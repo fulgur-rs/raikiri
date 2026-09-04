@@ -98,21 +98,24 @@ use crate::cascade::{
 };
 use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_properties};
 use crate::property::{
-    Border, BorderColor, BorderRadius, BorderStyle, BoxShadowItem, CustomProperty, FlexBasisValue,
-    FlexShorthand, GapShorthand, GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth,
-    GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto,
-    LengthOrNormal, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowXY, PropertyKey,
-    PropertyValue, Sides, TextShadowItem, parse_length_allow_negative, parse_non_negative_length,
-    parse_value, resolve_overflow, resolve_writing_mode,
+    BackgroundSize, Border, BorderColor, BorderRadius, BorderStyle, BoxShadowItem, CssPosition,
+    CssPositionOffset, CustomProperty, FlexBasisValue, FlexShorthand, GapShorthand,
+    GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+    GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
+    Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue,
+    Sides, TextShadowItem, parse_length_allow_negative, parse_non_negative_length, parse_value,
+    resolve_overflow, resolve_writing_mode,
 };
 use crate::resolve::{
-    ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
+    ComputedBackgroundSize, ComputedCssPositionOffset, ComputedFlexBasis,
+    ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
     ComputedGridTrackListComponent, ComputedGridTrackSize, ComputedLength,
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
-    ResolveContext, lift_length_or_normal, lift_line_height, lift_tab_size, resolve_border,
-    resolve_border_radius, resolve_box_shadow_item, resolve_flex_basis,
-    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
-    resolve_length_or_normal, resolve_length_percentage, resolve_length_percentage_or_auto,
+    ResolveContext, lift_length_or_normal, lift_line_height, lift_tab_size,
+    resolve_background_size, resolve_border, resolve_border_radius, resolve_box_shadow_item,
+    resolve_css_position, resolve_flex_basis, resolve_grid_auto_track_list,
+    resolve_grid_template_tracks, resolve_length, resolve_length_or_normal,
+    resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
     resolve_outline, resolve_tab_size, resolve_vertical_align, used_line_height_length,
 };
@@ -2357,6 +2360,59 @@ fn absolutize_in_page_context(
             ComputedFlexBasis::Percent(p) => FlexBasisValue::Length(Length::Percent(p)),
         }
     }
+    /// `background-size: <bg-size>` — same round-trip as [`lpa`], applied
+    /// per axis via [`resolve_background_size`]; `cover`/`contain` carry no
+    /// length and pass straight through.
+    fn background_size(
+        specified: BackgroundSize,
+        font_size: ComputedLength,
+        own_line_height: Option<ComputedLength>,
+        ctx: &ResolveContext,
+    ) -> BackgroundSize {
+        fn lift(computed: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
+            match computed {
+                ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
+                ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
+                ComputedLengthPercentageOrAuto::Percent(p) => {
+                    LengthOrAuto::Length(Length::Percent(p))
+                }
+            }
+        }
+        match resolve_background_size(specified, font_size, own_line_height, ctx) {
+            ComputedBackgroundSize::Cover => BackgroundSize::Cover,
+            ComputedBackgroundSize::Contain => BackgroundSize::Contain,
+            ComputedBackgroundSize::Explicit { width, height } => BackgroundSize::Explicit {
+                width: lift(width),
+                height: lift(height),
+            },
+        }
+    }
+    /// `background-position: <position>` — same round-trip as [`lp`],
+    /// applied to each edge/offset via [`resolve_css_position`].
+    fn css_position(
+        specified: CssPosition,
+        font_size: ComputedLength,
+        own_line_height: Option<ComputedLength>,
+        ctx: &ResolveContext,
+    ) -> CssPosition {
+        fn lift(computed: ComputedLengthPercentage) -> Length {
+            match computed {
+                ComputedLengthPercentage::Px(v) => Length::Px(v),
+                ComputedLengthPercentage::Percent(p) => Length::Percent(p),
+            }
+        }
+        fn lift_offset(computed: ComputedCssPositionOffset) -> CssPositionOffset {
+            match computed {
+                ComputedCssPositionOffset::Start(l) => CssPositionOffset::Start(lift(l)),
+                ComputedCssPositionOffset::End(l) => CssPositionOffset::End(lift(l)),
+            }
+        }
+        let computed = resolve_css_position(specified, font_size, own_line_height, ctx);
+        CssPosition {
+            horizontal: lift_offset(computed.horizontal),
+            vertical: lift_offset(computed.vertical),
+        }
+    }
     /// `row-gap` / `column-gap`: `normal | <length-percentage [0,∞]>` —
     /// same mapping shape as [`lp`], with `normal` preserved (unlike
     /// `letter-spacing`/`word-spacing`'s `lift_length_or_normal`, which
@@ -2815,7 +2871,17 @@ fn absolutize_in_page_context(
         // specified integer — nothing for phase 3 to absolutize, same shape
         // as `FlexGrow`/`FlexShrink` above.
         | PropertyValue::Orphans(_)
-        | PropertyValue::Widows(_)) => v,
+        | PropertyValue::Widows(_)
+        // `background-repeat`/`background-attachment`/`background-clip`/
+        // `background-origin` (CSS Backgrounds and Borders 3 §2.4/§2.5/§2.7/§2.8)
+        // carry no length — computed value = specified keyword(s), same
+        // shape as `WordBreak` above. `background-size`/`background-position`
+        // do carry `<length-percentage>` and get their own transform arms
+        // below (next to `Width`/`Height`).
+        | PropertyValue::BackgroundRepeat(_)
+        | PropertyValue::BackgroundAttachment(_)
+        | PropertyValue::BackgroundClip(_)
+        | PropertyValue::BackgroundOrigin(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -3021,6 +3087,17 @@ fn absolutize_in_page_context(
         // ── width / height ────────────────────────────────────────────────
         PropertyValue::Width(v) => PropertyValue::Width(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Height(v) => PropertyValue::Height(lpa(v, font_size, own_line_height, ctx)),
+        // ── background-size / background-position ───────────────────────
+        // CSS Backgrounds and Borders 3 §2.9/§2.6: both carry
+        // `<length-percentage>` components, absolutized against this page
+        // context's own font-size/line-height (same basis as `Width`/
+        // `Height` above).
+        PropertyValue::BackgroundSize(v) => {
+            PropertyValue::BackgroundSize(background_size(v, font_size, own_line_height, ctx))
+        }
+        PropertyValue::BackgroundPosition(v) => {
+            PropertyValue::BackgroundPosition(css_position(v, font_size, own_line_height, ctx))
+        }
         // ── overflow-x / overflow-y ──────────────────────────────────────────
         // CSS Overflow 3 §3.1 cross-axis coupling — this axis's own winner
         // (`v`) paired with the *other* axis's winner (`overflow_pair`,
@@ -3293,18 +3370,19 @@ mod tests {
     use super::*;
     use crate::computed::INITIAL_FONT_SIZE_PX;
     use crate::property::{
-        AlignSelfValue, BorderRadius, BoxShadowItem, BoxSizing, BreakBetween, BreakInside,
-        ClearValue, ContentAlignmentValue, ContentComponent, CssColor, CustomProperty, Direction,
-        DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps,
-        FontWeightValue, GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand,
-        GridLineValue, GridRepeatCount, GridTemplateAreaEntry, GridTemplateAreas,
-        GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
-        GridTrackListComponent, GridTrackRepeat, GridTrackSize, Hyphens, Length, LengthOrAuto,
-        LengthOrNormal, LineHeight, Outline, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY,
-        PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
-        SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextDecorationColor, TextDecorationLine,
-        TextDecorationShorthand, TextDecorationStyle, TextShadowColor, TextTransform,
-        VerticalAlign, Visibility, WhiteSpace, WordBreak, WritingMode, ZIndexValue,
+        AlignSelfValue, BackgroundAttachment, BackgroundRepeat, BackgroundRepeatKeyword,
+        BorderRadius, BoxShadowItem, BoxSizing, BreakBetween, BreakInside, ClearValue,
+        ContentAlignmentValue, ContentComponent, CssColor, CustomProperty, Direction, DisplayValue,
+        FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, FontWeightValue,
+        GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand, GridLineValue,
+        GridRepeatCount, GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue,
+        GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent,
+        GridTrackRepeat, GridTrackSize, Hyphens, Length, LengthOrAuto, LengthOrNormal, LineHeight,
+        Outline, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PlaceContentShorthand,
+        PlaceItemsShorthand, PlaceSelfShorthand, PositionValue, SelfAlignmentValue, StartEnd,
+        TabSize, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationShorthand,
+        TextDecorationStyle, TextShadowColor, TextTransform, VerticalAlign, Visibility, VisualBox,
+        WhiteSpace, WordBreak, WritingMode, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use crate::ruletree::build_rule_tree;
@@ -5296,6 +5374,87 @@ mod tests {
         }
     }
 
+    /// Direct exercise of `absolutize_in_page_context`'s `BackgroundSize`
+    /// arm for the `cover`/`contain` keywords — `page_corpus`'s
+    /// `BackgroundSize` worst-case sample is always the `Explicit` variant
+    /// (`sample_for` 参照), so this test drives the `Cover`/`Contain` arms
+    /// of the local `lift` helper directly (sibling of
+    /// `absolutize_in_page_context_covers_flex_basis_and_gap_arms` above).
+    #[test]
+    fn absolutize_in_page_context_covers_background_size_cover_and_contain_arms() {
+        let fs = ComputedLength(20.0);
+        let ctx = ResolveContext::new(ComputedLength(16.0));
+        let styles = Sides::all(BorderStyle::None);
+
+        for size in [BackgroundSize::Cover, BackgroundSize::Contain] {
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                absolutize_in_page_context(
+                    ResolvedAgainstInherited::for_test(PropertyValue::BackgroundSize(size)),
+                    fs,
+                    None,
+                    &ctx,
+                    styles,
+                    OutlineStyle::None,
+                    OverflowXY::both(OverflowValue::Visible),
+                ),
+                PropertyValue::BackgroundSize(size),
+                "background-size: {size:?}",
+            );
+        }
+    }
+
+    /// Direct exercise of `background_size`'s and `css_position`'s local
+    /// `lift` helpers' `Percent` arm — `page_corpus`'s `BackgroundSize`
+    /// (`Em`/`Auto`) and `BackgroundPosition` (`Em`/`Rem`) worst-case
+    /// samples both resolve to `Px` (`resolve_length_percentage` collapses
+    /// font-relative units to `Px`, never `Percent`), so a percentage
+    /// payload is the only way to reach `lift`'s `Percent` arm in either
+    /// function; sibling of
+    /// `absolutize_in_page_context_covers_background_size_cover_and_contain_arms`
+    /// above.
+    #[test]
+    fn absolutize_in_page_context_covers_background_size_and_position_percent_axis_arms() {
+        let fs = ComputedLength(20.0);
+        let ctx = ResolveContext::new(ComputedLength(16.0));
+        let styles = Sides::all(BorderStyle::None);
+
+        let size = BackgroundSize::Explicit {
+            width: LengthOrAuto::Length(Length::Percent(30.0)),
+            height: LengthOrAuto::Length(Length::Percent(40.0)),
+        };
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::BackgroundSize(size)),
+                fs,
+                None,
+                &ctx,
+                styles,
+                OutlineStyle::None,
+                OverflowXY::both(OverflowValue::Visible),
+            ),
+            PropertyValue::BackgroundSize(size),
+        );
+
+        let position = CssPosition {
+            horizontal: CssPositionOffset::Start(Length::Percent(30.0)),
+            vertical: CssPositionOffset::End(Length::Percent(40.0)),
+        };
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::BackgroundPosition(position)),
+                fs,
+                None,
+                &ctx,
+                styles,
+                OutlineStyle::None,
+                OverflowXY::both(OverflowValue::Visible),
+            ),
+            PropertyValue::BackgroundPosition(position),
+        );
+    }
+
     /// Direct exercise of `absolutize_in_page_context`'s `VerticalAlign`
     /// arm — the 6 keywords stay as-is, `<length>` absolutizes against this
     /// page context's own font-size (same "worst case: `Em`" shape
@@ -5764,11 +5923,19 @@ mod tests {
     /// therefore need no page-context length conversion; `OutlineWidth` and
     /// the `Outline` shorthand remain on the transform side because they carry
     /// a width).
+    /// 69 → 73 (`BackgroundRepeat` / `BackgroundAttachment` /
+    /// `BackgroundClip` / `BackgroundOrigin`, CSS Backgrounds and Borders 3
+    /// §2.4/§2.5/§2.7/§2.8 — all 4 are keyword-only and therefore need no
+    /// page-context length conversion. `BackgroundSize` / `BackgroundPosition`
+    /// remain on the transform side because they carry
+    /// `<length-percentage>` — `absolutize_in_page_context`'s dedicated
+    /// `BackgroundSize`/`BackgroundPosition` arms, mirroring `Width`/
+    /// `Height` above).
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 69;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 73;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -6254,6 +6421,33 @@ mod tests {
         // to match `PropertyKey`'s own declaration order (`property.rs`),
         // per this macro's `property_key_samples!` doc contract.
         WritingMode => PropertyValue::WritingMode(WritingMode::VerticalRl),
+        // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.7/§2.8 — keyword-only,
+        // carry no length (`x`/`y` intentionally asymmetric to catch a
+        // swapped-axis regression, same reasoning as `OverflowXY`'s
+        // distinct x/y samples).
+        BackgroundRepeat => PropertyValue::BackgroundRepeat(BackgroundRepeat {
+            x: BackgroundRepeatKeyword::Round,
+            y: BackgroundRepeatKeyword::Space,
+        }),
+        BackgroundAttachment => PropertyValue::BackgroundAttachment(BackgroundAttachment::Fixed),
+        BackgroundClip => PropertyValue::BackgroundClip(VisualBox::ContentBox),
+        BackgroundOrigin => PropertyValue::BackgroundOrigin(VisualBox::ContentBox),
+        // CSS Backgrounds and Borders 3 §2.9 — `Length::Em` worst-case
+        // payload (same convention as `Padding`/`Width` above) so this raw
+        // sample is caught by `specified_layer_residue` before phase 3
+        // absolutizes it; `height: Auto` also exercises the "second axis
+        // omitted defaults to auto" fill rule's `Auto` arm.
+        BackgroundSize => PropertyValue::BackgroundSize(BackgroundSize::Explicit {
+            width: LengthOrAuto::Length(Length::Em(2.0)),
+            height: LengthOrAuto::Auto,
+        }),
+        // CSS Backgrounds and Borders 3 §2.6 — `Em`/`Rem` worst-case
+        // payload on both `Start` and `End` (distinct edges, to exercise
+        // both `CssPositionOffset` variants in the same sample).
+        BackgroundPosition => PropertyValue::BackgroundPosition(CssPosition {
+            horizontal: CssPositionOffset::Start(Length::Em(1.0)),
+            vertical: CssPositionOffset::End(Length::Rem(2.0)),
+        }),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -6488,6 +6682,12 @@ mod tests {
         Orphans,
         Widows,
         WritingMode,
+        BackgroundRepeat,
+        BackgroundAttachment,
+        BackgroundClip,
+        BackgroundOrigin,
+        BackgroundSize,
+        BackgroundPosition,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -6931,6 +7131,14 @@ mod tests {
             // above — but that collapse has nothing to do with *length*
             // residue, which is all this detector checks.
             | PropertyValue::WritingMode(_)
+            // `background-repeat`/`background-attachment`/`background-clip`/
+            // `background-origin` carry no length either — keyword-only
+            // payloads (`BackgroundSize`/`BackgroundPosition` below do carry
+            // `<length-percentage>` and get their own arms).
+            | PropertyValue::BackgroundRepeat(_)
+            | PropertyValue::BackgroundAttachment(_)
+            | PropertyValue::BackgroundClip(_)
+            | PropertyValue::BackgroundOrigin(_)
             // Custom properties and deferred values are pre-computed cascade
             // representations, not page-context computed length payloads.
             | PropertyValue::CustomProperty(_)
@@ -6966,6 +7174,27 @@ mod tests {
             // already computed-equivalent.
             PropertyValue::Outline(outline) => length(outline.width),
             PropertyValue::OutlineWidth(width) => length(*width),
+            // `background-size` stores a `<length-percentage [0,∞]> | auto`
+            // per axis — same shape as `Width`/`Height` above
+            // (`length_or_auto` delegate); `cover`/`contain` carry no
+            // length.
+            PropertyValue::BackgroundSize(size) => match size {
+                BackgroundSize::Cover | BackgroundSize::Contain => None,
+                BackgroundSize::Explicit { width, height } => {
+                    length_or_auto(*width).or_else(|| length_or_auto(*height))
+                }
+            },
+            // `background-position` stores a `<length-percentage>` per
+            // edge/offset (`CssPositionOffset::Start`/`End` both wrap a
+            // plain `Length` — the edge itself carries no length).
+            PropertyValue::BackgroundPosition(pos) => {
+                fn offset_residue(o: CssPositionOffset) -> Option<&'static str> {
+                    match o {
+                        CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
+                    }
+                }
+                offset_residue(pos.horizontal).or_else(|| offset_residue(pos.vertical))
+            }
         }
     }
 
@@ -7128,6 +7357,23 @@ mod tests {
                 Length::Em(1.0)
             ))),
             Some("Length::Em"),
+        );
+    }
+
+    /// `background-size: cover` / `contain` は残滓ではない (CSS Backgrounds 3
+    /// §2.9: どちらも `<length-percentage>` を伴わない bare keyword) —
+    /// `page_corpus`'s `BackgroundSize` worst-case sample は常に `Explicit`
+    /// variant (`sample_for` 参照) なので `specified_layer_residue`'s
+    /// `Cover | Contain => None` arm は corpus 経由では exercise されない。
+    #[test]
+    fn background_size_cover_and_contain_are_not_specified_layer_residue() {
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::BackgroundSize(BackgroundSize::Cover)),
+            None,
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::BackgroundSize(BackgroundSize::Contain)),
+            None,
         );
     }
 

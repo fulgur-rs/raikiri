@@ -4553,6 +4553,186 @@ pub struct Outline {
     pub color: OutlineColor,
 }
 
+/// `<position>` value type の 1 軸分の offset (CSS Values and Units 4 §8.3
+/// <https://www.w3.org/TR/css-values-4/#typedef-position>、CSS Backgrounds
+/// and Borders 3 §2.6 `<bg-position>` <https://www.w3.org/TR/css-backgrounds-3/#typedef-bg-position>
+/// が `background-position` 向けにこの grammar を拡張したものを、他
+/// property 向けに一般化して再利用する共通 value type)。
+///
+/// # Grammar (CSS Backgrounds 3 §2.6 `<bg-position>` — 汎用 `<position>`
+/// (CSS Values 4 §8.3) の superset。素の `<position>` は 3-4 value
+/// edge-offset 構文を許さない — この拡張は `<bg-position>` 固有)
+///
+/// ```text
+/// <position> =
+///   [ left | center | right | top | bottom | <length-percentage> ]
+/// |
+///   [ left | center | right | <length-percentage> ]
+///   [ top | center | bottom | <length-percentage> ]
+/// |
+///   [ center | [ left | right ] <length-percentage>? ] &&
+///   [ center | [ top | bottom ] <length-percentage>? ]
+/// ```
+///
+/// 3 alternative のうち最後 (`&&`、2 group が任意順で出現可能) が `top left` /
+/// `bottom 10px right 20px` のような keyword 並び替えと 3-4 value edge-offset
+/// 構文をカバーする。
+///
+/// # なぜ 2 variant (`Start`/`End`) か — `<length-percentage>` 単体では表現不能
+///
+/// `right 10px top` (3-value edge-offset — bare `right 10px` alone is a
+/// *different*, ambiguous 2-value form, see the well-known gotcha pinned
+/// by `background_position_parse_right_10px_is_not_an_edge_offset`)の
+/// 水平成分 (右 edge から 10px) は「左 edge から `100% - 10px`」と等価だが、
+/// この crate は `calc()` を実装していない ([`DEFERRED_FUNCTIONS`] 参照) ため、
+/// 単一の `<length-percentage>` (px と % の線形結合) としては表現できない。
+/// そのため offset がどちらの edge から測られているかを型で保持し、edge から
+/// 実 pixel 位置への最終変換は (`<length-percentage>` の percentage 解決自体が
+/// 元々必要とする) background positioning area のサイズを持つ downstream layout
+/// に委ねる — この crate の他の `<length-percentage>` (`padding` / `width` 等)
+/// が percentage を解決せず素通しするのと同じ「絶対化は used value 層」の設計
+/// 方針を、edge 情報にも一貫して適用したもの。
+///
+/// `Percent` payload の `End` は構築直後に等価な `Start` (`100.0 - p` を
+/// percentage とする) へ正規化される ([`normalize_css_position`] 参照) —
+/// `right`/`bottom` を percentage で表現できる場合は常に `Start` 基準に畳み、
+/// `End` が実際に現れるのは非 percentage な offset (`right 10px top` の
+/// 水平成分等、`calc()` 相当が必要なケース) に限られる。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CssPositionOffset {
+    /// Start edge (horizontal: `left`、vertical: `top`) からの offset。
+    Start(Length),
+    /// End edge (horizontal: `right`、vertical: `bottom`) からの offset —
+    /// 上記 doc の「なぜ 2 variant か」節参照。
+    End(Length),
+}
+
+/// `<position>` value type (CSS Backgrounds and Borders 3 §2.6、[`CssPositionOffset`]
+/// doc 参照)。`background-position` (本 crate) と、将来の `object-position` /
+/// `transform-origin` 等の再利用を見込んで汎用的に定義する。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CssPosition {
+    /// 水平軸の offset。
+    pub horizontal: CssPositionOffset,
+    /// 垂直軸の offset。
+    pub vertical: CssPositionOffset,
+}
+
+/// `<repeat-style>` の 1 軸分の keyword (CSS Backgrounds and Borders 3 §2.4
+/// <https://www.w3.org/TR/css-backgrounds-3/#typedef-repeat-style>)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackgroundRepeatKeyword {
+    /// `repeat` — spec initial value (両軸)。tile を繰り返し、必要なら最後の
+    /// tile を clip する。
+    Repeat,
+    /// `space` — tile を繰り返しつつ、割り切れない余白を tile 間の均等な
+    /// 間隔として分配する。
+    Space,
+    /// `round` — tile を繰り返しつつ、割り切れるよう tile を伸縮する。
+    Round,
+    /// `no-repeat` — tile を 1 個だけ配置する。
+    NoRepeat,
+}
+
+/// `background-repeat` の specified value。
+///
+/// CSS Backgrounds and Borders 3 §2.4 "Tiling Images: the
+/// background-repeat property"。Grammar: `<repeat-style>#` — この
+/// property は複数 background layer 用の comma-separated list
+/// (`#` multiplier) を許すが、この実装は `background-image` 自体が
+/// (別 task の scope として) 未実装で複数 layer を observe する経路が無いため、
+/// 単一 layer のみを受理する — 将来 `background-image` が comma-list を
+/// 持つようになった時点で、本 struct を `Arc<Vec<BackgroundRepeat>>` へ
+/// wrap するだけで拡張できる (`BoxShadowItem` の `Arc<Vec<..>>` 化と
+/// 同じ shape)。
+///
+/// `repeat-x` = `{x: Repeat, y: NoRepeat}`、`repeat-y` = `{x: NoRepeat, y:
+/// Repeat}` (2 keyword shorthand として spec が定義する computed value —
+/// [`parse_background_repeat`] doc 参照)。1 keyword 指定時は両軸に適用する
+/// (`repeat` = `repeat repeat` 等)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BackgroundRepeat {
+    /// 水平軸の repeat 方式。
+    pub x: BackgroundRepeatKeyword,
+    /// 垂直軸の repeat 方式。
+    pub y: BackgroundRepeatKeyword,
+}
+
+/// `background-attachment` の specified value。
+///
+/// CSS Backgrounds and Borders 3 §2.5 "Affixing Images: the
+/// background-attachment property"。Grammar: `<attachment>#` — comma-list
+/// の scope 外理由は [`BackgroundRepeat`] doc と同じ。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackgroundAttachment {
+    /// `scroll` — spec initial value。background は element を含む block
+    /// (containing block chain) に対して固定され、element 自身の内容と
+    /// ともにスクロールしない一方、page 全体のスクロールには追従する。
+    Scroll,
+    /// `fixed` — background は viewport に対して固定される。
+    Fixed,
+    /// `local` — background は element 自身の内容とともにスクロールする。
+    Local,
+}
+
+/// `background-clip` / `background-origin` が共有する box keyword
+/// (CSS Backgrounds and Borders 3 §2.7 "Painting Area: the
+/// background-clip property" / "Positioning Area: the
+/// background-origin property")。両 property とも grammar は
+/// `<visual-box>#` — comma-list の scope 外理由は [`BackgroundRepeat`] doc
+/// と同じ。
+///
+/// spec initial は property ごとに異なる — `background-clip` は
+/// `border-box`、`background-origin` は `padding-box`
+/// ([`crate::specified::SpecifiedValues::initial`] / [`crate::computed::ComputedValues::initial`]
+/// 参照)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VisualBox {
+    /// `border-box` — border の外側の縁。
+    BorderBox,
+    /// `padding-box` — border の内側、padding の外側の縁。
+    PaddingBox,
+    /// `content-box` — padding の内側、content box の縁。
+    ContentBox,
+}
+
+/// `background-size` の specified value。
+///
+/// CSS Backgrounds and Borders 3 §2.9 "Sizing Images: the
+/// background-size property"。Grammar: `<bg-size>#` — comma-list の scope
+/// 外理由は [`BackgroundRepeat`] doc と同じ。
+///
+/// `<bg-size> = [ <length-percentage [0,∞]> | auto ]{1,2} | cover |
+/// contain`。1 value のみ指定時、2 個目の axis は **`auto`** になる (spec
+/// verbatim: "If only one value is given the second is assumed to be
+/// auto.") — 同じく 1-2 value を取る [`BorderRadius`] (省略値は 1 個目を
+/// 複製) とは fill 規則が異なる点に注意 ([`parse_background_size`] doc
+/// 参照)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BackgroundSize {
+    /// `[ <length-percentage [0,∞]> | auto ]{1,2}` — 各軸独立に長さまたは
+    /// `auto` を取る。
+    Explicit {
+        /// 水平軸のサイズ。
+        width: LengthOrAuto,
+        /// 垂直軸のサイズ。
+        height: LengthOrAuto,
+    },
+    /// `cover` — background positioning area 全体を覆うよう、アスペクト比を
+    /// 保ったまま拡大縮小する。
+    Cover,
+    /// `contain` — background positioning area に収まる最大サイズまで、
+    /// アスペクト比を保ったまま拡大縮小する。
+    Contain,
+}
+
 /// 現サポート property の resolved value (variant 一覧は下記、
 /// property name → variant mapping は `parse_value` 参照)。
 ///
@@ -5691,6 +5871,34 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     WritingMode(WritingMode),
+    /// `background-repeat` — **non-inherited**、initial:
+    /// [`BackgroundRepeat`]`{x: Repeat, y: Repeat}` (CSS Backgrounds 3 §2.4
+    /// [`BackgroundRepeat`] doc 参照)。末尾に追加 (1:1 disjoint な新 field、
+    /// [`PropertyKey`] doc の判断規則)。
+    BackgroundRepeat(BackgroundRepeat),
+    /// `background-attachment` — **non-inherited**、initial:
+    /// [`BackgroundAttachment::Scroll`] (CSS Backgrounds 3 §2.5
+    /// [`BackgroundAttachment`] doc 参照)。
+    BackgroundAttachment(BackgroundAttachment),
+    /// `background-clip` — **non-inherited**、initial:
+    /// [`VisualBox::BorderBox`] (CSS Backgrounds 3 §2.7 [`VisualBox`] doc 参照
+    /// — sibling [`Self::BackgroundOrigin`] と initial が異なる点に注意)。
+    BackgroundClip(VisualBox),
+    /// `background-origin` — **non-inherited**、initial:
+    /// [`VisualBox::PaddingBox`] (CSS Backgrounds 3 §2.8 [`VisualBox`] doc
+    /// 参照 — sibling [`Self::BackgroundClip`] と initial が異なる点に注意)。
+    BackgroundOrigin(VisualBox),
+    /// `background-size` — **non-inherited**、initial:
+    /// [`BackgroundSize::Explicit`]`{width: Auto, height: Auto}` (CSS
+    /// Backgrounds 3 §2.9 [`BackgroundSize`] doc 参照)。`<length-percentage>`
+    /// を含むため絶対化は phase 3 に委ねる (`padding`/`width` と同型)。
+    BackgroundSize(BackgroundSize),
+    /// `background-position` — **non-inherited**、initial:
+    /// [`CssPosition`]`{horizontal: Start(Percent(0.0)), vertical:
+    /// Start(Percent(0.0))}` (CSS Backgrounds 3 §2.6 "Initial: 0% 0%"、
+    /// [`CssPosition`] doc 参照)。`<length-percentage>` を含むため絶対化は
+    /// phase 3 に委ねる。
+    BackgroundPosition(CssPosition),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -6018,6 +6226,18 @@ pub enum PropertyKey {
     // no per-variant docs per crate convention). 末尾配置の理由は
     // PropertyValue::WritingMode の doc 参照。
     WritingMode,
+    // background-repeat / background-attachment / background-clip /
+    // background-origin / background-size / background-position (CSS
+    // Backgrounds and Borders 3 §2.4-§2.9、semantics on the matching
+    // PropertyValue::Background* variants; sibling PropertyKey variants
+    // carry no per-variant docs per crate convention). 末尾配置の理由は
+    // WritingMode 直前の同節参照 (1:1 disjoint な新 field)。
+    BackgroundRepeat,
+    BackgroundAttachment,
+    BackgroundClip,
+    BackgroundOrigin,
+    BackgroundSize,
+    BackgroundPosition,
 }
 
 impl PropertyValue {
@@ -6146,6 +6366,12 @@ impl PropertyValue {
             PropertyValue::OutlineStyle(_) => PropertyKey::OutlineStyle,
             PropertyValue::OutlineColor(_) => PropertyKey::OutlineColor,
             PropertyValue::WritingMode(_) => PropertyKey::WritingMode,
+            PropertyValue::BackgroundRepeat(_) => PropertyKey::BackgroundRepeat,
+            PropertyValue::BackgroundAttachment(_) => PropertyKey::BackgroundAttachment,
+            PropertyValue::BackgroundClip(_) => PropertyKey::BackgroundClip,
+            PropertyValue::BackgroundOrigin(_) => PropertyKey::BackgroundOrigin,
+            PropertyValue::BackgroundSize(_) => PropertyKey::BackgroundSize,
+            PropertyValue::BackgroundPosition(_) => PropertyKey::BackgroundPosition,
         }
     }
 }
@@ -6522,6 +6748,12 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "orphans" => PropertyKey::Orphans,
         "widows" => PropertyKey::Widows,
         "writing-mode" => PropertyKey::WritingMode,
+        "background-repeat" => PropertyKey::BackgroundRepeat,
+        "background-attachment" => PropertyKey::BackgroundAttachment,
+        "background-clip" => PropertyKey::BackgroundClip,
+        "background-origin" => PropertyKey::BackgroundOrigin,
+        "background-size" => PropertyKey::BackgroundSize,
+        "background-position" => PropertyKey::BackgroundPosition,
         _ => return None,
     })
 }
@@ -7063,6 +7295,18 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // `resolve_writing_mode` (`WritingMode` doc's Non-goal section), not
         // here.
         "writing-mode" => parse_writing_mode(input).map(PropertyValue::WritingMode),
+        // CSS Backgrounds and Borders 3 §2.4-§2.9. `background-clip` /
+        // `background-origin` share the `<visual-box>` keyword parser
+        // (`VisualBox` doc — the two differ only in initial value, handled
+        // in `specified.rs`/`computed.rs`, not here).
+        "background-repeat" => parse_background_repeat(input).map(PropertyValue::BackgroundRepeat),
+        "background-attachment" => {
+            parse_background_attachment(input).map(PropertyValue::BackgroundAttachment)
+        }
+        "background-clip" => parse_visual_box(input).map(PropertyValue::BackgroundClip),
+        "background-origin" => parse_visual_box(input).map(PropertyValue::BackgroundOrigin),
+        "background-size" => parse_background_size(input).map(PropertyValue::BackgroundSize),
+        "background-position" => parse_css_position(input).map(PropertyValue::BackgroundPosition),
         _ => None,
     }
 }
@@ -12422,6 +12666,472 @@ fn parse_length_allow_negative_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<Length, ParseError<'i, ()>> {
     parse_length_allow_negative(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `<length-percentage>` — sign 制限なし ([`parse_length_value`] with
+/// `allow_percentage=true`、`Result` wrapper for `try_parse` callers)。
+/// [`CssPosition`] の offset (負値も spec-valid、[`parse_position_horizontal_edge`]
+/// 等の doc 参照) が使う。
+fn parse_length_percentage_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<Length, ParseError<'i, ()>> {
+    parse_length_value(input, true).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// [`CssPositionOffset::End`] の `Percent` payload を、等価な
+/// [`CssPositionOffset::Start`] へ畳む ([`CssPositionOffset`] doc の
+/// 「なぜ 2 variant か」節)。`right 30%` (`End(Percent(30.0))`) は
+/// `Start(Percent(70.0))` と完全に等価な値なので、常に `Start` 側へ
+/// 正規化して代表形を 1 つに保つ — `End` が生き残るのは percentage で
+/// 表現できない offset (`right 10px` 等) に限られる。
+fn normalize_css_position_offset(offset: CssPositionOffset) -> CssPositionOffset {
+    match offset {
+        CssPositionOffset::End(Length::Percent(p)) => {
+            CssPositionOffset::Start(Length::Percent(100.0 - p))
+        }
+        other => other,
+    }
+}
+
+fn normalize_css_position(position: CssPosition) -> CssPosition {
+    CssPosition {
+        horizontal: normalize_css_position_offset(position.horizontal),
+        vertical: normalize_css_position_offset(position.vertical),
+    }
+}
+
+fn css_position_center() -> CssPositionOffset {
+    CssPositionOffset::Start(Length::Percent(50.0))
+}
+
+/// `<position>` grammar ([`CssPosition`] doc) の `[ left | right ]
+/// <length-percentage>?` alternative — horizontal 軸の edge keyword を
+/// optional offset とともに読む。offset 省略時は edge そのもの (offset
+/// `0`) を返す。`left`/`right` どちらにもマッチしなければ `None`
+/// (token は消費しない)。
+fn parse_position_horizontal_edge(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
+    if input.try_parse(|i| i.expect_ident_matching("left")).is_ok() {
+        let offset = input
+            .try_parse(parse_length_percentage_res)
+            .unwrap_or(Length::Percent(0.0));
+        return Some(CssPositionOffset::Start(offset));
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("right"))
+        .is_ok()
+    {
+        let offset = input
+            .try_parse(parse_length_percentage_res)
+            .unwrap_or(Length::Percent(0.0));
+        return Some(CssPositionOffset::End(offset));
+    }
+    None
+}
+
+/// [`parse_position_horizontal_edge`] の vertical 軸版 (`top`/`bottom`)。
+fn parse_position_vertical_edge(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
+    if input.try_parse(|i| i.expect_ident_matching("top")).is_ok() {
+        let offset = input
+            .try_parse(parse_length_percentage_res)
+            .unwrap_or(Length::Percent(0.0));
+        return Some(CssPositionOffset::Start(offset));
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("bottom"))
+        .is_ok()
+    {
+        let offset = input
+            .try_parse(parse_length_percentage_res)
+            .unwrap_or(Length::Percent(0.0));
+        return Some(CssPositionOffset::End(offset));
+    }
+    None
+}
+
+/// `center | [ left | right ] <length-percentage>?` — horizontal 軸の
+/// branch-3 group ([`parse_position_branch3`] doc)。
+fn parse_position_horizontal_group(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
+    if input
+        .try_parse(|i| i.expect_ident_matching("center"))
+        .is_ok()
+    {
+        return Some(css_position_center());
+    }
+    parse_position_horizontal_edge(input)
+}
+
+/// [`parse_position_horizontal_group`] の vertical 軸版。
+fn parse_position_vertical_group(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
+    if input
+        .try_parse(|i| i.expect_ident_matching("center"))
+        .is_ok()
+    {
+        return Some(css_position_center());
+    }
+    parse_position_vertical_edge(input)
+}
+
+/// `<position>` grammar ([`CssPosition`] doc) の 3rd alternative —
+/// `[ center | [ left | right ] <length-percentage>? ] && [ center | [ top |
+/// bottom ] <length-percentage>? ]`。`&&` は両 group が (任意順で) 必須
+/// なことを意味する — 一方の group しか読めなければ (呼び出し元が
+/// `input.try_parse` で包む前提の) `None` を返し、消費した token は
+/// 呼び出し元の rewind に委ねる。
+///
+/// 1 個目の token は horizontal-exclusive (`left`/`right`) → vertical-exclusive
+/// (`top`/`bottom`) → ambiguous `center` の順で試す。`center` は両 group に
+/// 属し得るため、どちらの軸に属するかは 2 個目の token (もう片方の
+/// group) を見て初めて決まる。
+fn parse_position_branch3(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
+    if let Some(horizontal) = parse_position_horizontal_edge(input) {
+        let vertical = parse_position_vertical_group(input)?;
+        return Some(CssPosition {
+            horizontal,
+            vertical,
+        });
+    }
+    if let Some(vertical) = parse_position_vertical_edge(input) {
+        let horizontal = parse_position_horizontal_group(input)?;
+        return Some(CssPosition {
+            horizontal,
+            vertical,
+        });
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("center"))
+        .is_ok()
+    {
+        if let Some(vertical) = parse_position_vertical_edge(input) {
+            return Some(CssPosition {
+                horizontal: css_position_center(),
+                vertical,
+            });
+        }
+        if let Some(horizontal) = parse_position_horizontal_edge(input) {
+            return Some(CssPosition {
+                horizontal,
+                vertical: css_position_center(),
+            });
+        }
+        if input
+            .try_parse(|i| i.expect_ident_matching("center"))
+            .is_ok()
+        {
+            return Some(CssPosition {
+                horizontal: css_position_center(),
+                vertical: css_position_center(),
+            });
+        }
+        return None;
+    }
+    None
+}
+
+/// `[ left | center | right | <length-percentage> ]` — `<position>` grammar
+/// ([`CssPosition`] doc) の 2nd alternative の horizontal 側。bare
+/// `<length-percentage>` はこの alternative でのみ受理される (branch3 の
+/// group はどちらも bare LP を単独では受理しない) — edge keyword が無い
+/// ぶん offset ではなく「値そのもの」として `Start` に格納する。
+fn parse_position_branch2_horizontal(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
+    if input.try_parse(|i| i.expect_ident_matching("left")).is_ok() {
+        return Some(CssPositionOffset::Start(Length::Percent(0.0)));
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("center"))
+        .is_ok()
+    {
+        return Some(css_position_center());
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("right"))
+        .is_ok()
+    {
+        return Some(CssPositionOffset::Start(Length::Percent(100.0)));
+    }
+    let lp = input.try_parse(parse_length_percentage_res).ok()?;
+    Some(CssPositionOffset::Start(lp))
+}
+
+/// [`parse_position_branch2_horizontal`] の vertical 側
+/// (`[ top | center | bottom | <length-percentage> ]`)。
+fn parse_position_branch2_vertical(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
+    if input.try_parse(|i| i.expect_ident_matching("top")).is_ok() {
+        return Some(CssPositionOffset::Start(Length::Percent(0.0)));
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("center"))
+        .is_ok()
+    {
+        return Some(css_position_center());
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("bottom"))
+        .is_ok()
+    {
+        return Some(CssPositionOffset::Start(Length::Percent(100.0)));
+    }
+    let lp = input.try_parse(parse_length_percentage_res).ok()?;
+    Some(CssPositionOffset::Start(lp))
+}
+
+/// `<position>` grammar ([`CssPosition`] doc) の 2nd alternative — 厳密に
+/// horizontal → vertical の順で 2 token を読む (keyword 並び替え不可、
+/// branch3 と違い `&&` ではなく単純な連接)。
+fn parse_position_branch2(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
+    let horizontal = parse_position_branch2_horizontal(input)?;
+    let vertical = parse_position_branch2_vertical(input)?;
+    Some(CssPosition {
+        horizontal,
+        vertical,
+    })
+}
+
+/// `<position>` grammar ([`CssPosition`] doc) の 1st alternative — 単一
+/// keyword または単一 `<length-percentage>`。指定されなかった軸は
+/// `center` (50%) になる (spec 明示なし、`background-position` (CSS
+/// Backgrounds 3 §2.6) の "if only one value is specified, the second
+/// value is assumed to be center" 相当を汎用 `<position>` 型として保持)。
+fn parse_position_branch1(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
+    if input
+        .try_parse(|i| i.expect_ident_matching("center"))
+        .is_ok()
+    {
+        return Some(CssPosition {
+            horizontal: css_position_center(),
+            vertical: css_position_center(),
+        });
+    }
+    if input.try_parse(|i| i.expect_ident_matching("left")).is_ok() {
+        return Some(CssPosition {
+            horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+            vertical: css_position_center(),
+        });
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("right"))
+        .is_ok()
+    {
+        return Some(CssPosition {
+            horizontal: CssPositionOffset::Start(Length::Percent(100.0)),
+            vertical: css_position_center(),
+        });
+    }
+    if input.try_parse(|i| i.expect_ident_matching("top")).is_ok() {
+        return Some(CssPosition {
+            horizontal: css_position_center(),
+            vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+        });
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("bottom"))
+        .is_ok()
+    {
+        return Some(CssPosition {
+            horizontal: css_position_center(),
+            vertical: CssPositionOffset::Start(Length::Percent(100.0)),
+        });
+    }
+    let lp = input.try_parse(parse_length_percentage_res).ok()?;
+    Some(CssPosition {
+        horizontal: CssPositionOffset::Start(lp),
+        vertical: css_position_center(),
+    })
+}
+
+/// `<position>` value type を parse する ([`CssPosition`] doc の grammar
+/// 参照)。
+///
+/// # Alternative の試行順序 — 3rd → 2nd → 1st (grammar 記載順とは逆)
+///
+/// 3 alternative は互いに重なりうるため、試す順序が結果を左右する。
+/// **3rd (edge 並び替え可) を最初に試す**理由 — 3rd の失敗が「安全に
+/// rewind する」ことを保証するメカニズムの説明:
+///
+/// `left 10px` を例にとる。3rd alternative は horizontal group に `left`
+/// を、続けて optional offset `10px` を貪欲に割り当てる — その結果
+/// vertical group に残す token が無くなり (`&&` は両 group 必須)、3rd
+/// alternative 全体が失敗して丸ごと rewind する (この入力に限れば 2nd を
+/// 先に試しても `[left|center|right|<LP>]` が `left` を、
+/// `[top|center|bottom|<LP>]` が残りの `10px` を bare
+/// `<length-percentage>` として消費し、同じ horizontal = `left` (0%)、
+/// vertical = `10px` に到達するため、この特定の入力だけでは順序は
+/// 結果を左右しない — 3rd が「余計に消費してから失敗する」ことはあっても
+/// 「誤った値で成功する」ことは無い、という下記の safety-invariant の
+/// 具体例として引いている)。順序が真に結果を左右するのは `top left` の
+/// ような keyword 並び替え入力 (2nd は horizontal→vertical の固定順しか
+/// 受理しないため `top` を horizontal 側で reject し、3rd の `&&`
+/// (任意順) でしか解釈できない) や、`bottom 10px right 20px` のような
+/// 3-4 value edge-offset 入力 (2nd は高々 2 token しか消費しないため
+/// leftover が残り `expect_exhausted` で丸ごと drop される) である。
+///
+/// 同じ理由で 2nd は 1st より先: 1st は token を 1 個しか消費しないため、
+/// 2 token 以上の入力 (`0px 20px` 等) に対して 2nd を先に試さないと
+/// 2 個目の value が leftover として残り、呼び出し元の `expect_exhausted`
+/// (`rule.rs`) が declaration ごと drop してしまう。
+///
+/// この順序が「3rd が prefix だけ食って leftover を残す」場合でも安全な
+/// 理由: 2nd は高々 2 token、1st は高々 1 token しか消費できないため、
+/// 同じ開始位置から 2nd/1st が 3rd より **多くの** token を消費して
+/// leftover をゼロにできることは無い — 3rd が成功した時点でそれが
+/// 常に「最も leftover が少ない (またはゼロの)」alternative になる。
+///
+/// 各 alternative は `input.try_parse` で包まれた `Option`-returning
+/// helper (`parse_position_branch3` 等) として実装し、途中まで token を
+/// 消費して失敗しても呼び出し元の `try_parse` が丸ごと rewind する。
+fn parse_position_branch3_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<CssPosition, ParseError<'i, ()>> {
+    parse_position_branch3(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+fn parse_position_branch2_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<CssPosition, ParseError<'i, ()>> {
+    parse_position_branch2(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+fn parse_position_branch1_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<CssPosition, ParseError<'i, ()>> {
+    parse_position_branch1(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+pub fn parse_css_position(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
+    let position = input
+        .try_parse(parse_position_branch3_res)
+        .or_else(|_| input.try_parse(parse_position_branch2_res))
+        .or_else(|_| input.try_parse(parse_position_branch1_res))
+        .ok()?;
+    Some(normalize_css_position(position))
+}
+
+/// `<repeat-style>` の 1 keyword を parse する ([`BackgroundRepeatKeyword`]
+/// doc の grammar 参照)。`repeat-x`/`repeat-y` はここでは扱わない
+/// ([`parse_background_repeat`] が別途 top-level alternative として処理)。
+fn parse_background_repeat_keyword(input: &mut Parser<'_, '_>) -> Option<BackgroundRepeatKeyword> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "repeat" => Some(BackgroundRepeatKeyword::Repeat),
+        "space" => Some(BackgroundRepeatKeyword::Space),
+        "round" => Some(BackgroundRepeatKeyword::Round),
+        "no-repeat" => Some(BackgroundRepeatKeyword::NoRepeat),
+        _ => None,
+    }
+}
+
+fn parse_background_repeat_keyword_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<BackgroundRepeatKeyword, ParseError<'i, ()>> {
+    parse_background_repeat_keyword(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `background-repeat: <repeat-style>` を parse する ([`BackgroundRepeat`]
+/// doc の grammar 参照: `repeat-x | repeat-y | [repeat | space | round |
+/// no-repeat]{1,2}`)。
+///
+/// `repeat-x`/`repeat-y` は 2-keyword form の shorthand として先に試す
+/// (spec computed value: `repeat-x` = `repeat no-repeat`、`repeat-y` =
+/// `no-repeat repeat`)。1 keyword のみ指定時は両軸に同じ値を適用する
+/// (`repeat` = `repeat repeat` 等)。
+fn parse_background_repeat(input: &mut Parser<'_, '_>) -> Option<BackgroundRepeat> {
+    if input
+        .try_parse(|i| i.expect_ident_matching("repeat-x"))
+        .is_ok()
+    {
+        return Some(BackgroundRepeat {
+            x: BackgroundRepeatKeyword::Repeat,
+            y: BackgroundRepeatKeyword::NoRepeat,
+        });
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("repeat-y"))
+        .is_ok()
+    {
+        return Some(BackgroundRepeat {
+            x: BackgroundRepeatKeyword::NoRepeat,
+            y: BackgroundRepeatKeyword::Repeat,
+        });
+    }
+    let first = parse_background_repeat_keyword(input)?;
+    let second = input.try_parse(parse_background_repeat_keyword_res).ok();
+    Some(match second {
+        None => BackgroundRepeat { x: first, y: first },
+        Some(second) => BackgroundRepeat {
+            x: first,
+            y: second,
+        },
+    })
+}
+
+/// `background-attachment: <attachment>` を parse する
+/// ([`BackgroundAttachment`] doc の grammar 参照: `scroll | fixed | local`)。
+fn parse_background_attachment(input: &mut Parser<'_, '_>) -> Option<BackgroundAttachment> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "scroll" => Some(BackgroundAttachment::Scroll),
+        "fixed" => Some(BackgroundAttachment::Fixed),
+        "local" => Some(BackgroundAttachment::Local),
+        _ => None,
+    }
+}
+
+/// `<visual-box>` を parse する ([`VisualBox`] doc の grammar 参照:
+/// `border-box | padding-box | content-box`)。`background-clip` /
+/// `background-origin` 共有 (initial value の違いは呼び出し元ではなく
+/// `specified.rs`/`computed.rs` 側で扱う)。
+fn parse_visual_box(input: &mut Parser<'_, '_>) -> Option<VisualBox> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "border-box" => Some(VisualBox::BorderBox),
+        "padding-box" => Some(VisualBox::PaddingBox),
+        "content-box" => Some(VisualBox::ContentBox),
+        _ => None,
+    }
+}
+
+/// `<bg-size>` の 1 軸分 — `<length-percentage [0,∞]> | auto`
+/// ([`parse_width`] と同じ non-negative enforcement pattern)。
+fn parse_background_size_axis(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(LengthOrAuto::Auto);
+    }
+    let length = parse_length_value(input, true)?;
+    (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
+}
+
+fn parse_background_size_axis_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<LengthOrAuto, ParseError<'i, ()>> {
+    parse_background_size_axis(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `background-size: <bg-size>` を parse する ([`BackgroundSize`] doc の
+/// grammar 参照: `[ <length-percentage [0,∞]> | auto ]{1,2} | cover |
+/// contain`)。
+///
+/// `cover`/`contain` は keyword 全体を占有するため axis run より先に試す。
+/// 2 個目の axis が省略された場合は **`auto`** (spec verbatim: "If only
+/// one value is given the second is assumed to be auto.") — 1 個目の
+/// 値を複製する [`parse_border_radius`] 系の fill 規則とは異なるので
+/// 流用しない。
+fn parse_background_size(input: &mut Parser<'_, '_>) -> Option<BackgroundSize> {
+    if input
+        .try_parse(|i| i.expect_ident_matching("cover"))
+        .is_ok()
+    {
+        return Some(BackgroundSize::Cover);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("contain"))
+        .is_ok()
+    {
+        return Some(BackgroundSize::Contain);
+    }
+    let width = parse_background_size_axis(input)?;
+    let height = input
+        .try_parse(parse_background_size_axis_res)
+        .unwrap_or(LengthOrAuto::Auto);
+    Some(BackgroundSize::Explicit { width, height })
 }
 
 /// `<length>{2,4}` の box-shadow length run を parse する。
@@ -24248,5 +24958,696 @@ mod tests {
         // `<url-modifier>` (`crossorigin()` 等) 付き `url()` — unsupported,
         // see `parse_url_value` doc for the block-exhaustion mechanism.
         assert_eq!(parse_url("url(\"foo.png\" crossorigin)"), None);
+    }
+
+    // ── background-repeat (CSS Backgrounds 3 §2.4) ──
+
+    #[test]
+    fn background_repeat_parse_single_keyword_applies_to_both_axes() {
+        for (source, keyword) in [
+            ("repeat", BackgroundRepeatKeyword::Repeat),
+            ("space", BackgroundRepeatKeyword::Space),
+            ("round", BackgroundRepeatKeyword::Round),
+            ("no-repeat", BackgroundRepeatKeyword::NoRepeat),
+        ] {
+            // cov:ignore: the failure-message branch of this `assert_eq!`
+            // only executes when the assertion fails; it passes here, so
+            // llvm-cov reports the macro's condition-false region as an
+            // uncovered added line even though the assertion itself runs
+            // and does its job.
+            assert_eq!(
+                parse(source, "background-repeat"),
+                Some(PropertyValue::BackgroundRepeat(BackgroundRepeat {
+                    x: keyword,
+                    y: keyword,
+                })),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn background_repeat_parse_repeat_x_and_repeat_y() {
+        assert_eq!(
+            parse("repeat-x", "background-repeat"),
+            Some(PropertyValue::BackgroundRepeat(BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Repeat,
+                y: BackgroundRepeatKeyword::NoRepeat,
+            }))
+        );
+        assert_eq!(
+            parse("repeat-y", "background-repeat"),
+            Some(PropertyValue::BackgroundRepeat(BackgroundRepeat {
+                x: BackgroundRepeatKeyword::NoRepeat,
+                y: BackgroundRepeatKeyword::Repeat,
+            }))
+        );
+    }
+
+    #[test]
+    fn background_repeat_parse_two_keyword_form() {
+        assert_eq!(
+            parse("space round", "background-repeat"),
+            Some(PropertyValue::BackgroundRepeat(BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Space,
+                y: BackgroundRepeatKeyword::Round,
+            }))
+        );
+    }
+
+    #[test]
+    fn background_repeat_is_case_insensitive() {
+        assert_eq!(
+            parse("REPEAT-X", "background-repeat"),
+            Some(PropertyValue::BackgroundRepeat(BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Repeat,
+                y: BackgroundRepeatKeyword::NoRepeat,
+            }))
+        );
+        assert_eq!(
+            parse("No-Repeat", "background-repeat"),
+            Some(PropertyValue::BackgroundRepeat(BackgroundRepeat {
+                x: BackgroundRepeatKeyword::NoRepeat,
+                y: BackgroundRepeatKeyword::NoRepeat,
+            }))
+        );
+    }
+
+    #[test]
+    fn background_repeat_rejects_css_wide_keyword() {
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(keyword, "background-repeat"), None, "{keyword}");
+        }
+    }
+
+    #[test]
+    fn background_repeat_rejects_unknown_keyword() {
+        assert_eq!(parse("stretch", "background-repeat"), None);
+        assert_eq!(parse("16px", "background-repeat"), None);
+    }
+
+    #[test]
+    fn background_repeat_key_maps_to_background_repeat_property_key() {
+        let v = PropertyValue::BackgroundRepeat(BackgroundRepeat {
+            x: BackgroundRepeatKeyword::Repeat,
+            y: BackgroundRepeatKeyword::Repeat,
+        });
+        assert_eq!(v.key(), PropertyKey::BackgroundRepeat);
+    }
+
+    // ── background-attachment (CSS Backgrounds 3 §2.5) ──
+
+    #[test]
+    fn background_attachment_parse_all_three_keywords() {
+        assert_eq!(
+            parse("scroll", "background-attachment"),
+            Some(PropertyValue::BackgroundAttachment(
+                BackgroundAttachment::Scroll
+            ))
+        );
+        assert_eq!(
+            parse("fixed", "background-attachment"),
+            Some(PropertyValue::BackgroundAttachment(
+                BackgroundAttachment::Fixed
+            ))
+        );
+        assert_eq!(
+            parse("local", "background-attachment"),
+            Some(PropertyValue::BackgroundAttachment(
+                BackgroundAttachment::Local
+            ))
+        );
+    }
+
+    #[test]
+    fn background_attachment_is_case_insensitive() {
+        assert_eq!(
+            parse("FIXED", "background-attachment"),
+            Some(PropertyValue::BackgroundAttachment(
+                BackgroundAttachment::Fixed
+            ))
+        );
+    }
+
+    #[test]
+    fn background_attachment_rejects_css_wide_keyword() {
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(keyword, "background-attachment"), None, "{keyword}");
+        }
+    }
+
+    #[test]
+    fn background_attachment_rejects_unknown_keyword() {
+        assert_eq!(parse("static", "background-attachment"), None);
+    }
+
+    #[test]
+    fn background_attachment_key_maps_to_background_attachment_property_key() {
+        let v = PropertyValue::BackgroundAttachment(BackgroundAttachment::Scroll);
+        assert_eq!(v.key(), PropertyKey::BackgroundAttachment);
+    }
+
+    // ── background-clip (CSS Backgrounds 3 §2.7) / background-origin (§2.8) ──
+
+    #[test]
+    fn background_clip_parse_all_three_keywords() {
+        assert_eq!(
+            parse("border-box", "background-clip"),
+            Some(PropertyValue::BackgroundClip(VisualBox::BorderBox))
+        );
+        assert_eq!(
+            parse("padding-box", "background-clip"),
+            Some(PropertyValue::BackgroundClip(VisualBox::PaddingBox))
+        );
+        assert_eq!(
+            parse("content-box", "background-clip"),
+            Some(PropertyValue::BackgroundClip(VisualBox::ContentBox))
+        );
+    }
+
+    #[test]
+    fn background_origin_parse_all_three_keywords() {
+        assert_eq!(
+            parse("border-box", "background-origin"),
+            Some(PropertyValue::BackgroundOrigin(VisualBox::BorderBox))
+        );
+        assert_eq!(
+            parse("padding-box", "background-origin"),
+            Some(PropertyValue::BackgroundOrigin(VisualBox::PaddingBox))
+        );
+        assert_eq!(
+            parse("content-box", "background-origin"),
+            Some(PropertyValue::BackgroundOrigin(VisualBox::ContentBox))
+        );
+    }
+
+    #[test]
+    fn background_clip_and_origin_are_case_insensitive() {
+        assert_eq!(
+            parse("BORDER-BOX", "background-clip"),
+            Some(PropertyValue::BackgroundClip(VisualBox::BorderBox))
+        );
+        assert_eq!(
+            parse("Padding-Box", "background-origin"),
+            Some(PropertyValue::BackgroundOrigin(VisualBox::PaddingBox))
+        );
+    }
+
+    #[test]
+    fn background_clip_rejects_css_wide_keyword() {
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(keyword, "background-clip"), None, "{keyword}");
+        }
+    }
+
+    #[test]
+    fn background_origin_rejects_unknown_keyword() {
+        assert_eq!(parse("fill-box", "background-origin"), None);
+        assert_eq!(parse("16px", "background-origin"), None);
+    }
+
+    #[test]
+    fn background_clip_key_maps_to_background_clip_property_key() {
+        let v = PropertyValue::BackgroundClip(VisualBox::BorderBox);
+        assert_eq!(v.key(), PropertyKey::BackgroundClip);
+    }
+
+    #[test]
+    fn background_origin_key_maps_to_background_origin_property_key() {
+        let v = PropertyValue::BackgroundOrigin(VisualBox::PaddingBox);
+        assert_eq!(v.key(), PropertyKey::BackgroundOrigin);
+    }
+
+    // ── background-size (CSS Backgrounds 3 §2.9) ──
+
+    #[test]
+    fn background_size_parse_cover_and_contain() {
+        assert_eq!(
+            parse("cover", "background-size"),
+            Some(PropertyValue::BackgroundSize(BackgroundSize::Cover))
+        );
+        assert_eq!(
+            parse("contain", "background-size"),
+            Some(PropertyValue::BackgroundSize(BackgroundSize::Contain))
+        );
+    }
+
+    #[test]
+    fn background_size_parse_single_value_fills_auto_for_second_axis() {
+        // spec verbatim: "If only one value is given the second is assumed
+        // to be auto." — NOT a duplicate of the first value (unlike
+        // `border-radius`'s 1-4 value fill rule).
+        assert_eq!(
+            parse("50%", "background-size"),
+            Some(PropertyValue::BackgroundSize(BackgroundSize::Explicit {
+                width: LengthOrAuto::Length(Length::Percent(50.0)),
+                height: LengthOrAuto::Auto,
+            }))
+        );
+    }
+
+    #[test]
+    fn background_size_parse_two_values() {
+        assert_eq!(
+            parse("100px 50%", "background-size"),
+            Some(PropertyValue::BackgroundSize(BackgroundSize::Explicit {
+                width: LengthOrAuto::Length(Length::Px(100.0)),
+                height: LengthOrAuto::Length(Length::Percent(50.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn background_size_parse_auto_auto() {
+        assert_eq!(
+            parse("auto auto", "background-size"),
+            Some(PropertyValue::BackgroundSize(BackgroundSize::Explicit {
+                width: LengthOrAuto::Auto,
+                height: LengthOrAuto::Auto,
+            }))
+        );
+        // single bare `auto` also fills the second axis with `auto`.
+        assert_eq!(
+            parse("auto", "background-size"),
+            Some(PropertyValue::BackgroundSize(BackgroundSize::Explicit {
+                width: LengthOrAuto::Auto,
+                height: LengthOrAuto::Auto,
+            }))
+        );
+    }
+
+    #[test]
+    fn background_size_rejects_negative_length() {
+        // `<length-percentage [0,∞]>` — negative values are grammar-invalid.
+        assert_eq!(parse("-10px", "background-size"), None);
+        // A present-but-invalid 2nd axis is not the same as an *omitted*
+        // 2nd axis: `parse_background_size_axis` rejects `-10px` and the
+        // wrapping `try_parse` rewinds, so the token survives as leftover
+        // for the caller's `expect_exhausted` (`rule.rs`) to drop the whole
+        // declaration — `parse` alone (no exhaustion check) would otherwise
+        // silently observe only the 1st axis and default the 2nd to `auto`.
+        assert_eq!(parse_entire("10px -10px", "background-size"), None);
+    }
+
+    #[test]
+    fn background_size_rejects_negative_percentage() {
+        // Sibling of `background_size_rejects_negative_length` — the
+        // `[0,∞]` bound applies to the whole `<length-percentage>`, not
+        // just its `<length>` alternative. `length_payload` extracts the
+        // numeric payload uniformly across `Length` variants including
+        // `Percent`, so `parse_background_size_axis`'s `>= 0.0` gate
+        // covers this case identically.
+        assert_eq!(parse("-10%", "background-size"), None);
+    }
+
+    #[test]
+    fn background_size_accepts_percentage() {
+        assert_eq!(
+            parse("10%", "background-size"),
+            Some(PropertyValue::BackgroundSize(BackgroundSize::Explicit {
+                width: LengthOrAuto::Length(Length::Percent(10.0)),
+                height: LengthOrAuto::Auto,
+            }))
+        );
+    }
+
+    #[test]
+    fn background_size_rejects_css_wide_keyword() {
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(keyword, "background-size"), None, "{keyword}");
+        }
+    }
+
+    #[test]
+    fn background_size_rejects_unknown_unit() {
+        assert_eq!(parse("10vw", "background-size"), None);
+    }
+
+    #[test]
+    fn background_size_key_maps_to_background_size_property_key() {
+        let v = PropertyValue::BackgroundSize(BackgroundSize::Cover);
+        assert_eq!(v.key(), PropertyKey::BackgroundSize);
+    }
+
+    // ── background-position / `<position>` (CSS Backgrounds 3 §2.6) ──
+    //
+    // `<position>` grammar has 3 overlapping alternatives (`CssPosition`
+    // doc) — the test names below reference which alternative/branch each
+    // input exercises so a future regression is easy to localize.
+
+    #[test]
+    fn background_position_parse_single_keyword() {
+        // 1st alternative, bare keyword — the other axis defaults to
+        // `center`.
+        assert_eq!(
+            parse("center", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }))
+        );
+        assert_eq!(
+            parse("left", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }))
+        );
+        assert_eq!(
+            parse("right", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(100.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }))
+        );
+        assert_eq!(
+            parse("top", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            }))
+        );
+        assert_eq!(
+            parse("bottom", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(100.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn background_position_parse_single_length_percentage() {
+        // 1st alternative, bare `<length-percentage>` — always horizontal,
+        // vertical defaults to `center`.
+        assert_eq!(
+            parse("25%", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(25.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn background_position_parse_two_bare_length_percentages() {
+        // 2nd alternative: `[left|center|right|<LP>] [top|center|bottom|<LP>]`
+        // — strict horizontal-then-vertical order, no reordering.
+        assert_eq!(
+            parse("10px 20px", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Px(10.0)),
+                vertical: CssPositionOffset::Start(Length::Px(20.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn background_position_parse_two_keywords_reordered() {
+        // 3rd alternative (`&&`, either order) — `top left` and `left top`
+        // must produce the identical result.
+        let expected = PropertyValue::BackgroundPosition(CssPosition {
+            horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+            vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+        });
+        assert_eq!(
+            parse("left top", "background-position"),
+            Some(expected.clone())
+        );
+        assert_eq!(parse("top left", "background-position"), Some(expected));
+    }
+
+    #[test]
+    fn background_position_parse_center_with_single_edge_keyword_either_order() {
+        // `center` is ambiguous until the other token disambiguates it
+        // (`parse_position_branch3` doc) — both orders must agree.
+        let expected = PropertyValue::BackgroundPosition(CssPosition {
+            horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+            vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+        });
+        assert_eq!(
+            parse("center left", "background-position"),
+            Some(expected.clone())
+        );
+        assert_eq!(parse("left center", "background-position"), Some(expected));
+    }
+
+    #[test]
+    fn background_position_parse_keyword_then_bare_length_percentage() {
+        // "left 10px" — `left` fills the horizontal slot (0%, no attached
+        // offset — the 3rd alternative's `left <length-percentage>?`
+        // greedily tries to consume `10px` as an offset first, but then
+        // has nothing left for the mandatory vertical group and fails as a
+        // whole; the 2nd alternative matches instead, treating `10px` as
+        // the bare vertical value). See `parse_css_position` doc.
+        assert_eq!(
+            parse("left 10px", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                vertical: CssPositionOffset::Start(Length::Px(10.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn background_position_parse_right_10px_is_not_an_edge_offset() {
+        // The well-known 2-value gotcha: "right 10px" does NOT mean "10px
+        // from the right edge" — with only 2 tokens the 3rd alternative
+        // (edge-offset form) cannot satisfy its mandatory vertical group,
+        // so the 2nd alternative wins: horizontal = `right` (100%),
+        // vertical = the bare `10px`. The edge-offset reading requires a
+        // 3rd token (see `background_position_parse_edge_offset_three_values`).
+        assert_eq!(
+            parse("right 10px", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(100.0)),
+                vertical: CssPositionOffset::Start(Length::Px(10.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn background_position_parse_edge_offset_three_values() {
+        // 3rd alternative, 3 tokens: an offset attached to one edge, the
+        // other axis a bare `center`.
+        assert_eq!(
+            parse("right 10px center", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::End(Length::Px(10.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn background_position_parse_edge_offset_four_values() {
+        // 3rd alternative, 4 tokens, both axes carrying an explicit offset
+        // — matches CSS Backgrounds 3 §2.6's own worked example verbatim
+        // ("a 10px upward offset from the bottom and 20px leftward offset
+        // from the right edge").
+        assert_eq!(
+            parse("bottom 10px right 20px", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::End(Length::Px(20.0)),
+                vertical: CssPositionOffset::End(Length::Px(10.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn background_position_parse_edge_offset_missing_offset_defaults_to_zero() {
+        // 3rd alternative, 3 tokens: the edge with no attached offset
+        // defaults to `0` — `right` alone normalizes to `Start(100%)`
+        // (`normalize_css_position_offset` collapses a percentage `End`
+        // back to `Start`).
+        assert_eq!(
+            parse("bottom 10px right", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(100.0)),
+                vertical: CssPositionOffset::End(Length::Px(10.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn background_position_accepts_negative_length_offset() {
+        // Unlike `background-size`, `<position>`'s `<length-percentage>`
+        // has no `[0,∞]` restriction — negative offsets are spec-valid
+        // ("outward" offsets, per the propdef's offset-computation prose).
+        assert_eq!(
+            parse("bottom -10px right -20px", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::End(Length::Px(-20.0)),
+                vertical: CssPositionOffset::End(Length::Px(-10.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn background_position_parse_edge_offset_percentage_normalizes_non_zero() {
+        // `normalize_css_position_offset` folds `End(Percent(p))` back to
+        // `Start(Percent(100.0 - p))` — the other tests above only exercise
+        // this at `p = 0` (`right` alone, via
+        // `background_position_parse_edge_offset_missing_offset_defaults_to_zero`).
+        // A non-zero `p` proves the subtraction itself, not just the
+        // identity case. `right 30%` measures 30% in from the right edge,
+        // which is the same physical point as 70% in from the left edge —
+        // the two are interchangeable because both `Start` and `End`
+        // percentages share the same basis (CSS Backgrounds 3 §2.6:
+        // "refer to size of background positioning area minus size of
+        // background image"), whatever that basis resolves to, so
+        // `100% - 30% = 70%` lands on the correct point without this
+        // helper itself needing to know that basis.
+        assert_eq!(
+            parse("right 30% center", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(70.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn background_position_parse_branch2_vertical_keywords_with_bare_horizontal_length() {
+        // "<LP> top|center|bottom" only reaches the 2nd alternative's
+        // vertical keyword arms (`parse_position_branch2_vertical`) when
+        // the horizontal side is a bare `<length-percentage>` — every
+        // keyword-pair input elsewhere in this file (`"left top"` etc.) is
+        // claimed by the 3rd (edge-offset) alternative first, since that
+        // one is tried before the 2nd (`parse_css_position` doc).
+        assert_eq!(
+            parse("10px top", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Px(10.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            }))
+        );
+        assert_eq!(
+            parse("10px center", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Px(10.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }))
+        );
+        assert_eq!(
+            parse("10px bottom", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Px(10.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(100.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn background_position_parse_branch2_horizontal_center_with_bare_vertical_length() {
+        // Sibling of the test above, horizontal side of the 2nd
+        // alternative: "center <LP>" reaches `parse_position_branch2_horizontal`'s
+        // `center` arm — every other `center`-with-keyword input in this
+        // file is claimed by the 3rd alternative first.
+        assert_eq!(
+            parse("center 10px", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Px(10.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn background_position_parse_edge_keyword_then_center() {
+        // "top center" — the 3rd alternative's vertical-edge-first branch
+        // (`top` matches `parse_position_vertical_edge`) leaves `center`
+        // for the mandatory horizontal group, reaching
+        // `parse_position_horizontal_group`'s own `center` arm (distinct
+        // from the ambiguous-`center`-first branch exercised by
+        // `background_position_parse_center_with_single_edge_keyword_either_order`,
+        // which starts from `center` rather than ending on it).
+        assert_eq!(
+            parse("top center", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn background_position_parse_center_then_vertical_edge() {
+        // "center top" — `parse_position_branch3`'s ambiguous-`center`
+        // branch resolves by trying the vertical edge first; distinct from
+        // `background_position_parse_center_with_single_edge_keyword_either_order`,
+        // which only ever pairs `center` with a *horizontal* edge (`left`).
+        assert_eq!(
+            parse("center top", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn background_position_parse_center_center() {
+        // "center center" — `parse_position_branch3`'s ambiguous-`center`
+        // branch falls through both the vertical-edge and horizontal-edge
+        // attempts before matching the explicit trailing `center` ident.
+        assert_eq!(
+            parse("center center", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn background_position_rejects_two_horizontal_keywords() {
+        // "left right" — after `left` fills the horizontal slot, `right`
+        // has nowhere to go in any alternative and is left as unconsumed
+        // trailing garbage.
+        assert_eq!(parse_entire("left right", "background-position"), None);
+    }
+
+    #[test]
+    fn background_position_rejects_two_vertical_keywords() {
+        assert_eq!(parse_entire("top bottom", "background-position"), None);
+    }
+
+    #[test]
+    fn background_position_rejects_trailing_garbage() {
+        // "left center 20px" — 2 tokens fully satisfy the 3rd alternative
+        // (`left`, `center`), leaving `20px` as leftover with no
+        // preceding edge keyword to attach to.
+        assert_eq!(
+            parse_entire("left center 20px", "background-position"),
+            None
+        );
+    }
+
+    #[test]
+    fn background_position_is_case_insensitive() {
+        assert_eq!(
+            parse("TOP LEFT", "background-position"),
+            Some(PropertyValue::BackgroundPosition(CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            }))
+        );
+    }
+
+    #[test]
+    fn background_position_rejects_css_wide_keyword() {
+        for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert_eq!(parse(keyword, "background-position"), None, "{keyword}");
+        }
+    }
+
+    #[test]
+    fn background_position_key_maps_to_background_position_property_key() {
+        let v = PropertyValue::BackgroundPosition(CssPosition {
+            horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+            vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+        });
+        assert_eq!(v.key(), PropertyKey::BackgroundPosition);
     }
 }

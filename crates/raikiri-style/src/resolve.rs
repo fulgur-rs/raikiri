@@ -184,11 +184,11 @@ use smol_str::SmolStr;
 
 use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{
-    Border, BorderColor, BorderRadius, BorderStyle, BoxShadowItem, FlexBasisValue,
-    GridInflexibleBreadth, GridRepeatCount, GridTemplateTracks, GridTrackBreadth, GridTrackList,
-    GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
-    LineHeight, Outline, OutlineColor, OutlineStyle, TabSize, TextShadowColor, TextShadowItem,
-    VerticalAlign,
+    BackgroundSize, Border, BorderColor, BorderRadius, BorderStyle, BoxShadowItem, CssPosition,
+    CssPositionOffset, FlexBasisValue, GridInflexibleBreadth, GridRepeatCount, GridTemplateTracks,
+    GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize,
+    Length, LengthOrAuto, LengthOrNormal, LineHeight, Outline, OutlineColor, OutlineStyle, TabSize,
+    TextShadowColor, TextShadowItem, VerticalAlign,
 };
 
 // ---------------------------------------------------------------------------
@@ -351,6 +351,48 @@ pub enum ComputedLengthPercentageOrAuto {
     Percent(f32),
     /// `auto` keyword。
     Auto,
+}
+
+/// Computed `<position>` の 1 軸分の offset ([`crate::property::CssPositionOffset`]
+/// の computed 版)。edge 情報 (`Start`/`End`) はここでも保持し続ける — 実 pixel
+/// 位置への最終変換 (`End` なら `100% - offset`) は background positioning
+/// area のサイズを要する used value 層の責務のまま
+/// ([`crate::property::CssPositionOffset`] doc 参照)。
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum ComputedCssPositionOffset {
+    /// Start edge (`left`/`top`) からの offset。
+    Start(ComputedLengthPercentage),
+    /// End edge (`right`/`bottom`) からの offset。
+    End(ComputedLengthPercentage),
+}
+
+/// Computed `<position>` ([`crate::property::CssPosition`] の computed 版)。
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct ComputedCssPosition {
+    /// 水平軸の offset。
+    pub horizontal: ComputedCssPositionOffset,
+    /// 垂直軸の offset。
+    pub vertical: ComputedCssPositionOffset,
+}
+
+/// Computed `background-size` ([`crate::property::BackgroundSize`] の
+/// computed 版)。
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum ComputedBackgroundSize {
+    /// `[ <length-percentage [0,∞]> | auto ]{1,2}` — 各軸独立。
+    Explicit {
+        /// 水平軸のサイズ。
+        width: ComputedLengthPercentageOrAuto,
+        /// 垂直軸のサイズ。
+        height: ComputedLengthPercentageOrAuto,
+    },
+    /// `cover` keyword。
+    Cover,
+    /// `contain` keyword。
+    Contain,
 }
 
 /// Computed `flex-basis`。
@@ -1760,6 +1802,101 @@ pub fn resolve_length_percentage_or_auto(
                 ComputedLengthPercentage::Percent(p) => ComputedLengthPercentageOrAuto::Percent(p),
             }
         }
+    }
+}
+
+/// `<position>` の 1 軸分の offset を絶対化する (**phase 3** — 自 node 基準)。
+///
+/// edge (`Start`/`End`) はそのまま保持し、payload の `<length-percentage>`
+/// だけを [`resolve_length_percentage`] に delegate する
+/// ([`ComputedCssPositionOffset`] doc の「なぜ edge を保持し続けるか」節)。
+fn resolve_css_position_offset(
+    specified: CssPositionOffset,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedCssPositionOffset {
+    match specified {
+        CssPositionOffset::Start(l) => ComputedCssPositionOffset::Start(resolve_length_percentage(
+            l,
+            font_size,
+            own_line_height,
+            ctx,
+        )),
+        CssPositionOffset::End(l) => ComputedCssPositionOffset::End(resolve_length_percentage(
+            l,
+            font_size,
+            own_line_height,
+            ctx,
+        )),
+    }
+}
+
+/// `<position>` (`background-position` 等) の specified value を絶対化する
+/// (**phase 3** — 自 node 基準)。両軸をそれぞれ [`resolve_css_position_offset`]
+/// に delegate する。
+///
+/// [`CssPosition`] が `#[non_exhaustive]` なため、[`resolve_border_radius`] /
+/// [`resolve_box_shadow_item`] / [`resolve_outline`] と同様 doctest は無く
+/// (crate 外から struct literal を構築できない)、代わりに本 module の
+/// `tests` に unit test を持つ (`resolve_css_position_absolutizes_each_offset`)。
+pub fn resolve_css_position(
+    specified: CssPosition,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedCssPosition {
+    ComputedCssPosition {
+        horizontal: resolve_css_position_offset(
+            specified.horizontal,
+            font_size,
+            own_line_height,
+            ctx,
+        ),
+        vertical: resolve_css_position_offset(specified.vertical, font_size, own_line_height, ctx),
+    }
+}
+
+/// `background-size: <bg-size>` の specified value を絶対化する (**phase 3**
+/// — 自 node 基準)。`cover`/`contain` はそのまま keyword として素通し、
+/// `Explicit` の各軸は [`resolve_length_percentage_or_auto`] (`width`/
+/// `height` と同じ shape、`Lh`/`Rlh` 解決不能時は `Auto` — [`BackgroundSize`]
+/// の spec initial も `auto` なので、この fallback は width/height と同じ
+/// 理由でここでも正しい) に delegate する。
+///
+/// ```
+/// use raikiri_style::{ComputedLength, ResolveContext, resolve_background_size};
+/// use raikiri_style::property::{BackgroundSize, Length, LengthOrAuto};
+///
+/// let ctx = ResolveContext::initial();
+/// let font_size = ComputedLength(16.0);
+///
+/// let specified = BackgroundSize::Explicit {
+///     width: LengthOrAuto::Length(Length::Em(2.0)),
+///     height: LengthOrAuto::Auto,
+/// };
+/// let computed = resolve_background_size(specified, font_size, None, &ctx);
+/// assert_eq!(
+///     computed,
+///     raikiri_style::ComputedBackgroundSize::Explicit {
+///         width: raikiri_style::ComputedLengthPercentageOrAuto::Px(32.0),
+///         height: raikiri_style::ComputedLengthPercentageOrAuto::Auto,
+///     },
+/// );
+/// ```
+pub fn resolve_background_size(
+    specified: BackgroundSize,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedBackgroundSize {
+    match specified {
+        BackgroundSize::Cover => ComputedBackgroundSize::Cover,
+        BackgroundSize::Contain => ComputedBackgroundSize::Contain,
+        BackgroundSize::Explicit { width, height } => ComputedBackgroundSize::Explicit {
+            width: resolve_length_percentage_or_auto(width, font_size, own_line_height, ctx),
+            height: resolve_length_percentage_or_auto(height, font_size, own_line_height, ctx),
+        },
     }
 }
 
@@ -3349,6 +3486,52 @@ mod tests {
                 spread_radius: ComputedLength(5.0),
                 color: TextShadowColor::Resolved(CssColor::BLACK),
             }
+        );
+    }
+
+    /// `resolve_css_position` absolutizes each axis's `Length` payload while
+    /// preserving the `Start`/`End` edge — `Em`/`Percent` cover both the
+    /// px-absolutization branch and the pass-through-percentage branch,
+    /// `End` covers the edge-relative offset case (`CssPositionOffset` doc's
+    /// "なぜ 2 variant か" section).
+    #[test]
+    fn resolve_css_position_absolutizes_each_offset() {
+        let specified = CssPosition {
+            horizontal: CssPositionOffset::Start(Length::Em(1.0)),
+            vertical: CssPositionOffset::End(Length::Percent(30.0)),
+        };
+        assert_eq!(
+            resolve_css_position(specified, ComputedLength(16.0), None, &CTX),
+            ComputedCssPosition {
+                horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(16.0)),
+                vertical: ComputedCssPositionOffset::End(ComputedLengthPercentage::Percent(30.0)),
+            }
+        );
+    }
+
+    /// `resolve_background_size` absolutizes each axis via the same
+    /// `<length-percentage> | auto` shape `width`/`height` use, and passes
+    /// `cover`/`contain` straight through untouched.
+    #[test]
+    fn resolve_background_size_absolutizes_explicit_axes_and_passes_keywords_through() {
+        let explicit = BackgroundSize::Explicit {
+            width: LengthOrAuto::Length(Length::Em(2.0)),
+            height: LengthOrAuto::Auto,
+        };
+        assert_eq!(
+            resolve_background_size(explicit, ComputedLength(16.0), None, &CTX),
+            ComputedBackgroundSize::Explicit {
+                width: ComputedLengthPercentageOrAuto::Px(32.0),
+                height: ComputedLengthPercentageOrAuto::Auto,
+            }
+        );
+        assert_eq!(
+            resolve_background_size(BackgroundSize::Cover, ComputedLength(16.0), None, &CTX),
+            ComputedBackgroundSize::Cover
+        );
+        assert_eq!(
+            resolve_background_size(BackgroundSize::Contain, ComputedLength(16.0), None, &CTX),
+            ComputedBackgroundSize::Contain
         );
     }
 

@@ -6723,6 +6723,21 @@ pub(crate) fn resolve_against_inherited(
         // resolve, same shape as `FlexGrow`/`FlexShrink` above.
         | PropertyValue::Orphans(_)
         | PropertyValue::Widows(_)
+        // background-repeat / background-attachment / background-clip /
+        // background-origin / background-size / background-position (CSS
+        // Backgrounds and Borders 3 §2.4-§2.9) — nothing for phase 2 to
+        // resolve against the inheritance parent (all 6 are non-inherited,
+        // `background-color`'s sibling shape); `background-size`/
+        // `background-position`'s `<length-percentage>` absolutization is
+        // phase 3's job (`crate::specified::SpecifiedValues::absolutize_with`
+        // on the element path, `crate::page`'s `absolutize_in_page_context`
+        // on the page path), same as `Padding`/`Width` above.
+        | PropertyValue::BackgroundRepeat(_)
+        | PropertyValue::BackgroundAttachment(_)
+        | PropertyValue::BackgroundClip(_)
+        | PropertyValue::BackgroundOrigin(_)
+        | PropertyValue::BackgroundSize(_)
+        | PropertyValue::BackgroundPosition(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)) => v,
     })
@@ -7362,6 +7377,19 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // is a `SpecifiedValues` field, not `ComputedValues` — see
         // `WritingMode` doc's Non-goal section.
         PropertyValue::WritingMode(v) => target.writing_mode = v,
+        // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.7/§2.8. non-inherited,
+        // computed value = specified keyword(s) — simple assignment, no
+        // length payload (`BackgroundColor`/`Orphans` arm と同じ shape)。
+        PropertyValue::BackgroundRepeat(v) => target.background_repeat = v,
+        PropertyValue::BackgroundAttachment(v) => target.background_attachment = v,
+        PropertyValue::BackgroundClip(v) => target.background_clip = v,
+        PropertyValue::BackgroundOrigin(v) => target.background_origin = v,
+        // CSS Backgrounds and Borders 3 §2.9/§2.6. non-inherited、
+        // `<length-percentage>` を含むため specified 表現のまま格納 —
+        // 絶対化は phase 3 (`SpecifiedValues::absolutize_with`) に委ねる
+        // (`Width`/`Padding` arm と同じ shape)。
+        PropertyValue::BackgroundSize(v) => target.background_size = v,
+        PropertyValue::BackgroundPosition(v) => target.background_position = v,
         // These values are resolved before ordinary winners reach this
         // function. Keeping an explicit no-op makes direct internal callers
         // panic-free without allowing raw deferred data into a computed field.
@@ -14074,6 +14102,152 @@ mod tests {
         assert_eq!(cv.writing_mode, WritingMode::HorizontalTb);
     }
 
+    // ── background-repeat/attachment/clip/origin/size/position wire-through
+    // (CSS Backgrounds and Borders 3 §2.4-§2.9) ──
+
+    #[test]
+    fn background_repeat_attachment_clip_origin_wired_through_cascade_from_inline_style() {
+        use crate::property::{
+            BackgroundAttachment, BackgroundRepeat, BackgroundRepeatKeyword, VisualBox,
+        };
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some(
+                "background-repeat: repeat-x; background-attachment: fixed; \
+                 background-clip: content-box; background-origin: border-box",
+            ),
+        );
+        assert_eq!(
+            cv.background_repeat,
+            BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Repeat,
+                y: BackgroundRepeatKeyword::NoRepeat,
+            }
+        );
+        assert_eq!(cv.background_attachment, BackgroundAttachment::Fixed);
+        assert_eq!(cv.background_clip, VisualBox::ContentBox);
+        assert_eq!(cv.background_origin, VisualBox::BorderBox);
+    }
+
+    #[test]
+    fn background_repeat_attachment_clip_origin_are_non_inherited() {
+        use crate::property::{
+            BackgroundAttachment, BackgroundRepeat, BackgroundRepeatKeyword, VisualBox,
+        };
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(
+            0,
+            "p",
+            Some(
+                "background-repeat: round; background-attachment: local; \
+                 background-clip: content-box; background-origin: content-box",
+            ),
+        );
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[p].background_repeat,
+            BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Round,
+                y: BackgroundRepeatKeyword::Round,
+            }
+        );
+        // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.7/§2.8 "Inherited: no" — the
+        // child without its own winner resets to each property's spec
+        // initial, not the parent's value.
+        assert_eq!(
+            r.computed[span].background_repeat,
+            BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Repeat,
+                y: BackgroundRepeatKeyword::Repeat,
+            }
+        );
+        assert_eq!(
+            r.computed[p].background_attachment,
+            BackgroundAttachment::Local
+        );
+        assert_eq!(
+            r.computed[span].background_attachment,
+            BackgroundAttachment::Scroll
+        );
+        assert_eq!(r.computed[p].background_clip, VisualBox::ContentBox);
+        assert_eq!(r.computed[span].background_clip, VisualBox::BorderBox);
+        assert_eq!(r.computed[p].background_origin, VisualBox::ContentBox);
+        // `background-origin`'s initial (`padding-box`) differs from
+        // `background-clip`'s (`border-box`) — pin both distinctly.
+        assert_eq!(r.computed[span].background_origin, VisualBox::PaddingBox);
+    }
+
+    #[test]
+    fn background_size_wired_through_cascade_and_absolutizes_em() {
+        use crate::resolve::{ComputedBackgroundSize, ComputedLengthPercentageOrAuto};
+        // `2em` at the default 16px font-size absolutizes to 32px; the 2nd
+        // axis is omitted so it fills with `auto` (not a duplicate of the
+        // 1st, per `BackgroundSize` doc's fill-rule note).
+        let cv = cascade_doc("", "div", Some("background-size: 2em"));
+        assert_eq!(
+            cv.background_size,
+            ComputedBackgroundSize::Explicit {
+                width: ComputedLengthPercentageOrAuto::Px(32.0),
+                height: ComputedLengthPercentageOrAuto::Auto,
+            }
+        );
+    }
+
+    #[test]
+    fn background_size_is_non_inherited() {
+        use crate::resolve::ComputedBackgroundSize;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("background-size: cover"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].background_size, ComputedBackgroundSize::Cover);
+        assert_eq!(
+            r.computed[span].background_size,
+            ComputedValues::initial().background_size
+        );
+    }
+
+    #[test]
+    fn background_position_wired_through_cascade_and_absolutizes_edge_offset() {
+        use crate::resolve::{
+            ComputedCssPosition, ComputedCssPositionOffset, ComputedLengthPercentage,
+        };
+        // `bottom 1em right` — `1em` absolutizes to 16px at the default
+        // font-size, `right`'s omitted offset defaults to 0 and normalizes
+        // to `Start(100%)` (`CssPositionOffset` doc's normalization note).
+        let cv = cascade_doc("", "div", Some("background-position: bottom 1em right"));
+        assert_eq!(
+            cv.background_position,
+            ComputedCssPosition {
+                horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(
+                    100.0
+                )),
+                vertical: ComputedCssPositionOffset::End(ComputedLengthPercentage::Px(16.0)),
+            }
+        );
+    }
+
+    #[test]
+    fn background_position_is_non_inherited() {
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("background-position: right bottom"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_ne!(
+            r.computed[p].background_position,
+            ComputedValues::initial().background_position
+        );
+        assert_eq!(
+            r.computed[span].background_position,
+            ComputedValues::initial().background_position
+        );
+    }
+
     #[test]
     fn orphans_widows_wired_through_cascade_from_inline_style() {
         let cv = cascade_doc("", "p", Some("orphans: 4; widows: 3"));
@@ -14668,6 +14842,20 @@ mod tests {
             passthrough.into_property_value(),
             PropertyValue::Color(CssColor::BLACK),
         );
+
+        // `background-position` — added `v @ (...)` pass-through arm (CSS
+        // Backgrounds 3 §2.6). This arm is only reachable via the `@page`
+        // path (`crate::page::cascade_page`) in practice — the element
+        // path goes through `apply_value` directly — so this direct call
+        // is this arm's only coverage of the 6 new `Background*` variants
+        // (same shape as the `Color` assertion above, which covers
+        // `background_color`'s sibling arm the same way).
+        let position = PropertyValue::BackgroundPosition(crate::property::CssPosition {
+            horizontal: crate::property::CssPositionOffset::Start(Length::Px(5.0)),
+            vertical: crate::property::CssPositionOffset::Start(Length::Px(5.0)),
+        });
+        let passthrough = resolve_against_inherited(position.clone(), &inherited, &ctx);
+        assert_eq!(passthrough.into_property_value(), position);
     }
 
     #[test]

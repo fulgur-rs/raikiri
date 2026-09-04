@@ -35,9 +35,10 @@ pub use style_dom::{
 
 pub mod property;
 pub use property::{
-    BorderRadius, BoxShadowItem, CssColor, DisplayValue, Length, LengthOrAuto, LengthOrNormal,
-    Outline, OutlineColor, OutlineStyle, PropertyKey, PropertyValue, Sides, TextShadowColor,
-    TextShadowItem,
+    BackgroundAttachment, BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, BorderRadius,
+    BoxShadowItem, CssColor, CssPosition, CssPositionOffset, DisplayValue, Length, LengthOrAuto,
+    LengthOrNormal, Outline, OutlineColor, OutlineStyle, PropertyKey, PropertyValue, Sides,
+    TextShadowColor, TextShadowItem, VisualBox,
 };
 
 pub mod rule;
@@ -65,17 +66,18 @@ pub use computed::ComputedValues;
 
 pub mod resolve;
 pub use resolve::{
-    ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedFlexBasis,
-    ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
-    ComputedGridTrackListComponent, ComputedGridTrackRepeat, ComputedGridTrackSize, ComputedLength,
-    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
-    ComputedLineHeight, ComputedOutline, ComputedTabSize, ComputedTextShadow, ResolveContext,
-    lift_font_size, lift_length_or_normal, lift_length_percentage, lift_line_height, lift_tab_size,
-    lift_text_shadow_item, resolve_border, resolve_border_radius, resolve_box_shadow_item,
-    resolve_flex_basis, resolve_font_size, resolve_grid_auto_track_list,
-    resolve_grid_inflexible_breadth, resolve_grid_template_tracks, resolve_grid_track_breadth,
-    resolve_grid_track_list, resolve_grid_track_size, resolve_length_or_normal,
-    resolve_length_percentage, resolve_length_percentage_or_auto,
+    ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem,
+    ComputedCssPosition, ComputedCssPositionOffset, ComputedFlexBasis, ComputedGridTemplateTracks,
+    ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
+    ComputedGridTrackRepeat, ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
+    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
+    ComputedOutline, ComputedTabSize, ComputedTextShadow, ResolveContext, lift_font_size,
+    lift_length_or_normal, lift_length_percentage, lift_line_height, lift_tab_size,
+    lift_text_shadow_item, resolve_background_size, resolve_border, resolve_border_radius,
+    resolve_box_shadow_item, resolve_css_position, resolve_flex_basis, resolve_font_size,
+    resolve_grid_auto_track_list, resolve_grid_inflexible_breadth, resolve_grid_template_tracks,
+    resolve_grid_track_breadth, resolve_grid_track_list, resolve_grid_track_size,
+    resolve_length_or_normal, resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
     resolve_outline, resolve_tab_size, resolve_text_shadow_item, used_line_height_length,
 };

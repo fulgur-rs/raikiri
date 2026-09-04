@@ -14,18 +14,20 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::{
-    AlignSelfValue, BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside, ClearValue,
-    ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue, FlexDirectionValue,
-    FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue,
+    AlignSelfValue, BackgroundAttachment, BackgroundRepeat, BackgroundRepeatKeyword, BorderColor,
+    BorderStyle, BoxSizing, BreakBetween, BreakInside, ClearValue, ContentAlignmentValue,
+    ContentComponent, CssColor, Direction, DisplayValue, FlexDirectionValue, FlexWrapValue,
+    FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue,
     GridTemplateAreasValue, Hyphens, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
     OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
-    TextDecorationStyle, TextTransform, VerticalAlign, Visibility, WhiteSpace, WordBreak,
-    WritingMode, ZIndexValue, empty_content_list, empty_counter_entries, empty_quotes_entries,
-    empty_string_set_entries, initial_font_family,
+    TextDecorationStyle, TextTransform, VerticalAlign, Visibility, VisualBox, WhiteSpace,
+    WordBreak, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
+    empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
-    ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedFlexBasis,
-    ComputedGridTemplateTracks, ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
+    ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem,
+    ComputedCssPosition, ComputedCssPositionOffset, ComputedFlexBasis, ComputedGridTemplateTracks,
+    ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
     ComputedOutline, ComputedTabSize, ComputedTextShadow, empty_computed_box_shadow_list,
     empty_computed_text_shadow_list, initial_computed_grid_auto_track_list,
@@ -1217,6 +1219,53 @@ pub struct ComputedValues {
     /// which side of a fragmentation break the minimum line count applies to
     /// (after the break, vs. `orphans`'s before).
     pub widows: i32,
+    /// `background-repeat`. **non-inherited**, initial:
+    /// [`BackgroundRepeat`]`{x: Repeat, y: Repeat}` (CSS Backgrounds and
+    /// Borders 3 §2.4 "Tiling Images: the background-repeat
+    /// property" <https://www.w3.org/TR/css-backgrounds-3/#the-background-repeat>,
+    /// "Value: `<repeat-style>#`", "Inherited: no"). Computed value =
+    /// specified keyword pair (no length payload).
+    pub background_repeat: BackgroundRepeat,
+    /// `background-attachment`. **non-inherited**, initial:
+    /// [`BackgroundAttachment::Scroll`] (CSS Backgrounds and Borders 3 §2.5
+    /// "Affixing Images: the background-attachment property"
+    /// <https://www.w3.org/TR/css-backgrounds-3/#the-background-attachment>,
+    /// "Value: `<attachment>#`", "Inherited: no").
+    pub background_attachment: BackgroundAttachment,
+    /// `background-clip`. **non-inherited**, initial:
+    /// [`VisualBox::BorderBox`] (CSS Backgrounds and Borders 3 §2.7
+    /// "Painting Area: the background-clip property"
+    /// <https://www.w3.org/TR/css-backgrounds-3/#the-background-clip>,
+    /// "Value: `<visual-box>#`", "Initial: border-box", "Inherited: no" —
+    /// sibling [`Self::background_origin`] has a *different* initial, see
+    /// that field's doc).
+    pub background_clip: VisualBox,
+    /// `background-origin`. **non-inherited**, initial:
+    /// [`VisualBox::PaddingBox`] (CSS Backgrounds and Borders 3 §2.8
+    /// "Positioning Area: the background-origin property"
+    /// <https://www.w3.org/TR/css-backgrounds-3/#the-background-origin>,
+    /// "Value: `<visual-box>#`", "Initial: padding-box", "Inherited: no" —
+    /// sibling [`Self::background_clip`] has a *different* initial, see
+    /// that field's doc).
+    pub background_origin: VisualBox,
+    /// `background-size`. **non-inherited**, initial:
+    /// [`crate::property::BackgroundSize::Explicit`]`{width: Auto, height: Auto}` (CSS
+    /// Backgrounds and Borders 3 §2.9 "Sizing Images: the
+    /// background-size property"
+    /// <https://www.w3.org/TR/css-backgrounds-3/#the-background-size>,
+    /// "Value: `<bg-size>#`", "Initial: auto", "Inherited: no"). Contains a
+    /// `<length-percentage>` per axis, absolutized against this node's own
+    /// font-size/line-height (`em`/`rem`/`lh` resolved to px, `%` passed
+    /// through — same layering as [`Self::width`]).
+    pub background_size: ComputedBackgroundSize,
+    /// `background-position`. **non-inherited**, initial: `0% 0%` (CSS
+    /// Backgrounds and Borders 3 §2.6 "Positioning the Background Image:
+    /// the background-position property"
+    /// <https://www.w3.org/TR/css-backgrounds-3/#the-background-position>,
+    /// "Value: `<bg-position>#`", "Inherited: no"). See
+    /// [`crate::property::CssPositionOffset`] doc for why edge-relative
+    /// offsets (`right 10px` etc.) stay symbolic through this layer too.
+    pub background_position: ComputedCssPosition,
     /// Resolved custom properties for the page-context inheritance bridge.
     ///
     /// This is deliberately crate-private: `ComputedValues`' public property
@@ -1420,6 +1469,27 @@ impl ComputedValues {
             // initial は共に `2`。
             orphans: 2,
             widows: 2,
+            // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.6/§2.7/§2.8/§2.9 —
+            // spec initial values (`Self::background_repeat` 等の field doc
+            // に spec 根拠あり; `background_clip`/`background_origin` は
+            // initial が異なる点に注意)。
+            background_repeat: BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Repeat,
+                y: BackgroundRepeatKeyword::Repeat,
+            },
+            background_attachment: BackgroundAttachment::Scroll,
+            background_clip: VisualBox::BorderBox,
+            background_origin: VisualBox::PaddingBox,
+            background_size: ComputedBackgroundSize::Explicit {
+                width: ComputedLengthPercentageOrAuto::Auto,
+                height: ComputedLengthPercentageOrAuto::Auto,
+            },
+            background_position: ComputedCssPosition {
+                horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(
+                    0.0,
+                )),
+                vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(0.0)),
+            },
             custom_properties: empty_custom_properties(),
         }
     }
@@ -1434,7 +1504,7 @@ impl ComputedValues {
     /// doc comment を canonical source として参照する
     /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside)。
+    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position)。
     ///
     /// # 実装 (delegation)
     ///
@@ -1905,6 +1975,21 @@ mod tests {
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             orphans: 5,
             widows: 7,
+            // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.6/§2.7/§2.8/§2.9: 全て
+            // non-inherited なので、initial と異なる値にしておく
+            // (non_initial_parent の趣旨どおり)。
+            background_repeat: BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Round,
+                y: BackgroundRepeatKeyword::Space,
+            },
+            background_attachment: BackgroundAttachment::Fixed,
+            background_clip: VisualBox::ContentBox,
+            background_origin: VisualBox::ContentBox,
+            background_size: ComputedBackgroundSize::Cover,
+            background_position: ComputedCssPosition {
+                horizontal: ComputedCssPositionOffset::End(ComputedLengthPercentage::Px(5.0)),
+                vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(25.0)),
+            },
             custom_properties: CustomPropertyEnvironment::from_map(HashMap::from([(
                 SmolStr::new("--fixture"),
                 SmolStr::new("1px"),
@@ -2055,6 +2140,14 @@ mod tests {
         // justify-self は共に non-inherited。
         assert_eq!(child.justify_items, initial.justify_items);
         assert_eq!(child.justify_self, initial.justify_self);
+        // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.6/§2.7/§2.8/§2.9: 全て
+        // non-inherited。
+        assert_eq!(child.background_repeat, initial.background_repeat);
+        assert_eq!(child.background_attachment, initial.background_attachment);
+        assert_eq!(child.background_clip, initial.background_clip);
+        assert_eq!(child.background_origin, initial.background_origin);
+        assert_eq!(child.background_size, initial.background_size);
+        assert_eq!(child.background_position, initial.background_position);
     }
 
     /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。
