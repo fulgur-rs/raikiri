@@ -61,19 +61,20 @@
 //! snapshots `self.counters` (via `CounterStack::values`) into a fresh
 //! `TargetInfo::counters`.
 //!
-//! **`target-counter()`/`target-counters()` do NOT benefit from this fix**,
-//! though, in the wiring this driver actually runs under:
+//! **`target-counter()`/`target-counters()` do not benefit from *this*
+//! fix**, though, in the wiring this driver actually runs under:
 //! `crate::target::build_target_registry` populates `TargetInfo::counters`
-//! via its own, separate ancestor-chain-only `CounterScopes` walk *before*
-//! `drive_page` ever runs, and `TargetRegistry::register`'s first-wins
-//! semantics mean that walk's result — not anything the `RegisterTarget`
-//! arm above would contribute — is what a real caller resolves.
-//! `derive_element_directives` (`crate::running`) does not even emit
-//! `RegisterTarget` in the first place, so that arm's own now-correct
-//! snapshot is presently unreachable from this driver's actual directive
-//! stream. See `crate::target`'s own module doc "Counter-stack scope model"
-//! for the separate, still-open following-sibling-scoping gap in that
-//! ancestor-chain-only walk — unaffected by anything in this file.
+//! via its own, separate `CounterScopes` walk *before* `drive_page` ever
+//! runs, and `TargetRegistry::register`'s first-wins semantics mean that
+//! walk's result — not anything the `RegisterTarget` arm above would
+//! contribute — is what a real caller resolves. `derive_element_directives`
+//! (`crate::running`) does not even emit `RegisterTarget` in the first
+//! place, so that arm's own now-correct snapshot is presently unreachable
+//! from this driver's actual directive stream. `CounterScopes` implements
+//! the same following-sibling scoping and sibling-obscuring rules
+//! independently (see `crate::target`'s own module doc "Counter-stack scope
+//! model") — this paragraph's point is only that it does so on its own
+//! terms, not by inheriting anything from the fix described in this file.
 //!
 //! **This dom-local mirror itself implements neither half of §4.3** —
 //! unlike the promoted side just described, [`PhaseBWalkState`]'s own driver
