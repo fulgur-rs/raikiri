@@ -47,8 +47,8 @@
 //! own parent's* subtree exit, not at the instantiating element's own exit
 //! — popping at the element's own exit would only keep the scope visible to
 //! its descendants, losing the following-sibling half CSS Lists 3 §4.3
-//! grants it. `crate::target::CounterScopes` (a different code path from
-//! this driver — it operates inside `crate::target::build_target_registry`,
+//! grants it. [`crate::target`]'s `CounterScopes` (a different code path from
+//! this driver — it operates inside [`crate::target::build_target_registry`],
 //! the dom-local `TargetRegistry` producer, not inside `PageContext`'s own
 //! walk) implements the identical parent-exit-pop mechanism independently;
 //! see that type's own doc.
@@ -131,7 +131,7 @@
 //! the target counter is currently absent — so [`walk_directives`] reads
 //! [`raikiri_traits::PageContext::counter`] first and treats an absent
 //! counter, or one whose `CounterStack::values` is empty, as the
-//! frame-creating case. `crate::target::CounterScopes::apply` (the sibling
+//! frame-creating case. [`crate::target`]'s `CounterScopes::apply` (the sibling
 //! tracker mentioned above) makes this same frame-creating-or-not decision
 //! too, but fuses the check and the mutation into one
 //! `match stack.last_mut()` on its own owned `stacks` map — it can do that
