@@ -34,20 +34,43 @@
 //! nested-scope frame's removal — popping at the resetting element's own
 //! *parent's* subtree exit, via `raikiri_traits::PageContext::pop_counter_scope`
 //! (see `crate::phase_b`'s module doc "Counter-scope exit (CSS Lists 3
-//! §4.3)" for the full account) — but it does **not** implement §4.3's
-//! separate "obscuring" rule: a later sibling's `counter-reset` of the same
-//! name is specified to remove an earlier sibling's still-open same-named
-//! frame from scope entirely, not merely sit above it. Because frames are
-//! only ever popped at parent-exit here, an earlier sibling's frame stays
-//! live (and visible) until then. `PageContext::counter`'s
-//! `CounterStack::current` read (the singular, top-of-stack accessor,
-//! backing the `counter()` CSS function) is unaffected — the later sibling's
-//! frame is always on top regardless. `CounterStack::values` (the plural,
-//! every-frame accessor `raikiri_traits::page::target`'s
-//! `join_counter_stack` consumes for the `counters()` CSS function and for
-//! target-counters snapshots) is where the gap is observable: it returns
-//! both frames joined together where the spec calls for only the later
-//! one.
+//! §4.3, §4.4.2)" for the full account). It also implements §4.3's separate
+//! "obscuring" rule: a later sibling's `counter-reset` of the same name
+//! removes an earlier sibling's still-open same-named frame from scope
+//! entirely, via the same `pop_counter_scope` call, made eagerly right
+//! before the later sibling's own reset is applied rather than deferred to
+//! any `Exit`. `PageContext::counter`'s `CounterStack::current` read (the
+//! singular, top-of-stack accessor, backing the `counter()` CSS function)
+//! reads correctly either way this rule is implemented — the later
+//! sibling's frame is always on top regardless. `CounterStack::values` (the
+//! plural, every-frame accessor) is where the difference is observable, and
+//! two callers of it benefit: `raikiri_traits::page::context`'s
+//! `resolve_content_source` (via `super::target::join_counter_stack`),
+//! which resolves a `counters()` item inside a `string-set` content-list —
+//! the production path this driver actually exercises — and
+//! `PageContext::apply_directive`'s own `RegisterTarget` arm, which
+//! snapshots `self.counters` (via `CounterStack::values`) into a fresh
+//! `TargetInfo::counters`.
+//!
+//! **`target-counter()`/`target-counters()` do NOT benefit from this fix**,
+//! though, in the wiring this driver actually runs under:
+//! `crate::target::build_target_registry` populates `TargetInfo::counters`
+//! via its own, separate ancestor-chain-only `CounterScopes` walk *before*
+//! `drive_page` ever runs, and `TargetRegistry::register`'s first-wins
+//! semantics mean that walk's result — not anything the `RegisterTarget`
+//! arm above would contribute — is what a real caller resolves.
+//! `derive_element_directives` (`crate::running`) does not even emit
+//! `RegisterTarget` in the first place, so that arm's own now-correct
+//! snapshot is presently unreachable from this driver's actual directive
+//! stream. See `crate::target`'s own module doc "Counter-stack scope model"
+//! for the separate, still-open following-sibling-scoping gap in that
+//! ancestor-chain-only walk — unaffected by anything in this file.
+//!
+//! **This dom-local mirror itself implements neither half of §4.3** —
+//! unlike the promoted side just described, [`PhaseBWalkState`]'s own driver
+//! ([`apply_running_template_directives`]) has no subtree-exit markers to
+//! pop *or* evict at (see "Input source" below); both rules remain entirely
+//! `crate::phase_b`'s doing.
 //!
 //! **This module is still deliberately retained, not deleted**, despite the
 //! promoted-type side now being fully wired: collapsing it onto
