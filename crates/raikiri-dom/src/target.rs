@@ -59,7 +59,7 @@
 //! (previously constructed only in raikiri-traits's own round-trip unit
 //! test).
 //!
-//! # Counter-stack scope model (deliberately narrowed — see divergence note)
+//! # Counter-stack scope model
 //!
 //! [`raikiri_traits::TargetInfo::counters`] wants each counter's full
 //! **nested stack** (outermost scope first, leaf last — see that field's
@@ -70,54 +70,49 @@
 //! counter of the same name, nested inside the existing counter" — and that
 //! a counter's scope "starts at the first element in the document that
 //! instantiates that counter and includes the element's descendants and its
-//! following siblings with their descendants" (same section).
+//! following siblings with their descendants" (same section). §4.3 also
+//! states a second, separate rule: a counter-reset's scope "does not
+//! include any elements in the scope of a counter with the same name
+//! created by a counter-reset on a later sibling of the element, allowing
+//! such explicit counter instantiations to obscure those earlier siblings."
 //!
-//! [`CounterScopes`] implements an **ancestor-chain-only** subset of that
-//! model: a scope established by an *ancestor* of the current element (or
-//! by the current element itself) is visible, and correctly continues,
-//! across every descendant walked while that ancestor's own subtree is
-//! still open — including across multiple children under that ancestor
-//! (siblings of each other that all share the scope-establishing ancestor).
-//! `counter-reset` pushes a new stack level on entering an element and the
-//! level is popped the moment the walker finishes that element's *own*
-//! subtree. This correctly produces the "1", "1.1", "1.1.1" nesting for the
-//! target-counters() use case this task exists for (parent → child nesting,
-//! and mutation of `counter-increment`/`counter-set` within a scope that is
-//! *still open* — i.e. an ancestor of the current element, or the current
-//! element itself).
+//! [`CounterScopes`] implements both rules for this arena-local walk.
+//! `counter-reset` always pushes a new stack level unconditionally
+//! (self-nesting); `counter-increment`/`counter-set` push one only when the
+//! named counter has no active level yet (CSS Lists 3 §4.4.2
+//! <https://www.w3.org/TR/css-lists-3/#instantiating-counters>), otherwise
+//! they mutate the innermost existing level in place. Either way, a newly
+//! pushed level is popped not at the instantiating element's *own* subtree
+//! exit, but at that element's **parent's** subtree exit
+//! ([`build_target_registry`]'s `pending_pops` side-stack) — the exit point
+//! that keeps the level visible across the instantiating element's own
+//! following siblings and their descendants too, matching the
+//! following-sibling half of the scope quoted above. A later sibling's own
+//! `counter-reset` for the same name then evicts (rather than nests inside)
+//! whatever earlier-sibling level is still open, per the obscuring rule
+//! quoted above. [`CounterScopes::apply`]'s own doc covers the full
+//! mechanism.
 //!
-//! **What's deferred — scope a *sibling itself* establishes, propagating to
-//! that sibling's own following siblings.** §4.3's scope text quoted above
-//! is explicit that a counter's scope "includes the element's descendants
-//! **and its following siblings** with their descendants" — not just
-//! descendants of a shared ancestor. This module does not implement that
-//! specific case: because a `counter-reset`'s pushed level is popped at the
-//! *resetting element's own* subtree exit (before any of *that element's
-//! own* following siblings are visited), a scope a sibling itself created
-//! is invisible to elements after it, even though the spec puts those later
-//! siblings in scope too. Concretely, `<div style="counter-reset: c
-//! 5"></div><p style="counter-increment: c" id="p">` (both children of the
-//! same parent, with no counter-reset on that parent) should resolve `p`'s
-//! `c` to `6` (still in the div's scope, per following-sibling inclusion);
-//! this module resolves it to `1` (fresh local auto-instantiation, module
-//! doc's [`CounterScopes::apply`] "no ancestor counter-reset scope" branch)
-//! — pinned by `counter_increment_on_following_sibling_of_reset_element_is_not_in_scope`.
-//! The ancestor-established case this module *does* model correctly (two
-//! children of a common counter-reset-bearing parent, as opposed to two
-//! top-level siblings where one of them is itself the resetting element) is
-//! pinned by `counter_increment_continues_across_siblings_sharing_an_ancestor_scope`.
-//! The same gap subsumes CSS Lists 3 §4.4.2 "Instantiating counters"
-//! <https://www.w3.org/TR/css-lists-3/#auto-numbering>'s narrower case of a
-//! counter with *no* `counter-reset` anywhere, which per spec is
-//! instantiated once and *continues* across later, unrelated siblings
-//! (pinned by
-//! `counter_increment_without_ancestor_reset_does_not_persist_across_siblings`).
-//! This is a fail-closed narrowing (原則 3), not a silent divergence — the
-//! full cross-subtree accounting is `raikiri_traits::PageContext.counters`'s
-//! job (design doc §7.2, `HashMap<Symbol, CounterStack>`; the `PageContext`
-//! promotion itself has already landed) once a later Phase B walk actually
-//! drives it — which in turn depends on the DOM-tree-walking driver still
-//! being built.
+//! `counter_increment_continues_across_siblings_sharing_an_ancestor_scope`,
+//! `counter_increment_on_following_sibling_of_reset_element_continues_that_scope`,
+//! and
+//! `counter_increment_without_ancestor_reset_persists_across_siblings`
+//! each pin one shape of following-sibling continuation: a shared-ancestor
+//! scope, a sibling-established `counter-reset` scope, and a
+//! no-`counter-reset`-anywhere auto-instantiated scope, respectively.
+//! `build_target_registry_counter_scope_resets_between_independent_sections`
+//! pins the obscuring rule's counterpart: two independent top-level
+//! siblings that both reset the same counter name do not nest — the second
+//! section's own reset evicts the first section's still-open level rather
+//! than stacking a new one on top of it.
+//!
+//! A `counter-reset` on this walk's own root element has no parent bucket
+//! to record into ([`build_target_registry`]'s `pending_pops` starts empty)
+//! and is therefore never popped — inert here, since a [`CounterScopes`]
+//! value never outlives the single `build_target_registry` call that owns
+//! it (contrast `crate::phase_b::drive_page`'s own doc, where the identical
+//! root-level non-pop is a real, documented leak, because its
+//! `PageContext` state persists across calls).
 //!
 //! # Text parts — `ContentPart::Content` only
 //!
@@ -152,8 +147,10 @@ use raikiri_traits::{TargetInfo, TargetRegistry};
 
 use crate::document::Document;
 
-/// Ancestor-chain-only counter-scope tracker — see module doc "Counter-stack
-/// scope model" for exactly what this does and does not model.
+/// Counter-scope tracker implementing CSS Lists 3 §4.3's nested-scope model
+/// (self-nesting, following-sibling inclusion, and sibling obscuring) for
+/// one arena-local walk — see module doc "Counter-stack scope model" and
+/// [`Self::apply`]'s own doc for the mechanism.
 #[derive(Debug, Default)]
 struct CounterScopes {
     /// counter name → currently active nested stack (outermost first, leaf
@@ -170,17 +167,47 @@ impl CounterScopes {
     /// sibling `GcpmDirective`-emit walk, and for the same reason: §4.2's
     /// note that `counter-set` is applied after `counter-increment`).
     ///
-    /// Returns the counter names for which *this call* pushed a brand-new
-    /// stack level, so the caller can pop exactly those when this element's
-    /// subtree walk finishes ([`Self::pop`]) — see module doc.
+    /// Every counter name this call newly *instantiates* — a `counter-reset`
+    /// unconditionally, or a `counter-increment`/`counter-set` on a name
+    /// with no active level yet (CSS Lists 3 §4.4.2) — is recorded into
+    /// `parent_bucket`, not tracked against this element itself: CSS Lists 3
+    /// §4.3 scopes a counter-reset to "the element's descendants and its
+    /// following siblings with their descendants", so the pop must wait for
+    /// the *parent's* subtree exit, not this element's own.
+    /// [`build_target_registry`]'s `pending_pops` side-stack passes its own
+    /// top-of-stack bucket — the one this element's parent pushed — as
+    /// `parent_bucket` here, and pops it (via [`Self::pop`]) when that
+    /// parent's own `Exit` step runs. `parent_bucket` is `None` only when
+    /// this element is the walk's root (no `Enter` has pushed a bucket
+    /// yet); a root-level instantiation is then left untracked and never
+    /// popped — harmless here, since a [`CounterScopes`] value never
+    /// outlives the one [`build_target_registry`] call that owns it
+    /// (contrast `crate::phase_b::drive_page`'s own doc, where the same
+    /// root-level non-pop is a real, documented leak because its
+    /// `PageContext` state persists across calls).
+    ///
+    /// Also implements CSS Lists 3 §4.3's "obscuring" rule, quoted in full
+    /// on the module doc: a `counter-reset` for a name already present in
+    /// `parent_bucket` — i.e. instantiated by an *earlier sibling* under the
+    /// same parent, not by an ancestor (an ancestor's own level lives in an
+    /// outer bucket this element's *parent's* own `Enter` pushed, never in
+    /// `parent_bucket` itself, which only ever holds names the parent's
+    /// *children* — this element's siblings — instantiated) — evicts that
+    /// sibling's level outright (removing it from `parent_bucket` and
+    /// popping it from `stacks`) before pushing its own, rather than nesting
+    /// a new level inside it. `counter-increment`/`counter-set` never evict;
+    /// per CSS Lists 3 §4.4.2 they only ever mutate whichever level is
+    /// already in scope, continuing it across siblings.
     ///
     /// A duplicate `<counter-name>` within `cv.counter_reset` itself (e.g.
     /// `counter-reset: foo 1 foo 2`) is deduplicated to the *last*
     /// occurrence's value before pushing — CSS Lists 3 §4.1, see the
     /// dedup step's own comment below.
-    fn apply(&mut self, cv: &raikiri_style::ComputedValues) -> Vec<Symbol> {
-        let mut pushed = Vec::new();
-
+    fn apply(
+        &mut self,
+        cv: &raikiri_style::ComputedValues,
+        mut parent_bucket: Option<&mut Vec<Symbol>>,
+    ) {
         // CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#counter-reset>:
         // "If multiple instances of the same <counter-name> occur in the
         // property value, only the last one is honored." Reduce to one
@@ -200,11 +227,23 @@ impl CounterScopes {
         }
         for sym in reset_order {
             let value = reset_values[&sym];
+            // Obscuring rule: an earlier sibling's still-open same-name
+            // level (found in `parent_bucket`) is evicted, not nested
+            // inside, by this element's own counter-reset — see this
+            // method's own doc.
+            if let Some(bucket) = parent_bucket.as_deref_mut()
+                && let Some(pos) = bucket.iter().position(|pending| *pending == sym)
+            {
+                bucket.remove(pos);
+                self.pop_one(&sym);
+            }
             // counter-reset always instantiates a *new* nested scope level
             // (CSS Lists 3 §4.3 "self-nesting", module doc), regardless of
             // whether an ancestor scope for `name` already exists.
             self.stacks.entry(sym.clone()).or_default().push(value);
-            pushed.push(sym);
+            if let Some(bucket) = parent_bucket.as_deref_mut() {
+                bucket.push(sym);
+            }
         }
         for (name, delta) in cv.counter_increment.iter() {
             let sym = Symbol::new(name.clone());
@@ -220,12 +259,15 @@ impl CounterScopes {
                 // silently wrap to `i32::MIN` (release) on plain `+=`.
                 Some(top) => *top = top.saturating_add(*delta),
                 None => {
-                    // No ancestor counter-reset scope for `name` — local
-                    // auto-instantiation (module doc's divergence note
-                    // covers how this differs from §4.4.2's cross-sibling
-                    // continuation).
+                    // No active scope for `name` yet anywhere in scope —
+                    // local auto-instantiation (CSS Lists 3 §4.4.2), tracked
+                    // into `parent_bucket` exactly like a counter-reset's
+                    // own push so it too survives across following
+                    // siblings.
                     stack.push(*delta);
-                    pushed.push(sym);
+                    if let Some(bucket) = parent_bucket.as_deref_mut() {
+                        bucket.push(sym);
+                    }
                 }
             }
         }
@@ -236,24 +278,34 @@ impl CounterScopes {
                 Some(top) => *top = *value,
                 None => {
                     stack.push(*value);
-                    pushed.push(sym);
+                    if let Some(bucket) = parent_bucket.as_deref_mut() {
+                        bucket.push(sym);
+                    }
                 }
             }
         }
-
-        pushed
     }
 
-    /// Pop exactly the scope levels a prior [`Self::apply`] call pushed
-    /// (invoked when the walker finishes that element's subtree — see
-    /// [`build_target_registry`]'s `Exit` step).
+    /// Pop exactly the scope levels recorded for one bucket of
+    /// [`build_target_registry`]'s `pending_pops` side-stack — invoked when
+    /// the walker finishes that bucket's owning element's subtree (the
+    /// `Exit` step), which per [`Self::apply`]'s doc is the *parent* of
+    /// whichever element(s) originally pushed those levels.
     fn pop(&mut self, names: &[Symbol]) {
         for name in names {
-            if let Some(stack) = self.stacks.get_mut(name) {
-                stack.pop();
-                if stack.is_empty() {
-                    self.stacks.remove(name);
-                }
+            self.pop_one(name);
+        }
+    }
+
+    /// Pop the innermost scope level for one counter `name`, if any is
+    /// active — the single-name primitive [`Self::pop`]'s loop delegates
+    /// to, and that [`Self::apply`]'s obscuring-rule eviction (see that
+    /// method's doc) also calls directly for the one name it evicts.
+    fn pop_one(&mut self, name: &Symbol) {
+        if let Some(stack) = self.stacks.get_mut(name) {
+            stack.pop();
+            if stack.is_empty() {
+                self.stacks.remove(name);
             }
         }
     }
@@ -379,8 +431,11 @@ fn build_target_info(doc: &Document, idx: usize, scopes: &CounterScopes) -> Targ
 /// Walks `doc` from its root in document order (iterative DFS with explicit
 /// `Enter`/`Exit` steps — same reverse-push-children shape as
 /// [`crate::layout::find_body`] / [`crate::running::build_running_template_store`],
-/// extended with an `Exit` step so [`CounterScopes`] can pop exactly the
-/// scope levels each element pushed once its subtree is fully walked). For
+/// extended with an `Exit` step and a `pending_pops: Vec<Vec<Symbol>>`
+/// side-stack — the same shape `crate::phase_b::walk_directives` uses
+/// against the promoted `PageContext` type — so [`CounterScopes`] pops each
+/// pushed scope level at the *pushing element's parent's* `Exit`, not the
+/// pushing element's own; see [`CounterScopes::apply`]'s doc for why). For
 /// every in-document element with a non-empty `id`
 /// ([`element_id`]), synthesizes a `GcpmDirective::RegisterTarget`
 /// ([`synthesize_register_target`]), builds a [`TargetInfo`]
@@ -444,10 +499,22 @@ pub(crate) fn build_target_registry(doc: &Document, cascade: &CascadeResult) -> 
 
     enum WalkStep {
         Enter(usize),
-        Exit(Vec<Symbol>),
+        Exit,
     }
 
     let mut stack = vec![WalkStep::Enter(doc.root)];
+    // `pending_pops[i]` holds the counter names to pop (via
+    // [`CounterScopes::pop`]) at the `Exit` matching the `Enter` that pushed
+    // bucket `i`. A name lands in the *parent's* bucket — the one on top of
+    // `pending_pops` at the moment the instantiating element is entered,
+    // i.e. `pending_pops.last_mut()` passed into [`CounterScopes::apply`] as
+    // `parent_bucket` — rather than a bucket of the instantiating element's
+    // own, so it is popped at the parent's `Exit` and stays visible to the
+    // instantiating element's own following siblings (CSS Lists 3 §4.3, see
+    // [`CounterScopes::apply`]'s doc). Same shape as
+    // `crate::phase_b::walk_directives`'s identically-named mechanism
+    // against the promoted `PageContext` type.
+    let mut pending_pops: Vec<Vec<Symbol>> = Vec::new();
     while let Some(step) = stack.pop() {
         match step {
             WalkStep::Enter(idx) => {
@@ -459,7 +526,7 @@ pub(crate) fn build_target_registry(doc: &Document, cascade: &CascadeResult) -> 
                 let cv = cascade.computed.get(idx);
                 let is_display_none = matches!(cv, Some(cv) if cv.display == DisplayValue::None);
 
-                let pushed = match cv {
+                match cv {
                     Some(cv) if is_display_none || cv.display == DisplayValue::Contents => {
                         // CSS Lists 3 §4.5
                         // <https://www.w3.org/TR/css-lists-3/#counters-in-elements-that-do-not-generate-boxes>:
@@ -474,17 +541,16 @@ pub(crate) fn build_target_registry(doc: &Document, cascade: &CascadeResult) -> 
                         // either way; it may still register as a target
                         // below (target-* doesn't require box generation,
                         // only an id).
-                        Vec::new()
                     }
-                    Some(cv) => scopes.apply(cv),
+                    Some(cv) => scopes.apply(cv, pending_pops.last_mut()),
                     // cov:ignore: `raikiri_style::cascade`'s own contract
                     // (`computed.len() == doc.node_count()`) guarantees
                     // `Some` for every valid arena index when `cascade` was
                     // produced from this `doc` — same defensive shape
                     // `crate::running::collect_running_template`'s matching
                     // `.get(idx)` note documents.
-                    None => Vec::new(),
-                };
+                    None => {}
+                }
 
                 if let Some(fragment_id) = element_id(doc, idx) {
                     let directive = synthesize_register_target(&fragment_id);
@@ -501,28 +567,43 @@ pub(crate) fn build_target_registry(doc: &Document, cascade: &CascadeResult) -> 
                     // (`display` is not an inherited property), so CSS
                     // Lists 3 §4.5's "must have no effect" for counters
                     // extends to the whole subtree, not just this element.
-                    // Don't push this element's `Exit` step, or any child,
-                    // onto the walk, matching `Node::is_display_none()`'s
-                    // paint-stage subtree-skip convention — unlike
-                    // `display: contents` above, which still walks its
-                    // subtree below. Skipping the `Exit` push is itself a
-                    // no-op either way: `pushed` is always empty for this
-                    // arm (the match above never calls `scopes.apply` for
-                    // it), so there is nothing for that `Exit` to pop.
+                    // Don't push this element's `Exit` step, `pending_pops`
+                    // bucket, or any child onto the walk, matching
+                    // `Node::is_display_none()`'s paint-stage subtree-skip
+                    // convention — unlike `display: contents` above, which
+                    // still walks its subtree below. Skipping the bucket
+                    // push is itself a no-op either way: the match above
+                    // never calls `scopes.apply` for this arm, so no bucket
+                    // this element's descendants might have pushed into
+                    // could exist regardless.
                     continue;
                 }
 
-                // Even an id-less element's pushed scopes (e.g. from a bare
-                // counter-reset with no id) must still be popped on the way
-                // back out.
-                stack.push(WalkStep::Exit(pushed));
+                stack.push(WalkStep::Exit);
+                // This element's OWN bucket — accumulates any newly
+                // instantiated counter-scope names its own children push
+                // (see the `Enter` arm above), to be popped when this
+                // element's `Exit` (just pushed above) is reached. An
+                // id-less element (e.g. a bare `counter-reset` with no id)
+                // still needs one, since its *children* may push into it.
+                pending_pops.push(Vec::new());
 
                 for &child in node.children.iter().rev() {
                     stack.push(WalkStep::Enter(child));
                 }
             }
-            WalkStep::Exit(pushed_names) => {
-                scopes.pop(&pushed_names);
+            WalkStep::Exit => {
+                // `pending_pops.pop()` is `None` only if this `Exit` has no
+                // matching `Enter` bucket — structurally impossible: every
+                // `Enter(idx)` path that reaches this point pushes exactly
+                // one `WalkStep::Exit` and one `pending_pops` bucket
+                // together (the `!is_in_document()` and `display: none`
+                // early `continue`s skip both). Kept as a graceful no-op
+                // rather than `.expect()` so a violation, if one ever
+                // existed, can't panic on parsed DOM input.
+                if let Some(names) = pending_pops.pop() {
+                    scopes.pop(&names);
+                }
             }
         }
     }
@@ -942,16 +1023,11 @@ mod tests {
         // display:contents does not remove its descendants from the box
         // tree, so `target` below is still walked and registered normally.
         //
-        // Regression-pin shape: the id-bearing probe must be a
-        // *descendant* of the display:contents element, registered
-        // *before* that element's own subtree-exit pop — a sibling-after
-        // probe would read "0" either way (the ancestor-chain-only
-        // pop-on-subtree-exit model already discards the reset's scope by
-        // the time a later sibling is visited, fix or no fix — see
-        // counter_increment_on_following_sibling_of_reset_element_is_not_in_scope),
-        // so it can't distinguish "correctly skipped" from "wrongly applied
-        // then popped". A descendant, seen *while the scope is still open*,
-        // can.
+        // Regression-pin shape: the id-bearing probe is a *descendant* of
+        // the display:contents element, registered while that element's
+        // scope (if any had wrongly been pushed) would still be directly
+        // observable — the most direct way to pin "this element's own
+        // counter-reset never even ran".
         let mut doc = Document::new();
         let contents = doc.append_element(
             Some(0),
@@ -983,11 +1059,11 @@ mod tests {
 
     #[test]
     fn counter_increment_continues_across_siblings_sharing_an_ancestor_scope() {
-        // The case the ancestor-chain-only model correctly handles (module
-        // doc "Counter-stack scope model"): two <p> children of a common
-        // <section> that itself carries counter-reset both see, and
+        // The shared-ancestor shape of following-sibling continuation
+        // (module doc "Counter-stack scope model"): two <p> children of a
+        // common <section> that itself carries counter-reset both see, and
         // continue, that still-open ancestor scope — contrast with
-        // counter_increment_on_following_sibling_of_reset_element_is_not_in_scope,
+        // counter_increment_on_following_sibling_of_reset_element_continues_that_scope,
         // where the reset is on a SIBLING rather than a shared ancestor.
         let mut doc = Document::new();
         let section = doc.append_element(
@@ -1037,13 +1113,75 @@ mod tests {
     }
 
     #[test]
+    fn build_target_registry_counter_increment_visible_across_cross_branch_cousin() {
+        // CSS Lists 3 §4.4.1 "Inheriting Counters"
+        // <https://www.w3.org/TR/css-lists-3/#inheriting-counters>'s own
+        // worked example: `#baz` "inherits the example counter from the
+        // #foo element, its previous sibling. However, rather than
+        // inheriting the value 1 from #foo along with the counter, it
+        // inherits the value 2 from #bar, the previous element in tree
+        // order" — `#bar` is `#foo`'s own child, so `#baz` (a plain sibling
+        // of `#foo`, not a descendant of it) must see the mutation `#bar`
+        // made two levels deeper than `#baz` itself sits, not merely
+        // `#foo`'s own top-level increment.
+        let mut doc = Document::new();
+        let ul = doc.append_element(
+            Some(0),
+            "ul",
+            Style::default(),
+            Some("counter-reset: example 0"),
+        );
+        let foo = doc.append_element(
+            Some(ul),
+            "li",
+            Style::default(),
+            Some("counter-increment: example"),
+        );
+        set_id(&mut doc, foo, "foo");
+        let bar = doc.append_element(
+            Some(foo),
+            "div",
+            Style::default(),
+            Some("counter-increment: example"),
+        );
+        set_id(&mut doc, bar, "bar");
+        let baz = doc.append_element(Some(ul), "li", Style::default(), None::<&str>);
+        set_id(&mut doc, baz, "baz");
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut registry = build_target_registry(&doc, &cr);
+        let out = registry.resolve_target_counter(
+            "#baz",
+            Symbol::new("example"),
+            raikiri_style::property::CounterStyle::Decimal,
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            out,
+            raikiri_traits::ResolveOutcome::Resolved("2".to_owned()),
+            "#baz must inherit the shared <ul> ancestor scope's CURRENT value, as \
+             mutated by #bar (its own preceding sibling #foo's child), not #foo's \
+             own top-level increment value"
+        );
+    }
+
+    #[test]
     fn build_target_registry_counter_scope_resets_between_independent_sections() {
         // Two independent top-level <section>s, each with their own
         // counter-reset: chapter — the second section's <h2 id> must see a
-        // FRESH scope (not the first section's leftover value), pinning the
-        // push/pop-on-subtree-exit behavior module doc describes as
-        // correctly handled (as opposed to the no-ancestor-reset case, which
-        // is the documented divergence).
+        // FRESH scope (not the first section's leftover value). Pins CSS
+        // Lists 3 §4.3's obscuring rule (module doc "Counter-stack scope
+        // model"): sec2's own counter-reset evicts sec1's still-open
+        // same-name level (kept open, per the following-sibling half of
+        // §4.3, until their shared parent's subtree exit) instead of
+        // nesting a new level inside it — without the obscuring rule this
+        // would instead read "1.5" via `resolve_target_counters`, even
+        // though the leaf-only `resolve_target_counter` used below can't
+        // tell the two outcomes apart (see
+        // `build_target_registry_counter_reset_obscures_earlier_sibling_scope_even_under_plural_read`).
         let mut doc = Document::new();
         let sec1 = doc.append_element(
             Some(0),
@@ -1083,22 +1221,79 @@ mod tests {
             Symbol::new("chapter"),
             raikiri_style::property::CounterStyle::Decimal,
         );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             out2,
             raikiri_traits::ResolveOutcome::Resolved("5".to_owned()),
-            "second section's own counter-reset must win, not leak sec1's popped scope"
+            "second section's own counter-reset must obscure (evict), not nest inside, \
+             sec1's still-open scope for the same name"
         );
     }
 
     #[test]
-    fn counter_increment_without_ancestor_reset_does_not_persist_across_siblings() {
-        // Documented divergence pin (module doc "What's deferred"): per CSS
-        // Lists 3 §4.4.2, two unrelated elements incrementing a
-        // never-explicitly-reset counter should see a CONTINUING value (1,
-        // then 2) — this walker's ancestor-chain-only model instead resets
-        // per independent local auto-instantiation (1, then 1 again). This
-        // test pins the CURRENT (narrowed) behavior so a silent behavior
-        // change is caught, not to assert it's spec-correct.
+    fn build_target_registry_counter_reset_obscures_earlier_sibling_scope_even_under_plural_read() {
+        // Companion to
+        // build_target_registry_counter_scope_resets_between_independent_sections,
+        // reading through `resolve_target_counters` (every stack level,
+        // joined) instead of `resolve_target_counter` (innermost level
+        // only). The two reads cannot be told apart by the singular query
+        // above: whether sec2's own counter-reset evicted sec1's still-open
+        // level (correct, per CSS Lists 3 §4.3's obscuring rule) or merely
+        // nested a new level on top of it (incorrect self-nesting — §4.3's
+        // self-nesting rule applies to an ancestor's inherited counter, not
+        // a sibling's), `#ch2`'s innermost value is "5" either way. The
+        // plural read is not: a wrongly-nested stack would join to "1.5",
+        // not "5".
+        let mut doc = Document::new();
+        let sec1 = doc.append_element(
+            Some(0),
+            "section",
+            Style::default(),
+            Some("counter-reset: chapter 1"),
+        );
+        doc.append_element(Some(sec1), "h2", Style::default(), None::<&str>);
+
+        let sec2 = doc.append_element(
+            Some(0),
+            "section",
+            Style::default(),
+            Some("counter-reset: chapter 5"),
+        );
+        let h2_2 = doc.append_element(Some(sec2), "h2", Style::default(), None::<&str>);
+        set_id(&mut doc, h2_2, "ch2");
+
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut registry = build_target_registry(&doc, &cr);
+        let out = registry.resolve_target_counters(
+            "#ch2",
+            Symbol::new("chapter"),
+            ".",
+            raikiri_style::property::CounterStyle::Decimal,
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            out,
+            raikiri_traits::ResolveOutcome::Resolved("5".to_owned()),
+            "sec1's obscured level must not still be on the stack underneath sec2's own \
+             (a wrongly-nested stack would join to \"1.5\", not \"5\")"
+        );
+    }
+
+    #[test]
+    fn counter_increment_without_ancestor_reset_persists_across_siblings() {
+        // CSS Lists 3 §4.4.2 <https://www.w3.org/TR/css-lists-3/#instantiating-counters>:
+        // a counter with no `counter-reset` anywhere is still instantiated
+        // the first time something references it (here, p1's own
+        // counter-increment) and that instantiation's scope covers p1's
+        // following siblings too, same as an explicit counter-reset's scope
+        // would (module doc "Counter-stack scope model") — so p2 must
+        // continue p1's value (1, then 2), not restart its own independent
+        // local auto-instantiation (which would read 1, then 1 again).
         let mut doc = Document::new();
         let p1 = doc.append_element(Some(0), "p", Style::default(), Some("counter-increment: x"));
         set_id(&mut doc, p1, "p1");
@@ -1123,25 +1318,25 @@ mod tests {
             out1,
             raikiri_traits::ResolveOutcome::Resolved("1".to_owned())
         );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             out2,
-            raikiri_traits::ResolveOutcome::Resolved("1".to_owned()),
-            "documented narrowing: p2 does NOT continue p1's un-reset counter \
-             (true spec behavior would be \"2\" — see module doc)"
+            raikiri_traits::ResolveOutcome::Resolved("2".to_owned()),
+            "p2 must continue p1's un-reset counter (CSS Lists 3 §4.4.2 \
+             cross-sibling persistence)"
         );
     }
 
     #[test]
-    fn counter_increment_on_following_sibling_of_reset_element_is_not_in_scope() {
-        // Documented divergence pin (module doc "What's deferred"): CSS
-        // Lists 3 §4.3 puts a counter-reset's scope over "the element's
+    fn counter_increment_on_following_sibling_of_reset_element_continues_that_scope() {
+        // CSS Lists 3 §4.3 puts a counter-reset's scope over "the element's
         // descendants and its following siblings with their descendants" —
-        // so a following sibling of the resetting <div> should see and
-        // continue its scope (spec-correct answer: "6"). This walker's
-        // ancestor-chain-only model pops the div's scope at its own subtree
-        // exit, so the sibling <p> never observes it and instead gets a
-        // fresh local auto-instantiation. Pins the CURRENT (narrowed)
-        // behavior, not spec correctness.
+        // so a following sibling of the resetting <div> (both children of
+        // the same implicit parent) must see and continue its scope: the
+        // div's own push is popped at the shared parent's subtree exit, not
+        // the div's own, so it is still open when the sibling <p> is
+        // walked.
         let mut doc = Document::new();
         doc.append_element(Some(0), "div", Style::default(), Some("counter-reset: c 5"));
         let p = doc.append_element(Some(0), "p", Style::default(), Some("counter-increment: c"));
@@ -1156,11 +1351,13 @@ mod tests {
             Symbol::new("c"),
             raikiri_style::property::CounterStyle::Decimal,
         );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
             out,
-            raikiri_traits::ResolveOutcome::Resolved("1".to_owned()),
-            "documented narrowing: p does NOT see the div's following-sibling-\
-             inclusive scope (true spec behavior would be \"6\" — see module doc)"
+            raikiri_traits::ResolveOutcome::Resolved("6".to_owned()),
+            "p must see and continue the div's following-sibling-inclusive scope \
+             (CSS Lists 3 §4.3)"
         );
     }
 

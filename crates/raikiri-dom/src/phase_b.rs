@@ -47,10 +47,11 @@
 //! own parent's* subtree exit, not at the instantiating element's own exit
 //! — popping at the element's own exit would only keep the scope visible to
 //! its descendants, losing the following-sibling half CSS Lists 3 §4.3
-//! grants it (the same narrowing `crate::target`'s `CounterScopes`
-//! documents as a known, separately-tracked gap in its own
-//! ancestor-chain-only model — that dom-local type is a different code path
-//! from this driver and is not affected by this section).
+//! grants it. `crate::target::CounterScopes` (a different code path from
+//! this driver — it operates inside `crate::target::build_target_registry`,
+//! the dom-local `TargetRegistry` producer, not inside `PageContext`'s own
+//! walk) implements the identical parent-exit-pop mechanism independently;
+//! see that type's own doc.
 //!
 //! An element can instantiate a counter's frame two ways: `counter-reset`
 //! always pushes a fresh frame unconditionally (CSS Lists 3 §4.1), while
@@ -131,10 +132,10 @@
 //! [`raikiri_traits::PageContext::counter`] first and treats an absent
 //! counter, or one whose `CounterStack::values` is empty, as the
 //! frame-creating case. `crate::target::CounterScopes::apply` (the sibling
-//! ancestor-chain-only tracker mentioned above) makes this same
-//! frame-creating-or-not decision too, but fuses the check and the mutation
-//! into one `match stack.last_mut()` on its own owned `stacks` map — it can
-//! do that because it holds the map directly. This driver cannot: its
+//! tracker mentioned above) makes this same frame-creating-or-not decision
+//! too, but fuses the check and the mutation into one
+//! `match stack.last_mut()` on its own owned `stacks` map — it can do that
+//! because it holds the map directly. This driver cannot: its
 //! counter state lives behind [`PageContext::apply_directive`]'s
 //! `()`-returning interface, which offers no way to learn after the fact
 //! whether a call happened to create a frame, so the check has to be a
