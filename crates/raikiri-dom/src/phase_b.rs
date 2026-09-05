@@ -38,34 +38,70 @@
 //!    `set_targets` leaves target resolution running against an empty,
 //!    default `TargetRegistry` for the whole document.
 //!
-//! # Counter-scope exit (CSS Lists 3 §4.3)
+//! # Counter-scope exit (CSS Lists 3 §4.3, §4.4.2)
 //!
 //! CSS Lists 3 §4.3 <https://www.w3.org/TR/css-lists-3/#auto-numbering>
-//! scopes a `counter-reset` to "the element's descendants and its following
-//! siblings with their descendants". [`walk_directives`] models this by
-//! popping the pushed nested-scope frame at the *resetting element's own
-//! parent's* subtree exit, not at the resetting element's own exit —
-//! popping at the element's own exit would only keep the scope visible to
+//! scopes a counter's nested-scope frame to "the element's descendants and
+//! its following siblings with their descendants". [`walk_directives`]
+//! models this by popping the pushed frame at the *instantiating element's
+//! own parent's* subtree exit, not at the instantiating element's own exit
+//! — popping at the element's own exit would only keep the scope visible to
 //! its descendants, losing the following-sibling half CSS Lists 3 §4.3
 //! grants it (the same narrowing `crate::target`'s `CounterScopes`
 //! documents as a known, separately-tracked gap in its own
 //! ancestor-chain-only model — that dom-local type is a different code path
 //! from this driver and is not affected by this section).
 //!
+//! An element can instantiate a counter's frame two ways: `counter-reset`
+//! always pushes a fresh frame unconditionally (CSS Lists 3 §4.1), while
+//! `counter-increment` and `counter-set` only push one when the counter has
+//! no active frame yet — CSS Lists 3 §4.4.2
+//! <https://www.w3.org/TR/css-lists-3/#instantiating-counters> ("also when
+//! not otherwise present if named in counter-increment, counter-set, or the
+//! counter() or counters() notations") — otherwise they mutate the innermost
+//! existing frame in place (`CounterStack::increment` / `CounterStack::set`).
+//! Only the frame-creating case needs a scheduled pop; mutating an inherited
+//! frame is not this element's scope to close. The quoted rule's third
+//! trigger — a `counter()`/`counters()` *read* of an absent counter also
+//! instantiating it — is not modeled by this mechanism at all: the private
+//! `resolve_content_source` helper behind
+//! [`PageContext::apply_directive`]'s `StringSet` arm (in `raikiri-traits`,
+//! not this crate) already defaults an absent counter to `0` directly,
+//! without emitting any `GcpmDirective` of its own, so there is no
+//! directive here for `walk_directives` to intercept and no frame ever gets
+//! pushed for that case.
+//!
 //! The mechanism is a `pending_pops: Vec<Vec<Symbol>>` side-stack,
 //! structurally parallel to `walk_directives`'s own `Enter`/`Exit` stack:
 //! every `Enter(idx)` pushes a fresh bucket for `idx` right where it pushes
 //! `idx`'s matching `Exit` marker (so the two stacks stay 1:1, for leaf and
-//! non-leaf nodes alike), and every `CounterReset` directive `idx` applies
-//! to itself records its name not into that just-pushed bucket but into the
+//! non-leaf nodes alike), and every directive that instantiates a new frame
+//! for `idx` records its name not into that just-pushed bucket but into the
 //! bucket beneath it — the one `idx`'s own parent pushed — so the name is
 //! popped when the parent's subtree (not `idx`'s own subtree) finishes.
 //! Each `Exit` pops its matching bucket and calls
 //! [`raikiri_traits::PageContext::pop_counter_scope`] for every name in it.
-//! A root-level `counter-reset` (applied while `pending_pops` is still
-//! empty, i.e. before any bucket exists) has no ancestor exit inside this
-//! function to pop at and is intentionally left open for the whole
+//! A root-level frame-creating directive (applied while `pending_pops` is
+//! still empty, i.e. before any bucket exists) has no ancestor exit inside
+//! this function to pop at and is intentionally left open for the whole
 //! [`drive_document`]/[`drive_page`] call.
+//!
+//! Telling "creates a new frame" apart from "mutates an inherited one" for
+//! `counter-increment`/`counter-set` needs a look at `ctx`'s counter state
+//! *before* the directive is applied — [`GcpmDirective::CounterIncrement`]
+//! and [`GcpmDirective::CounterSet`] carry only the delta/value, not whether
+//! the target counter is currently absent — so [`walk_directives`] reads
+//! [`raikiri_traits::PageContext::counter`] first and treats an absent
+//! counter, or one whose `CounterStack::values` is empty, as the
+//! frame-creating case. `crate::target::CounterScopes::apply` (the sibling
+//! ancestor-chain-only tracker mentioned above) makes this same
+//! frame-creating-or-not decision too, but fuses the check and the mutation
+//! into one `match stack.last_mut()` on its own owned `stacks` map — it can
+//! do that because it holds the map directly. This driver cannot: its
+//! counter state lives behind [`PageContext::apply_directive`]'s
+//! `()`-returning interface, which offers no way to learn after the fact
+//! whether a call happened to create a frame, so the check has to be a
+//! separate peek taken beforehand instead.
 
 use raikiri_style::CascadeResult;
 use raikiri_style::property::DisplayValue;
@@ -130,10 +166,10 @@ pub(crate) fn drive_document(ctx: &mut PageContext, doc: &Document, cascade: &Ca
 /// Document-order walk applying every in-document element's derived
 /// directives to `ctx`. Same iterative reverse-push-children DFS shape as
 /// [`crate::target::build_target_registry`], extended with an `Exit` step
-/// that pops nested counter scopes at the *resetting element's parent's*
-/// exit — see module doc "Counter-scope exit (CSS Lists 3 §4.3)" for the
-/// `pending_pops` side-stack this uses to track which names to pop at each
-/// `Exit`.
+/// that pops nested counter scopes at the *instantiating element's parent's*
+/// exit — see module doc "Counter-scope exit (CSS Lists 3 §4.3, §4.4.2)" for
+/// the `pending_pops` side-stack this uses to track which names to pop at
+/// each `Exit`.
 fn walk_directives(ctx: &mut PageContext, doc: &Document, cascade: &CascadeResult, root: usize) {
     enum WalkStep {
         Enter(usize),
@@ -143,10 +179,10 @@ fn walk_directives(ctx: &mut PageContext, doc: &Document, cascade: &CascadeResul
     let mut stack = vec![WalkStep::Enter(root)];
     // `pending_pops[i]` holds the counter names to pop at the `Exit`
     // matching the `Enter` that pushed bucket `i` — see module doc
-    // "Counter-scope exit (CSS Lists 3 §4.3)" for why a name lands in the
-    // *parent's* bucket (index `pending_pops.len() - 1` at the moment the
-    // resetting element is entered, i.e. the bucket the parent itself
-    // pushed) rather than the resetting element's own bucket.
+    // "Counter-scope exit (CSS Lists 3 §4.3, §4.4.2)" for why a name lands
+    // in the *parent's* bucket (index `pending_pops.len() - 1` at the moment
+    // the instantiating element is entered, i.e. the bucket the parent
+    // itself pushed) rather than the instantiating element's own bucket.
     let mut pending_pops: Vec<Vec<Symbol>> = Vec::new();
     let mut directives = Vec::new();
     while let Some(step) = stack.pop() {
@@ -173,21 +209,46 @@ fn walk_directives(ctx: &mut PageContext, doc: &Document, cascade: &CascadeResul
                         directives.clear();
                         derive_element_directives(doc, idx, cv, &mut directives);
                         for directive in &directives {
+                            // Which counter, if any, this directive is about
+                            // to instantiate a brand new frame for — decided
+                            // from `ctx`'s state *before* applying it, since
+                            // `apply_directive` mutates `ctx` and returns
+                            // `()`. `counter-reset` (CSS Lists 3 §4.1)
+                            // always instantiates unconditionally;
+                            // `counter-increment`/`counter-set` (CSS Lists 3
+                            // §4.4.2) only do when the counter has no active
+                            // frame yet, otherwise they mutate the innermost
+                            // existing (possibly ancestor-inherited) frame
+                            // in place and open no new scope of their own.
+                            let instantiated_name = match directive {
+                                GcpmDirective::CounterReset { name, .. } => Some(name),
+                                GcpmDirective::CounterIncrement { name, .. }
+                                | GcpmDirective::CounterSet { name, .. }
+                                    if ctx
+                                        .counter(name)
+                                        .is_none_or(|stack| stack.values().is_empty()) =>
+                                {
+                                    Some(name)
+                                }
+                                _ => None,
+                            };
+
                             ctx.apply_directive(directive);
-                            // Every scope this element's own CounterReset
-                            // pushes must be popped at this element's
-                            // PARENT's exit, not this element's own exit
-                            // (CSS Lists 3 §4.3 grants the scope to
+
+                            // Every scope newly instantiated by this
+                            // element's own directive must be popped at this
+                            // element's PARENT's exit, not this element's
+                            // own exit (CSS Lists 3 §4.3 grants the scope to
                             // following siblings too, not just
                             // descendants) — so record it in the bucket the
                             // parent already pushed, not a bucket of this
                             // element's own. `pending_pops` is empty only
                             // for `root` itself (no `Enter` has pushed a
                             // bucket yet at that point), in which case a
-                            // root-level reset has no ancestor exit inside
-                            // this call to pop at and is intentionally left
-                            // open for the whole walk.
-                            if let GcpmDirective::CounterReset { name, .. } = directive
+                            // root-level instantiating directive has no
+                            // ancestor exit inside this call to pop at and
+                            // is intentionally left open for the whole walk.
+                            if let Some(name) = instantiated_name
                                 && let Some(parent_bucket) = pending_pops.last_mut()
                             {
                                 parent_bucket.push(name.clone());
@@ -204,10 +265,11 @@ fn walk_directives(ctx: &mut PageContext, doc: &Document, cascade: &CascadeResul
                 }
 
                 stack.push(WalkStep::Exit);
-                // This element's OWN bucket — accumulates any CounterReset
-                // names pushed by its children (see the `Enter` branch
-                // above) as they're processed, to be popped when this
-                // element's own `Exit` (just pushed above) is reached.
+                // This element's OWN bucket — accumulates any newly
+                // instantiated counter-scope names pushed by its children
+                // (see the `Enter` branch above) as they're processed, to be
+                // popped when this element's own `Exit` (just pushed above)
+                // is reached.
                 pending_pops.push(Vec::new());
                 for &child in node.children.iter().rev() {
                     stack.push(WalkStep::Enter(child));
@@ -567,25 +629,20 @@ mod tests {
             // walked.
             Some("counter-reset: hidden 9; string-set: hidden_probe counter(hidden)"),
         );
-        // `counter-increment`, not `counter-reset`, deliberately: an
-        // implicitly-created counter (no reset seeding it) is never
-        // recorded in `walk_directives`'s `pending_pops` (only
-        // `CounterReset` directives are), so its value survives to be read
-        // back after `drive_document` regardless of where in the tree it
-        // sits — see module doc "Counter-scope exit". A `counter-reset`
-        // here would be popped at `doc.root`'s own exit (the very last step
-        // of a whole-document walk) before this assertion could observe it,
-        // same as the sibling fixes above; that pop is *correct* per CSS
-        // Lists 3 §4.3 (there is nothing left in the document to see the
-        // scope once the walk finishes), it just means `counter-reset`
-        // specifically is the wrong vehicle for this test's actual point,
-        // which is only that the `<template>` skip does not also wrongly
-        // skip an ordinary sibling.
+        // This sibling's parent is `doc.root` itself, so its implicitly
+        // instantiated scope (CSS Lists 3 §4.4.2) closes at `doc.root`'s own
+        // exit — the very last step of this whole-document walk — same as
+        // `hidden`'s reset closing at `tmpl`'s exit above. Same fix as
+        // `hidden_probe`: a `string-set` probe freezes the value while the
+        // scope is still open, rather than reading `counter-increment`'s
+        // target back through `ctx.counter()` after `drive_document`
+        // returns, which would observe it only after it has already been
+        // popped.
         doc.append_element(
             Some(0),
             "p",
             Style::default(),
-            Some("counter-increment: visible 1"),
+            Some("counter-increment: visible 1; string-set: visible_probe counter(visible)"),
         );
         doc.mark_in_document_flags();
         let rules = build_rule_tree(&doc);
@@ -621,9 +678,9 @@ mod tests {
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
-            ctx.counter(&Symbol::new("visible"))
-                .and_then(|c| c.current()),
-            Some(1),
+            ctx.string_state(&Symbol::new("visible_probe"))
+                .and_then(|s| s.running()),
+            Some("1"),
             "a sibling counter-increment outside the <template> must still \
              apply normally"
         );
@@ -667,15 +724,13 @@ mod tests {
         );
     }
 
-    // ── Counter-scope exit (CSS Lists 3 §4.3) ───────────────
+    // ── Counter-scope exit (CSS Lists 3 §4.3, §4.4.2) ───────────────
     //
     // These tests need to observe a counter's value at a point *inside* a
     // walk, before some later `Exit` step pops it away — `ctx.counter()`
     // alone cannot do that from outside this driver (see the tests above,
-    // which sidestep the same problem either by walking a subtree's own
-    // root directly, so its top-level scope is never popped within that
-    // call, or by using `counter-increment`/`counter-set` with no matching
-    // `counter-reset`, which is never tracked in `pending_pops` at all).
+    // which sidestep the same problem by walking a subtree's own root
+    // directly, so its top-level scope is never popped within that call).
     // Here, `string-set: <probe-name> counter(<name>)` is used instead: it
     // freezes whatever `<name>` currently reads into a `NamedStringState`,
     // which `walk_directives` never pops (only `counters` gets that
@@ -904,6 +959,161 @@ mod tests {
             None,
             "outer's own scope must in turn be fully closed once doc.root's \
              subtree walk completes"
+        );
+    }
+
+    #[test]
+    fn implicit_counter_from_increment_does_not_leak_past_its_parents_subtree() {
+        // The bug this pins: CSS Lists 3 §4.4.2
+        // <https://www.w3.org/TR/css-lists-3/#instantiating-counters> lets
+        // `counter-increment` instantiate a counter when none exists yet,
+        // exactly like `counter-reset` does — but an earlier version of
+        // `walk_directives` only ever recorded `CounterReset` names into
+        // `pending_pops`, so a `counter-increment`-only instantiation was
+        // never scheduled for any pop at all and stayed visible for the
+        // rest of the whole-document walk, including to an uncle element
+        // entirely outside its instantiating parent's subtree.
+        let mut doc = Document::new();
+        let parent = doc.append_element(Some(0), "section", Style::default(), None::<&str>);
+        doc.append_element(
+            Some(parent),
+            "p",
+            Style::default(),
+            Some("counter-increment: c 1"),
+        );
+        // `uncle` is a following sibling of `parent`, not of the
+        // instantiating `p` — CSS Lists 3 §4.3 grants the scope to
+        // `parent`'s descendants and `parent`'s own following siblings, but
+        // `uncle` is neither: it is outside `parent`'s subtree altogether,
+        // so it must never observe the scope `parent`'s descendant opened.
+        doc.append_element(
+            Some(0),
+            "p",
+            Style::default(),
+            Some("string-set: probe counter(c)"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut ctx = PageContext::default();
+        drive_document(&mut ctx, &doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.string_state(&Symbol::new("probe"))
+                .and_then(|s| s.running()),
+            Some("0"),
+            "an uncle outside the implicitly-instantiating element's parent \
+             subtree must read the counter as absent (formatted \"0\"), not \
+             the leaked value 1 — the scope must have already closed at \
+             `parent`'s own exit"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.counter(&Symbol::new("c")).and_then(|c| c.current()),
+            None,
+            "the implicitly-instantiated scope must be fully closed by the \
+             time the whole-document walk completes, same as an explicit \
+             counter-reset would be"
+        );
+    }
+
+    #[test]
+    fn implicit_counter_from_set_does_not_leak_past_its_parents_subtree() {
+        // Same bug, same fix, but for `counter-set` rather than
+        // `counter-increment` — CSS Lists 3 §4.4.2 grants both the same
+        // instantiate-when-absent behavior, and `walk_directives`'s
+        // frame-creating check is a single `match` arm shared by both
+        // `GcpmDirective::CounterIncrement` and `GcpmDirective::CounterSet`,
+        // but nothing structurally guarantees the two stay in sync — this
+        // pins `CounterSet` on its own rather than relying on the
+        // `counter-increment` test above to cover it by proxy.
+        let mut doc = Document::new();
+        let parent = doc.append_element(Some(0), "section", Style::default(), None::<&str>);
+        doc.append_element(
+            Some(parent),
+            "p",
+            Style::default(),
+            Some("counter-set: c 1"),
+        );
+        // Same uncle-outside-the-parent-subtree shape as the
+        // `counter-increment` version above.
+        doc.append_element(
+            Some(0),
+            "p",
+            Style::default(),
+            Some("string-set: probe counter(c)"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut ctx = PageContext::default();
+        drive_document(&mut ctx, &doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.string_state(&Symbol::new("probe"))
+                .and_then(|s| s.running()),
+            Some("0"),
+            "an uncle outside the implicitly-instantiating element's parent \
+             subtree must read the counter as absent (formatted \"0\"), not \
+             the leaked value 1 — the scope must have already closed at \
+             `parent`'s own exit"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.counter(&Symbol::new("c")).and_then(|c| c.current()),
+            None,
+            "the implicitly-instantiated scope must be fully closed by the \
+             time the whole-document walk completes, same as an explicit \
+             counter-reset would be"
+        );
+    }
+
+    #[test]
+    fn implicit_counter_from_increment_is_visible_to_a_following_sibling() {
+        // Companion to the leak-prevention test above: the "following
+        // siblings" half of CSS Lists 3 §4.3 applies to an implicitly
+        // instantiated counter (CSS Lists 3 §4.4.2) exactly as it does to an
+        // explicit `counter-reset` — a following sibling *within the same
+        // parent* as the instantiating element must still see the scope,
+        // not just its own descendants.
+        let mut doc = Document::new();
+        let parent = doc.append_element(Some(0), "section", Style::default(), None::<&str>);
+        doc.append_element(
+            Some(parent),
+            "p",
+            Style::default(),
+            Some("counter-increment: c 1"),
+        );
+        doc.append_element(
+            Some(parent),
+            "p",
+            Style::default(),
+            Some("string-set: probe counter(c)"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut ctx = PageContext::default();
+        drive_document(&mut ctx, &doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.string_state(&Symbol::new("probe"))
+                .and_then(|s| s.running()),
+            Some("1"),
+            "a following sibling under the SAME parent as the implicitly \
+             instantiating element must still inherit the scope (read back \
+             as 1), since it has not yet closed at that shared parent's exit"
         );
     }
 }
