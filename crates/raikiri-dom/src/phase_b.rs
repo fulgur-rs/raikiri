@@ -1394,4 +1394,103 @@ mod tests {
              as 1), since it has not yet closed at that shared parent's exit"
         );
     }
+
+    #[test]
+    fn many_same_named_sibling_counter_resets_keep_the_frame_stack_bounded() {
+        const SIBLING_COUNT: i32 = 500;
+        // Sentinel for the last sibling's own `counter-reset`, chosen
+        // outside the `0..SIBLING_COUNT - 1` range the generator loop below
+        // emits, so it can't be confused with one of that loop's own
+        // per-sibling values when read back off `probe`.
+        const LAST_SIBLING_RESET_VALUE: i32 = 9999;
+
+        // Regression test for unbounded `CounterStack` frame growth:
+        // `CounterStack` (`raikiri_traits::page::context`) is a plain
+        // push/pop stack with no eviction logic of its own — nothing in
+        // that type itself bounds how many frames it can hold. That bound
+        // has to come entirely from the caller popping scopes at the right
+        // points. If `walk_directives` ever failed to call
+        // `PageContext::pop_counter_scope` at every point CSS Lists 3 §4.3
+        // requires — including the "obscuring" case where a later sibling's
+        // own `counter-reset` evicts an earlier sibling's still-open
+        // same-named frame rather than nesting on top of it — a document
+        // with many sibling elements each resetting the same counter name
+        // would leave one frame open per sibling that came before it,
+        // instead of just one.
+        //
+        // A post-walk-only check can't see this: the shared parent's own
+        // `Exit` drains every bucket entry it has accumulated regardless of
+        // how many there are, so `frames.len()` reads back as 0 either way
+        // once the whole walk has finished — that drain loop, not the
+        // per-sibling eviction, is what a purely-after-the-fact assertion
+        // would actually be pinning. To observe the mid-walk frame count at
+        // its worst point (right after the LAST sibling's own reset, when
+        // an un-evicted accumulation would be at its largest), the last
+        // sibling also does a `string-set: probe counters(c, ".")` —
+        // `raikiri_traits::page::context::NamedStringState` freezes text
+        // at resolution time and is never popped afterward, the same
+        // mid-walk-probe idiom the nested-resets test above already uses
+        // for the same reason. The post-walk frame-count assertion further
+        // below is kept anyway, despite that non-discriminating limitation
+        // on its own, to match this module's convention of every other
+        // test here also pinning the trailing post-walk invariant.
+        let mut doc = Document::new();
+        let container = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        for i in 0..SIBLING_COUNT - 1 {
+            doc.append_element(
+                Some(container),
+                "p",
+                Style::default(),
+                Some(format!("counter-reset: c {i}")),
+            );
+        }
+        doc.append_element(
+            Some(container),
+            "p",
+            Style::default(),
+            Some(format!(
+                "counter-reset: c {LAST_SIBLING_RESET_VALUE}; \
+                 string-set: probe counters(c, \".\")"
+            )),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut ctx = PageContext::default();
+        drive_document(&mut ctx, &doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.string_state(&Symbol::new("probe"))
+                .and_then(|s| s.running()),
+            Some(LAST_SIBLING_RESET_VALUE.to_string().as_str()),
+            "the last sibling's own counters() reading must see only its \
+             own freshly-reset frame ({LAST_SIBLING_RESET_VALUE}) — every \
+             earlier sibling's same-named frame must already have been \
+             evicted (CSS Lists 3 §4.3's \"obscuring\" rule) by the time \
+             this sibling's own reset takes effect, not still open and \
+             joined alongside it as a {SIBLING_COUNT}-segment string"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.counter(&Symbol::new("c"))
+                .map(|c| c.values().len())
+                // `Option::unwrap_or` here is not defensive "no map entry"
+                // handling — `PageContext::pop_counter_scope` only ever
+                // pops frames off an existing `CounterStack`, it never
+                // removes the `counters` map entry itself, so `counter`
+                // returning `None` can't actually happen once a
+                // `counter-reset` has touched this name. The `0` fallback
+                // exists purely to unwrap the `Option` for the comparison.
+                .unwrap_or(0),
+            0,
+            "after the whole-document walk completes, the last sibling's \
+             own surviving frame must also have been popped at the shared \
+             parent's own subtree exit, back to the document's actual \
+             nesting depth (zero)"
+        );
+    }
 }
