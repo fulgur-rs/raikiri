@@ -855,8 +855,16 @@ fn grid_line_value_to_taffy_placement(v: &GridLineValue) -> GridPlacement {
     }
 }
 
-/// 最小限の (単一行・non-wrapping な) inline formatting context を、
-/// 条件を満たす block container に確立する。
+/// 最小限の inline formatting context を、条件を満たす block container に
+/// 確立する。`<br>` を含まない場合は単一行・non-wrapping (下記 "実現方法")
+/// だが、display:none ではない `<br>` を 1 個以上含む場合は forced break
+/// だけで少なくともその個数 + 1 個の (視覚上高さを持つ) line に分かれる
+/// (下記 "`<br>` forced break")。先頭・末尾・連続する `<br>` はそれ自身の
+/// line が高さ 0 に潰れるため、実際の見た目上の line 数はこれより少なく
+/// なりうる一方、`<br>` を含む container は `flex_wrap: Wrap` も同時に
+/// 有効になる副作用を持つため、それとは独立な size-based wrapping が
+/// 追加の line を発生させ、より多くなることもある — 上限はない (同
+/// section の doc および Non-goals 参照)。
 ///
 /// CSS 2.1 §9.4.2 <https://www.w3.org/TR/CSS21/visuren.html#inline-formatting>:
 /// "a block container either contains only block-level boxes or
@@ -969,6 +977,23 @@ fn grid_line_value_to_taffy_placement(v: &GridLineValue) -> GridPlacement {
 /// box を並べるモデル) ため、[`bridge_gap`] が copy した author 値を
 /// ここで無効化する。
 ///
+/// `align_content` も `align_items: FlexStart` (上記) と同じ理由・同じ
+/// 値 (`Some(FlexStart)`) へ reset する — [`bridge_alignment`] が copy
+/// した author の `align-content` 宣言、あるいは author が宣言しなければ
+/// `None` (taffy はこれを flexbox path では `Stretch` 相当に default
+/// する) が、ここで初めて live になる。`align-content` は cross-axis
+/// 方向で複数の flex line 間に余った space を配る property であり、この
+/// container が author の明示的な `height` (block container のままでも
+/// 常に効く、[`bridge_size`] 参照) で自身の content より高く sizing
+/// される場合、reset を怠ると default の `Stretch` がその余り space を
+/// 全 line (`<br>` forced break — 下記 doc section 参照 — が確立した、
+/// 高さ 0 の line を含む) に均等に配ってしまい、`<br>` の line を
+/// 0 より大きくして視覚的な gap を挟んでしまう。CSS 2.1 の inline
+/// formatting context に "container の余り cross space を line 間に配る"
+/// 意味論はそもそも存在しない (line box は各自の natural height を保つ、
+/// 上記 `align_items: FlexStart` の rationale と同じ) ため、`FlexStart`
+/// へ固定してその意味論ごと無効化する。
+///
 /// 参加する各 child はさらに `flex_grow: 0.0` / `flex_shrink: 0.0` /
 /// `flex_basis: auto` / `align_self: None` も得る ([`bridge_flex`] /
 /// [`bridge_alignment`] が自身の author CSS から copy した値を、上記と
@@ -990,18 +1015,98 @@ fn grid_line_value_to_taffy_placement(v: &GridLineValue) -> GridPlacement {
 /// fallback させるためである (`auto` は親の `align-items` へ fallback
 /// する契約、[`bridge_alignment`] の doc 参照)。
 ///
+/// # `<br>` forced break
+///
+/// HTML LS §the-br-element
+/// (<https://html.spec.whatwg.org/multipage/text-level-semantics.html#the-br-element>)
+/// の `<br>` は "a line break" を表す。HTML LS の rendering section
+/// (§phrasing-content-3) は `br { display-outside: newline; }` と記すが、
+/// これは CSS Display 4 の `<display-outside>` production
+/// (`block | inline | run-in` のみ) に存在しない illustrative な記法で、
+/// raikiri-style が消費できる CSS 宣言ではない。本 pass は代わりに `<br>`
+/// を tag_name で直接判別する ([`find_body`] が `tag_name() ==
+/// Some("body")` を直接比較するのと同じ pattern — `<br>` の判別に
+/// [`NodeKind`] へ新しい variant を追加する必要はない、`NodeKind::Element`
+/// のまま扱う)。
+///
+/// qualify する container の participating children に、display:none
+/// ではない `<br>` が 1 個以上含まれる場合、container 自身の `flex_wrap`
+/// を (taffy 自身の default である) `NoWrap` から `Wrap` へ切り替え、
+/// 参加する `<br>` child 自身の `flex_basis` のみを (他の child と同じ
+/// `auto` ではなく) `100%` にする。他の participating child への
+/// `flex_grow: 0` / `flex_shrink: 0` の適用は変わらない。
+///
+/// これにより、taffy 自身の flex line-packing algorithm (CSS Flexbox 1
+/// §9.2 "Line Length Determination"
+/// <https://www.w3.org/TR/css-flexbox-1/#algo-line-break> — multi-line
+/// (`flex-wrap` が `nowrap` ではない) container の各 line は、item を
+/// 1 個ずつ足しながら、container の main size を超える最初の item の
+/// 手前で確定し、その item を次の line へ持ち越す。ただしその item が
+/// line 上の最初の item である場合 (line がまだ空) は、超えていても
+/// そのまま現在の line に置く、という例外を持つ) が `<br>` の位置で
+/// 自然に line を切る: `<br>` の hypothetical main size が container
+/// 幅の 100% であるため、すでに他の item が乗っている line には決して
+/// 収まらず新しい line へ move する一方、`<br>` 自身が (空の) line の
+/// 先頭に来た場合は上記例外でその line にそのまま置かれる。
+/// `<br>` が単独で占有するその line 自身の高さ (cross size、row 方向
+/// なので `flex_basis` が支配しない軸) は
+/// [`compute_leaf_layout`](taffy::compute_leaf_layout) の測定に委ねられる
+/// — `<br>` は children を持たない leaf であり [`Node::text_layout`](crate::node::Node::text_layout) も
+/// 返さないため、measure 結果は常に `0` になる (この module の
+/// `LayoutPartialTree::compute_child_layout` — `taffy_impl.rs` 側 — の
+/// leaf 分岐 doc 参照)。したがって `<br>` が占有する line は幅こそ
+/// container 全幅だが高さ 0 で、直後の line が直前の line の下端に
+/// 隙間なく続く。結果として `<br>` の前後にある run はそれぞれ別の
+/// (見た目上の) line に分かれる一方、`<br>` 自身は視覚上何の高さも
+/// 占めない — CSS 2.1 の forced line break の見た目の効果と一致する。
+///
+/// この機構は `<br>` を含む container にのみ `flex_wrap: Wrap` を
+/// 付与する副作用も持つ: `<br>` を含まない container は従来通り
+/// `flex_wrap: NoWrap` のままだが、`<br>` を含む container では
+/// (`<br>` の前後どちらの run でも) 本来 Non-goal である
+/// size-based wrapping が technically 可能になる — line 内の
+/// inline-level item 群が container の available width を超えれば、
+/// `<br>` の有無に関わらず taffy 自身が折り返してしまう。この delta は
+/// `<br>` を含む container にのみ生じ、これまで pin されていた
+/// no-wrap な挙動 (`establish_minimal_line_boxes_upgrades_qualifying_container_to_flex_row`
+/// 等の regression test) は `<br>` を含まないケースなので影響を受けない。
+///
 /// # Non-goals (本 pass)
 ///
-/// - line wrapping / breaking は行わない: qualify する container **自身が
-///   確立する line box** の個数は、container の available width に
-///   関わらず常にちょうど 1 個になる。ただしこれは container レベルの
-///   取り扱いの話であり、participating な text child 自身が shape する
-///   glyph run が内部で複数行に折り返されないことまでは意味しない (3 番目
-///   の bullet 参照 — [`preshape_text`] は本 pass とは独立に、text ごと
-///   に page width 基準で soft-wrap する)。forced break (`<br>` 等) も本
-///   pass では line の境界として認識しない — 他の 2 個の inline-level
-///   な child の間にある `<br>` も、同じ 1 行上の別の inline-level な
-///   flex item に過ぎず、break point にはまだならない。
+/// - size-based line wrapping は行わない: qualify する container **自身が
+///   確立する line box** の個数は、display:none ではない `<br>` を含まない
+///   限り、container の available width に関わらず常にちょうど 1 個になる
+///   (`<br>` を含む場合の個数は上記 "`<br>` forced break" 参照 — それは
+///   forced break であり、size に基づく wrap ではない)。ただしこれは
+///   container レベルの取り扱いの話であり、participating な text child
+///   自身が shape する glyph run が内部で複数行に折り返されないことまでは
+///   意味しない (最後の bullet 参照 — [`preshape_text`] は本 pass とは
+///   独立に、text ごとに page width 基準で soft-wrap する)。
+/// - `<br>` 自身の box は測定上つねに `0×0` であり、「空の行が font の
+///   line-height 相当の高さを持つ」という real browser の挙動を再現
+///   しない。real browser でこの高さを与えているのは CSS 2.1 §10.8.1
+///   <https://www.w3.org/TR/CSS21/visudet.html#strut> の "strut" —
+///   各 line box の先頭に、その line box を確立した要素の font /
+///   line-height を持つ幅 0 の仮想 inline box が置かれているものとして
+///   扱う、という規定で、空行にも line-height 分の最小高さを与える。
+///   本 pass はこの strut を line box (= 本 pass が作る flex line) に
+///   対して合成しない — [`compute_leaf_layout`](taffy::compute_leaf_layout)
+///   による `<br>` 自身の測定結果だけが line の cross size を決めるため、
+///   これは [`establish_minimal_line_boxes`] が line box そのものを
+///   (単一行・non-wrapping な場合を含め) 元から strut 抜きで組んでいる
+///   ことの帰結であり、別々の special case ではない。これにより 2 個の
+///   bullet で挙動が変わる:
+///   (a) `<br>` が (自身の line 上で) 最初の participating item になる
+///   場合 — line の先頭にある container、あるいは連続する `<br><br>` の
+///   2 個目以降 — line-packing の "空の line はその最初の item を
+///   そのまま受け入れる" 例外により `<br>` はそこに留まり、高さ 0 のまま
+///   何も visible な空行を作らない。real browser が `<p><br>text</p>` の
+///   先頭や `<br><br>` の間で作る空行の高さは、本 pass では再現しない。
+///   (b) 末尾の `<br>` (後続の inline-level content が無い) も同様に
+///   高さ 0 の line を追加するだけで、視覚上の余白は生まない。
+///   両方とも、`<br>` が childless leaf で text layout を持たないために
+///   measure が `0` を返すという同じ機構の帰結であり、別々の special
+///   case ではない。
 /// - nested な inline element を ancestor の line box へ flatten する
 ///   ことは行わない — qualify する各 container 自身の IFC は直接の
 ///   children のみを対象とし、さらに nested した inline の descendant
@@ -1036,12 +1141,26 @@ fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
             .copied()
             .filter(|&c| doc.nodes[c].is_in_document())
             .collect();
+        // この container に display:none ではない `<br>` が 1 個でも
+        // あるかどうか — "`<br>` forced break" (この関数の doc 参照) の
+        // 適用条件そのもの。display:none な `<br>` は box を生成しないため
+        // forced break として数えない — 数えてしまうと `<br>` を含まない
+        // 見た目上の container まで `flex_wrap: Wrap` になり、size-based
+        // wrapping が意図せず有効になってしまう (下記 doc 参照)。
+        let has_forced_break = participating_children
+            .iter()
+            .any(|&c| is_forced_line_break(doc, c, cascade));
         {
             let style = &mut doc.nodes[idx].style;
             style.display = Display::Flex;
             style.flex_direction = TaffyFlexDirection::Row;
-            style.flex_wrap = TaffyFlexWrap::NoWrap;
+            style.flex_wrap = if has_forced_break {
+                TaffyFlexWrap::Wrap
+            } else {
+                TaffyFlexWrap::NoWrap
+            };
             style.align_items = Some(TaffyAlignItems::FLEX_START);
+            style.align_content = Some(TaffyAlignContent::FLEX_START);
             style.justify_content = None;
             style.gap = Size {
                 width: LengthPercentage::length(0.0),
@@ -1049,13 +1168,33 @@ fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
             };
         }
         for c in participating_children {
+            let is_break = is_forced_line_break(doc, c, cascade);
             let child_style = &mut doc.nodes[c].style;
             child_style.flex_grow = 0.0;
             child_style.flex_shrink = 0.0;
-            child_style.flex_basis = Dimension::auto();
+            child_style.flex_basis = if is_break {
+                Dimension::percent(1.0)
+            } else {
+                Dimension::auto()
+            };
             child_style.align_self = None;
         }
     }
+}
+
+/// `idx` (ある in-document な node) が [`establish_minimal_line_boxes`] の
+/// "`<br>` forced break" (同関数の doc section 参照) として扱われるべき
+/// かどうか。
+///
+/// `NodeKind::Element` かつ `tag_name() == Some("br")` かつ computed
+/// `display` が [`DisplayValue::None`] ではないことを見る — tag_name の
+/// 直接比較は [`find_body`] の `tag_name() == Some("body")` と同じ pattern
+/// であり、`<br>` を判別するために [`NodeKind`] へ新しい variant を追加する
+/// 必要はない。
+fn is_forced_line_break(doc: &Document, idx: usize, cascade: &CascadeResult) -> bool {
+    doc.nodes[idx].kind() == NodeKind::Element
+        && doc.nodes[idx].tag_name() == Some("br")
+        && cascade.computed[idx].display != DisplayValue::None
 }
 
 /// `idx` (ある [`NodeKind::Element`]) が
@@ -3662,6 +3801,453 @@ mod tests {
              (= auto) once `p` qualifies for minimal-line-box treatment, \
              so `b` falls back to `p`'s own align_items:FlexStart \
              instead of diverging from it"
+        );
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_br_switches_container_to_wrap_and_forces_full_basis() {
+        // Unit-level pin for the "`<br>` forced break" mechanism documented
+        // on `establish_minimal_line_boxes`: a qualifying container with a
+        // participating `<br>` switches from `flex_wrap: NoWrap` to `Wrap`,
+        // and only the `<br>` child (not its siblings) gets its flex_basis
+        // forced to 100%.
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
+        let a = doc.append_text(p, "A");
+        let br = doc.append_element(Some(p), "br", Style::default(), None::<&str>);
+        let c = doc.append_text(p, "C");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+
+        assert_eq!(doc.nodes[p].style.display, Display::Flex);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            doc.nodes[p].style.flex_wrap,
+            TaffyFlexWrap::Wrap,
+            "a qualifying container with a participating <br> must enable \
+             flex_wrap so taffy's own line-packing algorithm can place the \
+             <br> (and anything after it) onto a new line"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            doc.nodes[br].style.flex_basis,
+            Dimension::percent(1.0),
+            "<br> itself must get flex_basis:100% — the hypothetical main \
+             size that never fits alongside a non-empty line, forcing it \
+             (and everything after it) onto a new line"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            doc.nodes[a].style.flex_basis,
+            Dimension::auto(),
+            "a plain sibling text node must keep the ordinary content-based \
+             flex_basis — only <br> itself gets the 100% override"
+        );
+        assert_eq!(doc.nodes[c].style.flex_basis, Dimension::auto());
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_display_none_br_does_not_switch_to_wrap() {
+        // A `display:none` `<br>` generates no box at all (CSS Display 4
+        // §2's "the element and its descendants generate no boxes"), so it
+        // must not be treated as a forced break — otherwise a container
+        // with no visually-effective `<br>` would still gain
+        // `flex_wrap: Wrap`, silently enabling size-based wrapping
+        // (`establish_minimal_line_boxes`'s Non-goals doc) for content that
+        // never asked for it.
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
+        let _a = doc.append_text(p, "A");
+        let _br = doc.append_element(Some(p), "br", Style::default(), Some("display: none"));
+        let _c = doc.append_text(p, "C");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+
+        assert_eq!(doc.nodes[p].style.display, Display::Flex);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            doc.nodes[p].style.flex_wrap,
+            TaffyFlexWrap::NoWrap,
+            "a display:none <br> must not count as a forced break"
+        );
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_br_forces_second_line_end_to_end() {
+        // End-to-end pin (full `layout_single_page` pipeline, matching
+        // `establish_minimal_line_boxes_lays_out_children_side_by_side_not_stacked`'s
+        // style) for the concrete geometry `<br>` must produce: the content
+        // after `<br>` lands on a lower line than the content before it,
+        // and the `<br>` itself contributes no visible height — the line
+        // it alone occupies (taffy's line-packing algorithm assigns it one
+        // because its flex_basis:100% never fits next to prior content)
+        // must have cross size 0, so it does not introduce a phantom blank
+        // line between the two real ones.
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
+        let a = doc.append_text(p, "AAAA");
+        let br = doc.append_element(Some(p), "br", Style::default(), None::<&str>);
+        let c = doc.append_text(p, "CCCC");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let a_loc = doc.nodes[a].unrounded_layout;
+        let br_loc = doc.nodes[br].unrounded_layout;
+        let c_loc = doc.nodes[c].unrounded_layout;
+        let p_loc = doc.nodes[p].unrounded_layout;
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            c_loc.location.y >= a_loc.location.y + a_loc.size.height - 1e-3,
+            "the text after <br> must start at or below the first line's \
+             bottom edge (forced break into a second line), got \
+             a.y={} a.h={} c.y={}",
+            a_loc.location.y,
+            a_loc.size.height,
+            c_loc.location.y
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            br_loc.size.height, 0.0,
+            "<br> is a childless leaf with no text layout, so its own \
+             measured cross size must be 0 — the load-bearing fact that \
+             keeps the line it alone occupies from adding visible height"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (p_loc.size.height - (a_loc.size.height + c_loc.size.height)).abs() < 1e-3,
+            "the container's total height must equal exactly the sum of \
+             the two real lines' heights — no phantom third (blank) line \
+             from the line <br> alone occupies, got p.h={} a.h={} c.h={}",
+            p_loc.size.height,
+            a_loc.size.height,
+            c_loc.size.height
+        );
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_consecutive_br_adds_no_blank_line_either() {
+        // Same mechanism as the leading-<br> Non-goal
+        // (`establish_minimal_line_boxes_leading_br_does_not_add_leading_blank_line`),
+        // checked for the *second* <br> in a `<br><br>` run instead of the
+        // first: after the first <br> takes the whole of its own (now
+        // empty) line, the second <br> is checked against a line with 0
+        // remaining space — still its line's first item (the first <br>
+        // already moved on), so the same "an empty line accepts its first
+        // item" exception applies to it too, and it likewise measures
+        // 0-height. Confirms the doc's claim explicitly, rather than
+        // leaving it as an un-pinned assertion about a case distinct from
+        // the leading-<br> one.
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
+        let a = doc.append_text(p, "AAAA");
+        let br1 = doc.append_element(Some(p), "br", Style::default(), None::<&str>);
+        let br2 = doc.append_element(Some(p), "br", Style::default(), None::<&str>);
+        let b = doc.append_text(p, "BBBB");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let a_loc = doc.nodes[a].unrounded_layout;
+        let br1_loc = doc.nodes[br1].unrounded_layout;
+        let br2_loc = doc.nodes[br2].unrounded_layout;
+        let b_loc = doc.nodes[b].unrounded_layout;
+        let p_loc = doc.nodes[p].unrounded_layout;
+
+        assert_eq!(br1_loc.size.height, 0.0);
+        assert_eq!(br2_loc.size.height, 0.0);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            b_loc.location.y >= a_loc.location.y + a_loc.size.height - 1e-3,
+            "got a.y={} a.h={} b.y={}",
+            a_loc.location.y,
+            a_loc.size.height,
+            b_loc.location.y
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (p_loc.size.height - (a_loc.size.height + b_loc.size.height)).abs() < 1e-3,
+            "a consecutive <br><br> must not add a visible blank line \
+             between AAAA and BBBB — got p.h={} a.h={} b.h={}",
+            p_loc.size.height,
+            a_loc.size.height,
+            b_loc.size.height
+        );
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_br_full_basis_resolves_against_narrow_container_width() {
+        // `<br>`'s flex_basis:100% (`establish_minimal_line_boxes`'s doc)
+        // must resolve against the *qualifying container's own* used main
+        // size, not its containing block's — otherwise a narrower
+        // container (explicit `width`, rather than filling its parent)
+        // would give <br> a too-wide box. Pins that by giving the
+        // container an explicit width much narrower than the page and
+        // checking <br>'s own box stays within it.
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("display: block; width: 100px"),
+        );
+        let a = doc.append_text(p, "AAAA");
+        let br = doc.append_element(Some(p), "br", Style::default(), None::<&str>);
+        let c = doc.append_text(p, "CCCC");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let p_loc = doc.nodes[p].unrounded_layout;
+        let br_loc = doc.nodes[br].unrounded_layout;
+        let a_loc = doc.nodes[a].unrounded_layout;
+        let c_loc = doc.nodes[c].unrounded_layout;
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (p_loc.size.width - 100.0).abs() < 1e-3,
+            "fixture precondition: explicit width:100px must actually take \
+             effect, got p.w={}",
+            p_loc.size.width
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            br_loc.size.width <= p_loc.size.width + 1e-3,
+            "<br>'s flex_basis:100% must resolve against the qualifying \
+             container's own (narrow) used width, not some wider \
+             containing block — got br.w={} p.w={}",
+            br_loc.size.width,
+            p_loc.size.width
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            c_loc.location.y >= a_loc.location.y + a_loc.size.height - 1e-3,
+            "the forced break must still occur on a narrow container, got \
+             a.y={} a.h={} c.y={}",
+            a_loc.location.y,
+            a_loc.size.height,
+            c_loc.location.y
+        );
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_br_line_stays_zero_height_under_explicit_tall_container_height()
+    {
+        // Regression pin for a property-leak this pass must guard against:
+        // `bridge_size` unconditionally copies an author `height` into
+        // `style.size.height`, and `bridge_alignment` unconditionally
+        // copies an author `align-content` into `style.align_content`
+        // (`None` when unauthored). Once this container becomes a
+        // multi-line flex container (this pass's "`<br>` forced break"),
+        // an explicit `height` taller than the natural content height
+        // leaves leftover cross space that taffy's own default
+        // (`align_content: Stretch` when unset) would distribute across
+        // ALL flex lines — including the zero-height line the `<br>`
+        // alone occupies — growing it above 0 and inserting a visible gap
+        // between the two real text lines. This container's own
+        // `align_content` must be reset (mirroring the `align_items`
+        // reset a few lines up) so that leftover space is not distributed
+        // onto lines at all.
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("display: block; height: 200px"),
+        );
+        let a = doc.append_text(p, "AAAA");
+        let br = doc.append_element(Some(p), "br", Style::default(), None::<&str>);
+        let c = doc.append_text(p, "CCCC");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let p_loc = doc.nodes[p].unrounded_layout;
+        let a_loc = doc.nodes[a].unrounded_layout;
+        let br_loc = doc.nodes[br].unrounded_layout;
+        let c_loc = doc.nodes[c].unrounded_layout;
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (p_loc.size.height - 200.0).abs() < 1e-3,
+            "fixture precondition: explicit height:200px must actually \
+             take effect (and exceed the two text lines' natural height), \
+             got p.h={}",
+            p_loc.size.height
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            br_loc.size.height, 0.0,
+            "the <br>'s own line must stay at 0 height even when the \
+             container's explicit height leaves leftover cross space — \
+             that space must not stretch onto any line, got br.h={}",
+            br_loc.size.height
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (c_loc.location.y - (a_loc.location.y + a_loc.size.height)).abs() < 1e-3,
+            "no visible gap between the two real lines: the second \
+             line's top must sit exactly at the first line's bottom \
+             edge, got a.y={} a.h={} c.y={}",
+            a_loc.location.y,
+            a_loc.size.height,
+            c_loc.location.y
+        );
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_leading_br_does_not_add_leading_blank_line() {
+        // Documents (rather than merely asserting) the accepted Non-goal on
+        // `establish_minimal_line_boxes`: a `<br>` with no preceding
+        // participating content on its line is the *first* item taffy
+        // considers for that line, so the flex line-packing exception
+        // ("an already-empty line accepts its first item even if it
+        // overflows") places it there rather than moving it — and since
+        // `<br>` measures 0x0 (no children, no text layout), that first
+        // line has no visible height. So a leading `<br>` here does not
+        // reproduce the leading blank line real browsers render for it;
+        // this pins the current (accepted) behavior instead.
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
+        let br = doc.append_element(Some(p), "br", Style::default(), None::<&str>);
+        let a = doc.append_text(p, "AAAA");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let br_loc = doc.nodes[br].unrounded_layout;
+        let a_loc = doc.nodes[a].unrounded_layout;
+        let p_loc = doc.nodes[p].unrounded_layout;
+
+        assert_eq!(br_loc.location.y, 0.0);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (p_loc.size.height - a_loc.size.height).abs() < 1e-3,
+            "no leading blank line: container height must equal just the \
+             text line's height, got p.h={} a.h={}",
+            p_loc.size.height,
+            a_loc.size.height
+        );
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_br_forces_second_line_on_inline_block_container() {
+        // Same forced-break geometry as
+        // `establish_minimal_line_boxes_br_forces_second_line_end_to_end`,
+        // but on a qualifying `inline-block` container rather than `block`
+        // — pins that the mechanism does not depend on which of the two
+        // qualifying display values establishes the line box (this crate's
+        // block layout gives both a definite available main size from
+        // their own containing block; see `bridge_display`'s doc, neither
+        // display value gets shrink-to-fit sizing here).
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let ib = doc.append_element(
+            Some(body),
+            "span",
+            Style::default(),
+            Some("display:inline-block"),
+        );
+        let a = doc.append_text(ib, "AAAA");
+        let br = doc.append_element(Some(ib), "br", Style::default(), None::<&str>);
+        let c = doc.append_text(ib, "CCCCCCCCCCCCCCCCCCCC");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let a_loc = doc.nodes[a].unrounded_layout;
+        let br_loc = doc.nodes[br].unrounded_layout;
+        let c_loc = doc.nodes[c].unrounded_layout;
+        let ib_loc = doc.nodes[ib].unrounded_layout;
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            c_loc.location.y >= a_loc.location.y + a_loc.size.height - 1e-3,
+            "got a.y={} a.h={} c.y={}",
+            a_loc.location.y,
+            a_loc.size.height,
+            c_loc.location.y
+        );
+        assert_eq!(br_loc.size.height, 0.0);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (ib_loc.size.height - (a_loc.size.height + c_loc.size.height)).abs() < 1e-3,
+            "got ib.h={} a.h={} c.h={}",
+            ib_loc.size.height,
+            a_loc.size.height,
+            c_loc.size.height
         );
     }
 
