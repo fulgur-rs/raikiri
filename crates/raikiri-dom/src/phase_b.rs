@@ -84,7 +84,12 @@
 //! A root-level frame-creating directive (applied while `pending_pops` is
 //! still empty, i.e. before any bucket exists) has no ancestor exit inside
 //! this function to pop at and is intentionally left open for the whole
-//! [`drive_document`]/[`drive_page`] call.
+//! [`drive_document`]/[`drive_page`] call — see [`drive_page`]'s own doc
+//! for why that frame in fact stays open for `ctx`'s entire lifetime, not
+//! just the one call: nothing pops it later, so it is still there,
+//! unconditionally, whether or not a second [`drive_page`] call ever
+//! touches the same `ctx` — a second such call is only what turns that
+//! standing frame into an *observable* correctness problem.
 //!
 //! Telling "creates a new frame" apart from "mutates an inherited one" for
 //! `counter-increment`/`counter-set` needs a look at `ctx`'s counter state
@@ -121,6 +126,43 @@ use crate::target::build_target_registry;
 /// per-document step this function deliberately stays out of, and
 /// [`drive_document`] for the sanctioned way to satisfy this precondition
 /// for a whole document in one call.
+///
+/// **A `counter-reset` on `page_root` itself is never popped, by this call
+/// or any later one.** Module doc "Counter-scope exit (CSS Lists 3 §4.3,
+/// §4.4.2)" explains why: a root-level frame-creating directive has no
+/// ancestor `Exit` inside this function's walk to close it at, so the
+/// frame it opens stays open on `ctx` for as long as `ctx` lives, not just
+/// for this one call — the `pending_pops` side-stack that tracks
+/// everything else is local to this function and carries nothing across
+/// calls. Calling `drive_page` again on the same `ctx` — for the same
+/// `page_root`, or a different one whose own directives reset the same
+/// counter name — stacks another open frame on top of the first,
+/// permanently, since nothing outside a single call is watching which
+/// root-level frames are still open. [`PageContext::counter`]'s
+/// `CounterStack::values()` (what `counters()`-function rendering reads)
+/// returns every open frame, so a later `counters(name, ..)` reference
+/// would join whatever earlier frame(s) leaked this way together with the
+/// frame the current page actually meant to expose. A caller driving more
+/// than one page against one `ctx` must therefore give every page a
+/// `page_root` whose own directives don't carry a `counter-reset` meant to
+/// be scoped to that page alone — this driver has no mechanism to close a
+/// root-level reset at any page boundary, so in practice it behaves as if
+/// open for `ctx`'s whole lifetime, not just the one page, regardless of
+/// which `page_root` it happens to be attached to.
+///
+/// **Most other counter scopes are already closed by the time this call
+/// returns.** Every scope other than the `page_root`-level one above
+/// closes at some `Exit` reached inside this same call (module doc
+/// "Counter-scope exit"), so [`PageContext::counter`] read after this
+/// function returns observes only whatever frame, if any, is still open at
+/// `page_root`'s own level — not the value a nested element saw while its
+/// own scope was still live. A caller that needs a counter's value from a
+/// specific point in the walk should capture it from inside directive
+/// processing instead, via a `string-set: <name> counter(<counter-name>)`
+/// directive resolved into a [`PageContext::string_state`] entry (the
+/// pattern this module's own tests use): `NamedStringState` freezes the
+/// value at resolution time and, unlike `counters`, this walk never pops
+/// it.
 #[allow(
     dead_code,
     reason = "No production per-document caller wires this into a real \
@@ -151,6 +193,17 @@ pub(crate) fn drive_page(
 /// than once per document would re-wire `targets` and silently discard any
 /// `pending_slots` queued in between, exactly the hazard the module doc's
 /// "one-time, per-document step" framing exists to rule out.
+///
+/// The root-level counter-reset leak documented on [`drive_page`] applies
+/// here too, one level up: this function always walks from `doc.root`, so
+/// a `counter-reset` applied by `doc.root` itself is never popped by this
+/// call either, and the resulting standing frame is on `ctx` unconditionally
+/// — the same single call this function is meant to make already leaves it
+/// there, not only a hypothetical second call. It stays harmless as long as
+/// nothing reads `counters()`-backed state off `ctx` afterward; see
+/// [`drive_page`]'s own doc for the full explanation, including how a
+/// caller should read a counter's value from inside the walk instead of
+/// from `ctx` after this function returns.
 #[allow(
     dead_code,
     reason = "No production per-document driver calls this yet — the \
