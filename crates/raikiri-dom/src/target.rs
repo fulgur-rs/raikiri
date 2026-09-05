@@ -8,14 +8,12 @@
 //! `CounterIncrement`/`CounterReset`/`CounterSet`/`StringSet` (and
 //! `RegisterRunning` is emitted by [`crate::running::build_running_template_store`]
 //! itself) into each `position: running(name)` template's own
-//! `directives: Vec<GcpmDirective>` — a dom-local Phase B walk (landed as
-//! [`crate::gcpm`]) is what *applies* those emitted directives to
-//! dom-local counter/string/running state, and (also landed)
-//! `raikiri_traits::page::context::PageContext::apply_directive`
-//! is the promoted, canonical counterpart. This module's `RegisterTarget`
-//! variant has no emit-step counterpart in either of those (see "synthesized
-//! here" below) — it *does* now have a real apply-step counterpart on the
-//! promoted `PageContext` (its `RegisterTarget` arm registers a
+//! `directives: Vec<GcpmDirective>` — [`crate::phase_b`]'s DOM-tree-walking
+//! driver is what *applies* those emitted directives, via
+//! `raikiri_traits::page::context::PageContext::apply_directive`. This
+//! module's `RegisterTarget` variant has no emit-step counterpart there
+//! (see "synthesized here" below) — it *does* now have a real apply-step
+//! counterpart on the promoted `PageContext` (its `RegisterTarget` arm registers a
 //! counts-only `TargetInfo` from live counter state; see that method's
 //! doc), separate from and complementary to this module's own richer
 //! text-carrying [`build_target_registry`] walk (wired in via
@@ -251,10 +249,9 @@ impl CounterScopes {
             match stack.last_mut() {
                 // Saturating, not wrapping/panicking, on overflow — the
                 // same fix as
-                // `raikiri_traits::page::context::CounterStack::increment`
-                // and `crate::gcpm::CounterStack::increment` — this walker's
-                // top-of-stack increment shared the exact same unbounded
-                // `+=` bug. `counter-reset: c 2147483647; counter-increment:
+                // `raikiri_traits::page::context::CounterStack::increment` —
+                // this walker's top-of-stack increment shared the exact same
+                // unbounded `+=` bug. `counter-reset: c 2147483647; counter-increment:
                 // c 1` is spec-legal CSS and would panic (debug) or
                 // silently wrap to `i32::MIN` (release) on plain `+=`.
                 Some(top) => *top = top.saturating_add(*delta),
@@ -846,8 +843,8 @@ mod tests {
         // counter-increment past i32::MAX must saturate, not panic (debug
         // builds) or wrap to i32::MIN (release builds). Same finding, same
         // fix, as `CounterStack::increment` in `raikiri-traits`'s
-        // `page::context` and `raikiri-dom`'s `gcpm` — this walker's
-        // top-of-stack increment shared the exact same unbounded `+=` bug.
+        // `page::context` — this walker's top-of-stack increment shared
+        // the exact same unbounded `+=` bug.
         //
         // reset is deliberately `i32::MAX - 1`, not `i32::MAX`, so the
         // expected result (`i32::MAX`) is reachable ONLY by actually adding

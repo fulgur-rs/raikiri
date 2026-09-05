@@ -1,9 +1,9 @@
 //! Phase B main-document driver — the DOM-tree/per-page walking driver that
 //! consumes raikiri-traits's promoted `PageContext`
-//! (`raikiri_traits::page::context::PageContext`) rather than this crate's
-//! own dom-local `crate::gcpm` mirror (see that module's doc for why the
-//! mirror still exists dom-locally rather than being collapsed onto this
-//! driver yet).
+//! (`raikiri_traits::page::context::PageContext`). A dom-local mirror of
+//! this same algorithm existed here previously, built and unit tested in
+//! isolation before the `PageContext` promotion landed; it has since been
+//! collapsed onto this driver.
 //!
 //! # Per-document setup, then one [`drive_page`] call per page
 //!
@@ -301,8 +301,7 @@ fn walk_directives(ctx: &mut PageContext, doc: &Document, cascade: &CascadeResul
                     // This also suppresses `StringSet` for the whole
                     // subtree, which is worth flagging separately from the
                     // counter case above: this diverges from CSS GCPM 3
-                    // §1.1.1's literal per-element carve-out (quoted on
-                    // `crate::gcpm`'s `NamedStringState` doc) — that rule
+                    // §1.1.1's literal per-element carve-out — that rule
                     // fires `string-set` "at the point when the content box
                     // of the element is first created (or would have been
                     // created if **the element's** display value is

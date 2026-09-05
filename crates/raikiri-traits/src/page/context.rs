@@ -5,11 +5,11 @@
 //! 1940-1965) gives `PageContext`'s canonical 6-field shape. Previously this
 //! was an empty `#[non_exhaustive]` placeholder while the walk algorithm
 //! (nested counter scopes, named-string 4-snapshot timing, running-binding
-//! rebind) was built and unit tested dom-locally at
-//! `raikiri_dom::gcpm::PhaseBWalkState` — see that module's doc for why:
-//! populating this struct's fields requires new raikiri-traits `pub`
-//! accessor/mutator methods, a genuine `wall/traits` crossing. This module is
-//! that promotion:
+//! rebind) was built and unit tested dom-locally, isolated from raikiri-traits,
+//! at what was then a `raikiri-dom`-local `PhaseBWalkState` type: populating
+//! this struct's fields required new raikiri-traits `pub` accessor/mutator
+//! methods, a cross-crate API-surface addition. This module is that
+//! promotion:
 //!
 //! 1. The 4 `HashMap`-shaped fields (`counters` / `strings` / `running` /
 //!    `targets`) are encapsulated behind the single
@@ -25,26 +25,21 @@
 //!    that method's doc for the full contract.
 //!
 //! **Type-promotion design decision**: the dom-local
-//! `raikiri_dom::gcpm::CounterStack` / `raikiri_dom::gcpm::NamedStringState`
-//! *shapes* are promoted (moved) here, matching the `super::target`
+//! `CounterStack` / `NamedStringState` *shapes* were promoted (moved) here
+//! from raikiri-dom's own dom-local mirror, matching the `super::target`
 //! precedent (`TargetRegistry` / `TargetInfo` canonical impl lives in
-//! raikiri-traits, raikiri-dom only hosts producers). `raikiri_dom::gcpm`'s
-//! own dom-local mirror types are **deliberately left in place**, not
-//! deleted: no production driver in raikiri-dom calls
-//! `PageContext::apply_directive` yet (wiring a real DOM-tree-walking driver
-//! — `CounterStack::pop_scope` / `NamedStringState` page-boundary call sites
-//! — remains future work, explicitly out of this promotion's scope) —
-//! `raikiri_dom::gcpm::PhaseBWalkState` remains the *only*
-//! currently-exercised implementation reachable from raikiri-dom's actual
-//! code path (`apply_running_template_directives`). Deleting it here would
-//! strand that call site with nothing to call until the DOM-tree-walking
-//! driver lands. `raikiri_dom::gcpm`'s module doc is updated to point here
-//! instead of carrying a stale "not yet landed" note.
+//! raikiri-traits, raikiri-dom only hosts producers). That dom-local mirror
+//! was initially left in place after this promotion landed, since wiring a
+//! real DOM-tree-walking driver against it — `CounterStack::pop_scope` /
+//! `NamedStringState` page-boundary call sites — was out of this
+//! promotion's scope. raikiri-dom's `crate::phase_b` driver has since been
+//! built against this promoted type directly, and the dom-local mirror
+//! (having no remaining caller once that driver existed) has been deleted.
 //!
 //! **Field-shape divergence from the dom-local mirror, now resolved**: the
 //! dom-local `NamedStringState` stores `Option<StringSnapshot>` (a
 //! `ContentSource` + a raw counter-values snapshot) instead of design §7.2's
-//! canonical `Option<String>`, because `raikiri_dom::gcpm` could not reach
+//! canonical `Option<String>`, because the dom-local mirror could not reach
 //! `super::target`'s private `format_counter` / `join_counter_stack`
 //! helpers (a documented gap). Now that this promotion lives *inside*
 //! raikiri-traits, that gap dissolves for the `Named`-counter-style half of
@@ -61,7 +56,7 @@
 //! — see `resolve_content_source`'s doc "Skipping, not fabricating").
 //!
 //! **`RegisterTarget` now really mutates `self.targets`** — unlike
-//! `raikiri_dom::gcpm`'s documented no-op (that module doesn't own
+//! the dom-local mirror's documented no-op (it never owned
 //! `TargetRegistry` at all). See [`PageContext::apply_directive`]'s doc for
 //! what it can and cannot populate from a bare directive, and
 //! [`PageContext::set_targets`] for the complementary bulk-wiring path the
@@ -88,8 +83,8 @@ use crate::dom::Symbol;
 /// — reset = push a new frame, increment/set = mutate the top frame — is the
 /// natural fit design §7.2 names.
 ///
-/// Promoted from `raikiri_dom::gcpm::CounterStack`
-/// — same algorithm, now `pub` (design §7.2 gives `PageContext.counters:
+/// Promoted from what was raikiri-dom's own dom-local `CounterStack`
+/// (since deleted there) — same algorithm, now `pub` (design §7.2 gives `PageContext.counters:
 /// HashMap<Symbol, CounterStack>` with no `pub` on the field itself, so the
 /// *value type* returned by [`PageContext::counter`] must be nameable from
 /// outside this crate).
@@ -198,10 +193,11 @@ impl CounterStack {
 /// CSS GCPM 3 §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#propdef-string-set> /
 /// §1.1.2 <https://www.w3.org/TR/css-gcpm-3/#string-first>).
 ///
-/// Promoted from `raikiri_dom::gcpm::NamedStringState` — same 4-snapshot
+/// Promoted from what was raikiri-dom's own dom-local `NamedStringState`
+/// (since deleted there) — same 4-snapshot
 /// timing rules, but with the
 /// design-doc-canonical `Option<String>` field type (fully resolved text)
-/// instead of that module's dom-local `Option<StringSnapshot>` deferral; see
+/// instead of that dom-local mirror's `Option<StringSnapshot>` deferral; see
 /// module-level doc "Field-shape divergence" for why this promotion can do
 /// what the dom-local mirror could not.
 ///
@@ -228,9 +224,9 @@ impl CounterStack {
 /// from the caller. `last` → `on_page_last_use`, else `on_page_start` (exit
 /// value). `first-except` → `on_page_first_use.is_some()` ? empty :
 /// `on_page_start` (condition is page-local, not element-position). Carried
-/// over unchanged from the dom-local mirror (`raikiri_dom::gcpm`) — the
-/// consuming `string()` implementation itself is a future consumer's task,
-/// not this promotion's.
+/// over unchanged from the dom-local mirror (since deleted from raikiri-dom)
+/// — the consuming `string()` implementation itself is a future consumer's
+/// task, not this promotion's.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct NamedStringState {
@@ -463,9 +459,10 @@ impl PageContext {
 
     /// Apply one [`GcpmDirective`] to this context — the single entry point
     /// for mutating `counters` / `strings` / `running` / `targets` (a
-    /// deliberate design decision). Mirrors
-    /// `raikiri_dom::gcpm::PhaseBWalkState::apply_directive`'s dispatch, with
-    /// two differences documented on the relevant arms below:
+    /// deliberate design decision). Mirrored the dispatch of what was
+    /// raikiri-dom's own dom-local `PhaseBWalkState::apply_directive`
+    /// (since deleted there), with two differences documented on the
+    /// relevant arms below:
     /// `StringSet` resolves text where possible and otherwise skips the
     /// assignment (module doc "Field-shape divergence",
     /// `resolve_content_source`'s doc "Skipping, not fabricating") and
@@ -474,8 +471,9 @@ impl PageContext {
     ///
     /// **Exhaustive same-crate match, no wildcard arm.** [`GcpmDirective`] is
     /// defined in this crate; `#[non_exhaustive]`'s "downstream `match` needs
-    /// a wildcard" restriction is a cross-crate rule, so unlike
-    /// `raikiri_dom::gcpm`'s necessarily-wildcarded copy, this match lists
+    /// a wildcard" restriction is a cross-crate rule, so unlike the
+    /// dom-local mirror's necessarily-wildcarded copy (that copy lived in a
+    /// different crate; it has since been deleted), this match lists
     /// every variant — a future 7th variant fails to compile right here
     /// instead of silently no-op'ing under a `_` arm.
     pub fn apply_directive(&mut self, directive: &GcpmDirective) {
@@ -1257,11 +1255,12 @@ mod tests {
         }
 
         #[test]
-        fn register_target_unlike_dom_local_gcpm_no_op_really_mutates_targets() {
+        fn register_target_unlike_pre_promotion_dom_local_no_op_really_mutates_targets() {
             // Regression pin against the pre-promotion dom-local behavior
-            // (raikiri_dom::gcpm::PhaseBWalkState treats RegisterTarget as a
-            // documented no-op) — this promoted apply_directive must NOT
-            // preserve that no-op; it owns TargetRegistry for real now.
+            // (the deleted raikiri_dom::gcpm::PhaseBWalkState treated
+            // RegisterTarget as a documented no-op) — this promoted
+            // apply_directive must NOT preserve that no-op; it owns
+            // TargetRegistry for real now.
             let before = PageContext::default();
             let mut after = before.clone();
             after.apply_directive(&GcpmDirective::RegisterTarget {
