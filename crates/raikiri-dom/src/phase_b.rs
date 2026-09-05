@@ -91,6 +91,38 @@
 //! touches the same `ctx` — a second such call is only what turns that
 //! standing frame into an *observable* correctness problem.
 //!
+//! CSS Lists 3 §4.3 also specifies a second, separate rule alongside the
+//! following-sibling scoping above — quoted verbatim: a `counter-reset`'s
+//! scope "does not include any elements in the scope of a counter with the
+//! same name created by a counter-reset on a later sibling of the element,
+//! allowing such explicit counter instantiations to obscure those earlier
+//! siblings." [`walk_directives`] implements this by checking, right before
+//! applying a `CounterReset` directive, whether the *parent's own* bucket
+//! (`pending_pops.last()`) already holds this name — meaning some earlier
+//! sibling under the same parent opened a frame for it that has not been
+//! popped yet. If so, that entry is removed from the bucket and
+//! [`PageContext::pop_counter_scope`] evicts the frame immediately, before
+//! the new frame is pushed. Because this document-order walk always fully
+//! processes (and closes out, down to matching `Exit`) an element's whole
+//! subtree before its next sibling is even entered, the frame such a bucket
+//! hit points at is always the earlier sibling's own top-of-stack frame for
+//! that name, never a deeper one from inside that sibling's own subtree
+//! (already popped by the time this check runs) and never an ancestor's
+//! (which lives one level up, in the parent's own parent's bucket — outside
+//! what this check ever consults). This is also why the check must key off
+//! the *parent's* bucket rather than, say, "the counter stack is
+//! non-empty": a `counter-reset` nested inside an *ancestor's* own
+//! same-named reset (genuine §4.1 nesting, not sibling obscuring) must keep
+//! both frames — and it does, because the ancestor's frame was recorded into
+//! a different, outer bucket the nested element's own parent never sees.
+//! Only `CounterReset` triggers this eviction — the quoted rule names
+//! counter-reset specifically as the obscuring operation — even though the
+//! same bucket can also hold a name an earlier sibling instantiated
+//! implicitly via `counter-increment`/`counter-set` (CSS Lists 3 §4.4.2,
+//! see below): a later sibling's own `counter-increment`/`counter-set` never
+//! evicts anything, it only ever mutates whatever frame is already in
+//! scope, same as before this rule existed.
+//!
 //! Telling "creates a new frame" apart from "mutates an inherited one" for
 //! `counter-increment`/`counter-set` needs a look at `ctx`'s counter state
 //! *before* the directive is applied — [`GcpmDirective::CounterIncrement`]
@@ -286,6 +318,49 @@ fn walk_directives(ctx: &mut PageContext, doc: &Document, cascade: &CascadeResul
                                 _ => None,
                             };
 
+                            // CSS Lists 3 §4.3's "obscuring" rule: a
+                            // `counter-reset` on a later sibling evicts an
+                            // earlier sibling's still-open same-named frame
+                            // from scope entirely, rather than nesting a new
+                            // frame on top of it. The parent's own bucket
+                            // (`pending_pops.last()`) already tracks exactly
+                            // the set of same-level, not-yet-popped frames —
+                            // opened by an earlier sibling's `CounterReset`,
+                            // or by an earlier sibling's
+                            // `CounterIncrement`/`CounterSet` implicit
+                            // instantiation (both record into this same
+                            // bucket, just above) — so a hit here is always
+                            // a sibling-level frame for this exact name, not
+                            // an ancestor's: any frame a *descendant* of
+                            // that earlier sibling opened for the same name
+                            // was already popped at that descendant's own
+                            // parent's exit, which — in this document-order
+                            // walk — happens strictly before this element is
+                            // even entered. Only `CounterReset` triggers
+                            // this eviction (§4.3 names counter-reset,
+                            // specifically, as the obscuring operation);
+                            // `CounterIncrement`/`CounterSet` on a later
+                            // sibling keep mutating whatever frame is
+                            // already in scope, unchanged from before.
+                            //
+                            // This must NOT fire for genuine nesting (a
+                            // *child* resetting the same name as its own
+                            // ancestor): the bucket consulted here is the
+                            // resetting element's PARENT's bucket, which
+                            // only ever holds frames opened by the parent's
+                            // own children (this element's siblings) — the
+                            // ancestor's own frame lives one level up, in
+                            // the parent's own PARENT's bucket, invisible to
+                            // this check.
+                            if let GcpmDirective::CounterReset { name, .. } = directive
+                                && let Some(parent_bucket) = pending_pops.last_mut()
+                                && let Some(pos) =
+                                    parent_bucket.iter().position(|pending| pending == name)
+                            {
+                                parent_bucket.remove(pos);
+                                ctx.pop_counter_scope(name);
+                            }
+
                             ctx.apply_directive(directive);
 
                             // Every scope newly instantiated by this
@@ -339,6 +414,16 @@ fn walk_directives(ctx: &mut PageContext, doc: &Document, cascade: &CascadeResul
                 // `display:none` arm, the defensive `None` arm, and the
                 // normal directive-applying arm — falls through to both),
                 // so the two stacks stay 1:1 for every node, leaf or not.
+                // Bucket *entries*, unlike the bucket itself, are not
+                // append-only: the obscuring-eviction check above
+                // (`GcpmDirective::CounterReset`'s handling, module doc
+                // "Counter-scope exit") can `remove` a name from a bucket
+                // before that bucket's own `Exit` is ever reached. That name
+                // is then simply gone from `names` by the time this loop
+                // runs — not double-popped, since it was never re-added
+                // after removal (only the later sibling's own fresh
+                // `CounterReset` re-adds it, under the same name, as a
+                // separate push).
                 //
                 // cov:ignore: the `None` branch below is unreachable per
                 // the invariant above; kept as a graceful no-op rather than
@@ -902,6 +987,50 @@ mod tests {
     }
 
     #[test]
+    fn later_siblings_counter_reset_evicts_earlier_siblings_still_open_frame() {
+        // CSS Lists 3 §4.3's "obscuring" rule
+        // <https://www.w3.org/TR/css-lists-3/#auto-numbering>: a
+        // `counter-reset` on a later sibling evicts an earlier sibling's
+        // still-open same-named frame from scope entirely, rather than
+        // merely nesting a new frame on top of it. `counter()`'s
+        // top-of-stack read happens to come out right either way (the later
+        // sibling's own frame is always topmost regardless of whether the
+        // earlier one was evicted) — `counters()` (every open frame, joined)
+        // is where an un-evicted frame would still wrongly show up.
+        let mut doc = Document::new();
+        doc.append_element(
+            Some(0),
+            "section",
+            Style::default(),
+            Some("counter-reset: c 1"),
+        );
+        doc.append_element(
+            Some(0),
+            "section",
+            Style::default(),
+            Some("counter-reset: c 1; string-set: probe counters(c, \".\")"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut ctx = PageContext::default();
+        drive_document(&mut ctx, &doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.string_state(&Symbol::new("probe"))
+                .and_then(|s| s.running()),
+            Some("1"),
+            "the later sibling's own counters() reading must see only its own \
+             freshly-reset frame (\"1\") — the earlier sibling's still-open \
+             frame must already be evicted by the time the later sibling's \
+             own reset takes effect, not joined alongside it as \"1.1\""
+        );
+    }
+
+    #[test]
     fn root_level_counter_reset_is_never_erroneously_popped_mid_walk() {
         // A counter-reset applied by the walk's own `root` argument (rather
         // than by a descendant reached from it) has no enclosing
@@ -964,7 +1093,10 @@ mod tests {
             Some(inner),
             "p",
             Style::default(),
-            Some("counter-increment: c 1; string-set: probe_leaf counter(c)"),
+            Some(
+                "counter-increment: c 1; \
+                 string-set: probe_leaf counter(c), probe_leaf_full counters(c, '.')",
+            ),
         );
         // A later sibling of `outer` itself (not of `inner`) — by the time
         // this runs, `inner`'s scope has already closed (at `outer`'s own
@@ -993,6 +1125,17 @@ mod tests {
             Some("101"),
             "the innermost element must see the INNER reset's own scope (100 + 1 \
              = 101), nested on top of (not replacing) the outer scope"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.string_state(&Symbol::new("probe_leaf_full"))
+                .and_then(|s| s.running()),
+            Some("1.101"),
+            "the inner reset must NOT evict the outer reset's frame — §4.3's \
+             obscuring rule is specific to a *sibling*'s counter-reset, not a \
+             descendant's; counters() must still join both frames (outer=1, \
+             inner=100+1=101), same as before this rule was implemented"
         );
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.

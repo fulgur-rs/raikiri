@@ -104,12 +104,18 @@ use crate::dom::Symbol;
 /// same-depth scopes, not accumulating nesting). `raikiri_dom::phase_b`'s
 /// walker now does exactly this, via [`PageContext::pop_counter_scope`]'s
 /// forwarding call at the resetting element's own parent's subtree exit.
-/// That popping is LIFO-only, though: it does not implement CSS Lists 3
-/// §4.3's separate "obscuring" rule, under which a later sibling's reset of
-/// the same name is specified to evict an earlier sibling's still-open
-/// frame outright rather than merely sit above it — see
-/// `raikiri_dom::gcpm`'s module doc for the concrete gap this leaves in
-/// [`Self::values`]'s callers.
+/// `raikiri_dom::phase_b` also implements CSS Lists 3 §4.3's separate
+/// "obscuring" rule this way, using the same [`Self::pop_scope`] primitive:
+/// a later sibling's reset of the same name is specified to evict an
+/// earlier sibling's still-open frame outright rather than merely sit above
+/// it, so that walker calls [`Self::pop_scope`] (via
+/// [`PageContext::pop_counter_scope`]) on the earlier sibling's frame right
+/// before applying the later sibling's own reset, instead of leaving both
+/// frames on the stack for [`Self::values`]'s callers to see joined
+/// together — see `raikiri_dom::phase_b`'s module doc "Counter-scope exit"
+/// for the full mechanism. [`Self::reset`] itself still only ever pushes,
+/// never replaces in place; the eviction is the caller's own extra
+/// `pop_scope` call, not a change to this method.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct CounterStack {
