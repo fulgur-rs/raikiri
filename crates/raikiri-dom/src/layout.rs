@@ -10,6 +10,7 @@
 use raikiri_traits::NodeKind;
 
 use crate::document::Document;
+use crate::node::NodeFlags;
 use parley::{
     Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, Layout,
     LayoutContext, LineHeight, StyleProperty,
@@ -113,6 +114,11 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
 ///   `grid-auto-flow` / `grid-row-start` / `grid-row-end` /
 ///   `grid-column-start` / `grid-column-end` → [`taffy::Style`]'s matching
 ///   grid container/item fields (CSS Grid Layout Module Level 1)
+///
+/// per-node の bridge loop の後、second pass
+/// ([`establish_minimal_line_boxes`]) が bridge 済みの tree 全体を走査し、
+/// 条件を満たす block container に minimal な inline formatting context を
+/// 確立する — qualifying condition と scope は同関数の doc 参照。
 pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResult) {
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
@@ -131,6 +137,7 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         bridge_gap(style, cv, &mut doc.layout_warnings);
         bridge_grid(style, cv, &mut doc.layout_warnings);
     }
+    establish_minimal_line_boxes(doc, cascade);
 }
 
 /// [`DisplayValue`] → [`taffy::Display`] mapping。
@@ -846,6 +853,250 @@ fn grid_line_value_to_taffy_placement(v: &GridLineValue) -> GridPlacement {
         // matched above only; required for its #[non_exhaustive] contract.
         _ => GridPlacement::Auto,
     }
+}
+
+/// 最小限の (単一行・non-wrapping な) inline formatting context を、
+/// 条件を満たす block container に確立する。
+///
+/// CSS 2.1 §9.4.2 <https://www.w3.org/TR/CSS21/visuren.html#inline-formatting>:
+/// "a block container either contains only block-level boxes or
+/// establishes an inline formatting context and thus contains only
+/// inline-level boxes."(block container は block-level box のみを含むか、
+/// inline formatting context を確立して inline-level box のみを含む)。
+/// ここで node が条件を満たすのは、自身の computed display
+/// ([`DisplayValue`]) が [`DisplayValue::Block`] または
+/// [`DisplayValue::InlineBlock`] であり (両方とも自身の content に対して
+/// block container を生成する — `inline-block` は CSS Display 3 §2 上
+/// "inline flow-root" (plain な `block` の "block flow" とは別の、独立
+/// した formatting context を確立する概念、[`DisplayValue::InlineBlock`]
+/// 自身の doc 参照) だが、本 pass の qualifying condition と扱いはこの
+/// 区別をしない — どちらも「自身の content area が block container で
+/// ある」という一点のみを見る)、**かつ** in-document な children が
+/// **2 個以上**あり、それら
+/// 全てが inline-level である場合 ([`NodeKind::Text`] の child、または
+/// [`DisplayValue`] が [`DisplayValue::Inline`] / [`DisplayValue::InlineBlock`]
+/// な [`NodeKind::Element`] の child。[`DisplayValue::None`] の child は
+/// 無視する — count にも disqualification にも数えない)。
+/// [`NodeKind::Text`] の child は無条件に count する
+/// (whitespace のみを保持する text node も含む) — HTML parser は source の
+/// indentation から sibling tag 間にこうした text node をよく生成し、CSS
+/// 2.1 §9.2.1.1 上、text node の content は保持する文字に関わらず
+/// ordinary な inline-level content である (`white-space` の collapsing は
+/// rendering 時の関心事であり、formatting context の関心事ではない) ため、
+/// "本物の" inline な child が 1 個だけの container でも、付随する parser
+/// の whitespace により実質的にすでに 2 個以上の qualifying な children
+/// を持つことが多い。inline-level な child が 1 個だけの場合は、plain な
+/// block path のままにする: line 上に box が 1 個しかなければ隣に置く
+/// ものが無く、taffy の block layout も 1 個だけの child を
+/// `align-items: flex-start` な 1-item flex row と同じ位置に置く
+/// (どちらも container を child 自身の margin box に合わせて size し、
+/// cross-axis 方向の処理が不要な点も同じ) — したがってこの case には
+/// 埋めるべき behavioral gap が無く、既存の block code path を乱す理由も
+/// 無い。
+///
+/// plain な [`DisplayValue::Inline`] の node は、自身の children が
+/// inline-level 2 個以上でも本条件を満たさ**ない**: `block` /
+/// `inline-block` と異なり、non-replaced な `inline` box は CSS 2.1
+/// §9.2.1.1 上、自身の content に対して block container を生成しない —
+/// その content は `inline` box 自身と*同じ* inline formatting context
+/// に流れ込む ordinary な inline-level content である (nested な
+/// inline box は新しい formatting context を開始しない)。本 pass は
+/// element の境界を越えた nested inline content の flatten は行わない
+/// (下記 "Non-goals" 参照) ため、`inline` な node の children は
+/// [`bridge_display`] が mapping した状態のまま、本 pass によって変更
+/// されない。
+///
+/// block-level / flex / grid な in-document child を 1 個でも持つ
+/// container も同様に変更しない (block-level と inline-level が混在する
+/// content は、CSS 2.1 §9.2.1.1 に従い inline-level の run を囲む
+/// anonymous block box の生成が必要になるが、本 minimal pass はそこまで
+/// 対応しない)。
+///
+/// # 実現方法
+///
+/// taffy には inline layout mode が無いため、line box は 1 行・
+/// non-wrapping な flex container として実現する: [`Display::Flex`] +
+/// `flex_direction: Row` (taffy 自身の default と同じ) + `flex_wrap:
+/// NoWrap` (同上) により、参加する children を左から右へ 1 行に並べる —
+/// これは CSS 2.1 §9.4.2 が inline formatting context の box について
+/// 述べる内容 ("laid out horizontally, one after the other, beginning at
+/// the top of a containing block") そのものである。`flex_direction` /
+/// `flex_wrap` を default に委ねず明示的に set しているのは、この node
+/// が block container だった間は inert だった author の
+/// `flex-direction` / `flex-wrap` 宣言を [`bridge_flex`] が既に copy
+/// 済みの可能性があり、ここで flex container になった時点でそれが
+/// inert でなくなるため — default のままだろうと期待するのではなく
+/// 明示的に上書きする必要がある。
+///
+/// `align_items: FlexStart` (taffy 自身の default である `Stretch` では
+/// なく) を set しているのは、上記の `flex_direction` / `flex_wrap` と
+/// 全く同じ「もう inert ではない」理由による: `bridge_alignment` も
+/// author の `align-items` 宣言をこの node に既に copy している可能性が
+/// あり、block container だった間は inert だったものが、ここで flex
+/// container になった時点で live になるため、同様に上書きする必要が
+/// ある。`FlexStart` そのもの (`Stretch` ではなく) を選ぶ理由は、参加する
+/// 各 child を最も高い sibling に合わせて stretch せず、各自の natural
+/// な (measured) height のまま保つことで、CSS 2.1 §9.4.2 の "line box is
+/// always tall enough for all of the boxes it contains"(line box は
+/// 自身が含む全 box を収められるだけの高さを常に持つ) を、より低い box
+/// を無理に伸ばさずに満たすためである。
+///
+/// `FlexStart` も taffy の `AlignItems::Baseline` も、ここでは本当の
+/// font-baseline alignment を行わない: 本 crate の taffy leaf layout は
+/// alignment の基準となる baseline を一切 report しない (`taffy_impl.rs`
+/// の leaf measure closure は `Size` しか返さない) ため、`Baseline` は
+/// 各 item の下端 (bottom edge) 揃えに degrade し、`FlexStart` は各
+/// item の上端 (top edge) 揃えになる — どちらも近似であって、「本物の
+/// baseline mode」と「fallback」の選択ではない。`FlexStart` を選んだのは、
+/// 参加する children が同じ used line-height / ascent metric を共有する
+/// 場合 (同じ font、同じ computed font-size、同じ line-height という
+/// 一般的な case) には正しい baseline alignment と一致し、共有しない
+/// 場合 (例えば `<sub>`/`<sup>` の child が smaller な computed
+/// font-size を使う場合、あるいは通常の text 以外の box model) にのみ
+/// そこから外れるためである。
+///
+/// container 自身は `justify_content: None` (taffy 自身の default、CSS
+/// の `normal` 相当) へも reset する — 全く同じ「もう inert ではない」
+/// 理由による: [`bridge_alignment`] が copy した author の
+/// `justify-content` 宣言は、block container だった間は inert だったが、
+/// ここで flex container になった時点で main-axis 方向の item 配置
+/// (space-between 等) を変えてしまう。CSS 2.1 の inline formatting
+/// context に "line box 上の複数 box を main-axis 方向に再配置する"
+/// 意味論はそもそも存在しないため、taffy 側の default に戻すことでその
+/// 意味論を無効化する。`gap` (`row-gap` / `column-gap`) も同じ理由で
+/// `0` へ reset する — line box は inline-level box の間に author 指定の
+/// 隙間を空ける意味論を持たない (CSS 2.1 §9.4.2 の line box は隙間なく
+/// box を並べるモデル) ため、[`bridge_gap`] が copy した author 値を
+/// ここで無効化する。
+///
+/// 参加する各 child はさらに `flex_grow: 0.0` / `flex_shrink: 0.0` /
+/// `flex_basis: auto` / `align_self: None` も得る ([`bridge_flex`] /
+/// [`bridge_alignment`] が自身の author CSS から copy した値を、上記と
+/// 同じ「もう inert ではない」理由で上書きする)。`flex_grow` /
+/// `flex_shrink` を `0` にする理由: line wrapping を未実装の現状、
+/// container より広い content は圧縮されずに overflow するべきものである
+/// — flex の default である `flex-shrink: 1` のままだと、各 child の
+/// box を自身の shaped content より狭く圧縮してしまい、text の child
+/// ではすでに [`preshape_text`] が shape した glyph run と box が乖離
+/// する (shaped 済みの glyph は追従して縮まないため、狭くなった box から
+/// overflow し、隣の child の glyph と重なりうる — 本 pass が置き換える
+/// 以前の stacked-block な描画より悪化する)。`flex_basis` を `auto` へ
+/// 戻す理由も同じ box/glyph 乖離を防ぐためである — 明示的な author
+/// `flex-basis` は `flex_grow` / `flex_shrink` の値に関わらず box の
+/// main size を直接決めてしまうため、`flex_shrink: 0` だけでは守れない
+/// (自身の content 基準の flex basis に戻すことで、box は常に自身の
+/// shaped content 以上の幅を持つ)。`align_self` を `None` (= `auto`) へ
+/// 戻す理由は、container 側の `align_items: FlexStart` へ一貫して
+/// fallback させるためである (`auto` は親の `align-items` へ fallback
+/// する契約、[`bridge_alignment`] の doc 参照)。
+///
+/// # Non-goals (本 pass)
+///
+/// - line wrapping / breaking は行わない: qualify する container **自身が
+///   確立する line box** の個数は、container の available width に
+///   関わらず常にちょうど 1 個になる。ただしこれは container レベルの
+///   取り扱いの話であり、participating な text child 自身が shape する
+///   glyph run が内部で複数行に折り返されないことまでは意味しない (3 番目
+///   の bullet 参照 — [`preshape_text`] は本 pass とは独立に、text ごと
+///   に page width 基準で soft-wrap する)。forced break (`<br>` 等) も本
+///   pass では line の境界として認識しない — 他の 2 個の inline-level
+///   な child の間にある `<br>` も、同じ 1 行上の別の inline-level な
+///   flex item に過ぎず、break point にはまだならない。
+/// - nested な inline element を ancestor の line box へ flatten する
+///   ことは行わない — qualify する各 container 自身の IFC は直接の
+///   children のみを対象とし、さらに nested した inline の descendant
+///   には及ばない (line box 内の `<b>` は、本 pass が存在しなかった時と
+///   全く同じく、自身の children を独立に何らかの code path で
+///   layout する)。
+/// - [`preshape_text`] は本 pass の後 (`apply_computed_to_style` 完了後、
+///   `layout_single_page` の後段) に、各 text node の glyph run を full
+///   page width に対して shape・soft-wrap する。これは本 pass が最終的に
+///   その text node に line box 上の sibling と並べて与える横幅とは
+///   無関係であり、text の shaping を実際の available な inline space
+///   と整合させることは follow-up work であり、ここでは行わない。
+fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
+    for idx in 0..doc.nodes.len() {
+        if doc.nodes[idx].kind() != NodeKind::Element {
+            continue;
+        }
+        let qualifies = qualifies_for_minimal_line_box(doc, idx, cascade);
+        doc.nodes[idx]
+            .flags
+            .set(NodeFlags::IS_INLINE_ROOT, qualifies);
+        if !qualifies {
+            continue;
+        }
+        // display:none な child も含む — taffy はそのような child を
+        // Display::None として layout tree から丸ごと除外するため、
+        // flex_grow/flex_shrink を pin することに実害は無い (無駄では
+        // あるが害はない)。
+        let participating_children: Vec<usize> = doc.nodes[idx]
+            .children
+            .iter()
+            .copied()
+            .filter(|&c| doc.nodes[c].is_in_document())
+            .collect();
+        {
+            let style = &mut doc.nodes[idx].style;
+            style.display = Display::Flex;
+            style.flex_direction = TaffyFlexDirection::Row;
+            style.flex_wrap = TaffyFlexWrap::NoWrap;
+            style.align_items = Some(TaffyAlignItems::FLEX_START);
+            style.justify_content = None;
+            style.gap = Size {
+                width: LengthPercentage::length(0.0),
+                height: LengthPercentage::length(0.0),
+            };
+        }
+        for c in participating_children {
+            let child_style = &mut doc.nodes[c].style;
+            child_style.flex_grow = 0.0;
+            child_style.flex_shrink = 0.0;
+            child_style.flex_basis = Dimension::auto();
+            child_style.align_self = None;
+        }
+    }
+}
+
+/// `idx` (ある [`NodeKind::Element`]) が
+/// [`establish_minimal_line_boxes`] の minimal-line-box 処理の対象かどうか
+/// — qualifying condition とその根拠は同関数の doc 参照。
+fn qualifies_for_minimal_line_box(doc: &Document, idx: usize, cascade: &CascadeResult) -> bool {
+    // ここでは意図的に pre-bridge の `DisplayValue` を読む
+    // (post-`bridge_display` の `taffy::Display` ではない — この second
+    // pass が走る時点で `Block` / `Inline` / `InlineBlock` は既に全て
+    // `Display::Block` に collapse 済み)。plain な `Inline` の container
+    // は qualify させては**ならない**、`Block` / `InlineBlock` のみ
+    // (この module の doc 参照)。
+    match cascade.computed[idx].display {
+        DisplayValue::Block | DisplayValue::InlineBlock => {}
+        _ => return false,
+    }
+    let mut inline_level_count = 0usize;
+    for &c in &doc.nodes[idx].children {
+        if !doc.nodes[c].is_in_document() {
+            continue;
+        }
+        match doc.nodes[c].kind() {
+            NodeKind::Text => inline_level_count += 1,
+            NodeKind::Element => match cascade.computed[c].display {
+                DisplayValue::Inline | DisplayValue::InlineBlock => inline_level_count += 1,
+                DisplayValue::None => {}
+                // block-level / flex / grid な child (および将来の
+                // non_exhaustive な DisplayValue variant) は全て
+                // disqualify する — block-level と inline-level の
+                // 混在は対象外、この module の doc 参照。
+                _ => return false,
+            },
+            // Comment / ProcessingInstruction / DocumentFragment /
+            // Document はそもそも `is_in_document()` にならないはず
+            // (`NodeData` の doc 参照) だが、その invariant を前提とせず
+            // ここで defensive に fail closed する。
+            // cov:ignore: unreachable — Comment/ProcessingInstruction/DocumentFragment/Document nodes always have IS_IN_DOCUMENT cleared (see document.rs's mark_in_document_flags invariant), filtered by the is_in_document() guard above; kept as a defensive fallback rather than relying on that invariant here.
+            _ => return false,
+        }
+    }
+    inline_level_count >= 2
 }
 
 /// Saturating `i32` → `i16` cast — [`grid_line_value_to_taffy_placement`]
@@ -2855,6 +3106,563 @@ mod tests {
         assert_eq!(doc.nodes[body].style.size, default_style.size);
         assert_eq!(doc.nodes[body].style.margin, default_style.margin);
         assert_eq!(doc.nodes[body].style.padding, default_style.padding);
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_upgrades_qualifying_container_to_flex_row() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        // `build_rule_tree` deliberately excludes UA CSS (its own doc:
+        // "UA CSS は含めない" — UA is injected via `raikiri_html::parse`
+        // during real HTML parsing, which this hand-built-arena test
+        // fixture bypasses). So every element's own display is declared
+        // explicitly via inline style below, rather than relying on a
+        // `p { display: block }` / `b { display: inline }` UA default
+        // that would not actually be present in this fixture.
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
+        let _a = doc.append_text(p, "A ");
+        let b = doc.append_element(Some(p), "b", Style::default(), Some("display: inline"));
+        let _b_text = doc.append_text(b, "B");
+        let _c = doc.append_text(p, " C");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+
+        assert_eq!(doc.nodes[p].style.display, Display::Flex);
+        assert_eq!(doc.nodes[p].style.flex_direction, TaffyFlexDirection::Row);
+        assert_eq!(doc.nodes[p].style.flex_wrap, TaffyFlexWrap::NoWrap);
+        assert_eq!(
+            doc.nodes[p].style.align_items,
+            Some(TaffyAlignItems::FLEX_START)
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            doc.nodes[p].flags.contains(NodeFlags::IS_INLINE_ROOT),
+            "qualifying container must have IS_INLINE_ROOT set"
+        );
+        // Participating children get flex_grow/flex_shrink pinned to 0 so
+        // they neither grow nor compress narrower than their own shaped
+        // content (see this pass's doc, "flex-shrink hazard").
+        for &c in &doc.nodes[p].children {
+            assert_eq!(doc.nodes[c].style.flex_grow, 0.0);
+            assert_eq!(doc.nodes[c].style.flex_shrink, 0.0);
+        }
+
+        // `b` is a plain `inline` element (not `block`/`inline-block`), so
+        // it does not itself qualify regardless of its own child count —
+        // covered separately by
+        // `establish_minimal_line_boxes_excludes_plain_inline_container`.
+        // Here it just needs to remain block-container-shaped (i.e. its
+        // own single Text child is laid out exactly as before this pass).
+        assert_eq!(doc.nodes[b].style.display, Display::Block);
+        assert!(!doc.nodes[b].flags.contains(NodeFlags::IS_INLINE_ROOT));
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_leaves_single_inline_child_container_on_block_path() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
+        let _a = doc.append_text(p, "A");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            doc.nodes[p].style.display,
+            Display::Block,
+            "a single inline-level child is geometrically degenerate \
+             (nothing to place beside it) — must be left on the plain \
+             block path, not upgraded to a 1-item flex row"
+        );
+        assert!(!doc.nodes[p].flags.contains(NodeFlags::IS_INLINE_ROOT));
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_leaves_mixed_block_and_inline_content_untouched() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
+        let _text = doc.append_text(p, "A");
+        let _div = doc.append_element(Some(p), "div", Style::default(), Some("display: block"));
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            doc.nodes[p].style.display,
+            Display::Block,
+            "a block-level sibling among inline-level content must \
+             disqualify minimal-line-box treatment (mixed content is out \
+             of scope for this pass)"
+        );
+        assert!(!doc.nodes[p].flags.contains(NodeFlags::IS_INLINE_ROOT));
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_hidden_sibling_does_not_count_toward_threshold() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
+        let _a = doc.append_text(p, "A");
+        let _hidden = doc.append_element(Some(p), "span", Style::default(), Some("display:none"));
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+
+        // Only 1 *counted* inline-level child (the display:none sibling
+        // doesn't count) — below the 2-child threshold.
+        assert_eq!(doc.nodes[p].style.display, Display::Block);
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_hidden_sibling_does_not_disqualify_when_threshold_met() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
+        let _a = doc.append_text(p, "A");
+        let _hidden = doc.append_element(Some(p), "span", Style::default(), Some("display:none"));
+        let _c = doc.append_text(p, "C");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            doc.nodes[p].style.display,
+            Display::Flex,
+            "a display:none sibling must not block qualification once the \
+             2 visible-inline-level threshold is otherwise met"
+        );
+    }
+
+    #[test]
+    fn qualifies_for_minimal_line_box_skips_not_in_document_sibling() {
+        // Regression pin for the `if !doc.nodes[c].is_in_document() {
+        // continue; }` guard in `qualifies_for_minimal_line_box`: a
+        // Comment sibling is reachable in the raw arena tree but always
+        // has `IS_IN_DOCUMENT` cleared by `mark_in_document_flags`
+        // (`NodeData::Comment`'s doc) — it must be skipped entirely
+        // (neither counted nor disqualifying) while the 2 real Text
+        // children still meet the threshold.
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
+        let _a = doc.append_text(p, "A");
+        let comment = doc.append_comment(Some(p), "not rendered");
+        let _c = doc.append_text(p, "C");
+        doc.mark_in_document_flags();
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            !doc.nodes[comment].is_in_document(),
+            "fixture precondition: the comment sibling must actually be \
+             not-in-document for this test to exercise the guard"
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            doc.nodes[p].style.display,
+            Display::Flex,
+            "a not-in-document sibling (e.g. a Comment) must be skipped \
+             entirely by the is_in_document() guard — neither counted \
+             nor disqualifying — while the 2 real Text children still \
+             meet the threshold"
+        );
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_excludes_plain_inline_container() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        // 2 text children, but `b` itself must not qualify: a plain
+        // `inline` node's content flows into its ancestor's line box, it
+        // does not get its own (this module's doc, "does not qualify
+        // here even with 2+ inline-level children").
+        let b = doc.append_element(Some(body), "b", Style::default(), Some("display: inline"));
+        let _x = doc.append_text(b, "X");
+        let _y = doc.append_text(b, "Y");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+
+        assert_eq!(doc.nodes[b].style.display, Display::Block);
+        assert!(!doc.nodes[b].flags.contains(NodeFlags::IS_INLINE_ROOT));
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_qualifies_inline_block_container() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let ib = doc.append_element(
+            Some(body),
+            "span",
+            Style::default(),
+            Some("display:inline-block"),
+        );
+        let _x = doc.append_text(ib, "X");
+        let _y = doc.append_text(ib, "Y");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            doc.nodes[ib].style.display,
+            Display::Flex,
+            "inline-block generates a block container for its own content, \
+             same as block — it must qualify just like a block container"
+        );
+        assert!(doc.nodes[ib].flags.contains(NodeFlags::IS_INLINE_ROOT));
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_lays_out_children_side_by_side_not_stacked() {
+        // End-to-end pin (via the full `layout_single_page` pipeline, not
+        // just `apply_computed_to_style` in isolation) that qualifying
+        // inline-level siblings actually end up beside each other, not
+        // independently stacked — the concrete geometry bug this pass
+        // fixes.
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
+        let a = doc.append_text(p, "AAAA");
+        let c = doc.append_text(p, "CCCC");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let a_loc = doc.nodes[a].unrounded_layout;
+        let c_loc = doc.nodes[c].unrounded_layout;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (a_loc.location.y - c_loc.location.y).abs() < 1e-3,
+            "both text children must sit on the same line (same y), got \
+             a.y={} c.y={}",
+            a_loc.location.y,
+            c_loc.location.y
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            c_loc.location.x >= a_loc.location.x + a_loc.size.width - 1e-3,
+            "second child must start at or after the first child's right \
+             edge (side-by-side placement), got a.x={} a.w={} c.x={}",
+            a_loc.location.x,
+            a_loc.size.width,
+            c_loc.location.x
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            c_loc.location.x > 0.0,
+            "second child must not sit at x=0 — that would mean it's \
+             still being independently stacked below the first child \
+             rather than placed beside it"
+        );
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_does_not_compress_children_narrower_than_shaped_text() {
+        // Regression pin for the flex-shrink hazard documented on
+        // `establish_minimal_line_boxes`: flex items default to
+        // `flex-shrink: 1`, which under `flex_wrap: NoWrap` would (absent
+        // this pass's override) compress each child's box narrower than
+        // its own already-shaped glyph run once the combined content
+        // exceeds the line's available width — the box would shrink but
+        // the glyph run would not, so the rendered glyphs would overflow
+        // the box and can overlap a neighboring child's glyphs.
+        //
+        // Two children, each a single unbroken run with no whitespace (so
+        // `preshape_text`'s own per-node soft-wrap against the full page
+        // width has no break opportunity and leaves each on one line,
+        // regardless of length — see the `layout.len() == 1` precondition
+        // below), together wide enough to exceed the page — real shrink
+        // pressure, absent the override, would apply.
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("display: block; font-size: 72px"),
+        );
+        let a = doc.append_text(p, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        let c = doc.append_text(p, "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let mut shaped_widths = Vec::new();
+        for &id in &[a, c] {
+            let layout = doc.nodes[id]
+                .text_layout()
+                .expect("text node must have a preshaped layout");
+            // Fixture precondition: each string is one unbroken run with
+            // no whitespace, so `preshape_text`'s own per-node soft-wrap
+            // (against the full page width) has no break opportunity and
+            // leaves it on a single line regardless of length — pin that
+            // so a `shaped_width` below isn't silently the width of one
+            // wrapped sub-line instead of the whole run.
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(
+                layout.len(),
+                1,
+                "fixture precondition: each child's text must shape to \
+                 exactly 1 line (no internal wrap) so its `width()` below \
+                 reflects the whole run, not one wrapped sub-line"
+            );
+            shaped_widths.push(layout.width());
+        }
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            shaped_widths[0] + shaped_widths[1] > PageBox::A4.width,
+            "fixture precondition: the two children combined ({} + {}) \
+             must exceed the page width ({}) so real shrink pressure \
+             would apply absent the flex_shrink:0 override",
+            shaped_widths[0],
+            shaped_widths[1],
+            PageBox::A4.width
+        );
+
+        for (&id, &shaped_width) in [a, c].iter().zip(shaped_widths.iter()) {
+            let box_width = doc.nodes[id].unrounded_layout.size.width;
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert!(
+                box_width + 1e-3 >= shaped_width,
+                "child box (width={box_width}) must not be compressed \
+                 narrower than its own shaped glyph run (width={shaped_width})"
+            );
+        }
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_resets_conflicting_flex_basis() {
+        // Regression pin for the `flex_basis: auto` reset documented on
+        // `establish_minimal_line_boxes`. `b` below carries an explicit
+        // `flex-basis: 10px` far smaller than its own shaped content — a
+        // declaration that was inert while `p` was a plain block
+        // container but would become a live flex-item property (and a
+        // box/glyph-desync hazard) once `p` qualifies here, absent this
+        // reset.
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("display: block; font-size: 72px"),
+        );
+        let _a = doc.append_text(p, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+        let b = doc.append_element(
+            Some(p),
+            "b",
+            Style::default(),
+            Some("display: inline; flex-basis: 10px"),
+        );
+        let c = doc.append_text(b, "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            doc.nodes[b].style.flex_basis,
+            Dimension::auto(),
+            "`b`'s explicit flex-basis:10px must be reset to auto once `p` \
+             qualifies for minimal-line-box treatment — a non-auto \
+             author flex-basis directly sets the box's main size \
+             regardless of flex_shrink:0, so leaving it in place would \
+             reopen the box/glyph desync hazard flex_shrink:0 exists to \
+             prevent"
+        );
+
+        let shaped_width = doc.nodes[c]
+            .text_layout()
+            .expect("text node must have a preshaped layout")
+            .width();
+        let b_box_width = doc.nodes[b].unrounded_layout.size.width;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            b_box_width + 1e-3 >= shaped_width,
+            "`b`'s box (width={b_box_width}) must not be compressed \
+             below its shaped content (width={shaped_width}) now that \
+             the conflicting flex-basis:10px is reset to auto"
+        );
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_resets_conflicting_justify_content_and_gap() {
+        // Regression pin for the `justify_content: None` / `gap: 0`
+        // resets documented on `establish_minimal_line_boxes`. `p` below
+        // carries explicit `justify-content: space-between` and
+        // `column-gap: 500px` — both inert while `p` was a plain block
+        // container, both live main-axis-affecting flex-container
+        // properties once `p` qualifies here, absent these resets. If
+        // either leaked through, the two participating children would
+        // end up far apart (`justify-content: space-between` alone would
+        // push the second child to the far right edge, and a 500px gap
+        // would separate them further still) instead of adjacent.
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("display: block; justify-content: space-between; column-gap: 500px"),
+        );
+        let a = doc.append_text(p, "AAAA");
+        let c = doc.append_text(p, "CCCC");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            doc.nodes[p].style.justify_content, None,
+            "`p`'s explicit justify-content:space-between must be reset \
+             to taffy's default (None) once it qualifies for \
+             minimal-line-box treatment — line boxes have no main-axis \
+             item-redistribution semantics to preserve"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            doc.nodes[p].style.gap,
+            Size {
+                width: LengthPercentage::length(0.0),
+                height: LengthPercentage::length(0.0),
+            },
+            "`p`'s explicit column-gap:500px must be reset to 0 once it \
+             qualifies for minimal-line-box treatment — line boxes have \
+             no author-controllable gap semantics to preserve"
+        );
+
+        let a_loc = doc.nodes[a].unrounded_layout;
+        let c_loc = doc.nodes[c].unrounded_layout;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            c_loc.location.x < a_loc.location.x + a_loc.size.width + 1.0,
+            "the two children must still sit adjacent (within 1px) — \
+             got a.x={} a.w={} c.x={}, i.e. neither the space-between \
+             nor the 500px gap leaked through",
+            a_loc.location.x,
+            a_loc.size.width,
+            c_loc.location.x
+        );
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_resets_conflicting_align_self() {
+        // Regression pin for the `align_self: None` reset documented on
+        // `establish_minimal_line_boxes`. `b` below carries an explicit
+        // `align-self: flex-end` — inert while `p` was a plain block
+        // container, a live cross-axis override once `p` qualifies here,
+        // absent this reset (it would otherwise diverge from the
+        // container's own `align_items: FlexStart`).
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
+        let _a = doc.append_text(p, "A");
+        let b = doc.append_element(
+            Some(p),
+            "b",
+            Style::default(),
+            Some("display: inline; align-self: flex-end"),
+        );
+        let _c = doc.append_text(b, "B");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            doc.nodes[b].style.align_self, None,
+            "`b`'s explicit align-self:flex-end must be reset to None \
+             (= auto) once `p` qualifies for minimal-line-box treatment, \
+             so `b` falls back to `p`'s own align_items:FlexStart \
+             instead of diverging from it"
+        );
     }
 
     #[test]

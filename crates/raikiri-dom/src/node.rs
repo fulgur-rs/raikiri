@@ -21,15 +21,19 @@ bitflags::bitflags! {
     /// const IS_IN_DOCUMENT = 0b00000100;   // = 1 << 2
     /// ```
     ///
-    /// 現状は `IS_IN_DOCUMENT` のみ使用。`IS_INLINE_ROOT` (将来の inline
-    /// formatting root 用)、`IS_TABLE_ROOT` (将来の table formatting root 用)
-    /// は blitz と同 bit 位置で予約定義するのみ (今は誰も set/clear しないが、
-    /// bit 位置を確保することで raw-bit 変換
+    /// `IS_IN_DOCUMENT` と `IS_INLINE_ROOT` は使用中。`IS_TABLE_ROOT` (将来の
+    /// table formatting root 用) は blitz と同 bit 位置で予約定義するのみ
+    /// (今は誰も set/clear しないが、bit 位置を確保することで raw-bit 変換
     /// `NodeFlags::from_bits(blitz_flags.bits())` が将来の blitz-compat 変換で
     /// 正しく動く)。
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub struct NodeFlags: u32 {
-        /// Inline formatting context root。将来使用予定 (blitz と同 bit 位置)。
+        /// Inline formatting context root。[`mod@crate::layout`] の
+        /// `establish_minimal_line_boxes` が、その node が同関数の
+        /// minimal-line-box 条件を満たす block container かどうかで
+        /// set/clear する (`layout_single_page` 呼び出し毎に再計算、set
+        /// のままにも clear のままにもなる — write-only ではない)。bit
+        /// 位置は blitz と同じ。
         const IS_INLINE_ROOT = 1 << 0;
         /// Table formatting context root。将来使用予定 (blitz と同 bit 位置)。
         const IS_TABLE_ROOT = 1 << 1;
