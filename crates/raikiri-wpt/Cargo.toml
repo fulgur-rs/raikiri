@@ -9,7 +9,7 @@ publish = false
 
 [dependencies]
 raikiri   = { workspace = true }
-blitz-dom = { workspace = true }
+blitz-dom = { workspace = true, features = ["floats"] }
 time      = { workspace = true }
 
 [dev-dependencies]

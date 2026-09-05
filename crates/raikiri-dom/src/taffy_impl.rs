@@ -9,10 +9,10 @@
 //!   style getter marker impls
 
 use taffy::{
-    CacheTree, Display, Layout, LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer,
-    LayoutInput, LayoutOutput, LayoutPartialTree, NodeId, Size, Style, TraversePartialTree,
-    TraverseTree, compute_block_layout, compute_cached_layout, compute_flexbox_layout,
-    compute_grid_layout, compute_leaf_layout,
+    BlockContext, CacheTree, Display, Layout, LayoutBlockContainer, LayoutFlexboxContainer,
+    LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree, NodeId, Size, Style,
+    TraversePartialTree, TraverseTree, compute_block_layout, compute_cached_layout,
+    compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
 };
 
 use crate::document::Document;
@@ -137,6 +137,38 @@ impl LayoutPartialTree for Document {
     }
 
     fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
+        self.compute_child_layout_with_block_ctx(node_id, inputs, None)
+    }
+}
+
+impl Document {
+    /// Unified `compute_child_layout` implementation that both
+    /// [`LayoutPartialTree::compute_child_layout`] (called with
+    /// `block_ctx: None`) and [`LayoutBlockContainer::compute_block_child_layout`]
+    /// (called with the caller's [`BlockContext`]) delegate to.
+    ///
+    /// Threading `block_ctx` through to `compute_block_layout`'s `Display::Block`
+    /// arm is what keeps a normal-flow block descendant in the same Block
+    /// Formatting Context as its ancestor instead of each one starting a fresh,
+    /// independent `BlockFormattingContext` — per CSS2 §9.4.1
+    /// <https://www.w3.org/TR/CSS2/visuren.html#block-formatting> a box is only
+    /// in the *same* BFC as its parent when it doesn't itself establish a new
+    /// one (taffy's own `is_in_same_bfc` gate in `compute_block_layout`:
+    /// in-flow, not floated, not absolutely positioned, not a table, not a
+    /// scroll container). Without this, floats placed by one child would not
+    /// be visible to (and would not cause wraparound in) that child's own
+    /// nested block descendants, only its direct siblings.
+    ///
+    /// `overflow` is not yet bridged to `taffy::Style::overflow`
+    /// ([`crate::layout`]'s bridge dispatch has no `overflow` arm), so
+    /// `is_scroll_container()` is always false and the CSS2 §9.4.1
+    /// overflow-triggered BFC establishment does not yet apply to any element.
+    fn compute_child_layout_with_block_ctx(
+        &mut self,
+        node_id: NodeId,
+        inputs: LayoutInput,
+        block_ctx: Option<&mut BlockContext<'_>>,
+    ) -> LayoutOutput {
         // Lazy layout cache invalidation — mutations only set a flag; we
         // clear all node caches on the first compute after the flag flips
         // (amortized O(1) per mutation over N-node batches).
@@ -182,7 +214,7 @@ impl LayoutPartialTree for Document {
                 )
             } else {
                 match display {
-                    Display::Block => compute_block_layout(tree, node_id, inputs, None),
+                    Display::Block => compute_block_layout(tree, node_id, inputs, block_ctx),
                     Display::Flex => compute_flexbox_layout(tree, node_id, inputs),
                     Display::Grid => compute_grid_layout(tree, node_id, inputs),
                     Display::None => unreachable!("Display::None handled above"),
@@ -208,6 +240,22 @@ impl LayoutBlockContainer for Document {
 
     fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_> {
         &self.nodes[usize::from(child_node_id)].style
+    }
+
+    /// Overrides the default (which forwards to
+    /// [`LayoutPartialTree::compute_child_layout`] and discards `block_ctx`,
+    /// always starting a fresh Block Formatting Context) so that a
+    /// same-BFC block child — the case `compute_block_layout` calls this
+    /// for — actually continues the caller's [`BlockContext`]. See
+    /// [`Document::compute_child_layout_with_block_ctx`]'s doc for why this
+    /// matters once floats are involved.
+    fn compute_block_child_layout(
+        &mut self,
+        node_id: NodeId,
+        inputs: LayoutInput,
+        block_ctx: Option<&mut BlockContext<'_>>,
+    ) -> LayoutOutput {
+        self.compute_child_layout_with_block_ctx(node_id, inputs, block_ctx)
     }
 }
 

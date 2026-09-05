@@ -16,8 +16,8 @@ use parley::{
     LayoutContext, LineHeight, StyleProperty,
 };
 use raikiri_style::property::{
-    AlignSelfValue, BoxSizing as StyleBoxSizing, ContentAlignmentValue, DisplayValue,
-    FlexDirectionValue, FlexWrapValue, FontStyle as StyleFontStyle, GridAutoFlowValue,
+    AlignSelfValue, BoxSizing as StyleBoxSizing, ClearValue, ContentAlignmentValue, DisplayValue,
+    FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle as StyleFontStyle, GridAutoFlowValue,
     GridLineValue, GridRepeatCount, GridTemplateAreasValue, SelfAlignmentValue,
 };
 use raikiri_style::{
@@ -29,13 +29,13 @@ use raikiri_style::{
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
     AlignContent as TaffyAlignContent, AlignItems as TaffyAlignItems, AvailableSpace,
-    BoxSizing as TaffyBoxSizing, Dimension, Display, FlexDirection as TaffyFlexDirection,
-    FlexWrap as TaffyFlexWrap, GridAutoFlow as TaffyGridAutoFlow, GridPlacement,
-    GridTemplateArea as TaffyGridTemplateArea, GridTemplateComponent, GridTemplateRepetition,
-    Layout as TaffyLayout, LengthPercentage, LengthPercentageAuto, Line as TaffyLine,
-    MaxTrackSizingFunction, MinTrackSizingFunction, NodeId as TaffyNodeId, Point, Rect,
-    RepetitionCount as TaffyRepetitionCount, Size, TrackSizingFunction, compute_root_layout,
-    style_helpers as taffy_style_helpers,
+    BoxSizing as TaffyBoxSizing, Clear as TaffyClear, Dimension, Display,
+    FlexDirection as TaffyFlexDirection, FlexWrap as TaffyFlexWrap, Float as TaffyFloat,
+    GridAutoFlow as TaffyGridAutoFlow, GridPlacement, GridTemplateArea as TaffyGridTemplateArea,
+    GridTemplateComponent, GridTemplateRepetition, Layout as TaffyLayout, LengthPercentage,
+    LengthPercentageAuto, Line as TaffyLine, MaxTrackSizingFunction, MinTrackSizingFunction,
+    NodeId as TaffyNodeId, Point, Rect, RepetitionCount as TaffyRepetitionCount, Size,
+    TrackSizingFunction, compute_root_layout, style_helpers as taffy_style_helpers,
 };
 
 /// Document arena を DFS で walk し、最初の `<body>` element の arena index を返す。
@@ -89,6 +89,8 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
 ///
 /// 現時点で active な bridge:
 /// - [`bridge_display`] — [`DisplayValue`] → [`taffy::Display`]
+/// - [`bridge_float`] — [`ComputedValues::float`] / [`ComputedValues::clear`] →
+///   [`taffy::Style::float`] / [`taffy::Style::clear`] (CSS2 §9.5.1 / §9.5.2)
 /// - [`bridge_margin`] — `Sides<ComputedLengthPercentageOrAuto>` → [`taffy::Rect<LengthPercentageAuto>`]
 /// - [`bridge_padding`] — `Sides<ComputedLengthPercentage>` → [`taffy::Rect<LengthPercentage>`]
 /// - [`bridge_size`] — [`ComputedLengthPercentageOrAuto`] `cv.width` / `cv.height` →
@@ -127,6 +129,7 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         let cv = &cascade.computed[idx];
         let style = &mut doc.nodes[idx].style;
         bridge_display(style, cv);
+        bridge_float(style, cv);
         bridge_margin(style, cv, &mut doc.layout_warnings);
         bridge_padding(style, cv, &mut doc.layout_warnings);
         bridge_size(style, cv, &mut doc.layout_warnings);
@@ -170,6 +173,43 @@ fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
             // non_exhaustive catch-all — unknown future variant goes to Block
             Display::Block
         }
+    };
+}
+
+/// [`ComputedValues::float`] / [`ComputedValues::clear`] → [`taffy::Style::float`] /
+/// [`taffy::Style::clear`] bridge (CSS2 §9.5.1
+/// <https://www.w3.org/TR/CSS2/visuren.html#propdef-float> / §9.5.2
+/// <https://www.w3.org/TR/CSS2/visuren.html#propdef-clear>)。**enum 1:1
+/// mapping** (both raikiri-style's `FloatValue`/`ClearValue` and taffy's
+/// `Float`/`Clear` carry exactly the spec's keyword sets, so no length
+/// resolution or Length policy participation is needed, same shape as
+/// [`bridge_box_sizing`]).
+///
+/// This only carries the keyword through; the actual float positioning,
+/// shrink-to-fit width, and wraparound layout it drives is taffy's
+/// `float_layout` feature (`compute_block_layout`'s `BlockFormattingContext`/
+/// `FloatContext`), wired via this crate's `taffy_impl` module.
+///
+/// **Known taffy `block_layout` limitation**: a same-BFC child narrower than
+/// its own BFC root can get float insets computed against the root's width
+/// instead of its own — not yet worked around or covered by a test here.
+fn bridge_float(style: &mut taffy::Style, cv: &ComputedValues) {
+    style.float = match cv.float {
+        FloatValue::None => TaffyFloat::None,
+        FloatValue::Left => TaffyFloat::Left,
+        FloatValue::Right => TaffyFloat::Right,
+        // cov:ignore: unreachable while FloatValue is None|Left|Right only;
+        // required for its #[non_exhaustive] contract.
+        _ => TaffyFloat::None,
+    };
+    style.clear = match cv.clear {
+        ClearValue::None => TaffyClear::None,
+        ClearValue::Left => TaffyClear::Left,
+        ClearValue::Right => TaffyClear::Right,
+        ClearValue::Both => TaffyClear::Both,
+        // cov:ignore: unreachable while ClearValue is None|Left|Right|Both
+        // only; required for its #[non_exhaustive] contract.
+        _ => TaffyClear::None,
     };
 }
 
@@ -5363,6 +5403,175 @@ mod tests {
         assert!(
             (fixed_width - 100.0).abs() < 0.5,
             "non-growing sibling should stay at its flex-basis width, got width={fixed_width}"
+        );
+    }
+
+    #[test]
+    fn bridge_float_maps_every_float_and_clear_keyword() {
+        // `bridge_float`'s enum match arms — direct pin, same rationale as
+        // `bridge_flex_maps_every_flex_direction_and_flex_wrap_keyword`:
+        // geometry-based tests below only exercise `Float::Left` /
+        // `Clear::Left`, so this pins the remaining keyword→taffy-constant
+        // mappings that a geometry fixture can't discriminate from each
+        // other without a dedicated fixture per variant.
+        for (float, expected) in [
+            (FloatValue::None, TaffyFloat::None),
+            (FloatValue::Left, TaffyFloat::Left),
+            (FloatValue::Right, TaffyFloat::Right),
+        ] {
+            let mut cv = ComputedValues::initial();
+            cv.float = float;
+            let mut style = Style::default();
+            bridge_float(&mut style, &cv);
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            assert_eq!(style.float, expected, "float: {float:?}");
+        }
+
+        for (clear, expected) in [
+            (ClearValue::None, TaffyClear::None),
+            (ClearValue::Left, TaffyClear::Left),
+            (ClearValue::Right, TaffyClear::Right),
+            (ClearValue::Both, TaffyClear::Both),
+        ] {
+            let mut cv = ComputedValues::initial();
+            cv.clear = clear;
+            let mut style = Style::default();
+            bridge_float(&mut style, &cv);
+            assert_eq!(style.clear, expected, "clear: {clear:?}");
+        }
+    }
+
+    #[test]
+    fn floated_box_with_explicit_width_is_positioned_at_the_containing_block_edge() {
+        // Real float layout (taffy's `float_layout` feature, wired via
+        // `bridge_float` + `taffy_impl`'s `LayoutBlockContainer` impl) —
+        // a `float:left` box with an explicit width must be sized to
+        // that width (not stretch to the container's full width like a
+        // normal block child would) and must be positioned flush against
+        // the containing block's start edge (CSS2 §9.5.1
+        // <https://www.w3.org/TR/CSS2/visuren.html#propdef-float>: "The
+        // left outer edge of a left-floating box may not be to the left
+        // of the left edge of its containing block").
+        //
+        // This does NOT exercise shrink-to-fit sizing (CSS2 §10.3.5
+        // <https://www.w3.org/TR/CSS2/visudet.html#float-width>, which only
+        // applies when 'width' computes to 'auto') — this fixture gives an
+        // explicit width on purpose. Shrink-to-fit-width coverage is a
+        // separate, currently-untested gap.
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let container =
+            doc.append_element(Some(body), "div", Style::default(), Some("width:200px"));
+        let float_child = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("float:left;width:60px;height:40px"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let loc = doc.nodes[float_child].unrounded_layout.location;
+        let size = doc.nodes[float_child].unrounded_layout.size;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (size.width - 60.0).abs() < 0.5,
+            "explicit width must still be honored, got width={}",
+            size.width
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            loc.x.abs() < 0.5,
+            "left float must sit flush against the containing block's left edge, got x={}",
+            loc.x
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            loc.y.abs() < 0.5,
+            "first child's float must sit flush against the containing block's top edge, got y={}",
+            loc.y
+        );
+    }
+
+    #[test]
+    fn nested_normal_flow_descendant_clears_ancestor_level_float() {
+        // `LayoutBlockContainer::compute_block_child_layout`'s override in
+        // `taffy_impl` only matters when a float and content that reacts to
+        // it are at *different* nesting depths — direct siblings share one
+        // `compute_block_layout` invocation (and hence one taffy
+        // `BlockFormattingContext`) regardless of the override. This
+        // fixture puts the float and a `clear:left` box two levels apart
+        // (`float_sibling` is `container`'s child, `probe` is `container`'s
+        // grandchild via the intervening `wrapper`), so the assertion only
+        // holds if `wrapper`'s own recursive layout call continues
+        // `container`'s `BlockFormattingContext` rather than starting a
+        // fresh, float-blind one for `wrapper`'s own children (CSS2 §9.5.2
+        // <https://www.w3.org/TR/CSS2/visuren.html#propdef-clear>: "clear"
+        // requires the box's top border edge be below any earlier float in
+        // the same block formatting context — not just floats that are its
+        // own direct siblings).
+        //
+        // `wrapper` is left with no explicit width so it stretch-fits to
+        // `container`'s full inner width, matching the BFC root's width —
+        // avoiding a taffy `block_layout` limitation (a same-BFC child
+        // narrower than its BFC root can get float insets computed against
+        // the root's width instead of its own) that is orthogonal to what
+        // this test pins.
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let container =
+            doc.append_element(Some(body), "div", Style::default(), Some("width:200px"));
+        let float_sibling = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("float:left;width:60px;height:40px"),
+        );
+        let wrapper = doc.append_element(Some(container), "div", Style::default(), None::<&str>);
+        let probe = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("clear:left;width:50px;height:10px"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let float_loc = doc.nodes[float_sibling].unrounded_layout.location;
+        let float_size = doc.nodes[float_sibling].unrounded_layout.size;
+        let wrapper_loc = doc.nodes[wrapper].unrounded_layout.location;
+        let probe_loc = doc.nodes[probe].unrounded_layout.location;
+
+        // `location` is parent-relative in taffy, so translate `probe`'s y
+        // into `container`'s coordinate space by walking up one level.
+        let probe_y_in_container = wrapper_loc.y + probe_loc.y;
+        let float_bottom = float_loc.y + float_size.height;
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            probe_y_in_container + 0.5 >= float_bottom,
+            "clear:left box two BFC levels below the float must sit at or below the float's bottom edge, got float_bottom={float_bottom}, probe_y_in_container={probe_y_in_container}"
         );
     }
 
