@@ -277,15 +277,13 @@ pub(crate) struct ParsedRunningTemplate {
     /// emitted.
     #[allow(
         dead_code,
-        reason = "Written by collect_running_template; \
-                  read by crate::gcpm::PhaseBWalkState::apply_directive via \
-                  crate::gcpm::apply_running_template_directives (landed — \
-                  the dom-local Phase B walk \
-                  state/algorithm; promotion onto raikiri_traits::PageContext \
-                  is a separate, still-blocked follow-up). No production \
-                  per-page driver invokes that walk \
-                  yet (a later, separate wall/dom-paint task) — exercised via \
-                  unit tests until then."
+        reason = "Written by collect_running_template; no production reader \
+                  consumes a position: running(name) template's own \
+                  directives list yet (the main per-page walk applies every \
+                  in-document element's directives directly via \
+                  crate::phase_b, not through this field) — exercised via \
+                  this module's own unit tests until a running-template \
+                  consumer lands."
     )]
     pub(crate) directives: Vec<GcpmDirective>,
     /// Which dynamic axes this template exercises (see [`DynamicFlags`]).
@@ -704,10 +702,9 @@ pub(crate) fn build_running_template_store(
 /// in the declaration, duplicates included) — reduce to one pair per
 /// distinct name, keeping the *last* occurrence's value via
 /// `HashMap::insert`'s overwrite-on-reinsert semantics, before emitting a
-/// directive. Consumers (`PageContext::apply_directive`,
-/// `PhaseBWalkState::apply_directive`) process one
-/// `GcpmDirective` at a time and unconditionally push a new nested-scope
-/// frame per `CounterReset` received, so a duplicate name reaching them as
+/// directive. The consumer (`PageContext::apply_directive`) processes one
+/// `GcpmDirective` at a time and unconditionally pushes a new nested-scope
+/// frame per `CounterReset` received, so a duplicate name reaching it as
 /// two directives would produce two frames instead of one — dedup has to
 /// happen here, at the producer, since the "these came from the same
 /// declaration" information doesn't survive past this point. `order`
@@ -722,8 +719,8 @@ pub(crate) fn build_running_template_store(
 /// same-declaration duplicate name here is deliberately *not* collapsed —
 /// every raw `(name, value)` pair is pushed as its own directive. That is
 /// correct (not an oversight mirroring the dedup above) because
-/// `PageContext::apply_directive` / `PhaseBWalkState::apply_directive`
-/// mutate the *existing* top-of-stack frame in place for
+/// `PageContext::apply_directive`
+/// mutates the *existing* top-of-stack frame in place for
 /// `CounterIncrement`/`CounterSet` (`CounterStack::increment`/`::set`)
 /// rather than pushing a new nested-scope frame the way `CounterReset` does
 /// (`CounterStack::reset`) — so N directives for the same name, applied in
@@ -953,9 +950,9 @@ fn convert_string_set_source(content_list: &[ContentComponent]) -> Option<Conten
 /// **Resolving here (collection time) is equivalent to CSS GCPM 3
 /// §1.1.1's "assigned at the point when the content box of the element is
 /// first created"**, unlike `counter()`/`counters()`, which
-/// [`crate::gcpm::StringSnapshot`]'s doc explains must be frozen at
-/// *directive-apply* time because their value drifts as later siblings
-/// mutate shared counter state. An attribute value and an element's own
+/// `raikiri_traits::page::context::resolve_content_source`'s doc explains
+/// must be resolved at *directive-apply* time because their value drifts as
+/// later siblings mutate shared counter state. An attribute value and an element's own
 /// descendant text don't have that per-page drift — they're fixed
 /// per-element, which is exactly why this module's own
 /// [`detect_dynamic_flags`] already classifies `Attr` and `content(text)`

@@ -41,7 +41,6 @@
 //! 追加時に漏れる。
 
 mod diag;
-mod gcpm;
 mod node;
 mod phase_b;
 mod running;
