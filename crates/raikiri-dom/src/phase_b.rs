@@ -278,18 +278,59 @@ fn walk_directives(ctx: &mut PageContext, doc: &Document, cascade: &CascadeResul
                     continue;
                 }
 
-                match cascade.computed.get(idx) {
-                    // CSS Lists 3 §4.5
-                    // <https://www.w3.org/TR/css-lists-3/#counters-in-elements-that-do-not-generate-boxes>:
-                    // an element that does not generate a box "cannot set,
-                    // reset, or increment a counter ... they must have no
-                    // effect." `display: none` (whole-subtree box omission)
-                    // and `display: contents` (element generates no box of
-                    // its own, CSS Display 3 §2.5) both qualify — same skip
-                    // crate::target::build_target_registry's own `Enter`
-                    // step already applies (see that function's doc).
-                    Some(cv)
-                        if matches!(cv.display, DisplayValue::None | DisplayValue::Contents) => {}
+                let cv = cascade.computed.get(idx);
+                if matches!(cv, Some(cv) if cv.display == DisplayValue::None) {
+                    // CSS Display 3
+                    // <https://www.w3.org/TR/css-display-3/#typedef-display-box>
+                    // omits the element's entire subtree from the box
+                    // tree — none of its descendants generate a box
+                    // either, regardless of their own computed `display`
+                    // (`display` is not an inherited property). Don't push
+                    // this element's `Exit`, `pending_pops` bucket, or any
+                    // child onto the walk, matching
+                    // `Node::is_display_none()`'s paint-stage subtree-skip
+                    // convention: CSS Lists 3 §4.5's "must have no effect"
+                    // for counters
+                    // (<https://www.w3.org/TR/css-lists-3/#counters-in-elements-that-do-not-generate-boxes>)
+                    // therefore extends to the whole subtree, not just this
+                    // element — same skip
+                    // `crate::target::build_target_registry`'s own `Enter`
+                    // step applies (see that function's doc).
+                    //
+                    // This also suppresses `StringSet` for the whole
+                    // subtree, which is worth flagging separately from the
+                    // counter case above: this diverges from CSS GCPM 3
+                    // §1.1.1's literal per-element carve-out (quoted on
+                    // `crate::gcpm`'s `NamedStringState` doc) — that rule
+                    // fires `string-set` "at the point when the content box
+                    // of the element is first created (or would have been
+                    // created if **the element's** display value is
+                    // none)", naming only the literal element's own
+                    // `display: none`, not an ancestor's. Whether it should
+                    // extend to a non-none descendant of a display:none
+                    // ancestor (whose own content box, per CSS Display 3,
+                    // is *also* never created), or whether such a
+                    // descendant's `string-set` should instead be assigned
+                    // per that same fictional-timing carve-out, is an open
+                    // question this driver has not resolved either way —
+                    // suppressing it here is the fail-closed choice, not a
+                    // confirmed-correct one.
+                    continue;
+                }
+
+                match cv {
+                    Some(cv) if cv.display == DisplayValue::Contents => {
+                        // CSS Lists 3 §4.5: an element that does not
+                        // generate a box "cannot set, reset, or increment a
+                        // counter ... they must have no effect."
+                        // `display: contents` generates no box of its own
+                        // (CSS Display 3 §2.5) but does not remove its
+                        // descendants from the box tree the way
+                        // `display: none` does, so — unlike the
+                        // `display: none` case handled above — this
+                        // element's subtree is still walked below; only its
+                        // own directive application is skipped.
+                    }
                     Some(cv) => {
                         directives.clear();
                         derive_element_directives(doc, idx, cv, &mut directives);
@@ -408,12 +449,15 @@ fn walk_directives(ctx: &mut PageContext, doc: &Document, cascade: &CascadeResul
                 // every counter scope it accumulated. `pending_pops.pop()`
                 // is `None` only if this `Exit` has no matching `Enter`
                 // bucket — structurally impossible: every `Enter(idx)` path
-                // pushes exactly one `WalkStep::Exit` and one
-                // `pending_pops` bucket together (the `!is_in_document()`
-                // early `continue` skips both; every other path — the
-                // `display:none` arm, the defensive `None` arm, and the
+                // that reaches this point pushes exactly one
+                // `WalkStep::Exit` and one `pending_pops` bucket together
+                // (the `!is_in_document()` early `continue` and the
+                // `display:none` early `continue` both skip both pushes
+                // instead of reaching this point; every other path — the
+                // `display:contents` arm, the defensive `None` arm, and the
                 // normal directive-applying arm — falls through to both),
-                // so the two stacks stay 1:1 for every node, leaf or not.
+                // so the two stacks stay 1:1 for every node whose `Exit`
+                // actually gets pushed, leaf or not.
                 // Bucket *entries*, unlike the bucket itself, are not
                 // append-only: the obscuring-eviction check above
                 // (`GcpmDirective::CounterReset`'s handling, module doc
@@ -592,6 +636,43 @@ mod tests {
             None,
             "a display:none element's counter-reset must have no effect \
              (CSS Lists 3 §4.5)"
+        );
+    }
+
+    #[test]
+    fn drive_document_skips_directives_on_display_none_descendants_too() {
+        // CSS Display 3 <https://www.w3.org/TR/css-display-3/#typedef-display-box>
+        // omits the element's entire subtree from the box tree — a
+        // descendant's own computed `display` doesn't matter (`display` is
+        // not an inherited property; `p` below has no `display: none` of
+        // its own), so CSS Lists 3 §4.5's "must have no effect" for
+        // counters extends to the whole subtree, not just the
+        // display:none element itself. Companion to
+        // drive_document_skips_directives_on_display_none_elements, which
+        // pins the display:none element's OWN directive; this one pins its
+        // descendant's.
+        let mut doc = Document::new();
+        let hidden = doc.append_element(Some(0), "div", Style::default(), Some("display: none"));
+        doc.append_element(
+            Some(hidden),
+            "p",
+            Style::default(),
+            Some("counter-reset: c 5"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut ctx = PageContext::default();
+        drive_document(&mut ctx, &doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.counter(&Symbol::new("c")),
+            None,
+            "a display:none ancestor's descendant's own counter-reset must \
+             have no effect either (CSS Lists 3 §4.5)"
         );
     }
 

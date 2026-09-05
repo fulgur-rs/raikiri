@@ -23,12 +23,21 @@
 //! (like this mirror) it has no production caller of its own yet either. It
 //! applies every element's `CounterReset`/`CounterIncrement`/
 //! `CounterSet`/`StringSet` directive, and correctly handles the
-//! "descendants" half of CSS Lists 3 §4.3's counter-reset scope (modulo one
-//! pre-existing, separately-tracked gap it inherits by matching
-//! `crate::target`'s own `display:none` handling: a `display:none`
-//! element's *own* box-generating descendants are still walked and applied,
-//! since `display` isn't inherited — CSS Lists 3 §4.5 withdraws counter
-//! effects only from elements that don't themselves generate a box).
+//! "descendants" half of CSS Lists 3 §4.3's counter-reset scope. It also
+//! matches `crate::target`'s own `display:none` handling: a `display:none`
+//! element's entire subtree is skipped, not just the element's own
+//! directive, since CSS Display 3
+//! <https://www.w3.org/TR/css-display-3/#typedef-display-box> omits the
+//! whole subtree from the box tree regardless of a descendant's own
+//! computed `display` (`display` isn't inherited) — CSS Lists 3 §4.5
+//! withdraws counter effects from any element that doesn't itself generate
+//! a box. The same subtree skip also suppresses `StringSet` for the whole
+//! subtree, which is a related but separately unresolved question: CSS
+//! GCPM 3 §1.1.1's own `string-set` assignment-timing rule carves out only
+//! the literal element's own `display: none`, not an ancestor's, so
+//! whether it should extend to a non-none descendant of a display:none
+//! ancestor is open (see `crate::phase_b`'s `walk_directives` for the full
+//! account) — this is not settled just because the counter half is.
 //!
 //! For the "following siblings" half, it wires the *timing* of a pushed
 //! nested-scope frame's removal — popping at the resetting element's own

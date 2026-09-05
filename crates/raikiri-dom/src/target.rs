@@ -397,10 +397,28 @@ fn build_target_info(doc: &Document, idx: usize, scopes: &CounterScopes) -> Targ
 /// non-conforming in the first place
 /// (<https://html.spec.whatwg.org/multipage/dom.html#the-id-attribute>).
 ///
-/// Elements with `display: none` never run their counter directives (CSS
-/// Lists 3 §4.5, see the `Enter` step's own comment below) — but they can
+/// A `display: none` element never runs its own counter directives (CSS
+/// Lists 3 §4.5, see the `Enter` step's own comment below) — but it can
 /// still register as a target, since `target-*()` addresses fragments by
-/// `id`, not by box generation.
+/// `id`, not by box generation. Its descendants get neither: CSS Display 3
+/// <https://www.w3.org/TR/css-display-3/#typedef-display-box> omits the
+/// element's entire subtree from the box tree, so none of them generate a
+/// box either regardless of their own computed `display` (`display` is not
+/// an inherited property) — the `Enter` step skips a `display: none`
+/// element's whole subtree, registering only the element itself before
+/// doing so.
+///
+/// **This makes a display:none descendant's own `id` unaddressable by
+/// `target-*()`**, unlike the display:none element itself — a narrowing of
+/// the `id`-based addressability argument above, not something CSS Lists 3
+/// §4.5 (which only withdraws counter effects) requires. The alternative —
+/// walking into the subtree only far enough to register ids while still
+/// suppressing every counter directive there — would need a second,
+/// separate traversal mode; this walker instead skips the whole subtree in
+/// one pass, matching `Node::is_display_none()`'s paint-stage convention
+/// (see above). CSS Content 3 §2.6.3's `target-text()` addressing has no
+/// display/box-generation dependency at all, so this narrowing is tracked
+/// as a known limitation, not fixed here.
 ///
 /// # Precondition
 ///
@@ -438,19 +456,22 @@ pub(crate) fn build_target_registry(doc: &Document, cascade: &CascadeResult) -> 
                     continue;
                 }
 
-                let pushed = match cascade.computed.get(idx) {
-                    Some(cv)
-                        if matches!(cv.display, DisplayValue::None | DisplayValue::Contents) =>
-                    {
+                let cv = cascade.computed.get(idx);
+                let is_display_none = matches!(cv, Some(cv) if cv.display == DisplayValue::None);
+
+                let pushed = match cv {
+                    Some(cv) if is_display_none || cv.display == DisplayValue::Contents => {
                         // CSS Lists 3 §4.5
                         // <https://www.w3.org/TR/css-lists-3/#counters-in-elements-that-do-not-generate-boxes>:
                         // an element that does not generate a box "cannot
                         // set, reset, or increment a counter ... they must
                         // have no effect." `display: none` (whole-subtree
-                        // box omission) and `display: contents` (element
-                        // generates no box of its own, CSS Display 3 §2.5)
-                        // both qualify. Skip directive application entirely
-                        // — the element may still register as a target
+                        // box omission, CSS Display 3
+                        // <https://www.w3.org/TR/css-display-3/#typedef-display-box>)
+                        // and `display: contents` (element generates no box
+                        // of its own, CSS Display 3 §2.5) both qualify —
+                        // skip this element's own directive application
+                        // either way; it may still register as a target
                         // below (target-* doesn't require box generation,
                         // only an id).
                         Vec::new()
@@ -464,17 +485,37 @@ pub(crate) fn build_target_registry(doc: &Document, cascade: &CascadeResult) -> 
                     // `.get(idx)` note documents.
                     None => Vec::new(),
                 };
-                // Push the Exit step before the id/register check below —
-                // even an id-less element's pushed scopes (e.g. from a bare
-                // counter-reset with no id) must still be popped on the way
-                // back out.
-                stack.push(WalkStep::Exit(pushed));
 
                 if let Some(fragment_id) = element_id(doc, idx) {
                     let directive = synthesize_register_target(&fragment_id);
                     let info = build_target_info(doc, idx, &scopes);
                     apply_register_target(directive, info, &mut registry);
                 }
+
+                if is_display_none {
+                    // CSS Display 3
+                    // <https://www.w3.org/TR/css-display-3/#typedef-display-box>
+                    // omits the element's entire subtree from the box
+                    // tree — none of its descendants generate a box
+                    // either, regardless of their own computed `display`
+                    // (`display` is not an inherited property), so CSS
+                    // Lists 3 §4.5's "must have no effect" for counters
+                    // extends to the whole subtree, not just this element.
+                    // Don't push this element's `Exit` step, or any child,
+                    // onto the walk, matching `Node::is_display_none()`'s
+                    // paint-stage subtree-skip convention — unlike
+                    // `display: contents` above, which still walks its
+                    // subtree below. Skipping the `Exit` push is itself a
+                    // no-op either way: `pushed` is always empty for this
+                    // arm (the match above never calls `scopes.apply` for
+                    // it), so there is nothing for that `Exit` to pop.
+                    continue;
+                }
+
+                // Even an id-less element's pushed scopes (e.g. from a bare
+                // counter-reset with no id) must still be popped on the way
+                // back out.
+                stack.push(WalkStep::Exit(pushed));
 
                 for &child in node.children.iter().rev() {
                     stack.push(WalkStep::Enter(child));
@@ -794,22 +835,23 @@ mod tests {
     }
 
     #[test]
-    fn build_target_registry_display_none_element_does_not_affect_counter_stack() {
-        // CSS Lists 3 §4.5
-        // <https://www.w3.org/TR/css-lists-3/#counters-in-elements-that-do-not-generate-boxes>:
-        // an element that does not generate a box "cannot set, reset, or
-        // increment a counter ... they must have no effect."
-        //
-        // Regression-pin shape: the id-bearing probe must be a *descendant*
-        // of the display:none element, registered *before* that element's
-        // own subtree-exit pop — a sibling-after probe would read "0"
-        // either way (the ancestor-chain-only pop-on-subtree-exit model
-        // already discards the reset's scope by the time a later sibling is
-        // visited, fix or no fix — see
-        // counter_increment_on_following_sibling_of_reset_element_is_not_in_scope),
-        // so it can't distinguish "correctly skipped" from "wrongly applied
-        // then popped". A descendant, seen *while the scope is still open*,
-        // can.
+    fn build_target_registry_display_none_ancestor_skips_the_entire_descendant_subtree() {
+        // CSS Display 3 <https://www.w3.org/TR/css-display-3/#typedef-display-box>
+        // omits the element's entire subtree from the box tree — none of
+        // its descendants generate a box either, regardless of their own
+        // computed `display` (`display` is not an inherited property, so
+        // `target`'s own computed display below is not none). CSS Lists 3
+        // §4.5's "must have no effect" for counters
+        // (<https://www.w3.org/TR/css-lists-3/#counters-in-elements-that-do-not-generate-boxes>)
+        // therefore extends to the whole subtree: `target` must not
+        // register as a target at all — not merely register with its own
+        // directive suppressed — matching `Node::is_display_none()`'s
+        // paint-stage subtree-skip convention. `hidden` (the display:none
+        // element itself) is given an `id` too and asserted `Resolved` in
+        // this same document, pinning the exact boundary this function's
+        // own doc draws ("This makes a display:none descendant's own `id`
+        // unaddressable ... unlike the display:none element itself") rather
+        // than merely showing SOME failure to register `target`.
         let mut doc = Document::new();
         let hidden = doc.append_element(
             Some(0),
@@ -817,37 +859,61 @@ mod tests {
             Style::default(),
             Some("display: none; counter-reset: c 5"),
         );
-        let target = doc.append_element(Some(hidden), "span", Style::default(), None::<&str>);
+        set_id(&mut doc, hidden, "hidden");
+        let target = doc.append_element(
+            Some(hidden),
+            "span",
+            Style::default(),
+            Some("counter-increment: c"),
+        );
         set_id(&mut doc, target, "target");
         doc.mark_in_document_flags();
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
         let mut registry = build_target_registry(&doc, &cr);
-        let out = registry.resolve_target_counter(
+        let hidden_out = registry.resolve_target_counter(
+            "#hidden",
+            Symbol::new("c"),
+            raikiri_style::property::CounterStyle::Decimal,
+        );
+        let target_out = registry.resolve_target_counter(
             "#target",
             Symbol::new("c"),
             raikiri_style::property::CounterStyle::Decimal,
         );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
         assert_eq!(
-            out,
+            hidden_out,
             raikiri_traits::ResolveOutcome::Resolved("0".to_owned()),
-            "a display:none ancestor's own counter-reset must have no effect at all, \
-             even observed from inside its still-open (but skipped) scope"
+            "the display:none element itself must still register (its own \
+             counter-reset has no effect on itself either, per CSS Lists 3 \
+             §4.5)"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            matches!(target_out, raikiri_traits::ResolveOutcome::Pending(_)),
+            "a display:none ancestor's descendant must never be visited by the \
+             walk at all, so it never registers as a target — got {target_out:?}"
         );
     }
 
     #[test]
     fn build_target_registry_display_none_element_itself_still_registers_as_target() {
-        // Companion to build_target_registry_display_none_element_does_not_affect_counter_stack:
-        // that test pins that a display:none element's counter directives
-        // have no effect on OTHERS; this one pins that skipping directive
-        // application doesn't also accidentally skip TARGET registration
-        // for the display:none element itself. CSS Lists 3 §4.5 only
-        // withdraws counter set/reset/increment from non-box-generating
-        // elements — it says nothing about target-*() addressability, which
-        // is purely id-based (see build_target_registry's own "Elements
-        // with display: none" doc note).
+        // Companion to build_target_registry_display_none_ancestor_skips_the_entire_descendant_subtree:
+        // that test pins that a display:none element's DESCENDANT is never
+        // visited or registered at all (while the display:none element
+        // itself still resolves there too); this one isolates that second
+        // half — a display:none element with no descendant of its own
+        // still registers as a target, so skipping directive application
+        // doesn't also accidentally skip TARGET registration for the
+        // display:none element itself. CSS Lists 3 §4.5 only withdraws
+        // counter set/reset/increment from non-box-generating elements —
+        // it says nothing about target-*() addressability, which is purely
+        // id-based (see build_target_registry's own "Elements with
+        // display: none" doc note).
         let mut doc = Document::new();
         let hidden = doc.append_element(Some(0), "div", Style::default(), Some("display: none"));
         set_id(&mut doc, hidden, "hidden");
@@ -869,11 +935,23 @@ mod tests {
 
     #[test]
     fn build_target_registry_display_contents_element_does_not_affect_counter_stack() {
-        // Companion to build_target_registry_display_none_element_does_not_affect_counter_stack:
         // display:contents also generates no box for the element itself
         // (CSS Display 3 §2.5), so CSS Lists 3 §4.5's "no effect" rule
-        // applies here too. Same regression-pin shape (descendant probe,
-        // still-open scope) for the same reason that test documents.
+        // applies here too — but unlike display:none
+        // (build_target_registry_display_none_ancestor_skips_the_entire_descendant_subtree),
+        // display:contents does not remove its descendants from the box
+        // tree, so `target` below is still walked and registered normally.
+        //
+        // Regression-pin shape: the id-bearing probe must be a
+        // *descendant* of the display:contents element, registered
+        // *before* that element's own subtree-exit pop — a sibling-after
+        // probe would read "0" either way (the ancestor-chain-only
+        // pop-on-subtree-exit model already discards the reset's scope by
+        // the time a later sibling is visited, fix or no fix — see
+        // counter_increment_on_following_sibling_of_reset_element_is_not_in_scope),
+        // so it can't distinguish "correctly skipped" from "wrongly applied
+        // then popped". A descendant, seen *while the scope is still open*,
+        // can.
         let mut doc = Document::new();
         let contents = doc.append_element(
             Some(0),
