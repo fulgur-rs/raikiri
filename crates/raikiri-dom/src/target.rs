@@ -108,7 +108,7 @@
 //! to record into ([`build_target_registry`]'s `pending_pops` starts empty)
 //! and is therefore never popped — inert here, since a [`CounterScopes`]
 //! value never outlives the single `build_target_registry` call that owns
-//! it (contrast `crate::phase_b::drive_page`'s own doc, where the identical
+//! it (contrast [`crate::phase_b::drive_page`]'s own doc, where the identical
 //! root-level non-pop is a real, documented leak, because its
 //! `PageContext` state persists across calls).
 //!
@@ -180,7 +180,7 @@ impl CounterScopes {
     /// yet); a root-level instantiation is then left untracked and never
     /// popped — harmless here, since a [`CounterScopes`] value never
     /// outlives the one [`build_target_registry`] call that owns it
-    /// (contrast `crate::phase_b::drive_page`'s own doc, where the same
+    /// (contrast [`crate::phase_b::drive_page`]'s own doc, where the same
     /// root-level non-pop is a real, documented leak because its
     /// `PageContext` state persists across calls).
     ///
@@ -429,7 +429,7 @@ fn build_target_info(doc: &Document, idx: usize, scopes: &CounterScopes) -> Targ
 /// `Enter`/`Exit` steps — same reverse-push-children shape as
 /// [`crate::layout::find_body`] / [`crate::running::build_running_template_store`],
 /// extended with an `Exit` step and a `pending_pops: Vec<Vec<Symbol>>`
-/// side-stack — the same shape `crate::phase_b::walk_directives` uses
+/// side-stack — the same shape [`crate::phase_b`]'s `walk_directives` uses
 /// against the promoted `PageContext` type — so [`CounterScopes`] pops each
 /// pushed scope level at the *pushing element's parent's* `Exit`, not the
 /// pushing element's own; see [`CounterScopes::apply`]'s doc for why). For
@@ -501,14 +501,14 @@ pub(crate) fn build_target_registry(doc: &Document, cascade: &CascadeResult) -> 
 
     let mut stack = vec![WalkStep::Enter(doc.root)];
     // `pending_pops[i]` holds the counter names to pop (via
-    // [`CounterScopes::pop`]) at the `Exit` matching the `Enter` that pushed
+    // `CounterScopes::pop`) at the `Exit` matching the `Enter` that pushed
     // bucket `i`. A name lands in the *parent's* bucket — the one on top of
     // `pending_pops` at the moment the instantiating element is entered,
-    // i.e. `pending_pops.last_mut()` passed into [`CounterScopes::apply`] as
+    // i.e. `pending_pops.last_mut()` passed into `CounterScopes::apply` as
     // `parent_bucket` — rather than a bucket of the instantiating element's
     // own, so it is popped at the parent's `Exit` and stays visible to the
     // instantiating element's own following siblings (CSS Lists 3 §4.3, see
-    // [`CounterScopes::apply`]'s doc). Same shape as
+    // `CounterScopes::apply`'s doc). Same shape as
     // `crate::phase_b::walk_directives`'s identically-named mechanism
     // against the promoted `PageContext` type.
     let mut pending_pops: Vec<Vec<Symbol>> = Vec::new();
