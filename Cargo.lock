@@ -1749,7 +1749,6 @@ name = "raikiri-dom"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.13.0",
- "libc",
  "parley",
  "raikiri-style",
  "raikiri-traits",
@@ -1817,6 +1816,7 @@ name = "raikiri-traits"
 version = "0.2.0"
 dependencies = [
  "bytes",
+ "libc",
  "raikiri-style",
  "rustc-hash",
  "smol_str",
@@ -1831,8 +1831,8 @@ dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
  "kurbo",
- "libc",
  "peniko",
+ "raikiri-traits",
  "rustix",
  "tempfile",
  "tiny-skia",

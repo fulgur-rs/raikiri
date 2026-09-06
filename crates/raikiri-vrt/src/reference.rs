@@ -18,132 +18,7 @@
 #![allow(rustdoc::private_intra_doc_links)]
 
 use std::fmt;
-use std::io::Read;
 use std::path::{Path, PathBuf};
-
-/// Open a regular file with the leaf-swap TOCTOU defense stack.
-///
-/// The unix impl passes `O_NOFOLLOW | O_NONBLOCK` to `File::open`:
-///
-/// - `O_NOFOLLOW`: a symlink swapped in between the pre-open
-///   `symlink_metadata` check and this open call cannot cause the resolver
-///   to follow a fresh target. POSIX mandates `ELOOP` for
-///   `open(O_NOFOLLOW)` on a symlink (Linux, macOS, and modern FreeBSD
-///   comply); legacy BSDs (NetBSD, OpenBSD, FreeBSD <10) may return
-///   `EMLINK` or `EFTYPE` instead. Callers that need to distinguish this
-///   case from other I/O errors should check the errno match against
-///   `libc::ELOOP` AND fall back to a `symlink_metadata` recheck (see
-///   `read_bounded_fixture_file` for the portable pattern).
-/// - `O_NONBLOCK`: **load-bearing time-DoS defense** paired with the
-///   post-open fstat check in [`check_open_handle_regular`]. If a regular
-///   file is swapped for a **writer-less FIFO** between the pre-open
-///   `symlink_metadata` check and this `open()`, the bare
-///   `open(O_RDONLY | O_NOFOLLOW)` call would block indefinitely at the
-///   `open()` syscall itself — `O_NOFOLLOW` does not fire (a FIFO is not a
-///   symlink), so the post-open fstat is never reached. `O_NONBLOCK` makes
-///   FIFO opens return immediately (POSIX: read-side `O_RDONLY | O_NONBLOCK`
-///   on a FIFO succeeds even with no writer), letting the post-open fstat
-///   inspect the fd and reject non-regular kinds. Regular file semantics
-///   are unaffected: POSIX specifies `O_NONBLOCK` has no effect on regular
-///   files, and Linux/macOS both honor that (ports
-///   `raikiri_dom::fonts::safe_open`'s O_NONBLOCK defense to this crate).
-///
-/// The Windows impl takes a different route to the same guarantee, because
-/// Win32 has no direct `O_NOFOLLOW` equivalent: `CreateFile` normally
-/// resolves a reparse point (symlink, junction, mount point, ...) and hands
-/// back a handle to whatever it points at, rather than failing the open.
-/// `FILE_FLAG_OPEN_REPARSE_POINT` changes that: it opens the reparse point
-/// itself instead of following it. The open still *succeeds* on a symlink
-/// (unlike `O_NOFOLLOW`, which fails it outright), so the returned handle
-/// can be bound to a symlink object rather than its target.
-///
-/// `FILE_FLAG_BACKUP_SEMANTICS` is deliberately **not** added alongside it.
-/// That flag is only needed to open a *directory-type* reparse point
-/// (junction, directory symlink) — without it, `CreateFile` on a
-/// directory-attributed object fails outright, which is still fail-closed
-/// for this fixture-loading path (an `Err` from the open propagates via
-/// `?` exactly like a rejected file-type reparse point does below). Adding
-/// it would buy detection of a threat class this call site never has to
-/// open (a directory can never be a legitimate `input.html` or
-/// `expected/page-*.png` leaf; the pre-open `!is_file()` gate in
-/// [`read_bounded_fixture_file`] already rejects one before `safe_open`
-/// runs) at the cost of a real behavior change: in a process that holds
-/// `SeBackupPrivilege` (not exotic for a Windows CI/build agent),
-/// `FILE_FLAG_BACKUP_SEMANTICS` bypasses normal access checks. Omitting it
-/// keeps this function's access checks identical to a plain `CreateFile`
-/// call in every privilege context, at zero loss of coverage for the
-/// file-type-reparse-point case this defense targets.
-///
-/// Because the open can succeed on a (file-type) symlink, the symlink
-/// check has to move to *after* the open: the handle's `dwFileAttributes`
-/// (read via `std::os::windows::fs::MetadataExt::file_attributes`, itself
-/// a thin wrapper over `GetFileInformationByHandle`) is inspected for
-/// `FILE_ATTRIBUTE_REPARSE_POINT`, and the handle is discarded with an
-/// error if the bit is set. There is no path through this function that
-/// returns a handle bound to a followed reparse-point target: either
-/// `CreateFile` itself fails (directory-type reparse point, or any other
-/// I/O error) and `?` propagates it, or it succeeds bound to the leaf
-/// object exactly as `CreateFile` resolved it and the attribute check
-/// rejects that object before it is returned. Because both the open and
-/// the check operate on the same handle — no path is re-resolved in
-/// between — a leaf swapped in between the pre-open `symlink_metadata`
-/// check and this call cannot cause a fresh reparse-point target to be
-/// read: whatever `CreateFile` bound the handle to is exactly what
-/// `file_attributes()` reports on. This mirrors the "checked == used, same
-/// fd" shape [`check_open_handle_regular`] already uses for the
-/// regular-file-kind check below.
-///
-/// Any other platform (neither unix nor windows) keeps the plain
-/// `File::open` follow-at-open default; no leaf-swap defense is applied
-/// there.
-// Callsite-local defense: sharing this stack with raikiri-dom is deferred
-// pending a walls.md §2 crate-list placement decision. Do not lift
-// into raikiri-traits::io without that decision.
-#[cfg(unix)]
-fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
-    use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(path)
-}
-
-#[cfg(windows)]
-fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
-    use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
-
-    // Win32 `CreateFile` flag/attribute bits (winnt.h). Not exposed as
-    // constants by std, but part of the stable Win32 ABI — these values
-    // have been unchanged since Windows NT and are not expected to move.
-    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
-
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(path)?;
-
-    // Post-open, same-handle check: reject if what CreateFile actually
-    // bound the handle to is a reparse point. See the doc comment above for
-    // why this has to run after the open rather than before it.
-    let attrs = file.metadata()?.file_attributes();
-    if attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-        return Err(std::io::Error::other(format!(
-            "refusing to open {}: leaf resolved to a reparse point (symlink/junction) \
-             rather than a plain file",
-            path.display()
-        )));
-    }
-    Ok(file)
-}
-
-#[cfg(not(any(unix, windows)))]
-fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
-    // No leaf-swap defense is implemented for platforms outside the
-    // unix/windows pair above; this fallback keeps plain follow-at-open
-    // `File::open` semantics.
-    std::fs::File::open(path)
-}
 
 /// Maximum per-fixture-file size cap (input.html or expected/page-*.png).
 ///
@@ -179,10 +54,17 @@ fn safe_open(path: &std::path::Path) -> std::io::Result<std::fs::File> {
 ///   `symlink_metadata(fixture_dir)` rejects a symlinked root
 /// - **path escape via intermediate symlink** (e.g. `expected/` → `/tmp/evil`
 ///   so `expected/page-0000.png` resolves outside the fixture root):
-///   `canonicalize` + `starts_with(canonical_root)` prefix check
-/// - **mid-read grow (TOCTOU)**: `File::open + take(cap + 1) + read_to_end`
-///   +1-probe pattern catches files that grow
-///   between the `metadata.len()` check and the actual read
+///   `canonicalize` + `starts_with(canonical_root)` prefix check, plus
+///   [`check_open_handle_containment`]'s post-open fd-derived recheck for
+///   the residual window between that check and the open
+/// - **leaf-swap (TOCTOU) between the pre-open `symlink_metadata` check and
+///   the open**: `raikiri_traits::io::open_bounded_regular_file`'s
+///   `O_NOFOLLOW` (unix) / reparse-point-aware open (Windows), with an
+///   ELOOP-or-`symlink_metadata`-recheck fallback and a post-open fd-based
+///   kind recheck for the FIFO/device-swap subclass
+/// - **mid-read grow (TOCTOU)**: the `+1-probe` pattern in
+///   `raikiri_traits::io::read_bounded_from_open_file` catches files that
+///   grow between the `metadata.len()` check and the actual read
 const FIXTURE_SIZE_CAP: u64 = 100 * 1024 * 1024;
 
 /// Maximum number of `expected/page-*.png` entries `load_fixture` will read.
@@ -378,25 +260,17 @@ pub enum FixtureError {
         /// Path of the rejected non-regular entry.
         path: PathBuf,
     },
-    /// Post-open, fd-based fstat (`check_open_handle_regular`) found the
-    /// descriptor `safe_open` returned does not resolve to a regular file.
-    /// Race-free complement to [`FixtureError::NotRegularFile`]: the
-    /// pre-open path-based `symlink_metadata` check can observe a regular
-    /// file that gets swapped for a FIFO/device before `safe_open` runs;
-    /// this check instead consults the inode already bound to the opened
-    /// descriptor, so no second path lookup can be raced. Mirrors
-    /// `raikiri_dom::fonts::FontReadReject::NotRegularFilePostOpen` (ported
-    /// to this crate from that source pattern).
-    ///
-    /// Shape divergence from the fonts.rs original, intentional: fonts.rs's
-    /// `FontReadReject::NotRegularFilePostOpen` is a bare unit variant
-    /// because `FontReadReject` defers attaching `path` to the caller
-    /// (`FontWarn`/`FontError` add it later). This crate's `FixtureError`
-    /// has no such deferred layer — every existing variant already
-    /// self-carries its `path` — so this variant does too, and
-    /// `check_open_handle_regular`/`check_open_handle_containment` both
-    /// take an extra `path: &Path` parameter (absent from the fonts.rs
-    /// originals) purely to construct it.
+    /// Post-open, fd-based fstat inside
+    /// `raikiri_traits::io::open_bounded_regular_file` found the descriptor
+    /// the open returned does not resolve to a regular file. Race-free
+    /// complement to [`FixtureError::NotRegularFile`]: the pre-open
+    /// path-based `symlink_metadata` check can observe a regular file that
+    /// gets swapped for a FIFO/device before the open runs; the traits
+    /// helper's post-open check instead consults the inode already bound to
+    /// the opened descriptor, so no second path lookup can be raced.
+    /// `map_reject_reason` attaches `path` when translating
+    /// `raikiri_traits::io::RejectReason::NotRegularFilePostOpen` (which
+    /// carries no path of its own) into this variant.
     NotRegularFilePostOpen {
         /// Path whose opened fd resolved to a non-regular kind.
         path: PathBuf,
@@ -426,15 +300,16 @@ pub enum FixtureError {
     },
     /// Post-open, fd-bound containment recheck (`check_open_handle_containment`)
     /// found the already-opened descriptor resolves outside `canonical_root`.
-    /// Unlike [`FixtureError::PathEscape`] (pre-open, path-based, and itself
-    /// TOCTOU-vulnerable to a second swap before `safe_open` runs), this
-    /// variant is derived from the fd `safe_open` actually returned — on
-    /// Linux via `/proc/self/fd/<fd>`, on Apple platforms via
-    /// `fcntl(fd, F_GETPATH, ..)` — so firing here
-    /// means an intermediate-directory swap happened inside the pre-open
-    /// canonicalize→safe_open re-resolution window itself. Mirrors
-    /// `raikiri_dom::fonts::FontReadReject::PathEscapePostOpen` (source of
-    /// this pattern; ported here as the same-shape follow-up).
+    /// Unlike [`FixtureError::PathEscape`] (a fresh, path-based
+    /// `canonicalize` re-resolution — itself TOCTOU-vulnerable to a second
+    /// swap before this recheck runs, and, per
+    /// [`read_bounded_fixture_file`]'s own doc, now performed *after* the
+    /// open rather than before it), this variant is derived from the fd the
+    /// open actually returned — on Linux via `/proc/self/fd/<fd>`, on Apple
+    /// platforms via `fcntl(fd, F_GETPATH, ..)` — so firing here means an
+    /// intermediate-directory swap happened inside the window between the
+    /// open and this fd-based recheck. Mirrors
+    /// `raikiri_dom::fonts::FontReadReject::PathEscapePostOpen`.
     PathEscapePostOpen {
         /// fd-derived canonical path (post-open) that fell outside the root.
         canonical: PathBuf,
@@ -521,7 +396,7 @@ impl fmt::Display for FixtureError {
             Self::PathEscapePostOpen { canonical, root } => {
                 write!(
                     f,
-                    "fixture entry's opened fd resolves to {} which escapes fixture root {} (TOCTOU-swap between pre-open canonicalize and safe_open)",
+                    "fixture entry's opened fd resolves to {} which escapes fixture root {} (TOCTOU-swap between the open and this containment recheck)",
                     canonical.display(),
                     root.display()
                 )
@@ -648,80 +523,40 @@ pub fn compare_png(
     })
 }
 
-/// Post-open fd-based fstat: verify the handle `safe_open` returned still
-/// resolves to a regular file. Load-bearing supplement to the pre-open
-/// path-based `symlink_metadata` + `is_file()` gate in
-/// [`read_bounded_fixture_file`].
-///
-/// The pre-open path-based check is race-vulnerable — a regular file can be
-/// swapped for a FIFO / character device / block device between the
-/// pre-open metadata call and the subsequent `safe_open`. `O_NOFOLLOW` does
-/// not filter file kind (a FIFO is not a symlink), so the swapped-in kind
-/// slips through `safe_open`. Calling `File::metadata()` on the returned fd
-/// consults the inode already bound to the descriptor, so no path lookup
-/// re-runs and the race window is closed by construction — for the *kind*
-/// check.
-///
-/// This crate's [`safe_open`] pairs `O_NOFOLLOW` with `O_NONBLOCK` — the
-/// same pairing `raikiri_dom::fonts::safe_open` carries — so a swapped-in
-/// writer-less FIFO returns
-/// immediately from `open()` instead of blocking before this fstat is
-/// reached. This function closes the *kind*-detection half for all swap
-/// classes reachable via `safe_open` — FIFOs, character devices, and block
-/// devices alike.
-///
-/// Mirrors `raikiri_dom::fonts::check_open_handle_regular` (source of this
-/// pattern, ported to this crate, with the `O_NONBLOCK` pairing added here
-/// too).
-fn check_open_handle_regular(file: &std::fs::File, path: &Path) -> Result<(), FixtureError> {
-    // cov:ignore: fstat on a descriptor this function's caller just opened
-    // failing (e.g. underlying storage unmounted mid-call) is an
-    // environment fault, not a state a deterministic unit test can force.
-    // `raikiri_dom::fonts`'s sibling check treats the equivalent as
-    // fail-closed `Io`; preserved here as `FixtureError::IoError`.
-    let metadata = file.metadata().map_err(|source| FixtureError::IoError {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    if !metadata.file_type().is_file() {
-        return Err(FixtureError::NotRegularFilePostOpen {
-            path: path.to_path_buf(),
-        });
-    }
-    Ok(())
-}
-
 /// Post-open fd-bound containment recheck: verify the descriptor
-/// `safe_open` returned still resolves under `canonical_root`, using a
-/// path derived **from the fd itself** rather than a fresh path-based
-/// `canonicalize` call.
+/// `raikiri_traits::io::open_bounded_regular_file` returned still resolves
+/// under `canonical_root`, using a path derived **from the fd itself**
+/// rather than a fresh path-based `canonicalize` call.
 ///
 /// # Why this closes the intermediate-dir-swap TOCTOU
 ///
-/// [`read_bounded_fixture_file`]'s pre-open gate canonicalizes `path` and
-/// checks `starts_with(canonical_root)` *before* calling `safe_open`. Both
-/// calls independently re-resolve the same pathname, so they are two
-/// separate lookups of a mutable filesystem tree, not one atomic operation
-/// on one object: an attacker who swaps an intermediate directory component
-/// between the two calls can make the pre-open `canonicalize` observe a
-/// path inside `canonical_root` while `safe_open`'s own pathname
-/// resolution — running microseconds later — binds the fd to a different,
-/// outside-root object. The leaf is still a regular file either way, so
-/// neither `check_open_handle_regular` (kind only) nor the pre-open gate
-/// (already-passed, stale) catches the swap.
+/// [`read_bounded_fixture_file`]'s `canonicalize` gate (which, per that
+/// function's own doc, runs after the open rather than before it) checks
+/// `starts_with(canonical_root)`. That check and the open inside
+/// `raikiri_traits::io::open_bounded_regular_file` independently re-resolve
+/// the same pathname, so they are two separate lookups of a mutable
+/// filesystem tree, not one atomic operation on one object: an attacker who
+/// swaps an intermediate directory component between the two calls can make
+/// the `canonicalize` observe a path inside `canonical_root` while the
+/// open's own pathname resolution — running microseconds earlier or later —
+/// binds the fd to a different, outside-root object. The leaf is still a
+/// regular file either way, so neither the post-open kind check inside
+/// `open_bounded_regular_file` (kind only) nor the `canonicalize` check
+/// (independently re-resolved, stale by the time this runs) catches the
+/// swap.
 ///
 /// The fix is to derive the containment check from the **same fd** that
 /// will be read, so there is no second pathname resolution after the check
 /// to race against. On Linux, `/proc/self/fd/<fd>` is a magic symlink the
 /// kernel keeps pointing at the dentry the fd is actually bound to;
 /// `readlink`-ing it costs one syscall and does not walk `path` again, so
-/// the check is bound to the fd `safe_open` returned rather than to an
-/// independent re-resolution of `path`. (Precisely: the kernel reconstructs
-/// the *reported path string* from the dentry chain at readlink time, so a
-/// rename of an ancestor directory between `safe_open` and this call can
-/// still change what `readlink` reports; what cannot happen is a second,
-/// attacker-steerable *pathname lookup* of `path` — the class of swap this
-/// check closes.)
+/// the check is bound to the fd the open actually returned rather than to
+/// an independent re-resolution of `path`. (Precisely: the kernel
+/// reconstructs the *reported path string* from the dentry chain at
+/// readlink time, so a rename of an ancestor directory between the open and
+/// this call can still change what `readlink` reports; what cannot happen
+/// is a second, attacker-steerable *pathname lookup* of `path` — the class
+/// of swap this check closes.)
 ///
 /// # Fail-closed on procfs-unavailable
 ///
@@ -731,8 +566,9 @@ fn check_open_handle_regular(file: &std::fs::File, path: &Path) -> Result<(), Fi
 /// that error is **not** skipped — every `FixtureError` this crate produces
 /// is `?`-propagated or explicitly returned (never silently dropped and
 /// continued past), so there is no warn+skip path anywhere in this crate
-/// that could fall back to the weaker pre-open-only guarantee. This is
-/// deliberate fail-closed (autonomy.md 原則3): a filesystem that cannot
+/// that could fall back to the weaker path-based-only guarantee (the
+/// `canonicalize` check alone, without this fd-based recheck). This is
+/// deliberate fail-closed: a filesystem that cannot
 /// support the authoritative containment check is treated as a hard error.
 /// Concretely, on a Linux host without procfs mounted this recheck now
 /// hard-fails VRT fixture loading that previously succeeded under the
@@ -763,8 +599,10 @@ fn check_open_handle_regular(file: &std::fs::File, path: &Path) -> Result<(), Fi
 ///   (see rustix's own `build.rs`) to exactly this platform set, so this
 ///   fix covers Apple platforms only.
 /// - **Everything else** (non-Apple BSDs, Windows, ...): no-op fallback
-///   (below) that leaves the pre-open canonicalize check as the only
-///   containment gate there — no worse than before this change.
+///   (below) that leaves the `canonicalize` + `starts_with` check (which
+///   runs *after* the open, not before — see
+///   [`read_bounded_fixture_file`]'s own doc) as the only containment gate
+///   there — no worse than before this change.
 ///   `raikiri_dom::fonts`'s analogous non-Linux, non-Apple gap was
 ///   researched but not acted on; this file's
 ///   residual on that same platform set remains untracked, same as
@@ -800,7 +638,7 @@ fn check_open_handle_containment(
 }
 
 /// Apple-platform implementation: derives the post-open containment path
-/// from the same fd `safe_open` returned, via `fcntl(fd, F_GETPATH, ..)`
+/// from the same fd the open returned, via `fcntl(fd, F_GETPATH, ..)`
 /// through [`rustix::fs::getpath`] — the Darwin/XNU analogue of the Linux
 /// arm's `/proc/self/fd/<fd>` readlink above. Same race-freedom argument
 /// applies: `F_GETPATH` asks the kernel for the path bound to *this*
@@ -820,7 +658,8 @@ fn check_open_handle_containment(
 /// taking the same fail-closed hard-abort path documented in the
 /// "Fail-closed on procfs-unavailable" section above: a filesystem that
 /// cannot support the authoritative containment check is a hard error,
-/// not a silent fallback to the weaker pre-open-only guarantee. Note the
+/// not a silent fallback to the weaker path-based-only guarantee (the
+/// `canonicalize` check alone, without this fd-based recheck). Note the
 /// failure *shape* differs from Linux: a live fd's `/proc/self/fd/<fd>`
 /// entry effectively cannot fail to `readlink`, while `F_GETPATH`
 /// reconstructs its answer from the vnode's name cache and has a genuine
@@ -905,10 +744,10 @@ fn check_open_handle_containment(
 /// Fallback for every other platform (non-Apple BSDs, Windows, ...): no
 /// portable fd-to-path primitive is wired up (see the Portability section
 /// on the `target_os = "linux"` impl above). No-op so behavior on these
-/// platforms is unchanged — the pre-open `canonicalize` +
-/// `starts_with` gate in [`read_bounded_fixture_file`] remains the only
-/// containment check, exactly as it was before this fd-based defense was
-/// added.
+/// platforms is unchanged — the `canonicalize` + `starts_with` gate in
+/// [`read_bounded_fixture_file`] (which now runs *after* the open, per
+/// that function's own comments) remains the only containment check,
+/// exactly as it was before this fd-based defense was added.
 #[cfg(not(any(
     target_os = "linux",
     target_os = "macos",
@@ -925,65 +764,78 @@ fn check_open_handle_containment(
     Ok(())
 }
 
+/// Map a [`raikiri_traits::io::RejectReason`] onto this module's
+/// [`FixtureError`] taxonomy, attaching `path` (the traits helper carries no
+/// `path` field itself — the caller already has it).
+///
+/// `RejectReason` and `OversizePhase` are both `#[non_exhaustive]`; a future
+/// variant this match has not been updated for falls through to the
+/// wildcard arm and is treated as an I/O-shaped hard error — this crate
+/// already `?`-propagates every `FixtureError` it produces (no warn+skip
+/// path exists here to silently downgrade into), so the wildcard preserves
+/// that same fail-closed shape rather than inventing a new one.
+fn map_reject_reason(path: &Path, reason: raikiri_traits::io::RejectReason) -> FixtureError {
+    use raikiri_traits::io::{OversizePhase, RejectReason};
+    match reason {
+        RejectReason::Symlink => FixtureError::SymlinkRejected {
+            path: path.to_path_buf(),
+        },
+        RejectReason::NotRegularFile => FixtureError::NotRegularFile {
+            path: path.to_path_buf(),
+        },
+        RejectReason::NotRegularFilePostOpen => FixtureError::NotRegularFilePostOpen {
+            path: path.to_path_buf(),
+        },
+        RejectReason::Oversized {
+            size,
+            cap,
+            phase: OversizePhase::PreOpen | OversizePhase::DuringRead,
+        } => FixtureError::OversizedFixture {
+            path: path.to_path_buf(),
+            size,
+            cap,
+        },
+        RejectReason::Io(source) => FixtureError::IoError {
+            path: path.to_path_buf(),
+            source,
+        },
+        // cov:ignore: unreachable while RejectReason is Symlink|NotRegularFile|
+        // NotRegularFilePostOpen|Oversized|Io only (all explicitly matched
+        // above); required for its #[non_exhaustive] contract.
+        other => FixtureError::IoError {
+            path: path.to_path_buf(),
+            source: std::io::Error::other(other.to_string()),
+        },
+    }
+}
+
 /// Read a single fixture-tree file with the full defense stack:
-/// leaf-symlink reject (pre-open metadata + open-time O_NOFOLLOW on unix /
+/// `raikiri_traits::io::open_bounded_regular_file` provides leaf-symlink
+/// reject (pre-open metadata + open-time `O_NOFOLLOW` on unix /
 /// reparse-point-aware open on Windows), `!is_file()` reject, up-front size
-/// cap, canonicalize-and-`starts_with(canonical_root)` containment check,
-/// `safe_open` at open time, two post-open fd-based rechecks —
-/// [`check_open_handle_regular`] (rejects non-regular kinds bound to the
-/// descriptor) and [`check_open_handle_containment`] (rejects an fd
-/// resolving outside `canonical_root`, on Linux via `/proc/self/fd/<fd>`,
-/// on Apple platforms via `fcntl(fd, F_GETPATH, ..)`) — both race-free
-/// against a pre-open→open path-swap because they consult the fd
-/// `safe_open` actually returned rather than re-resolving `path`, and a
+/// cap, and a post-open fd-based kind recheck (rejects non-regular kinds
+/// bound to the descriptor). This function layers
+/// canonicalize-and-`starts_with(canonical_root)` containment on top, plus
+/// [`check_open_handle_containment`] (rejects an fd resolving outside
+/// `canonical_root`, on Linux via `/proc/self/fd/<fd>`, on Apple platforms
+/// via `fcntl(fd, F_GETPATH, ..)`) — race-free against a path-swap because
+/// it consults the fd the traits helper's open actually returned rather
+/// than re-resolving `path` — and `raikiri_traits::io::read_bounded_from_open_file`'s
 /// bounded `take(cap + 1)` read that also catches TOCTOU-grow.
-///
-/// The open-time leaf-swap race between the pre-open `symlink_metadata`
-/// check and the actual open is closed on unix (`O_NOFOLLOW`)
-/// and on Windows (reparse-point-aware open + same-handle attribute check,
-/// see [`safe_open`]'s doc comment). Platforms outside that pair keep
-/// follow-at-open semantics with no defense against this specific race.
-///
-/// The two post-open rechecks port `raikiri_dom::fonts::read_bounded_font_file`'s
-/// equivalent stack to this
-/// crate, as the same-shape follow-up that had not yet received them.
 ///
 /// See [`FIXTURE_SIZE_CAP`] for the threat model these layers cover.
 fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u8>, FixtureError> {
-    let metadata = std::fs::symlink_metadata(path).map_err(|source| FixtureError::IoError {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    let file_type = metadata.file_type();
-    if file_type.is_symlink() {
-        return Err(FixtureError::SymlinkRejected {
-            path: path.to_path_buf(),
-        });
-    }
-    // `is_file()` gate is load-bearing: it catches direct FIFO/device/socket
-    // placement (e.g. attacker `mkfifo input.html`) that the symlink gate
-    // doesn't cover.  `metadata.len()` reports 0 for devices, so the size cap
-    // won't help either — only `is_file()` fails these entries closed.
-    // (Intermediate-symlink escape into `/dev` via `expected/`-as-symlink is
-    // already blocked by `load_fixture`'s pre-check on `expected/` itself;
-    // this gate is not load-bearing for that vector.)
-    if !file_type.is_file() {
-        return Err(FixtureError::NotRegularFile {
-            path: path.to_path_buf(),
-        });
-    }
-    if metadata.len() > FIXTURE_SIZE_CAP {
-        return Err(FixtureError::OversizedFixture {
-            path: path.to_path_buf(),
-            size: metadata.len(),
-            cap: FIXTURE_SIZE_CAP,
-        });
-    }
+    let (mut file, _len) = raikiri_traits::io::open_bounded_regular_file(path, FIXTURE_SIZE_CAP)
+        .map_err(|reason| map_reject_reason(path, reason))?;
+
     // Containment check via canonicalization.  Given the symlink and
-    // non-regular-file gates upstream, an unresolvable escape via a leaf
-    // symlink is already rejected; this branch covers intermediate-symlink
-    // escapes (e.g. `expected/` symlinked to `/tmp/evil`) and any future
-    // relaxation of the upstream gates.
+    // non-regular-file gates inside `open_bounded_regular_file`, an
+    // unresolvable escape via a leaf symlink is already rejected; this
+    // branch covers intermediate-symlink escapes (e.g. `expected/`
+    // symlinked to `/tmp/evil`) and any future relaxation of the upstream
+    // gates.  Only "belt": the fd-bound `check_open_handle_containment`
+    // call below (post-open, derived from the fd the open above actually
+    // returned) is what closes the window.
     let canonical = std::fs::canonicalize(path).map_err(|source| FixtureError::IoError {
         path: path.to_path_buf(),
         source,
@@ -994,120 +846,20 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
             root: canonical_root.to_path_buf(),
         });
     }
-    // safe_open adds O_NOFOLLOW on unix (reparse-point-aware open on
-    // Windows) so a leaf-symlink swapped in between the earlier
-    // symlink_metadata check and this open call cannot cause a fresh
-    // symlink target to be followed.  The Err arm's inline comments below
-    // document the platform-specific reject-detection and the portable
-    // fallback each uses.
-    let mut file = match safe_open(path) {
-        Ok(f) => f,
-        Err(e) => {
-            #[cfg(unix)]
-            {
-                // POSIX mandates ELOOP for O_NOFOLLOW on symlink (Linux, macOS,
-                // and modern FreeBSD comply). Legacy BSDs may return EMLINK or
-                // EFTYPE instead; the post-Err symlink_metadata recheck catches
-                // those cases portably at the cost of one extra stat syscall on
-                // the reject path. Not race-perfect (an attacker could swap the
-                // symlink back to a regular file between safe_open and this
-                // recheck), but covers the common attack shape while remaining
-                // simple. Full inode-verify would require fstat-after-open on the
-                // handle safe_open never returned.
-                let looks_like_symlink_swap = e.raw_os_error() == Some(libc::ELOOP)
-                    || std::fs::symlink_metadata(path)
-                        .map(|m| m.file_type().is_symlink())
-                        .unwrap_or(false);
-                if looks_like_symlink_swap {
-                    return Err(FixtureError::SymlinkRejected {
-                        path: path.to_path_buf(),
-                    });
-                }
-            }
-            #[cfg(windows)]
-            {
-                // safe_open's own reparse-point reject is synthesized by this
-                // crate (there is no OS errno to match, unlike unix's ELOOP —
-                // CreateFile itself succeeded; safe_open constructed the Err
-                // after inspecting the handle), so there is nothing to check
-                // on `e` directly. Fall back to the same symlink_metadata
-                // recheck unix uses for legacy BSDs that also lack a
-                // matchable errno. Not race-perfect for the same reason the
-                // unix recheck isn't: the leaf could be swapped back to a
-                // regular file between safe_open and this recheck.
-                let looks_like_symlink_swap = std::fs::symlink_metadata(path)
-                    .map(|m| m.file_type().is_symlink())
-                    .unwrap_or(false);
-                if looks_like_symlink_swap {
-                    return Err(FixtureError::SymlinkRejected {
-                        path: path.to_path_buf(),
-                    });
-                }
-            }
-            return Err(FixtureError::IoError {
-                path: path.to_path_buf(),
-                source: e,
-            });
-        }
-    };
-    // Post-open fd-based fstat: reject if the descriptor `safe_open` bound
-    // does not resolve to a regular file. Closes the *kind*-detection half
-    // of the FIFO/device swap TOCTOU window that the pre-open path-based
-    // `symlink_metadata` + `is_file()` gate above cannot cover; `safe_open`'s
-    // `O_NONBLOCK` closes the open-time-block half,
-    // so a writer-less FIFO swapped into this window cannot hang `open()`
-    // before this fstat runs. See `check_open_handle_regular`'s doc for the
-    // full rationale.
-    check_open_handle_regular(&file, path)?;
-    // Post-open fd-bound containment recheck: verify the descriptor
-    // `safe_open` bound still resolves under `canonical_root`, derived from
+    // Post-open fd-bound containment recheck: verify the descriptor the
+    // open above bound still resolves under `canonical_root`, derived from
     // the fd itself (Linux: `/proc/self/fd/<fd>` readlink; Apple platforms:
     // `fcntl(fd, F_GETPATH, ..)`) rather than a fresh path-based
     // `canonicalize`. Closes the intermediate-dir-swap TOCTOU window
-    // between the pre-open `canonicalize` above and `safe_open`'s own
-    // pathname re-resolution. See `check_open_handle_containment`'s doc
+    // between the open above and this recheck itself — the `canonicalize`
+    // above is its own separate, independently re-resolved pathname lookup
+    // and cannot close that window by construction (see this function's
+    // own doc comment). See `check_open_handle_containment`'s doc
     // for the full rationale and the remaining no-op fallback.
     check_open_handle_containment(&file, path, canonical_root)?;
-    read_bounded_from_open_file(&mut file, path, FIXTURE_SIZE_CAP)
-}
 
-/// Bounded read on an already-opened file (`+1-probe` post-read length gate,
-/// factored out for injectable-cap testing).
-///
-/// Reads at most `size_cap + 1` bytes and returns `OversizedFixture` when
-/// the buffer grew past `size_cap`.  The `+1-probe` is the load-bearing
-/// defense that turns a TOCTOU-grow (file grew past the cap between the
-/// caller's metadata check and this read) into a hard error instead of a
-/// silently truncated buffer.  Regression tests exercise the
-/// post-read length gate in isolation via a static oversized file with a
-/// small cap; simulating an actual TOCTOU-grow race remains future work.
-///
-/// `size_cap` is a `u64` parameter (rather than the hard-coded
-/// [`FIXTURE_SIZE_CAP`] const) so tests can pass a small cap against tiny
-/// test files.  `saturating_add(1)` guards against callers passing
-/// `u64::MAX` — the same regression pattern
-/// `raikiri_traits::io::read_bounded_regular_file` codifies elsewhere.
-fn read_bounded_from_open_file(
-    file: &mut std::fs::File,
-    path: &Path,
-    size_cap: u64,
-) -> Result<Vec<u8>, FixtureError> {
-    let mut bytes = Vec::new();
-    file.take(size_cap.saturating_add(1))
-        .read_to_end(&mut bytes)
-        .map_err(|source| FixtureError::IoError {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    let len = bytes.len() as u64;
-    if len > size_cap {
-        return Err(FixtureError::OversizedFixture {
-            path: path.to_path_buf(),
-            size: len,
-            cap: size_cap,
-        });
-    }
-    Ok(bytes)
+    raikiri_traits::io::read_bounded_from_open_file(&mut file, FIXTURE_SIZE_CAP)
+        .map_err(|reason| map_reject_reason(path, reason))
 }
 
 /// Load a `tests/reference/<name>/` fixture directory.
@@ -1543,8 +1295,9 @@ mod type_tests {
     /// `Display` for the two post-open recheck variants. Constructed
     /// directly (no filesystem I/O) since
     /// these are pure formatting checks — the variants' actual construction
-    /// sites are pinned by `defense_tests`'s `check_open_handle_regular_*`
-    /// / `check_open_handle_containment_*` tests.
+    /// sites are pinned by `raikiri_traits::io`'s own
+    /// `check_open_handle_regular_*` tests and this file's `defense_tests`
+    /// module's `check_open_handle_containment_*` tests.
     #[test]
     fn fixture_error_not_regular_file_post_open_display_contains_path() {
         let err = FixtureError::NotRegularFilePostOpen {
@@ -1699,75 +1452,14 @@ mod defense_tests {
         assert_eq!(fixture.expected_pages[0].len() as u64, FIXTURE_SIZE_CAP);
     }
 
-    #[test]
-    fn read_bounded_from_open_file_trips_plus1_probe_on_oversized_read() {
-        // Pins the +1-probe post-read reject in
-        // `read_bounded_from_open_file`, AND pins the `+1` bound itself.
-        //
-        // The file is deliberately much larger than `cap + 1` (20 bytes
-        // for cap=8, so 12 bytes past the probe limit) and the assertion
-        // is `size == cap + 1` (exactly).  This shape catches two
-        // regression classes at once:
-        //
-        //   1. Removing the post-read `bytes.len() > cap` check
-        //      (`OversizedFixture` never fires → test enters the panic
-        //      arm).
-        //   2. Widening the read bound to more than `cap + 1` — e.g. a
-        //      typo `take(cap + 2)` or `take(u64::MAX)` — which would
-        //      read 20 bytes into `bytes`, still trigger the reject,
-        //      but with `size = 20 ≠ cap + 1` → the equality assert
-        //      fails.  A cap+1-sized file would let both regressions
-        //      pass the reject arm silently.
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("many_bytes.bin");
-        std::fs::File::create(&path)
-            .unwrap()
-            .write_all(b"aaaaaaaaaaaaaaaaaaaa") // 20 bytes, well over cap + 1
-            .unwrap();
-        let mut file = std::fs::File::open(&path).unwrap();
-        let cap: u64 = 8;
-
-        match read_bounded_from_open_file(&mut file, &path, cap) {
-            Err(FixtureError::OversizedFixture {
-                path: p,
-                size,
-                cap: c,
-            }) => {
-                assert_eq!(p, path);
-                assert_eq!(
-                    size,
-                    cap + 1,
-                    "size must be exactly cap + 1 — pins the +1 bound; \
-                     a widened read (e.g. take(cap + 2)) would report size > cap + 1"
-                );
-                assert_eq!(c, cap);
-            }
-            other => {
-                panic!("expected OversizedFixture via +1-probe post-read reject, got {other:?}")
-            }
-        }
-    }
-
-    #[test]
-    fn read_bounded_from_open_file_accepts_at_boundary_cap() {
-        // Companion pin: silent over-reject canary for
-        // the injectable-cap helper.  A file of exactly `cap` bytes must
-        // load successfully — the post-read check is `>` cap, not `>=`,
-        // and the `take(cap + 1)` read yields exactly `cap` bytes when
-        // the file is not growing.
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("eight_bytes.bin");
-        std::fs::File::create(&path)
-            .unwrap()
-            .write_all(b"aaaaaaaa") // 8 bytes
-            .unwrap();
-        let mut file = std::fs::File::open(&path).unwrap();
-        let cap: u64 = 8;
-
-        let bytes = read_bounded_from_open_file(&mut file, &path, cap)
-            .expect("boundary-size (== cap) read must accept");
-        assert_eq!(bytes, b"aaaaaaaa");
-    }
+    // `read_bounded_from_open_file`'s `+1-probe` post-read length gate (the
+    // exact `cap + 1` bound, and the boundary-cap accept case) is now a
+    // primitive owned by `raikiri_traits::io` — see that crate's
+    // `rejects_oversized_during_read_via_plus1_probe` and
+    // `accepts_at_boundary_cap` tests. `map_reject_reason` above collapses
+    // both `RejectReason::Oversized` phases onto this crate's single
+    // `FixtureError::OversizedFixture` variant (which never distinguished
+    // the two phases to begin with).
 
     #[test]
     fn expected_dir_as_plain_file_is_ignored_not_read() {
@@ -2116,114 +1808,13 @@ mod defense_tests {
         }
     }
 
-    /// safe_open must reject a symlink at open time on unix. POSIX mandates
-    /// ELOOP (Linux, macOS, modern FreeBSD comply); legacy BSDs (NetBSD,
-    /// OpenBSD, FreeBSD <10) return EMLINK or EFTYPE. The test accepts any
-    /// Err on unix, because a passing implementation must not follow the
-    /// symlink regardless of the exact errno. The Ok arm is the regression
-    /// pin — an implementation that drops custom_flags(O_NOFOLLOW) would
-    /// silently follow the link and return Ok(file), failing this test.
-    #[cfg(unix)]
-    #[test]
-    fn safe_open_rejects_symlink_at_open_time() {
-        let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("target.bin");
-        std::fs::File::create(&target)
-            .unwrap()
-            .write_all(b"target contents")
-            .unwrap();
-        let link = dir.path().join("link.bin");
-        std::os::unix::fs::symlink(&target, &link).unwrap();
-
-        match safe_open(&link) {
-            Err(_) => {
-                // Sanity-check that the path is still a symlink at
-                // observation time — proves the Err is due to O_NOFOLLOW
-                // (portable across ELOOP / EMLINK / EFTYPE) rather than
-                // an unrelated I/O error like permission or NotFound.
-                let post = std::fs::symlink_metadata(&link)
-                    .expect("symlink still present after safe_open Err");
-                assert!(
-                    post.file_type().is_symlink(),
-                    "link at test observation time was not a symlink"
-                );
-            }
-            Ok(_) => panic!("safe_open followed the symlink (O_NOFOLLOW not applied)"),
-        }
-    }
-
-    /// Windows counterpart of `safe_open_rejects_symlink_at_open_time`:
-    /// `safe_open` must not hand back a readable handle bound to a
-    /// symlink's target.
-    ///
-    /// `std::os::windows::fs::symlink_file` requires either Developer Mode
-    /// or `SeCreateSymbolicLinkPrivilege` on the running account; a
-    /// restricted CI/sandbox account without either denies the symlink
-    /// creation itself (`ERROR_PRIVILEGE_NOT_HELD`) before this test can
-    /// exercise `safe_open` at all. That setup failure is orthogonal to the
-    /// property under test, so it is treated as a skip rather than a
-    /// failure — this test has no way to grant the privilege it does not
-    /// have.
-    ///
-    /// This early-return-on-skip shape is the one the race-simulation test
-    /// below deliberately avoids (`#[ignore]` instead, for exactly this
-    /// reason: an early return that reports success without the check ever
-    /// running is a silent-pass hazard). The two cases differ in what the
-    /// skip condition means: the race test's `#[ignore]` guards a
-    /// deliberately-not-run-by-default timing simulation, where "did it
-    /// run" is itself the signal worth preserving. This test's skip guards
-    /// a missing OS privilege that is a fixed property of the account
-    /// running the suite, not a per-run coin flip — an account either has
-    /// the privilege for the whole session or it doesn't, so a stderr
-    /// notice at the one point where that's discovered is enough to make
-    /// the skip visible without adding an `#[ignore]` that would also
-    /// suppress the (non-privilege-dependent) common case.
-    ///
-    /// Compile-checked via `cargo check --target x86_64-pc-windows-gnu`; not
-    /// executed — its actual runtime behavior on Windows is unverified
-    /// until it runs there.
-    #[cfg(windows)]
-    #[test]
-    fn safe_open_rejects_symlink_at_open_time() {
-        let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("target.bin");
-        std::fs::File::create(&target)
-            .unwrap()
-            .write_all(b"target contents")
-            .unwrap();
-        let link = dir.path().join("link.bin");
-        if std::os::windows::fs::symlink_file(&target, &link).is_err() {
-            eprintln!(
-                "skipping safe_open_rejects_symlink_at_open_time: \
-                 symlink creation requires Developer Mode or \
-                 SeCreateSymbolicLinkPrivilege"
-            );
-            return;
-        }
-
-        match safe_open(&link) {
-            Err(_) => {
-                // Sanity-check that the path is still a symlink at
-                // observation time — proves the Err is due to safe_open's
-                // post-open reparse-point check rather than an unrelated
-                // I/O error like permission or NotFound.
-                let post = std::fs::symlink_metadata(&link)
-                    .expect("symlink still present after safe_open Err");
-                assert!(
-                    post.file_type().is_symlink(),
-                    "link at test observation time was not a symlink"
-                );
-            }
-            Ok(_) => panic!("safe_open followed the symlink (reparse-point check not applied)"),
-        }
-    }
-
     /// End-to-end pin: read_bounded_fixture_file rejects a symlink at the
     /// pre-open `symlink_metadata` check.  This test does NOT exercise the
-    /// O_NOFOLLOW path (safe_open never runs because the pre-open check
-    /// short-circuits) — that unit is covered by
-    /// `safe_open_rejects_symlink_at_open_time`.  Kept to pin the full-path
-    /// behavior against future refactors that might reorder the checks.
+    /// `O_NOFOLLOW` path (the open never runs because the pre-open check
+    /// short-circuits) — that unit is covered by `raikiri_traits::io`'s own
+    /// `safe_open_rejects_symlink_at_open_time` test.  Kept to pin the
+    /// full-path behavior against future refactors that might reorder the
+    /// checks.
     #[cfg(unix)]
     #[test]
     fn read_bounded_fixture_file_rejects_symlink_via_pre_open_check() {
@@ -2264,130 +1855,83 @@ mod defense_tests {
         assert_eq!(bytes, b"regular content");
     }
 
-    // ------------------------------------------------------------------
-    // Post-open fd-based fstat + fd-bound containment tests (porting
-    // raikiri_dom::fonts's check_open_handle_regular
-    // / check_open_handle_containment to this crate's read_bounded_fixture_file)
-    // ------------------------------------------------------------------
-    //
-    // As with the fonts.rs sibling, the actual TOCTOU swap windows these
-    // helpers close (regular-file → FIFO/device between pre-open metadata
-    // and safe_open; intermediate-dir swap between pre-open canonicalize
-    // and safe_open's own pathname re-resolution) are not deterministically
-    // reachable through the composed `read_bounded_fixture_file` — they
-    // require a second attacker action landing in a microseconds-wide
-    // window between two syscalls on the same thread. The defense is
-    // instead exercised at the primitive level: `check_open_handle_regular`
-    // / `check_open_handle_containment` called directly against a `File`
-    // handle that already represents the "swapped" state.
-    //
-    // `safe_open` sets `O_NONBLOCK` (mirroring fonts.rs, see `safe_open`'s
-    // doc), so a FIFO test analogous to fonts.rs's
-    // `check_open_handle_regular_rejects_fifo` exists below — see
-    // `check_open_handle_regular_rejects_fifo`. The `/dev/null` char-device
-    // test exercises the identical `!metadata.file_type().is_file()` branch
-    // on a kind that opens immediately even without `O_NONBLOCK`.
-
-    /// `check_open_handle_regular` accepts a regular file opened via
-    /// `safe_open` — the primitive-level happy-path regression pin.
+    /// `map_reject_reason` translates every `raikiri_traits::io::RejectReason`
+    /// variant to its `FixtureError` counterpart, attaching `path`.
+    /// `NotRegularFilePostOpen` and `Oversized { phase: DuringRead }` are
+    /// only reachable through `read_bounded_fixture_file` via a genuine
+    /// TOCTOU race, so this is the sole deterministic pin that a future
+    /// match reorder can't silently reroute a race-detected reject into the
+    /// wildcard `IoError` arm (every `FixtureError` this crate produces is
+    /// `?`-propagated — there is no warn+skip path to fall back to).
     #[test]
-    fn check_open_handle_regular_accepts_regular_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("regular.bin");
-        std::fs::File::create(&path)
-            .unwrap()
-            .write_all(b"regular content")
-            .unwrap();
+    fn map_reject_reason_maps_all_variants() {
+        use raikiri_traits::io::{OversizePhase, RejectReason};
 
-        let file = safe_open(&path).expect("safe_open should succeed on regular file");
-        check_open_handle_regular(&file, &path).expect("regular file must pass post-open fstat");
-    }
+        let path = Path::new("/tmp/fake.bin");
 
-    /// `safe_open` + `check_open_handle_regular` rejects `/dev/null`
-    /// (character device). `/dev/null` opens immediately even without
-    /// `O_NONBLOCK` (no writer-attachment blocking like a FIFO), so this
-    /// exercises the fd-based fstat's non-regular-kind rejection without
-    /// needing `O_NONBLOCK`. Mirrors
-    /// `raikiri_dom::fonts::check_open_handle_regular_rejects_char_device`.
-    #[cfg(unix)]
-    #[test]
-    fn check_open_handle_regular_rejects_char_device() {
-        let path = Path::new("/dev/null");
-        let file = safe_open(path).expect(
-            "safe_open on /dev/null should succeed (regular open semantics on char device)",
-        );
-        match check_open_handle_regular(&file, path) {
-            Err(FixtureError::NotRegularFilePostOpen { path: rejected }) => {
-                assert_eq!(rejected, path);
-            }
-            // cov:ignore: diagnostic-only fallthrough — the expected `Err`
-            // arm immediately above is what this test asserts and is
-            // pinned by the same test run; this arm exists only to turn an
-            // implementation regression into a readable panic message
-            // instead of falling through silently.
-            other => panic!(
-                "expected NotRegularFilePostOpen for /dev/null post-open fstat, got {other:?}"
+        assert!(matches!(
+            map_reject_reason(path, RejectReason::Symlink),
+            FixtureError::SymlinkRejected { path: p } if p == path
+        ));
+        assert!(matches!(
+            map_reject_reason(path, RejectReason::NotRegularFile),
+            FixtureError::NotRegularFile { path: p } if p == path
+        ));
+        assert!(matches!(
+            map_reject_reason(path, RejectReason::NotRegularFilePostOpen),
+            FixtureError::NotRegularFilePostOpen { path: p } if p == path
+        ));
+        assert!(matches!(
+            map_reject_reason(
+                path,
+                RejectReason::Oversized {
+                    size: 42,
+                    cap: 10,
+                    phase: OversizePhase::PreOpen,
+                }
             ),
+            FixtureError::OversizedFixture { path: p, size: 42, cap: 10 } if p == path
+        ));
+        assert!(matches!(
+            map_reject_reason(
+                path,
+                RejectReason::Oversized {
+                    size: 101,
+                    cap: 100,
+                    phase: OversizePhase::DuringRead,
+                }
+            ),
+            FixtureError::OversizedFixture { path: p, size: 101, cap: 100 } if p == path
+        ));
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        match map_reject_reason(path, RejectReason::Io(io_err)) {
+            FixtureError::IoError { path: p, source } => {
+                assert_eq!(p, path);
+                assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
+            }
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            other => panic!("expected IoError, got {other:?}"),
         }
     }
 
-    /// `safe_open` + `check_open_handle_regular` rejects a FIFO. Two
-    /// asserts pin the composite defense:
-    ///
-    /// 1. `safe_open` returns `Ok` (without hanging) — proves the
-    ///    `O_NONBLOCK` addition prevents `open()`
-    ///    from blocking on a writer-less FIFO. Without `O_NONBLOCK`,
-    ///    `open(O_RDONLY)` on a writer-less FIFO blocks indefinitely at the
-    ///    syscall itself and the test would deadlock (never reach the
-    ///    fstat).
-    /// 2. `check_open_handle_regular` returns
-    ///    `Err(FixtureError::NotRegularFilePostOpen)` — proves the fd-based
-    ///    `File::metadata()` fstat correctly identifies the FIFO kind and
-    ///    would reject before any read from the pipe.
-    ///
-    /// This crate's pre-open gate in `read_bounded_fixture_file` already
-    /// rejects a FIFO placed directly at `input.html` or
-    /// `expected/page-*.png` (see `fifo_as_input_html_is_rejected_not_blocked`
-    /// / `fifo_at_expected_png_is_rejected_not_blocked`) without ever
-    /// calling `safe_open`, so this test calls `safe_open` directly — the
-    /// same isolation fonts.rs's sibling test uses — to exercise the
-    /// post-open detection path that only fires on a real TOCTOU race in
-    /// the composed pipeline. Mirrors
-    /// `raikiri_dom::fonts::check_open_handle_regular_rejects_fifo`.
-    #[cfg(unix)]
-    #[test]
-    fn check_open_handle_regular_rejects_fifo() {
-        let tmp = tempfile::tempdir().unwrap();
-        let fifo = tmp.path().join("evil.bin");
-        let status = std::process::Command::new("mkfifo")
-            .arg(&fifo)
-            .status()
-            .expect("mkfifo(1) should be available on unix hosts");
-        assert!(status.success(), "mkfifo failed for {}", fifo.display());
-
-        // safe_open must return Ok(fd) without blocking — O_NONBLOCK
-        // regression guard. A test process reaching this assertion proves
-        // `open()` did not hang on the writer-less FIFO.
-        let file = safe_open(&fifo).expect(
-            "safe_open on writer-less FIFO should return Ok immediately via O_NONBLOCK, \
-             not block or Err — if this fails the O_NONBLOCK flag was dropped or the \
-             open path regressed",
-        );
-
-        match check_open_handle_regular(&file, &fifo) {
-            Err(FixtureError::NotRegularFilePostOpen { path }) => {
-                assert_eq!(path, fifo);
-            }
-            // cov:ignore: diagnostic-only fallthrough — the expected `Err`
-            // arm immediately above is what this test asserts and is
-            // pinned by the same test run; this arm exists only to turn an
-            // implementation regression into a readable panic message
-            // instead of falling through silently.
-            other => {
-                panic!("expected NotRegularFilePostOpen for FIFO post-open fstat, got {other:?}")
-            }
-        }
-    }
+    // ------------------------------------------------------------------
+    // Post-open fd-bound containment tests (porting
+    // raikiri_dom::fonts's check_open_handle_containment to this crate's
+    // read_bounded_fixture_file). The post-open kind check itself
+    // (FIFO/char-device rejection) is now `raikiri_traits::io`'s primitive —
+    // see that crate's `check_open_handle_regular_rejects_fifo` /
+    // `_rejects_char_device` tests.
+    // ------------------------------------------------------------------
+    //
+    // As with the fonts.rs sibling, the actual intermediate-dir swap window
+    // this helper closes (between the open and this fd-based recheck
+    // itself) is not deterministically reachable
+    // through the composed `read_bounded_fixture_file` — it requires a
+    // second attacker action landing in a microseconds-wide window between
+    // two syscalls on the same thread. The defense is instead exercised at
+    // the primitive level: `check_open_handle_containment` called directly
+    // against a `File` handle that already represents the "swapped" state.
 
     /// `check_open_handle_containment` accepts a file whose fd resolves
     /// under the given `canonical_root` — the happy-path regression pin
@@ -2405,14 +1949,15 @@ mod defense_tests {
             .write_all(b"inside content")
             .unwrap();
 
-        let file = safe_open(&path).expect("safe_open should succeed on regular file");
+        let (file, _len) = raikiri_traits::io::open_bounded_regular_file(&path, FIXTURE_SIZE_CAP)
+            .expect("open should succeed on regular file");
         check_open_handle_containment(&file, &path, &canonical_root)
             .expect("fd resolving inside canonical_root must pass containment recheck");
     }
 
     /// `check_open_handle_containment` rejects a file whose fd resolves
     /// outside the given `canonical_root`. This is the primitive-level pin
-    /// of the actual defense: even though `safe_open` opened the file
+    /// of the actual defense: even though the open succeeded on the file
     /// successfully (it is a perfectly regular file, just not under the
     /// expected root), the fd-derived `/proc/self/fd/<fd>` path fails
     /// `starts_with(canonical_root)` and the recheck rejects — proving the
@@ -2433,7 +1978,9 @@ mod defense_tests {
             .write_all(b"outside content")
             .unwrap();
 
-        let file = safe_open(&outside_leaf).expect("safe_open should succeed on regular file");
+        let (file, _len) =
+            raikiri_traits::io::open_bounded_regular_file(&outside_leaf, FIXTURE_SIZE_CAP)
+                .expect("open should succeed on regular file");
         match check_open_handle_containment(&file, &outside_leaf, &canonical_root) {
             Err(FixtureError::PathEscapePostOpen { canonical, root }) => {
                 assert_eq!(canonical, outside_leaf);
@@ -2490,14 +2037,15 @@ mod defense_tests {
             .write_all(b"inside content")
             .unwrap();
 
-        let file = safe_open(&path).expect("safe_open should succeed on regular file");
+        let (file, _len) = raikiri_traits::io::open_bounded_regular_file(&path, FIXTURE_SIZE_CAP)
+            .expect("open should succeed on regular file");
         check_open_handle_containment(&file, &path, &canonical_root)
             .expect("fd resolving inside canonical_root must pass containment recheck");
     }
 
     /// `check_open_handle_containment` (Apple-platform arm) rejects a file
     /// whose fd resolves outside the given `canonical_root`. Mirrors the
-    /// Linux primitive-level pin: even though `safe_open` opened the file
+    /// Linux primitive-level pin: even though the open succeeded on the file
     /// successfully (it is a perfectly regular file, just not under the
     /// expected root), the fd-derived `F_GETPATH` path fails
     /// `starts_with(canonical_root)` and the recheck rejects — proving the
@@ -2524,7 +2072,9 @@ mod defense_tests {
             .write_all(b"outside content")
             .unwrap();
 
-        let file = safe_open(&outside_leaf).expect("safe_open should succeed on regular file");
+        let (file, _len) =
+            raikiri_traits::io::open_bounded_regular_file(&outside_leaf, FIXTURE_SIZE_CAP)
+                .expect("open should succeed on regular file");
         match check_open_handle_containment(&file, &outside_leaf, &canonical_root) {
             Err(FixtureError::PathEscapePostOpen { canonical, root }) => {
                 assert_eq!(canonical, outside_leaf);
@@ -2563,8 +2113,9 @@ mod defense_tests {
     /// `evil.bin` is placed **inside** `canonical_root`, deliberately — if
     /// it lived outside the fixture root, a weakened build (no
     /// `O_NOFOLLOW`) would still get caught by the *unrelated* `PathEscape`
-    /// containment check (`canonicalize` follows the symlink before
-    /// `safe_open` ever runs), and this test would pass even with the
+    /// containment check (a successful, symlink-following open would still
+    /// have its resolved target caught by the subsequent `canonicalize`
+    /// check), and this test would pass even with the
     /// `O_NOFOLLOW` defense removed — zero detection power. Keeping
     /// `evil.bin` in-root routes execution through `safe_open`, the one
     /// line this test exists to pin. **Do not relocate `evil.bin` outside

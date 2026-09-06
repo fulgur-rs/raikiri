@@ -1,23 +1,41 @@
-//! Bounded regular-file read primitive.
+//! Bounded regular-file read primitives with a leaf-swap TOCTOU defense
+//! stack.
 //!
 //! Shared defense stack for filesystem input taken from consumer-controlled
-//! locations (WPT fixture tree, WPT bundled font dir).  Intended to consolidate
-//! the two prior hand-rolls at `raikiri_dom::fonts::build_wpt_font_ctx`
-//! and `raikiri_vrt::reference::load_fixture`
-//! via the `+1-probe` TOCTOU-grow pattern.
-//!
-//! **Migration status**: raikiri-dom side is migrated; raikiri-vrt side
-//! is deferred (walls.md §2 crate-list implications —
-//! raikiri-vrt has never depended on raikiri-traits, adding the dep would
-//! implicitly extend the wall/traits implementor list).  Until that lands the
-//! raikiri-vrt hand-roll and this helper coexist with the same defense shape.
+//! locations (WPT fixture tree, WPT bundled font dir).  Consolidates the two
+//! prior hand-rolled `safe_open` pipelines at
+//! `raikiri_dom::fonts::read_bounded_font_file` and
+//! `raikiri_vrt::reference::read_bounded_fixture_file`: both crates now call
+//! into [`open_bounded_regular_file`] and [`read_bounded_from_open_file`]
+//! (or the [`read_bounded_regular_file`] convenience wrapper, for a caller
+//! with no extra post-open check of its own) instead of carrying their own
+//! `safe_open`.
 //!
 //! Downstream-crate paths are shown as plain code (not intra-doc links)
 //! because raikiri-dom / raikiri-vrt are not in scope from this crate.
 //!
-//! Callers layer domain-specific checks (path containment for the fixture
-//! tree, platform-specific hardening like `O_NOFOLLOW`) on top of this
-//! primitive.
+//! # What this module does not cover
+//!
+//! Callers layer domain-specific checks on top of the primitives here:
+//!
+//! - **Path containment** (bounding the resolved path to a canonical root,
+//!   e.g. the WPT fixture tree or the WPT font directory): a
+//!   `canonicalize().starts_with(root)` check (run after the open, per the
+//!   two callers' own docs) plus — for the residual intermediate-directory-
+//!   swap window between the open and that check — a post-open, fd-derived
+//!   recheck (`/proc/self/fd/<fd>` readlink
+//!   on Linux, `fcntl(fd, F_GETPATH, ..)` on Apple platforms).
+//!   [`open_bounded_regular_file`] returns the open [`std::fs::File`] handle
+//!   precisely so a caller can run this recheck against the same descriptor
+//!   before reading from it — "checked" and "used" are then the same fd, so
+//!   no second pathname lookup remains to race. This module does not
+//!   implement the recheck directly: the Apple-platform arm needs an extra
+//!   dependency (`rustix`, for `fcntl(fd, F_GETPATH, ..)`) this foundation
+//!   crate does not take on, and the check needs a `canonical_root`
+//!   parameter this module has no other use for.
+//! - **Aggregate caps across multiple files**: per-file only.  Callers doing
+//!   directory-walk aggregation (fixture-tree pages, font directories) must
+//!   track running totals themselves.
 
 use std::io::Read;
 use std::path::Path;
@@ -29,19 +47,43 @@ use std::path::Path;
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum RejectReason {
-    /// `symlink_metadata().file_type().is_symlink()` returned true.
-    ///
-    /// The read never followed the link.  Callers refusing to follow symlinks
-    /// (fixture-tree, font dir) map this to their symlink-rejected error.
+    /// `symlink_metadata().file_type().is_symlink()` returned `true` at the
+    /// pre-open check, **or** the open-time leaf-swap defense in
+    /// [`open_bounded_regular_file`] (`O_NOFOLLOW` on unix, a
+    /// reparse-point-aware open on Windows) refused a symlink leaf that was
+    /// swapped in after the pre-open check ran.  Both detection points map
+    /// to the same variant: the caller-facing contract is "this path was
+    /// rejected because it is a symlink", independent of *when* that was
+    /// discovered, and the read never followed the link either way.
     Symlink,
     /// Path is neither a regular file nor a symlink (device, fifo, socket,
-    /// directory, block/char device).
+    /// directory, block/char device), observed at the pre-open
+    /// `symlink_metadata` check.
     ///
     /// `File::open` on a fifo with no writer blocks indefinitely, and
     /// `metadata.len()` reports 0 for devices — the size cap alone cannot
     /// close these vectors.  Rejecting at metadata time is the load-bearing
     /// defense against time-axis DoS.
     NotRegularFile,
+    /// The descriptor [`open_bounded_regular_file`] actually opened does not
+    /// resolve to a regular file (FIFO / character device / block device
+    /// swapped in between the pre-open `symlink_metadata` check and the
+    /// open).  Race-free complement to `NotRegularFile`: the pre-open
+    /// path-based check can observe a regular file that gets swapped for a
+    /// non-regular kind before the open runs; this variant is instead
+    /// derived from a `File::metadata()` fstat on the descriptor the open
+    /// already bound, so no second path lookup can be raced.
+    ///
+    /// Kept as a peer variant rather than folded into `NotRegularFile` with
+    /// a `phase` field (the way [`RejectReason::Oversized`] folds its two
+    /// detection points) because the two `NotRegularFile*` cases carry no
+    /// extra data to distinguish by phase, and a caller may reasonably want
+    /// a different diagnostic for "never opened" versus "opened, but the
+    /// descriptor resolved to the wrong kind" (a stronger TOCTOU-swap
+    /// signal than the pre-open case). Adding a peer variant to a
+    /// `#[non_exhaustive]` enum is non-breaking for existing `match`
+    /// arms with a wildcard.
+    NotRegularFilePostOpen,
     /// File size exceeds `size_cap`.  `phase` records whether the pre-open
     /// `metadata.len()` check tripped (PreOpen) or the post-read `+1-probe`
     /// tripped (DuringRead — TOCTOU-grow race between metadata and read).
@@ -60,7 +102,7 @@ pub enum RejectReason {
         /// Phase in which the size-cap check tripped.
         phase: OversizePhase,
     },
-    /// I/O error from `symlink_metadata`, `File::open`, or `read_to_end`.
+    /// I/O error from `symlink_metadata`, the open, or `read_to_end`.
     Io(std::io::Error),
 }
 
@@ -82,6 +124,10 @@ impl std::fmt::Display for RejectReason {
         match self {
             RejectReason::Symlink => write!(f, "path is a symlink"),
             RejectReason::NotRegularFile => write!(f, "path is not a regular file"),
+            RejectReason::NotRegularFilePostOpen => write!(
+                f,
+                "opened fd resolves to a non-regular file (TOCTOU-swap between pre-open metadata and open)"
+            ),
             RejectReason::Oversized {
                 size,
                 cap,
@@ -109,7 +155,160 @@ impl std::error::Error for RejectReason {
     }
 }
 
-/// Read a regular file with a defense-in-depth bounded read.
+/// Open a regular file with the leaf-swap TOCTOU defense stack.
+///
+/// - **unix**: `O_NOFOLLOW | O_NONBLOCK`.
+///   - `O_NOFOLLOW`: a symlink swapped in between the pre-open
+///     `symlink_metadata` check and this open call cannot cause the resolver
+///     to follow a fresh target. POSIX mandates `ELOOP` for
+///     `open(O_NOFOLLOW)` on a symlink; Linux and macOS comply, but FreeBSD
+///     deliberately does not — its own `open(2)` documents returning
+///     `EMLINK` instead of `ELOOP` for this case as an intentional POSIX
+///     deviation, at every supported version, not a legacy-only quirk.
+///     Other BSDs (NetBSD, OpenBSD) may return `EMLINK` or `EFTYPE` as well
+///     — [`open_bounded_regular_file`] falls back to a `symlink_metadata`
+///     recheck on any `Err` to cover all of these portably.
+///   - `O_NONBLOCK`: load-bearing time-DoS defense paired with the post-open
+///     fstat in [`open_bounded_regular_file`]. If a regular file is swapped
+///     for a **writer-less FIFO** between the pre-open `symlink_metadata`
+///     check and this `open()`, a bare `open(O_RDONLY | O_NOFOLLOW)` would
+///     block indefinitely at the syscall itself — `O_NOFOLLOW` does not fire
+///     (a FIFO is not a symlink), so the post-open fstat would never be
+///     reached. `O_NONBLOCK` makes FIFO opens return immediately (POSIX:
+///     read-side `O_RDONLY | O_NONBLOCK` on a FIFO succeeds even with no
+///     writer), letting the post-open fstat inspect the fd and reject
+///     non-regular kinds. POSIX specifies `O_NONBLOCK` has no effect on
+///     regular files, so happy-path reads are unaffected.
+///
+/// - **windows**: Win32 has no direct `O_NOFOLLOW` equivalent — `CreateFile`
+///   normally resolves a reparse point (symlink, junction, mount point, ...)
+///   and hands back a handle to whatever it points at, rather than failing
+///   the open. `FILE_FLAG_OPEN_REPARSE_POINT` changes that: it opens the
+///   reparse point itself instead of following it. Because the open can
+///   still *succeed* on a symlink (unlike `O_NOFOLLOW`, which fails it
+///   outright), the symlink check has to move to *after* the open: the
+///   handle's `dwFileAttributes` (read via
+///   `std::os::windows::fs::MetadataExt::file_attributes`) is inspected for
+///   `FILE_ATTRIBUTE_REPARSE_POINT`, and the handle is discarded with a
+///   synthesized error if the bit is set. Both the open and the check
+///   operate on the same handle — no path is re-resolved in between — so a
+///   leaf swapped in between the pre-open `symlink_metadata` check and this
+///   call cannot cause a fresh reparse-point target to be read.
+///
+///   `FILE_FLAG_BACKUP_SEMANTICS` is deliberately **not** added alongside
+///   `FILE_FLAG_OPEN_REPARSE_POINT`: it is only needed to open a
+///   *directory-type* reparse point, and in a process holding
+///   `SeBackupPrivilege` it bypasses normal access checks — a real behavior
+///   change this function does not need, since the pre-open `!is_file()`
+///   gate already rejects a directory-type leaf before this function runs.
+///   Without `FILE_FLAG_BACKUP_SEMANTICS`, `CreateFile` fails outright
+///   (`ERROR_ACCESS_DENIED`) when the target is a directory-type reparse
+///   point, so even a leaf swapped in after that pre-open gate races is
+///   still rejected by the open call itself — a second, independent
+///   fail-closed layer, not the sole line of defense against that race.
+///
+/// - **any other platform**: plain follow-at-open `File::open` — no
+///   leaf-swap defense is applied there.
+fn safe_open(path: &Path) -> std::io::Result<std::fs::File> {
+    imp::safe_open(path)
+}
+
+#[cfg(unix)]
+mod imp {
+    use std::path::Path;
+
+    pub(super) fn safe_open(path: &Path) -> std::io::Result<std::fs::File> {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(path)
+    }
+}
+
+#[cfg(windows)]
+mod imp {
+    use std::path::Path;
+
+    // Win32 `CreateFile` flag/attribute bits (winnt.h). Not exposed as
+    // constants by std, but part of the stable Win32 ABI — these values
+    // have been unchanged since Windows NT and are not expected to move.
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+
+    pub(super) fn safe_open(path: &Path) -> std::io::Result<std::fs::File> {
+        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)?;
+
+        // Post-open, same-handle check: reject if what CreateFile actually
+        // bound the handle to is a reparse point. See `safe_open`'s doc
+        // comment for why this has to run after the open rather than
+        // before it.
+        let attrs = file.metadata()?.file_attributes();
+        if attrs & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(std::io::Error::other(format!(
+                "refusing to open {}: leaf resolved to a reparse point (symlink/junction) \
+                 rather than a plain file",
+                path.display()
+            )));
+        }
+        Ok(file)
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+mod imp {
+    use std::path::Path;
+
+    pub(super) fn safe_open(path: &Path) -> std::io::Result<std::fs::File> {
+        std::fs::File::open(path)
+    }
+}
+
+/// Post-open fd-based fstat: verify the handle [`safe_open`] returned still
+/// resolves to a regular file.  Load-bearing supplement to the pre-open
+/// path-based `symlink_metadata` + `is_file()` gate: that check is
+/// race-vulnerable (a regular file can be swapped for a FIFO / character
+/// device / block device between the pre-open metadata call and the
+/// subsequent open), and `O_NOFOLLOW` does not filter file kind (a FIFO is
+/// not a symlink), so the swapped-in kind slips through `safe_open`.
+/// Calling `File::metadata()` on the returned fd consults the inode already
+/// bound to the descriptor, so no path lookup re-runs and the race window is
+/// closed by construction.
+///
+/// Portable: the fstat is via `std::fs::File::metadata`, which delegates to
+/// the platform's fd-based stat (Linux `fstat`, Windows
+/// `GetFileInformationByHandle`).  Called unconditionally after a successful
+/// `safe_open`, so non-unix builds get the defense-in-depth too, even where
+/// `safe_open`'s `O_NOFOLLOW` / `O_NONBLOCK` custom flags are absent.
+fn check_open_handle_regular(file: &std::fs::File) -> Result<(), RejectReason> {
+    let metadata = file.metadata().map_err(RejectReason::Io)?;
+    if !metadata.file_type().is_file() {
+        return Err(RejectReason::NotRegularFilePostOpen);
+    }
+    Ok(())
+}
+
+/// Run the pre-open gates, open `path` through the leaf-swap-hardened
+/// `safe_open`, and run the post-open kind recheck — everything
+/// [`read_bounded_regular_file`] does short of the actual bounded read.
+///
+/// Split out from [`read_bounded_regular_file`] so a caller that also needs
+/// a post-open, fd-derived check of its own (e.g. path containment against a
+/// canonical root — see the module-level "What this module does not cover"
+/// section) can run it against the same descriptor before handing it to
+/// [`read_bounded_from_open_file`]. "Checked" and "used" then refer to the
+/// same fd, so no second pathname lookup remains to race.
+///
+/// Returns the open handle together with `metadata.len()` observed at the
+/// pre-open check, for a caller's own bookkeeping (e.g. diagnostics).
+/// [`read_bounded_from_open_file`] does not need this value — it derives
+/// its own read-buffer preallocation hint independently via an fd-based
+/// stat on the handle it is given.
 ///
 /// The check order is:
 ///
@@ -117,28 +316,25 @@ impl std::error::Error for RejectReason {
 /// 2. `file_type().is_file()` — reject device/fifo/socket/directory before
 ///    opening (load-bearing against `mkfifo`-style time DoS).
 /// 3. `metadata.len() > size_cap` — reject oversized files up front.
-/// 4. `File::open + take(size_cap + 1) + read_to_end` — bounded read.
-/// 5. `bytes.len() > size_cap` — reject TOCTOU-grown files that expanded
-///    between step 3 and step 4.
-///
-/// The `+1-probe` (step 4) is what makes silent truncation impossible: a file
-/// that grew past `size_cap` after step 3 yields at least `size_cap + 1` bytes
-/// and trips step 5 instead of returning a truncated buffer.
-///
-/// # Not covered
-///
-/// - **Path containment**: callers that need to bound the resolved path to a
-///   canonical root (fixture-tree) must add `canonicalize().starts_with(root)`
-///   on top.
-/// - **Leaf-swap TOCTOU between `symlink_metadata` and `File::open`**: an
-///   attacker with concurrent-write access to the path can swap a regular
-///   file for a symlink between step 1 and step 4.  Callers needing this
-///   defense must use `O_NOFOLLOW` (unix) or an inode-verify-after-open
-///   pattern.  Not yet implemented here.
-/// - **Aggregate caps across multiple files**: per-file only.  Callers doing
-///   directory-walk aggregation (fixture-tree pages) must track running
-///   totals themselves.
-pub fn read_bounded_regular_file(path: &Path, size_cap: u64) -> Result<Vec<u8>, RejectReason> {
+/// 4. `safe_open` — `O_NOFOLLOW` (unix) / reparse-point-aware open
+///    (Windows) so a leaf swapped to a symlink between step 1 and this open
+///    cannot be followed.  On error, an errno consistent with the open
+///    refusing to follow a symlink (`ELOOP`, POSIX-mandated and honored on
+///    Linux/macOS, but not on FreeBSD, which deliberately returns `EMLINK`
+///    instead at every version) — or, on platforms/errno values that don't
+///    distinguish this case, a `symlink_metadata` recheck finding the leaf
+///    is now a symlink — maps to [`RejectReason::Symlink`]; anything else
+///    maps to [`RejectReason::Io`]. Not race-perfect (an attacker could swap
+///    the symlink back to a regular file between the failed open and this
+///    recheck), but covers the common attack shape while remaining simple.
+/// 5. A post-open, fd-based fstat — reject a kind other than a regular
+///    file bound to the opened descriptor (FIFO/device swapped in between
+///    step 1 and step 4; `safe_open`'s `O_NONBLOCK` on unix keeps a
+///    writer-less FIFO from blocking `open()` before this check runs).
+pub fn open_bounded_regular_file(
+    path: &Path,
+    size_cap: u64,
+) -> Result<(std::fs::File, u64), RejectReason> {
     let metadata = std::fs::symlink_metadata(path).map_err(RejectReason::Io)?;
     let file_type = metadata.file_type();
     if file_type.is_symlink() {
@@ -155,19 +351,108 @@ pub fn read_bounded_regular_file(path: &Path, size_cap: u64) -> Result<Vec<u8>, 
         });
     }
 
-    let mut file = std::fs::File::open(path).map_err(RejectReason::Io)?;
-    // Preallocate against the known-good `metadata.len()` upper bound to
-    // avoid the log2(N) reallocations `Vec::new() + read_to_end` would incur
-    // on a large happy-path file.  The `+1-probe` may push one byte past the
-    // reservation on the TOCTOU-grow reject path — that is one memcpy, not
-    // a full growth chain.
-    let mut bytes = Vec::with_capacity(std::cmp::min(metadata.len(), size_cap) as usize);
-    // `saturating_add(1)` avoids `size_cap + 1` overflow when a caller passes
-    // `u64::MAX` as the cap.  With overflow the read limit would wrap to 0
-    // and any non-empty file would be silently accepted as empty bytes; the
-    // saturation keeps the bound at `u64::MAX` (effectively unlimited) so a
-    // small file still reads through and the post-check below cannot
-    // spuriously fire.
+    let file = match safe_open(path) {
+        Ok(f) => f,
+        Err(e) => {
+            #[cfg(unix)]
+            {
+                let looks_like_symlink_swap = e.raw_os_error() == Some(libc::ELOOP)
+                    // cov:ignore: the symlink_metadata fallback below this
+                    // line exists for platforms/errno combinations that
+                    // don't return ELOOP for O_NOFOLLOW-vs-symlink —
+                    // FreeBSD (which returns EMLINK at every version, not
+                    // just older ones) plus other non-Linux/macOS BSDs.
+                    // Unreachable on this workspace's CI, which runs Linux
+                    // only, where ELOOP always fires first.
+                    || std::fs::symlink_metadata(path)
+                        .map(|m| m.file_type().is_symlink())
+                        .unwrap_or(false);
+                if looks_like_symlink_swap {
+                    // cov:ignore: only reached when `open_bounded_regular_file`
+                    // itself is called against a path that gets symlink-swapped
+                    // during the call — a genuine open-time TOCTOU race. The
+                    // only test that drives a real race through this
+                    // function is the `#[ignore]`d concurrent stress test;
+                    // `safe_open_rejects_symlink_at_open_time` does not
+                    // exercise this line, since it calls `safe_open`
+                    // directly and never goes through
+                    // `open_bounded_regular_file`'s own classification here.
+                    return Err(RejectReason::Symlink);
+                    // cov:ignore: closing brace of an if-block whose only
+                    // statement unconditionally returns — llvm-cov attributes
+                    // a region to this brace that a `return` never reaches.
+                }
+            }
+            #[cfg(windows)]
+            {
+                // safe_open's own reparse-point reject is synthesized here
+                // (there is no OS errno to match, unlike unix's ELOOP —
+                // CreateFile itself succeeded; safe_open constructed the Err
+                // after inspecting the handle), so there is nothing to check
+                // on `e` directly. Fall back to the same symlink_metadata
+                // recheck unix uses for errno values (FreeBSD's EMLINK
+                // included) that don't distinguish this case.
+                let looks_like_symlink_swap = std::fs::symlink_metadata(path)
+                    .map(|m| m.file_type().is_symlink())
+                    .unwrap_or(false);
+                if looks_like_symlink_swap {
+                    return Err(RejectReason::Symlink);
+                }
+            }
+            return Err(RejectReason::Io(e));
+        }
+    };
+
+    check_open_handle_regular(&file)?;
+
+    Ok((file, metadata.len()))
+}
+
+/// Read the remainder of an already-open regular-file handle with the
+/// `+1-probe` bounded-read pattern.
+///
+/// The initial `Vec` allocation is sized from an fd-based
+/// `file.metadata()?.len()` call on `file` itself — the same descriptor the
+/// read below uses, so this consults no path and re-resolves nothing (no
+/// new TOCTOU exposure). Deriving the hint internally, rather than taking
+/// it as a caller-supplied parameter, also closes a positional-argument
+/// footgun a two-`u64`-parameter signature would otherwise invite: every
+/// real caller passes the same `len` and `size_cap` pair `open_bounded_regular_file`
+/// just produced, and a caller that (or a future caller that) swapped their
+/// order would compile silently while quietly changing which value gets
+/// enforced as the reject cap.
+///
+/// The upfront reservation is `min(metadata_len, size_cap, 1 MiB)`: no
+/// combination of on-disk file size and caller-supplied `size_cap` can
+/// force an over-large `Vec::with_capacity` call (which would abort the
+/// process on allocation failure — an outcome this function's whole
+/// contract of returning `Err` instead of aborting must not permit). A real
+/// file larger than 1 MiB still reads through fine: `read_to_end` grows the
+/// buffer via its normal reallocation as bytes come in, so the 1 MiB
+/// ceiling only gives up the single-allocation fast path above that size,
+/// not correctness or the `size_cap` bound itself (still enforced by the
+/// `+1-probe` below, independent of this reservation). A `metadata()`
+/// failure here is folded into the same `Io` reject the read itself would
+/// produce, rather than a separate error path.
+///
+/// The `+1-probe`: `take(size_cap + 1)` then post-read `bytes.len() >
+/// size_cap`.  This is what makes silent truncation impossible: a file that
+/// grew past `size_cap` after the caller's pre-open size check yields at
+/// least `size_cap + 1` bytes and trips the post-read reject instead of
+/// returning a truncated buffer.  `saturating_add(1)` avoids `size_cap + 1`
+/// overflow when a caller passes `u64::MAX` as the cap — with overflow the
+/// read limit would wrap to 0 and any non-empty file would be silently
+/// accepted as empty bytes; the saturation keeps the bound at `u64::MAX`
+/// (effectively unlimited) so a small file still reads through and the
+/// post-check cannot spuriously fire.
+pub fn read_bounded_from_open_file(
+    file: &mut std::fs::File,
+    size_cap: u64,
+) -> Result<Vec<u8>, RejectReason> {
+    const PREALLOC_CEILING: u64 = 1 << 20; // 1 MiB
+    let metadata_len = file.metadata().map_err(RejectReason::Io)?.len();
+    let cap_hint = std::cmp::min(metadata_len, size_cap).min(PREALLOC_CEILING);
+    let mut bytes = Vec::with_capacity(cap_hint as usize);
     let read_limit = size_cap.saturating_add(1);
     file.by_ref()
         .take(read_limit)
@@ -181,6 +466,22 @@ pub fn read_bounded_regular_file(path: &Path, size_cap: u64) -> Result<Vec<u8>, 
         });
     }
     Ok(bytes)
+}
+
+/// Read a regular file with a defense-in-depth bounded read: pre-open
+/// symlink/kind/size gates, an `O_NOFOLLOW`-hardened open with a post-open
+/// kind recheck (see [`open_bounded_regular_file`]), and a `+1-probe`
+/// bounded read (see [`read_bounded_from_open_file`]).
+///
+/// Convenience wrapper over the two split primitives, for a caller that
+/// doesn't need a post-open check of its own (e.g. path containment)
+/// between the open and the read.  A caller that does need one should call
+/// [`open_bounded_regular_file`] and [`read_bounded_from_open_file`]
+/// directly, running its own check against the returned handle in between —
+/// see the module-level "What this module does not cover" section.
+pub fn read_bounded_regular_file(path: &Path, size_cap: u64) -> Result<Vec<u8>, RejectReason> {
+    let (mut file, _len) = open_bounded_regular_file(path, size_cap)?;
+    read_bounded_from_open_file(&mut file, size_cap)
 }
 
 #[cfg(test)]
@@ -241,6 +542,84 @@ mod tests {
         }
     }
 
+    /// Pins the `+1-probe` post-read reject in `read_bounded_from_open_file`,
+    /// AND pins the `+1` bound itself.
+    ///
+    /// The file is deliberately much larger than `cap + 1` (20 bytes for
+    /// cap=8, so 12 bytes past the probe limit) and the assertion is `size
+    /// == cap + 1` (exactly). This shape catches two regression classes at
+    /// once:
+    ///
+    ///   1. Removing the post-read `bytes.len() > cap` check
+    ///      (`Oversized` never fires — test enters the panic arm).
+    ///   2. Widening the read bound to more than `cap + 1` — e.g. a typo
+    ///      `take(cap + 2)` or `take(u64::MAX)` — which would read 20 bytes
+    ///      into `bytes`, still trigger the reject, but with `size = 20 ≠
+    ///      cap + 1` — the equality assert fails. A cap+1-sized file would
+    ///      let both regressions pass the reject arm silently.
+    ///
+    /// Opens the file directly (bypassing `open_bounded_regular_file`'s
+    /// pre-open size check) so the cap mismatch is only discovered by the
+    /// post-read probe — the same isolation `open_bounded_regular_file`'s
+    /// own tests use to reach a post-open-only detection path.
+    #[test]
+    fn rejects_oversized_during_read_via_plus1_probe() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("many_bytes.bin");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"aaaaaaaaaaaaaaaaaaaa") // 20 bytes, well over cap + 1
+            .unwrap();
+        let mut file = std::fs::File::open(&path).unwrap();
+        let cap: u64 = 8;
+
+        match read_bounded_from_open_file(&mut file, cap) {
+            Err(RejectReason::Oversized {
+                size,
+                cap: c,
+                phase: OversizePhase::DuringRead,
+            }) => {
+                // cov:ignore: panic-message literal only executed on
+                // assertion failure, which doesn't happen while this test
+                // passes.
+                assert_eq!(
+                    size,
+                    cap + 1,
+                    "size must be exactly cap + 1 — pins the +1 bound; \
+                     a widened read (e.g. take(cap + 2)) would report size > cap + 1"
+                );
+                assert_eq!(c, cap);
+            }
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            other => {
+                panic!(
+                    "expected Oversized{{DuringRead}} via +1-probe post-read reject, got {other:?}"
+                )
+            }
+        }
+    }
+
+    /// Companion pin: silent over-reject canary. A file of exactly `cap`
+    /// bytes must load successfully — the post-read check is `>` cap, not
+    /// `>=`, and the `take(cap + 1)` read yields exactly `cap` bytes when
+    /// the file is not growing.
+    #[test]
+    fn accepts_at_boundary_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("eight_bytes.bin");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"aaaaaaaa") // 8 bytes
+            .unwrap();
+        let mut file = std::fs::File::open(&path).unwrap();
+        let cap: u64 = 8;
+
+        let bytes = read_bounded_from_open_file(&mut file, cap)
+            .expect("boundary-size (== cap) read must accept");
+        assert_eq!(bytes, b"aaaaaaaa");
+    }
+
     #[test]
     fn accepts_small_file_with_u64_max_cap() {
         // Regression: `size_cap + 1` overflow when `size_cap == u64::MAX`.
@@ -287,12 +666,236 @@ mod tests {
         }
     }
 
-    // fifo/device rejection would exercise `NotRegularFile` on the time-DoS
-    // vector (`mkfifo`), but adding a libc/nix dev-dep here just for the test
-    // is out of proportion for a leaf helper.  `rejects_directory_as_not_regular_file`
-    // already exercises the same `!file_type.is_file()` branch structurally;
-    // fifo-specific coverage lives in the consumer crates (raikiri-dom fonts,
-    // raikiri-vrt reference) which already depend on tempfile + unix APIs.
+    /// `safe_open` must reject a symlink at open time on unix. POSIX
+    /// mandates ELOOP; Linux and macOS comply, but FreeBSD deliberately
+    /// returns EMLINK instead at every version (not a legacy-only quirk),
+    /// and other BSDs (NetBSD, OpenBSD) may return EMLINK or EFTYPE too.
+    /// The test accepts any `Err` on unix, because a passing implementation must not
+    /// follow the symlink regardless of the exact errno. The `Ok` arm is the
+    /// regression pin — an implementation that dropped `O_NOFOLLOW` would
+    /// silently follow the link and return `Ok(file)`, failing this test.
+    #[cfg(unix)]
+    #[test]
+    fn safe_open_rejects_symlink_at_open_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.bin");
+        std::fs::File::create(&target)
+            .unwrap()
+            .write_all(b"target contents")
+            .unwrap();
+        let link = dir.path().join("link.bin");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        match safe_open(&link) {
+            Err(_) => {
+                let post = std::fs::symlink_metadata(&link)
+                    .expect("symlink still present after safe_open Err");
+                // cov:ignore: panic-message literal only executed on
+                // assertion failure, which doesn't happen while this test
+                // passes.
+                assert!(
+                    post.file_type().is_symlink(),
+                    "link at test observation time was not a symlink"
+                );
+            }
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            Ok(_) => panic!("safe_open followed the symlink (O_NOFOLLOW not applied)"),
+        }
+    }
+
+    /// `open_bounded_regular_file`'s `safe_open` error-classification branch
+    /// (a non-`ELOOP` error, and the leaf is still a regular file at
+    /// recheck time) must fall through to the generic `RejectReason::Io`
+    /// arm rather than being misclassified as a symlink swap. `chmod 000`
+    /// after creation revokes read permission without touching the leaf's
+    /// kind: `symlink_metadata` (step 1, a stat-only syscall gated on parent
+    /// directory traversal, not the file's own mode bits) still succeeds,
+    /// but `safe_open`'s actual `open()` (step 4) then fails with
+    /// `EACCES` — an error that is neither `ELOOP` nor accompanied by the
+    /// leaf becoming a symlink, so it must reach line `return
+    /// Err(RejectReason::Io(e))` at the end of the `Err` arm, not the
+    /// symlink-swap short-circuit above it.
+    ///
+    /// Tolerates running as root: root bypasses the file-mode read check
+    /// entirely, so `chmod 000` would not make `safe_open` fail there —
+    /// the `Ok` arm below accepts that outcome instead of asserting it as
+    /// a failure (no `unsafe` euid probe; this crate forbids `unsafe`
+    /// code workspace-wide, so the test observes the actual behavior
+    /// rather than predicting it).
+    #[cfg(unix)]
+    #[test]
+    fn non_eloop_open_error_on_a_still_regular_file_maps_to_io_not_symlink() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("unreadable.bin");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"contents")
+            .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        match open_bounded_regular_file(&path, 128) {
+            Err(RejectReason::Io(e)) => {
+                assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied);
+            }
+            // cov:ignore: unreachable in this workspace's non-root CI/dev
+            // environment — chmod 000 always blocks open() there. Kept for
+            // portability against a hypothetical root-running environment,
+            // which cannot be fabricated in a test.
+            Ok(_) => {
+                // chmod 000 didn't block open() — running with privileges
+                // (e.g. root) that bypass the file-mode read check, so this
+                // test's premise doesn't hold here. Not a failure.
+                eprintln!(
+                    "skipping non_eloop_open_error_on_a_still_regular_file_maps_to_io_not_symlink: \
+                     chmod 000 did not block open() (running as root or another \
+                     privileged account) — this test's premise doesn't hold here"
+                );
+            }
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            other => panic!("expected Io(PermissionDenied) or an Ok root-bypass, got {other:?}"),
+        }
+
+        // Restore write permission so tempdir's own Drop cleanup can remove it.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
+    /// Windows counterpart of `safe_open_rejects_symlink_at_open_time`:
+    /// `safe_open` must not hand back a readable handle bound to a
+    /// symlink's target.
+    ///
+    /// `std::os::windows::fs::symlink_file` requires either Developer Mode
+    /// or `SeCreateSymbolicLinkPrivilege` on the running account; a
+    /// restricted CI/sandbox account without either denies the symlink
+    /// creation itself (`ERROR_PRIVILEGE_NOT_HELD`) before this test can
+    /// exercise `safe_open` at all. That setup failure is orthogonal to the
+    /// property under test, so it is treated as a skip (via `eprintln!` +
+    /// early return) rather than a failure — this test has no way to grant
+    /// the privilege it does not have.
+    ///
+    /// Compile-checked via `cargo check --target x86_64-pc-windows-gnu`; not
+    /// executed — its actual runtime behavior on Windows is unverified
+    /// until it runs there.
+    #[cfg(windows)]
+    #[test]
+    fn safe_open_rejects_symlink_at_open_time_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.bin");
+        std::fs::File::create(&target)
+            .unwrap()
+            .write_all(b"target contents")
+            .unwrap();
+        let link = dir.path().join("link.bin");
+        if std::os::windows::fs::symlink_file(&target, &link).is_err() {
+            eprintln!(
+                "skipping safe_open_rejects_symlink_at_open_time_windows: \
+                 symlink creation requires Developer Mode or \
+                 SeCreateSymbolicLinkPrivilege"
+            );
+            return;
+        }
+
+        match safe_open(&link) {
+            Err(_) => {
+                let post = std::fs::symlink_metadata(&link)
+                    .expect("symlink still present after safe_open Err");
+                assert!(
+                    post.file_type().is_symlink(),
+                    "link at test observation time was not a symlink"
+                );
+            }
+            Ok(_) => panic!("safe_open followed the symlink (reparse-point check not applied)"),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Post-open fd-based fstat tests (FIFO/device swap TOCTOU defense).
+    // The FIFO/device swap window between the pre-open `symlink_metadata`
+    // check and `safe_open` is not deterministically reachable through
+    // `open_bounded_regular_file` (the pre-open `!is_file()` gate rejects a
+    // FIFO/device placed directly at `path` before `safe_open` ever runs).
+    // The defense is instead exercised at the primitive level: `safe_open` +
+    // `check_open_handle_regular` called directly on FIFO / char device
+    // paths, isolating the post-open detection path that in the composed
+    // pipeline only fires on a real TOCTOU race.
+    // ------------------------------------------------------------------
+
+    /// `check_open_handle_regular` accepts a regular file opened via
+    /// `safe_open` — the primitive-level happy-path regression pin (also
+    /// pins that `O_NONBLOCK` does not break a regular-file open).
+    #[test]
+    fn check_open_handle_regular_accepts_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("regular.bin");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"regular content")
+            .unwrap();
+
+        let file = safe_open(&path).expect("safe_open should succeed on regular file");
+        check_open_handle_regular(&file).expect("regular file must pass post-open fstat");
+    }
+
+    /// `safe_open` + `check_open_handle_regular` rejects `/dev/null`
+    /// (character device). `/dev/null` opens immediately even without
+    /// `O_NONBLOCK` (no writer-attachment blocking like a FIFO), so this
+    /// exercises the fd-based fstat's non-regular-kind rejection without
+    /// needing `O_NONBLOCK`.
+    #[cfg(unix)]
+    #[test]
+    fn check_open_handle_regular_rejects_char_device() {
+        let path = Path::new("/dev/null");
+        let file = safe_open(path).expect(
+            "safe_open on /dev/null should succeed (regular open semantics on char device)",
+        );
+        match check_open_handle_regular(&file) {
+            Err(RejectReason::NotRegularFilePostOpen) => {}
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            other => panic!(
+                "expected NotRegularFilePostOpen for /dev/null post-open fstat, got {other:?}"
+            ),
+        }
+    }
+
+    /// `safe_open` + `check_open_handle_regular` rejects a FIFO. Two
+    /// asserts pin the composite defense:
+    ///
+    /// 1. `safe_open` returns `Ok` (without hanging) — proves `O_NONBLOCK`
+    ///    prevents `open()` from blocking on a writer-less FIFO.
+    /// 2. `check_open_handle_regular` returns
+    ///    `Err(RejectReason::NotRegularFilePostOpen)` — proves the fd-based
+    ///    `File::metadata()` fstat correctly identifies the FIFO kind and
+    ///    would reject before any read from the pipe.
+    #[cfg(unix)]
+    #[test]
+    fn check_open_handle_regular_rejects_fifo() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("evil.bin");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo(1) should be available on unix hosts");
+        assert!(status.success(), "mkfifo failed for {}", fifo.display());
+
+        let file = safe_open(&fifo).expect(
+            "safe_open on writer-less FIFO should return Ok immediately via O_NONBLOCK, \
+             not block or Err — if this fails the O_NONBLOCK flag was dropped or the \
+             open path regressed",
+        );
+
+        match check_open_handle_regular(&file) {
+            Err(RejectReason::NotRegularFilePostOpen) => {}
+            // cov:ignore: panic-message literal only executed on assertion
+            // failure, which doesn't happen while this test passes.
+            other => {
+                panic!("expected NotRegularFilePostOpen for FIFO post-open fstat, got {other:?}")
+            }
+        }
+    }
 
     #[test]
     fn reject_reason_display_and_source() {
@@ -305,6 +908,14 @@ mod tests {
         let nrf = RejectReason::NotRegularFile;
         assert_eq!(nrf.to_string(), "path is not a regular file");
         assert!(nrf.source().is_none());
+
+        let nrf_post = RejectReason::NotRegularFilePostOpen;
+        assert!(
+            nrf_post
+                .to_string()
+                .contains("opened fd resolves to a non-regular file")
+        );
+        assert!(nrf_post.source().is_none());
 
         let over_pre = RejectReason::Oversized {
             size: 200,
