@@ -9101,8 +9101,262 @@ fn parse_mix_color_space<'i>(
     }
 }
 
+// ── Numeric-token NaN stabilization ───────────────────────────────────
+//
+// cssparser 0.37.0's tokenizer computes a `<number>`/`<percentage>`/
+// `<dimension>` token's value in two floating-point steps rather than as
+// the single formula CSS Syntax Level 3 §4.3.13 defines
+// (<https://www.w3.org/TR/css-syntax-3/#convert-a-string-to-a-number>,
+// `s·(i + f·10⁻ᵈ)·10^(t·e)`): first the mantissa `sign * (integral_part +
+// fractional_part)` as an f64, then, only if an exponent was written,
+// `value *= f64::powf(10., sign * exponent)` (`tokenizer.rs:1081` in the
+// `cssparser` crate). For a zero-mantissa literal with a huge exponent
+// (`0e999`), `f64::powf(10., 999.)` evaluates to `+Infinity` first, and
+// IEEE 754 defines `0.0 * Infinity` as `NaN` — even though the spec
+// formula's actual value for this input is exactly `0` (multiplying by
+// zero, not by infinity, is what the formula does mathematically).
+// `"0e999".parse::<f32>()` (Rust's own single-step, correctly-rounded
+// string-to-float conversion) returns `0` directly, confirming the value
+// is exact and in-range — the `NaN` this crate would otherwise observe is
+// purely an artifact of the tokenizer's two-step evaluation order.
+//
+// The same collapse mirrors in the opposite direction: digit accumulation
+// in the tokenizer's integral-part loop can itself overflow to
+// `+Infinity` for a sufficiently long run of digits with no exponent
+// written, and multiplying that by a sufficiently negative exponent's
+// `10^exponent` (which underflows to `0.0`) hits `Infinity * 0.0` = `NaN`
+// the same way, for a literal whose true value is small but nonzero.
+//
+// `stabilize_nan_numeric_value` recovers both directions identically,
+// since it does not special-case which operand was zero — it simply
+// re-parses the token's own raw source text. The three functions below it
+// (`expect_number_stable`/`expect_percentage_stable`/`next_numeric_stable`)
+// are the acquisition points every NaN-sensitive numeric-token consumer in
+// this module routes through, so the recovery happens once, at the
+// source, and every downstream `!is_nan()` guard (and every range check
+// that incidentally depends on NaN comparing `false`, e.g.
+// `parse_filter_amount`'s `v >= 0.0`) sees the spec-correct value
+// directly, without needing a special case of its own — with one
+// documented exception, `parse_grid_flex_res` (the `fr` unit), which still
+// acquires its token via raw `Parser::next` and so still observes this
+// hazard for `grid-template-columns: 0e999fr`-shaped literals (see that
+// function's own doc).
+//
+// This grammar-mirroring is itself a forward-maintenance hazard worth
+// naming: `numeric_token_prefix` below re-implements cssparser's
+// `consume_numeric` number grammar by hand, and the workspace pins
+// `cssparser = "0.37"` (a caret range, not an exact version) — if a future
+// `cssparser` version this range admits changes the `<number-token>`
+// grammar (e.g. adds a new numeric literal shape), `numeric_token_prefix`
+// must be updated to match, or it will silently mis-split the raw text for
+// that new shape.
+
+/// Splits the `<number>` production (CSS Syntax Level 3 §4.3.12 "Consume a
+/// number" <https://www.w3.org/TR/css-syntax-3/#consume-number>; see also
+/// §4.1's railroad diagram
+/// <https://www.w3.org/TR/css-syntax-3/#number-token-diagram> for the
+/// visual grammar: optional sign, digits, optional `.` + digits, optional
+/// `[eE]` + optional sign + digits) off the front of `raw`. A percentage's
+/// trailing `%` or a dimension's trailing unit is not part of this
+/// production and is left in the (discarded) remainder — this mirrors cssparser's own
+/// `consume_numeric` grammar exactly, so it consumes the whole numeric
+/// prefix, and only the numeric prefix, of any text cssparser itself
+/// already tokenized as a `<number-token>`/`<percentage-token>`/
+/// `<dimension-token>`; no unit-length bookkeeping is needed to find the
+/// boundary.
+fn numeric_token_prefix(raw: &str) -> &str {
+    let bytes = raw.as_bytes();
+    let mut i = 0;
+    if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
+        i += 1;
+    }
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i < bytes.len() && bytes[i] == b'.' && bytes.get(i + 1).is_some_and(u8::is_ascii_digit) {
+        i += 1;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+    }
+    if i < bytes.len() && (bytes[i] == b'e' || bytes[i] == b'E') {
+        let mut j = i + 1;
+        if j < bytes.len() && (bytes[j] == b'+' || bytes[j] == b'-') {
+            j += 1;
+        }
+        // The two closing braces below (after `i = j;`) are reached every
+        // time this `if`'s condition is true — a plain assignment
+        // statement with no early return/break cannot skip past its own
+        // block's closing brace. Every actual call to this function is
+        // gated on `value.is_nan()` at the call site (`expect_number_stable`
+        // et al.), and `NaN` can only arise from a numeric token that had a
+        // written exponent with at least one digit (module doc above), so
+        // both this `if` and its enclosing one are always true for every
+        // call this crate makes — there is no reachable path through this
+        // function where they are false. Despite that, `cargo-llvm-cov`
+        // 0.8.7's line-level report shows 0 hits on both closing-brace
+        // lines even though the `i = j;` line directly above executes on
+        // every one of those calls: a closing brace immediately following
+        // the last (non-control-flow) statement of a nested `if` block,
+        // when every exercised call takes the identical path through it,
+        // does not get its own incremented coverage region in this
+        // toolchain — reproduced in isolation with a minimal function of
+        // the same shape. No additional test changes what these two lines
+        // report, since the statement they follow is already exercised.
+        if j < bytes.len() && bytes[j].is_ascii_digit() {
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            i = j;
+        } // cov:ignore: closing-brace coverage-instrumentation artifact, see comment above the `if` this closes
+    } // cov:ignore: same closing-brace artifact, one nesting level out — see comment above
+    &raw[..i]
+}
+
+/// Recovers a numeric token's value from its own raw source text when
+/// cssparser's tokenizer computed `NaN` for it (module doc above). `raw`
+/// must already be trimmed to the `<number>` production span
+/// (`numeric_token_prefix`). Re-parsing with `f64::from_str` computes the
+/// CSS Syntax §4.3.13 formula in one step, so the `0 * Infinity` /
+/// `Infinity * 0` intermediate never arises.
+///
+/// On the (expected-unreachable, since every `raw` this module passes in
+/// is text cssparser itself already validated as a `<number-token>`)
+/// chance the reparse fails, the original `value` (still `NaN`) is
+/// returned unchanged, so callers' existing `is_nan()`/range-check guards
+/// keep rejecting it rather than silently substituting a wrong number.
+/// When `value` isn't `NaN` to begin with, this is a no-op — every
+/// ordinary numeric literal, including magnitude overflow to real
+/// `+Inf`/`-Inf`, is bit-identical to before this function existed.
+fn stabilize_nan_numeric_value(raw_number_text: &str, value: f32) -> f32 {
+    if !value.is_nan() {
+        return value;
+    }
+    raw_number_text
+        .parse::<f64>()
+        .map(|v| v as f32)
+        .unwrap_or(value)
+}
+
+/// `stabilize_nan_numeric_value`'s counterpart for `Token::Percentage`'s
+/// `unit_value` field — `raw_number_text` is the same `<number>`
+/// production span (`numeric_token_prefix`, with the trailing `%` already
+/// excluded), but the recovered magnitude is divided by `100.` before
+/// returning, matching `Parser::expect_percentage`'s own `unit_value`
+/// convention (`0%`..`100%` → `0.0`..`1.0`). Shared by `expect_percentage_stable`
+/// and `next_numeric_stable`'s `Token::Percentage` arm so the `/ 100.`
+/// convention lives in one place rather than being repeated at each call
+/// site.
+fn stabilize_nan_percentage_value(raw_number_text: &str, unit_value: f32) -> f32 {
+    if !unit_value.is_nan() {
+        return unit_value;
+    }
+    raw_number_text
+        .parse::<f64>()
+        .map(|v| (v / 100.0) as f32)
+        .unwrap_or(unit_value)
+}
+
+/// `Parser::expect_number` wrapper that applies `stabilize_nan_numeric_value`
+/// before returning. Every `<number>` acquisition in this module should
+/// call this instead of `Parser::expect_number` directly.
+///
+/// `Parser::skip_whitespace` is called explicitly before capturing the
+/// start position: `Parser::next` (which `Parser::expect_number` calls
+/// internally) skips leading whitespace *and comments* before reading the
+/// token, so without this the captured position could point at that
+/// skipped run instead of the token's first byte, and `Parser::slice_from`
+/// would return a slice `numeric_token_prefix` can't walk (e.g. a leading
+/// space makes it return `""`). Calling `skip_whitespace` here is a no-op
+/// for `Parser::next`'s own subsequent call to it (nothing is left to
+/// skip), so this changes no parsing behavior, only where the position is
+/// captured.
+fn expect_number_stable<'i>(input: &mut Parser<'i, '_>) -> Result<f32, BasicParseError<'i>> {
+    input.skip_whitespace();
+    let start = input.position();
+    let value = input.expect_number()?;
+    Ok(if value.is_nan() {
+        stabilize_nan_numeric_value(numeric_token_prefix(input.slice_from(start)), value)
+    } else {
+        value
+    })
+}
+
+/// `Parser::expect_percentage` wrapper — same recovery and
+/// whitespace/comment-skip rationale as `expect_number_stable`, but
+/// re-derives the pre-`/100` magnitude from the raw text and re-applies
+/// `Parser::expect_percentage`'s own `/ 100.` convention before returning,
+/// so the result stays a normalized `unit_value` (`0%`..`100%` → `0.0`..
+/// `1.0`) like the wrapped method's.
+fn expect_percentage_stable<'i>(input: &mut Parser<'i, '_>) -> Result<f32, BasicParseError<'i>> {
+    input.skip_whitespace();
+    let start = input.position();
+    let unit_value = input.expect_percentage()?;
+    Ok(if unit_value.is_nan() {
+        stabilize_nan_percentage_value(numeric_token_prefix(input.slice_from(start)), unit_value)
+    } else {
+        unit_value
+    })
+}
+
+/// `Parser::next` wrapper for the raw `Token::Number`/`Token::Percentage`/
+/// `Token::Dimension` matches in this module (`parse_length_value`,
+/// `parse_angle`, `parse_hue`) — corrects the token's own numeric field in
+/// place when it is `NaN` (module doc above), before the caller's `match`
+/// ever sees it. Non-numeric tokens, and numeric tokens whose value isn't
+/// `NaN`, pass through unchanged. Same whitespace/comment-skip rationale
+/// as `expect_number_stable`.
+fn next_numeric_stable<'i, 't>(
+    input: &mut Parser<'i, 't>,
+) -> Result<Token<'i>, BasicParseError<'i>> {
+    input.skip_whitespace();
+    let start = input.position();
+    let token = input.next()?.clone();
+    Ok(match token {
+        Token::Number {
+            has_sign,
+            value,
+            int_value,
+        } if value.is_nan() => Token::Number {
+            has_sign,
+            value: stabilize_nan_numeric_value(
+                numeric_token_prefix(input.slice_from(start)),
+                value,
+            ),
+            int_value,
+        },
+        Token::Percentage {
+            has_sign,
+            unit_value,
+            int_value,
+        } if unit_value.is_nan() => Token::Percentage {
+            has_sign,
+            unit_value: stabilize_nan_percentage_value(
+                numeric_token_prefix(input.slice_from(start)),
+                unit_value,
+            ),
+            int_value,
+        },
+        Token::Dimension {
+            has_sign,
+            value,
+            int_value,
+            unit,
+        } if value.is_nan() => Token::Dimension {
+            has_sign,
+            value: stabilize_nan_numeric_value(
+                numeric_token_prefix(input.slice_from(start)),
+                value,
+            ),
+            int_value,
+            unit,
+        },
+        other => other,
+    })
+}
+
 fn parse_mix_percentage<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
-    let percentage = input.expect_percentage()?;
+    let percentage = expect_percentage_stable(input)?;
     if (0.0..=1.0).contains(&percentage) {
         Ok(percentage)
     } else {
@@ -9332,24 +9586,24 @@ fn parse_color_component<'i>(
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Err(input.new_custom_error(()));
     }
-    if let Ok(percentage) = input.try_parse(|i| i.expect_percentage()) {
+    if let Ok(percentage) = input.try_parse(|i| expect_percentage_stable(i)) {
         return Ok(percentage * percentage_scale);
     }
-    Ok(input.expect_number()?)
+    Ok(expect_number_stable(input)?)
 }
 
 fn parse_lightness<'i>(
     input: &mut Parser<'i, '_>,
     is_oklab: bool,
 ) -> Result<f32, ParseError<'i, ()>> {
-    let value = if let Ok(percentage) = input.try_parse(|i| i.expect_percentage()) {
+    let value = if let Ok(percentage) = input.try_parse(|i| expect_percentage_stable(i)) {
         if is_oklab {
             percentage
         } else {
             percentage * 100.0
         }
     } else {
-        input.expect_number()?
+        expect_number_stable(input)?
     };
     Ok(if is_oklab {
         value.clamp(0.0, 1.0)
@@ -9362,7 +9616,7 @@ fn parse_hue<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> 
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Err(input.new_custom_error(()));
     }
-    match input.next()?.clone() {
+    match next_numeric_stable(input)? {
         Token::Number { value, .. } => {
             let hue = value.rem_euclid(360.0).to_radians();
             if hue.is_finite() {
@@ -9398,10 +9652,10 @@ fn parse_optional_modern_alpha<'i>(input: &mut Parser<'i, '_>) -> Result<f32, Pa
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Err(input.new_custom_error(()));
     }
-    if let Ok(percentage) = input.try_parse(|i| i.expect_percentage()) {
+    if let Ok(percentage) = input.try_parse(|i| expect_percentage_stable(i)) {
         return Ok(percentage.clamp(0.0, 1.0));
     }
-    Ok(input.expect_number()?.clamp(0.0, 1.0))
+    Ok(expect_number_stable(input)?.clamp(0.0, 1.0))
 }
 
 fn rgb_f32_to_css_color(rgb: [f32; 3], alpha: f32) -> CssColor {
@@ -9764,7 +10018,7 @@ fn parse_border_color(input: &mut Parser<'_, '_>) -> Option<BorderColor> {
 fn parse_rgb_function<'i>(input: &mut Parser<'i, '_>) -> Result<ParsedColor, ParseError<'i, ()>> {
     // 1st channel: try percentage first、fail → integer number。
     // 成功した variant が以降 2 channel の kind を固定する。
-    let (r, is_pct) = if let Ok(pct) = input.try_parse(|i| i.expect_percentage()) {
+    let (r, is_pct) = if let Ok(pct) = input.try_parse(|i| expect_percentage_stable(i)) {
         (pct.clamp(0.0, 1.0), true)
     } else {
         (clamp_channel(input.expect_integer()?), false)
@@ -9796,7 +10050,7 @@ fn parse_rgb_channel<'i>(
     is_pct: bool,
 ) -> Result<f32, ParseError<'i, ()>> {
     if is_pct {
-        Ok(input.expect_percentage()?.clamp(0.0, 1.0))
+        Ok(expect_percentage_stable(input)?.clamp(0.0, 1.0))
     } else {
         Ok(clamp_channel(input.expect_integer()?))
     }
@@ -9812,10 +10066,10 @@ fn parse_rgb_channel<'i>(
 /// [`parse_rgb_function`] の 1 番目 channel と対称の順序 (mix reject と同じ
 /// pattern で読める)。
 fn parse_alpha_value<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
-    if let Ok(pct) = input.try_parse(|i| i.expect_percentage()) {
+    if let Ok(pct) = input.try_parse(|i| expect_percentage_stable(i)) {
         Ok(pct.clamp(0.0, 1.0))
     } else {
-        Ok(input.expect_number()?.clamp(0.0, 1.0))
+        Ok(expect_number_stable(input)?.clamp(0.0, 1.0))
     }
 }
 
@@ -9851,35 +10105,37 @@ fn clamp_channel(value: i32) -> f32 {
 /// handled correctly by the phase-3 clamp above — `f32::clamp` maps
 /// `+Inf`/`-Inf` to `1.0`/`0.0` exactly as it maps any other out-of-range
 /// finite value, so a huge-magnitude literal like `opacity: -1e40` (which
-/// the tokenizer's f64->f32 conversion overflows to `-Infinity`, not NaN —
-/// distinct from the `0 * Infinity` collapse below) must reach the clamp
-/// unrejected and become `0.0` (fully transparent), not fall back to the
-/// initial `1.0` (fully opaque) by being dropped here. **NaN is different**
-/// — `f32::clamp` returns `self` unchanged when `self` is NaN (only a NaN
-/// *bound* panics), so an unguarded NaN would sail through the clamp and
-/// reach [`crate::computed::ComputedValues::opacity`] — this guard is what
-/// keeps that field NaN-free for values that go through this parser (see
-/// that field's doc for the "ordinary parse -> cascade pipeline" scoping of
-/// that guarantee). A huge-*exponent* literal (`opacity: 0e999`) produces
-/// exactly that hazard: the
-/// tokenizer's `0 * 10^999` collapses to `0.0 * f32::INFINITY` = `NaN` (an
-/// earlier iteration of this guard used `is_finite()`, which rejects
-/// `+Inf`/`-Inf` too and wrongly dropped `-1e40`-shaped declarations — this
-/// helper deliberately does **not** reuse
+/// the tokenizer's f64->f32 conversion overflows to `-Infinity`, not NaN)
+/// must reach the clamp unrejected and become `0.0` (fully transparent),
+/// not fall back to the initial `1.0` (fully opaque) by being dropped
+/// here. **NaN is different** — `f32::clamp` returns `self` unchanged when
+/// `self` is NaN (only a NaN *bound* panics), so an unguarded NaN would
+/// sail through the clamp and reach
+/// [`crate::computed::ComputedValues::opacity`] — this guard is what keeps
+/// that field NaN-free for values that go through this parser (see that
+/// field's doc for the "ordinary parse -> cascade pipeline" scoping of
+/// that guarantee). An earlier iteration of this guard used `is_finite()`,
+/// which rejects `+Inf`/`-Inf` too and wrongly dropped `-1e40`-shaped
+/// declarations — this helper deliberately does **not** reuse
 /// [`parse_nonneg_finite_number`]'s `is_finite()` pattern for that reason;
 /// unlike `flex-grow`/`flex-shrink`, which reject `<number [0,∞]>` and so
 /// have no legitimate use for `-Inf` in the first place, `opacity`'s
 /// unbounded `<number>` grammar makes `+Inf`/`-Inf` legitimate inputs that
-/// must reach the clamp). `!is_nan()` is checked on both the `<number>`
-/// and `<percentage>` branches, since either token shape can hit the same
-/// `0 * Infinity` collapse — a rejected (NaN) declaration falls back to
-/// the initial value `1.0` via the ordinary "invalid declaration is
-/// dropped" path, same as any other malformed value.
+/// must reach the clamp.
+///
+/// `expect_number_stable`/`expect_percentage_stable` already correct the
+/// one class of `NaN` a numeric token can actually carry (a huge-exponent,
+/// zero-mantissa literal like `opacity: 0e999`, module doc above) before
+/// this function ever sees the value, so in ordinary use `n`/`pct` here
+/// are never `NaN`. This `!is_nan()` check is kept as defense-in-depth —
+/// it costs nothing when the value isn't `NaN` and still protects
+/// [`crate::computed::ComputedValues::opacity`]'s NaN-free invariant if
+/// that upstream recovery is ever bypassed or extended incorrectly.
 fn parse_opacity_value(input: &mut Parser<'_, '_>) -> Option<f32> {
-    if let Ok(pct) = input.try_parse(|i| i.expect_percentage()) {
+    if let Ok(pct) = input.try_parse(|i| expect_percentage_stable(i)) {
         (!pct.is_nan()).then_some(pct)
     } else {
-        let n = input.expect_number().ok()?;
+        let n = expect_number_stable(input).ok()?;
         (!n.is_nan()).then_some(n)
     }
 }
@@ -10007,15 +10263,25 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
 ///
 /// **`NaN` はこの saturation の対象外**。`is_finite()` は `NaN` に対しても
 /// `false` を返すため、当初の実装は `NaN` も `±f32::MAX` へ saturate して
-/// いたが、それは誤り: 例えば `0e999%` は cssparser 側の `0.0 * 10^999`
-/// (`f64::powf` が `+Inf` を返す) で `NaN` になる、**真の数学的値は 0**
-/// の入力であり、"closest value" は `f32::MAX` ではなく `0.0` である。
-/// `sanitize_finite` (`raikiri-dom/src/layout.rs`) は `NaN` を既に `0.0`
-/// として扱うため、ここで saturate せず `NaN` のまま通せば sink 側の
-/// 既存契約と整合する。よって saturation の条件は `is_infinite()` に
-/// 限定し、`NaN` は無変換で通す。
+/// いたが、それは誤り: 例えば `0e999%` は cssparser の tokenizer が計算する
+/// `0.0 * 10^999` (`f64::powf` が `+Inf` を返す) の中間結果としては `NaN`
+/// になるが、**真の数学的値は 0** の入力であり、"closest value" は
+/// `f32::MAX` ではなく `0.0` である。この関数が呼ぶ `next_numeric_stable`
+/// (module doc 冒頭「Numeric-token NaN stabilization」節参照) がまさに
+/// この class を token 取得の時点で訂正するため、通常の parse では
+/// `unit_value` がこの arm に `NaN` のまま届くことはもう無く、`0e999%` は
+/// この saturation 分岐を経由せずそのまま `Length::Percent(0.0)` になる。
+/// それでも `NaN` を saturate 対象から除外する条件分岐 (`is_infinite()`
+/// 限定) 自体は defense-in-depth として残す —
+/// `sanitize_finite` (`raikiri-dom/src/layout.rs`) が `NaN` を既に `0.0`
+/// として扱う既存の sink 契約と整合するため、`next_numeric_stable` の
+/// recovery が (再 parse 失敗などで) 効かなかった残余の `NaN` も
+/// `f32::MAX` へ寄せず無変換で通す。`is_infinite()` の saturation 自体は
+/// `1e40%` のような正真正銘の magnitude overflow に対して引き続き
+/// 必要 (module doc の「同じ collapse は逆方向にも起こりうる」とは別の、
+/// 通常の overflow class)。
 fn parse_length_value(input: &mut Parser<'_, '_>, allow_percentage: bool) -> Option<Length> {
-    match input.next().ok()? {
+    match &next_numeric_stable(input).ok()? {
         Token::Dimension { value, unit, .. } => match unit.to_ascii_lowercase().as_str() {
             "px" => Some(Length::Px(*value)),
             "em" => Some(Length::Em(*value)),
@@ -10924,7 +11190,7 @@ fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 /// # Ordering
 ///
 /// `normal` (`try_parse` + `expect_ident_matching`) → bare number
-/// (`try_parse(|i| i.expect_number())` — Dimension/Percentage に対しては rewind
+/// (`try_parse(|i| expect_number_stable(i))` — Dimension/Percentage に対しては rewind
 /// して失敗) → [`parse_length_value`] (`allow_percentage = true`)。この順で
 /// `1.5` は Number branch、`1.5em` / `1.5px` / `150%` は Length branch に確定分岐。
 ///
@@ -10962,7 +11228,7 @@ fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
     //    で reject すると consumed cursor のまま Length branch に落ち、
     //    `line-height: -0.5 20px` が `20px` として silently accept される
     //    (spec-invalid CSS を通す correctness bug)。
-    if let Ok(n) = input.try_parse(|i| i.expect_number()) {
+    if let Ok(n) = input.try_parse(|i| expect_number_stable(i)) {
         // spec `<number [0,∞]>` 違反 → declaration drop (Length branch へ落とさない)。
         return (n >= 0.0).then_some(LineHeight::Number(n));
     }
@@ -11011,7 +11277,7 @@ fn parse_tab_size(input: &mut Parser<'_, '_>) -> Option<TabSize> {
     // 1. bare `<number [0,∞]>` — Token::Number (unit なし)。Dimension
     //    (`4px`) に対しては `expect_number` が Err を返し `try_parse` が
     //    rewind するため、Length branch へフォールスルー。
-    if let Ok(n) = input.try_parse(|i| i.expect_number()) {
+    if let Ok(n) = input.try_parse(|i| expect_number_stable(i)) {
         // spec `[0,∞]` 違反 → declaration drop (Length branch へ落とさない、
         // 上記 doc 節参照)。
         return (n >= 0.0).then_some(TabSize::Number(n));
@@ -11119,11 +11385,16 @@ fn parse_flex_wrap(input: &mut Parser<'_, '_>) -> Option<FlexWrapValue> {
 /// 参照) ため parse 層では素通しでよい。一方 `flex-grow`/`flex-shrink` は
 /// raikiri-dom の `bridge_flex` が `taffy::Style::flex_grow`/`flex_shrink`
 /// (共に生 `f32`) へ **無変換で直接 copy する** — 途中に絶対化/sink guard の
-/// 通過点が無いため、`+Inf`/`NaN` を防ぐ唯一の場所が本 parse-time check に
-/// なる。`<number [0,∞]>` 自体の f64→f32 変換 (cssparser tokenizer 側) は
-/// 巨大な literal (`flex-grow: 1e40`) で `+Inf` を produce しうる。
+/// 通過点が無いため、`+Inf` を防ぐ唯一の場所が本 parse-time check になる。
+/// `<number [0,∞]>` 自体の f64→f32 変換 (cssparser tokenizer 側) は巨大な
+/// literal (`flex-grow: 1e40`) で `+Inf` を produce しうる。`NaN` についても
+/// 同じ `is_finite()` check が引き続き弾くが、`expect_number_stable`
+/// (module doc「Numeric-token NaN stabilization」節参照) が zero-mantissa
+/// huge-exponent literal (`flex-grow: 0e999`) 由来の `NaN` を acquisition
+/// 時点で既に訂正するため、通常の parse ではこの check が `NaN` を実際に
+/// 弾く場面はもう無い — `+Inf` に対する必須の check という位置づけ。
 fn parse_nonneg_finite_number(input: &mut Parser<'_, '_>) -> Option<f32> {
-    let n = input.expect_number().ok()?;
+    let n = expect_number_stable(input).ok()?;
     (n.is_finite() && n >= 0.0).then_some(n)
 }
 
@@ -11472,6 +11743,14 @@ fn parse_line_names_or_empty(input: &mut Parser<'_, '_>) -> Vec<SmolStr> {
 /// [`parse_nonneg_finite_number`] doc と同じ理由 (raikiri-dom bridge が
 /// taffy `MaxTrackSizingFunction::fr` へ無変換で copy する、sink guard を
 /// 経由しない経路)。
+///
+/// この関数は raw `Parser::next` で token を取得しており、module doc
+/// 「Numeric-token NaN stabilization」節の `next_numeric_stable` を経由
+/// しない — 本 crate の他の numeric parser とは異なる、既知の
+/// pre-existing な不整合。zero-mantissa/huge-exponent literal
+/// (`grid-template-columns: 0e999fr`) は依然 cssparser tokenizer 側で
+/// `NaN` に collapse し、`value.is_finite()` に弾かれて drop される
+/// (spec-correct な `Flex(0.0)` にはならない)。
 fn parse_grid_flex_res<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
     match input.next()?.clone() {
         Token::Dimension {
@@ -12133,14 +12412,19 @@ fn parse_place_self_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceSelfSho
 /// `crate::cascade::tests::bolder_lighter_resolve_against_unrounded_fractional_parent_weight`)。
 /// `f32` 格上げにより丸めそのものが不要になったため、この 2 次被害も解消される。
 fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeightValue> {
-    match input.next().ok()? {
+    match &next_numeric_stable(input).ok()? {
         // `<number [1,1000]>`。`value` field (f32) を見るので `1e3` のような
         // scientific notation や fractional もそのまま受理される (どちらも
         // CSS Values 3 の `<number>` production として spec-valid)。fraction は
         // 丸めずそのまま computed value まで運ぶ (上記 doc 参照)。
-        // NaN は両比較が false、±inf は片方のみ false — いずれも guard が成立
-        // しないため reject される (`1e400` → None、§2.2 "all other values are
-        // invalid" と一致)。
+        // token 取得は `next_numeric_stable` 経由 (module doc「Numeric-token
+        // NaN stabilization」節参照) — zero-mantissa/huge-exponent
+        // (`0e999`) と huge-mantissa/underflowing-exponent (例:
+        // `50` に等しい `5` + 400 zeros + `e-399`) の両方の cssparser
+        // tokenizer artifact をここで訂正済のため、この範囲判定が実際に
+        // `NaN` を見ることはもう無い。±inf (`1e400` 等、真正の magnitude
+        // overflow) は依然どちらか片方の比較が false になり reject される
+        // (§2.2 "all other values are invalid" と一致)。
         Token::Number { value, .. } if *value >= 1.0 && *value <= 1000.0 => {
             Some(FontWeightValue::Absolute(*value))
         }
@@ -13901,22 +14185,21 @@ fn parse_length_allow_negative_res<'i>(
 /// Decoration Module Level 3 §4), with an explicit `!is_nan()` guard layered
 /// on top.
 ///
-/// # Why NaN happens here
+/// # Why this guard is (mostly) already a no-op
 ///
 /// A huge-exponent literal like `0e999px` has an exact mathematical value
 /// of `0` (CSS Syntax 3 §4.3.13's own `<number-token>` conversion is
-/// `sign * mantissa * 10^exponent`, and `0 * anything` is `0`). The `NaN`
-/// this crate actually observes is not that spec arithmetic — it is an
-/// artifact of how the cssparser 0.37.0 tokenizer computes the same
-/// formula as a separate floating-point step (`mantissa * 10^exponent`),
-/// where `0.0 * f64::INFINITY` evaluates to `NaN` under IEEE 754 instead of
-/// the spec-correct `0`. This guard is a defensive workaround for that
-/// upstream tokenizer artifact, not something CSS Values 4 §5 mandates —
-/// fixing the tokenizer itself is outside this crate's scope (by the time
-/// a `Token::Dimension` reaches this parser, the original mantissa/exponent
-/// are already gone). Same hazard, same workaround shape as the
-/// already-landed [`parse_opacity_value`]'s `!is_nan()` guard — this
-/// helper just extends that precedent to shadow offsets/spread.
+/// `sign * mantissa * 10^exponent`, and `0 * anything` is `0`), but
+/// cssparser 0.37.0's tokenizer computes that same formula as a separate
+/// floating-point step (`mantissa * 10^exponent`) that collapses to `NaN`
+/// for this input (module doc's "Numeric-token NaN stabilization"
+/// section). `parse_length_value` — which `parse_length_allow_negative`
+/// (and so this function) goes through — already routes its token
+/// acquisition through `next_numeric_stable`, which corrects exactly this
+/// class of `NaN` before this function ever sees the `Length`. So in
+/// ordinary use `length_payload(length)` here is never `NaN` for a
+/// zero-mantissa literal; this `!is_nan()` check is kept as
+/// defense-in-depth, same precedent as [`parse_opacity_value`]'s guard.
 ///
 /// # Why the guard must be explicit here
 ///
@@ -14495,21 +14778,26 @@ fn parse_clip_path(input: &mut Parser<'_, '_>) -> Option<ClipPath> {
 /// cannot lean on a range check to catch the same hazard and must guard
 /// explicitly. Same class of hazard as
 /// [`PropertyValue::Opacity`]'s parser (`parse_opacity_value`'s
-/// `!is_nan()` guard doc is canonical for the *mechanism*: a huge-exponent
-/// literal like `scale(0e999)` collapses to `0.0 * f32::INFINITY` = NaN
-/// during cssparser tokenization) — but the *reason a guard is needed
-/// at all* here is `transform`-specific: this crate's `Length`-typed box
-/// fields (`width`/`margin`/etc.) can go unguarded because
-/// `raikiri-dom::layout::sanitize_finite` normalizes NaN at the one sink
-/// that consumes them ([`Length`] doc's "型は層を表明しない" note describes
-/// that pipeline); `transform`'s `f32`/[`Length`]/[`Angle`] payloads have
-/// no such downstream sink (no paint-side consumer exists yet at all), so
-/// nothing else in this crate's pipeline will ever normalize a NaN that
-/// slips past this parser. `+Inf`/`-Inf` (ordinary magnitude overflow, a
-/// different hazard class per `parse_opacity_value` doc's own
-/// distinction) are preserved — no bound restricts a plain `<number>`.
+/// `!is_nan()` guard doc is canonical for the *mechanism*) — but the
+/// *reason a guard is needed at all* here is `transform`-specific: this
+/// crate's `Length`-typed box fields (`width`/`margin`/etc.) can go
+/// unguarded because `raikiri-dom::layout::sanitize_finite` normalizes
+/// NaN at the one sink that consumes them ([`Length`] doc's "型は層を
+/// 表明しない" note describes that pipeline); `transform`'s
+/// `f32`/[`Length`]/[`Angle`] payloads have no such downstream sink (no
+/// paint-side consumer exists yet at all), so nothing else in this
+/// crate's pipeline will ever normalize a NaN that slips past this
+/// parser. `+Inf`/`-Inf` (ordinary magnitude overflow, a different hazard
+/// class per `parse_opacity_value` doc's own distinction) are preserved —
+/// no bound restricts a plain `<number>`.
+///
+/// `expect_number_stable` already corrects a huge-exponent, zero-mantissa
+/// literal like `scale(0e999)` (module doc's "Numeric-token NaN
+/// stabilization" section) before this function sees `n`, so in ordinary
+/// use this `!is_nan()` check is defense-in-depth, not the primary
+/// mechanism.
 fn parse_transform_number(input: &mut Parser<'_, '_>) -> Option<f32> {
-    let n = input.expect_number().ok()?;
+    let n = expect_number_stable(input).ok()?;
     (!n.is_nan()).then_some(n)
 }
 
@@ -14521,6 +14809,9 @@ fn parse_transform_number(input: &mut Parser<'_, '_>) -> Option<f32> {
 /// rejects NaN), `translate()`'s `<length-percentage>` has no sign
 /// restriction, so there is no such incidental filter here — the guard
 /// must be explicit, same shape as [`parse_transform_number`]'s own doc.
+/// [`parse_length_value`] already routes through `next_numeric_stable`
+/// (module doc above), so this is likewise defense-in-depth in ordinary
+/// use.
 fn parse_transform_length_percentage(input: &mut Parser<'_, '_>) -> Option<Length> {
     let length = parse_length_value(input, true)?;
     (!length_payload(length).is_nan()).then_some(length)
@@ -14533,10 +14824,11 @@ fn parse_transform_length_percentage(input: &mut Parser<'_, '_>) -> Option<Lengt
 /// states implementations "must not normalize" the value, ruling out a
 /// modulo-360 transform here). Wraps [`parse_angle`] (the shared
 /// gradient-facing helper, `Result`-returning) with the same `!is_nan()`
-/// guard [`parse_transform_number`] applies — `parse_angle` itself does
-/// not reject NaN (its own doc's overflow-saturation note is scoped to
-/// `+Inf`/`-Inf` from ordinary magnitude overflow, not the `0 * Infinity`
-/// collapse a huge-*exponent* literal like `rotate(0e999deg)` produces).
+/// guard [`parse_transform_number`] applies. `parse_angle` acquires its
+/// token via `next_numeric_stable` (module doc above), which corrects a
+/// huge-*exponent* literal like `rotate(0e999deg)` before `parse_angle`
+/// ever computes degrees from it, so — same as the guards above — this is
+/// defense-in-depth rather than the primary mechanism in ordinary use.
 /// Guarded here at the call site rather than inside `parse_angle` itself,
 /// to avoid changing that shared helper's behavior for its other
 /// (gradient) callers.
@@ -14731,16 +15023,20 @@ fn parse_transform(input: &mut Parser<'_, '_>) -> Option<Vec<TransformFunction>>
 ///
 /// No separate `!is_nan()` guard is needed: `v >= 0.0` is `false` for NaN
 /// under IEEE 754 comparison semantics, so the same range check that
-/// rejects an ordinary negative value incidentally also rejects a NaN
-/// parse (the `0 * Infinity` tokenizer collapse a huge-exponent literal
-/// like `brightness(0e999)` produces) — unlike [`parse_transform_number`]
-/// (whose callers have no range restriction to lean on and must guard
-/// explicitly), this helper's range restriction already does the job.
+/// rejects an ordinary negative value would incidentally also reject a
+/// NaN parse — unlike [`parse_transform_number`] (whose callers have no
+/// range restriction to lean on and must guard explicitly), this helper's
+/// range restriction alone would do the job. In practice a huge-exponent
+/// literal like `brightness(0e999)` no longer reaches this check as NaN
+/// at all — `expect_number_stable`/`expect_percentage_stable` (module
+/// doc's "Numeric-token NaN stabilization" section) already correct it to
+/// `0.0` at acquisition, so `v >= 0.0` accepts it normally instead of
+/// incidentally rejecting it.
 fn parse_filter_amount<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
-    let v = if let Ok(pct) = input.try_parse(|i| i.expect_percentage()) {
+    let v = if let Ok(pct) = input.try_parse(|i| expect_percentage_stable(i)) {
         pct
     } else {
-        input.expect_number()?
+        expect_number_stable(input)?
     };
     if v >= 0.0 {
         Ok(v)
@@ -14936,9 +15232,11 @@ fn parse_gradient<'i>(input: &mut Parser<'i, '_>) -> Result<Gradient, ParseError
 /// "Unitless zero" 節 — とは別の、angle 固有の根拠)。単位変換
 /// (grad/rad/turn → deg) の overflow saturation は同関数の "Percentage
 /// overflow" 節と同じ方針 (`is_infinite()` の場合のみ符号を保持して
-/// `f32::MAX` へ寄せる、`NaN` は無変換)。
+/// `f32::MAX` へ寄せる、`NaN` は無変換)。token 取得は `next_numeric_stable`
+/// 経由 (module doc 冒頭「Numeric-token NaN stabilization」節参照) — 通常の
+/// parse では `value` に `0e999deg` 由来の `NaN` が届くことはもう無い。
 fn parse_angle<'i>(input: &mut Parser<'i, '_>) -> Result<Angle, ParseError<'i, ()>> {
-    match input.next()?.clone() {
+    match next_numeric_stable(input)? {
         Token::Number { value, .. } => {
             if value == 0.0 {
                 Ok(Angle(0.0))
@@ -14982,7 +15280,7 @@ fn parse_angle_percentage<'i>(
 /// 符号を保持して `f32::MAX` へ寄せる、同関数の "Percentage overflow" 節
 /// 参照)。
 fn parse_percent_number<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
-    let unit_value = input.expect_percentage()?;
+    let unit_value = expect_percentage_stable(input)?;
     let percent = unit_value * 100.0;
     Ok(if percent.is_infinite() {
         f32::MAX.copysign(percent)
@@ -18307,13 +18605,40 @@ mod tests {
         assert_eq!(parse("1000.4", "font-weight"), None);
         // 非有限値。`1e400` は f32 に収まらず ±inf に overflow するため、
         // `value <= 1000.0` (または `>= 1.0`) が成立せず reject される
-        // (§2.2 "all other values are invalid" と一致)。NaN は両比較が false。
-        // `nan` / `inf` は `<number>` production ではなく Ident token なので
-        // keyword arm にも該当せず reject される。
+        // (§2.2 "all other values are invalid" と一致) — これは genuine
+        // magnitude overflow であり、`next_numeric_stable` が訂正する
+        // zero-mantissa/huge-mantissa 由来の `NaN` collapse とは別の hazard
+        // class (`parse_font_weight` doc参照)。`nan` / `inf` は `<number>`
+        // production ではなく Ident token なので keyword arm にも該当せず
+        // reject される — cssparser tokenizer の `NaN` artifact とは無関係。
         assert_eq!(parse("1e400", "font-weight"), None);
         assert_eq!(parse("-1e400", "font-weight"), None);
         assert_eq!(parse("nan", "font-weight"), None);
         assert_eq!(parse("inf", "font-weight"), None);
+    }
+
+    #[test]
+    fn font_weight_mirror_huge_mantissa_tiny_exponent_resolves_inside_valid_range() {
+        // Same mirror-collapse class as
+        // `parse_length_value_mirror_huge_mantissa_tiny_exponent_resolves_correctly`
+        // — a mantissa long enough to itself overflow to `+Infinity` during
+        // cssparser's digit-by-digit accumulation (`5` followed by 400
+        // zeros), multiplied by a sufficiently negative exponent's
+        // `10^exponent` (which underflows to `0.0`), collapses to
+        // `Infinity * 0.0` = `NaN` in the tokenizer's own two-step
+        // computation — even though the true value, `5 * 10^400 * 10^-399`
+        // = `50`, lands squarely inside `<font-weight-absolute>`'s valid
+        // `[1,1000]` range (CSS Fonts 4 §2.2). `next_numeric_stable`
+        // (which `parse_font_weight` acquires its token through) recovers
+        // this before the range guard ever runs, so this legitimate value
+        // resolves to `FontWeightValue::Absolute(50.0)` instead of being
+        // silently dropped.
+        let digits = format!("5{}", "0".repeat(400)); // 5 * 10^400, overflows f64 digit accumulation to +Infinity
+        let source = format!("{digits}e-399");
+        assert_eq!(
+            parse(&source, "font-weight"),
+            Some(PropertyValue::FontWeight(FontWeightValue::Absolute(50.0)))
+        );
     }
 
     #[test]
@@ -19937,28 +20262,85 @@ mod tests {
     }
 
     #[test]
-    fn parse_length_value_nan_percentage_passes_through_unsaturated() {
-        // finding:
-        // `is_finite()` also catches NaN, a different failure class than the
-        // `1e40%` overflow above. `0e999%` triggers it: cssparser's exponent
-        // handling computes `0.0 * 10f64.powf(999.0)`, and
-        // `10f64.powf(999.0)` is `+Inf`, so the product is `NaN` per IEEE
-        // 754 — even though `0e999`'s true mathematical value is `0`, not
-        // "unrepresentable". Saturating this to `f32::MAX` would turn the
-        // sink-side geometry (`raikiri-dom::layout::sanitize_finite`, which
-        // already treats `NaN` as `0.0`) into a huge box instead of a
-        // zero-sized one, so this class must pass through unsaturated and
-        // rely on that existing `NaN -> 0.0` sink contract downstream.
-        // cov:ignore: the panic-message literals in this match's arms only
-        // execute on assertion/match failure, unreachable while this test
-        // passes.
-        match parse_length("0e999%", true) {
-            Some(Length::Percent(v)) => assert!(
-                v.is_nan(),
-                "expected NaN (0 * Inf) to pass through unsaturated, got {v}"
-            ),
-            other => panic!("expected Some(Length::Percent(NaN)), got {other:?}"),
-        }
+    fn parse_length_value_zero_mantissa_huge_exponent_percentage_resolves_to_zero() {
+        // `0e999%` is a zero-mantissa, huge-exponent literal — cssparser's
+        // tokenizer computes its pre-`/100` magnitude as `0.0 *
+        // f64::powf(10., 999.)`, and `10f64.powf(999.0)` is `+Inf`, so the
+        // product collapses to `NaN` per IEEE 754, even though CSS Syntax
+        // Level 3 §4.3.13's own formula gives an exact `0` for this input
+        // (`property.rs` module doc's "Numeric-token NaN stabilization"
+        // section is canonical for the mechanism). `next_numeric_stable`
+        // (which `parse_length_value` acquires its token through) corrects
+        // this before `parse_length_value` ever sees the `Token::Percentage`,
+        // so `0e999%` resolves to the spec-correct `Length::Percent(0.0)`
+        // directly — it no longer reaches the `is_infinite()`-only
+        // saturation guard as `NaN` at all (that guard remains, for the
+        // genuinely-different `1e40%` magnitude-overflow case pinned above).
+        assert_eq!(parse_length("0e999%", true), Some(Length::Percent(0.0)));
+        // Sign is preserved through the recovery (`-0.0 == 0.0` under IEEE
+        // 754, so this also confirms the negative-mantissa path resolves,
+        // not just that it doesn't panic).
+        assert_eq!(parse_length("-0e999%", true), Some(Length::Percent(0.0)));
+    }
+
+    #[test]
+    fn parse_length_value_zero_mantissa_with_fractional_part_huge_exponent_resolves_to_zero() {
+        // Same collapse as `0e999`, but with a written fractional part
+        // (`numeric_token_prefix`'s `.`-branch, not exercised by the
+        // integer-only `0e999`/`0e999%` cases above) — `0.0e999px` still
+        // has zero mantissa (`0 + 0 * 10^-1 == 0`), so it resolves to
+        // `Length::Px(0.0)` the same way.
+        assert_eq!(parse_length("0.0e999px", false), Some(Length::Px(0.0)));
+    }
+
+    #[test]
+    fn parse_length_value_mirror_huge_mantissa_tiny_exponent_resolves_correctly() {
+        // The `0 * Infinity` collapse this crate works around
+        // (`0e999`-shaped literals, zero mantissa / huge exponent) has a
+        // mirror case: a mantissa long enough to itself overflow to
+        // `+Infinity` while being accumulated digit-by-digit (cssparser
+        // `tokenizer.rs`'s `consume_numeric`, no exponent needed for this
+        // half), multiplied by a sufficiently negative exponent's
+        // `10^exponent` (which underflows to `0.0`), hits `Infinity * 0.0`
+        // = `NaN` the same way — for a literal whose true value is small
+        // but nonzero. `1` followed by 400 zeros, `e-400`, has true value
+        // `1` (`1eN * 10^-N == 1` for any `N`); this crate's recovery does
+        // not special-case which operand collapsed to `0`/`Infinity` (it
+        // simply re-parses the raw token text), so it resolves this
+        // mirror case for free, not just the zero-mantissa one.
+        let digits = format!("1{}", "0".repeat(400)); // 10^400, overflows f64 digit accumulation to +Infinity
+        let source = format!("{digits}e-400px");
+        assert_eq!(parse_length(&source, false), Some(Length::Px(1.0)));
+    }
+
+    #[test]
+    fn stabilize_nan_numeric_value_is_a_no_op_for_non_nan_input() {
+        // Direct unit test of the private recovery primitive's documented
+        // "no-op" contract for the common case — every call site
+        // (`expect_number_stable`/`next_numeric_stable`) already gates on
+        // `value.is_nan()` before calling this function, so this branch
+        // is otherwise never exercised through the public parsing paths
+        // above (they only ever pass a `NaN` `value` in practice). The
+        // `raw_number_text` argument is deliberately garbage here (it
+        // would never actually be parsed, since the `!value.is_nan()`
+        // early return fires first) to prove the early return, not the
+        // reparse path, is what's under test.
+        assert_eq!(stabilize_nan_numeric_value("not a number", 5.0), 5.0);
+        assert_eq!(
+            stabilize_nan_numeric_value("not a number", f32::INFINITY),
+            f32::INFINITY
+        );
+    }
+
+    #[test]
+    fn stabilize_nan_percentage_value_is_a_no_op_for_non_nan_input() {
+        // Same contract, `Token::Percentage`'s `unit_value` counterpart —
+        // see `stabilize_nan_numeric_value_is_a_no_op_for_non_nan_input`.
+        assert_eq!(stabilize_nan_percentage_value("not a number", 0.5), 0.5);
+        assert_eq!(
+            stabilize_nan_percentage_value("not a number", f32::NEG_INFINITY),
+            f32::NEG_INFINITY
+        );
     }
 
     #[test]
@@ -25815,20 +26197,41 @@ mod tests {
     }
 
     #[test]
-    fn text_shadow_rejects_nan_offset_but_not_infinity() {
-        // `0e999` collapses to `0.0 * f32::INFINITY` = NaN during
-        // tokenization (`parse_shadow_length_reject_nan` doc's `!is_nan()`
-        // guard section) — rejected here, dropping the whole declaration
-        // (same "declaration dropped" path as any other malformed value).
-        assert_eq!(parse("0e999px 1px", "text-shadow"), None);
-        assert_eq!(parse("1px 0e999px", "text-shadow"), None);
+    fn text_shadow_zero_mantissa_huge_exponent_offset_resolves_to_zero_but_preserves_infinity() {
+        // `0e999` is a zero-mantissa, huge-exponent literal that
+        // cssparser's tokenizer collapses to `NaN` internally (module doc's
+        // "Numeric-token NaN stabilization" section), but
+        // `next_numeric_stable` (which `parse_length_value` — reached via
+        // `parse_shadow_length_reject_nan` → `parse_length_allow_negative`
+        // — acquires its token through) corrects that before this
+        // property's `!is_nan()` guard ever runs. So `0e999px` resolves to
+        // the spec-correct `Length::Px(0.0)` offset, and the whole
+        // declaration parses successfully — it is no longer dropped.
+        assert_eq!(
+            text_shadow_items("0e999px 1px"),
+            vec![TextShadowItem {
+                offset_x: Length::Px(0.0),
+                offset_y: Length::Px(1.0),
+                blur_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            }]
+        );
+        assert_eq!(
+            text_shadow_items("1px 0e999px"),
+            vec![TextShadowItem {
+                offset_x: Length::Px(1.0),
+                offset_y: Length::Px(0.0),
+                blur_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            }]
+        );
 
         // `+Inf`/`-Inf` are a *different* hazard class — ordinary `<number>`
         // magnitude overflow, a legitimate (if extreme) `<length>` per CSS
-        // Values 4 §5 — and must NOT be rejected here. Both signs are
-        // checked (not just `+Inf`) because an earlier iteration of the
+        // Values 4 §5 — and must NOT be rejected here either. Both signs
+        // are checked (not just `+Inf`) because an earlier iteration of the
         // sibling `opacity` guard used `is_finite()` and wrongly dropped
-        // the negative-overflow case too (`opacity_rejects_nan_but_not_infinity`
+        // the negative-overflow case too (`opacity_zero_mantissa_huge_exponent_resolves_to_zero_but_preserves_infinity`
         // doc参照).
         assert_eq!(
             text_shadow_items("1e40px 1px"),
@@ -25851,15 +26254,21 @@ mod tests {
     }
 
     #[test]
-    fn text_shadow_blur_radius_nan_is_rejected_via_existing_non_negative_check() {
-        // Pins `parse_text_shadow_lengths`'s doc claim that blur-radius
-        // (3rd slot) needs no dedicated NaN guard:
-        // `parse_non_negative_length`'s `>= 0.0` check already rejects it
-        // as an incidental side effect (`NaN >= 0.0` is `false` under IEEE
-        // 754), so the stray `0e999px` token is left unconsumed and trips
-        // `parse_entirely` — same leftover-token path as the existing
-        // `1px 1px -3px` negative-blur case.
-        assert_eq!(parse("1px 1px 0e999px", "text-shadow"), None);
+    fn text_shadow_blur_radius_zero_mantissa_huge_exponent_resolves_to_zero() {
+        // Same recovery as the offset case above, for blur-radius (3rd
+        // slot) — `0e999px` resolves to `Length::Px(0.0)`, which
+        // `parse_non_negative_length`'s `>= 0.0` check accepts normally
+        // (it is no longer `NaN`, so there is nothing for that check to
+        // incidentally reject).
+        assert_eq!(
+            text_shadow_items("1px 1px 0e999px"),
+            vec![TextShadowItem {
+                offset_x: Length::Px(1.0),
+                offset_y: Length::Px(1.0),
+                blur_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            }]
+        );
     }
 
     #[test]
@@ -27075,22 +27484,54 @@ mod tests {
     }
 
     #[test]
-    fn box_shadow_rejects_nan_offset_or_spread_but_not_infinity() {
-        // `0e999` collapses to `0.0 * f32::INFINITY` = NaN during
-        // tokenization (`parse_shadow_length_reject_nan` doc's `!is_nan()`
-        // guard section) — rejected for offset-x, offset-y, and
-        // spread-radius alike (all three carry no sign restriction, unlike
-        // blur-radius's `[0,∞]` incidental filter).
-        assert_eq!(parse("0e999px 1px", "box-shadow"), None);
-        assert_eq!(parse("1px 0e999px", "box-shadow"), None);
-        assert_eq!(parse("1px 1px 1px 0e999px", "box-shadow"), None);
+    fn box_shadow_zero_mantissa_huge_exponent_offset_or_spread_resolves_to_zero_but_preserves_infinity()
+     {
+        // `0e999` is a zero-mantissa, huge-exponent literal that
+        // cssparser's tokenizer collapses to `NaN` internally (module doc's
+        // "Numeric-token NaN stabilization" section), but
+        // `next_numeric_stable` corrects it before `parse_length_value`
+        // (and so `parse_shadow_length_reject_nan`'s `!is_nan()` guard)
+        // ever sees the token — for offset-x, offset-y, and spread-radius
+        // alike (all three carry no sign restriction, unlike blur-radius's
+        // `[0,∞]` incidental filter). Each resolves to the spec-correct
+        // `Length::Px(0.0)`, and the whole declaration parses successfully.
+        assert_eq!(
+            parse("0e999px 1px", "box-shadow"),
+            Some(PropertyValue::BoxShadow(Arc::new(vec![BoxShadowItem {
+                offset_x: Length::Px(0.0),
+                offset_y: Length::Px(1.0),
+                blur_radius: Length::Px(0.0),
+                spread_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            }])))
+        );
+        assert_eq!(
+            parse("1px 0e999px", "box-shadow"),
+            Some(PropertyValue::BoxShadow(Arc::new(vec![BoxShadowItem {
+                offset_x: Length::Px(1.0),
+                offset_y: Length::Px(0.0),
+                blur_radius: Length::Px(0.0),
+                spread_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            }])))
+        );
+        assert_eq!(
+            parse("1px 1px 1px 0e999px", "box-shadow"),
+            Some(PropertyValue::BoxShadow(Arc::new(vec![BoxShadowItem {
+                offset_x: Length::Px(1.0),
+                offset_y: Length::Px(1.0),
+                blur_radius: Length::Px(1.0),
+                spread_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            }])))
+        );
 
         // `+Inf`/`-Inf` are a *different* hazard class — ordinary `<number>`
         // magnitude overflow, a legitimate (if extreme) `<length>` per CSS
         // Values 4 §5 — and must NOT be rejected here. Both signs are
         // checked (not just `+Inf`) because an earlier iteration of the
         // sibling `opacity` guard used `is_finite()` and wrongly dropped
-        // the negative-overflow case too (`opacity_rejects_nan_but_not_infinity`
+        // the negative-overflow case too (`opacity_zero_mantissa_huge_exponent_resolves_to_zero_but_preserves_infinity`
         // doc参照).
         assert_eq!(
             parse("1e40px 1px", "box-shadow"),
@@ -27135,16 +27576,23 @@ mod tests {
     }
 
     #[test]
-    fn box_shadow_blur_radius_nan_is_rejected_via_existing_non_negative_check() {
-        // Pins `parse_box_shadow_lengths`'s doc claim that blur-radius (3rd
-        // slot) needs no dedicated NaN guard: the existing
-        // `length_payload(value) >= 0.0` check already rejects it as an
-        // incidental side effect (`NaN >= 0.0` is `false` under IEEE 754).
-        // Unlike text-shadow's blur, this hits `parse_box_shadow_lengths`'s
-        // `Ok(_) => return Err(..)` arm (a hard error, not a leftover
-        // unconsumed token) — same observable result (`None`) as the
-        // existing `1px 2px -3px` negative-blur case, via that same path.
-        assert_eq!(parse("1px 1px 0e999px", "box-shadow"), None);
+    fn box_shadow_blur_radius_zero_mantissa_huge_exponent_resolves_to_zero() {
+        // Same recovery as
+        // `box_shadow_zero_mantissa_huge_exponent_offset_or_spread_resolves_to_zero`
+        // above, for blur-radius (3rd slot) — `0e999px` resolves to
+        // `Length::Px(0.0)` before `parse_box_shadow_lengths`'s
+        // `length_payload(value) >= 0.0` check ever runs, so it is accepted
+        // normally rather than incidentally rejected.
+        assert_eq!(
+            parse("1px 1px 0e999px", "box-shadow"),
+            Some(PropertyValue::BoxShadow(Arc::new(vec![BoxShadowItem {
+                offset_x: Length::Px(1.0),
+                offset_y: Length::Px(1.0),
+                blur_radius: Length::Px(0.0),
+                spread_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            }])))
+        );
     }
 
     #[test]
@@ -29787,15 +30235,23 @@ mod tests {
     }
 
     #[test]
-    fn opacity_rejects_nan_but_not_infinity() {
-        // `0 * 10^999` collapses to `0.0 * f32::INFINITY` = NaN during the
-        // cssparser tokenizer's f64->f32 conversion (`parse_opacity_value`
-        // doc's "`!is_nan()` guard" section) — NaN must be rejected here at
-        // parse time (unguarded, it would sail through the phase-3 clamp
-        // unchanged and break `ComputedValues::opacity`'s `[0,1]`
-        // invariant).
-        assert_eq!(parse("0e999", "opacity"), None);
-        assert_eq!(parse("0e999%", "opacity"), None);
+    fn opacity_zero_mantissa_huge_exponent_resolves_to_zero_but_preserves_infinity() {
+        // `0 * 10^999` collapses to `0.0 * f32::INFINITY` = NaN internally
+        // during cssparser's tokenizer computation (module doc's
+        // "Numeric-token NaN stabilization" section), but
+        // `expect_number_stable`/`expect_percentage_stable` (which
+        // `parse_opacity_value` acquires its value through) recover the
+        // spec-correct `0.0` before `parse_opacity_value`'s `!is_nan()`
+        // guard ever runs — so `opacity: 0e999` parses successfully to
+        // `PropertyValue::Opacity(0.0)`, not `None` (this is the
+        // most-visible regression case the fix targets: without it, this
+        // declaration used to be dropped and fall back to the initial
+        // `1.0`, making a fully-transparent `0e999` render fully opaque).
+        assert_eq!(parse("0e999", "opacity"), Some(PropertyValue::Opacity(0.0)));
+        assert_eq!(
+            parse("0e999%", "opacity"),
+            Some(PropertyValue::Opacity(0.0))
+        );
 
         // `+Inf`/`-Inf` are a *different* hazard class — a spec-valid
         // `<number>` overflow (not a NaN collapse) that the phase-3 clamp
@@ -30326,10 +30782,18 @@ mod tests {
     }
 
     #[test]
-    fn transform_matrix_rejects_nan_argument() {
-        // `0e999` collapses to NaN during tokenization (`parse_transform_number`
-        // doc) — must be rejected, unlike ordinary magnitude overflow.
-        assert_eq!(parse("matrix(0e999, 0, 0, 1, 0, 0)", "transform"), None);
+    fn transform_matrix_zero_mantissa_huge_exponent_argument_resolves_to_zero() {
+        // `0e999` collapses to `NaN` internally during cssparser
+        // tokenization (module doc's "Numeric-token NaN stabilization"
+        // section), but `expect_number_stable` (which `parse_transform_number`
+        // acquires its value through) recovers the spec-correct `0.0`
+        // before `parse_transform_number`'s `!is_nan()` guard ever runs —
+        // unlike ordinary magnitude overflow (`1e40`, preserved as `+Inf`
+        // below), this is not a hazard `matrix()` rejects.
+        assert_eq!(
+            expect_transform(parse("matrix(0e999, 0, 0, 1, 0, 0)", "transform")),
+            vec![TransformFunction::Matrix([0.0, 0.0, 0.0, 1.0, 0.0, 0.0])]
+        );
     }
 
     #[test]
@@ -30351,13 +30815,29 @@ mod tests {
     }
 
     #[test]
-    fn transform_translate_rejects_nan_length() {
-        assert_eq!(parse("translate(0e999px)", "transform"), None);
+    fn transform_translate_zero_mantissa_huge_exponent_length_resolves_to_zero() {
+        // Same recovery as the `matrix()` case above, through
+        // `parse_transform_length_percentage` / `parse_length_value` /
+        // `next_numeric_stable` — `translate(0e999px)`'s omitted 2nd
+        // argument defaults to `Length::Px(0.0)` (`parse_translate_args`
+        // doc), same as the (now also `0.0`, not rejected) 1st.
+        assert_eq!(
+            expect_transform(parse("translate(0e999px)", "transform")),
+            vec![TransformFunction::Translate(
+                Length::Px(0.0),
+                Length::Px(0.0)
+            )]
+        );
     }
 
     #[test]
-    fn transform_rotate_rejects_nan_angle() {
-        assert_eq!(parse("rotate(0e999deg)", "transform"), None);
+    fn transform_rotate_zero_mantissa_huge_exponent_angle_resolves_to_zero() {
+        // Same recovery as above, through `parse_angle_reject_nan` /
+        // `parse_angle` / `next_numeric_stable`.
+        assert_eq!(
+            expect_transform(parse("rotate(0e999deg)", "transform")),
+            vec![TransformFunction::Rotate(Angle(0.0))]
+        );
     }
 
     #[test]
@@ -30536,15 +31016,23 @@ mod tests {
     }
 
     #[test]
-    fn filter_amount_functions_reject_nan_via_the_negative_check() {
-        // `0e999` collapses to NaN (same cssparser tokenizer hazard as
-        // `transform`'s numeric arguments) — `parse_filter_amount`'s
-        // `v >= 0.0` check rejects it, since `NaN >= 0.0` is `false` under
-        // IEEE 754 (`parse_filter_amount` doc's "No separate `!is_nan()`
-        // guard is needed" section — no separate guard was added, this
-        // pins that the range check alone already does the job).
-        assert_eq!(parse("brightness(0e999)", "filter"), None);
-        assert_eq!(parse("brightness(0e999%)", "filter"), None);
+    fn filter_amount_functions_zero_mantissa_huge_exponent_resolves_to_zero() {
+        // `0e999` collapses to `NaN` internally (same cssparser tokenizer
+        // hazard as `transform`'s numeric arguments), but
+        // `expect_number_stable`/`expect_percentage_stable` (which
+        // `parse_filter_amount` acquires its value through) recover the
+        // spec-correct `0.0` before `parse_filter_amount`'s `v >= 0.0`
+        // check ever runs — so it accepts `0.0` normally instead of
+        // incidentally rejecting `NaN` (`parse_filter_amount` doc's "No
+        // separate `!is_nan()` guard is needed" section).
+        assert_eq!(
+            expect_filter(parse("brightness(0e999)", "filter")),
+            vec![FilterFunction::Brightness(0.0)]
+        );
+        assert_eq!(
+            expect_filter(parse("brightness(0e999%)", "filter")),
+            vec![FilterFunction::Brightness(0.0)]
+        );
     }
 
     #[test]
@@ -30583,8 +31071,13 @@ mod tests {
     }
 
     #[test]
-    fn filter_hue_rotate_rejects_nan_angle() {
-        assert_eq!(parse("hue-rotate(0e999deg)", "filter"), None);
+    fn filter_hue_rotate_zero_mantissa_huge_exponent_angle_resolves_to_zero() {
+        // Same recovery as `transform_rotate_zero_mantissa_huge_exponent_angle_resolves_to_zero`
+        // — `hue-rotate()` shares `parse_angle_reject_nan` with `rotate()`.
+        assert_eq!(
+            expect_filter(parse("hue-rotate(0e999deg)", "filter")),
+            vec![FilterFunction::HueRotate(Angle(0.0))]
+        );
     }
 
     #[test]
@@ -30628,14 +31121,22 @@ mod tests {
     }
 
     #[test]
-    fn filter_drop_shadow_rejects_nan_offset() {
-        // `0e999` collapses to NaN during tokenization — rejected by
-        // `parse_text_shadow_lengths`'s `!is_nan()` guard
-        // (`parse_shadow_length_reject_nan` doc参照), which
-        // `parse_drop_shadow_args` inherits through its verbatim reuse of
-        // `parse_text_shadow_item`, same shape as
-        // `transform_translate_rejects_nan_length`.
-        assert_eq!(parse("drop-shadow(0e999px 2px)", "filter"), None);
+    fn filter_drop_shadow_zero_mantissa_huge_exponent_offset_resolves_to_zero() {
+        // `0e999` collapses to `NaN` internally during tokenization, but
+        // `next_numeric_stable` recovers the spec-correct `0.0` before
+        // `parse_shadow_length_reject_nan`'s `!is_nan()` guard ever runs —
+        // `parse_drop_shadow_args` inherits this through its verbatim
+        // reuse of `parse_text_shadow_item`, same shape as
+        // `transform_translate_zero_mantissa_huge_exponent_length_resolves_to_zero`.
+        assert_eq!(
+            expect_filter(parse("drop-shadow(0e999px 2px)", "filter")),
+            vec![FilterFunction::DropShadow(TextShadowItem {
+                offset_x: Length::Px(0.0),
+                offset_y: Length::Px(2.0),
+                blur_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            })]
+        );
     }
 
     #[test]

@@ -1523,12 +1523,15 @@ impl SpecifiedValues {
             // panicking (only NaN bounds panic, and neither bound here is
             // NaN). When `self` was built through the ordinary parse ->
             // cascade pipeline, `self.opacity` also never carries NaN by
-            // the time it reaches here — `parse_opacity_value` rejects a
-            // NaN parse (the `0 * Infinity` collapse a huge-*exponent*
-            // literal like `opacity: 0e999` produces) with `!is_nan()`, a
-            // narrower guard than `is_finite()` specifically so
-            // `+Inf`/`-Inf` still reach this clamp (`parse_opacity_value`
-            // doc's "`!is_nan()` guard" section is canonical). But
+            // the time it reaches here: `property.rs`'s numeric-token
+            // acquisition already corrects the one cssparser artifact that
+            // could otherwise produce it (a huge-*exponent* literal like
+            // `opacity: 0e999`, `property.rs` module doc's "Numeric-token
+            // NaN stabilization" section), and `parse_opacity_value`'s
+            // `!is_nan()` guard — narrower than `is_finite()` specifically
+            // so `+Inf`/`-Inf` still reach this clamp — remains as
+            // defense-in-depth on top of that (`parse_opacity_value` doc's
+            // "`!is_nan()` guard" section is canonical). But
             // `self.opacity` is a public field on a `pub fn` — a caller
             // that builds a `SpecifiedValues` directly and assigns `NaN`
             // here bypasses that parse-time guard entirely, and
