@@ -13705,6 +13705,10 @@ fn parse_text_shadow_color(input: &mut Parser<'_, '_>) -> Option<TextShadowColor
 /// unit として parse する — [`TextShadowItem`] doc の「Non-negative
 /// blur-radius」節参照。
 ///
+/// offset-x/offset-y は [`parse_shadow_length_reject_nan`] 経由 — 同関数の
+/// doc が説明する `!is_nan()` guard を通す (sign 制限が無いため
+/// blur-radius 側の `>= 0.0` incidental filter が効かない)。
+///
 /// blur-radius は [`parse_non_negative_length`] で non-negative を
 /// enforce、省略時は `Length::Px(0.0)` (同 doc の「各成分の初期値埋め」節)。
 /// caller ([`parse_text_shadow_item`]) が本関数全体を `try_parse` で包む
@@ -13716,8 +13720,8 @@ fn parse_text_shadow_color(input: &mut Parser<'_, '_>) -> Option<TextShadowColor
 fn parse_text_shadow_lengths<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<(Length, Length, Length), ParseError<'i, ()>> {
-    let x = parse_length_value(input, false).ok_or_else(|| input.new_custom_error(()))?;
-    let y = parse_length_value(input, false).ok_or_else(|| input.new_custom_error(()))?;
+    let x = parse_shadow_length_reject_nan_res(input)?;
+    let y = parse_shadow_length_reject_nan_res(input)?;
     let blur = input
         .try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
             parse_non_negative_length(i).ok_or_else(|| i.new_custom_error(()))
@@ -13858,6 +13862,59 @@ fn parse_length_allow_negative_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<Length, ParseError<'i, ()>> {
     parse_length_allow_negative(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `<length>` for shadow offset-x/offset-y (`text-shadow`/`box-shadow`) and
+/// box-shadow's spread-radius — [`parse_length_allow_negative`]'s
+/// unrestricted-sign shape (negative offsets/spread are valid per the two
+/// properties' shared `<shadow>` grammar, CSS Backgrounds 3 §6.1 / CSS Text
+/// Decoration Module Level 3 §4), with an explicit `!is_nan()` guard layered
+/// on top.
+///
+/// # Why NaN happens here
+///
+/// A huge-exponent literal like `0e999px` has an exact mathematical value
+/// of `0` (CSS Syntax 3 §4.3.13's own `<number-token>` conversion is
+/// `sign * mantissa * 10^exponent`, and `0 * anything` is `0`). The `NaN`
+/// this crate actually observes is not that spec arithmetic — it is an
+/// artifact of how the cssparser 0.37.0 tokenizer computes the same
+/// formula as a separate floating-point step (`mantissa * 10^exponent`),
+/// where `0.0 * f64::INFINITY` evaluates to `NaN` under IEEE 754 instead of
+/// the spec-correct `0`. This guard is a defensive workaround for that
+/// upstream tokenizer artifact, not something CSS Values 4 §5 mandates —
+/// fixing the tokenizer itself is outside this crate's scope (by the time
+/// a `Token::Dimension` reaches this parser, the original mantissa/exponent
+/// are already gone). Same hazard, same workaround shape as the
+/// already-landed [`parse_opacity_value`]'s `!is_nan()` guard — this
+/// helper just extends that precedent to shadow offsets/spread.
+///
+/// # Why the guard must be explicit here
+///
+/// [`parse_non_negative_length`]'s `>= 0.0` filter incidentally also
+/// rejects NaN, but offset-x/offset-y/spread-radius carry no sign
+/// restriction — unlike blur-radius (`[0,∞]`, see
+/// [`parse_text_shadow_lengths`]/[`parse_box_shadow_lengths`]) — so there
+/// is no such incidental filter here; the guard must be explicit, same
+/// shape [`parse_transform_length_percentage`] uses for `transform`'s own
+/// unconsumed payloads.
+///
+/// # `+Inf`/`-Inf` are not rejected
+///
+/// No paint-side consumer applies shadow offsets/spread to anything yet,
+/// so nothing downstream in this crate will ever normalize a NaN that
+/// slips past this parser. `+Inf`/`-Inf`, by contrast, are ordinary
+/// `<length>` magnitude overflow — legitimate, if extreme, values per CSS
+/// Values 4 §5's "closest value supported by the implementation" clause —
+/// and are preserved unfiltered.
+fn parse_shadow_length_reject_nan(input: &mut Parser<'_, '_>) -> Option<Length> {
+    let length = parse_length_allow_negative(input)?;
+    (!length_payload(length).is_nan()).then_some(length)
+}
+
+fn parse_shadow_length_reject_nan_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<Length, ParseError<'i, ()>> {
+    parse_shadow_length_reject_nan(input).ok_or_else(|| input.new_custom_error(()))
 }
 
 /// `<length-percentage>` — sign 制限なし ([`parse_length_value`] with
@@ -14739,25 +14796,14 @@ fn parse_sepia_args<'i>(input: &mut Parser<'i, '_>) -> Result<FilterFunction, Pa
 /// 3rd `<length>` value being the standard deviation instead of blur
 /// radius" — grammar-identical to `text-shadow`'s own `<shadow>` syntax
 /// (no spread, no inset), so [`parse_text_shadow_item`] is reused verbatim
-/// ([`FilterFunction::DropShadow`] doc参照).
-///
-/// # NaN guard on offset-x/offset-y (call-site-local)
-///
-/// [`parse_text_shadow_item`]/`parse_text_shadow_lengths` themselves do not
-/// guard offset-x/offset-y against NaN (`parse_box_shadow_lengths` has the
-/// identical gap for `box-shadow`). The guard is applied here, at the call
-/// site, rather than inside `parse_text_shadow_lengths`, to avoid changing
-/// that shared helper's behavior for its other callers (`text-shadow`/
-/// `box-shadow`) — same call-site-local approach
-/// [`parse_transform_number`]/[`parse_transform_length_percentage`]/
-/// [`parse_angle_reject_nan`] use for their own shared helpers.
+/// ([`FilterFunction::DropShadow`] doc参照). [`parse_text_shadow_lengths`]'s
+/// offset-x/offset-y already go through [`parse_shadow_length_reject_nan`]'s
+/// `!is_nan()` guard (see that function's doc), so this reuse inherits the
+/// guard automatically — no separate guard needed at this call site.
 fn parse_drop_shadow_args<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<FilterFunction, ParseError<'i, ()>> {
     let item = parse_text_shadow_item(input).ok_or_else(|| input.new_custom_error(()))?;
-    if length_payload(item.offset_x).is_nan() || length_payload(item.offset_y).is_nan() {
-        return Err(input.new_custom_error(()));
-    }
     Ok(FilterFunction::DropShadow(item))
 }
 
@@ -15762,11 +15808,17 @@ fn parse_background_shorthand(input: &mut Parser<'_, '_>) -> Option<BackgroundSh
 }
 
 /// `<length>{2,4}` の box-shadow length run を parse する。
+///
+/// offset-x/offset-y/spread-radius はいずれも sign 制限なしのため、
+/// [`parse_shadow_length_reject_nan`]/`_res` 経由で `!is_nan()` guard を
+/// 通す (同関数 doc 参照)。blur-radius (3rd slot) は既存の
+/// `length_payload(value) >= 0.0` チェックが NaN も incidental に
+/// 弾くため、追加 guard は不要 (`NaN >= 0.0` は IEEE 754 で `false`)。
 fn parse_box_shadow_lengths<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<(Length, Length, Length, Length), ParseError<'i, ()>> {
-    let offset_x = parse_length_value(input, false).ok_or_else(|| input.new_custom_error(()))?;
-    let offset_y = parse_length_value(input, false).ok_or_else(|| input.new_custom_error(()))?;
+    let offset_x = parse_shadow_length_reject_nan_res(input)?;
+    let offset_y = parse_shadow_length_reject_nan_res(input)?;
     // Parse the optional third slot without rewinding a negative length into
     // the fourth (spread) slot.  The grammar's third length is blur-radius,
     // which is non-negative; only the fourth spread-radius may be negative.
@@ -15776,7 +15828,7 @@ fn parse_box_shadow_lengths<'i>(
         Err(_) => Length::Px(0.0),
     };
     let spread_radius = input
-        .try_parse(parse_length_allow_negative_res)
+        .try_parse(parse_shadow_length_reject_nan_res)
         .unwrap_or(Length::Px(0.0));
     Ok((offset_x, offset_y, blur_radius, spread_radius))
 }
@@ -25733,6 +25785,54 @@ mod tests {
     }
 
     #[test]
+    fn text_shadow_rejects_nan_offset_but_not_infinity() {
+        // `0e999` collapses to `0.0 * f32::INFINITY` = NaN during
+        // tokenization (`parse_shadow_length_reject_nan` doc's `!is_nan()`
+        // guard section) — rejected here, dropping the whole declaration
+        // (same "declaration dropped" path as any other malformed value).
+        assert_eq!(parse("0e999px 1px", "text-shadow"), None);
+        assert_eq!(parse("1px 0e999px", "text-shadow"), None);
+
+        // `+Inf`/`-Inf` are a *different* hazard class — ordinary `<number>`
+        // magnitude overflow, a legitimate (if extreme) `<length>` per CSS
+        // Values 4 §5 — and must NOT be rejected here. Both signs are
+        // checked (not just `+Inf`) because an earlier iteration of the
+        // sibling `opacity` guard used `is_finite()` and wrongly dropped
+        // the negative-overflow case too (`opacity_rejects_nan_but_not_infinity`
+        // doc参照).
+        assert_eq!(
+            text_shadow_items("1e40px 1px"),
+            vec![TextShadowItem {
+                offset_x: Length::Px(f32::INFINITY),
+                offset_y: Length::Px(1.0),
+                blur_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            }]
+        );
+        assert_eq!(
+            text_shadow_items("-1e40px 1px"),
+            vec![TextShadowItem {
+                offset_x: Length::Px(f32::NEG_INFINITY),
+                offset_y: Length::Px(1.0),
+                blur_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            }]
+        );
+    }
+
+    #[test]
+    fn text_shadow_blur_radius_nan_is_rejected_via_existing_non_negative_check() {
+        // Pins `parse_text_shadow_lengths`'s doc claim that blur-radius
+        // (3rd slot) needs no dedicated NaN guard:
+        // `parse_non_negative_length`'s `>= 0.0` check already rejects it
+        // as an incidental side effect (`NaN >= 0.0` is `false` under IEEE
+        // 754), so the stray `0e999px` token is left unconsumed and trips
+        // `parse_entirely` — same leftover-token path as the existing
+        // `1px 1px -3px` negative-blur case.
+        assert_eq!(parse("1px 1px 0e999px", "text-shadow"), None);
+    }
+
+    #[test]
     fn text_shadow_parse_multiple_comma_separated() {
         assert_eq!(
             text_shadow_items("1px 1px red, 2px 2px 4px blue"),
@@ -26942,6 +27042,79 @@ mod tests {
             }])))
         );
         assert_eq!(parse("1px 2px 10%", "box-shadow"), None);
+    }
+
+    #[test]
+    fn box_shadow_rejects_nan_offset_or_spread_but_not_infinity() {
+        // `0e999` collapses to `0.0 * f32::INFINITY` = NaN during
+        // tokenization (`parse_shadow_length_reject_nan` doc's `!is_nan()`
+        // guard section) — rejected for offset-x, offset-y, and
+        // spread-radius alike (all three carry no sign restriction, unlike
+        // blur-radius's `[0,∞]` incidental filter).
+        assert_eq!(parse("0e999px 1px", "box-shadow"), None);
+        assert_eq!(parse("1px 0e999px", "box-shadow"), None);
+        assert_eq!(parse("1px 1px 1px 0e999px", "box-shadow"), None);
+
+        // `+Inf`/`-Inf` are a *different* hazard class — ordinary `<number>`
+        // magnitude overflow, a legitimate (if extreme) `<length>` per CSS
+        // Values 4 §5 — and must NOT be rejected here. Both signs are
+        // checked (not just `+Inf`) because an earlier iteration of the
+        // sibling `opacity` guard used `is_finite()` and wrongly dropped
+        // the negative-overflow case too (`opacity_rejects_nan_but_not_infinity`
+        // doc参照).
+        assert_eq!(
+            parse("1e40px 1px", "box-shadow"),
+            Some(PropertyValue::BoxShadow(Arc::new(vec![BoxShadowItem {
+                offset_x: Length::Px(f32::INFINITY),
+                offset_y: Length::Px(1.0),
+                blur_radius: Length::Px(0.0),
+                spread_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            }])))
+        );
+        assert_eq!(
+            parse("-1e40px 1px", "box-shadow"),
+            Some(PropertyValue::BoxShadow(Arc::new(vec![BoxShadowItem {
+                offset_x: Length::Px(f32::NEG_INFINITY),
+                offset_y: Length::Px(1.0),
+                blur_radius: Length::Px(0.0),
+                spread_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            }])))
+        );
+        assert_eq!(
+            parse("1px 1px 1px 1e40px", "box-shadow"),
+            Some(PropertyValue::BoxShadow(Arc::new(vec![BoxShadowItem {
+                offset_x: Length::Px(1.0),
+                offset_y: Length::Px(1.0),
+                blur_radius: Length::Px(1.0),
+                spread_radius: Length::Px(f32::INFINITY),
+                color: TextShadowColor::CurrentColor,
+            }])))
+        );
+        assert_eq!(
+            parse("1px 1px 1px -1e40px", "box-shadow"),
+            Some(PropertyValue::BoxShadow(Arc::new(vec![BoxShadowItem {
+                offset_x: Length::Px(1.0),
+                offset_y: Length::Px(1.0),
+                blur_radius: Length::Px(1.0),
+                spread_radius: Length::Px(f32::NEG_INFINITY),
+                color: TextShadowColor::CurrentColor,
+            }])))
+        );
+    }
+
+    #[test]
+    fn box_shadow_blur_radius_nan_is_rejected_via_existing_non_negative_check() {
+        // Pins `parse_box_shadow_lengths`'s doc claim that blur-radius (3rd
+        // slot) needs no dedicated NaN guard: the existing
+        // `length_payload(value) >= 0.0` check already rejects it as an
+        // incidental side effect (`NaN >= 0.0` is `false` under IEEE 754).
+        // Unlike text-shadow's blur, this hits `parse_box_shadow_lengths`'s
+        // `Ok(_) => return Err(..)` arm (a hard error, not a leftover
+        // unconsumed token) — same observable result (`None`) as the
+        // existing `1px 2px -3px` negative-blur case, via that same path.
+        assert_eq!(parse("1px 1px 0e999px", "box-shadow"), None);
     }
 
     #[test]
@@ -30426,11 +30599,40 @@ mod tests {
 
     #[test]
     fn filter_drop_shadow_rejects_nan_offset() {
-        // `0e999` collapses to NaN during tokenization — `parse_drop_shadow_args`'s
-        // own call-site-local NaN guard on offset-x/offset-y (its doc's "NaN
-        // guard on offset-x/offset-y" section), same shape as
+        // `0e999` collapses to NaN during tokenization — rejected by
+        // `parse_text_shadow_lengths`'s `!is_nan()` guard
+        // (`parse_shadow_length_reject_nan` doc参照), which
+        // `parse_drop_shadow_args` inherits through its verbatim reuse of
+        // `parse_text_shadow_item`, same shape as
         // `transform_translate_rejects_nan_length`.
         assert_eq!(parse("drop-shadow(0e999px 2px)", "filter"), None);
+    }
+
+    #[test]
+    fn filter_drop_shadow_offset_infinity_passes_through_unclamped() {
+        // `+Inf`/`-Inf` are a *different* hazard class from `0e999`'s NaN
+        // collapse above (ordinary `<number>` magnitude overflow, not a
+        // `0 * Infinity` collapse) — legitimate, if extreme, `<length>`
+        // values per CSS Values 4 §5, so unlike NaN they must NOT be
+        // rejected here (`parse_shadow_length_reject_nan` doc参照).
+        assert_eq!(
+            expect_filter(parse("drop-shadow(1e40px 2px)", "filter")),
+            vec![FilterFunction::DropShadow(TextShadowItem {
+                offset_x: Length::Px(f32::INFINITY),
+                offset_y: Length::Px(2.0),
+                blur_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            })]
+        );
+        assert_eq!(
+            expect_filter(parse("drop-shadow(-1e40px 2px)", "filter")),
+            vec![FilterFunction::DropShadow(TextShadowItem {
+                offset_x: Length::Px(f32::NEG_INFINITY),
+                offset_y: Length::Px(2.0),
+                blur_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            })]
+        );
     }
 
     #[test]
