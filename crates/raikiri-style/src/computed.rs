@@ -1322,9 +1322,13 @@ pub struct ComputedValues {
     /// invalid, and are preserved in specified values, but are clamped to
     /// the range \[0, 1\] in computed values." A value produced by the
     /// ordinary parse -> cascade pipeline through this field always lands
-    /// in `[0.0, 1.0]`: `parse_opacity_value` (this crate's `property`
-    /// module) rejects a NaN parse outright, and the `[0, 1]` clamp for
-    /// every other out-of-range value (including `+Inf`/`-Inf`) happens in
+    /// in `[0.0, 1.0]`: this crate's `property` module numeric-token
+    /// acquisition (`expect_number_stable`/`expect_percentage_stable`)
+    /// corrects the one cssparser tokenizer artifact that could otherwise
+    /// produce a NaN parse (a huge-exponent, zero-mantissa literal like
+    /// `opacity: 0e999`), and `parse_opacity_value`'s `!is_nan()` guard
+    /// remains on top as defense-in-depth; the `[0, 1]` clamp for every
+    /// other out-of-range value (including `+Inf`/`-Inf`) happens in
     /// [`crate::specified::SpecifiedValues::absolutize_with`] (phase 3) and
     /// its page-context sibling in [`crate::page`]; the corresponding
     /// specified-layer field

@@ -14638,18 +14638,33 @@ mod tests {
     }
 
     #[test]
-    fn text_shadow_nan_offset_drops_whole_declaration_and_falls_back_to_initial() {
-        // `0e999` collapses to NaN during tokenization
-        // (`parse_shadow_length_reject_nan` doc's `!is_nan()` guard
-        // section) — `parse_text_shadow_lengths` rejects it, so the whole
-        // `text-shadow` declaration is invalid and dropped, same as any
-        // other malformed value
-        // (`property::tests::text_shadow_rejects_nan_offset_but_not_infinity`
+    fn text_shadow_zero_mantissa_huge_exponent_offset_resolves_through_real_cascade() {
+        // `0e999` collapses to `NaN` internally during cssparser
+        // tokenization (`raikiri-style/src/property.rs` module doc's
+        // "Numeric-token NaN stabilization" section), but the acquisition
+        // layer recovers the spec-correct `0.0` before
+        // `parse_shadow_length_reject_nan`'s `!is_nan()` guard ever runs —
+        // so `text-shadow: 0e999px 1px red` parses and cascades
+        // successfully, instead of being dropped
+        // (`property::tests::text_shadow_zero_mantissa_huge_exponent_offset_resolves_to_zero_but_preserves_infinity`
         // pins the parse-layer half of this). This is the end-to-end pin,
-        // through the real parse -> cascade pipeline, that no NaN ever
-        // reaches `ComputedValues::text_shadow`.
+        // through the real parse -> cascade pipeline, that `0e999`
+        // resolves to `0.0` all the way to `ComputedValues::text_shadow`.
         let cv = cascade_doc("", "p", Some("text-shadow: 0e999px 1px red"));
-        assert!(cv.text_shadow.is_empty());
+        assert_eq!(
+            *cv.text_shadow,
+            vec![ComputedTextShadow {
+                offset_x: ComputedLength(0.0),
+                offset_y: ComputedLength(1.0),
+                blur_radius: ComputedLength::ZERO,
+                color: TextShadowColor::Resolved(CssColor {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                }),
+            }]
+        );
     }
 
     #[test]
@@ -14747,18 +14762,28 @@ mod tests {
     }
 
     #[test]
-    fn box_shadow_nan_offset_drops_whole_declaration_and_falls_back_to_initial() {
-        // `0e999` collapses to NaN during tokenization
-        // (`parse_shadow_length_reject_nan` doc's `!is_nan()` guard
-        // section) — `parse_box_shadow_lengths` rejects it, so the whole
-        // `box-shadow` declaration is invalid and dropped, same as any
-        // other malformed value
-        // (`property::tests::box_shadow_rejects_nan_offset_or_spread_but_not_infinity`
-        // pins the parse-layer half of this). This is the end-to-end pin,
-        // through the real parse -> cascade pipeline, that no NaN ever
-        // reaches `ComputedValues::box_shadow`.
+    fn box_shadow_zero_mantissa_huge_exponent_offset_resolves_through_real_cascade() {
+        // Same recovery as
+        // `text_shadow_zero_mantissa_huge_exponent_offset_resolves_through_real_cascade`
+        // above, for `box-shadow`
+        // (`property::tests::box_shadow_zero_mantissa_huge_exponent_offset_or_spread_resolves_to_zero_but_preserves_infinity`
+        // pins the parse-layer half).
         let cv = cascade_doc("", "p", Some("box-shadow: 0e999px 1px red"));
-        assert!(cv.box_shadow.is_empty());
+        assert_eq!(
+            *cv.box_shadow,
+            vec![ComputedBoxShadowItem {
+                offset_x: ComputedLength(0.0),
+                offset_y: ComputedLength(1.0),
+                blur_radius: ComputedLength::ZERO,
+                spread_radius: ComputedLength::ZERO,
+                color: TextShadowColor::Resolved(CssColor {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                }),
+            }]
+        );
     }
 
     #[test]
@@ -15311,17 +15336,20 @@ mod tests {
     }
 
     #[test]
-    fn opacity_nan_literal_drops_whole_declaration_and_falls_back_to_initial() {
-        // `0e999` collapses to NaN during tokenization
-        // (`parse_opacity_value` doc's "`!is_nan()` guard" section) —
-        // `parse_opacity_value` rejects it (`None`), so the whole
-        // declaration is invalid and dropped, same as any other malformed
-        // value (`property::tests::opacity_rejects_nan_but_not_infinity`
+    fn opacity_zero_mantissa_huge_exponent_resolves_through_real_cascade() {
+        // `0e999` collapses to `NaN` internally during cssparser
+        // tokenization (`raikiri-style/src/property.rs` module doc's
+        // "Numeric-token NaN stabilization" section), but the acquisition
+        // layer recovers the spec-correct `0.0` before `parse_opacity_value`'s
+        // `!is_nan()` guard ever runs — so `opacity: 0e999` parses and
+        // cascades successfully to `0.0`, not dropped back to the initial
+        // `1.0`
+        // (`property::tests::opacity_zero_mantissa_huge_exponent_resolves_to_zero_but_preserves_infinity`
         // pins the parse-layer half of this). This is the end-to-end pin,
-        // through the real parse -> cascade pipeline, that no NaN ever
-        // reaches `ComputedValues::opacity`.
+        // through the real parse -> cascade pipeline, that `0e999` reaches
+        // `ComputedValues::opacity` as `0.0`.
         let cv = cascade_doc("", "div", Some("opacity: 0e999"));
-        assert_eq!(cv.opacity, 1.0);
+        assert_eq!(cv.opacity, 0.0);
         assert!(!cv.opacity.is_nan());
     }
 
@@ -15521,19 +15549,28 @@ mod tests {
     }
 
     #[test]
-    fn filter_drop_shadow_nan_offset_drops_declaration_through_real_cascade() {
-        // `0e999` collapses to NaN during tokenization
-        // (`parse_shadow_length_reject_nan` doc's `!is_nan()` guard
-        // section) — `parse_text_shadow_lengths` rejects it (reused
-        // verbatim by `parse_drop_shadow_args`), so the whole `filter`
-        // declaration is invalid and dropped, same as any other malformed
-        // value
-        // (`property::tests::filter_drop_shadow_rejects_nan_offset` pins
-        // the parse-layer half of this). This is the end-to-end pin,
-        // through the real parse -> cascade pipeline, that no NaN ever
-        // reaches `ComputedValues::filter`.
+    fn filter_drop_shadow_zero_mantissa_huge_exponent_offset_resolves_through_real_cascade() {
+        use crate::property::{FilterFunction, TextShadowItem};
+        // `0e999` collapses to `NaN` internally during cssparser
+        // tokenization, but the acquisition layer recovers the
+        // spec-correct `0.0` before `parse_shadow_length_reject_nan`'s
+        // `!is_nan()` guard ever runs (reused verbatim by
+        // `parse_drop_shadow_args`) — so `filter: drop-shadow(0e999px 2px)`
+        // parses and cascades successfully, instead of being dropped
+        // (`property::tests::filter_drop_shadow_zero_mantissa_huge_exponent_offset_resolves_to_zero`
+        // pins the parse-layer half of this). This is the end-to-end pin,
+        // through the real parse -> cascade pipeline, that `0e999`
+        // resolves to `0.0` all the way to `ComputedValues::filter`.
         let cv = cascade_doc("", "div", Some("filter: drop-shadow(0e999px 2px)"));
-        assert!(cv.filter.is_empty());
+        assert_eq!(
+            *cv.filter,
+            vec![FilterFunction::DropShadow(TextShadowItem {
+                offset_x: Length::Px(0.0),
+                offset_y: Length::Px(2.0),
+                blur_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            })]
+        );
     }
 
     #[test]
