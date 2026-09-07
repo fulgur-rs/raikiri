@@ -3523,13 +3523,43 @@ pub struct TextDecorationShorthand {
 ///   line box.")。line box 内の **他 box すべての extent** を要する、真の
 ///   inline formatting context / line box model 依存の値であり、
 ///   `middle`/`text-top`/`text-bottom` の「親の font metric だけで定まる」
-///   性質とは計算可能性の質が異なる。raikiri-dom は現状 inline formatting
-///   context を持たない (`display: inline` の要素も他の block 要素と同じ
-///   独立した行として積み上がる) ため、IFC 自体の実装が前提になる —
-///   `middle`/`text-top`/`text-bottom` に適用した「parse を通し、
-///   raikiri-paint 側の実装待ちは 0px shift の暫定値で吸収する」形の緩和
-///   (下記「cascade-regression risk の受け入れ」節) では済まない、質的に
-///   大きい別 work として引き続き未実装のまま残す。
+///   性質とは計算可能性の質が異なる。qualify する block / inline-block
+///   container に対しては `crates/raikiri-dom/src/layout.rs` の
+///   `establish_minimal_line_boxes` が既に line box を近似しており
+///   (inline-level な children はもはや他の block 要素と同じ独立した行
+///   として積み上がらず、side-by-side に並ぶ)。この近似はなお
+///   `top`/`bottom` が要求する量を提供しない。第一に、taffy の leaf
+///   layout は baseline / ascent / descent を一切 report しない
+///   (`establish_minimal_line_boxes` doc の「実現方法」節参照) ため、
+///   参加する各 child は real font metric に基づく baseline からの
+///   extent を持たず、line box 自身の top/bottom という量が
+///   layout・raikiri-paint のどちらの側にも計算対象として存在しない。
+///   第二に、CSS 2.1 §10.8.1 の
+///   <https://www.w3.org/TR/CSS21/visudet.html#strut> が定める strut
+///   (各 line box 先頭に置かれる、その line box を確立した要素の
+///   font/line-height を持つ幅 0 の仮想 inline box。空行にも
+///   line-height 分の高さを与える) を `establish_minimal_line_boxes` は
+///   合成しない (同関数 doc の「Non-goals」節参照) — strut はまさに
+///   line box の top/bottom を well-defined にする要素であり、これが
+///   無い以上 line box の縦方向の境界自体が spec 通りには定まらない。
+///   第三に、nested な inline element は ancestor の line box へ
+///   flatten されず各自が自分の pass の対象になる (同関数 doc の
+///   「Non-goals」節参照) ため、`top`/`bottom` の対象である「aligned
+///   subtree」— nested inline を跨いで再帰的に定まる — に相当する構造も
+///   まだ存在しない。上記 3 点をすべて埋めても、spec 自体が一般には
+///   一意に解けないと認めている境界ケースが残る: CSS 2.1 §10.8 "Line
+///   height calculations: the 'line-height' and 'vertical-align'
+///   properties" <https://www.w3.org/TR/CSS21/visudet.html#line-height>
+///   の line box height 算出手順 (numbered list) 第 2 項は、`top`/
+///   `bottom` に揃える box が "tall enough" な場合 line box height を
+///   最小化する解が複数存在し、"CSS 2.1 does not define the position
+///   of the line box's baseline" と明言する (spec verbatim)。つまり
+///   `top`/`bottom` の完全な実装は、上記 3 点の plumbing を超えて、
+///   この未定義ケースをどう扱うかという設計判断も要する。
+///   `middle`/`text-top`/`text-bottom` に適用した
+///   「parse を通し、raikiri-paint 側の実装待ちは 0px shift の暫定値で
+///   吸収する」形の緩和 (下記「cascade-regression risk の受け入れ」節)
+///   では済まない、質的に大きい別 work として引き続き未実装のまま残す。
 /// - **(b) 非対応**: `<percentage>` value は spec-valid だが未実装、silent
 ///   drop (`None`)。CSS 2.1 §10.8.1 はこの percentage を要素自身の
 ///   `line-height` 基準で定義する (propdef の "Percentages: refer to the
