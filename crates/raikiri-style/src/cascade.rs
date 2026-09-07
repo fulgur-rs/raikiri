@@ -13973,6 +13973,55 @@ mod tests {
         assert!(cv.text_shadow.is_empty());
     }
 
+    #[test]
+    fn text_shadow_nan_offset_drops_whole_declaration_and_falls_back_to_initial() {
+        // `0e999` collapses to NaN during tokenization
+        // (`parse_shadow_length_reject_nan` doc's `!is_nan()` guard
+        // section) — `parse_text_shadow_lengths` rejects it, so the whole
+        // `text-shadow` declaration is invalid and dropped, same as any
+        // other malformed value
+        // (`property::tests::text_shadow_rejects_nan_offset_but_not_infinity`
+        // pins the parse-layer half of this). This is the end-to-end pin,
+        // through the real parse -> cascade pipeline, that no NaN ever
+        // reaches `ComputedValues::text_shadow`.
+        let cv = cascade_doc("", "p", Some("text-shadow: 0e999px 1px red"));
+        assert!(cv.text_shadow.is_empty());
+    }
+
+    #[test]
+    fn text_shadow_infinite_offset_passes_through_unclamped_through_real_cascade() {
+        // `+Inf` is a *different* hazard class from `0e999`'s NaN collapse
+        // above — a spec-valid `<length>` magnitude overflow (CSS Values 4
+        // §5), not a `0 * Infinity` collapse — so unlike NaN it must reach
+        // `ComputedValues::text_shadow` unrejected (dropping it here would
+        // be the same class of regression the opacity guard's own
+        // `is_finite()`-vs-`!is_nan()` history warns against).
+        let cv = cascade_doc("", "p", Some("text-shadow: 1e40px 1px red"));
+        assert_eq!(
+            *cv.text_shadow,
+            vec![ComputedTextShadow {
+                offset_x: ComputedLength(f32::INFINITY),
+                offset_y: ComputedLength(1.0),
+                blur_radius: ComputedLength::ZERO,
+                color: TextShadowColor::Resolved(CssColor {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                }),
+            }]
+        );
+
+        // Both signs, same reason
+        // `opacity_infinite_literal_clamps_through_real_cascade_instead_of_being_dropped`
+        // checks both `1e40`/`-1e40`.
+        let neg = cascade_doc("", "p", Some("text-shadow: -1e40px 1px red"));
+        assert_eq!(
+            neg.text_shadow[0].offset_x,
+            ComputedLength(f32::NEG_INFINITY)
+        );
+    }
+
     // ── border-radius / box-shadow / outline wire-through ────────────────
 
     #[test]
@@ -14030,6 +14079,58 @@ mod tests {
                 b: 0,
                 a: 255,
             })
+        );
+    }
+
+    #[test]
+    fn box_shadow_nan_offset_drops_whole_declaration_and_falls_back_to_initial() {
+        // `0e999` collapses to NaN during tokenization
+        // (`parse_shadow_length_reject_nan` doc's `!is_nan()` guard
+        // section) — `parse_box_shadow_lengths` rejects it, so the whole
+        // `box-shadow` declaration is invalid and dropped, same as any
+        // other malformed value
+        // (`property::tests::box_shadow_rejects_nan_offset_or_spread_but_not_infinity`
+        // pins the parse-layer half of this). This is the end-to-end pin,
+        // through the real parse -> cascade pipeline, that no NaN ever
+        // reaches `ComputedValues::box_shadow`.
+        let cv = cascade_doc("", "p", Some("box-shadow: 0e999px 1px red"));
+        assert!(cv.box_shadow.is_empty());
+    }
+
+    #[test]
+    fn box_shadow_infinite_offset_passes_through_unclamped_through_real_cascade() {
+        // `+Inf` is a *different* hazard class from `0e999`'s NaN collapse
+        // above — a spec-valid `<length>` magnitude overflow (CSS Values 4
+        // §5), not a `0 * Infinity` collapse — so unlike NaN it must reach
+        // `ComputedValues::box_shadow` unrejected.
+        let cv = cascade_doc("", "p", Some("box-shadow: 1e40px 1px 1px 1e40px red"));
+        assert_eq!(
+            *cv.box_shadow,
+            vec![ComputedBoxShadowItem {
+                offset_x: ComputedLength(f32::INFINITY),
+                offset_y: ComputedLength(1.0),
+                blur_radius: ComputedLength(1.0),
+                spread_radius: ComputedLength(f32::INFINITY),
+                color: TextShadowColor::Resolved(CssColor {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                }),
+            }]
+        );
+
+        // Both signs, same reason
+        // `opacity_infinite_literal_clamps_through_real_cascade_instead_of_being_dropped`
+        // checks both `1e40`/`-1e40`.
+        let neg = cascade_doc("", "p", Some("box-shadow: -1e40px 1px 1px -1e40px red"));
+        assert_eq!(
+            neg.box_shadow[0].offset_x,
+            ComputedLength(f32::NEG_INFINITY)
+        );
+        assert_eq!(
+            neg.box_shadow[0].spread_radius,
+            ComputedLength(f32::NEG_INFINITY)
         );
     }
 
@@ -14753,6 +14854,44 @@ mod tests {
             vec![FilterFunction::Blur(crate::property::Length::Px(2.0))]
         );
         assert!(r.computed[span].filter.is_empty());
+    }
+
+    #[test]
+    fn filter_drop_shadow_nan_offset_drops_declaration_through_real_cascade() {
+        // `0e999` collapses to NaN during tokenization
+        // (`parse_shadow_length_reject_nan` doc's `!is_nan()` guard
+        // section) — `parse_text_shadow_lengths` rejects it (reused
+        // verbatim by `parse_drop_shadow_args`), so the whole `filter`
+        // declaration is invalid and dropped, same as any other malformed
+        // value
+        // (`property::tests::filter_drop_shadow_rejects_nan_offset` pins
+        // the parse-layer half of this). This is the end-to-end pin,
+        // through the real parse -> cascade pipeline, that no NaN ever
+        // reaches `ComputedValues::filter`.
+        let cv = cascade_doc("", "div", Some("filter: drop-shadow(0e999px 2px)"));
+        assert!(cv.filter.is_empty());
+    }
+
+    #[test]
+    fn filter_drop_shadow_infinite_offset_passes_through_unclamped_through_real_cascade() {
+        use crate::property::{FilterFunction, TextShadowItem};
+        // `+Inf` is a *different* hazard class from `0e999`'s NaN collapse
+        // above — a spec-valid `<length>` magnitude overflow (CSS Values 4
+        // §5), not a `0 * Infinity` collapse — so unlike NaN it must reach
+        // `ComputedValues::filter` unrejected. `filter` is not
+        // independently absolutized at phase 3 (unlike `text-shadow`/
+        // `box-shadow`), so the payload stays the specified `Length`/
+        // `TextShadowItem` shape all the way through.
+        let cv = cascade_doc("", "div", Some("filter: drop-shadow(1e40px 2px)"));
+        assert_eq!(
+            *cv.filter,
+            vec![FilterFunction::DropShadow(TextShadowItem {
+                offset_x: Length::Px(f32::INFINITY),
+                offset_y: Length::Px(2.0),
+                blur_radius: Length::Px(0.0),
+                color: TextShadowColor::CurrentColor,
+            })]
+        );
     }
 
     // ── background-image wire-through (CSS Backgrounds and Borders 3 §2.3) ──
