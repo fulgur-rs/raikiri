@@ -289,17 +289,44 @@ impl NonTSPseudoClass for PseudoClass {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PseudoElem {}
+/// `::before` / `::after` — CSS Pseudo-Elements Module Level 4 §4.1
+/// <https://drafts.csswg.org/css-pseudo-4/#generated-content> ("The
+/// `::before` and `::after` pseudo-elements..."). No other pseudo-element is
+/// modeled yet ([`RaikiriSelectorParser::parse_pseudo_element`] rejects
+/// everything else, fail-closed).
+///
+/// Variant shape mirrors the `selectors` crate's own reference test
+/// implementation (`selectors` v0.39.0 `parser.rs`, its `#[cfg(test)]`
+/// module's `PseudoElement::Before`/`::After`/`::Marker`/`::DetailsContent`)
+/// — that crate models exactly this kind of enum for its own test suite, so
+/// this shape is the crate author's own intended usage pattern for
+/// `selectors::parser::PseudoElement`, not a Stylo-derived shape.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PseudoElem {
+    /// `::before` (also accepted as legacy `:before`).
+    Before,
+    /// `::after` (also accepted as legacy `:after`).
+    After,
+}
 
 impl ToCss for PseudoElem {
-    fn to_css<W: fmt::Write>(&self, _dest: &mut W) -> fmt::Result {
-        match *self {}
+    fn to_css<W: fmt::Write>(&self, dest: &mut W) -> fmt::Result {
+        dest.write_str(match self {
+            PseudoElem::Before => "::before",
+            PseudoElem::After => "::after",
+        })
     }
 }
 
 impl PseudoElement for PseudoElem {
     type Impl = RaikiriSelectorImpl;
+
+    // Every other `PseudoElement` trait method keeps its `false`/default
+    // value deliberately — fail-closed posture matching this parser's
+    // pseudo-class handling: no state pseudo-class, no other pseudo-element,
+    // and no `::slotted()`/`::part()` context is accepted after `::before`/
+    // `::after` (verified empirically — see `lib.rs`'s
+    // `parse_pseudo_element_rejects_chaining_after_before_or_after` test).
 }
 
 // ---------------------------------------------------------------------------
@@ -364,18 +391,21 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
     /// language ranges \[...\] a valid CSS `<ident>` or `<string>`"; `:dir()`'s
     /// "argument \[...\] must be a single identifier, otherwise the selector
     /// is invalid."
-    // `_after_part` is unused: the `selectors` crate only ever sets it after
-    // a successfully-parsed `::part()` (gated by `Parser::parse_part()`,
-    // which this impl leaves at its `false` default) or another
-    // element-backed pseudo-element (gated by `parse_pseudo_element`
-    // succeeding, which can never happen here — `crate::PseudoElem` is an
-    // uninhabited enum, so no pseudo-element construct parses successfully
-    // in this crate at all yet). Both preconditions are unreachable today,
+    // `_after_part` is unused: the `selectors` crate only sets it after a
+    // successfully-parsed `::part()` (gated by `Parser::parse_part()`, which
+    // this impl leaves at its `false` default, so `::part()` itself never
+    // parses) or after a pseudo-element whose `parses_as_element_backed()`
+    // returns `true` (`selectors-0.39.0/parser.rs`'s `AFTER_PART_LIKE`
+    // handling). `crate::PseudoElem` (`::before`/`::after`) leaves that
+    // method at its `false` default, so it never sets this flag either —
+    // and since it also leaves `is_before_or_after()` at `false`, no
+    // pseudo-class can even be attempted after `::before`/`::after` in the
+    // first place (rejected at the selector-parsing state check before
+    // reaching this function at all). Both preconditions stay unreachable,
     // so `after_part` is always `false` when this function runs — unlike
     // the `selectors` crate's own reference test impl (its internal
     // `"lang" if !after_part => ...` arm, `selectors-0.39.0/parser.rs`),
-    // this crate has no live case to guard against. Revisit if/when
-    // pseudo-element support is ever added.
+    // this crate has no live case to guard against.
     fn parse_non_ts_functional_pseudo_class<'t>(
         &self,
         name: CowRcStr<'i>,
@@ -409,6 +439,29 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
         } else {
             Err(
                 parser.new_custom_error(SelectorParseErrorKind::UnsupportedPseudoClassOrElement(
+                    name,
+                )),
+            )
+        }
+    }
+
+    /// `::before` / `::after` only (CSS Pseudo-Elements Module Level 4 §4.1,
+    /// see [`PseudoElem`] doc) — everything else (`::marker`,
+    /// `::details-content`, `::part()`, `::slotted()`, any unknown name)
+    /// stays a parse error, same fail-closed posture as
+    /// [`Self::parse_non_ts_pseudo_class`] above.
+    fn parse_pseudo_element(
+        &self,
+        location: SourceLocation,
+        name: CowRcStr<'i>,
+    ) -> Result<PseudoElem, cssparser::ParseError<'i, Self::Error>> {
+        if name.eq_ignore_ascii_case("before") {
+            Ok(PseudoElem::Before)
+        } else if name.eq_ignore_ascii_case("after") {
+            Ok(PseudoElem::After)
+        } else {
+            Err(
+                location.new_custom_error(SelectorParseErrorKind::UnsupportedPseudoClassOrElement(
                     name,
                 )),
             )
@@ -566,5 +619,116 @@ mod tests {
     fn parse_nth_child_of_rejects_invalid_selector_list_forms() {
         assert!(parse_selector_list("p:nth-child(2 of .featured,)").is_err());
         assert!(parse_selector_list("p:nth-of-type(2 of .featured)").is_err());
+    }
+
+    // ---- `::before`/`::after` pseudo-element selector parsing ----
+    //
+    // CSS Pseudo-Elements Module Level 4 §4.1
+    // <https://drafts.csswg.org/css-pseudo-4/#generated-content>, Selectors
+    // Level 4 (pseudo-element grammar). `cascade.rs`'s test module covers
+    // matching/cascade behavior once parsed; these tests cover parsing
+    // (accept/reject shape) only.
+
+    #[test]
+    fn parse_before_and_after_pseudo_element_roundtrip() {
+        for (src, expected) in [
+            (".foo::before", PseudoElem::Before),
+            ("p::after", PseudoElem::After),
+        ] {
+            let list = parse_selector_list(src).unwrap_or_else(|e| panic!("parse {src:?}: {e}"));
+            let selector = &list.slice()[0];
+            assert_eq!(selector.pseudo_element(), Some(&expected));
+            let mut out = String::new();
+            list.to_css(&mut out).expect("serialize selector list");
+            assert_eq!(out, src);
+        }
+    }
+
+    #[test]
+    fn parse_bare_pseudo_element_implies_universal_originating_selector() {
+        // `::before` alone parses like `*::before` — no explicit type/class
+        // required on the originating-element side.
+        let list = parse_selector_list("::before").expect("parse ::before");
+        let selector = &list.slice()[0];
+        assert_eq!(selector.pseudo_element(), Some(&PseudoElem::Before));
+    }
+
+    #[test]
+    fn parse_pseudo_element_rejects_unknown_name() {
+        // Fail-closed posture: only `before`/`after` are recognized —
+        // `::marker`/`::details-content`/anything else stays a parse error
+        // (same posture `parse_non_ts_pseudo_class` already has for
+        // unrecognized pseudo-classes).
+        assert!(parse_selector_list("::marker").is_err());
+        assert!(parse_selector_list("::details-content").is_err());
+        assert!(parse_selector_list("::bogus").is_err());
+    }
+
+    #[test]
+    fn parse_pseudo_element_must_be_selector_tail() {
+        // A pseudo-element must be the rightmost component — nothing may
+        // follow it in the same selector.
+        assert!(parse_selector_list("a::before b").is_err());
+    }
+
+    #[test]
+    fn parse_pseudo_element_rejects_chaining_after_before_or_after() {
+        // Fail-closed posture (see `PseudoElem`/`RaikiriSelectorParser` doc):
+        // no pseudo-class, and no other pseudo-element, may follow
+        // `::before`/`::after` in this crate — `PseudoElem` overrides none
+        // of `is_before_or_after`/`accepts_state_pseudo_classes`/
+        // `parses_as_element_backed`'s `false` defaults, so the `selectors`
+        // crate's own parser state machine rejects all three forms below.
+        assert!(parse_selector_list("::before::after").is_err());
+        assert!(parse_selector_list("::before:hover").is_err());
+        assert!(parse_selector_list(".foo::before.bar").is_err());
+    }
+
+    #[test]
+    fn parse_pseudo_element_rejected_inside_nth_child_of_selector_list() {
+        // CSS Selectors Level 4 forbids a pseudo-element inside
+        // `:nth-child(An+B of S)`'s `S` — the `selectors` crate itself
+        // enforces this at parse time (not something this crate's own
+        // `is_supported_selector` needs to reject after the fact, though it
+        // does so too as defense-in-depth — see `ruletree.rs`
+        // `is_supported_selector`'s doc).
+        assert!(parse_selector_list("p:nth-child(2 of .x::before)").is_err());
+    }
+
+    #[test]
+    fn parse_legacy_single_colon_before_and_after_syntax() {
+        // CSS Pseudo-Elements Module Level 4 §8 "Compatibility Syntax"
+        // <https://drafts.csswg.org/css-pseudo-4/#css2-compat>, verbatim:
+        // "For compatibility with existing style sheets written against CSS
+        // Level 2 `[...]`, user agents must also accept the previous
+        // one-colon notation (:before, :after, :first-letter, :first-line)
+        // for the ::before, ::after, ::first-letter, and ::first-line
+        // pseudo-elements." The `selectors` crate's own
+        // `is_css2_pseudo_element` already special-cases exactly these two
+        // names (plus `first-line`/`first-letter`, which this crate's
+        // `parse_pseudo_element` still rejects by name) into the same
+        // pseudo-element parse path the double-colon syntax uses — so this
+        // MUST-level requirement already works without any extra code in
+        // this crate, but was previously untested.
+        //
+        // Deliberately does NOT assert a source round-trip via `to_css`
+        // (unlike `parse_before_and_after_pseudo_element_roundtrip` above):
+        // `:before`/`:after` and `::before`/`::after` denote the same
+        // pseudo-element (Selectors Level 4 §3.10 "Syntax"
+        // <https://www.w3.org/TR/selectors-4/#pseudo-element-syntax>, same
+        // one-colon compatibility rule), and this crate's `PseudoElem` has
+        // no field to remember which spelling the author used, so
+        // `ToCss for PseudoElem` always serializes the double-colon form
+        // regardless of which one was parsed. A naive `assert_eq!(out,
+        // src)` against `:before` input would therefore fail spuriously;
+        // the correct assertion is on the parsed `PseudoElem` value only.
+        for (src, expected) in [
+            (":before", PseudoElem::Before),
+            (":after", PseudoElem::After),
+        ] {
+            let list = parse_selector_list(src).unwrap_or_else(|e| panic!("parse {src:?}: {e}"));
+            let selector = &list.slice()[0];
+            assert_eq!(selector.pseudo_element(), Some(&expected));
+        }
     }
 }
