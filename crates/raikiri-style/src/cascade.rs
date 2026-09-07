@@ -55,22 +55,80 @@ use crate::specified::SpecifiedValues;
 use crate::style_dom::{
     StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind, StyleQuirksMode,
 };
-use crate::{Direction, RaikiriSelectorImpl};
+use crate::{Direction, PseudoElem, RaikiriSelectorImpl};
 
 /// Cascade 結果。
 ///
-/// 現時点では `computed` のみ populate。将来の GCPM (paged media generated
-/// content) static-side 実装では、per-node ComputedValues 内で content /
-/// string_set / running_templates を保持する canonical taxonomy に落ち着く見込みで、
-/// CascadeResult-level の `gcpm_directives` / `running_templates` は下流
-/// (raikiri-dom) で per-document に concatenate される責務に移る。
-/// `#[non_exhaustive]` は将来 field 追加のために維持。
+/// 将来の GCPM (paged media generated content) static-side 実装では、per-node
+/// ComputedValues 内で content / string_set / running_templates を保持する
+/// canonical taxonomy に落ち着く見込みで、CascadeResult-level の
+/// `gcpm_directives` / `running_templates` は下流 (raikiri-dom) で
+/// per-document に concatenate される責務に移る。`#[non_exhaustive]` は将来
+/// field 追加のために維持。
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct CascadeResult {
     /// Per-node computed values (NodeId.0 as usize で index)。
     /// Element / Text / Document 全 kind に populate、範囲外は panic (caller 責任)。
     pub computed: Vec<ComputedValues>,
+    /// `::before` / `::after` — sparse, keyed by `(originating element's own
+    /// NodeId, which pseudo)`. An entry exists **iff** at least one
+    /// stylesheet rule's selector targets that pseudo-element and matches
+    /// that element (CSS Pseudo-Elements Module Level 4 §4.1
+    /// <https://drafts.csswg.org/css-pseudo-4/#generated-content>) — most
+    /// elements have neither `::before` nor `::after` rules, so this stays
+    /// empty for them (no wasted entry).
+    ///
+    /// Each value is a **full** [`ComputedValues`], computed the same way a
+    /// real element's is — cascaded winners from matching `::before`/
+    /// `::after` selectors applied over inherited-from-the-real-element
+    /// values, then absolutized — not just a lone `content` value. Two
+    /// distinct spec statements justify this, and neither alone would:
+    /// §4 `#treelike` (tree-abiding pseudo-elements, which `::before`/
+    /// `::after` are a subcase of) states the *unconditioned* inheritance
+    /// model this crate actually implements — "They inherit any inheritable
+    /// properties from their originating element; non-inheritable
+    /// properties take their initial values as usual" — independent of what
+    /// `content` computes to. §4.1 `#generated-content` separately states
+    /// the *content-conditioned* box-generation model — "When their
+    /// computed 'content' value is not 'none', these pseudo-elements
+    /// generate boxes as if they were immediate children of their
+    /// originating element" — which is a downstream (`raikiri-dom`)
+    /// decision, not something this crate's cascade computes. So a pseudo
+    /// inherits its `color`/`font-*`/etc. from the real element exactly
+    /// like a real child would (§4, unconditionally), and can have those
+    /// (and any other property) overridden by its own `::before`/`::after`
+    /// rule; whether a box is actually generated from the result (§4.1,
+    /// conditioned on `content`) is left to the consumer, per this doc's own
+    /// `content.is_empty()` note below. See [`resolve_inheritance`]'s
+    /// pseudo-element section for the derivation.
+    ///
+    /// This crate represents both `content: normal` and `content: none` as
+    /// an empty `content` list ([`ComputedValues::content`] doc) — a present
+    /// map entry with an empty `content` list means "a `::before`/`::after`
+    /// rule matched, but its (or the initial) `content` value is `normal`/
+    /// `none`". CSS Content Module Level 3
+    /// <https://www.w3.org/TR/css-content-3/#content-property> is the
+    /// primary source for what a non-empty `content` value implies for box
+    /// generation — this crate stops at exposing the computed value; the
+    /// consumer decides box generation from `content.is_empty()`, not from
+    /// map presence (map presence only means "some `::before`/`::after`
+    /// rule matched this element", independent of what that rule set
+    /// `content` to). This `content.is_empty()` ⇒ suppress-box reading is
+    /// scoped to **this** (`pseudo`) map's entries specifically — it does
+    /// not carry over to [`Self::computed`] (real elements). CSS Content 3
+    /// §1 <https://www.w3.org/TR/css-content-3/#content-property> draws
+    /// exactly this real-element/pseudo-element split itself: "For
+    /// elements, \[`content`\] has only one purpose: specifying that the
+    /// element renders as normal, or replacing the element with an image
+    /// [...]. For pseudo-elements [...], it is more powerful. It controls
+    /// whether the element renders at all, can replace the element with an
+    /// image, or replace it with arbitrary inline content" — an empty
+    /// `content` list on a **real** element's own [`Self::computed`] entry
+    /// means "renders as normal" (no box-suppression meaning at all), while
+    /// the same empty list on a **pseudo**'s [`Self::pseudo`] entry means
+    /// "no box" (§4.1's `content: not none` condition above).
+    pub pseudo: HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
 }
 
 /// DOM + RuleTree から per-node ComputedValues を produce。
@@ -109,15 +167,17 @@ pub fn cascade<D: StyleDom>(dom: &D, rule_tree: &RuleTree) -> Result<CascadeResu
     // 直接 index する)。事前に initial() で埋めておき、DFS で visited slot を
     // 上書きする実装。
     let mut computed: Vec<ComputedValues> = vec![ComputedValues::initial(); dom.node_count()];
+    let mut pseudo: HashMap<(StyleNodeId, PseudoElem), ComputedValues> = HashMap::new();
     resolve_inheritance(
         dom,
         dom.root_id(),
         &ComputedValues::initial(),
         &cascaded,
         &mut computed,
+        &mut pseudo,
     );
 
-    Ok(CascadeResult { computed })
+    Ok(CascadeResult { computed, pseudo })
 }
 
 /// selectors 由来の 32-bit specificity。u32 で完全順序比較。
@@ -254,6 +314,19 @@ pub(crate) struct CascadedArena {
     custom_decls: Vec<CustomCascadedDecl>,
     /// Per-node ranges into `custom_decls`.
     custom_ranges: HashMap<StyleNodeId, Range<usize>>,
+    /// `decls`/`ranges` と同じ flat-arena 技法だが、key が「originating
+    /// element の `StyleNodeId`」ではなく「`(originating element の
+    /// StyleNodeId, その `::before`/`::after`)`」— 1 element が `::before`/
+    /// `::after` 両方の候補を独立に持ちうるため。空 (no candidate) の
+    /// `(id, pseudo)` の組はここに entry を持たない (同じ「無ければ握らない」
+    /// 契約)。
+    pseudo_decls: Vec<CascadedDecl>,
+    /// `(id, pseudo)` ごとの `pseudo_decls` 内部分区間。
+    pseudo_ranges: HashMap<(StyleNodeId, PseudoElem), Range<usize>>,
+    /// `pseudo_decls` の custom-property 版。
+    pseudo_custom_decls: Vec<CustomCascadedDecl>,
+    /// `(id, pseudo)` ごとの `pseudo_custom_decls` 内部分区間。
+    pseudo_custom_ranges: HashMap<(StyleNodeId, PseudoElem), Range<usize>>,
 }
 
 impl CascadedArena {
@@ -263,6 +336,10 @@ impl CascadedArena {
             ranges: HashMap::new(),
             custom_decls: Vec::new(),
             custom_ranges: HashMap::new(),
+            pseudo_decls: Vec::new(),
+            pseudo_ranges: HashMap::new(),
+            pseudo_custom_decls: Vec::new(),
+            pseudo_custom_ranges: HashMap::new(),
         }
     }
 
@@ -282,10 +359,37 @@ impl CascadedArena {
             .get(&id)
             .map(|range| &self.custom_decls[range.clone()])
     }
+
+    /// `(id, pseudo)` の candidate 一覧 — [`candidates`](Self::candidates) の
+    /// `::before`/`::after` 版。
+    fn pseudo_candidates(&self, id: StyleNodeId, pseudo: PseudoElem) -> Option<&[CascadedDecl]> {
+        self.pseudo_ranges
+            .get(&(id, pseudo))
+            .map(|range| &self.pseudo_decls[range.clone()])
+    }
+
+    fn pseudo_custom_candidates(
+        &self,
+        id: StyleNodeId,
+        pseudo: PseudoElem,
+    ) -> Option<&[CustomCascadedDecl]> {
+        self.pseudo_custom_ranges
+            .get(&(id, pseudo))
+            .map(|range| &self.pseudo_custom_decls[range.clone()])
+    }
 }
 
+/// Pushes one declaration into `decls`/`custom_decls` (routing on
+/// `PropertyValue::CustomProperty`, same split every candidate list in this
+/// module uses). Takes the destination `Vec`s directly rather than a whole
+/// [`CascadedArena`] so the same function serves both the real-element path
+/// (`&mut out.decls, &mut out.custom_decls`, [`collect_cascaded`]) and the
+/// `::before`/`::after` path (a per-element scratch buffer pair,
+/// [`collect_cascaded`]'s pseudo-element section) without duplicating this
+/// match.
 fn push_cascaded_decl(
-    out: &mut CascadedArena,
+    decls: &mut Vec<CascadedDecl>,
+    custom_decls: &mut Vec<CustomCascadedDecl>,
     value: PropertyValue,
     important: bool,
     origin: Origin,
@@ -294,12 +398,9 @@ fn push_cascaded_decl(
 ) {
     match value {
         PropertyValue::CustomProperty(custom) => {
-            out.custom_decls
-                .push((custom, important, origin, specificity, source_order))
+            custom_decls.push((custom, important, origin, specificity, source_order))
         }
-        value => out
-            .decls
-            .push((value, important, origin, specificity, source_order)),
+        value => decls.push((value, important, origin, specificity, source_order)),
     }
 }
 
@@ -536,6 +637,16 @@ fn collect_cascaded<D: StyleDom>(
     // A" — verbatim (see `match_combinator_chain`'s "Spec provenance note"
     // for how this text was confirmed), both sides are elements).
     let mut ancestor_path: Vec<StyleNodeId> = Vec::new();
+    // `::before`/`::after` candidate scratch buffers — declared outside the
+    // walk loop and drained (via `Vec::append`, see the flush site below) at
+    // the end of each element's processing, so they're always empty when a
+    // new element starts. Reused across the whole document walk rather than
+    // allocated fresh per element, same rationale as `resolve_inheritance`'s
+    // `winners` buffer.
+    let mut pseudo_before_decls: Vec<CascadedDecl> = Vec::new();
+    let mut pseudo_after_decls: Vec<CascadedDecl> = Vec::new();
+    let mut pseudo_before_custom: Vec<CustomCascadedDecl> = Vec::new();
+    let mut pseudo_after_custom: Vec<CustomCascadedDecl> = Vec::new();
     while let Some((id, depth)) = stack.pop() {
         ancestor_path.truncate(depth);
         if let Some(node) = dom.node(id) {
@@ -609,7 +720,53 @@ fn collect_cascaded<D: StyleDom>(
                             // doc に集約。
                             expand_shorthand_into(decl, |d| {
                                 push_cascaded_decl(
-                                    out,
+                                    &mut out.decls,
+                                    &mut out.custom_decls,
+                                    d.value,
+                                    d.important,
+                                    rule.origin,
+                                    spec,
+                                    rule.source_order,
+                                );
+                            });
+                        }
+                    }
+                    // `::before`/`::after` — independent pass over the same
+                    // rule's selector list (a rule's comma-separated list can
+                    // target the real element via one selector and a
+                    // pseudo-element via another, e.g. `a, a::before {..}`,
+                    // so this isn't mutually exclusive with the match above).
+                    // `selector_matches_pseudo_element` fast-returns `None`
+                    // via `Selector::pseudo_element()`'s `O(1)` flag check
+                    // for the (overwhelmingly common) selector that doesn't
+                    // target a pseudo-element at all, so this second list
+                    // walk stays cheap for documents with no `::before`/
+                    // `::after` rules.
+                    for selector in rule.selectors.slice() {
+                        let Some(pseudo) = selector_matches_pseudo_element(
+                            dom,
+                            selector,
+                            &elem,
+                            id,
+                            &ancestor_path,
+                            quirks_mode,
+                        ) else {
+                            continue;
+                        };
+                        let spec = specificity_of(selector);
+                        let (buf, custom_buf) = match pseudo {
+                            PseudoElem::Before => {
+                                (&mut pseudo_before_decls, &mut pseudo_before_custom)
+                            }
+                            PseudoElem::After => {
+                                (&mut pseudo_after_decls, &mut pseudo_after_custom)
+                            }
+                        };
+                        for decl in &rule.declarations {
+                            expand_shorthand_into(decl, |d| {
+                                push_cascaded_decl(
+                                    buf,
+                                    custom_buf,
                                     d.value,
                                     d.important,
                                     rule.origin,
@@ -626,7 +783,8 @@ fn collect_cascaded<D: StyleDom>(
                     let mut parser = Parser::new(&mut input);
                     for decl in parse_declaration_block(&mut parser) {
                         push_cascaded_decl(
-                            out,
+                            &mut out.decls,
+                            &mut out.custom_decls,
                             decl.value,
                             decl.important,
                             Origin::Author,
@@ -642,6 +800,42 @@ fn collect_cascaded<D: StyleDom>(
                 let custom_end = out.custom_decls.len();
                 if custom_end > custom_start {
                     out.custom_ranges.insert(id, custom_start..custom_end);
+                }
+                // Flush this element's `::before`/`::after` scratch buffers
+                // into the shared pseudo arena — `Vec::append` moves (no
+                // clone) and leaves the scratch buffer empty, ready for the
+                // next element that has a pseudo match to reuse without a
+                // fresh allocation (same "declare outside the loop, drain in
+                // place" idiom `resolve_inheritance`'s `winners` buffer
+                // uses). Only elements with an actual match ever touch these
+                // buffers, so they stay empty (a cheap `is_empty` `Vec`, no
+                // allocation) for the common no-`::before`/`::after` case.
+                for (pseudo, buf, custom_buf) in [
+                    (
+                        PseudoElem::Before,
+                        &mut pseudo_before_decls,
+                        &mut pseudo_before_custom,
+                    ),
+                    (
+                        PseudoElem::After,
+                        &mut pseudo_after_decls,
+                        &mut pseudo_after_custom,
+                    ),
+                ] {
+                    let pseudo_start = out.pseudo_decls.len();
+                    out.pseudo_decls.append(buf);
+                    if out.pseudo_decls.len() > pseudo_start {
+                        out.pseudo_ranges
+                            .insert((id, pseudo), pseudo_start..out.pseudo_decls.len());
+                    }
+                    let pseudo_custom_start = out.pseudo_custom_decls.len();
+                    out.pseudo_custom_decls.append(custom_buf);
+                    if out.pseudo_custom_decls.len() > pseudo_custom_start {
+                        out.pseudo_custom_ranges.insert(
+                            (id, pseudo),
+                            pseudo_custom_start..out.pseudo_custom_decls.len(),
+                        );
+                    }
                 }
                 // This element becomes an ancestor for its own children
                 // (pushed just below with `ancestor_path.len()` as their
@@ -1371,6 +1565,85 @@ fn selector_matches<D: StyleDom, E: StyleElement>(
         }
 }
 
+/// `::before`/`::after` counterpart of [`selector_matches`]: if `selector`
+/// targets a `::before`/`::after` pseudo-element at all
+/// ([`Selector::pseudo_element`], an `O(1)` bitflag-backed check — cheap
+/// `None` for the overwhelmingly common non-pseudo selector) *and* the rest
+/// of the selector (the originating element's own compound/combinator chain,
+/// to the left of the `::before`/`::after`) matches `elem`, returns that
+/// pseudo-element. Otherwise `None` — including when `elem` doesn't match
+/// the originating-element part.
+///
+/// `elem` itself is never matched against `Component::PseudoElement`
+/// directly — that component only ever reaches [`compound_matches`] through
+/// this function's own one-compound skip below, never through
+/// [`selector_matches`]'s ordinary rightmost-compound match (which
+/// `compound_matches`'s `_ => false` safety net already rejects a bare
+/// `Component::PseudoElement` on, so an ordinary selector ending in
+/// `::before`/`::after` correctly never matches the real element as itself —
+/// this is what keeps [`match_complex_selector_list`] from also matching a
+/// `.foo::before` rule directly onto `.foo` the real element, with no
+/// changes needed to that function or `compound_matches`).
+///
+/// # Why `Component::PseudoElement` can only be this function's own leading
+/// compound
+///
+/// `RaikiriSelectorParser` overrides none of `PseudoElement`'s
+/// `is_before_or_after` / `accepts_state_pseudo_classes` /
+/// `parses_as_element_backed` defaults (all stay `false` — see
+/// [`crate::PseudoElem`] doc), so the `selectors` crate's own parser state
+/// machine rejects any pseudo-class or further pseudo-element after a
+/// `::before`/`::after` (`selectors` v0.39.0 `parser.rs`'s
+/// `AFTER_NON_ELEMENT_BACKED_PSEUDO`/`AFTER_BEFORE_OR_AFTER_PSEUDO` state
+/// handling), and a compound/combinator *following* `::before`/`::after`
+/// (e.g. `a::before b`) is rejected even earlier, as a bare syntax error —
+/// empirically confirmed against this crate's actual `parse_selector_list`
+/// (not read from `selectors`' source in isolation): `.foo::before` parses
+/// to the raw match-order sequence `[PseudoElement(Before),
+/// Combinator(PseudoElement), Class("foo")]`; `a::before b`,
+/// `::before::after`, `::before:hover`, and `.foo::before.bar` are all
+/// parse errors. A `Selector` that parsed successfully at all therefore has
+/// **at most one** `Component::PseudoElement`, always as the sole member of
+/// its own rightmost compound.
+fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
+    dom: &D,
+    selector: &Selector<RaikiriSelectorImpl>,
+    elem: &E,
+    elem_id: StyleNodeId,
+    ancestors: &[StyleNodeId],
+    quirks_mode: StyleQuirksMode,
+) -> Option<PseudoElem> {
+    let pseudo = *selector.pseudo_element()?;
+    let mut iter = selector.iter();
+    // Skip past the (sole) pseudo-element compound — same idiom the
+    // `selectors` crate's own `Selector::parts()` uses to skip a leading
+    // pseudo-element compound before inspecting the rest of the selector
+    // (`selectors` v0.39.0 `parser.rs`).
+    for _ in &mut iter {}
+    let combinator = iter.next_sequence();
+    // cov:ignore: panic-message literal only executed on assertion failure
+    // — this crate's whole selector-parsing surface (see this function's
+    // doc) guarantees `combinator == Some(Combinator::PseudoElement)`
+    // whenever `selector.pseudo_element()` returned `Some` above, so this
+    // never fails while any test in this crate runs.
+    debug_assert_eq!(
+        combinator,
+        Some(Combinator::PseudoElement),
+        "Selector::pseudo_element() returned Some, so `selectors` must have \
+         bridged it with Combinator::PseudoElement — see this function's \
+         doc for why that's the only shape a successfully-parsed selector \
+         can take here"
+    );
+    let matches = compound_matches(dom, &mut iter, elem, elem_id, ancestors, quirks_mode)
+        && match iter.next_sequence() {
+            None => true,
+            Some(next_combinator) => {
+                match_combinator_chain(dom, next_combinator, elem_id, ancestors, iter, quirks_mode)
+            }
+        };
+    matches.then_some(pseudo)
+}
+
 /// [`match_complex_selector_list`] が右端 compound を `elem` に対して
 /// マッチさせたあと、残りの combinator + compound 列を `ancestors`
 /// (祖先チェーン) / `current_id` から辿る兄弟列のどちらかを遡って判定する。
@@ -1481,15 +1754,23 @@ fn selector_matches<D: StyleDom, E: StyleElement>(
 /// 決して compound に一致しない)。
 ///
 /// 他 combinator ([`Combinator::PseudoElement`] / [`Combinator::SlotAssignment`]
-/// / [`Combinator::Part`]) はこの task の scope 外 — `ruletree.rs`
-/// `is_supported_selector_list` が rule tree 構築時点で drop するのに加え、
-/// これら 3 つは pseudo-element 専用の combinator で、本 crate の
-/// `parse_selector_list` (`RaikiriSelectorImpl`) がそもそも pseudo-element
-/// 構文自体を `Custom(UnsupportedPseudoClassOrElement(..))` として parse
-/// error にする (`a::before` を直接 parse させて実地確認済み) ため、この
-/// crate 内で生成された `SelectorList` から到達することは無い。
+/// / [`Combinator::Part`]) はこの関数の対応範囲外。うち
+/// [`Combinator::SlotAssignment`]/[`Combinator::Part`] は引き続き
+/// pseudo-element 専用の combinator で、本 crate の `parse_selector_list`
+/// (`RaikiriSelectorImpl`) が対応する `::slotted()`/`::part()` 構文自体を
+/// `parse_slotted`/`parse_part` 未 override のため parse error にする
+/// (`ruletree.rs` `is_supported_selector` doc 参照) ので、この crate 内で
+/// 生成された `SelectorList` から到達することは無い。
+/// [`Combinator::PseudoElement`] (`::before`/`::after`) は事情が異なる —
+/// 今はもう parse error ではなく、`SelectorList` に普通に乗って rule tree
+/// にも残る (`ruletree.rs` `is_supported_selector` が受理する) が、
+/// [`collect_cascaded`] が [`selector_matches_pseudo_element`] という
+/// 独立した matcher へ**この関数を経由させる前に**振り分けるため、
+/// [`match_combinator_chain`] のどちらの呼び出し元 ([`selector_matches`] /
+/// [`match_from_element`] 自身の再帰) もこの combinator を渡すことは無い。
 /// [`compound_matches`] の `_ => false` safety net と
-/// 同じ姿勢で、ここでも到達したら match fail 扱いにする。
+/// 同じ姿勢で、いずれの combinator も (到達すれば) ここでは match fail 扱い
+/// にする。
 ///
 /// # Spec provenance note
 ///
@@ -1944,27 +2225,36 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
                 stop_at: current_id,
             }
         }
-        // cov:ignore: `Combinator::PseudoElement`/`SlotAssignment`/`Part`
-        // are structurally unconstructible here.
-        // The `selectors` crate only ever pushes each of these 3
-        // combinators from behind its own `Parser` trait hook (parser.rs
-        // `parse_one_simple_selector`), and `RaikiriSelectorParser`
-        // overrides none of the three, so all fall to the trait's default:
-        //   - `PseudoElement`: gated by `parse_pseudo_element`, default
-        //     `Err`; also `RaikiriSelectorImpl::PseudoElement = PseudoElem`
-        //     is an uninhabited enum, so no value could exist even if the
-        //     hook were overridden to accept (verified via direct
-        //     `a::before` parse).
-        //   - `Part`: gated by `parse_part()`, default `false`.
-        //   - `SlotAssignment`: gated by `parse_slotted()`, default
-        //     `false`.
-        // The `a::before` check only exercises the first hook — overriding
-        // `parse_part`/`parse_slotted` on their own would make `Part`/
-        // `SlotAssignment` reachable without `a::before` ever failing, so
-        // overriding any of the three voids this exemption. See this
-        // module's "他 combinator" doc note, above `match_combinator_chain`,
-        // for the full argument. Yields an already-exhausted `Child(None)`
-        // cursor — same "no candidate ever
+        // cov:ignore: `Combinator::SlotAssignment`/`Part` are structurally
+        // unconstructible here, and `Combinator::PseudoElement` is
+        // constructible in a `SelectorList` but never reaches this function
+        // — each for a different reason:
+        //   - `Part`: gated by `Parser::parse_part()`, default `false`,
+        //     `RaikiriSelectorParser` doesn't override it, so `::part()`
+        //     never parses at all.
+        //   - `SlotAssignment`: same, gated by `Parser::parse_slotted()`.
+        //   - `PseudoElement`: `RaikiriSelectorParser` *does* override
+        //     `parse_pseudo_element` (accepts `::before`/`::after`, see
+        //     `crate::PseudoElem` doc) — this combinator is real and does
+        //     appear in successfully-parsed `Selector`s now. It never
+        //     reaches `match_combinator_chain` (and so never reaches this
+        //     function) from either of `match_combinator_chain`'s two call
+        //     sites: `selector_matches`'s real-element path never gets
+        //     past `compound_matches`'s own `_ => false` arm on the
+        //     rightmost `Component::PseudoElement` compound (matching a
+        //     real element against `.foo::before` fails right there,
+        //     before any `next_sequence()`/combinator crossing happens);
+        //     `selector_matches_pseudo_element`'s own dedicated path does
+        //     cross this exact combinator, but does so itself (its own
+        //     `iter.next_sequence()`, asserted via `debug_assert_eq!`)
+        //     *before* calling `match_combinator_chain` — by then the
+        //     iterator is already positioned past it, and a `Selector` has
+        //     at most one `Component::PseudoElement`/`Combinator::
+        //     PseudoElement` pair (see that function's doc), so it cannot
+        //     appear a second time further down the chain either.
+        // See this module's "他 combinator" doc note, above
+        // `match_combinator_chain`, for the fuller argument. Yields an
+        // already-exhausted `Child(None)` cursor — same "no candidate ever
         // succeeds" outcome the pre-fix `_ => false` arm produced.
         _ => PendingCandidates::Child(None),
     }
@@ -4656,6 +4946,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
     parent_computed: &ComputedValues,
     cascaded: &CascadedArena,
     out: &mut Vec<ComputedValues>,
+    pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
 ) {
     let mut stack: Vec<InheritanceStackEntry> =
         vec![(id, parent_computed.clone(), None, empty_custom_properties())];
@@ -4748,6 +5039,73 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
             )),
             None => None,
         };
+
+        // `::before`/`::after` — CSS Pseudo-Elements Module Level 4 §4
+        // <https://drafts.csswg.org/css-pseudo-4/#treelike> (tree-abiding
+        // pseudo-elements, of which `::before`/`::after` are a subcase):
+        // "They inherit any inheritable properties from their originating
+        // element; non-inheritable properties take their initial values as
+        // usual." This is computed inline here, right where `id`'s own real
+        // children would be, rather than in a separate pass after this
+        // whole walk finishes, for one specific reason: `child_ctx` (the
+        // `rem`/`rlh` basis `id`'s real children get) is *not* a
+        // document-wide constant — a document can have multiple top-level
+        // elements directly under the `Document` node, each independently
+        // becoming its own `root_ctx == None` root with its own `rem` basis
+        // (see `resolve_inheritance`'s `root_ctx` doc above). A pseudo's
+        // `rem`/`rlh` basis must match whichever one its own real
+        // originating element actually resolved against, and that value
+        // only exists as this loop's *local* `child_ctx` at this exact
+        // point — reconstructing it after the fact would require redoing
+        // this same top-level-root bookkeeping in a second pass. Using
+        // `computed` (not `parent_computed`) as the inherited-from base and
+        // `child_ctx` (not `root_ctx`) as the absolutization context both
+        // follow directly from that §4 inheritance framing — a pseudo is
+        // one more entry alongside `id`'s real children in every sense this
+        // cascade cares about, just one this function itself resolves
+        // instead of pushing onto `stack` (there is no `StyleNodeId` for a
+        // pseudo-element to push). Whether a box is actually generated from
+        // the result — §4.1 <https://drafts.csswg.org/css-pseudo-4/#generated-content>'s
+        // separate, `content`-conditioned rule, "When their computed
+        // 'content' value is not 'none', these pseudo-elements generate
+        // boxes as if they were immediate children of their originating
+        // element" — is a downstream (`raikiri-dom`) decision this crate
+        // does not make; see `CascadeResult::pseudo`'s doc.
+        if is_element {
+            for pseudo in [PseudoElem::Before, PseudoElem::After] {
+                let candidates = cascaded.pseudo_candidates(id, pseudo);
+                let custom_candidates = cascaded.pseudo_custom_candidates(id, pseudo);
+                if candidates.is_none() && custom_candidates.is_none() {
+                    continue;
+                }
+                let pseudo_custom_properties = custom_candidates
+                    .map(|candidates| resolve_custom_properties(&custom_properties, candidates))
+                    .unwrap_or_else(|| custom_properties.clone());
+
+                let mut pseudo_specified = SpecifiedValues::inherit_from(&computed);
+                if let Some(candidates) = candidates {
+                    apply_winners(
+                        candidates,
+                        &mut winners,
+                        &mut pseudo_specified,
+                        &pseudo_custom_properties,
+                    );
+                }
+
+                let ctx = child_ctx.expect(
+                    "a `::before`/`::after` candidate only exists for a \
+                     StyleNodeKind::Element (is_element == true here, since \
+                     only elements are ever matched by a selector — \
+                     `collect_cascaded`'s pseudo-element pass runs inside \
+                     the same `if let Some(elem) = node.as_element()` guard \
+                     as its real-element pass), and `child_ctx` is `Some` \
+                     for every element by this point in the match above",
+                );
+                let mut pseudo_computed = pseudo_specified.finalize(&computed, &ctx);
+                pseudo_computed.custom_properties = pseudo_custom_properties;
+                pseudo_out.insert((id, pseudo), pseudo_computed);
+            }
+        }
 
         // out を id+1 サイズに resize してから index 書き込み。
         // `cascade()` の pre-allocation で通常 out.len() == node_count() のため
@@ -11364,8 +11722,11 @@ mod tests {
     /// 1 つしか持てないが、descendant combinator で compound を連結すれば
     /// compound ごとに `Component::LocalName` が積み上がるため、この field も
     /// 公開 API 経由で飽和させられる (`RaikiriSelectorParser` は
-    /// pseudo-element 未サポート — `crate::PseudoElem` は uninhabited — // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
-    /// だが combinator 連結には無関係)。3 field 全てを飽和させると理論上の
+    /// `::before`/`::after` (`crate::PseudoElem`) をサポートするが、それらは // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+    /// selector の最右端に 1 個だけしか現れない (後続の combinator/component
+    /// を一切許さない、`selector_matches_pseudo_element` doc 参照) ため
+    /// combinator 連結による飽和には使えず、この field の飽和経路とは無関係)。
+    /// 3 field 全てを飽和させると理論上の
     /// packed 最大値 `0x3FFF_FFFF` (margin 1、実測値) に一致する — これは
     /// 本 const 直上の doc の「margin はちょうど 1」と整合する。
     #[test]
@@ -13213,6 +13574,309 @@ mod tests {
         assert!(
             r.computed[span].content.is_empty(),
             "child should not inherit content"
+        );
+    }
+
+    // ── ::before/::after pseudo-element cascade (CSS Pseudo-Elements
+    //    Module Level 4 §4/§4.1, CSS Content Module Level 3 §2) ──
+
+    #[test]
+    fn before_selector_populates_pseudo_map_with_content() {
+        // `.foo::before { content: "x" }` on `<p class="foo">` — the real
+        // element's own `computed` must NOT carry `content` (that selector
+        // never matches `p` itself, only its `::before`), while
+        // `result.pseudo[&(p, PseudoElem::Before)]` must.
+        use crate::property::ContentComponent;
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, r#".foo::before { content: "x" }"#);
+        let p = doc.push_element(0, "p", None);
+        doc.set_attr(p, "class", "foo");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            r.computed[p].content.is_empty(),
+            "the ::before rule must not leak onto the real element itself"
+        );
+        let before = r
+            .pseudo
+            .get(&(StyleNodeId(p as u64), PseudoElem::Before))
+            .expect("::before entry must exist");
+        assert_eq!(*before.content, vec![ContentComponent::Literal("x".into())]);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            !r.pseudo
+                .contains_key(&(StyleNodeId(p as u64), PseudoElem::After)),
+            "no ::after rule matched — no entry"
+        );
+    }
+
+    #[test]
+    fn after_selector_populates_pseudo_map_independently_of_before() {
+        use crate::property::ContentComponent;
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, r#"p::before { content: "b" } p::after { content: "a" }"#);
+        let p = doc.push_element(0, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        let before = &r.pseudo[&(StyleNodeId(p as u64), PseudoElem::Before)];
+        let after = &r.pseudo[&(StyleNodeId(p as u64), PseudoElem::After)];
+        assert_eq!(*before.content, vec![ContentComponent::Literal("b".into())]);
+        assert_eq!(*after.content, vec![ContentComponent::Literal("a".into())]);
+    }
+
+    #[test]
+    fn pseudo_element_computed_values_inherit_from_real_element_not_initial() {
+        // CSS Pseudo-Elements Module Level 4 §4
+        // <https://drafts.csswg.org/css-pseudo-4/#treelike>: "They inherit
+        // any inheritable properties from their originating element" — so
+        // `color` (inherited) on `::before` must come from the real
+        // element's own computed color, not the document's initial black,
+        // when the `::before` rule itself sets nothing for `color`.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, r#"p { color: red } p::before { content: "x" }"#);
+        let p = doc.push_element(0, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        let before = &r.pseudo[&(StyleNodeId(p as u64), PseudoElem::Before)];
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            before.color, RED,
+            "::before must inherit color from its real originating element"
+        );
+    }
+
+    #[test]
+    fn pseudo_element_own_declaration_overrides_inherited_value() {
+        // A `::before` rule can still set its own `color`, overriding what
+        // it would otherwise inherit from the real element.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            r#"p { color: red } p::before { content: "x"; color: blue }"#,
+        );
+        let p = doc.push_element(0, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        let before = &r.pseudo[&(StyleNodeId(p as u64), PseudoElem::Before)];
+        assert_eq!(before.color, BLUE);
+    }
+
+    #[test]
+    fn pseudo_element_custom_property_wired_through_cascade() {
+        // Exercises `CascadedArena`'s custom-property counterpart of the
+        // pseudo arena (`pseudo_custom_decls`/`pseudo_custom_ranges`,
+        // `collect_cascaded`'s `pseudo_before_custom`/`pseudo_after_custom`
+        // scratch buffers) — every other pseudo-element test above only
+        // ever pushes through the plain-property side
+        // (`pseudo_decls`/`pseudo_ranges`). A `::before` rule can declare a
+        // custom property exactly like a real element can; this pins that
+        // it actually reaches the pseudo's own `custom_properties`
+        // environment (via `resolve_custom_properties` in
+        // `resolve_inheritance`'s pseudo-element section), not just the
+        // parent's inherited one.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, r#"p::before { content: "x"; --accent: red }"#);
+        let p = doc.push_element(0, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        let before = &r.pseudo[&(StyleNodeId(p as u64), PseudoElem::Before)];
+        assert_eq!(before.custom_properties.get("--accent"), Some("red".into()));
+    }
+
+    #[test]
+    fn pseudo_element_entry_exists_with_empty_content_when_rule_sets_no_content() {
+        // `CascadeResult::pseudo` doc's contract to the consumer: map
+        // presence only means "some ::before/::after rule matched" — it says
+        // nothing about whether that rule actually set `content`. A
+        // `::before` rule that sets only `color` (forgets `content`, an easy
+        // authoring mistake) must still produce an entry, with an empty
+        // `content` list (this crate's `normal`/`none` representation) —
+        // not a missing entry, and not a panic.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "p::before { color: blue }");
+        let p = doc.push_element(0, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        let before = &r.pseudo[&(StyleNodeId(p as u64), PseudoElem::Before)];
+        assert_eq!(before.color, BLUE);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            before.content.is_empty(),
+            "no `content` declaration on the rule — must compute to the \
+             empty (normal/none) representation, not panic or default to \
+             something else"
+        );
+    }
+
+    #[test]
+    fn pseudo_element_selector_specificity_participates_in_cascade_ranking() {
+        // The pseudo arena runs through the same `pick_winners`/`beats`
+        // ranking as the real-element arena — this pins that
+        // `specificity_of(selector)` (not some constant) is actually what
+        // gets passed through for the `::before` path specifically.
+        // `.foo::before` (0,1,0 + pseudo-element count) must beat plain
+        // `p::before` (0,0,1 + pseudo-element count) *despite* losing on
+        // source order — `.foo::before` is declared **first** here
+        // deliberately, so that if the specificity value were accidentally
+        // dropped (e.g. a constant passed instead of
+        // `specificity_of(selector)`), the later, lower-specificity
+        // `p::before` would win on the source-order tie-break instead and
+        // this assertion would catch it.
+        use crate::property::ContentComponent;
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            r#".foo::before { content: "higher-specificity" } p::before { content: "later-source-order" }"#,
+        );
+        let p = doc.push_element(0, "p", None);
+        doc.set_attr(p, "class", "foo");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        let before = &r.pseudo[&(StyleNodeId(p as u64), PseudoElem::Before)];
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            *before.content,
+            vec![ContentComponent::Literal("higher-specificity".into())],
+            "higher-specificity .foo::before must win over the \
+             later-declared, lower-specificity p::before"
+        );
+    }
+
+    #[test]
+    fn no_pseudo_element_rule_leaves_pseudo_map_empty_for_that_element() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "p { color: red }");
+        doc.push_element(0, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert!(r.pseudo.is_empty(), "no ::before/::after rule anywhere");
+    }
+
+    #[test]
+    fn bare_before_pseudo_element_matches_every_element_like_universal() {
+        // Bare `::before` (no preceding type/class) parses as an implicit
+        // universal originating-element selector — `*::before`. Both `<p>`
+        // and `<span>` must get an entry.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, r#"::before { content: "x" }"#);
+        let p = doc.push_element(0, "p", None);
+        let span = doc.push_element(0, "span", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert!(
+            r.pseudo
+                .contains_key(&(StyleNodeId(p as u64), PseudoElem::Before))
+        );
+        assert!(
+            r.pseudo
+                .contains_key(&(StyleNodeId(span as u64), PseudoElem::Before))
+        );
+    }
+
+    #[test]
+    fn pseudo_element_originating_selector_can_use_a_combinator_chain() {
+        // Every other pseudo-element test above uses a single-compound
+        // originating-element selector (`.foo::before`, `p::before`, bare
+        // `::before`) — this one exercises `selector_matches_pseudo_element`
+        // when the part of the selector *before* the pseudo-element itself
+        // spans a combinator (`div p::before`, a descendant combinator),
+        // which routes through `match_combinator_chain` exactly like an
+        // ordinary (non-pseudo) selector's own combinator chain does.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, r#"div p::before { content: "nested" }"#);
+        let div = doc.push_element(0, "div", None);
+        let p_inside = doc.push_element(div, "p", None);
+        let p_outside = doc.push_element(0, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            r.pseudo
+                .contains_key(&(StyleNodeId(p_inside as u64), PseudoElem::Before)),
+            "`div p::before` must match the `<p>` that is a descendant of `<div>`"
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            !r.pseudo
+                .contains_key(&(StyleNodeId(p_outside as u64), PseudoElem::Before)),
+            "a `<p>` outside any `<div>` must not match `div p::before`"
+        );
+    }
+
+    #[test]
+    fn selector_list_can_mix_real_element_and_pseudo_element_targets() {
+        // `p, p::before { content: "x" }` — one selector targets the real
+        // `<p>`, the other targets its `::before`. Both must apply
+        // independently from the same rule.
+        use crate::property::ContentComponent;
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, r#"p, p::before { content: "x" }"#);
+        let p = doc.push_element(0, "p", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            *r.computed[p].content,
+            vec![ContentComponent::Literal("x".into())],
+            "the `p` branch of the selector list must still apply to the \
+             real element"
+        );
+        let before = &r.pseudo[&(StyleNodeId(p as u64), PseudoElem::Before)];
+        assert_eq!(*before.content, vec![ContentComponent::Literal("x".into())]);
+    }
+
+    #[test]
+    fn pseudo_element_selector_never_matches_real_element_directly() {
+        // Safety-net regression: `.foo::before` alone must not also apply
+        // its declarations to the real `.foo` element (only to its
+        // `::before`) — pins the `compound_matches` `_ => false` interaction
+        // `selector_matches_pseudo_element`'s doc describes.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, r#".foo::before { color: blue }"#);
+        let p = doc.push_element(0, "p", None);
+        doc.set_attr(p, "class", "foo");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[p].color,
+            ComputedValues::initial().color,
+            "must stay initial — the ::before rule must not leak onto the \
+             real element"
         );
     }
 

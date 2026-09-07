@@ -12,7 +12,7 @@ use crate::page::{
 };
 use crate::rule::{Declaration, StyleRule, parse_declaration_block};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
-use crate::{PseudoClass, RaikiriSelectorImpl, RaikiriSelectorParser};
+use crate::{PseudoClass, PseudoElem, RaikiriSelectorImpl, RaikiriSelectorParser};
 
 /// Cascade origin (CSS Cascading L4 §6.2)。
 ///
@@ -461,13 +461,27 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
 /// `Component::Nth(_)` (`:root` / `:empty` /
 /// `:first-child`/`:last-child`/`:only-child`/`:nth-child()`/`:nth-last-child()`
 /// / `:first-of-type`/`:last-of-type`/`:only-of-type`/`:nth-of-type()`/
-/// `:nth-last-of-type()`) を段階的に追加受理するよう拡張され、type/universal
-/// only という名前が実態と合わなくなったため rename した。他 combinator
-/// (`Combinator::PseudoElement` / `Combinator::SlotAssignment` /
-/// `Combinator::Part`) と `:hover`/`:active` pseudo-class は引き続き scope 外
-/// (`cascade.rs::match_combinator_chain` の doc 参照 — combinator 側の 3 つは
-/// pseudo-element 専用で、本 crate の `parse_selector_list` が pseudo-element
-/// 構文自体を parse error にするため到達不能)。
+/// `:nth-last-of-type()`)、`Component::PseudoElement(PseudoElem::Before |
+/// PseudoElem::After)` + その bridge である
+/// `Component::Combinator(Combinator::PseudoElement)` (`::before`/`::after`)
+/// を段階的に追加受理するよう拡張され、type/universal only という名前が
+/// 実態と合わなくなったため rename した。他 combinator
+/// (`Combinator::SlotAssignment` / `Combinator::Part`) と `:hover`/`:active`
+/// pseudo-class は引き続き scope 外 (`cascade.rs::match_combinator_chain` の
+/// doc 参照 — この 2 つは対応する pseudo 構文 (`::slotted()`/`::part()`) 自体を
+/// `RaikiriSelectorParser` が `parse_slotted`/`parse_part` を override せず
+/// default `false` のままにしているため、本 crate の
+/// `parse_selector_list` がそもそも parse error にする、つまり到達不能)。
+///
+/// `::before`/`::after` は `Component::PseudoElement` 単体として cascade 側の
+/// `compound_matches`/`match_combinator_chain` には一切渡らない (次節
+/// "Invariant" のただし書き参照) — real element 自身への直接 match は
+/// `cascade.rs::compound_matches` の `_ => false` safety net が
+/// `Component::PseudoElement` 単体の compound を安全に reject し続けるので、
+/// `.foo::before { .. }` が real `.foo` element に誤って直接適用されることは
+/// 無い。real element ではなく `::before`/`::after` 自体への適用は
+/// `cascade.rs::selector_matches_pseudo_element` という独立した matcher が
+/// 別途担当する。
 ///
 /// **4 combinator 間の混在に制限は無い**: 同じ
 /// complex selector の中で祖先系 (`>`/space) と兄弟系 (`+`/`~`)
@@ -538,12 +552,36 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
 /// doc pointer で invariant を明示するに留める)。この関数と `cascade.rs`
 /// 側の対応 match arm は combinator/pseudo-class の追加のたびに複数回
 /// 同時編集することになるため、変更のたびにこの対応関係を保つこと。
+///
+/// **例外 (`Component::PseudoElement` / `Component::Combinator(Combinator::
+/// PseudoElement)`)**: この 2 つだけはこの invariant の対象外 —
+/// `compound_matches`/`match_combinator_chain` に対応 arm を追加する代わりに、
+/// `cascade.rs::selector_matches_pseudo_element` という独立した matcher が
+/// 丸ごと引き受けている (real element 自身への直接 match は
+/// `compound_matches`'s `_ => false` safety net が `Component::PseudoElement`
+/// を安全に reject し続ける — 詳細はこの関数の doc の `::before`/`::after`
+/// 節、および `selector_matches_pseudo_element` 自身の doc)。
 fn is_supported_selector_list(list: &SelectorList<RaikiriSelectorImpl>) -> bool {
     list.slice()
         .iter()
         .all(|selector| is_supported_selector(selector, true))
 }
 
+/// `allow_nth` は名前の通り `Component::Nth`/`NthOf` の可否を切り替えるが、
+/// 同時に「この呼び出しは selector list の**外側** (top-level candidate
+/// selector) か、それとも `:nth-child(An+B of S)` の `S` の**内側**か」も
+/// 表す — `Component::PseudoElement`/`Combinator::PseudoElement` の受理も
+/// この同じフラグで gate する (専用の第 2 引数を増やさず再利用): CSS
+/// Selectors Level 4 は `:nth-child(of S)` の `S` にも pseudo-element を
+/// 禁じており (`selectors` crate 自身がこの禁止を **grammar 側で** 強制済み
+/// — 経験的に確認: `p:nth-child(2 of .x::before)` は `selectors` v0.39.0
+/// 自体が `InvalidState` で parse error にする、`S` として
+/// `Component::PseudoElement` を含む `SelectorList` はそもそも構築され得ない
+/// — `lib.rs`'s
+/// `parse_pseudo_element_rejected_inside_nth_child_of_selector_list` test
+/// 参照)、`allow_nth == false` の再帰呼び出しでは受理しないことで
+/// defense-in-depth を維持する (他の受理 component と同じ「upstream が防いで
+/// いるはずでも safety net を重ねる」姿勢)。
 fn is_supported_selector(selector: &Selector<RaikiriSelectorImpl>, allow_nth: bool) -> bool {
     use selectors::parser::{Combinator, Component};
 
@@ -576,6 +614,8 @@ fn is_supported_selector(selector: &Selector<RaikiriSelectorImpl>, allow_nth: bo
                         .all(|selector| is_supported_selector(selector, false))
             }
             Component::NonTSPseudoClass(PseudoClass::Lang(_) | PseudoClass::Dir(_)) => true,
+            Component::Combinator(Combinator::PseudoElement) => allow_nth,
+            Component::PseudoElement(PseudoElem::Before | PseudoElem::After) => allow_nth,
             _ => false,
         })
 }
