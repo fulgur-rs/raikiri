@@ -56,10 +56,30 @@ mod tests {
     use super::*;
     use raikiri_style::property::{BorderColor, CssColor};
 
-    const RED: CssColor = CssColor { r: 255, g: 0, b: 0, a: 255 };
-    const BLACK: CssColor = CssColor { r: 0, g: 0, b: 0, a: 255 };
-    const BLUE: CssColor = CssColor { r: 0, g: 0, b: 255, a: 255 };
-    const TRANSPARENT: CssColor = CssColor { r: 0, g: 0, b: 0, a: 0 };
+    const RED: CssColor = CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    const BLACK: CssColor = CssColor {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    const BLUE: CssColor = CssColor {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    };
+    const TRANSPARENT: CssColor = CssColor {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 0,
+    };
 
     #[test]
     fn current_color_resolves_to_computed_color() {
@@ -80,8 +100,14 @@ mod tests {
     fn resolved_black_is_independent_of_current_color() {
         // Hazard 3: <div style="border-color: black"> with a different
         // currentColor — Resolved must ignore current_color.
-        assert_eq!(resolve_border_color(BorderColor::Resolved(BLACK), RED), BLACK);
-        assert_eq!(resolve_border_color(BorderColor::Resolved(BLACK), BLUE), BLACK);
+        assert_eq!(
+            resolve_border_color(BorderColor::Resolved(BLACK), RED),
+            BLACK
+        );
+        assert_eq!(
+            resolve_border_color(BorderColor::Resolved(BLACK), BLUE),
+            BLACK
+        );
     }
 
     #[test]

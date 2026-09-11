@@ -9139,11 +9139,10 @@ fn parse_mix_color_space<'i>(
 // source, and every downstream `!is_nan()` guard (and every range check
 // that incidentally depends on NaN comparing `false`, e.g.
 // `parse_filter_amount`'s `v >= 0.0`) sees the spec-correct value
-// directly, without needing a special case of its own — with one
-// documented exception, `parse_grid_flex_res` (the `fr` unit), which still
-// acquires its token via raw `Parser::next` and so still observes this
-// hazard for `grid-template-columns: 0e999fr`-shaped literals (see that
-// function's own doc).
+// directly, without needing a special case of its own — including
+// `parse_grid_flex_res` (the `fr` unit), which acquires its
+// `Token::Dimension` via `next_numeric_stable` just like the other
+// numeric-token consumers.
 //
 // This grammar-mirroring is itself a forward-maintenance hazard worth
 // naming: `numeric_token_prefix` below re-implements cssparser's
@@ -11755,25 +11754,21 @@ fn parse_line_names_or_empty(input: &mut Parser<'_, '_>) -> Vec<SmolStr> {
 /// taffy `MaxTrackSizingFunction::fr` へ無変換で copy する、sink guard を
 /// 経由しない経路)。
 ///
-/// この関数は raw `Parser::next` で token を取得しており、module doc
-/// 「Numeric-token NaN stabilization」節の `next_numeric_stable` を経由
-/// しない — 本 crate の他の numeric parser とは異なる、既知の
-/// pre-existing な不整合。zero-mantissa/huge-exponent literal
-/// (`grid-template-columns: 0e999fr`) は依然 cssparser tokenizer 側で
-/// `NaN` に collapse し、`value.is_finite()` に弾かれて drop される
-/// (spec-correct な `Flex(0.0)` にはならない)。
+/// token 取得は `next_numeric_stable` 経由 (module doc 冒頭「Numeric-token
+/// NaN stabilization」節参照) — zero-mantissa/huge-exponent literal
+/// (`grid-template-columns: 0e999fr`) を cssparser tokenizer が `NaN` に
+/// collapse する artifact をここで訂正済のため、spec-correct な `Flex(0.0)`
+/// に解決される。
 fn parse_grid_flex_res<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
-    match input.next()?.clone() {
-        Token::Dimension {
-            value, ref unit, ..
-        } if unit.eq_ignore_ascii_case("fr") => {
-            if value.is_finite() && value >= 0.0 {
-                Ok(value)
+    match &next_numeric_stable(input)? {
+        Token::Dimension { value, unit, .. } if unit.eq_ignore_ascii_case("fr") => {
+            if value.is_finite() && *value >= 0.0 {
+                Ok(*value)
             } else {
                 Err(input.new_custom_error(()))
             }
         }
-        t => Err(input.new_unexpected_token_error(t)),
+        t => Err(input.new_unexpected_token_error(t.clone())),
     }
 }
 
@@ -26516,6 +26511,29 @@ mod tests {
         // check, and (unlike a valid `fr`) doesn't fall back to a
         // `<length-percentage>` either, since `fr` isn't a length unit.
         assert_eq!(parse("-1fr", "grid-template-columns"), None);
+    }
+
+    #[test]
+    fn grid_template_columns_zero_mantissa_huge_exponent_flex_resolves_to_zero() {
+        // `0e999fr` is a zero-mantissa, huge-exponent literal that cssparser's
+        // tokenizer collapses to `NaN` internally (module doc's
+        // "Numeric-token NaN stabilization" section is canonical for the
+        // mechanism), but `next_numeric_stable` (which `parse_grid_flex_res`
+        // acquires its token through) corrects that before the `is_finite()`
+        // guard ever runs. So `0e999fr` resolves to the spec-correct
+        // `GridTrackBreadth::Flex(0.0)` directly, per CSS Syntax 3 §4.3.13
+        // (`true value is 0`) and CSS Grid 1 §7.2.4 (`<flex [0,∞]>` allows 0).
+        assert_eq!(
+            parse("0e999fr", "grid-template-columns"),
+            Some(PropertyValue::GridTemplateColumns(
+                GridTemplateTracks::List(Arc::new(GridTrackList {
+                    line_names: vec![vec![], vec![]],
+                    components: vec![GridTrackListComponent::Size(GridTrackSize::Breadth(
+                        GridTrackBreadth::Flex(0.0)
+                    ))],
+                }))
+            ))
+        );
     }
 
     #[test]
