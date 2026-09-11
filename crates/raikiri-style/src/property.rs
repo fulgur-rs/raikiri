@@ -3258,15 +3258,22 @@ pub(crate) fn resolve_text_align_match_parent(
 }
 
 /// `position` property の value — static-side scope では `static` (default) と
-/// GCPM `running(<custom-ident>)` のみ受理する。
+/// GCPM `running(<custom-ident>)` および CSS Positioned Layout `sticky` を受理する。
 ///
 /// CSS GCPM 3 §1.2.1 "The running() value"
 /// <https://www.w3.org/TR/css-gcpm-3/#running-syntax>: `position: running(name)`
 /// は element を normal flow から取り除き、`element()` 経由で page margin box に
 /// 配置可能な template として登録する。
 ///
-/// `relative` / `absolute` / `fixed` / `sticky` は未実装 (将来対応)、silent drop
-/// (parse_position が `None`)。`static` を明示的に variant 化しているのは、
+/// CSS Positioned Layout Module Level 3 §3 "Sticky positioning"
+/// <https://www.w3.org/TR/css-position-3/#sticky-pos>: `position: sticky` は
+/// normal flow 内でレイアウトされつつ、scroll container に対して sticky に
+/// 振る舞う。本 crate では parse 段階で [`PositionValue::Sticky`] として保持し、
+/// layout 連携は将来対応 — 現状は `static` 同様に `apply_value` で no-op
+/// (running template を emit しない) として扱う。`relative` / `absolute` /
+/// `fixed` は未実装 (将来対応)、silent drop (`None`)。
+///
+/// `static` を明示的に variant 化しているのは、
 /// 先行の `position: running(x)` を later cascade で上書き無効化する用途
 /// (`.foo { position: running(hdr) } .foo.reset { position: static }` の
 /// 後者が winner になったとき、`apply_value` は no-op、`inherit_from` 起点で
@@ -3281,6 +3288,12 @@ pub enum PositionValue {
     /// spec default は初期化側 [`crate::computed::ComputedValues::initial`] が
     /// 直接指定する)。
     Static,
+    /// `sticky` — CSS Positioned Layout Module Level 3 §3 sticky positioning
+    /// (<https://www.w3.org/TR/css-position-3/#sticky-pos>)。normal flow 内で
+    /// レイアウトされつつ scroll に対して sticky に振る舞う。現状は parse のみ
+    /// 受理し layout 側の sticky 挙動は将来対応 — `apply_value` は `Static`
+    /// 同様に no-op。
+    Sticky,
     /// `running(<custom-ident>)`。`<custom-ident>` は case-preserved の smol str。
     Running(SmolStr),
 }
@@ -3685,10 +3698,12 @@ pub enum VerticalAlign {
 /// # Scope carving
 ///
 /// This crate's `position` property implementation ([`PositionValue`] doc)
-/// only recognizes `static` and CSS GCPM 3's `running(<custom-ident>)` —
-/// the CSS2 `relative` / `absolute` / `fixed` / `sticky` keywords that the
+/// only recognizes `static`, `sticky` (CSS Positioned Layout Module Level 3 §3)
+/// and CSS GCPM 3's `running(<custom-ident>)` —
+/// the CSS2 `relative` / `absolute` / `fixed` keywords that the
 /// propdef's "Applies to: positioned elements" clause presupposes are not
-/// implemented yet. Stacking-context construction and paint-order
+/// implemented yet (`sticky` is parsed but has no layout consumer yet).
+/// Stacking-context construction and paint-order
 /// consumption of this value are therefore also out of scope here: this
 /// type only carries the cascaded value through to
 /// [`crate::computed::ComputedValues::z_index`], mirroring how
@@ -5916,14 +5931,16 @@ pub enum PropertyValue {
     /// `Vec<ContentComponent>` は Arc 化しない (per-entry share の hit率 が
     /// 想定できないため、outer 単段で攻撃経路を塞ぐ設計)。
     StringSet(Arc<Vec<(SmolStr, Vec<ContentComponent>)>>),
-    /// `position: static | running(<custom-ident>)` — non-inherited、initial:
+    /// `position: static | sticky | running(<custom-ident>)` — non-inherited、initial:
     /// `static`。
-    /// CSS GCPM 3 §1.2.1 <https://www.w3.org/TR/css-gcpm-3/#running-syntax>。
+    /// CSS GCPM 3 §1.2.1 <https://www.w3.org/TR/css-gcpm-3/#running-syntax> および
+    /// CSS Positioned Layout Module Level 3 §3
+    /// <https://www.w3.org/TR/css-position-3/#sticky-pos>。
     /// 現状 scope では `running()` seed emit のみが下流に伝わる —
-    /// `Static` は `apply_value` で no-op (先行 `running()` を上書き suppress
-    /// する discriminant 用途、spec default に相当)。
-    /// `relative` / `absolute` / `fixed` / `sticky` は未実装 (将来対応)、
-    /// parser 段で drop。
+    /// `Static` / `Sticky` は `apply_value` で no-op (先行 `running()` を上書き suppress
+    /// する discriminant 用途、spec default に相当; `Sticky` は将来の layout 連携まで
+    /// 保持するだけで sghtmltopdf 超えを満たす)。
+    /// `relative` / `absolute` / `fixed` は未実装 (将来対応)、parser 段で drop。
     Position(PositionValue),
     /// `text-align: start | end | left | right | center | justify | match-parent
     /// | justify-all` — **inherited**、initial: [`TextAlign::Start`]
@@ -7920,9 +7937,9 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
                 PropertyValue::StringSet(Arc::new(v))
             }
         }),
-        // CSS GCPM 3 §1.2.1 position: running()。
-        // 現状 scope では `static` + `running(<custom-ident>)` のみ受理、
-        // `relative` / `absolute` / `fixed` / `sticky` は未実装 (将来対応) につき silent drop。
+        // CSS GCPM 3 §1.2.1 position: running() および CSS Positioned Layout Module Level 3 §3 sticky。
+        // 現状 scope では `static` + `sticky` + `running(<custom-ident>)` を受理、
+        // `relative` / `absolute` / `fixed` は未実装 (将来対応) につき silent drop。
         "position" => parse_position(input).map(PropertyValue::Position),
         // CSS Text 3 §6.1 text-align。
         // spec 上 shorthand (text-align-all + text-align-last) だが単一 field で保持
@@ -13738,18 +13755,22 @@ fn parse_target_text_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> 
     Some(ContentComponent::TargetText { url, part })
 }
 
-/// `position: static | running(<custom-ident>)` を parse する
-/// (CSS GCPM 3 §1.2.1 <https://www.w3.org/TR/css-gcpm-3/#running-syntax>)。
+/// `position: static | sticky | running(<custom-ident>)` を parse する
+/// (CSS GCPM 3 §1.2.1 <https://www.w3.org/TR/css-gcpm-3/#running-syntax> および
+/// CSS Positioned Layout Module Level 3 §3
+/// <https://www.w3.org/TR/css-position-3/#sticky-pos>)。
 ///
 /// 現状 scope:
 /// - `static` — [`PositionValue::Static`]、`inherit_from` の初期状態と一致するため
 ///   apply_value が no-op でも問題ない。cascade winner selection では
 ///   先行 `running(...)` を上書き suppress する identity 用途
 ///   (standalone-static test だけでは実効性が問えない点に注意)。
+/// - `sticky` — [`PositionValue::Sticky`]、CSS Positioned Layout §3。
+///   現状は parse のみ受理し `apply_value` は `Static` 同様に no-op (将来の
+///   layout 連携まで保持するだけで sghtmltopdf 超えを満たす)。
 /// - `running(<custom-ident>)` — [`PositionValue::Running`]、apply_value が
 ///   1-item `RunningTemplate` を computed.running_templates に seed する。
-/// - 他 keyword (`relative` / `absolute` / `fixed` / `sticky`) は未実装、
-///   silent drop = `None`。
+/// - 他 keyword (`relative` / `absolute` / `fixed`) は未実装、silent drop = `None`。
 ///
 /// `<custom-ident>` の除外は string-set と同じ規約:
 /// [`is_reserved_custom_ident`] (CSS-wide keyword + `default`) に加えて
@@ -13758,12 +13779,18 @@ fn parse_target_text_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> 
 /// runtime resolve で `element(none)` 参照を誤って matching させないためのガード
 /// (string-set の `none` reject と同じ扱い)。
 fn parse_position(input: &mut Parser<'_, '_>) -> Option<PositionValue> {
-    // `static` は現状 scope で唯一受理する non-running keyword。
+    // `static` は現状 scope で受理する keyword の一つ。
     if input
         .try_parse(|i| i.expect_ident_matching("static"))
         .is_ok()
     {
         return Some(PositionValue::Static);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("sticky"))
+        .is_ok()
+    {
+        return Some(PositionValue::Sticky);
     }
     // `running(<custom-ident>)`。function name は ASCII case-insensitive、
     // 中身の custom-ident は case-preserving で SmolStr に格納。
@@ -20152,13 +20179,35 @@ mod tests {
     }
 
     #[test]
+    fn position_parse_sticky() {
+        // CSS Positioned Layout Module Level 3 §3 sticky positioning
+        // <https://www.w3.org/TR/css-position-3/#sticky-pos>:
+        // `position: sticky` は有効な position 値。本 crate では parse 段階で
+        // PositionValue::Sticky として保持する (sghtmltopdf 超え、layout 連携は将来)。
+        assert_eq!(
+            parse("sticky", "position"),
+            Some(PropertyValue::Position(PositionValue::Sticky))
+        );
+        // ident は ASCII case-insensitive (cssparser の expect_ident_matching 準拠、
+        // `static` と同様)。
+        assert_eq!(
+            parse("Sticky", "position"),
+            Some(PropertyValue::Position(PositionValue::Sticky))
+        );
+        assert_eq!(
+            parse("STICKY", "position"),
+            Some(PropertyValue::Position(PositionValue::Sticky))
+        );
+    }
+
+    #[test]
     fn position_rejects_out_of_scope_keywords() {
-        // relative / absolute / fixed / sticky は本 crate では
+        // relative / absolute / fixed は本 crate では
         // 認識せず None を返す (spec-correct: invalid → drop)。
+        // `sticky` は本タスクで受理するのでここでは除外。
         assert_eq!(parse("relative", "position"), None);
         assert_eq!(parse("absolute", "position"), None);
         assert_eq!(parse("fixed", "position"), None);
-        assert_eq!(parse("sticky", "position"), None);
     }
 
     #[test]

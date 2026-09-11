@@ -7427,6 +7427,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         //   の 2-tier キャッシュ static side 責務 (design doc §7.3)。
         PropertyValue::Position(pv) => match pv {
             PositionValue::Static => {}
+            PositionValue::Sticky => {}
             PositionValue::Running(name) => {
                 target.running_templates.push(RunningTemplate { name });
             }

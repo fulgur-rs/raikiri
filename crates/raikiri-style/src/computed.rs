@@ -850,9 +850,11 @@ pub struct ComputedValues {
     /// This field carries the cascaded value only — no consumer reads it
     /// yet. [`ZIndexValue`] doc's "Scope carving" section explains why:
     /// this crate's `position` property does not implement the CSS2
-    /// `relative`/`absolute`/`fixed`/`sticky` keywords that "positioned
-    /// elements" (the propdef's "Applies to" clause) presupposes, so there
-    /// is no stacking-context/paint-order consumer to wire up yet.
+    /// `relative`/`absolute`/`fixed` keywords that "positioned
+    /// elements" (the propdef's "Applies to" clause) presupposes ( `sticky`
+    /// is parsed as [`crate::property::PositionValue::Sticky`] but has no
+    /// layout consumer yet, `relative`/`absolute`/`fixed` remain silent drop),
+    /// so there is no stacking-context/paint-order consumer to wire up yet.
     pub z_index: ZIndexValue,
     /// `word-break`. **inherited**, initial: [`WordBreak::Normal`] (CSS
     /// Text Module Level 3 §5.1 "Breaking Rules for Letters: the
