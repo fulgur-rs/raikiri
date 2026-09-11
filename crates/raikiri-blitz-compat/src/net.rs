@@ -299,11 +299,7 @@ where
                 let _ = self.tx.send((resolved_url, bytes));
             }
         }
-        self.0.fetch(
-            0,
-            blitz_req,
-            Box::new(ChannelHandler { tx }),
-        );
+        self.0.fetch(0, blitz_req, Box::new(ChannelHandler { tx }));
         // Block with timeout to avoid hang; use 5s default.
         match rx.recv_timeout(std::time::Duration::from_secs(5)) {
             Ok((url_str, bytes)) => {
