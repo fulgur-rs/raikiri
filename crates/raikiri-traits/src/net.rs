@@ -110,6 +110,14 @@ impl AbortSignal {
     pub fn is_aborted(&self) -> bool {
         self.0.load(Ordering::Acquire)
     }
+
+    /// blitz-traits 互換 alias (`is_aborted` → `aborted`)。
+    ///
+    /// blitz `AbortSignal::aborted()` と shape 一致させるための alias。
+    /// `is_aborted` が canonical。
+    pub fn aborted(&self) -> bool {
+        self.is_aborted()
+    }
 }
 
 /// AbortSignal を produce する controller。round 5 review #2 対応: raikiri は
