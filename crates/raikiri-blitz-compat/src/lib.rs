@@ -11,6 +11,7 @@ pub mod events;
 pub mod html;
 pub mod navigation;
 pub mod net;
+pub mod page_stream;
 pub mod shell;
 
 /// `blitz_traits` namespace alias — mirrors `blitz_traits` crate path.
