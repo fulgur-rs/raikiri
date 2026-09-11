@@ -5477,7 +5477,7 @@ pub enum ClipPath {
     GeometryBox(GeometryBox),
 }
 
-/// `mask-image` の specified value。
+/// `mask-image` の specified value — [`BackgroundImage`] の type alias.
 ///
 /// CSS Masking Level 1 §7.1 "Image Masking: the mask-image property"
 /// <https://www.w3.org/TR/css-masking-1/#the-mask-image>。Full grammar:
@@ -5496,21 +5496,20 @@ pub enum ClipPath {
 ///
 /// `<mask-source>` (`<url>`) と `<image>`'s `<url>` alternative は
 /// concrete syntax 上区別不能 (`url(#foo)` はどちらのつもりで書かれたかを
-/// パーサーが判別する情報を持たない) — したがって本 enum の [`Self::Url`]
-/// variant は両方を兼ねる、[`BackgroundImage`] の `<bg-image> = <url> |
-/// <gradient>` と同じ parse 経路 ([`parse_mask_image`] doc参照)。
-#[non_exhaustive]
-#[derive(Clone, Debug, PartialEq)]
-pub enum MaskImage {
-    /// `none` — spec initial value。masking を行わない。
-    None,
-    /// `<url>` — `<mask-source>` (SVG `<mask>` element参照) と `<image>`'s
-    /// `<url>` alternative の両方を兼ねる (上記 doc 参照)。
-    Url(String),
-    /// `<gradient>` — 6 gradient function のいずれか ([`BackgroundImage::Gradient`]
-    /// と同じ payload 型、paint 側での実際の fill は未実装)。
-    Gradient(Gradient),
-}
+/// パーサーが判別する情報を持たない) — したがって本 alias の concrete
+/// syntax は [`BackgroundImage`] の `<bg-image> = <url> | <gradient>` と
+/// 同一 ([`parse_mask_image`] doc 参照)。
+///
+/// # Reuse convention — [`BackgroundImage`] を verbatim 再利用
+///
+/// 本 alias は property 固有名の型を別 property でそのまま再利用する
+/// convention (b) に従う — 既存例: [`FilterFunction::DropShadow`] が
+/// [`TextShadowItem`] を verbatim 再利用。`MaskImage` と
+/// [`BackgroundImage`] は variant shape (`None` / `Url(String)` /
+/// `Gradient(Gradient)`) が完全一致するため、重複 enum ではなく type
+/// alias とする。将来 [`BackgroundImage`] に multi-layer 対応等の拡張が
+/// 入った場合も自動的に追従し drift を防ぐ。
+pub type MaskImage = BackgroundImage;
 
 /// `transform` の 1 function (CSS Transforms Level 1 §9.1 "Two-dimensional
 /// Subset" <https://www.w3.org/TR/css-transforms-1/#two-d-transform-functions>)。
@@ -14707,15 +14706,10 @@ fn parse_background_image(input: &mut Parser<'_, '_>) -> Option<BackgroundImage>
 /// <gradient>`、`<mask-source> = <url>`) は [`parse_background_image`]'s
 /// `<bg-image> = <url> | <gradient>` と concrete syntax レベルで一致する
 /// ([`MaskImage`] doc の「`<mask-source>` と `<image>` の `url`
-/// alternative は同じ具象構文」節) — body をそのまま踏襲する。
+/// alternative は同じ具象構文」節) — [`BackgroundImage`] への alias により
+/// body も共有する。
 fn parse_mask_image(input: &mut Parser<'_, '_>) -> Option<MaskImage> {
-    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
-        return Some(MaskImage::None);
-    }
-    if let Ok(gradient) = input.try_parse(parse_gradient) {
-        return Some(MaskImage::Gradient(gradient));
-    }
-    parse_url_value(input).map(MaskImage::Url)
+    parse_background_image(input)
 }
 
 /// `<geometry-box>` を parse する ([`GeometryBox`] doc の grammar 参照: 7
