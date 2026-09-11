@@ -3705,7 +3705,10 @@ pub enum ZIndexValue {
     /// `auto` — spec initial value. "The stack level of the generated box
     /// in the current stacking context is 0. The box does not establish a
     /// new stacking context unless it is the root element." (CSS2 §9.9.1
-    /// verbatim)
+    /// verbatim) Note: css-position-3 §2.2 overrides this for fixed and
+    /// sticky positioned boxes — they nonetheless form a stacking context
+    /// even when `z-index` is `auto`
+    /// (<https://www.w3.org/TR/css-position-3/#stacking-context>).
     Auto,
     /// `<integer>` — "the stack level of the generated box in the current
     /// stacking context. The box also establishes a new stacking context."
