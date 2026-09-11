@@ -8,6 +8,13 @@ license.workspace = true
 
 [dependencies]
 raikiri = { workspace = true }
+raikiri-traits = { workspace = true }
+bytes = { workspace = true }
+url = { workspace = true }
+smol_str = { workspace = true }
+http = "1"
+# shell/events deps (minimal)
+cursor-icon = "1"
 
 [lints]
 workspace = true

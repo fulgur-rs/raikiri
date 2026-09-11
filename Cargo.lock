@@ -1741,7 +1741,13 @@ dependencies = [
 name = "raikiri-blitz-compat"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "cursor-icon",
+ "http",
  "raikiri",
+ "raikiri-traits",
+ "smol_str",
+ "url",
 ]
 
 [[package]]
