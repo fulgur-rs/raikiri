@@ -48,12 +48,15 @@ impl BlitzOracle {
     /// returned document is style-and-layout resolved.
     pub fn parse_html(html: &str) -> BlitzDocument {
         use blitz_dom::DocumentConfig;
-        use blitz_traits::shell::Viewport;
         use blitz_html::HtmlDocument;
         use blitz_traits::shell::ColorScheme;
+        use blitz_traits::shell::Viewport;
 
         let viewport = Viewport {
-            window_size: (crate::reftest::DEFAULT_REFTTEST_WIDTH, crate::reftest::DEFAULT_REFTTEST_HEIGHT),
+            window_size: (
+                crate::reftest::DEFAULT_REFTTEST_WIDTH,
+                crate::reftest::DEFAULT_REFTTEST_HEIGHT,
+            ),
             hidpi_scale: 1.0,
             zoom: 1.0,
             color_scheme: ColorScheme::Light,
@@ -70,8 +73,10 @@ impl BlitzOracle {
     /// Compute the informational delta between a raikiri outcome and a
     /// blitz outcome.
     pub fn diff(raikiri: &TestOutcome, blitz: &TestOutcome, test_id: &str) -> OracleDiff {
-        let blitz_only_pass = matches!(blitz, TestOutcome::Pass) && !matches!(raikiri, TestOutcome::Pass);
-        let raikiri_only_pass = matches!(raikiri, TestOutcome::Pass) && !matches!(blitz, TestOutcome::Pass);
+        let blitz_only_pass =
+            matches!(blitz, TestOutcome::Pass) && !matches!(raikiri, TestOutcome::Pass);
+        let raikiri_only_pass =
+            matches!(raikiri, TestOutcome::Pass) && !matches!(blitz, TestOutcome::Pass);
         OracleDiff {
             test_id: test_id.to_owned(),
             raikiri: raikiri.clone(),
@@ -89,7 +94,11 @@ impl BlitzOracle {
     }
 
     /// Render `html` via raikiri at `width`×`height` and return the image.
-    pub fn render_raikiri_image(html: &str, width: u32, height: u32) -> Result<RenderedImage, String> {
+    pub fn render_raikiri_image(
+        html: &str,
+        width: u32,
+        height: u32,
+    ) -> Result<RenderedImage, String> {
         render_raikiri(html, width, height).map_err(|e| e.to_string())
     }
 
@@ -141,8 +150,22 @@ impl BlitzOracle {
             ReftestKind::Match => blitz_diff.matched,
             ReftestKind::Mismatch => !blitz_diff.matched,
         };
-        let raikiri_outcome = if raikiri_pass { TestOutcome::Pass } else { TestOutcome::Fail(format!("raikiri reftest {:?} failed ({} mismatched)", kind, raikiri_diff.mismatched_pixels)) };
-        let blitz_outcome = if blitz_pass { TestOutcome::Pass } else { TestOutcome::Fail(format!("blitz reftest {:?} failed ({} mismatched)", kind, blitz_diff.mismatched_pixels)) };
+        let raikiri_outcome = if raikiri_pass {
+            TestOutcome::Pass
+        } else {
+            TestOutcome::Fail(format!(
+                "raikiri reftest {:?} failed ({} mismatched)",
+                kind, raikiri_diff.mismatched_pixels
+            ))
+        };
+        let blitz_outcome = if blitz_pass {
+            TestOutcome::Pass
+        } else {
+            TestOutcome::Fail(format!(
+                "blitz reftest {:?} failed ({} mismatched)",
+                kind, blitz_diff.mismatched_pixels
+            ))
+        };
         Ok(Self::diff(&raikiri_outcome, &blitz_outcome, test_id))
     }
 }
@@ -169,7 +192,11 @@ mod tests {
 
     #[test]
     fn diff_marks_blitz_only_pass() {
-        let d = BlitzOracle::diff(&TestOutcome::Fail("x".into()), &TestOutcome::Pass, "foo.html");
+        let d = BlitzOracle::diff(
+            &TestOutcome::Fail("x".into()),
+            &TestOutcome::Pass,
+            "foo.html",
+        );
         assert!(d.blitz_only_pass);
         assert!(!d.raikiri_only_pass);
         assert!(!d.agrees());
@@ -195,7 +222,16 @@ mod tests {
     #[test]
     fn diff_reftest_pair_both_engines_agree_on_identical_match() {
         let html = "<html><body><p>same</p></body></html>";
-        let d = BlitzOracle::diff_reftest_pair(html, html, crate::reftest::ReftestKind::Match, 200, 100, Tolerance::EXACT, "t.html").unwrap();
+        let d = BlitzOracle::diff_reftest_pair(
+            html,
+            html,
+            crate::reftest::ReftestKind::Match,
+            200,
+            100,
+            Tolerance::EXACT,
+            "t.html",
+        )
+        .unwrap();
         // identical => both Pass => agree
         assert_eq!(d.raikiri, TestOutcome::Pass);
         assert_eq!(d.blitz, TestOutcome::Pass);

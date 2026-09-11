@@ -29,9 +29,11 @@
 //! を crate 境界越境で pub 化するよりも paint 側で持つ方が clean。
 
 use anyrender::PaintScene;
+use kurbo::Rect;
+use peniko::{Color, Fill};
 use raikiri_dom::Document;
 use raikiri_style::CascadeResult;
-use raikiri_style::property::{DisplayValue, VerticalAlign};
+use raikiri_style::property::{CssColor, DisplayValue, VerticalAlign};
 use raikiri_traits::{NodeKind, PageBox};
 
 use crate::text;
@@ -118,13 +120,16 @@ pub(crate) fn paint_document(
                 let own_shift =
                     vertical_align_shift_px(cv.vertical_align, cv.display, parent_font_size);
                 let child_shift_y = shift_y + own_shift;
-                // paint_element_background(scene, node, abs_x, abs_y + child_shift_y, cascade)
-                // — 将来ここに挿入。CSS 2.1 §10.8.1 の vertical-align は
-                // element 自身の box を shift する (descendant text だけでは
-                // ない) ので、その box の背景/border を描くならこの node
-                // 自身の累計 shift である `child_shift_y` (`shift_y` +
-                // `own_shift`、`abs_y` 自体ではない) を使う必要がある —
-                // `abs_y` のまま描くと box と shift 済み text がずれる。
+                // Paint element background (CSS Backgrounds 3 §2.2). Shift applies to the box itself
+                // per CSS 2.1 §10.8.1, so use `child_shift_y` not `abs_y`.
+                paint_element_background(
+                    scene,
+                    layout.size.width,
+                    layout.size.height,
+                    abs_x,
+                    abs_y + child_shift_y,
+                    cv.background_color,
+                );
                 let child_font_size = cv.font_size.px();
                 // children を reverse push すると pop 時に document order で処理される。
                 for &child in node.children.iter().rev() {
@@ -224,6 +229,27 @@ pub(crate) fn paint_document(
 /// どこにもクリップされない。CSS 2.1 / CSS Inline 3 とも shift 後の位置を
 /// box-model 計算 (line box の高さ等) に参加させる前提だが、ここでは
 /// 参加しない — 極端な shift 量が page box の外へはみ出して描画されうる。
+fn paint_element_background(
+    scene: &mut impl PaintScene,
+    width: f32,
+    height: f32,
+    abs_x: f32,
+    abs_y: f32,
+    bg: CssColor,
+) {
+    if bg.a == 0 || width <= 0.0 || height <= 0.0 {
+        return;
+    }
+    let color = Color::from_rgba8(bg.r, bg.g, bg.b, bg.a);
+    let rect = Rect::new(
+        abs_x as f64,
+        abs_y as f64,
+        (abs_x + width) as f64,
+        (abs_y + height) as f64,
+    );
+    scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &rect);
+}
+
 fn vertical_align_shift_px(
     va: VerticalAlign,
     display: DisplayValue,
