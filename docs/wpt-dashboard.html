@@ -27,7 +27,7 @@ h1 { margin: 0; }
 </div>
 <table>
 <tr><th>Area</th><th style="text-align:center;">Raikiri</th></tr>
-<tr><td style="background:white;">Total (basic reftest 12)</td><td class="pass">100%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">12/12 reftests</span></td></tr>
+<tr><td style="background:white;">Total</td><td class="partial" title="12 basic reftests passed out of 219483 CSS subtests in WPT (full suite not yet run)">0.005%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">12/219483 subtests (12 basic reftests)</span></td></tr>
 <tr><td>CSS Backgrounds</td><td class="pass">100%<span style="display:block;font-size:12px;">3/3 (bg-color, bg-image none, nested)</span></td></tr>
 <tr><td>Box Model (margin/padding)</td><td class="pass">100%<span style="display:block;font-size:12px;">2/2 (margin sh, padding sh)</span></td></tr>
 <tr><td>Flexbox</td><td class="pass">100%<span style="display:block;font-size:12px;">1/1 (flex row basic)</span></td></tr>
@@ -35,7 +35,7 @@ h1 { margin: 0; }
 <tr><td>Display / Visibility</td><td class="pass">100%<span style="display:block;font-size:12px;">1/1 (display:none)</span></td></tr>
 <tr><td>Mismatch (negative)</td><td class="pass">100%<span style="display:block;font-size:12px;">1/1 (mismatch bg colors)</span></td></tr>
 </table>
-<p style="font-size:12px;color:#666;margin-top:12px;">Raikiri's 12 basic reftests are from <code>crates/raikiri-wpt/tests/basic_reftests.rs</code>. Run <code>cargo test -p raikiri-wpt --test basic_reftests</code> to reproduce. Full WPT CSS suite (219k subtests) is Future Work — this dashboard will expand as <code>crates/raikiri-wpt</code> runs more of <code>css/</code>.</p>
+<p style="font-size:12px;color:#666;margin-top:12px;">分母は WPT CSS 全体のサブテスト数 219483 (blitz.is/wpt/css 2026-09-11 snapshot) を使用。Raikiri は現在 basic 12件のみを reftest で実行しており、残りは未実行のため 12/219483 が現状の pass 数です。全量を実行するには <code>cargo run -p raikiri-wpt --bin generate-dashboard -- --wpt-root /path/to/wpt</code> で全 css/ を走査する必要があります。<br>Raikiri's 12 basic reftests are from <code>crates/raikiri-wpt/tests/basic_reftests.rs</code>. Run <code>cargo test -p raikiri-wpt --test basic_reftests</code> to reproduce. Full WPT CSS suite (219k subtests) is Future Work — this dashboard will expand as <code>crates/raikiri-wpt</code> runs more of <code>css/</code>.</p>
 <div class="intro" style="margin-top:16px;">
 <h3>How to run</h3>
 <pre style="background:#f0f0f0;padding:12px;overflow:auto;">cargo test -p raikiri-wpt --test basic_reftests
