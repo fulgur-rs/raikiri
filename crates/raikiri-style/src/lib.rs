@@ -35,10 +35,12 @@ pub use style_dom::{
 
 pub mod property;
 pub use property::{
-    BackgroundAttachment, BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, BorderRadius,
-    BoxShadowItem, CssColor, CssPosition, CssPositionOffset, DisplayValue, Length, LengthOrAuto,
-    LengthOrNormal, ObjectFit, Outline, OutlineColor, OutlineStyle, PropertyKey, PropertyValue,
-    Sides, TextShadowColor, TextShadowItem, VisualBox,
+    BackgroundAttachment, BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, BasicShape,
+    BorderRadius, BoxShadowItem, CircleShape, ClipPath, CssColor, CssPosition, CssPositionOffset,
+    DisplayValue, EllipseShape, FillRule, GeometryBox, InsetBorderRadius, InsetShape, Length,
+    LengthOrAuto, LengthOrNormal, ObjectFit, Outline, OutlineColor, OutlineStyle, PathShape,
+    PolygonShape, PropertyKey, PropertyValue, ShapeRadius, Sides, TextShadowColor, TextShadowItem,
+    VisualBox,
 };
 
 pub mod rule;
