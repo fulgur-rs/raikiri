@@ -23,8 +23,7 @@ use crate::property::{
     OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
     TextDecorationStyle, TextTransform, VerticalAlign, Visibility, VisualBox, WhiteSpace,
     WordBreak, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
-    empty_filter_list, empty_quotes_entries, empty_string_set_entries,
-    initial_font_family,
+    empty_filter_list, empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem,
@@ -32,8 +31,8 @@ use crate::resolve::{
     ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
     ComputedOutline, ComputedTabSize, ComputedTextShadow, ComputedTransformFunction,
-    empty_computed_box_shadow_list, empty_computed_text_shadow_list,
-    empty_computed_transform_list, initial_computed_grid_auto_track_list,
+    empty_computed_box_shadow_list, empty_computed_text_shadow_list, empty_computed_transform_list,
+    initial_computed_grid_auto_track_list,
 };
 
 /// CSS spec 上の `font-size` initial value (`medium`) に対応する px 値。

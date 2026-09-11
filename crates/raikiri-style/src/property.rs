@@ -5454,26 +5454,182 @@ pub enum GeometryBox {
     ViewBox,
 }
 
-/// `clip-path` の specified value。
+/// `fill-rule` for [`BasicShape::Polygon`] / [`BasicShape::Path`].
+///
+/// CSS Shapes Module Level 1 §3.1 "Supported Shapes"
+/// <https://www.w3.org/TR/css-shapes-1/#supported-basic-shapes> defines
+/// `<polygon()>` and `<path()>` as `polygon( <'fill-rule'>? … )` and
+/// `path( <'fill-rule'>? , <string> )`, where `<fill-rule>` is the SVG
+/// `fill-rule` property (`nonzero | evenodd`, CSS Masking Level 1 §5.1
+/// delegates to this definition). Defaults to `nonzero` when omitted.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FillRule {
+    /// `nonzero` — spec default.
+    NonZero,
+    /// `evenodd`.
+    EvenOdd,
+}
+
+/// `<shape-radius>` for [`BasicShape::Circle`] / [`BasicShape::Ellipse`].
+///
+/// CSS Shapes Module Level 1 §3.1
+/// <https://www.w3.org/TR/css-shapes-1/#supported-basic-shapes> defines
+/// `circle()` / `ellipse()` as `circle( <radial-size>? [ at <position> ]? )`
+/// where `<radial-size>` is `<length-percentage [0,∞]> | closest-side |
+/// farthest-side` (CSS Images 3 §3.2 `<radial-size>` repurposed for the
+/// reference box). Negative lengths are invalid and cause the whole
+/// `clip-path` declaration to drop.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ShapeRadius {
+    /// `<length-percentage [0,∞]>` — authored value stored as [`Length`].
+    Length(Length),
+    /// `closest-side`.
+    ClosestSide,
+    /// `farthest-side`.
+    FarthestSide,
+}
+
+/// `inset()` shape — [`BasicShape::Inset`].
+///
+/// CSS Shapes Module Level 1 §3.1
+/// <https://www.w3.org/TR/css-shapes-1/#supported-basic-shapes>:
+/// `inset( <length-percentage>{1,4} [ round <'border-radius'> ]? )`.
+/// The 1-4 inset values expand like `margin` shorthand (1→all, 2→vertical/horizontal,
+/// 3→top/horizontal/bottom, 4→top/right/bottom/left). `round` introduces
+/// an optional border-radius for the inset rectangle (slash-separated
+/// elliptical radii are supported).
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub struct InsetShape {
+    /// Inset from top edge.
+    pub top: Length,
+    /// Inset from right edge.
+    pub right: Length,
+    /// Inset from bottom edge.
+    pub bottom: Length,
+    /// Inset from left edge.
+    pub left: Length,
+    /// Optional `round` border radius.
+    pub border_radius: Option<InsetBorderRadius>,
+}
+
+/// Border radius for [`InsetShape`] `round` clause.
+///
+/// CSS Backgrounds and Borders Level 3 §5 `<border-radius>` grammar
+/// (used via CSS Shapes `round <'border-radius'>`). Supports 1-4
+/// `<length-percentage [0,∞]>` values optionally followed by `/` and a
+/// second 1-4 group for elliptical radii. Values expand to four corners
+/// clockwise (top-left, top-right, bottom-right, bottom-left).
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub struct InsetBorderRadius {
+    /// Horizontal radii for four corners (top-left, top-right, bottom-right, bottom-left).
+    pub horizontal: [Length; 4],
+    /// Vertical radii if slash-separated, otherwise `None` (circular).
+    pub vertical: Option<[Length; 4]>,
+}
+
+/// `circle()` shape — [`BasicShape::Circle`].
+///
+/// CSS Shapes Module Level 1 §3.1: `circle( <shape-radius>? [ at <position> ]? )`.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CircleShape {
+    /// Optional radius (`<shape-radius>`).
+    pub radius: Option<ShapeRadius>,
+    /// Optional position (`at <position>`).
+    pub position: Option<CssPosition>,
+}
+
+/// `ellipse()` shape — [`BasicShape::Ellipse`].
+///
+/// CSS Shapes Module Level 1 §3.1: `ellipse( <shape-radius>{2}? [ at <position> ]? )`
+/// (0-2 radii — spec `<radial-size>` for ellipse expands to two values, but
+/// 0/1/2 are all valid; single radius leaves the other defaulting per
+/// browser behavior and is accepted as valid here).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EllipseShape {
+    /// Optional first radius (horizontal).
+    pub radius_x: Option<ShapeRadius>,
+    /// Optional second radius (vertical).
+    pub radius_y: Option<ShapeRadius>,
+    /// Optional position (`at <position>`).
+    pub position: Option<CssPosition>,
+}
+
+/// `polygon()` shape — [`BasicShape::Polygon`].
+///
+/// CSS Shapes Module Level 1 §3.1:
+/// `polygon( <fill-rule>? [ round <length> ]? , [<length-percentage> <length-percentage>]# )`.
+/// The optional `round` length enables rounded vertices (CSS Shapes
+/// Level 1 extension, `<length>` is non-negative). Points are stored as
+/// pairs of `<length-percentage>` values.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PolygonShape {
+    /// Fill rule (defaults to `nonzero`).
+    pub fill_rule: FillRule,
+    /// Optional `round` length for rounded polygon.
+    pub round: Option<Length>,
+    /// Vertices — each `(x, y)` is `<length-percentage>`.
+    pub points: Vec<(Length, Length)>,
+}
+
+/// `path()` shape — [`BasicShape::Path`].
+///
+/// CSS Shapes Module Level 1 §3.1: `path( <fill-rule>? , <string> )`.
+/// The `<string>` is raw SVG path data; structured segment parsing is
+/// deferred to raikiri-paint (no SVG path parser is reused here, per task
+/// scope note). Stored without surrounding quotes.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PathShape {
+    /// Fill rule (defaults to `nonzero`).
+    pub fill_rule: FillRule,
+    /// Raw SVG path data string.
+    pub path: String,
+}
+
+/// `<basic-shape>` for `clip-path`.
+///
+/// CSS Shapes Module Level 1 §3 "Basic Shapes"
+/// <https://www.w3.org/TR/css-shapes-1/#basic-shape-functions> (primary
+/// source for this type) as referenced by CSS Masking Level 1 §5.1
+/// <https://www.w3.org/TR/css-masking-1/#the-clip-path>. Covers
+/// `circle()` / `ellipse()` / `inset()` / `polygon()` / `path()`
+/// — `rect()` / `xywh()` / `shape()` (Level 1 additions / newer drafts) are
+/// intentionally out of scope for this task.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub enum BasicShape {
+    /// `inset()` — see [`InsetShape`].
+    Inset(InsetShape),
+    /// `circle()` — see [`CircleShape`].
+    Circle(CircleShape),
+    /// `ellipse()` — see [`EllipseShape`].
+    Ellipse(EllipseShape),
+    /// `polygon()` — see [`PolygonShape`].
+    Polygon(PolygonShape),
+    /// `path()` — see [`PathShape`].
+    Path(PathShape),
+}
+
+/// `clip-path` の specified value.
 ///
 /// CSS Masking Level 1 §5.1 "Basic Shapes: the clip-path property"
 /// <https://www.w3.org/TR/css-masking-1/#the-clip-path>。Full grammar:
 /// `<clip-source> | [ <basic-shape> || <geometry-box> ] | none`、
 /// `<clip-source> = <url>`。**non-inherited**。
 ///
-/// # Scope carving — `<basic-shape>` は未対応
-///
-/// `<basic-shape>` (`circle()` / `ellipse()` / `inset()` / `polygon()` /
-/// `path()`) は本 crate では意図的に未対応 — その完全な grammar (shape-radius
-/// の位置指定、fill-rule、SVG path data 文字列 etc.) は CSS Masking Level 1
-/// 自身ではなく CSS Shapes Module Level 1 が定義する別 spec の話であり、
-/// [`Gradient`] の Level 4 拡張 carve-out や [`BoxShadowItem`] の `inset`
-/// carve-out と同じ「単位として丸ごと defer し、半端に実装しない」判断
-/// ([`Gradient`] doc の scope carving 節参照)。本 variant が受理するのは
-/// `<clip-source>` (`<url>`) と `<geometry-box>` 単体のみ — 両者だけでも
-/// spec 上有効な `clip-path` 宣言 (例: `clip-path: padding-box`) であり、
-/// `<basic-shape>` を伴わない場合の grammar は CSS Masking Level 1 単独で
-/// 完全に定義されている。
+/// `<basic-shape>` の grammar は CSS Shapes Module Level 1 §3
+/// <https://www.w3.org/TR/css-shapes-1/#basic-shape-functions> が定義する
+/// (CSS Masking Level 1 自身ではなく同 spec が primary source)。
+/// 本 crate は `circle()` / `ellipse()` / `inset()` / `polygon()` /
+/// `path()` の 5 function を実装する — `rect()` / `xywh()` / `shape()`
+/// は本 task の scope 外。
 ///
 /// # Computed value
 ///
@@ -5490,6 +5646,14 @@ pub enum ClipPath {
     Url(String),
     /// `<geometry-box>` 単体 (`<basic-shape>` 併記なし)。
     GeometryBox(GeometryBox),
+    /// `[ <basic-shape> || <geometry-box> ]` — shape alone, or shape
+    /// paired with a reference box (either order in source).
+    BasicShape {
+        /// The `<basic-shape>` function.
+        shape: Box<BasicShape>,
+        /// Optional reference box (`<geometry-box>`).
+        geometry_box: Option<GeometryBox>,
+    },
 }
 
 /// `mask-image` の specified value — [`BackgroundImage`] の type alias.
@@ -14765,23 +14929,375 @@ fn parse_geometry_box(input: &mut Parser<'_, '_>) -> Option<GeometryBox> {
     }
 }
 
-/// `clip-path: <clip-source> | <geometry-box> | none` ([`ClipPath`] doc の
-/// scope carving 節参照 — `<basic-shape>` は未対応) を parse する。
+/// `clip-path: <clip-source> | [ <basic-shape> || <geometry-box> ] | none`
+/// ([`ClipPath`] doc参照) を parse する。
 ///
-/// `none` を最初に試し、次に `<geometry-box>` (7 keyword) を試し、最後に
-/// `<clip-source>` (`<url>`) を試す — 3 alternative は互いに排他的な token
-/// shape (ident vs. ident vs. url-token/function) なので試行順は結果を
-/// 左右しない ([`parse_background_image`] doc の同種の注記と同じ理由)。
+/// `none` → `<clip-source>` (`<url>`) → `[ <basic-shape> || <geometry-box> ]`
+/// の順で試す。最後の `[ … || … ]` は either order (shape before box or box
+/// before shape) を許すため、両順を試す。`basic-shape` function token と
+/// geometry-box ident は互いに排他的なので試行順は結果を左右しない。
 fn parse_clip_path(input: &mut Parser<'_, '_>) -> Option<ClipPath> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(ClipPath::None);
     }
-    if let Ok(geometry_box) = input.try_parse(|i| -> Result<GeometryBox, ParseError<'_, ()>> {
-        parse_geometry_box(i).ok_or_else(|| i.new_custom_error(()))
-    }) {
-        return Some(ClipPath::GeometryBox(geometry_box));
+    // Try [ <basic-shape> || <geometry-box> ] — either order, at least one.
+    // First try basic-shape with optional trailing geometry-box.
+    if let Some(shape_with_box) = input
+        .try_parse(|i| -> Result<ClipPath, ParseError<'_, ()>> {
+            let shape = parse_basic_shape(i).ok_or_else(|| i.new_custom_error(()))?;
+            let geometry_box = i
+                .try_parse(|j| -> Result<GeometryBox, ParseError<'_, ()>> {
+                    parse_geometry_box(j).ok_or_else(|| j.new_custom_error(()))
+                })
+                .ok();
+            Ok(ClipPath::BasicShape {
+                shape: Box::new(shape),
+                geometry_box,
+            })
+        })
+        .ok()
+    {
+        return Some(shape_with_box);
+    }
+    // Then try geometry-box with optional trailing basic-shape (the other order).
+    if let Some(box_with_shape) = input
+        .try_parse(|i| -> Result<ClipPath, ParseError<'_, ()>> {
+            let geometry_box = parse_geometry_box(i).ok_or_else(|| i.new_custom_error(()))?;
+            if let Ok(shape) = i.try_parse(|j| -> Result<BasicShape, ParseError<'_, ()>> {
+                parse_basic_shape(j).ok_or_else(|| j.new_custom_error(()))
+            }) {
+                Ok(ClipPath::BasicShape {
+                    shape: Box::new(shape),
+                    geometry_box: Some(geometry_box),
+                })
+            } else {
+                Ok(ClipPath::GeometryBox(geometry_box))
+            }
+        })
+        .ok()
+    {
+        return Some(box_with_shape);
     }
     parse_url_value(input).map(ClipPath::Url)
+}
+
+/// `<basic-shape>` — `circle()` / `ellipse()` / `inset()` / `polygon()` / `path()`.
+fn parse_basic_shape(input: &mut Parser<'_, '_>) -> Option<BasicShape> {
+    let name = input
+        .try_parse(|i| -> Result<String, ParseError<'_, ()>> {
+            let token = i.next()?.clone();
+            match token {
+                Token::Function(n) => Ok(n.as_ref().to_ascii_lowercase()),
+                _ => Err(i.new_unexpected_token_error(token)),
+            }
+        })
+        .ok()?;
+    match name.as_str() {
+        "circle" => input
+            .parse_nested_block(|i| -> Result<CircleShape, ParseError<'_, ()>> {
+                parse_circle_shape(i).ok_or_else(|| i.new_custom_error(()))
+            })
+            .ok()
+            .map(BasicShape::Circle),
+        "ellipse" => input
+            .parse_nested_block(|i| -> Result<EllipseShape, ParseError<'_, ()>> {
+                parse_ellipse_shape(i).ok_or_else(|| i.new_custom_error(()))
+            })
+            .ok()
+            .map(BasicShape::Ellipse),
+        "inset" => input
+            .parse_nested_block(|i| -> Result<InsetShape, ParseError<'_, ()>> {
+                parse_inset_shape(i).ok_or_else(|| i.new_custom_error(()))
+            })
+            .ok()
+            .map(BasicShape::Inset),
+        "polygon" => input
+            .parse_nested_block(|i| -> Result<PolygonShape, ParseError<'_, ()>> {
+                parse_polygon_shape(i).ok_or_else(|| i.new_custom_error(()))
+            })
+            .ok()
+            .map(BasicShape::Polygon),
+        "path" => input
+            .parse_nested_block(|i| -> Result<PathShape, ParseError<'_, ()>> {
+                parse_path_shape(i).ok_or_else(|| i.new_custom_error(()))
+            })
+            .ok()
+            .map(BasicShape::Path),
+        _ => None,
+    }
+}
+
+fn parse_fill_rule(input: &mut Parser<'_, '_>) -> Option<FillRule> {
+    let ident = input.expect_ident().ok()?.as_ref().to_ascii_lowercase();
+    match ident.as_str() {
+        "nonzero" => Some(FillRule::NonZero),
+        "evenodd" => Some(FillRule::EvenOdd),
+        _ => None,
+    }
+}
+
+/// Try to parse `<shape-radius>` as `closest-side` / `farthest-side` or `<length-percentage [0,∞]>`.
+fn try_parse_shape_radius(input: &mut Parser<'_, '_>) -> Option<ShapeRadius> {
+    if let Ok(sr) = input.try_parse(|i| -> Result<ShapeRadius, ParseError<'_, ()>> {
+        let ident = i.expect_ident()?.as_ref().to_ascii_lowercase();
+        match ident.as_str() {
+            "closest-side" => Ok(ShapeRadius::ClosestSide),
+            "farthest-side" => Ok(ShapeRadius::FarthestSide),
+            _ => Err(i.new_custom_error(())),
+        }
+    }) {
+        return Some(sr);
+    }
+    let length = parse_length_value(input, true)?;
+    if length_payload(length) < 0.0 || length_payload(length).is_nan() {
+        return None;
+    }
+    Some(ShapeRadius::Length(length))
+}
+
+fn parse_circle_shape(input: &mut Parser<'_, '_>) -> Option<CircleShape> {
+    let radius = input
+        .try_parse(|i| -> Result<ShapeRadius, ParseError<'_, ()>> {
+            try_parse_shape_radius(i).ok_or_else(|| i.new_custom_error(()))
+        })
+        .ok();
+    let position = if input.try_parse(|i| i.expect_ident_matching("at")).is_ok() {
+        let pos = parse_position_strict(input)?;
+        Some(pos)
+    } else {
+        None
+    };
+    if !input.is_exhausted() {
+        return None;
+    }
+    Some(CircleShape { radius, position })
+}
+
+fn parse_ellipse_shape(input: &mut Parser<'_, '_>) -> Option<EllipseShape> {
+    let radius_x = input
+        .try_parse(|i| -> Result<ShapeRadius, ParseError<'_, ()>> {
+            try_parse_shape_radius(i).ok_or_else(|| i.new_custom_error(()))
+        })
+        .ok();
+    let radius_y = if radius_x.is_some() {
+        input
+            .try_parse(|i| -> Result<ShapeRadius, ParseError<'_, ()>> {
+                try_parse_shape_radius(i).ok_or_else(|| i.new_custom_error(()))
+            })
+            .ok()
+    } else {
+        None
+    };
+    let position = if input.try_parse(|i| i.expect_ident_matching("at")).is_ok() {
+        let pos = parse_position_strict(input)?;
+        Some(pos)
+    } else {
+        None
+    };
+    if !input.is_exhausted() {
+        return None;
+    }
+    Some(EllipseShape {
+        radius_x,
+        radius_y,
+        position,
+    })
+}
+
+fn parse_inset_shape(input: &mut Parser<'_, '_>) -> Option<InsetShape> {
+    let mut insets: Vec<Length> = Vec::new();
+    for _ in 0..4 {
+        if let Some(lp) = input
+            .try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
+                parse_length_value(i, true).ok_or_else(|| i.new_custom_error(()))
+            })
+            .ok()
+        {
+            if length_payload(lp).is_nan() {
+                return None;
+            }
+            insets.push(lp);
+        } else {
+            break;
+        }
+    }
+    if insets.is_empty() {
+        return None;
+    }
+    let border_radius = if input
+        .try_parse(|i| i.expect_ident_matching("round"))
+        .is_ok()
+    {
+        Some(parse_inset_border_radius(input)?)
+    } else {
+        None
+    };
+    if !input.is_exhausted() {
+        return None;
+    }
+    let (top, right, bottom, left) = match insets.len() {
+        1 => (insets[0], insets[0], insets[0], insets[0]),
+        2 => (insets[0], insets[1], insets[0], insets[1]),
+        3 => (insets[0], insets[1], insets[2], insets[1]),
+        4 => (insets[0], insets[1], insets[2], insets[3]),
+        _ => unreachable!(),
+    };
+    Some(InsetShape {
+        top,
+        right,
+        bottom,
+        left,
+        border_radius,
+    })
+}
+
+fn parse_inset_border_radius(input: &mut Parser<'_, '_>) -> Option<InsetBorderRadius> {
+    let mut horiz: Vec<Length> = Vec::new();
+    for _ in 0..4 {
+        if let Some(lp) = input
+            .try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
+                let l = parse_length_value(i, true).ok_or_else(|| i.new_custom_error(()))?;
+                if length_payload(l) < 0.0 || length_payload(l).is_nan() {
+                    return Err(i.new_custom_error(()));
+                }
+                Ok(l)
+            })
+            .ok()
+        {
+            horiz.push(lp);
+        } else {
+            break;
+        }
+    }
+    if horiz.is_empty() {
+        return None;
+    }
+    let vertical = if input.try_parse(|i| i.expect_delim('/')).is_ok() {
+        let mut vert: Vec<Length> = Vec::new();
+        for _ in 0..4 {
+            if let Some(lp) = input
+                .try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
+                    let l = parse_length_value(i, true).ok_or_else(|| i.new_custom_error(()))?;
+                    if length_payload(l) < 0.0 || length_payload(l).is_nan() {
+                        return Err(i.new_custom_error(()));
+                    }
+                    Ok(l)
+                })
+                .ok()
+            {
+                vert.push(lp);
+            } else {
+                break;
+            }
+        }
+        if vert.is_empty() {
+            return None;
+        }
+        Some(vert)
+    } else {
+        None
+    };
+    let horiz_expanded = expand_to_four(&horiz);
+    let vert_expanded = vertical.as_ref().map(|v| expand_to_four(v));
+    Some(InsetBorderRadius {
+        horizontal: horiz_expanded,
+        vertical: vert_expanded,
+    })
+}
+
+fn expand_to_four(values: &[Length]) -> [Length; 4] {
+    match values.len() {
+        1 => [values[0]; 4],
+        2 => [values[0], values[1], values[0], values[1]],
+        3 => [values[0], values[1], values[2], values[1]],
+        4 => [values[0], values[1], values[2], values[3]],
+        _ => unreachable!(),
+    }
+}
+
+fn parse_polygon_shape(input: &mut Parser<'_, '_>) -> Option<PolygonShape> {
+    let mut fill_rule = FillRule::NonZero;
+    let mut fill_rule_consumed = false;
+    if let Ok(fr) = input.try_parse(|i| -> Result<FillRule, ParseError<'_, ()>> {
+        parse_fill_rule(i).ok_or_else(|| i.new_custom_error(()))
+    }) {
+        fill_rule = fr;
+        fill_rule_consumed = true;
+    }
+    if fill_rule_consumed {
+        let _ = input.try_parse(|i| i.expect_comma()).ok();
+    }
+    let round = if input
+        .try_parse(|i| i.expect_ident_matching("round"))
+        .is_ok()
+    {
+        let len = parse_length_value(input, true)?;
+        if length_payload(len) < 0.0 || length_payload(len).is_nan() {
+            return None;
+        }
+        let _ = input.try_parse(|i| i.expect_comma()).ok();
+        Some(len)
+    } else {
+        None
+    };
+    let mut points: Vec<(Length, Length)> = Vec::new();
+    loop {
+        let point = input.try_parse(|i| -> Result<(Length, Length), ParseError<'_, ()>> {
+            let x = parse_length_value(i, true).ok_or_else(|| i.new_custom_error(()))?;
+            if length_payload(x).is_nan() {
+                return Err(i.new_custom_error(()));
+            }
+            let y = parse_length_value(i, true).ok_or_else(|| i.new_custom_error(()))?;
+            if length_payload(y).is_nan() {
+                return Err(i.new_custom_error(()));
+            }
+            Ok((x, y))
+        });
+        match point {
+            Ok(p) => {
+                points.push(p);
+                let _ = input.try_parse(|i| i.expect_comma()).ok();
+            }
+            Err(_) => break,
+        }
+    }
+    if points.is_empty() {
+        return None;
+    }
+    if !input.is_exhausted() {
+        return None;
+    }
+    Some(PolygonShape {
+        fill_rule,
+        round,
+        points,
+    })
+}
+
+fn parse_path_shape(input: &mut Parser<'_, '_>) -> Option<PathShape> {
+    let mut fill_rule = FillRule::NonZero;
+    let mut consumed = false;
+    if let Ok(fr) = input.try_parse(|i| -> Result<FillRule, ParseError<'_, ()>> {
+        parse_fill_rule(i).ok_or_else(|| i.new_custom_error(()))
+    }) {
+        fill_rule = fr;
+        consumed = true;
+    }
+    if consumed {
+        if input.try_parse(|i| i.expect_comma()).is_err() {
+            return None;
+        }
+    } else {
+        let _ = input.try_parse(|i| i.expect_comma()).ok();
+    }
+    let path_str = input.expect_string().ok()?.as_ref().to_string();
+    if !input.is_exhausted() {
+        return None;
+    }
+    Some(PathShape {
+        fill_rule,
+        path: path_str,
+    })
 }
 
 /// `<number>` for the `transform` functions that take a bare number
@@ -30757,17 +31273,105 @@ mod tests {
     }
 
     #[test]
-    fn clip_path_rejects_basic_shape_functions() {
-        // `<basic-shape>` is deliberately out of scope (`ClipPath` doc's
-        // scope carving note) — a `circle()`/`ellipse()`/`inset()`/
-        // `polygon()`/`path()` declaration drops the whole declaration
-        // rather than partially parsing.
-        for source in [
+    fn clip_path_parses_basic_shapes() {
+        // Basic shapes per CSS Shapes Module Level 1 §3.1 — spot check that
+        // each of the 5 functions is accepted and lands as ClipPath::BasicShape.
+        let cases = [
             "circle(50%)",
             "ellipse(50% 50%)",
             "inset(10px)",
             "polygon(0 0, 100% 0, 100% 100%)",
             "path('M0 0 L10 10')",
+        ];
+        for source in cases {
+            let parsed = parse(source, "clip-path");
+            assert!(
+                matches!(
+                    parsed,
+                    Some(PropertyValue::ClipPath(ClipPath::BasicShape { .. }))
+                ),
+                "expected BasicShape for {source}, got {parsed:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn clip_path_basic_shape_with_geometry_box() {
+        // [ <basic-shape> || <geometry-box> ] — either order.
+        let a = parse("circle(50%) border-box", "clip-path");
+        assert!(matches!(
+            a,
+            Some(PropertyValue::ClipPath(ClipPath::BasicShape {
+                geometry_box: Some(GeometryBox::BorderBox),
+                ..
+            }))
+        ));
+        let b = parse("border-box circle(50%)", "clip-path");
+        assert!(matches!(
+            b,
+            Some(PropertyValue::ClipPath(ClipPath::BasicShape {
+                geometry_box: Some(GeometryBox::BorderBox),
+                ..
+            }))
+        ));
+        // Also check with padding-box + ellipse at center
+        let c = parse("ellipse(50% 50% at center) padding-box", "clip-path");
+        assert!(matches!(
+            c,
+            Some(PropertyValue::ClipPath(ClipPath::BasicShape {
+                geometry_box: Some(GeometryBox::PaddingBox),
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn clip_path_inset_round_and_polygon_fill_rule() {
+        assert!(matches!(
+            parse("inset(10px 20px round 5px)", "clip-path"),
+            Some(PropertyValue::ClipPath(ClipPath::BasicShape { .. }))
+        ));
+        assert!(matches!(
+            parse("polygon(evenodd, 0 0, 100% 0, 100% 100%)", "clip-path"),
+            Some(PropertyValue::ClipPath(ClipPath::BasicShape { .. }))
+        ));
+        assert!(matches!(
+            parse("path(evenodd, 'M0 0 L10 10 Z')", "clip-path"),
+            Some(PropertyValue::ClipPath(ClipPath::BasicShape { .. }))
+        ));
+    }
+
+    #[test]
+    fn clip_path_circle_ellipse_position_variants() {
+        // circle with position, ellipse with at center, plain circle()
+        for source in [
+            "circle(at center)",
+            "circle(closest-side at 10px 20%)",
+            "ellipse(closest-side farthest-side at center)",
+            "circle()",
+            "ellipse()",
+        ] {
+            let parsed = parse(source, "clip-path");
+            assert!(
+                matches!(
+                    parsed,
+                    Some(PropertyValue::ClipPath(ClipPath::BasicShape { .. }))
+                ),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn clip_path_rejects_invalid_basic_shapes() {
+        // Negative radius, empty inset, empty polygon should drop.
+        for source in [
+            "circle(-10px)",
+            "inset()",
+            "polygon()",
+            "path()",
+            "circle(50% 50% 50%)",
+            "inset(10px unknown)",
         ] {
             assert_eq!(parse(source, "clip-path"), None, "{source}");
         }

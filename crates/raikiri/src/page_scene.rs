@@ -271,11 +271,7 @@ impl PageScene {
 /// margin なしで body_id が taffy root として (0, 0) から compute されるため
 /// 常に `(0.0, 0.0)`。将来 @page margin が導入された時点で cascade から
 /// 引き出す予定。
-pub fn build_page_scene(
-    dom: &Document,
-    cascade: &CascadeResult,
-    page_box: PageBox,
-) -> PageScene {
+pub fn build_page_scene(dom: &Document, cascade: &CascadeResult, page_box: PageBox) -> PageScene {
     let page_metadata = PageMetadata {
         size: (page_box.width, page_box.height),
         page_name: None,

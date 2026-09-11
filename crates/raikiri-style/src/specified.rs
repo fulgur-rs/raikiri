@@ -55,8 +55,8 @@ use crate::resolve::{
     resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
     resolve_length_or_normal, resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
-    resolve_outline, resolve_tab_size, resolve_text_shadow_item, resolve_transform_function, resolve_vertical_align,
-    used_line_height_length,
+    resolve_outline, resolve_tab_size, resolve_text_shadow_item, resolve_transform_function,
+    resolve_vertical_align, used_line_height_length,
 };
 
 /// Cascade winner を適用し終えたが、まだ絶対化していない per-node の値。
@@ -1591,9 +1591,7 @@ impl SpecifiedValues {
                 Arc::new(
                     self.transform
                         .iter()
-                        .map(|f| {
-                            resolve_transform_function(*f, font_size, own_line_height, ctx)
-                        })
+                        .map(|f| resolve_transform_function(*f, font_size, own_line_height, ctx))
                         .collect(),
                 )
             },

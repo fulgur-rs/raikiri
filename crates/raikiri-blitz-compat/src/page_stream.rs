@@ -23,7 +23,7 @@
 //! `PageBox::A4` にフォールバック ( fulgur が viewport 未設定時に A4 相当でレイアウトする
 //! 挙動に合わせる )。
 
-use raikiri::{build_cascaded, build_page_scene, FontContext, PageBox, PageScene};
+use raikiri::{FontContext, PageBox, PageScene, build_cascaded, build_page_scene};
 use raikiri_html::{ParseOptions, parse as html_parse};
 use raikiri_traits::RenderError;
 
@@ -201,11 +201,18 @@ mod tests {
     #[test]
     fn receipt_html_to_page_scenes_produces_one_page() {
         let scenes = html_to_page_scenes(RECEIPT_HTML, PageBox::A4).expect("layout ok");
-        assert_eq!(scenes.len(), 1, "single-page PoC must produce exactly 1 PageScene");
+        assert_eq!(
+            scenes.len(),
+            1,
+            "single-page PoC must produce exactly 1 PageScene"
+        );
         let scene = &scenes[0];
         assert!(scene.root_id.is_some(), "root_id must be <html>");
         assert!(scene.body_id.is_some(), "body_id must be <body>");
-        assert!(!scene.node_ids.is_empty(), "node_ids must contain at least body descendants");
+        assert!(
+            !scene.node_ids.is_empty(),
+            "node_ids must contain at least body descendants"
+        );
         // fragments coverage: every node_id has a fragment
         for id in &scene.node_ids {
             assert!(
@@ -234,7 +241,10 @@ mod tests {
     fn parse_and_layout_with_raikiri_viewport_none_uses_a4() {
         let pages = parse_and_layout_with_raikiri(RECEIPT_HTML, None).expect("layout");
         assert_eq!(pages.len(), 1);
-        assert_eq!(pages[0].page_metadata.size, (PageBox::A4.width, PageBox::A4.height));
+        assert_eq!(
+            pages[0].page_metadata.size,
+            (PageBox::A4.width, PageBox::A4.height)
+        );
     }
 
     #[test]
@@ -286,7 +296,8 @@ mod tests {
     #[test]
     fn html_to_page_scenes_matches_html_to_png_via_page_stream_bytes() {
         // html_to_png_via_page_stream should be byte-identical to raikiri::html_to_png for same HTML
-        let png_via_stream = html_to_png_via_page_stream(RECEIPT_HTML, PageBox::A4).expect("stream png");
+        let png_via_stream =
+            html_to_png_via_page_stream(RECEIPT_HTML, PageBox::A4).expect("stream png");
         let png_via_umbrella = raikiri::html_to_png(RECEIPT_HTML.as_bytes()).expect("umbrella png");
         assert_eq!(
             png_via_stream, png_via_umbrella,
@@ -302,6 +313,9 @@ mod tests {
         assert_eq!(pages.len(), 1);
         let scene = &pages[0];
         // Verify that all element kinds are represented via block_styles
-        assert!(scene.drawables.block_styles.len() >= 3, "h1, p, table/td at least");
+        assert!(
+            scene.drawables.block_styles.len() >= 3,
+            "h1, p, table/td at least"
+        );
     }
 }
