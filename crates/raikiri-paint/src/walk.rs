@@ -43,12 +43,22 @@ use crate::text;
 /// "canvas propagation" (html の background-color を取得、TRANSPARENT なら
 /// body に fallback、Some なら PageBox 全域を fill) を実装する予定。
 pub(crate) fn paint_canvas_background(
-    _scene: &mut impl PaintScene,
+    scene: &mut impl PaintScene,
     _document: &Document,
     _cascade: &CascadeResult,
-    _page_box: PageBox,
+    page_box: PageBox,
 ) {
-    // 現状は no-op site。将来ここで発火する。
+    // Minimal canvas background: fill page white (UA default) so transparent areas are not mismatched.
+    // Full CSS Backgrounds §2.11 canvas propagation (html/body) is future work; this ensures page is white.
+    let color = peniko::Color::from_rgba8(255, 255, 255, 255);
+    let rect = kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64);
+    scene.fill(
+        peniko::Fill::NonZero,
+        kurbo::Affine::IDENTITY,
+        color,
+        None,
+        &rect,
+    );
 }
 
 /// Document arena を body から iterative DFS で walk する。fragment (no `<body>`)
@@ -130,6 +140,8 @@ pub(crate) fn paint_document(
                     abs_y + child_shift_y,
                     cv.background_color,
                     cv.background_clip,
+                    &cv.border,
+                    &cv.padding,
                 );
                 let child_font_size = cv.font_size.px();
                 // children を reverse push すると pop 時に document order で処理される。
@@ -230,6 +242,7 @@ pub(crate) fn paint_document(
 /// どこにもクリップされない。CSS 2.1 / CSS Inline 3 とも shift 後の位置を
 /// box-model 計算 (line box の高さ等) に参加させる前提だが、ここでは
 /// 参加しない — 極端な shift 量が page box の外へはみ出して描画されうる。
+#[allow(clippy::too_many_arguments)]
 fn paint_element_background(
     scene: &mut impl PaintScene,
     width: f32,
@@ -238,59 +251,67 @@ fn paint_element_background(
     abs_y: f32,
     bg: CssColor,
     clip: raikiri_style::property::VisualBox,
+    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
+    padding: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedLengthPercentage>,
 ) {
     if bg.a == 0 || width <= 0.0 || height <= 0.0 {
         return;
     }
-    // Handle background-clip: for now, Text is treated as no background (since text clipping requires glyph paths)
+    // background-clip: text — clip to text glyphs (CSS Backgrounds 4 §2.6).
+    // Requires glyph path clipping which is not yet implemented; treat as no opaque rect.
+    // This intentionally leaves coverage gap for text-clip tests (tracked separately).
     if matches!(clip, raikiri_style::property::VisualBox::Text) {
         return;
     }
-    let color = Color::from_rgba8(bg.r, bg.g, bg.b, bg.a);
-    let rect = Rect::new(
+    // Compute inset rect for background-clip per CSS Backgrounds 3 §2.7:
+    // - border-box / border-area: border box (full rect)
+    // - padding-box: padding box (inset by border widths)
+    // - content-box: content box (inset by border + padding)
+    // Width/height is border-box size from taffy layout.
+    let (mut x0, mut y0, mut x1, mut y1) = (
         abs_x as f64,
         abs_y as f64,
         (abs_x + width) as f64,
         (abs_y + height) as f64,
     );
-    // TODO: for PaddingBox/ContentBox, inset by border/padding widths using ComputedValues.
-    // For now, all non-Text clips are treated as BorderBox (full rect) — correct for border-area/border-box/padding-box/content-box in simple cases where border/padding is 0.
-    scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &rect);
-}
-
-/// Paint with background-clip aware rect (for future use).
-/// Currently `paint_element_background` above is used; this helper shows
-/// how `VisualBox` would inset the rect for `padding-box`/`content-box`.
-/// `border-area` and `text` are treated as `border-box` for now.
-#[allow(dead_code)]
-fn paint_element_background_clipped(
-    scene: &mut impl PaintScene,
-    width: f32,
-    height: f32,
-    abs_x: f32,
-    abs_y: f32,
-    bg: CssColor,
-    clip: raikiri_style::property::VisualBox,
-    border: &raikiri_style::property::Sides<raikiri_style::property::Border>,
-    padding: &raikiri_style::property::Sides<raikiri_style::property::Length>,
-) {
-    if bg.a == 0 || width <= 0.0 || height <= 0.0 {
-        return;
+    // Helper to get padding px: for Px use directly, for Percent approximate as percent of width
+    fn padding_px(v: raikiri_style::resolve::ComputedLengthPercentage, reference: f32) -> f32 {
+        match v {
+            raikiri_style::resolve::ComputedLengthPercentage::Px(px) => px,
+            raikiri_style::resolve::ComputedLengthPercentage::Percent(p) => reference * p / 100.0,
+        }
     }
-    // For now, handle padding-box/content-box by insetting; border-area/text as border-box.
-    let mut x0 = abs_x as f64;
-    let mut y0 = abs_y as f64;
-    let mut x1 = (abs_x + width) as f64;
-    let mut y1 = (abs_y + height) as f64;
     match clip {
         raikiri_style::property::VisualBox::PaddingBox => {
-            // Inset by border widths (simplified: use px values directly)
-            // Border width is Length::Px, but we need computed px; for PoC use 0
+            let bw = border;
+            x0 += bw.left.width().px() as f64;
+            y0 += bw.top.width().px() as f64;
+            x1 -= bw.right.width().px() as f64;
+            y1 -= bw.bottom.width().px() as f64;
         }
         raikiri_style::property::VisualBox::ContentBox => {
-            // Inset by border + padding
+            let bw = border;
+            // border inset
+            let bl = bw.left.width().px();
+            let bt = bw.top.width().px();
+            let br = bw.right.width().px();
+            let bb = bw.bottom.width().px();
+            // padding inset (handle Px/Percent)
+            let pl = padding_px(padding.left, width);
+            let pt = padding_px(padding.top, width);
+            let pr = padding_px(padding.right, width);
+            let pb = padding_px(padding.bottom, width);
+            x0 += (bl + pl) as f64;
+            y0 += (bt + pt) as f64;
+            x1 -= (br + pr) as f64;
+            y1 -= (bb + pb) as f64;
         }
+        // BorderBox, BorderArea: no inset
         _ => {}
+    }
+    // Guard against negative or inverted rect after inset (e.g. border larger than box)
+    if x1 <= x0 || y1 <= y0 {
+        return;
     }
     let color = Color::from_rgba8(bg.r, bg.g, bg.b, bg.a);
     let rect = Rect::new(x0, y0, x1, y1);
