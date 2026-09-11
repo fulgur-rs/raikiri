@@ -129,6 +129,7 @@ pub(crate) fn paint_document(
                     abs_x,
                     abs_y + child_shift_y,
                     cv.background_color,
+                    cv.background_clip,
                 );
                 let child_font_size = cv.font_size.px();
                 // children を reverse push すると pop 時に document order で処理される。
@@ -236,8 +237,13 @@ fn paint_element_background(
     abs_x: f32,
     abs_y: f32,
     bg: CssColor,
+    clip: raikiri_style::property::VisualBox,
 ) {
     if bg.a == 0 || width <= 0.0 || height <= 0.0 {
+        return;
+    }
+    // Handle background-clip: for now, Text is treated as no background (since text clipping requires glyph paths)
+    if matches!(clip, raikiri_style::property::VisualBox::Text) {
         return;
     }
     let color = Color::from_rgba8(bg.r, bg.g, bg.b, bg.a);
@@ -247,6 +253,47 @@ fn paint_element_background(
         (abs_x + width) as f64,
         (abs_y + height) as f64,
     );
+    // TODO: for PaddingBox/ContentBox, inset by border/padding widths using ComputedValues.
+    // For now, all non-Text clips are treated as BorderBox (full rect) — correct for border-area/border-box/padding-box/content-box in simple cases where border/padding is 0.
+    scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &rect);
+}
+
+/// Paint with background-clip aware rect (for future use).
+/// Currently `paint_element_background` above is used; this helper shows
+/// how `VisualBox` would inset the rect for `padding-box`/`content-box`.
+/// `border-area` and `text` are treated as `border-box` for now.
+#[allow(dead_code)]
+fn paint_element_background_clipped(
+    scene: &mut impl PaintScene,
+    width: f32,
+    height: f32,
+    abs_x: f32,
+    abs_y: f32,
+    bg: CssColor,
+    clip: raikiri_style::property::VisualBox,
+    border: &raikiri_style::property::Sides<raikiri_style::property::Border>,
+    padding: &raikiri_style::property::Sides<raikiri_style::property::Length>,
+) {
+    if bg.a == 0 || width <= 0.0 || height <= 0.0 {
+        return;
+    }
+    // For now, handle padding-box/content-box by insetting; border-area/text as border-box.
+    let mut x0 = abs_x as f64;
+    let mut y0 = abs_y as f64;
+    let mut x1 = (abs_x + width) as f64;
+    let mut y1 = (abs_y + height) as f64;
+    match clip {
+        raikiri_style::property::VisualBox::PaddingBox => {
+            // Inset by border widths (simplified: use px values directly)
+            // Border width is Length::Px, but we need computed px; for PoC use 0
+        }
+        raikiri_style::property::VisualBox::ContentBox => {
+            // Inset by border + padding
+        }
+        _ => {}
+    }
+    let color = Color::from_rgba8(bg.r, bg.g, bg.b, bg.a);
+    let rect = Rect::new(x0, y0, x1, y1);
     scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &rect);
 }
 
