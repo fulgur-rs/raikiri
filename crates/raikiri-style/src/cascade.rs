@@ -14218,6 +14218,100 @@ mod tests {
         assert_eq!(r.computed[span].font_style, FontStyle::Normal);
     }
 
+    // ── font-style scope-cut cascade consequence (raikiri-spike-1o32) ──
+    //
+    // `font-style`'s spec-valid but unimplemented keywords (`left` / `right`
+    // and `oblique <angle>`) are silent-dropped at parse time
+    // (`crate::property::FontStyle` doc's "Scope carving" section,
+    // `parse_font_style` returning `None` → `DeclParser` dropping the whole
+    // declaration like any other unhandled ident
+    // — same mechanism the `word-break: break-word` Non-goal uses).
+    // At cascade level this means the dropped declaration never participates
+    // as a winner, so an earlier valid declaration for the same property
+    // stays the winner instead of the property falling back to its initial
+    // value or applying the spec-mandated semantics. This is the crate-wide
+    // "scope-cut-but-spec-valid" gap; these tests pin the current
+    // declaration-drop → prior-wins behaviour so a future fix is visible.
+
+    #[test]
+    fn font_style_scope_cut_left_is_dropped_and_prior_wins_via_stylesheet() {
+        // `left` / `right` are spec-valid `font-style` keywords (CSS Fonts 4
+        // §2.4) but this crate's scope excludes them (`FontStyle` doc).
+        // Second rule is parse-dropped, so first rule stays winner.
+        use crate::property::FontStyle;
+        let cv = cascade_doc("p { font-style: italic } p { font-style: left }", "p", None);
+        assert_eq!(
+            cv.font_style,
+            FontStyle::Italic,
+            "scope-cut `font-style: left` is dropped, prior `italic` must remain winner (current crate behaviour)"
+        );
+    }
+
+    #[test]
+    fn font_style_scope_cut_right_is_dropped_and_prior_wins_via_inline() {
+        use crate::property::FontStyle;
+        let cv = cascade_doc("", "p", Some("font-style: italic; font-style: right"));
+        assert_eq!(
+            cv.font_style,
+            FontStyle::Italic,
+            "scope-cut `font-style: right` is dropped, prior `italic` must remain winner"
+        );
+    }
+
+    #[test]
+    fn font_style_scope_cut_oblique_angle_is_dropped_and_prior_wins() {
+        // `oblique <angle>` is spec-valid (CSS Fonts 4 §2.4) but this crate
+        // accepts only bare `oblique` (`FontStyle` doc's Scope carving).
+        // `oblique 14deg` is consumed as `oblique` then rejected by
+        // `DeclParser::expect_exhausted` for the leftover `<angle>` token,
+        // so the whole declaration is dropped — prior wins.
+        use crate::property::FontStyle;
+        let cv = cascade_doc(
+            "",
+            "p",
+            Some("font-style: italic; font-style: oblique 14deg"),
+        );
+        assert_eq!(
+            cv.font_style,
+            FontStyle::Italic,
+            "scope-cut `font-style: oblique 14deg` is dropped, prior `italic` must remain winner"
+        );
+        // Same via stylesheet ordering.
+        let cv = cascade_doc(
+            "p { font-style: italic } p { font-style: oblique 14deg }",
+            "p",
+            None,
+        );
+        assert_eq!(cv.font_style, FontStyle::Italic);
+    }
+
+    #[test]
+    fn font_style_scope_cut_alone_falls_back_to_initial() {
+        // A lone scope-cut declaration never wins, so the property stays at
+        // its initial value (`normal`), not the scope-cut keyword.
+        use crate::property::FontStyle;
+        let cv = cascade_doc("", "p", Some("font-style: left"));
+        assert_eq!(cv.font_style, FontStyle::Normal);
+        let cv = cascade_doc("", "p", Some("font-style: oblique 14deg"));
+        assert_eq!(cv.font_style, FontStyle::Normal);
+    }
+
+    #[test]
+    fn font_style_bare_oblique_is_not_scope_cut_and_wins() {
+        // Control: bare `oblique` IS implemented and must win over a prior
+        // declaration, proving the prior-wins above is due to the scope-cut
+        // drop, not a generic cascade bug.
+        use crate::property::FontStyle;
+        let cv = cascade_doc("", "p", Some("font-style: italic; font-style: oblique"));
+        assert_eq!(cv.font_style, FontStyle::Oblique);
+        let cv = cascade_doc(
+            "p { font-style: italic } p { font-style: oblique }",
+            "p",
+            None,
+        );
+        assert_eq!(cv.font_style, FontStyle::Oblique);
+    }
+
     // ── font-variant-caps wire-through (CSS Fonts Module Level 3 §6.6) ──
 
     #[test]
@@ -14378,6 +14472,93 @@ mod tests {
         assert_eq!(r.computed[span].word_break, WordBreak::KeepAll);
     }
 
+    // ── word-break scope-cut cascade consequence (raikiri-spike-1o32) ──
+    //
+    // `word-break: break-word` is spec-valid (CSS Text 3 §5.1) but
+    // intentionally unimplemented (`WordBreak` doc's "Scope carving" section:
+    // deprecated cross-property `normal` + `overflow-wrap: anywhere`
+    // semantics have no slot in this crate's per-property cascade model).
+    // The declaration is silent-dropped at parse time
+    // (`parse_word_break` → `None` → `DeclParser` drops), so at cascade level
+    // it never becomes a winner. The consequence is that an earlier valid
+    // declaration for `word-break` stays the winner, instead of the property
+    // falling back to its initial `normal` (or applying the spec-mandated
+    // `break-word` → `normal` + `anywhere` equivalent as browsers do).
+    // These tests pin that current prior-wins behaviour.
+
+    #[test]
+    fn word_break_scope_cut_break_word_is_dropped_and_prior_wins_via_stylesheet() {
+        // Issue example verbatim: `p { word-break: break-all; } p {
+        // word-break: break-word; }` — spec says computed should be `normal`
+        // (second wins, browsers apply deprecated-keyword equivalent), but
+        // this crate leaves `break-all` in place since second is dropped.
+        use crate::property::WordBreak;
+        let cv = cascade_doc(
+            "p { word-break: break-all } p { word-break: break-word }",
+            "p",
+            None,
+        );
+        assert_eq!(
+            cv.word_break,
+            WordBreak::BreakAll,
+            "scope-cut `word-break: break-word` is dropped, prior `break-all` must remain winner (current crate behaviour, not spec)"
+        );
+    }
+
+    #[test]
+    fn word_break_scope_cut_break_word_is_dropped_and_prior_wins_via_inline() {
+        use crate::property::WordBreak;
+        let cv = cascade_doc(
+            "",
+            "p",
+            Some("word-break: break-all; word-break: break-word"),
+        );
+        assert_eq!(
+            cv.word_break,
+            WordBreak::BreakAll,
+            "scope-cut `word-break: break-word` in inline style is dropped, prior `break-all` must remain winner"
+        );
+    }
+
+    #[test]
+    fn word_break_scope_cut_break_word_is_dropped_and_same_rule_prior_wins() {
+        // Same rule, later duplicate dropped → earlier stays winner
+        // (CSS Cascading L4 §6.1 Order of Appearance "last wins" would make
+        // the later win if it had parsed).
+        use crate::property::WordBreak;
+        let cv = cascade_doc(
+            "p { word-break: keep-all; word-break: break-word }",
+            "p",
+            None,
+        );
+        assert_eq!(cv.word_break, WordBreak::KeepAll);
+    }
+
+    #[test]
+    fn word_break_scope_cut_alone_falls_back_to_initial() {
+        // Lone `break-word` never wins → property stays at initial `normal`.
+        use crate::property::WordBreak;
+        let cv = cascade_doc("", "p", Some("word-break: break-word"));
+        assert_eq!(cv.word_break, WordBreak::Normal);
+        let cv = cascade_doc("p { word-break: break-word }", "p", None);
+        assert_eq!(cv.word_break, WordBreak::Normal);
+    }
+
+    #[test]
+    fn word_break_valid_later_overrides_prior_scope_cut_alone() {
+        // Control: `break-word` being dropped must not poison a later valid
+        // declaration in the same element. `break-word` (dropped) then
+        // `break-all` (valid) → `break-all` wins, proving the drop is
+        // per-declaration, not per-property.
+        use crate::property::WordBreak;
+        let cv = cascade_doc(
+            "",
+            "p",
+            Some("word-break: break-word; word-break: break-all"),
+        );
+        assert_eq!(cv.word_break, WordBreak::BreakAll);
+    }
+
     // ── overflow-wrap / word-wrap legacy alias wire-through (CSS Text 3 §5.4) ──
 
     #[test]
@@ -14441,6 +14622,83 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(r.computed[p].overflow_wrap, OverflowWrap::Anywhere);
         assert_eq!(r.computed[span].overflow_wrap, OverflowWrap::Normal);
+    }
+
+    // ── generic scope-cut cascade consequence (raikiri-spike-1o32) ──
+    //
+    // The word-break / font-style cases above are not unique: every
+    // scope-cut-but-spec-valid keyword in this crate follows the same
+    // declaration-drop → prior-wins path because the per-property parser
+    // returns `None` and `DeclParser` drops the declaration before cascade
+    // ever sees it. These three spot-checks pin that the same prior-wins
+    // behaviour holds for unrelated properties, proving the gap is crate-wide
+    // and not a single-property quirk.
+
+    #[test]
+    fn white_space_scope_cut_break_spaces_is_dropped_and_prior_wins() {
+        // CSS Text 3 §4.1 `white-space: break-spaces` is spec-valid but
+        // unimplemented (`WhiteSpace` doc's Scope carving). Same prior-wins
+        // shape as `word-break: break-word`.
+        use crate::property::WhiteSpace;
+        let cv = cascade_doc(
+            "",
+            "p",
+            Some("white-space: pre-wrap; white-space: break-spaces"),
+        );
+        assert_eq!(
+            cv.white_space,
+            WhiteSpace::PreWrap,
+            "scope-cut `white-space: break-spaces` is dropped, prior `pre-wrap` must remain winner"
+        );
+        let cv = cascade_doc(
+            "p { white-space: pre-wrap } p { white-space: break-spaces }",
+            "p",
+            None,
+        );
+        assert_eq!(cv.white_space, WhiteSpace::PreWrap);
+        // Lone scope-cut alone falls back to initial `normal`.
+        let cv = cascade_doc("", "p", Some("white-space: break-spaces"));
+        assert_eq!(cv.white_space, WhiteSpace::Normal);
+    }
+
+    #[test]
+    fn vertical_align_scope_cut_top_is_dropped_and_prior_wins() {
+        // CSS 2.1 §10.8.1 `vertical-align: top` / `bottom` are spec-valid but
+        // unimplemented (`VerticalAlign` doc's Scope carving: needs inline
+        // formatting context extent). Same mechanism.
+        use crate::property::VerticalAlign;
+        let cv = cascade_doc(
+            "",
+            "span",
+            Some("vertical-align: baseline; vertical-align: top"),
+        );
+        assert_eq!(
+            cv.vertical_align,
+            VerticalAlign::Baseline,
+            "scope-cut `vertical-align: top` is dropped, prior `baseline` must remain winner"
+        );
+        let cv = cascade_doc("", "span", Some("vertical-align: top"));
+        assert_eq!(cv.vertical_align, VerticalAlign::Baseline);
+    }
+
+    #[test]
+    fn text_transform_scope_cut_full_width_is_dropped_and_prior_wins() {
+        // CSS Text 3 §2.1 `text-transform: full-width` is spec-valid but
+        // unimplemented (`TextTransform` doc's Scope carving: `||` combinator).
+        // Lone `full-width` is dropped; with a prior valid, prior stays.
+        use crate::property::TextTransform;
+        let cv = cascade_doc(
+            "",
+            "p",
+            Some("text-transform: uppercase; text-transform: full-width"),
+        );
+        assert_eq!(
+            cv.text_transform,
+            TextTransform::Uppercase,
+            "scope-cut `text-transform: full-width` is dropped, prior `uppercase` must remain winner"
+        );
+        let cv = cascade_doc("", "p", Some("text-transform: full-width"));
+        assert_eq!(cv.text_transform, TextTransform::None);
     }
 
     // ── letter-spacing / word-spacing wire-through (CSS Text 3 §7.2 / §7.1) ──
