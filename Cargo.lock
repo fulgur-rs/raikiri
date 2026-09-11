@@ -1851,6 +1851,7 @@ dependencies = [
 name = "raikiri-wpt"
 version = "0.1.0"
 dependencies = [
+ "anyrender",
  "anyrender_vello_cpu",
  "assert_cmd",
  "blitz-dom",
@@ -1858,7 +1859,13 @@ dependencies = [
  "blitz-paint",
  "blitz-traits",
  "insta",
+ "parley",
  "raikiri",
+ "raikiri-dom",
+ "raikiri-html",
+ "raikiri-paint",
+ "raikiri-style",
+ "raikiri-traits",
  "tempfile",
  "time",
  "tiny-skia",
