@@ -1,8 +1,8 @@
-//! raikiri-wpt — WPT harness with blitz oracle (initial skeleton).
+//! raikiri-wpt — WPT harness with blitz oracle.
 //!
-//! Current scaffold: module structure + expectations parsers + type stubs.
-//! Actual reftest execution and oracle diff aggregation are future work
-//! (see design spec §12.9 / §12.10).
+//! Provides expectations parsers, reftest discovery/render/diff, runner
+//! dispatch, and the blitz oracle delta. See `reftest`, `runner`, and
+//! `oracle` modules for the execution path (spec §12.4, §12.9, §12.10).
 
 pub mod expectations;
 pub mod lint;
