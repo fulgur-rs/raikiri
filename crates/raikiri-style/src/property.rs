@@ -22530,6 +22530,67 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::ZIndex);
     }
 
+    #[test]
+    fn z_index_parses_auto_and_integers() {
+        assert_eq!(
+            parse("auto", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Auto))
+        );
+        assert_eq!(
+            parse("0", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Integer(0)))
+        );
+        assert_eq!(
+            parse("3", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Integer(3)))
+        );
+        assert_eq!(
+            parse("-1", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Integer(-1)))
+        );
+        assert_eq!(
+            parse("2147483647", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Integer(i32::MAX)))
+        );
+        assert_eq!(
+            parse("-2147483648", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Integer(i32::MIN)))
+        );
+    }
+
+    #[test]
+    fn z_index_clamps_out_of_i32_range() {
+        // cssparser 0.37.0 tokenizer.rs:1084-1091 clamps out-of-i32-range integer
+        // literals to i32::MAX/MIN rather than wrapping or erroring; parse_z_index
+        // delegates to `expect_integer()` so the clamp propagates.
+        assert_eq!(
+            parse("99999999999", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Integer(i32::MAX)))
+        );
+        assert_eq!(
+            parse("-99999999999", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Integer(i32::MIN)))
+        );
+        // Just beyond boundaries also clamp.
+        assert_eq!(
+            parse("2147483648", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Integer(i32::MAX)))
+        );
+        assert_eq!(
+            parse("-2147483649", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Integer(i32::MIN)))
+        );
+        // Very large magnitude (far beyond i32) still clamps.
+        assert_eq!(
+            parse("99999999999999999999", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Integer(i32::MAX)))
+        );
+        assert_eq!(
+            parse("-99999999999999999999", "z-index"),
+            Some(PropertyValue::ZIndex(ZIndexValue::Integer(i32::MIN)))
+        );
+    }
+
     // ── float (CSS2 §9.5.1) ──
     //
     // Value grammar (§9.5.1 spec verbatim): `left | right | none | inherit`.
