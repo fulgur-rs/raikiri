@@ -15027,6 +15027,9 @@ mod tests {
     //    §3.3) ──
 
     // ── writing-mode wire-through (CSS Writing Modes 4 §3.2) ──
+    // Debt (`raikiri-spike-zhmp`): vertical writing-mode 実装時に
+    // `resolve_writing_mode` の collapse を削除したら、本 test の期待値を
+    // `VerticalRl` へ戻すこと。
 
     #[test]
     fn writing_mode_wired_through_cascade_from_inline_style() {
@@ -15037,6 +15040,8 @@ mod tests {
         // happens later in `absolutize_with` (see `apply_value`'s
         // `PropertyValue::WritingMode` arm doc comment), so the computed
         // value here is always `HorizontalTb` even for `vertical-rl`.
+        // Debt (`raikiri-spike-zhmp`): vertical writing 実装時に
+        // `HorizontalTb` 期待値を `VerticalRl` へ戻すこと。
         assert_eq!(cv.writing_mode, WritingMode::HorizontalTb);
     }
 

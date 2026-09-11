@@ -2967,6 +2967,9 @@ pub enum Direction {
 ///   "Computed value: specified value" (= computed 値は specified keyword を
 ///   そのまま保持する) からの意図的な divergence であり、spec 解釈の誤りでは
 ///   ない — 縦書き非対応という scope cut を正直に表現したもの。
+///   将来 vertical writing-mode レンダリングを実装する際は、この collapse と
+///   [`resolve_writing_mode`] を削除し、spec どおり "specified value" を保持
+///   する computed value へ戻すこと — 棚卸しは `raikiri-spike-zhmp` が追跡する。
 ///
 /// [`DisplayValue`] / [`TextAlign`] / [`Direction`] と同じ convention で
 /// `Default` を derive しない — 初期化側
@@ -3151,6 +3154,19 @@ pub(crate) fn resolve_overflow(specified: OverflowXY) -> OverflowXY {
 /// **他 field (親の computed 値・同 node の他 property) に一切依存しない** —
 /// 引数の keyword に関わらず戻り値は固定 (`self` すら実質不要だが、他の
 /// `resolve_*` 関数と同じ signature shape を保つため受け取る)。
+///
+/// # Debt — vertical writing-mode 実装時の棚卸し (`raikiri-spike-zhmp`)
+///
+/// 本関数は CSS Writing Modes 4 "Computed value: specified value" からの
+/// 意図的な divergence である。将来 vertical writing を実装する際は、本関数
+/// 自体を削除し、`specified.rs` の
+/// `finalize_collapses_all_non_horizontal_writing_modes` /
+/// `inherit_from_then_finalize_still_collapses_writing_mode`、`page.rs` の
+/// `absolutize_in_page_context_collapses_writing_mode_to_horizontal_tb` /
+/// `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE` / `WritingMode(VerticalRl)` corpus
+/// sample、`cascade.rs` の `writing_mode_wired_through_cascade_from_inline_style`、
+/// `computed.rs` の `non_initial_parent` fixture + `HorizontalTb` assertion と
+/// lockstep で revert/rewrite すること。
 ///
 /// # 呼び出し元
 ///
@@ -22035,6 +22051,9 @@ mod tests {
     /// 4 non-horizontal ones (identity for `HorizontalTb` itself is also
     /// pinned so a future refactor can't "fix" this into a no-op passthrough
     /// without a test noticing).
+    ///
+    /// Debt (`raikiri-spike-zhmp`): vertical writing-mode 実装時に本 collapse を
+    /// 削除し、本 test を revert/rewrite すること。
     #[test]
     fn resolve_writing_mode_collapses_all_five_keywords_to_horizontal_tb() {
         for specified in [

@@ -2470,6 +2470,9 @@ mod tests {
     /// `WritingMode::HorizontalTb` (`WritingMode` doc's Non-goal section).
     /// This is the element-path pin; the page-path equivalent is
     /// `crate::page::tests::absolutize_in_page_context_collapses_writing_mode_to_horizontal_tb`.
+    ///
+    /// Debt (`raikiri-spike-zhmp`): vertical writing-mode 実装時に本 collapse を
+    /// 削除し、本 test を revert/rewrite すること。
     #[test]
     fn finalize_collapses_all_non_horizontal_writing_modes() {
         for specified in [
@@ -2498,6 +2501,9 @@ mod tests {
     /// computed value. See `computed::tests::non_initial_parent`'s doc
     /// comment for why this same invariant is exercised there with a
     /// synthetic (real-cascade-unreachable) `ComputedValues` literal.
+    ///
+    /// Debt (`raikiri-spike-zhmp`): vertical writing-mode 実装時に本 collapse を
+    /// 削除し、本 test を revert/rewrite すること。
     #[test]
     fn inherit_from_then_finalize_still_collapses_writing_mode() {
         let parent = ComputedValues {

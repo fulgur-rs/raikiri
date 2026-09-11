@@ -488,6 +488,8 @@ pub struct ComputedValues {
     /// [`crate::property::resolve_writing_mode`] により
     /// [`WritingMode::HorizontalTb`] に正規化されてからこの field へ
     /// 書き込まれる ([`WritingMode`] doc の Non-goal 節が canonical rationale)。
+    /// Debt (`raikiri-spike-zhmp`): vertical writing-mode 実装時に本 collapse を
+    /// 削除し、本 doc の「観測されることは無い」記述を撤回すること。
     pub writing_mode: WritingMode,
     /// `text-indent` — first-line indentation of a block container.
     /// **inherited**、initial: [`ComputedLengthPercentage::Px`]`(0.0)` (CSS
@@ -1976,6 +1978,10 @@ mod tests {
             // `assert_eq!(child.writing_mode, parent.writing_mode)`
             // **ではない** (下記 `inherit_from_copies_inherited_and_resets_non_inherited`
             // の該当行 doc comment 参照)。
+            // Debt (`raikiri-spike-zhmp`): vertical writing-mode 実装時に
+            // `VerticalRl` が実 cascade 到達可能になったら、本 fixture の
+            // 到達不能コメントと下記 `HorizontalTb` assertion を `VerticalRl` へ
+            // 戻すこと。
             writing_mode: WritingMode::VerticalRl,
             // CSS Text 3 §8.1: initial (`0`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
@@ -2241,6 +2247,8 @@ mod tests {
         // 正規化する (`WritingMode` doc の Non-goal 節参照)。この
         // assert は「inherit_from が本 field を素通しコピーしていない」こと
         // 自体が正しい挙動であることを pin する。
+        // Debt (`raikiri-spike-zhmp`): vertical writing-mode 実装時に本 collapse を
+        // 削除したら、`HorizontalTb` 期待値を `VerticalRl` へ戻すこと。
         assert_eq!(child.writing_mode, WritingMode::HorizontalTb);
         // CSS Fonts 4 §2.4: font-style は inherited。
         assert_eq!(child.font_style, parent.font_style);
