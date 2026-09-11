@@ -3398,7 +3398,12 @@ fn absolutize_in_page_context(
                 own_line_height,
                 ctx,
             ))
-        },
+        }
+        PropertyValue::OutlineOffset(v) => {
+            PropertyValue::OutlineOffset(Length::Px(
+                resolve_length(v, font_size, own_line_height, ctx).px(),
+            ))
+        }
         // ── width / height ────────────────────────────────────────────────
         PropertyValue::Width(v) => PropertyValue::Width(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Height(v) => PropertyValue::Height(lpa(v, font_size, own_line_height, ctx)),
@@ -6943,6 +6948,7 @@ mod tests {
         OutlineWidth => PropertyValue::OutlineWidth(Length::Em(0.25)),
         OutlineStyle => PropertyValue::OutlineStyle(OutlineStyle::Solid),
         OutlineColor => PropertyValue::OutlineColor(OutlineColor::Resolved(GREEN)),
+        OutlineOffset => PropertyValue::OutlineOffset(Length::Em(0.5)),
         // `VerticalRl` is deliberately the "worst case" here — it is one of
         // the 4 keywords `resolve_writing_mode` actually rewrites (->
         // `HorizontalTb`), same reasoning as `Overflow`'s `Visible` sample
@@ -7283,6 +7289,7 @@ mod tests {
         OutlineWidth,
         OutlineStyle,
         OutlineColor,
+        OutlineOffset,
         GridTemplateColumns,
         GridTemplateRows,
         GridTemplateAreas,
@@ -7604,7 +7611,8 @@ mod tests {
             | PropertyValue::BorderTopWidth(l)
             | PropertyValue::BorderRightWidth(l)
             | PropertyValue::BorderBottomWidth(l)
-            | PropertyValue::BorderLeftWidth(l) => length(*l),
+            | PropertyValue::BorderLeftWidth(l)
+            | PropertyValue::OutlineOffset(l) => length(*l),
             PropertyValue::MarginTop(l)
             | PropertyValue::MarginRight(l)
             | PropertyValue::MarginBottom(l)

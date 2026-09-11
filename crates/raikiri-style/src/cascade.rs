@@ -7083,6 +7083,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::OutlineWidth(_)
         | PropertyValue::OutlineStyle(_)
         | PropertyValue::OutlineColor(_)
+        | PropertyValue::OutlineOffset(_)
         // CSS Grid Layout Module Level 1 grid-template-columns/-rows/-areas
         // (§7.2/§7.3) + grid-auto-columns/-rows/-flow (§7.6/§7.7) +
         // grid-row-start/-end/grid-column-start/-end (+ their `grid-row`/
@@ -7778,6 +7779,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::OutlineWidth(v) => target.outline.width = v,
         PropertyValue::OutlineStyle(v) => target.outline.style = v,
         PropertyValue::OutlineColor(v) => target.outline.color = v,
+        PropertyValue::OutlineOffset(v) => target.outline_offset = v,
         // CSS Grid Layout Module Level 1 §7.2/§7.3/§7.6/§7.7/§8.3。
         // non-inherited、specified 表現のまま格納 — 絶対化は phase 3 に
         // 委ねる (`LetterSpacing`/`FlexBasis` arm と同じ handling)。

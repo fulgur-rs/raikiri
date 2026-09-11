@@ -616,6 +616,10 @@ pub struct ComputedValues {
     /// specified width の `medium` は style が visible の場合だけ computed width に
     /// 反映される。
     pub outline: ComputedOutline,
+    /// `outline-offset` の computed length。**non-inherited**、initial は `0px`
+    /// (CSS UI 3 §4.5 <https://www.w3.org/TR/css-ui-3/#outline-offset>)。
+    /// 負値は border edge より内側への inset を示す。
+    pub outline_offset: ComputedLength,
     /// `width` — preferred physical horizontal size (writing-mode neutral な
     /// physical property、vertical writing mode では block axis に対応)。
     /// **non-inherited**、initial: [`ComputedLengthPercentageOrAuto::Auto`] (CSS Sizing 3 §3.1.1
@@ -1485,6 +1489,8 @@ impl ComputedValues {
                 style: OutlineStyle::None,
                 color: OutlineColor::Invert,
             },
+            // CSS UI 3 §4.5: outline-offset initial は `0`.
+            outline_offset: ComputedLength::ZERO,
             // CSS Sizing 3 §3.1.1: width initial は `auto`。
             width: ComputedLengthPercentageOrAuto::Auto,
             // CSS Sizing 3 §3.1.1: height initial は `auto`。
@@ -1992,6 +1998,7 @@ mod tests {
                 style: OutlineStyle::Solid,
                 color: OutlineColor::Resolved(CssColor::BLACK),
             },
+            outline_offset: ComputedLength(5.0),
             width: ComputedLengthPercentageOrAuto::Px(200.0),
             height: ComputedLengthPercentageOrAuto::Px(200.0),
             box_sizing: BoxSizing::BorderBox,
