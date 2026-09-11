@@ -5182,6 +5182,8 @@ pub enum VisualBox {
     PaddingBox,
     /// `content-box` — padding の内側、content box の縁。
     ContentBox,
+    /// `border-area` — border area の縁 (CSS Backgrounds 4 §2.6)。
+    BorderArea,
 }
 
 /// `background-size` の specified value。
@@ -16455,6 +16457,7 @@ fn parse_visual_box(input: &mut Parser<'_, '_>) -> Option<VisualBox> {
         "border-box" => Some(VisualBox::BorderBox),
         "padding-box" => Some(VisualBox::PaddingBox),
         "content-box" => Some(VisualBox::ContentBox),
+        "border-area" => Some(VisualBox::BorderArea),
         _ => None,
     }
 }
