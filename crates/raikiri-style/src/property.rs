@@ -10104,7 +10104,15 @@ fn clamp_channel(value: i32) -> f32 {
 /// # `!is_nan()` guard — NaN, but *not* `+Inf`/`-Inf`, must be rejected
 ///
 /// `+Inf`/`-Inf` are spec-valid `<number>` values (CSS Color 4 §3.3 puts no
-/// range restriction on `<opacity-value>`'s `<number>` alternative) and are
+/// range restriction on `<opacity-value>`'s `<number>` alternative) and, per
+/// CSS Values and Units Module Level 4 §5 "Numeric Data Types"
+/// (<https://www.w3.org/TR/css-values-4/#numeric-types>), when a literal
+/// exceeds the implementation's supported precision it "must be converted to
+/// the closest value supported by the implementation" where "how the
+/// implementation defines 'closest' is implementation-defined" — treating
+/// IEEE-754 `Infinity` as that closest value (rather than e.g. `f32::MAX`)
+/// is a deliberate, spec-permitted choice, not the only conformant answer,
+/// and is what cssparser's `f64`->`f32` overflow naturally produces. They are
 /// handled correctly by the phase-3 clamp above — `f32::clamp` maps
 /// `+Inf`/`-Inf` to `1.0`/`0.0` exactly as it maps any other out-of-range
 /// finite value, so a huge-magnitude literal like `opacity: -1e40` (which
@@ -30331,6 +30339,25 @@ mod tests {
         );
         assert_eq!(
             parse("-1e40", "opacity"),
+            Some(PropertyValue::Opacity(f32::NEG_INFINITY))
+        );
+
+        // Percentage branch: cssparser 0.37.0 tokenizes `<percentage>` by
+        // parsing the numeric part as `f64` then dividing by `100.0` *in
+        // `f64`* before casting to `f32`, so `1e40%` becomes `1e38` as
+        // `f32` (finite — `1e40 / 100 = 1e38 < f32::MAX ≈ 3.4e38`) and does
+        // NOT overflow to `Infinity`. The first exponent that does overflow
+        // through this path is `1e41%` (`1e41 / 100 = 1e39 > f32::MAX` →
+        // `Infinity`). Pin both signs to cover `!is_nan()` passthrough for
+        // the percentage branch specifically (the existing `0e999%` case
+        // only exercises the `NaN` rejection path, not this `Infinity`
+        // passthrough).
+        assert_eq!(
+            parse("1e41%", "opacity"),
+            Some(PropertyValue::Opacity(f32::INFINITY))
+        );
+        assert_eq!(
+            parse("-1e41%", "opacity"),
             Some(PropertyValue::Opacity(f32::NEG_INFINITY))
         );
     }
