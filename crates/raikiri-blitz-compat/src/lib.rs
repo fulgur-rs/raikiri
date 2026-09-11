@@ -6,22 +6,22 @@
 //! (version-hell avoidance) — shapes are re-implemented verbatim
 //! and bridged via conversions / adapters.
 
-pub mod net;
-pub mod navigation;
-pub mod shell;
-pub mod events;
 pub mod devtools;
+pub mod events;
+pub mod navigation;
+pub mod net;
+pub mod shell;
 
 /// `blitz_traits` namespace alias — mirrors `blitz_traits` crate path.
 ///
 /// Allows `use raikiri_blitz_compat::blitz_traits::net::NetProvider`
 /// and `use raikiri_blitz_compat::net::NetProvider` interchangeably.
 pub mod blitz_traits {
-    pub use crate::devtools as devtools;
-    pub use crate::events as events;
-    pub use crate::navigation as navigation;
-    pub use crate::net as net;
-    pub use crate::shell as shell;
+    pub use crate::devtools;
+    pub use crate::events;
+    pub use crate::navigation;
+    pub use crate::net;
+    pub use crate::shell;
 }
 
 // ── raikiri-traits re-exports with blitz-compatible aliases ─────────────
@@ -49,21 +49,21 @@ pub mod resolver {
 }
 
 // Root-level type aliases for ergonomic `use raikiri_blitz_compat::NetProvider`.
+pub use raikiri_traits::AbortController;
+pub use raikiri_traits::AbortSignal;
+pub use raikiri_traits::Body as RaikiriBody;
 pub use raikiri_traits::Dom;
 pub use raikiri_traits::Element;
+pub use raikiri_traits::FetchedResource;
+pub use raikiri_traits::HeaderMap as RaikiriHeaderMap;
+pub use raikiri_traits::Method as RaikiriMethod;
+pub use raikiri_traits::NetworkProvider as NetProvider;
+pub use raikiri_traits::NetworkProvider;
 pub use raikiri_traits::Node;
 pub use raikiri_traits::NodeId;
 pub use raikiri_traits::NodeKind;
 pub use raikiri_traits::ReplacedResolver;
-pub use raikiri_traits::NetworkProvider as NetProvider;
-pub use raikiri_traits::NetworkProvider;
-pub use raikiri_traits::AbortSignal;
-pub use raikiri_traits::AbortController;
 pub use raikiri_traits::Request as RaikiriRequest;
-pub use raikiri_traits::FetchedResource;
-pub use raikiri_traits::Body as RaikiriBody;
-pub use raikiri_traits::HeaderMap as RaikiriHeaderMap;
-pub use raikiri_traits::Method as RaikiriMethod;
 
 // Re-export raikiri umbrella for convenience.
 pub use raikiri_traits;
@@ -104,9 +104,9 @@ mod tests {
 
     #[test]
     fn adapter_wraps_raikiri_provider() {
+        use bytes::Bytes;
         use net::{NetProvider, Request};
         use raikiri_traits::{FetchedResource, NetworkError, NetworkProvider};
-        use bytes::Bytes;
         use url::Url;
 
         struct Dummy;
@@ -138,7 +138,13 @@ mod tests {
                 self.called.store(true, std::sync::atomic::Ordering::SeqCst);
             }
         }
-        provider.fetch(0, req, Box::new(Handler { called: called_clone }));
+        provider.fetch(
+            0,
+            req,
+            Box::new(Handler {
+                called: called_clone,
+            }),
+        );
         assert!(called.load(std::sync::atomic::Ordering::SeqCst));
     }
 }
