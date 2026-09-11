@@ -271,7 +271,7 @@ impl PageScene {
 /// margin なしで body_id が taffy root として (0, 0) から compute されるため
 /// 常に `(0.0, 0.0)`。将来 @page margin が導入された時点で cascade から
 /// 引き出す予定。
-pub(crate) fn build_page_scene(
+pub fn build_page_scene(
     dom: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,

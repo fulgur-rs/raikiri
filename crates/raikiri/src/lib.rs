@@ -36,7 +36,7 @@ pub use html_to_png::{html_to_png, html_to_png_with_fonts};
 // `NodeId` は既存 `raikiri_traits::NodeId` (re-export 済み) を再利用し
 // PageScene と Document 間で node identity を統一する。
 mod page_scene;
-pub use page_scene::{Fragment, Orientation, PageMetadata, PageScene, Pt};
+pub use page_scene::{build_page_scene, Fragment, Orientation, PageMetadata, PageScene, Pt};
 
 mod page_drawables;
 pub use page_drawables::{PageDrawables, TrackedMap};
