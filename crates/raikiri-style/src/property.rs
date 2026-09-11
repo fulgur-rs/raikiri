@@ -14352,6 +14352,75 @@ fn parse_position_vertical_group(input: &mut Parser<'_, '_>) -> Option<(CssPosit
     parse_position_vertical_edge(input)
 }
 
+/// [`parse_position_branch3`] と [`parse_position_branch3_strict`] の共通コア —
+/// `<position>` 3rd alternative の構造を一度だけ記述し、offset 有無
+/// (`bool` 2 つ) を呼び出し元へ返す。`center` は常に offset なし (`false`)
+/// ([`parse_position_horizontal_group`] doc 参照)。
+fn parse_position_branch3_core(input: &mut Parser<'_, '_>) -> Option<(CssPosition, bool, bool)> {
+    if let Some((horizontal, h_offset)) = parse_position_horizontal_edge(input) {
+        let (vertical, v_offset) = parse_position_vertical_group(input)?;
+        return Some((
+            CssPosition {
+                horizontal,
+                vertical,
+            },
+            h_offset,
+            v_offset,
+        ));
+    }
+    if let Some((vertical, v_offset)) = parse_position_vertical_edge(input) {
+        let (horizontal, h_offset) = parse_position_horizontal_group(input)?;
+        return Some((
+            CssPosition {
+                horizontal,
+                vertical,
+            },
+            h_offset,
+            v_offset,
+        ));
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("center"))
+        .is_ok()
+    {
+        if let Some((vertical, v_offset)) = parse_position_vertical_edge(input) {
+            return Some((
+                CssPosition {
+                    horizontal: css_position_center(),
+                    vertical,
+                },
+                false,
+                v_offset,
+            ));
+        }
+        if let Some((horizontal, h_offset)) = parse_position_horizontal_edge(input) {
+            return Some((
+                CssPosition {
+                    horizontal,
+                    vertical: css_position_center(),
+                },
+                h_offset,
+                false,
+            ));
+        }
+        if input
+            .try_parse(|i| i.expect_ident_matching("center"))
+            .is_ok()
+        {
+            return Some((
+                CssPosition {
+                    horizontal: css_position_center(),
+                    vertical: css_position_center(),
+                },
+                false,
+                false,
+            ));
+        }
+        return None;
+    }
+    None
+}
+
 /// `<position>` grammar ([`CssPosition`] doc) の 3rd alternative —
 /// `[ center | [ left | right ] <length-percentage>? ] && [ center | [ top |
 /// bottom ] <length-percentage>? ]`。`&&` は両 group が (任意順で) 必須
@@ -14373,48 +14442,8 @@ fn parse_position_vertical_group(input: &mut Parser<'_, '_>) -> Option<(CssPosit
 /// `object-position` (`<position>` を要求) はあちら、という使い分けが
 /// [`CssPosition`] の Grammar 節の canonical な説明。
 fn parse_position_branch3(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
-    if let Some((horizontal, _)) = parse_position_horizontal_edge(input) {
-        let (vertical, _) = parse_position_vertical_group(input)?;
-        return Some(CssPosition {
-            horizontal,
-            vertical,
-        });
-    }
-    if let Some((vertical, _)) = parse_position_vertical_edge(input) {
-        let (horizontal, _) = parse_position_horizontal_group(input)?;
-        return Some(CssPosition {
-            horizontal,
-            vertical,
-        });
-    }
-    if input
-        .try_parse(|i| i.expect_ident_matching("center"))
-        .is_ok()
-    {
-        if let Some((vertical, _)) = parse_position_vertical_edge(input) {
-            return Some(CssPosition {
-                horizontal: css_position_center(),
-                vertical,
-            });
-        }
-        if let Some((horizontal, _)) = parse_position_horizontal_edge(input) {
-            return Some(CssPosition {
-                horizontal,
-                vertical: css_position_center(),
-            });
-        }
-        if input
-            .try_parse(|i| i.expect_ident_matching("center"))
-            .is_ok()
-        {
-            return Some(CssPosition {
-                horizontal: css_position_center(),
-                vertical: css_position_center(),
-            });
-        }
-        return None;
-    }
-    None
+    let (position, _, _) = parse_position_branch3_core(input)?;
+    Some(position)
 }
 
 /// [`parse_position_branch3`] の plain-`<position>` 版 —
@@ -14444,63 +14473,11 @@ fn parse_position_branch3(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
 /// `expect_exhausted` による leftover 検出でも捕捉できない。本関数は
 /// それを防ぐための、offset 有無の対称性チェックを追加した sibling。
 fn parse_position_branch3_strict(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
-    if let Some((horizontal, h_offset)) = parse_position_horizontal_edge(input) {
-        let (vertical, v_offset) = parse_position_vertical_group(input)?;
-        if h_offset != v_offset {
-            return None;
-        }
-        return Some(CssPosition {
-            horizontal,
-            vertical,
-        });
-    }
-    if let Some((vertical, v_offset)) = parse_position_vertical_edge(input) {
-        let (horizontal, h_offset) = parse_position_horizontal_group(input)?;
-        if h_offset != v_offset {
-            return None;
-        }
-        return Some(CssPosition {
-            horizontal,
-            vertical,
-        });
-    }
-    if input
-        .try_parse(|i| i.expect_ident_matching("center"))
-        .is_ok()
-    {
-        // `center` never carries an offset (`parse_position_horizontal_group`
-        // doc) — pairing it with an offset-bearing edge on the other axis is
-        // exactly the asymmetric 3-value shape this function rejects.
-        if let Some((vertical, v_offset)) = parse_position_vertical_edge(input) {
-            if v_offset {
-                return None;
-            }
-            return Some(CssPosition {
-                horizontal: css_position_center(),
-                vertical,
-            });
-        }
-        if let Some((horizontal, h_offset)) = parse_position_horizontal_edge(input) {
-            if h_offset {
-                return None;
-            }
-            return Some(CssPosition {
-                horizontal,
-                vertical: css_position_center(),
-            });
-        }
-        if input
-            .try_parse(|i| i.expect_ident_matching("center"))
-            .is_ok()
-        {
-            return Some(CssPosition {
-                horizontal: css_position_center(),
-                vertical: css_position_center(),
-            });
-        }
+    let (position, h_offset, v_offset) = parse_position_branch3_core(input)?;
+    if h_offset != v_offset {
         return None;
     }
-    None
+    Some(position)
 }
 
 /// `[ left | center | right | <length-percentage> ]` — `<position>` grammar
