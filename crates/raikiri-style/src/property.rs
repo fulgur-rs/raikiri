@@ -29746,6 +29746,61 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::BackgroundImage);
     }
 
+    // ── background-* comma-list (multi-layer) rejection (raikiri-spike-nh7f) ──
+
+    #[test]
+    fn background_longhands_reject_comma_separated_multi_layer() {
+        // All 7 background-* longhands are single-layer only; comma-separated
+        // multi-layer (#-list) must be whole-declaration-drop via
+        // `DeclParser::parse_value` + `expect_exhausted` (rule.rs:1094 etc.).
+        // This pins that a future refactor never silently truncates to the
+        // first layer ("first layer wins") — which would paint the wrong
+        // background instead of falling through to the previous declaration
+        // or the initial value.
+        let cases: &[(&str, &str)] = &[
+            ("background-repeat", "repeat, no-repeat"),
+            ("background-attachment", "scroll, fixed"),
+            ("background-clip", "border-box, padding-box"),
+            ("background-origin", "padding-box, content-box"),
+            ("background-size", "cover, contain"),
+            ("background-position", "left top, right bottom"),
+            ("background-image", "url(a.png), url(b.png)"),
+        ];
+        for (name, source) in cases {
+            assert_eq!(
+                parse_entire(source, name),
+                None,
+                "{name}: {source:?} should be whole-declaration-drop"
+            );
+            // The leading layer itself is valid — so the rejection is solely
+            // due to the trailing `, <layer>` leftover caught by
+            // `expect_exhausted`, not the parser rejecting the first token.
+            assert!(
+                parse(source, name).is_some(),
+                "{name}: first layer of {source:?} should still parse without exhaustion check"
+            );
+        }
+    }
+
+    #[test]
+    fn background_image_rejects_comma_list_with_none_and_gradient_variants() {
+        // `none` and `<gradient>` are also valid single layers; mixing them
+        // with a comma must still be whole-declaration-drop.
+        for source in [
+            "none, url(b.png)",
+            "url(a.png), none",
+            "none, none",
+            "linear-gradient(red, blue), url(b.png)",
+            "url(a.png), linear-gradient(red, blue)",
+        ] {
+            assert_eq!(
+                parse_entire(source, "background-image"),
+                None,
+                "background-image: {source:?} should be whole-declaration-drop"
+            );
+        }
+    }
+
     // ── `background` shorthand (CSS Backgrounds and Borders 3 §2.10) ──
 
     fn expect_background(value: Option<PropertyValue>) -> BackgroundShorthand {
