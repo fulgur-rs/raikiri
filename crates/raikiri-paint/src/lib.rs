@@ -19,6 +19,7 @@ use raikiri_dom::Document;
 use raikiri_style::CascadeResult;
 use raikiri_traits::PageBox;
 
+pub mod border;
 mod text;
 mod walk;
 
