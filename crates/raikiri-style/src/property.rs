@@ -3573,28 +3573,32 @@ pub struct TextDecorationShorthand {
 ///   「parse を通し、raikiri-paint 側の実装待ちは 0px shift の暫定値で
 ///   吸収する」形の緩和 (下記「cascade-regression risk の受け入れ」節)
 ///   では済まない、質的に大きい別 work として引き続き未実装のまま残す。
-/// - **(b) 非対応**: `<percentage>` value は spec-valid だが未実装、silent
-///   drop (`None`)。CSS 2.1 §10.8.1 はこの percentage を要素自身の
-///   `line-height` 基準で定義する (propdef の "Percentages: refer to the
-///   'line-height' of the element itself")。`line-height: normal` (spec
-///   initial value、宣言が無い要素の既定) の下では
+/// - **実装済み**: `<percentage>` value (§10.8.1 propdef
+///   "Percentages: refer to the 'line-height' of the element itself")。
+///   要素自身の used `line-height` に対する比率として絶対化する
+///   ([`crate::resolve::resolve_vertical_align`] doc 参照)。`50%` →
+///   `Length::Percent(50.0)` を parse し、phase 3 で
+///   `used_line_height_length * p / 100` に解決する。`0%` は spec 上
+///   `baseline` と同義 (上記 `<length>` 節の "`0cm` means the same as
+///   `baseline`" と同型)。負値も spec-valid として受理する (`<length>`
+///   と同じ "Raise/lower"  semantics)。
+///
+///   **`line-height: normal` 時の spec-deviation fallback**: `line-height:
+///   normal` (spec initial value、宣言が無い要素の既定) の下では
 ///   [`crate::resolve::used_line_height_length`] が `None` を返す —
 ///   real font metrics を style 層に持たないため "normal" を絶対長化できない
-///   (同関数 doc の "normal" wall が canonical)。`<length>` (上記
-///   「実装済み」節) と違い、この percentage には spec 側の UA-default
-///   fallback (CSS Inline Layout Module Level 3 §4.2.3 の `baseline-shift`
-///   相当記述) が存在しないため、`line-height: normal` という最も一般的な
-///   ケースを誠実に近似する手段が無い。汎用 length resolver
-///   ([`crate::resolve::resolve_length`]、`Length::Percent` を "grammar 上
-///   到達しない" 前提で `0px` に落とす) へそのまま通す実装は誤り —
-///   `0%` は spec 上 `baseline` と同義だが、非 0 の percentage まで一律
-///   `0px` に潰すのは近似ではなく誤変換になる。`padding` / `margin` が
+///   (同関数 doc の "normal" wall が canonical)。本来は used line-height
+///   が font metrics 由来の絶対長を持つため percentage も自然に解決するが、
+///   本 crate が font-metrics source を持つまで (raikiri-spike-m3 / parley
+///   統合 milestone) は `0px` (= `baseline` 相当) に倒す — これは比率を
+///   捏造しない cleanroom fallback であり、`padding` / `margin` が
 ///   `<percentage>` に対して採る「絶対化せず computed 層まで素通しし、
-///   使用先で解決する」staging pattern もここでは借用先が無い —
-///   raikiri-dom / raikiri-paint のいずれも今日時点で
-///   [`crate::computed::ComputedValues::line_height`] を読む consumer を
-///   持たず (line-height 自体、`normal` を実解決する行き先が現状存在
-///   しない)、percentage 残滓を素通しして渡す先が無い。
+///   使用先で解決する」staging とは異なり、素通し先の consumer
+///   (raikiri-dom / raikiri-paint) が今日時点で
+///   [`crate::computed::ComputedValues::line_height`] を読まないため
+///   選択した per-property fallback である。`Length::Lh` / `Length::Rlh`
+///   の `None` → `0px` fallback ([`crate::resolve::resolve_length`] doc)
+///   と同型の documented deviation。
 /// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
 ///   が canonical)。
@@ -3631,9 +3635,12 @@ pub struct TextDecorationShorthand {
 /// 扱う設計だったため、この 3 keyword が増えても新種の failure mode は
 /// 生じない — 追加される regression risk の形は `sub`/`super` が既に
 /// 許容しているものと同型であり、対象 keyword が増えるだけである。
-/// `top`/`bottom` は引き続き対象外 (上記「非対応、silent drop 継続」節)、
-/// `<percentage>` も対象外 (別種の raikiri-style 内部 gap、上記
-/// 「非対応: `<percentage>`」節 — cascade-regression risk とは無関係)。
+/// `top`/`bottom` は引き続き対象外 (上記「非対応、silent drop 継続」節)。
+/// `<percentage>` は上記「実装済み: `<percentage>`」節の
+/// `line-height: normal` fallback を伴い実装済み — `top`/`bottom` とは異なり
+/// raikiri-style 内部で完結して絶対化できるため、cascade-regression risk
+/// (未実装 keyword が cascade 上で実装済み値を押しのける) とは無関係な
+/// 別種の gap だったが、本対応で fallback を pin して解消した。
 ///
 /// `Default` は derive しない — sibling [`TextDecorationShorthand`] と
 /// 同じ convention (spec default は初期化側
@@ -3666,10 +3673,14 @@ pub enum VerticalAlign {
     /// `text-bottom` — "Align the bottom of the box with the bottom of
     /// the parent's content area." (§10.8.1 spec verbatim)。
     TextBottom,
-    /// `<length>` — "Raise (positive value) or lower (negative value) the
-    /// box by this distance. The value `0cm` means the same as
-    /// `baseline`." (§10.8.1 spec verbatim)。computed 層では絶対化済みの
-    /// `Length::Px` を運ぶ ([`Self`] doc の「実装済み: `<length>`」節参照)。
+    /// `<length>` / `<percentage>` — "Raise (positive value) or lower
+    /// (negative value) the box by this distance. The value `0cm` means the
+    /// same as `baseline`." (§10.8.1 spec verbatim、`<percentage>` は同 propdef
+    /// の "Percentages: refer to the 'line-height' of the element itself"
+    /// により `line-height` 基準で絶対長へ解決)。computed 層では絶対化済みの
+    /// `Length::Px` を運ぶ ([`Self`] doc の「実装済み: `<percentage>`」節および
+    /// [`crate::resolve::resolve_vertical_align`] doc 参照 — `normal` 時は
+    /// `0px` fallback)。
     Length(Length),
 }
 
@@ -13266,21 +13277,21 @@ fn parse_text_decoration_shorthand(input: &mut Parser<'_, '_>) -> Option<TextDec
 ///
 /// # Scope carving ([`VerticalAlign`] doc-comment に詳述)
 ///
-/// - **(b) 非対応**: `top` / `bottom` keyword、`<percentage>` value は
-///   silent drop = `None` — [`VerticalAlign`] doc 参照 (`top`/`bottom` は
-///   inline formatting context 依存、`<percentage>` は
-///   `line-height: normal` 時の未解決 gap)。
+/// - **(b) 非対応**: `top` / `bottom` keyword は silent drop = `None` —
+///   [`VerticalAlign`] doc 参照 (inline formatting context 依存)。
 /// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
 ///   が canonical)。
 /// - **(a) spec-invalid**: `baseline` / `sub` / `super` / `middle` /
-///   `text-top` / `text-bottom` 以外の ident、および `<length>` grammar に
-///   合わない token は silent drop = `None`。
-/// - `<length>` に non-negative filter は掛けない — spec が "Raise
-///   (positive value) or lower (negative value)" と明示的に負値を許容する
-///   ([`parse_letter_or_word_spacing`] と同じ判断、`padding`/`border-width`
-///   の non-negative constraint とは対照的)。percentage は不可
-///   (`parse_length_value` の `allow_percentage = false`)。
+///   `text-top` / `text-bottom` 以外の ident、および `<length>` /
+///   `<percentage>` grammar に合わない token は silent drop = `None`。
+/// - `<length>` / `<percentage>` に non-negative filter は掛けない — spec が
+///   "Raise (positive value) or lower (negative value)" と明示的に負値を
+///   許容する ([`parse_letter_or_word_spacing`] と同じ判断、
+///   `padding`/`border-width` の non-negative constraint とは対照的)。
+///   percentage の解決は [`crate::resolve::resolve_vertical_align`] が
+///   `used_line_height_length` 基準で行い、`normal` 時は `0px` fallback
+///   (同関数 doc 参照)。
 fn parse_vertical_align(input: &mut Parser<'_, '_>) -> Option<VerticalAlign> {
     if let Ok(ident) = input.try_parse(|i| i.expect_ident().cloned()) {
         return match ident.to_ascii_lowercase().as_str() {
@@ -13293,7 +13304,7 @@ fn parse_vertical_align(input: &mut Parser<'_, '_>) -> Option<VerticalAlign> {
             _ => None,
         };
     }
-    parse_length_value(input, false).map(VerticalAlign::Length)
+    parse_length_value(input, true).map(VerticalAlign::Length)
 }
 
 /// `counter-reset` / `counter-increment` / `counter-set` の value を parse する。
@@ -22698,12 +22709,28 @@ mod tests {
     }
 
     #[test]
-    fn vertical_align_rejects_percentage() {
-        // (b) not supported — `<percentage>` is explicit follow-up
-        // (`VerticalAlign` doc's "Scope carving" section: unresolved
-        // `line-height: normal` gap), distinct from the now-implemented
-        // `<length>` grammar alternative.
-        assert_eq!(parse("50%", "vertical-align"), None);
+    fn vertical_align_parse_percentage() {
+        // `<percentage>` is now implemented — absolutization is
+        // `resolve_vertical_align` responsibility (own line-height basis,
+        // `normal` fallback pinned there).
+        assert_eq!(
+            parse("50%", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::Length(
+                Length::Percent(50.0)
+            )))
+        );
+        assert_eq!(
+            parse("-20%", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::Length(
+                Length::Percent(-20.0)
+            )))
+        );
+        assert_eq!(
+            parse("0%", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::Length(
+                Length::Percent(0.0)
+            )))
+        );
     }
 
     #[test]

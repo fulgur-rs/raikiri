@@ -3556,8 +3556,11 @@ fn absolutize_in_page_context(
         }),
         // ── vertical-align ───────────────────────────────────────────────
         // CSS 2.1 §10.8.1 — the 6 keywords (`baseline`/`sub`/`super`/
-        // `middle`/`text-top`/`text-bottom`) preserved as-is, `<length>`
-        // absolutized. `resolve_vertical_align` already returns the same
+        // `middle`/`text-top`/`text-bottom`) preserved as-is,
+        // `<length>` / `<percentage>` absolutized (`<percentage>` is
+        // `used_line_height_length` basis with `0px` fallback when
+        // `line-height: normal` — `resolve_vertical_align` doc).
+        // `resolve_vertical_align` already returns the same
         // `VerticalAlign` shape `PropertyValue::VerticalAlign` carries (no
         // separate `Computed*` type exists for this property — see that
         // function's doc for why — so unlike `lp`/`fb`/`lift_length_or_normal`
@@ -7511,8 +7514,9 @@ mod tests {
         }
         /// `vertical-align` の 6 keyword (`baseline`/`sub`/`super`/`middle`/
         /// `text-top`/`text-bottom`) は常に無 residue (computed 層でも
-        /// keyword のまま)、`<length>` は [`length`] に delegate — `flex_basis`
-        /// と同じ shape。
+        /// keyword のまま)、`<length>` / `<percentage>` は [`length`] に
+        /// delegate — `flex_basis` と同じ shape (`<percentage>` は phase 3 で
+        /// `Px` に絶対化済みのため residue 判定上は `Px` 扱い)。
         fn vertical_align(va: VerticalAlign) -> Option<&'static str> {
             match va {
                 VerticalAlign::Baseline

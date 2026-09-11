@@ -755,14 +755,17 @@ pub struct ComputedValues {
     /// "Initial: baseline" / "Inherited: no"). Computed value: the 6
     /// keywords (`baseline`/`sub`/`super`/`middle`/`text-top`/`text-bottom`)
     /// stay the specified keyword; [`VerticalAlign::Length`] absolutizes to
-    /// `Length::Px` ([`crate::resolve::resolve_vertical_align`] doc).
+    /// `Length::Px` ([`crate::resolve::resolve_vertical_align`] doc,
+    /// `<percentage>` は `used_line_height_length` 基準で解決し、`normal` 時は
+    /// `0px` fallback — 同 doc 参照).
     ///
     /// # Scope carving
     ///
     /// This field holds the subset described on [`VerticalAlign`]'s own
-    /// "Scope carving" doc — `top` / `bottom` keywords and the
-    /// `<percentage>` value form remain explicit follow-up, not represented
-    /// by this field.
+    /// "Scope carving" doc — `top` / `bottom` keywords remain explicit
+    /// follow-up, not represented by this field (`<percentage>` は
+    /// `<length>` と同じ `Length` variant で表現し、computed では `Px` に
+    /// 絶対化済み).
     ///
     /// # Same type at both the specified and computed layer
     ///

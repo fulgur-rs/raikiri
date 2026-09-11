@@ -1355,9 +1355,10 @@ impl SpecifiedValues {
             text_decoration_color: self.text_decoration_color,
             // 6 keyword (`baseline`/`sub`/`super`/`middle`/`text-top`/
             // `text-bottom`) は computed value = specified keyword、
-            // `VerticalAlign::Length` だけ own node の `font_size`/
-            // `own_line_height` 基準で絶対化する (`resolve_vertical_align`
-            // doc 参照)。
+            // `VerticalAlign::Length` (`<length>` / `<percentage>`) だけ own
+            // node の `font_size` / `own_line_height` 基準で絶対化する
+            // (`resolve_vertical_align` doc 参照 — `<percentage>` は
+            // `line-height: normal` 時 `0px` fallback)。
             vertical_align: resolve_vertical_align(
                 self.vertical_align,
                 font_size,
@@ -2264,6 +2265,30 @@ mod tests {
         sv.vertical_align = VerticalAlign::Middle;
         let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
         assert_eq!(cv.vertical_align, VerticalAlign::Middle);
+    }
+
+    #[test]
+    fn finalize_resolves_vertical_align_percentage_against_own_line_height() {
+        // `line-height: 20px` → used 20px → 50% = 10px
+        let mut sv = SpecifiedValues::initial();
+        sv.font_size = Length::Px(16.0);
+        sv.line_height = LineHeight::Length(Length::Px(20.0));
+        sv.vertical_align = VerticalAlign::Length(Length::Percent(50.0));
+        let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
+        assert_eq!(cv.vertical_align, VerticalAlign::Length(Length::Px(10.0)));
+    }
+
+    #[test]
+    fn finalize_vertical_align_percentage_falls_back_to_zero_when_line_height_normal() {
+        // `line-height: normal` → `used_line_height_length` is None →
+        // spec-deviation fallback to 0px (baseline-equivalent), pinned as
+        // documented deviation (`VerticalAlign` doc + `resolve_vertical_align` doc).
+        let mut sv = SpecifiedValues::initial();
+        sv.font_size = Length::Px(16.0);
+        sv.line_height = LineHeight::Normal;
+        sv.vertical_align = VerticalAlign::Length(Length::Percent(50.0));
+        let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
+        assert_eq!(cv.vertical_align, VerticalAlign::Length(Length::Px(0.0)));
     }
 
     /// `padding: 1lh` needs the **already-resolved own** line-height as its
