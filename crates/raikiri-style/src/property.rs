@@ -4619,7 +4619,7 @@ pub struct Outline {
 /// ```
 ///
 /// **上記コード片は `<bg-position>` (この crate が `background-position`
-/// 向けに実装している grammar、[`parse_css_position`] 参照) であって、
+/// 向けに実装している grammar、[`parse_bg_position`] 参照) であって、
 /// `<position>` 自体ではない点に注意** — 最後の alternative の
 /// `<length-percentage>?` が両 group で独立に optional なのは
 /// `<bg-position>` 固有の拡張 (3-value edge-offset 構文、offset がどちらか
@@ -6845,7 +6845,7 @@ pub enum PropertyValue {
     /// 使われる」節) が、grammar は同一ではない — `<bg-position>` 固有の
     /// 3-value edge-offset 構文を許さない strict な `<position>` (CSS
     /// Values 4 §8.3) を要求するため、`background-position` が使う
-    /// [`parse_css_position`] ではなく [`parse_position_strict`] で parse
+    /// [`parse_bg_position`] ではなく [`parse_position_strict`] で parse
     /// する ([`parse_position_branch3_strict`] doc参照)。
     /// `<length-percentage>` を含むため絶対化は phase 3 に委ねる。
     ObjectPosition(CssPosition),
@@ -8364,7 +8364,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         "background-clip" => parse_visual_box(input).map(PropertyValue::BackgroundClip),
         "background-origin" => parse_visual_box(input).map(PropertyValue::BackgroundOrigin),
         "background-size" => parse_background_size(input).map(PropertyValue::BackgroundSize),
-        "background-position" => parse_css_position(input).map(PropertyValue::BackgroundPosition),
+        "background-position" => parse_bg_position(input).map(PropertyValue::BackgroundPosition),
         // CSS Backgrounds and Borders 3 §2.3
         // <https://www.w3.org/TR/css-backgrounds-3/#the-background-image>.
         "background-image" => parse_background_image(input).map(PropertyValue::BackgroundImage),
@@ -8380,7 +8380,7 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         // <https://www.w3.org/TR/css-images-3/#the-object-position>. Value:
         // `<position>` (CSS Values 4 §8.3), not `<bg-position>` —
         // `parse_position_strict` rejects the 3-value edge-offset form
-        // `background-position`'s `parse_css_position` accepts
+        // `background-position`'s `parse_bg_position` accepts
         // (`parse_position_branch3_strict` doc's "Why" section).
         "object-position" => parse_position_strict(input).map(PropertyValue::ObjectPosition),
         // CSS Color 4 §3.3
@@ -14645,7 +14645,11 @@ fn parse_position_branch1_res<'i>(
     parse_position_branch1(input).ok_or_else(|| input.new_custom_error(()))
 }
 
-pub fn parse_css_position(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
+/// `<bg-position>` (CSS Backgrounds 3 §2.6) value type を parse する — plain `<position>` (CSS Values 4 §8.3) の superset で、3-value edge-offset 形式を許す。`background-position` / `background` shorthand の position 部分 / gradient の `at <position>` 等がこの grammar を使う。素の `<position>` (3-value 形式を reject) は sibling の [`parse_position_strict`] を使うこと。
+///
+/// 3 alternative ([`parse_position_branch3`] / [`parse_position_branch2`] / [`parse_position_branch1`])
+/// を 3rd → 2nd → 1st の順で試す (詳細は [`parse_position_branch3_res`] の alternative 順序 doc 参照)。
+pub fn parse_bg_position(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
     let position = input
         .try_parse(parse_position_branch3_res)
         .or_else(|_| input.try_parse(parse_position_branch2_res))
@@ -14661,7 +14665,7 @@ fn parse_position_branch3_strict_res<'i>(
 }
 
 /// plain `<position>` (CSS Values 4 §8.3) value type を parse する —
-/// [`parse_css_position`] (`<bg-position>`、`background-position` 用) の
+/// [`parse_bg_position`] (`<bg-position>`、`background-position` 用) の
 /// sibling。`object-position` (CSS Images 3 §5.2、Value: `<position>`) が
 /// 使う。
 ///
@@ -15312,7 +15316,7 @@ fn default_gradient_color_interpolation() -> GradientColorInterpolation {
 /// `conic-gradient()` 共通。
 fn parse_at_position<'i>(input: &mut Parser<'i, '_>) -> Result<CssPosition, ParseError<'i, ()>> {
     input.expect_ident_matching("at")?;
-    parse_css_position(input).ok_or_else(|| input.new_custom_error(()))
+    parse_bg_position(input).ok_or_else(|| input.new_custom_error(()))
 }
 
 /// `<position>` の spec-mandated default (`center`、[`css_position_center`]
@@ -15537,7 +15541,7 @@ type RadialShapeSizePositionGroup = (
 /// doc参照)。2 つの `<length-percentage [0,∞]>` (ellipse form) を先に試す —
 /// 単一 token しか無い入力では 2 個目の parse が失敗して丸ごと rewind し、
 /// 単一 `<length [0,∞]>` (circle form) へ自然に fall back する
-/// ([`parse_css_position`]の alternative 順序 doc と同じ「安全な rewind」
+/// ([`parse_bg_position`]の alternative 順序 doc と同じ「安全な rewind」
 /// 構造)。
 fn parse_radial_size<'i>(
     input: &mut Parser<'i, '_>,
@@ -15930,7 +15934,7 @@ fn parse_background_size(input: &mut Parser<'_, '_>) -> Option<BackgroundSize> {
 /// separated by a literal `/` (same fixed-pair shape as
 /// [`parse_grid_line_shorthand`]'s `<grid-line> [ / <grid-line> ]?`).
 ///
-/// [`parse_css_position`]'s 3 internal alternatives (`branch3`/`branch2`/
+/// [`parse_bg_position`]'s 3 internal alternatives (`branch3`/`branch2`/
 /// `branch1`, see that function's doc) each consume exactly their own
 /// production and stop — they never overrun into tokens that belong to a
 /// later shorthand component. That is what lets this function's caller
@@ -15939,7 +15943,7 @@ fn parse_background_size(input: &mut Parser<'_, '_>) -> Option<BackgroundSize> {
 fn parse_background_position_and_size(
     input: &mut Parser<'_, '_>,
 ) -> Option<(CssPosition, Option<BackgroundSize>)> {
-    let position = parse_css_position(input)?;
+    let position = parse_bg_position(input)?;
     let size = input
         .try_parse(|i| -> Result<BackgroundSize, ParseError<'_, ()>> {
             i.expect_delim('/')?;
@@ -28741,7 +28745,7 @@ mod tests {
         // greedily tries to consume `10px` as an offset first, but then
         // has nothing left for the mandatory vertical group and fails as a
         // whole; the 2nd alternative matches instead, treating `10px` as
-        // the bare vertical value). See `parse_css_position` doc.
+        // the bare vertical value). See `parse_bg_position` doc.
         assert_eq!(
             parse("left 10px", "background-position"),
             Some(PropertyValue::BackgroundPosition(CssPosition {
@@ -28856,7 +28860,7 @@ mod tests {
         // the horizontal side is a bare `<length-percentage>` — every
         // keyword-pair input elsewhere in this file (`"left top"` etc.) is
         // claimed by the 3rd (edge-offset) alternative first, since that
-        // one is tried before the 2nd (`parse_css_position` doc).
+        // one is tried before the 2nd (`parse_bg_position` doc).
         assert_eq!(
             parse("10px top", "background-position"),
             Some(PropertyValue::BackgroundPosition(CssPosition {
@@ -29933,7 +29937,7 @@ mod tests {
     /// (`background: url(a.png) top left no-repeat, …`, comma-separated
     /// multi-layer, see `background_shorthand_rejects_comma_separated_multi_layer`
     /// below). `top left` (keyword reordering, only reachable via
-    /// `parse_css_position`'s `&&` branch — CSS Position 3 §2's
+    /// `parse_bg_position`'s `&&` branch — CSS Position 3 §2's
     /// non-reordering 2-value form rejects `top` in the horizontal slot)
     /// immediately followed by `/ 100% auto` exercises the atomic
     /// position+size `||` component with a non-trivial position.
@@ -29990,7 +29994,7 @@ mod tests {
     }
 
     /// `<bg-position>`'s 3-4 value edge-offset form (`CssPosition` doc's
-    /// `parse_css_position` — branch3) immediately followed by another `||`
+    /// `parse_bg_position` — branch3) immediately followed by another `||`
     /// component. Unlike the longhand `background-position` parse path
     /// (where leftover tokens always mean rejection via `expect_exhausted`),
     /// the shorthand loop hands leftover tokens to the *next* component —
@@ -30172,11 +30176,11 @@ mod tests {
     // ── object-position (CSS Images Module Level 3 §5.2) ──
     //
     // `object-position` uses `parse_position_strict`, not
-    // `parse_css_position` (`CssPosition` doc's Grammar section) — its Value
+    // `parse_bg_position` (`CssPosition` doc's Grammar section) — its Value
     // is plain `<position>` (CSS Values 4 §8.3), not `<bg-position>`
     // (`<bg-position>` is `background-position`'s own extension, CSS
     // Backgrounds 3 §2.6). The `background_position_*` tests above pin
-    // `<bg-position>` coverage (they exercise `parse_css_position`, which
+    // `<bg-position>` coverage (they exercise `parse_bg_position`, which
     // *does* accept the 3-value edge-offset form `<bg-position>` adds on top
     // of `<position>`) — that is NOT full `<position>` coverage, since the
     // 3-value form is exactly what plain `<position>` disallows. These tests
@@ -30296,7 +30300,7 @@ mod tests {
     /// Uses `parse_entire`, not the bare `parse` helper: once
     /// `parse_position_branch3_strict` rejects the asymmetric 3rd
     /// alternative, `parse_position_strict`'s fallback to the 2nd/1st
-    /// alternative (shared with `parse_css_position`, `CssPosition` doc's
+    /// alternative (shared with `parse_bg_position`, `CssPosition` doc's
     /// Grammar section) greedily matches a *prefix* of these 3-token inputs
     /// (e.g. `right 10px center` → 2nd alternative consumes `right 10px`,
     /// leaving `center` over) — same "prefix match, caller enforces full
