@@ -1138,8 +1138,21 @@ fn compound_matches<D: StyleDom, E: StyleElement>(
 /// [`matches_empty`]'s doc for the full verbatim citation and provenance,
 /// including the deliberate exclusion of form feed U+000C). For
 /// HTML-parsed content this set is `{space, tab, line feed}`; carriage
-/// return is included too for defensiveness against a non-HTML-normalized
-/// `StyleDom`, even though it cannot occur in a real HTML DOM text node.
+/// return (U+000D) is also included — CSS Text 3 §4
+/// <https://www.w3.org/TR/css-text-3/#white-space-processing> states it is
+/// "treated identically to spaces (U+0020) in all respects", even though CR
+/// is not itself a segment break (a segment break is line feed (U+000A) for
+/// HTML-parsed content, per the same section).
+///
+/// CR-inclusion is not dead weight against a non-HTML-normalized
+/// [`StyleDom`]: an HTML parser folds a *literal* CR/CRLF byte in the source
+/// to LF during input-stream preprocessing, but a numeric character
+/// reference such as `&#x0D;` is decoded to U+000D during tokenization,
+/// *after* that normalization step, so a real DOM text node produced by a
+/// conformant parser can and does contain a literal U+000D. §4's own
+/// closing sentence on this point: "the character is preserved — and the
+/// above rule observable — when encoded using an escape sequence
+/// (`&#x0d;`)."
 fn is_document_white_space(c: char) -> bool {
     matches!(c, '\u{0020}' | '\u{0009}' | '\u{000A}' | '\u{000D}')
 }
@@ -1185,13 +1198,18 @@ fn is_document_white_space(c: char) -> bool {
 /// newlines are normalized to line feed characters (U+000A)... so... each
 /// line feed (U+000A) is treated as a segment break" — and carriage
 /// return (U+000D) is separately stated to be "treated identically to
-/// spaces (U+0020) in all respects" (same source), even though that same
-/// passage confirms CR cannot actually reach a real HTML DOM text node
-/// ("carriage returns present in the source code are converted to line
-/// feeds at the parsing stage... and therefore do not appear as U+000D...
-/// to CSS" — kept here only for defensive completeness against a
-/// non-HTML-normalized `StyleDom`, since [`is_document_white_space`] is
-/// generic over any `StyleDom` impl, not just `raikiri-html`'s).
+/// spaces (U+0020) in all respects" (same source). CR-inclusion is not
+/// dead weight against a non-HTML-normalized [`StyleDom`]: an HTML parser
+/// folds a *literal* CR/CRLF byte in the source to LF during input-stream
+/// preprocessing, but a numeric character reference such as `&#x0D;` is
+/// decoded to U+000D during tokenization, *after* that normalization step,
+/// so a real DOM text node produced by a conformant parser can and does
+/// contain a literal U+000D. §4's own closing sentence on this point:
+/// "the character is preserved — and the above rule observable — when
+/// encoded using an escape sequence (`&#x0d;`)." [`is_document_white_space`]
+/// is generic over any [`StyleDom`] impl, not just `raikiri-html`'s, but
+/// the CR handling is load-bearing for ordinary conformant HTML content
+/// (e.g. `<h1>A&#x0d;&#x0d;B</h1>`), not defensive dead code.
 ///
 /// **Deliberately excludes form feed (U+000C)** — unlike Rust's
 /// `char::is_ascii_whitespace()` / this crate's own HTML "ASCII
