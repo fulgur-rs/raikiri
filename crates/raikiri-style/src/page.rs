@@ -127,8 +127,8 @@ use crate::property::{
     GapShorthand, GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
     Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue,
-    Sides, TextShadowItem, parse_length_allow_negative, parse_non_negative_length, parse_value,
-    resolve_overflow, resolve_writing_mode,
+    Sides, TextShadowItem, TransformFunction, parse_length_allow_negative,
+    parse_non_negative_length, parse_value, resolve_overflow, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedCssPositionOffset, ComputedFlexBasis,
@@ -2961,6 +2961,38 @@ fn absolutize_in_page_context(
         }
     }
 
+    /// `transform` の `<length-percentage>` slot を絶対化し page bag の
+    /// `TransformFunction` へ戻す。`lp` と同じ round-trip — length 側は
+    /// `Px` へ、percentage 側は `Percent` のまま残す。`matrix` の 6
+    /// `<number>` slot と `rotate`/`skew` 系の `<angle>` slot はそのまま。
+    fn transform_function(
+        specified: TransformFunction,
+        font_size: ComputedLength,
+        own_line_height: Option<ComputedLength>,
+        ctx: &ResolveContext,
+    ) -> TransformFunction {
+        match specified {
+            TransformFunction::Matrix(m) => TransformFunction::Matrix(m),
+            TransformFunction::Translate(tx, ty) => TransformFunction::Translate(
+                lp(tx, font_size, own_line_height, ctx),
+                lp(ty, font_size, own_line_height, ctx),
+            ),
+            TransformFunction::TranslateX(v) => {
+                TransformFunction::TranslateX(lp(v, font_size, own_line_height, ctx))
+            }
+            TransformFunction::TranslateY(v) => {
+                TransformFunction::TranslateY(lp(v, font_size, own_line_height, ctx))
+            }
+            TransformFunction::Scale(x, y) => TransformFunction::Scale(x, y),
+            TransformFunction::ScaleX(v) => TransformFunction::ScaleX(v),
+            TransformFunction::ScaleY(v) => TransformFunction::ScaleY(v),
+            TransformFunction::Rotate(a) => TransformFunction::Rotate(a),
+            TransformFunction::Skew(ax, ay) => TransformFunction::Skew(ax, ay),
+            TransformFunction::SkewX(a) => TransformFunction::SkewX(a),
+            TransformFunction::SkewY(a) => TransformFunction::SkewY(a),
+        }
+    }
+
     match value {
         // ── already computed-equivalent after phase 2 ──────────────────────
         // `font-size` is phase 2's output (`Length::Px`); re-absolutizing it
@@ -3173,29 +3205,14 @@ fn absolutize_in_page_context(
         // carry no length payload (`ClipPath` doc's scope note — no
         // `<basic-shape>` support, so no embedded length at all).
         | PropertyValue::ClipPath(_)
-        // `transform` (CSS Transforms Level 1 §4) — embeds `Length`/
-        // `Angle` (e.g. `translate()`'s `<length-percentage>`). This
-        // property's own Computed value is "as specified, but with
-        // lengths made absolute", so the non-percentage half of each
-        // `<length-percentage>` payload (and `<length>`-only slots) is
-        // spec-required to be absolutized — this crate simply has not
-        // implemented that yet (`resolve_css_position`'s existing
-        // length-absolutize/percentage-stays-symbolic split, used by
-        // `background-position`/`object-position`, is the applicable
-        // precedent once someone does). The percentage half genuinely
-        // cannot resolve without the element's own box size, an input no
-        // phase-3 pass threads through, so it stays symbolic regardless
-        // (`TransformFunction` doc's "Absolutization gap" section tracks
-        // this).
-        | PropertyValue::Transform(_)
-        // `filter` (§5) — unlike `transform` above, this property's own
-        // Computed value is plain "as specified": no absolutization is
-        // spec-required at all, so passing every embedded `Length`/
-        // `Angle` through untouched (including `drop-shadow()`'s, reused
-        // from `TextShadowItem`) is not a gap, just this property's
-        // actual computed-value definition (`FilterFunction` doc's "Range
-        // restriction is reject, not clamp" section establishes the same
-        // "as specified" fact for a different purpose).
+        // `filter` (§5) — Computed value is plain "as specified": no
+        // absolutization is spec-required at all, so passing every
+        // embedded `Length`/`Angle` through untouched (including
+        // `drop-shadow()`'s, reused from `TextShadowItem`) is not a gap,
+        // just this property's actual computed-value definition
+        // (`FilterFunction` doc's "Range restriction is reject, not clamp"
+        // section establishes the same "as specified" fact for a different
+        // purpose).
         | PropertyValue::Filter(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
@@ -3588,6 +3605,26 @@ fn absolutize_in_page_context(
         }
         PropertyValue::GridAutoRows(v) => {
             PropertyValue::GridAutoRows(gatl(&v, font_size, own_line_height, ctx))
+        }
+        // ── transform ────────────────────────────────────────────────────
+        // CSS Transforms Level 1 §4: Computed value is "as specified, but
+        // with lengths made absolute" — `translate()`/`translateX()`/
+        // `translateY()`'s `<length-percentage>` slot の length 側だけを
+        // `lp` と同じ split で絶対化し percentage 側は `Percent` のまま残す
+        // (`resolve_length_percentage` と同じ、`background-position` の
+        // `css_position` helper と同型)。`matrix` の 6 `<number>` slot と
+        // `rotate`/`skew` 系の `<angle>` slot はそのまま。
+        PropertyValue::Transform(items) => {
+            if items.is_empty() {
+                PropertyValue::Transform(items)
+            } else {
+                PropertyValue::Transform(Arc::new(
+                    items
+                        .iter()
+                        .map(|f| transform_function(*f, font_size, own_line_height, ctx))
+                        .collect(),
+                ))
+            }
         }
     }
 }
@@ -6464,7 +6501,7 @@ mod tests {
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 81;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 80;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -6474,7 +6511,9 @@ mod tests {
     /// arm。到達しないが「素通し」ではなく実際に変換する形の arm なので
     /// `PHASE_3_PASS_THROUGH_VARIANTS` 側には数えない) / text-shadow 1
     /// (各 item の length 3 本を絶対化する実 transform arm、`text_shadow_item`
-    /// helper 参照)。
+    /// helper 参照) / transform 1 (`translate` 系の `<length-percentage>`
+    /// を `lp` と同じ split で絶対化する `transform_function` helper
+    /// 参照)。
     ///
     /// 以前は `PROPERTY_VALUE_VARIANTS -
     /// PHASE_3_PASS_THROUGH_VARIANTS` という `const` 式だった。
@@ -7826,27 +7865,20 @@ mod tests {
             // `clip-path` (§5.1) — no embedded length at all (no
             // `<basic-shape>` support, `ClipPath` doc's scope note), so
             // `None` here needs no `BackgroundImage`-style caveat.
-            | PropertyValue::ClipPath(_)
-            // `transform` (CSS Transforms Level 1 §4) / `filter` (§5) —
-            // both carry `Length`/`Angle`/`f32` payloads (e.g.
-            // `translate()`'s `<length-percentage>`, `blur()`'s
-            // `<length>`), but this detector reports `None`
-            // unconditionally for both. For `filter` that is simply
-            // correct (its Computed value is "as specified", no
-            // absolutization is spec-required at all). For `transform`
-            // it is *not* yet correct — its own Computed value is "as
-            // specified, but with lengths made absolute", so this
-            // property's length payload genuinely is unrouted residue
-            // this crate has not implemented absolutizing yet (unlike
-            // `MaskImage`/`BackgroundImage` above, whose "never
-            // absolutized, by design" framing is accurate); tracked by
-            // `TransformFunction` doc's "Absolutization gap" section, not
-            // by this detector, since raw-length-residue tracking here is
-            // scoped to catching phase-2/phase-3 wiring bugs in
-            // properties phase 3 already claims to transform, not to
-            // flagging properties phase 3 doesn't touch at all yet.
-            | PropertyValue::Transform(_)
-            | PropertyValue::Filter(_)
+            | PropertyValue::ClipPath(_) => None,
+            PropertyValue::Transform(items) => items.iter().find_map(|f| match *f {
+                TransformFunction::Translate(tx, ty) => length(tx).or_else(|| length(ty)),
+                TransformFunction::TranslateX(v) | TransformFunction::TranslateY(v) => length(v),
+                TransformFunction::Matrix(_)
+                | TransformFunction::Scale(_, _)
+                | TransformFunction::ScaleX(_)
+                | TransformFunction::ScaleY(_)
+                | TransformFunction::Rotate(_)
+                | TransformFunction::Skew(_, _)
+                | TransformFunction::SkewX(_)
+                | TransformFunction::SkewY(_) => None,
+            }),
+            | PropertyValue::Filter(_) => None,
             // Custom properties and deferred values are pre-computed cascade
             // representations, not page-context computed length payloads.
             | PropertyValue::CustomProperty(_)
