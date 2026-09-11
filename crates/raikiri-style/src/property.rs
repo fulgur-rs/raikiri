@@ -6690,6 +6690,10 @@ pub enum PropertyValue {
     /// (CSS UI 3 §4.4)。[`OutlineColor`] keeps `invert`, `currentcolor`, and
     /// resolved colors distinct through computed-value processing.
     OutlineColor(OutlineColor),
+    /// `outline-offset: <length>` — non-inherited、initial: `0` (CSS UI 3 §4.5
+    /// <https://www.w3.org/TR/css-ui-3/#outline-offset>)。負値も受理し、border edge
+    /// からの offset を絶対化する。`<percentage>` は grammar 外。
+    OutlineOffset(Length),
     /// `grid-template-columns` — non-inherited、initial:
     /// [`GridTemplateTracks::None`] ([`GridTemplateTracks`] doc 参照)。
     GridTemplateColumns(GridTemplateTracks),
@@ -7230,6 +7234,7 @@ pub enum PropertyKey {
     OutlineWidth,
     OutlineStyle,
     OutlineColor,
+    OutlineOffset,
     // writing-mode (CSS Writing Modes 4 §3.2、semantics on the matching
     // PropertyValue::WritingMode variant; sibling PropertyKey variants carry
     // no per-variant docs per crate convention). 末尾配置の理由は
@@ -7417,6 +7422,7 @@ impl PropertyValue {
             PropertyValue::OutlineWidth(_) => PropertyKey::OutlineWidth,
             PropertyValue::OutlineStyle(_) => PropertyKey::OutlineStyle,
             PropertyValue::OutlineColor(_) => PropertyKey::OutlineColor,
+            PropertyValue::OutlineOffset(_) => PropertyKey::OutlineOffset,
             PropertyValue::WritingMode(_) => PropertyKey::WritingMode,
             PropertyValue::BackgroundRepeat(_) => PropertyKey::BackgroundRepeat,
             PropertyValue::BackgroundAttachment(_) => PropertyKey::BackgroundAttachment,
@@ -7792,6 +7798,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "outline-width" => PropertyKey::OutlineWidth,
         "outline-style" => PropertyKey::OutlineStyle,
         "outline-color" => PropertyKey::OutlineColor,
+        "outline-offset" => PropertyKey::OutlineOffset,
         "grid-template-columns" => PropertyKey::GridTemplateColumns,
         "grid-template-rows" => PropertyKey::GridTemplateRows,
         "grid-template-areas" => PropertyKey::GridTemplateAreas,
@@ -8309,6 +8316,9 @@ pub(crate) fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Prop
         "outline-width" => parse_border_width_side(input).map(PropertyValue::OutlineWidth),
         "outline-style" => parse_outline_style_side(input).map(PropertyValue::OutlineStyle),
         "outline-color" => parse_outline_color(input).map(PropertyValue::OutlineColor),
+        // CSS UI 3 §4.5 outline-offset — <length>, initial 0, non-inherited.
+        // 負値も受理し、border edge からの offset を示す。`<percentage>` は grammar 外。
+        "outline-offset" => parse_length_allow_negative(input).map(PropertyValue::OutlineOffset),
         // CSS Grid Layout Module Level 1 §7.2
         // <https://www.w3.org/TR/css-grid-1/#track-sizing>.
         "grid-template-columns" => {
@@ -27785,6 +27795,37 @@ mod tests {
         );
         // `invert` is outline-only; border-color parsing remains unchanged.
         assert_eq!(parse("invert", "border-top-color"), None);
+    }
+
+    #[test]
+    fn outline_offset_parses_length_and_rejects_non_length() {
+        // CSS UI 3 §4.5 <https://www.w3.org/TR/css-ui-3/#outline-offset> — `<length>`,
+        // initial `0`, non-inherited. Negative values are valid (inset).
+        assert_eq!(
+            parse("5px", "outline-offset"),
+            Some(PropertyValue::OutlineOffset(Length::Px(5.0)))
+        );
+        assert_eq!(
+            parse("0", "outline-offset"),
+            Some(PropertyValue::OutlineOffset(Length::Px(0.0)))
+        );
+        assert_eq!(
+            parse("-3px", "outline-offset"),
+            Some(PropertyValue::OutlineOffset(Length::Px(-3.0)))
+        );
+        assert_eq!(
+            parse("2em", "outline-offset"),
+            Some(PropertyValue::OutlineOffset(Length::Em(2.0)))
+        );
+        assert_eq!(
+            PropertyValue::OutlineOffset(Length::Px(4.0)).key(),
+            PropertyKey::OutlineOffset
+        );
+        // `<percentage>` is not part of the grammar — reject.
+        assert_eq!(parse("5%", "outline-offset"), None);
+        // `auto` / `none` are not valid for this property.
+        assert_eq!(parse("auto", "outline-offset"), None);
+        assert_eq!(parse("none", "outline-offset"), None);
     }
 
     #[test]

@@ -560,6 +560,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::OutlineWidth(_)
         | PropertyValue::OutlineStyle(_)
         | PropertyValue::OutlineColor(_)
+        | PropertyValue::OutlineOffset(_)
         // grid-template-columns/-rows/-areas + grid-auto-columns/-rows/-flow
         // + grid-row-start/-end + grid-column-start/-end — 展開先の longhand
         // を持たない individual property (CSS Grid Layout Module Level 1

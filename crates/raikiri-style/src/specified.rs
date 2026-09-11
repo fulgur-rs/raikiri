@@ -52,8 +52,8 @@ use crate::resolve::{
     lift_length_or_normal, lift_length_percentage, lift_line_height, lift_tab_size,
     lift_text_shadow_item, resolve_background_size, resolve_border, resolve_border_radius,
     resolve_box_shadow_item, resolve_css_position, resolve_flex_basis, resolve_font_size,
-    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length_or_normal,
-    resolve_length_percentage, resolve_length_percentage_or_auto,
+    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
+    resolve_length_or_normal, resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
     resolve_outline, resolve_tab_size, resolve_text_shadow_item, resolve_vertical_align,
     used_line_height_length,
@@ -229,6 +229,10 @@ pub struct SpecifiedValues {
     /// `outline` の **specified** value。phase 3 で width を絶対化し、
     /// `outline-style: none` の場合は computed width を 0 にする。
     pub outline: Outline,
+    /// `outline-offset` の **specified** value。phase 3 で絶対化される
+    /// (CSS UI 3 §4.5 <https://www.w3.org/TR/css-ui-3/#outline-offset>、
+    /// initial `0`、non-inherited、`<length>` — 負値も受理)。
+    pub outline_offset: Length,
     /// `width` の **specified** value。phase 3 で絶対化される。
     pub width: LengthOrAuto,
     /// `height` の **specified** value。phase 3 で絶対化される。
@@ -527,6 +531,8 @@ impl SpecifiedValues {
                 style: OutlineStyle::None,
                 color: OutlineColor::Invert,
             },
+            // CSS UI 3 §4.5: outline-offset initial は `0`.
+            outline_offset: Length::Px(0.0),
             width: LengthOrAuto::Auto,
             height: LengthOrAuto::Auto,
             box_sizing: BoxSizing::ContentBox,
@@ -831,6 +837,8 @@ impl SpecifiedValues {
                 style: OutlineStyle::None,
                 color: OutlineColor::Invert,
             },
+            // CSS UI 3 §4.5: outline-offset は non-inherited, initial `0`.
+            outline_offset: Length::Px(0.0),
             width: LengthOrAuto::Auto,
             height: LengthOrAuto::Auto,
             box_sizing: BoxSizing::ContentBox,
@@ -1279,6 +1287,7 @@ impl SpecifiedValues {
                 )
             },
             outline: resolve_outline(self.outline, font_size, own_line_height, ctx),
+            outline_offset: resolve_length(self.outline_offset, font_size, own_line_height, ctx),
             width: resolve_length_percentage_or_auto(self.width, font_size, own_line_height, ctx),
             height: resolve_length_percentage_or_auto(self.height, font_size, own_line_height, ctx),
             box_sizing: self.box_sizing,
@@ -1835,6 +1844,7 @@ mod tests {
                 style: OutlineStyle::Solid,
                 color: OutlineColor::Resolved(CssColor::BLACK),
             },
+            outline_offset: ComputedLength(5.0),
             width: ComputedLengthPercentageOrAuto::Px(200.0),
             height: ComputedLengthPercentageOrAuto::Px(200.0),
             box_sizing: BoxSizing::BorderBox,
