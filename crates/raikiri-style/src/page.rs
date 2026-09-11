@@ -6024,6 +6024,9 @@ mod tests {
     /// All 5 spec keywords collapse to `HorizontalTb`, including
     /// `HorizontalTb` itself (identity, not a no-op passthrough that a
     /// future refactor could silently break).
+    ///
+    /// Debt (`raikiri-spike-zhmp`): vertical writing-mode 実装時に本 collapse を
+    /// 削除し、本 test を revert/rewrite すること。
     #[test]
     fn absolutize_in_page_context_collapses_writing_mode_to_horizontal_tb() {
         let fs = ComputedLength(20.0);
@@ -6594,6 +6597,8 @@ mod tests {
     /// サンプル (`VerticalRl`) も `specified_layer_residue` に引っかからない
     /// (同関数の `WritingMode` arm が `None` を返す、`WritingMode` doc の
     /// Non-goal 節参照)。
+    /// Debt (`raikiri-spike-zhmp`): vertical writing-mode 実装時に本 collapse を
+    /// 削除し、`KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE` を 4 へ戻すこと。
     ///
     /// `opacity` (CSS Color 4 §3.3) は同じ形の 5 番目の variant だが、他の 4
     /// つと異なり **keyword ではなく number** — `absolutize_in_page_context`
@@ -6607,6 +6612,8 @@ mod tests {
     /// 定数名を `OVERFLOW_...` のままにしないのはこのため — 対応する variant が
     /// overflow の 3 つだけではなくなった。`phase_3_transformed_variants()`
     /// 側の +3 を打ち消す。
+    /// Debt (`raikiri-spike-zhmp`): 5 のうち 1 は `writing-mode` 由来。vertical
+    /// writing 実装で collapse を削除したら 4 へ戻すこと。
     const KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE: usize = 5;
 
     fn raw_corpus_residue_variants() -> usize {
@@ -7011,6 +7018,10 @@ mod tests {
         // phase-3 transform classification this corpus drives. Placed last
         // to match `PropertyKey`'s own declaration order (`property.rs`),
         // per this macro's `property_key_samples!` doc contract.
+        // Debt (`raikiri-spike-zhmp`): vertical writing-mode 実装時に computed
+        // value が specified value を保持するようになったら、本 sample の
+        // worst-case 理由付けと `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE` を
+        // 同時に見直すこと。
         WritingMode => PropertyValue::WritingMode(WritingMode::VerticalRl),
         // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.7/§2.8 — keyword-only,
         // carry no length (`x`/`y` intentionally asymmetric to catch a
