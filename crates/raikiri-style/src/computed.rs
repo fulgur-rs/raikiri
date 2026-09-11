@@ -21,9 +21,9 @@ use crate::property::{
     FontVariantCaps, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Hyphens, Isolation,
     MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
     OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
-    TextDecorationStyle, TextTransform, TransformFunction, VerticalAlign, Visibility, VisualBox,
-    WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
-    empty_filter_list, empty_quotes_entries, empty_string_set_entries, empty_transform_list,
+    TextDecorationStyle, TextTransform, VerticalAlign, Visibility, VisualBox, WhiteSpace,
+    WordBreak, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
+    empty_filter_list, empty_quotes_entries, empty_string_set_entries,
     initial_font_family,
 };
 use crate::resolve::{
@@ -31,8 +31,9 @@ use crate::resolve::{
     ComputedCssPosition, ComputedCssPositionOffset, ComputedFlexBasis, ComputedGridTemplateTracks,
     ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
-    ComputedOutline, ComputedTabSize, ComputedTextShadow, empty_computed_box_shadow_list,
-    empty_computed_text_shadow_list, initial_computed_grid_auto_track_list,
+    ComputedOutline, ComputedTabSize, ComputedTextShadow, ComputedTransformFunction,
+    empty_computed_box_shadow_list, empty_computed_text_shadow_list,
+    empty_computed_transform_list, initial_computed_grid_auto_track_list,
 };
 
 /// CSS spec 上の `font-size` initial value (`medium`) に対応する px 値。
@@ -1381,15 +1382,18 @@ pub struct ComputedValues {
     /// as [`Self::mask_image`] above.
     pub clip_path: ClipPath,
     /// `transform`. **non-inherited**, initial: `none` (empty list,
-    /// [`empty_transform_list`]) (CSS Transforms Level 1 §4 "The transform
+    /// [`crate::property::empty_transform_list`]) (CSS Transforms Level 1 §4 "The transform
     /// property" <https://www.w3.org/TR/css-transforms-1/#transform-property>).
-    /// Currently identity pass-through from
-    /// [`crate::specified::SpecifiedValues::transform`] — see
-    /// [`crate::property::TransformFunction`] doc's "Absolutization gap"
-    /// section for why that is not yet spec-correct (unlike
-    /// [`Self::filter`] below, whose identity pass-through *is*
-    /// spec-correct as-is).
-    pub transform: Arc<Vec<TransformFunction>>,
+    /// Computed value is "as specified, but with lengths made absolute" — the
+    /// length half of each `<length-percentage>` slot (`translate()`/
+    /// `translateX()`/`translateY()`'s [`crate::property::Length`] payload) is
+    /// absolutized against font-size/root-font-size while leaving
+    /// [`crate::property::Length::Percent`] symbolic
+    /// ([`crate::resolve::ComputedLengthPercentage::Percent`]) for a later
+    /// box-size-relative resolution. Same split as
+    /// [`crate::resolve::resolve_css_position`] for
+    /// `background-position`/`object-position`.
+    pub transform: Arc<Vec<ComputedTransformFunction>>,
     /// `filter`. **non-inherited**, initial: `none` (empty list,
     /// [`empty_filter_list`]) (CSS Filter Effects Level 1 §5 "The filter
     /// property" <https://www.w3.org/TR/filter-effects-1/#FilterProperty>,
@@ -1653,7 +1657,7 @@ impl ComputedValues {
             clip_path: ClipPath::None,
             // CSS Transforms Level 1 §4: transform initial は `none`
             // (空 list)。
-            transform: empty_transform_list(),
+            transform: empty_computed_transform_list(),
             // CSS Filter Effects Level 1 §5: filter initial は `none`
             // (空 list)。
             filter: empty_filter_list(),
@@ -2194,7 +2198,9 @@ mod tests {
             // CSS Transforms Level 1 §4/CSS Filter Effects Level 1 §5:
             // 両方 non-inherited なので initial (`none` = 空 list) と
             // 異なる値にしておく (non_initial_parent の趣旨どおり)。
-            transform: Arc::new(vec![TransformFunction::TranslateX(Length::Em(2.0))]),
+            transform: Arc::new(vec![ComputedTransformFunction::TranslateX(
+                ComputedLengthPercentage::Px(32.0),
+            )]),
             filter: Arc::new(vec![FilterFunction::Blur(Length::Px(3.0))]),
             custom_properties: CustomPropertyEnvironment::from_map(HashMap::from([(
                 SmolStr::new("--fixture"),
