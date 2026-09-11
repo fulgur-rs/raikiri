@@ -30188,7 +30188,12 @@ mod tests {
         // valid for plain `<position>` too (`<position-four>`,
         // `parse_position_branch3_strict` doc's "Why" section), unlike the
         // 3-value forms `object_position_rejects_bg_position_only_3_value_edge_offset_forms`
-        // pins as rejected.
+        // pins as rejected. Both this and the next case start with a
+        // vertical edge (`bottom`/`top`), so they exercise the
+        // vertical-exclusive-first branch of `parse_position_branch3_strict`;
+        // the horizontal-exclusive-first branch (symmetric offset case with
+        // `h_offset == v_offset == true` accepted via horizontal-edge
+        // priority) is pinned separately below.
         assert_eq!(
             parse("bottom 10px right 20px", "object-position"),
             Some(PropertyValue::ObjectPosition(CssPosition {
@@ -30196,16 +30201,27 @@ mod tests {
                 vertical: CssPositionOffset::End(Length::Px(10.0)),
             }))
         );
-        // Same 4-value form, vertical group leading instead of trailing
-        // (`&&` allows either order) — exercises the "vertical-exclusive
-        // first" branch of `parse_position_branch3_strict`, distinct code
-        // path from the horizontal-exclusive-first branch the case above
-        // exercises.
+        // Same 4-value form with the other vertical edge — also
+        // vertical-exclusive-first, not a distinct branch from the case
+        // above (both start with `bottom`/`top`; `&&` allows either order
+        // but both orders here are still vertical-first).
         assert_eq!(
             parse("top 10px left 20px", "object-position"),
             Some(PropertyValue::ObjectPosition(CssPosition {
                 horizontal: CssPositionOffset::Start(Length::Px(20.0)),
                 vertical: CssPositionOffset::Start(Length::Px(10.0)),
+            }))
+        );
+        // Horizontal-edge-first 4-value form — exercises the
+        // horizontal-exclusive-first branch of `parse_position_branch3_strict`
+        // (the symmetric `h_offset == v_offset == true` accept path where
+        // horizontal edge wins). Distinct from the two vertical-first cases
+        // above.
+        assert_eq!(
+            parse("right 20px bottom 10px", "object-position"),
+            Some(PropertyValue::ObjectPosition(CssPosition {
+                horizontal: CssPositionOffset::End(Length::Px(20.0)),
+                vertical: CssPositionOffset::End(Length::Px(10.0)),
             }))
         );
         // Ambiguous `center` leading, paired with a bare (offset-less)
