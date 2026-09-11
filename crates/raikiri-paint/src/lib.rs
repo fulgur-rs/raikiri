@@ -116,55 +116,67 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         let mut scene = Scene::new();
         paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
-        // fragment (no body) なので paint_document は早期 return、canvas は no-op site
-        assert!(
-            scene.commands.is_empty(),
-            "empty Document should emit no commands"
+        // canvas white fill is now emitted even for empty Document
+        assert_eq!(
+            scene
+                .commands
+                .iter()
+                .filter(|c| matches!(c, RenderCommand::Fill(_)))
+                .count(),
+            1,
+            "empty Document should emit 1 canvas Fill (white)"
         );
     }
 
     #[test]
     fn paint_single_page_canvas_background_site_is_noop_at_m1_4() {
-        // canvas fill site が現状 no-op で命令を積まないことを pin。
-        // 将来 background-color が cascade に入った時にこの test が反転する
-        // ("commands should be non-empty" で fail する)、その時に実装完了の合図。
+        // canvas fill site is now active (paints white page background).
+        // This test previously pinned the no-op state; now it pins that 1 canvas Fill is emitted.
         let (doc, cr) = hello_world_paint_setup();
         let mut scene = Scene::new();
-        // canvas fill 単体を呼ぶ相当の効果を得るため、paint_single_page 全体 - text glyph の
-        // 差分で判定 (canvas site が emit すれば Fill command が glyph より前に来る)。
-        // text が stub の間は全体 commands 0 でも OK。
-        // 将来 text 実装が進んだ後、この test は "GlyphRun のみ、Fill (canvas)
-        // は無い" に精緻化予定。
         paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
         let fill_commands: Vec<_> = scene
             .commands
             .iter()
             .filter(|c| matches!(c, RenderCommand::Fill(_)))
             .collect();
-        assert!(
-            fill_commands.is_empty(),
-            "canvas site should emit no Fill yet, got {:?}",
+        assert_eq!(
+            fill_commands.len(),
+            1,
+            "canvas site should emit 1 Fill (white page background), got {:?}",
             fill_commands.len()
         );
     }
 
     #[test]
     fn paint_single_page_without_body_returns_early() {
-        // fragment (Document → <p> 直子、no <body>) → paint は何も emit しない。
-        // layout_single_page は fragment で Err を返すが、paint 側は
-        // defensive に silent return する契約 (early return without touching scene)。
+        // fragment (Document → <p> 直子、no <body>) → paint_document は早期 return するが
+        // canvas background (white) は依然として emit される。
         let mut doc = Document::new();
         let p = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
         let _t = doc.append_text(p, "Hi");
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
-        // layout_single_page はここでは呼ばない (Err になる)、paint 単体で silent
-        // return するかを test。
+        // layout_single_page はここでは呼ばない (Err になる)、paint 単体で canvas のみ emit するかを test。
         let mut scene = Scene::new();
         paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
-        assert!(
-            scene.commands.is_empty(),
-            "fragment (no body) should emit no commands"
+        assert_eq!(
+            scene
+                .commands
+                .iter()
+                .filter(|c| matches!(c, RenderCommand::Fill(_)))
+                .count(),
+            1,
+            "fragment (no body) should emit 1 canvas Fill (white) even without body"
+        );
+        assert_eq!(
+            scene
+                .commands
+                .iter()
+                .filter(|c| matches!(c, RenderCommand::GlyphRun(_)))
+                .count(),
+            0,
+            "fragment should emit no GlyphRun"
         );
     }
 
