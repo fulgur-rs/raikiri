@@ -184,11 +184,13 @@ use smol_str::SmolStr;
 
 use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{
-    Angle, BackgroundSize, Border, BorderColor, BorderRadius, BorderStyle, BoxShadowItem,
-    CssPosition, CssPositionOffset, FlexBasisValue, GridInflexibleBreadth, GridRepeatCount,
-    GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
-    GridTrackSize, Length, LengthOrAuto, LengthOrNormal, LineHeight, Outline, OutlineColor,
-    OutlineStyle, TabSize, TextShadowColor, TextShadowItem, TransformFunction, VerticalAlign,
+    Angle, AngularColorStop, BackgroundImage, BackgroundSize, Border, BorderColor, BorderRadius,
+    BorderStyle, BoxShadowItem, ConicGradient, CssPosition, CssPositionOffset, FlexBasisValue,
+    Gradient, GradientColorStop, GridInflexibleBreadth, GridRepeatCount, GridTemplateTracks,
+    GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize,
+    Length, LengthOrAuto, LengthOrNormal, LineHeight, LinearGradient, Outline, OutlineColor,
+    OutlineStyle, RadialGradient, RadialSize, TabSize, TextShadowColor, TextShadowItem,
+    TransformFunction, VerticalAlign,
 };
 
 // ---------------------------------------------------------------------------
@@ -1976,6 +1978,180 @@ pub fn resolve_background_size(
             width: resolve_length_percentage_or_auto(width, font_size, own_line_height, ctx),
             height: resolve_length_percentage_or_auto(height, font_size, own_line_height, ctx),
         },
+    }
+}
+
+/// `background-image` / `mask-image` の `<gradient>` payload を絶対化する
+/// (**phase 3** — 自 node 基準)。
+///
+/// `None` / `Url(String)` は computed-equivalent で素通し。`Gradient(..)` の
+/// `<length-percentage>` payload (`GradientColorStop::position`,
+/// `RadialSize::Circle`/`Ellipse`, `RadialGradient`/`ConicGradient` の
+/// `CssPosition`) は font-relative 部分のみを `font-size`/`root-font-size`/
+/// `own_line_height` を基準に絶対化し、`<percentage>` は computed 層に残す
+/// (CSS Values 4 §5.5.1)。`<percentage>` の参照値 (gradient box の寸法) は
+/// この crate の scope 外 (paint/used-value 層) なので素通しが正しく、
+/// `Percent` を検出して特別扱いするのではなく [`resolve_length_percentage`]
+/// が既に `Percent` を素通しすることに依拠する — 他の `<length-percentage>`
+/// property (`padding`/`margin`/`background-position` 等) と同じ split。
+pub fn resolve_background_image(
+    specified: BackgroundImage,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> BackgroundImage {
+    match specified {
+        BackgroundImage::None | BackgroundImage::Url(_) => specified,
+        BackgroundImage::Gradient(g) => {
+            BackgroundImage::Gradient(resolve_gradient(g, font_size, own_line_height, ctx))
+        }
+    }
+}
+
+/// `<gradient>` (CSS Images 4 §3) の `<length-percentage>` payload を絶対化する
+/// (**phase 3** — 自 node 基準)。`Percent` は素通し、上記
+/// [`resolve_background_image`] doc参照。
+pub fn resolve_gradient(
+    specified: Gradient,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> Gradient {
+    match specified {
+        Gradient::Linear(g) => {
+            Gradient::Linear(resolve_linear_gradient(g, font_size, own_line_height, ctx))
+        }
+        Gradient::Radial(g) => {
+            Gradient::Radial(resolve_radial_gradient(g, font_size, own_line_height, ctx))
+        }
+        Gradient::Conic(g) => {
+            Gradient::Conic(resolve_conic_gradient(g, font_size, own_line_height, ctx))
+        }
+    }
+}
+
+fn absolutized_length(
+    specified: Length,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> Length {
+    match resolve_length_percentage(specified, font_size, own_line_height, ctx) {
+        ComputedLengthPercentage::Px(v) => Length::Px(v),
+        ComputedLengthPercentage::Percent(p) => Length::Percent(p),
+    }
+}
+
+fn absolutized_css_position(
+    specified: CssPosition,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> CssPosition {
+    let computed = resolve_css_position(specified, font_size, own_line_height, ctx);
+    fn lift(l: ComputedLengthPercentage) -> Length {
+        match l {
+            ComputedLengthPercentage::Px(v) => Length::Px(v),
+            ComputedLengthPercentage::Percent(p) => Length::Percent(p),
+        }
+    }
+    fn lift_offset(c: ComputedCssPositionOffset) -> CssPositionOffset {
+        match c {
+            ComputedCssPositionOffset::Start(l) => CssPositionOffset::Start(lift(l)),
+            ComputedCssPositionOffset::End(l) => CssPositionOffset::End(lift(l)),
+        }
+    }
+    CssPosition {
+        horizontal: lift_offset(computed.horizontal),
+        vertical: lift_offset(computed.vertical),
+    }
+}
+
+fn resolve_gradient_color_stops(
+    stops: &Arc<Vec<GradientColorStop>>,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> Arc<Vec<GradientColorStop>> {
+    Arc::new(
+        stops
+            .iter()
+            .map(|stop| GradientColorStop {
+                color: stop.color,
+                position: stop
+                    .position
+                    .map(|l| absolutized_length(l, font_size, own_line_height, ctx)),
+            })
+            .collect(),
+    )
+}
+
+fn resolve_radial_size(
+    specified: RadialSize,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> RadialSize {
+    match specified {
+        RadialSize::Extent(e) => RadialSize::Extent(e),
+        RadialSize::Circle(l) => {
+            RadialSize::Circle(absolutized_length(l, font_size, own_line_height, ctx))
+        }
+        RadialSize::Ellipse(a, b) => RadialSize::Ellipse(
+            absolutized_length(a, font_size, own_line_height, ctx),
+            absolutized_length(b, font_size, own_line_height, ctx),
+        ),
+    }
+}
+
+fn resolve_linear_gradient(
+    specified: LinearGradient,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> LinearGradient {
+    LinearGradient {
+        repeating: specified.repeating,
+        direction: specified.direction,
+        interpolation: specified.interpolation,
+        stops: resolve_gradient_color_stops(&specified.stops, font_size, own_line_height, ctx),
+    }
+}
+
+fn resolve_radial_gradient(
+    specified: RadialGradient,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> RadialGradient {
+    RadialGradient {
+        repeating: specified.repeating,
+        shape: specified.shape,
+        size: resolve_radial_size(specified.size, font_size, own_line_height, ctx),
+        position: absolutized_css_position(specified.position, font_size, own_line_height, ctx),
+        interpolation: specified.interpolation,
+        stops: resolve_gradient_color_stops(&specified.stops, font_size, own_line_height, ctx),
+    }
+}
+
+fn resolve_conic_gradient(
+    specified: ConicGradient,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ConicGradient {
+    ConicGradient {
+        repeating: specified.repeating,
+        angle: specified.angle,
+        position: absolutized_css_position(specified.position, font_size, own_line_height, ctx),
+        interpolation: specified.interpolation,
+        stops: Arc::new(
+            specified
+                .stops
+                .iter()
+                .cloned()
+                .collect::<Vec<AngularColorStop>>(),
+        ),
     }
 }
 

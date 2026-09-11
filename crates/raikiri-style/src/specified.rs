@@ -50,9 +50,9 @@ use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ResolveContext,
     empty_computed_box_shadow_list, empty_computed_text_shadow_list, lift_font_size,
     lift_length_or_normal, lift_length_percentage, lift_line_height, lift_tab_size,
-    lift_text_shadow_item, resolve_background_size, resolve_border, resolve_border_radius,
-    resolve_box_shadow_item, resolve_css_position, resolve_flex_basis, resolve_font_size,
-    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
+    lift_text_shadow_item, resolve_background_image, resolve_background_size, resolve_border,
+    resolve_border_radius, resolve_box_shadow_item, resolve_css_position, resolve_flex_basis,
+    resolve_font_size, resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
     resolve_length_or_normal, resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
     resolve_outline, resolve_tab_size, resolve_text_shadow_item, resolve_transform_function,
@@ -426,12 +426,12 @@ pub struct SpecifiedValues {
     /// `<length-percentage>` を絶対化する。
     pub background_position: CssPosition,
     /// [`ComputedValues::background_image`] の staging。`None`/`Url(String)`
-    /// は computed-equivalent。`Gradient(..)` variant (CSS Images 4 §3) は
-    /// `<length-percentage>`/`<angle>` を含むが、gradient box の寸法という
-    /// この struct の scope 外の入力が無いと絶対化できないため、phase 2/3
-    /// のどちらでも解決されない — フィールドの値は winner 適用結果の specified
-    /// 表現をそのまま [`ComputedValues`] まで運ぶ (「層の対応表」の
-    /// `background_image`\* 脚注参照)。
+    /// は computed-equivalent。`Gradient(..)` variant (CSS Images 4 §3) の
+    /// `<length-percentage>` payload (`GradientColorStop::position`,
+    /// `RadialSize::Circle`/`Ellipse`, `RadialGradient`/`ConicGradient` の
+    /// `CssPosition`) は font-relative 部分を phase 3 で絶対化し、
+    /// `<percentage>` は gradient box 寸法 (paint/used-value 層) が必要なため
+    /// 素通し — `resolve_background_image` doc参照。`<angle>` は常に素通し。
     pub background_image: BackgroundImage,
     /// [`ComputedValues::object_fit`] の staging。層は computed-equivalent
     /// (`ObjectFit` は length を運ばない)。
@@ -450,9 +450,10 @@ pub struct SpecifiedValues {
     pub isolation: Isolation,
     /// `mix-blend-mode` の **specified** value — `isolation` と同じ shape。
     pub mix_blend_mode: MixBlendMode,
-    /// `mask-image` の **specified** value — 絶対化不要な素通し field
-    /// (`background_image` と同じ shape — 埋め込まれた `<gradient>` の
-    /// length/angle は本 crate が絶対化しない、[`MaskImage`] doc参照)。
+    /// `mask-image` の **specified** value — `None`/`Url(String)` は
+    /// computed-equivalent。`Gradient(..)` variant は `background_image` と
+    /// 同じく `<length-percentage>` の font-relative 部分を phase 3 で絶対化
+    /// し、`<percentage>` は素通し (`resolve_background_image` doc参照)。
     pub mask_image: MaskImage,
     /// `clip-path` の **specified** value — `mask_image` と同じ shape
     /// (埋め込まれた `<url>` は絶対化しない、[`ClipPath`] doc参照)。
@@ -1316,11 +1317,17 @@ impl SpecifiedValues {
                 ctx,
             ),
             // CSS Backgrounds and Borders 3 §2.3 / CSS Images 4 §3 —
-            // computed value = specified value (`None`/`Url(String)`/
-            // `Gradient(..)`) — 自 node の winner 適用結果をそのまま素通し。
-            // `Gradient(..)`の length/angle は絶対化しない
-            // (`Self::background_image` doc の scope note参照)。
-            background_image: self.background_image,
+            // `None`/`Url(String)` は computed-equivalent。`Gradient(..)` の
+            // `<length-percentage>` payload は font-relative 部分を自 node の
+            // `font-size`/`own_line_height` 基準で絶対化し、`<percentage>` は
+            // gradient box 寸法が必要なため素通し
+            // (`resolve_background_image` doc参照)。`<angle>` は常に素通し。
+            background_image: resolve_background_image(
+                self.background_image,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
             // CSS Images Module Level 3 §5.1 — computed value = specified
             // keyword, no length payload (`background_repeat` arm と同じ
             // shape)。
@@ -1568,11 +1575,12 @@ impl SpecifiedValues {
             // CSS Compositing and Blending Level 1 §3.4.1: same shape as
             // `isolation` above.
             mix_blend_mode: self.mix_blend_mode,
-            // CSS Masking Level 1 §7.1: this crate never absolutizes a
-            // `mask-image` gradient's embedded lengths (`MaskImage` doc's
-            // scope note, same reasoning as `background_image` below) —
-            // 素通し。
-            mask_image: self.mask_image,
+            // CSS Masking Level 1 §7.1: `None`/`Url(String)` は
+            // computed-equivalent。`Gradient(..)` の `<length-percentage>`
+            // payload は `background_image` と同じく font-relative 部分を
+            // phase 3 で絶対化し、`<percentage>` は素通し
+            // (`resolve_background_image` doc参照)。
+            mask_image: resolve_background_image(self.mask_image, font_size, own_line_height, ctx),
             // CSS Masking Level 1 §5.1: same shape as `mask_image` above
             // (`ClipPath` doc's scope note).
             clip_path: self.clip_path,

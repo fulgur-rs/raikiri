@@ -3175,16 +3175,7 @@ fn absolutize_in_page_context(
         | PropertyValue::BackgroundAttachment(_)
         | PropertyValue::BackgroundClip(_)
         | PropertyValue::BackgroundOrigin(_)
-        // `background-image` (CSS Backgrounds and Borders 3 §2.3) — `None`/
-        // `Url(String)` carry no length, same as its 4 keyword-only siblings
-        // just above. `Gradient(..)` (CSS Images 4 §3) does carry
-        // `<length-percentage>`/`<angle>` payloads, but this crate never
-        // absolutizes them (resolving a gradient's lengths needs the
-        // gradient box's own dimensions, unavailable here) — they stay
-        // specified-layer data all the way into `ComputedValues`
-        // (`BackgroundImage` doc's scope note), so an identity pass-through
-        // is still correct for every payload of this variant.
-        | PropertyValue::BackgroundImage(_)
+
         // `object-fit` (CSS Images Module Level 3 §5.1) carries no length
         // either — keyword-only payload, same shape as `WordBreak` above.
         // `object-position` (§5.2) does carry `<length-percentage>` (reuses
@@ -3196,11 +3187,7 @@ fn absolutize_in_page_context(
         // `ObjectFit` above.
         | PropertyValue::Isolation(_)
         | PropertyValue::MixBlendMode(_)
-        // `mask-image` (CSS Masking Level 1 §7.1) — `None`/`Url(String)`
-        // carry no length payload; `Gradient(..)` does, but this crate
-        // never absolutizes it (same reasoning as `BackgroundImage` above,
-        // `MaskImage` doc's scope note).
-        | PropertyValue::MaskImage(_)
+
         // `clip-path` (§5.1) — `None`/`Url(String)`/`GeometryBox(..)` all
         // carry no length payload (`ClipPath` doc's scope note — no
         // `<basic-shape>` support, so no embedded length at all).
@@ -3214,6 +3201,23 @@ fn absolutize_in_page_context(
         // section establishes the same "as specified" fact for a different
         // purpose).
         | PropertyValue::Filter(_)) => v,
+        // ── background-image / mask-image ───────────────────────────────
+        // `None`/`Url(String)` are computed-equivalent. `Gradient(..)`'s
+        // `<length-percentage>` payloads (`GradientColorStop::position`,
+        // `RadialSize::Circle`/`Ellipse`, `RadialGradient`/`ConicGradient`'s
+        // `CssPosition`) are partially absolutized: font-relative lengths
+        // (`em`/`rem`/`ex`/`ch`/`ic`/`pt`/`cm`/`mm`/`q`/`in`/`pc`/`lh`/`rlh`)
+        // resolve against this page context's own `font-size`/
+        // `own_line_height` basis, while `<percentage>` stays symbolic for
+        // paint-time box-size resolution — same split as
+        // `background-position`/`object-position` (`resolve_css_position`/
+        // `resolve_length_percentage`), see `resolve_background_image` doc.
+        PropertyValue::BackgroundImage(img) => PropertyValue::BackgroundImage(
+            crate::resolve::resolve_background_image(img, font_size, own_line_height, ctx),
+        ),
+        PropertyValue::MaskImage(img) => PropertyValue::MaskImage(
+            crate::resolve::resolve_background_image(img, font_size, own_line_height, ctx),
+        ),
         // ── font-size: larger / smaller ──────────────────────────────────
         // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
         // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
@@ -3438,17 +3442,23 @@ fn absolutize_in_page_context(
         // `background` shorthand fall-through (see `Padding` above for the
         // unreachability rationale) — unreachable in practice
         // (`expand_shorthand_into` expands it before this function ever sees
-        // a winner). `position`/`size` are the only 2 of its 8 components
-        // this function absolutizes here — same basis as the
-        // `BackgroundPosition`/`BackgroundSize` longhand arms just above
-        // (`Flex`/`Gap` below use the same "only the length-bearing fields
-        // get transformed" shape). `image`'s `Gradient` payload does carry
-        // `<length-percentage>`/`<angle>` values too, but stays
-        // specified-layer, same as the standalone `BackgroundImage` arm
-        // above. Pinned directly by
+        // a winner). `position`/`size`/`image` are the length-bearing
+        // components this function absolutizes here — same basis as the
+        // `BackgroundPosition`/`BackgroundSize`/`BackgroundImage` longhand
+        // arms just above (`Flex`/`Gap` below use the same "only the
+        // length-bearing fields get transformed" shape). `image`'s
+        // `Gradient` payload's font-relative `<length-percentage>` values
+        // are absolutized while `<percentage>` stays symbolic (same split as
+        // `BackgroundImage` above). Pinned directly by
         // `tests::absolutize_in_page_context_shorthand_fall_throughs`'s
         // `Background` case.
         PropertyValue::Background(shorthand) => PropertyValue::Background(BackgroundShorthand {
+            image: crate::resolve::resolve_background_image(
+                shorthand.image,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
             position: css_position(shorthand.position, font_size, own_line_height, ctx),
             size: background_size(shorthand.size, font_size, own_line_height, ctx),
             ..shorthand
@@ -7817,23 +7827,7 @@ mod tests {
             | PropertyValue::BackgroundAttachment(_)
             | PropertyValue::BackgroundClip(_)
             | PropertyValue::BackgroundOrigin(_)
-            // `background-image` — `None`/`Url(String)` carry no length
-            // payload, same as its 4 keyword-only siblings just above.
-            // `Gradient(..)` (CSS Images 4 §3) *does* carry
-            // `<length-percentage>`/`<angle>` payloads, but this detector
-            // still reports `None` (no residue) for it: this crate
-            // deliberately never routes `BackgroundImage` through phase 3's
-            // absolutization at all (`absolutize_in_page_context`'s own
-            // `BackgroundImage(_) => v` arm above, and
-            // `SpecifiedValues::absolutize_with`'s equivalent field copy, are
-            // both identity pass-throughs — see `BackgroundImage` doc's
-            // scope note for why: resolving a gradient's lengths needs the
-            // gradient box's own dimensions, an input no phase-3 pass
-            // threads through). "Residue" here means *should have been
-            // absolutized by this point and wasn't*; a payload phase 3 never
-            // touches by design doesn't qualify, so flagging it would be a
-            // false positive against this detector's own contract.
-            | PropertyValue::BackgroundImage(_)
+
             // `object-fit` (CSS Images Module Level 3 §5.1) carries no
             // length either — keyword-only payload, same shape as
             // `BackgroundRepeat` above. `object-position` (§5.2) does carry
@@ -7854,14 +7848,7 @@ mod tests {
             // `Length` at all, unlike `Opacity`'s `f32`) — always `None`.
             | PropertyValue::Isolation(_)
             | PropertyValue::MixBlendMode(_)
-            // `mask-image` (CSS Masking Level 1 §7.1) — `Gradient(..)` can
-            // carry `<length-percentage>`/`<angle>` internally, but this
-            // detector reports `None` unconditionally regardless: this
-            // crate deliberately never routes `MaskImage` through phase 3
-            // at all (`absolutize_in_page_context`'s own pass-through arm,
-            // `MaskImage` doc's scope note) — same treatment as
-            // `BackgroundImage` above, for the same reason.
-            | PropertyValue::MaskImage(_)
+
             // `clip-path` (§5.1) — no embedded length at all (no
             // `<basic-shape>` support, `ClipPath` doc's scope note), so
             // `None` here needs no `BackgroundImage`-style caveat.
@@ -7935,33 +7922,139 @@ mod tests {
                 }
                 offset_residue(pos.horizontal).or_else(|| offset_residue(pos.vertical))
             }
-            // `background` shorthand fall-through — `position`/`size` are
-            // the only 2 of its 8 components this detector checks (same
-            // shape as `Flex`/`Gap` above). `image`'s `Gradient` payload
-            // does carry `<length-percentage>`/`<angle>` values too, but is
-            // excluded from this residue check for the same reason the
-            // standalone `PropertyValue::BackgroundImage(_)` arm above is:
-            // this crate deliberately never routes it through phase 3's
-            // absolutization (see that arm's comment for the full
-            // rationale) — a payload phase 3 never touches by design
-            // doesn't qualify as "residue", so flagging it here would be a
-            // false positive.
+            // `background` shorthand fall-through — `position`/`size`/`image`
+            // all carry `<length-percentage>` (same shape as `Flex`/`Gap`
+            // above, but now including the gradient payload's font-relative
+            // lengths — `Percent` stays symbolic, same split as
+            // `BackgroundImage` below).
             PropertyValue::Background(shorthand) => {
+                let image_residue = {
+                    fn gradient_residue(
+                        g: &crate::property::Gradient,
+                        length: fn(crate::property::Length) -> Option<&'static str>,
+                    ) -> Option<&'static str> {
+                        let stop_residue = |s: &crate::property::GradientColorStop| {
+                            s.position.and_then(length)
+                        };
+                        let offset_residue = |o: crate::property::CssPositionOffset| match o {
+                            crate::property::CssPositionOffset::Start(l)
+                            | crate::property::CssPositionOffset::End(l) => length(l),
+                        };
+                        match g {
+                            crate::property::Gradient::Linear(lg) => {
+                                lg.stops.iter().find_map(|s| stop_residue(s))
+                            }
+                            crate::property::Gradient::Radial(rg) => {
+                                let size_residue = match rg.size {
+                                    crate::property::RadialSize::Extent(_) => None,
+                                    crate::property::RadialSize::Circle(l) => length(l),
+                                    crate::property::RadialSize::Ellipse(a, b) => {
+                                        length(a).or_else(|| length(b))
+                                    }
+                                };
+                                size_residue
+                                    .or_else(|| offset_residue(rg.position.horizontal))
+                                    .or_else(|| offset_residue(rg.position.vertical))
+                                    .or_else(|| rg.stops.iter().find_map(|s| stop_residue(s)))
+                            }
+                            crate::property::Gradient::Conic(cg) => offset_residue(cg.position.horizontal)
+                                .or_else(|| offset_residue(cg.position.vertical)),
+                        }
+                    }
+                    match &shorthand.image {
+                        crate::property::BackgroundImage::None
+                        | crate::property::BackgroundImage::Url(_) => None,
+                        crate::property::BackgroundImage::Gradient(g) => gradient_residue(g, length),
+                    }
+                };
                 let size_residue = match shorthand.size {
                     BackgroundSize::Cover | BackgroundSize::Contain => None,
                     BackgroundSize::Explicit { width, height } => {
                         length_or_auto(width).or_else(|| length_or_auto(height))
                     }
                 };
-                size_residue.or_else(|| {
-                    fn offset_residue(o: CssPositionOffset) -> Option<&'static str> {
-                        match o {
-                            CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
+                image_residue
+                    .or_else(|| size_residue)
+                    .or_else(|| {
+                        fn offset_residue(o: CssPositionOffset) -> Option<&'static str> {
+                            match o {
+                                CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
+                            }
                         }
+                        offset_residue(shorthand.position.horizontal)
+                            .or_else(|| offset_residue(shorthand.position.vertical))
+                    })
+            }
+            // `background-image` / `mask-image` — `None`/`Url(String)` carry
+            // no length; `Gradient(..)`'s `<length-percentage>` payloads are
+            // checked via `length` (font-relative) while `Percent` stays
+            // symbolic (same split as `absolutize_in_page_context`'s new
+            // gradient arms). This is the detector counterpart to those
+            // arms — previously the whole variant was excluded as a false
+            // positive.
+            PropertyValue::BackgroundImage(img) => {
+                fn gradient_residue(
+                    g: &crate::property::Gradient,
+                    length: fn(crate::property::Length) -> Option<&'static str>,
+                ) -> Option<&'static str> {
+                    let stop_residue = |s: &crate::property::GradientColorStop| s.position.and_then(length);
+                    let offset_residue = |o: crate::property::CssPositionOffset| match o {
+                        crate::property::CssPositionOffset::Start(l)
+                        | crate::property::CssPositionOffset::End(l) => length(l),
+                    };
+                    match g {
+                        crate::property::Gradient::Linear(lg) => lg.stops.iter().find_map(|s| stop_residue(s)),
+                        crate::property::Gradient::Radial(rg) => {
+                            let size_residue = match rg.size {
+                                crate::property::RadialSize::Extent(_) => None,
+                                crate::property::RadialSize::Circle(l) => length(l),
+                                crate::property::RadialSize::Ellipse(a, b) => length(a).or_else(|| length(b)),
+                            };
+                            size_residue
+                                .or_else(|| offset_residue(rg.position.horizontal))
+                                .or_else(|| offset_residue(rg.position.vertical))
+                                .or_else(|| rg.stops.iter().find_map(|s| stop_residue(s)))
+                        }
+                        crate::property::Gradient::Conic(cg) => offset_residue(cg.position.horizontal)
+                            .or_else(|| offset_residue(cg.position.vertical)),
                     }
-                    offset_residue(shorthand.position.horizontal)
-                        .or_else(|| offset_residue(shorthand.position.vertical))
-                })
+                }
+                match img {
+                    crate::property::BackgroundImage::None | crate::property::BackgroundImage::Url(_) => None,
+                    crate::property::BackgroundImage::Gradient(g) => gradient_residue(g, length),
+                }
+            }
+            PropertyValue::MaskImage(img) => {
+                fn gradient_residue(
+                    g: &crate::property::Gradient,
+                    length: fn(crate::property::Length) -> Option<&'static str>,
+                ) -> Option<&'static str> {
+                    let stop_residue = |s: &crate::property::GradientColorStop| s.position.and_then(length);
+                    let offset_residue = |o: crate::property::CssPositionOffset| match o {
+                        crate::property::CssPositionOffset::Start(l)
+                        | crate::property::CssPositionOffset::End(l) => length(l),
+                    };
+                    match g {
+                        crate::property::Gradient::Linear(lg) => lg.stops.iter().find_map(|s| stop_residue(s)),
+                        crate::property::Gradient::Radial(rg) => {
+                            let size_residue = match rg.size {
+                                crate::property::RadialSize::Extent(_) => None,
+                                crate::property::RadialSize::Circle(l) => length(l),
+                                crate::property::RadialSize::Ellipse(a, b) => length(a).or_else(|| length(b)),
+                            };
+                            size_residue
+                                .or_else(|| offset_residue(rg.position.horizontal))
+                                .or_else(|| offset_residue(rg.position.vertical))
+                                .or_else(|| rg.stops.iter().find_map(|s| stop_residue(s)))
+                        }
+                        crate::property::Gradient::Conic(cg) => offset_residue(cg.position.horizontal)
+                            .or_else(|| offset_residue(cg.position.vertical)),
+                    }
+                }
+                match img {
+                    crate::property::BackgroundImage::None | crate::property::BackgroundImage::Url(_) => None,
+                    crate::property::BackgroundImage::Gradient(g) => gradient_residue(g, length),
+                }
             }
             // `object-position` stores a `<length-percentage>` per
             // edge/offset — same shape as `background-position` above (both
