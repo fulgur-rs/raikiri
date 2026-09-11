@@ -5544,7 +5544,7 @@ pub type MaskImage = BackgroundImage;
 /// range を制限しない引数である限り) 保持する、[`PropertyValue::Opacity`]
 /// の `!is_nan()` guard と同じ判断。
 ///
-/// # Absolutization gap (未実装)
+/// # Absolutization — length half is absolutized, percent stays symbolic
 ///
 /// `transform` property 自体の Computed value は "as specified, **but with
 /// lengths made absolute**"
@@ -5553,20 +5553,20 @@ pub type MaskImage = BackgroundImage;
 /// 単純な "as specified" (絶対化不要) とは異なり、`transform` は
 /// `<length>` payload (この enum では [`Self::Translate`]/
 /// [`Self::TranslateX`]/[`Self::TranslateY`] が運ぶ `Length` の
-/// non-percentage 側) を spec 上絶対化する義務を負う。
+/// non-percentage 側) を spec 上絶対化する義務を負う.
 ///
-/// 本 crate はこの絶対化をまだ実装していない — [`crate::specified::SpecifiedValues::transform`]
-/// も [`crate::page`] の `absolutize_in_page_context` も、この enum を
-/// specified 層のまま computed 層へ素通しする。box size が無いから
-/// 出来ない、という話ではない: `<length-percentage>` の length 側だけを
-/// font-size/root-font-size に対して絶対化し percentage 側は symbolic な
-/// まま残す、という同型の分割は既に
+/// 本 crate は element 経路では
+/// [`crate::resolve::ComputedTransformFunction`]/
+/// [`crate::resolve::resolve_transform_function`] が、`page` 経路では
+/// [`crate::page::cascade_page`] の phase 3 (`absolutize_in_page_context`
+/// の `Transform` arm) が、それぞれこの分割を実装する:
+/// `<length-percentage>` の length 側だけを font-size/root-font-size に対して
+/// 絶対化し percentage 側は symbolic なまま残す — 既に
 /// [`crate::resolve::resolve_css_position`]/
 /// [`crate::resolve::resolve_length_percentage`] が
-/// `background-position`/`object-position` に対して行っている — 同じ
-/// 仕組みを `transform` にも適用すれば実装できる。単に着手していない
-/// だけである (`Matrix` の 6 `<number>` slot と `Rotate`/`Skew`/`SkewX`/
-/// `SkewY` の `<angle>` slot にはこの gap は無い — 前者は既に fully
+/// `background-position`/`object-position` に対して行っているのと同型
+/// (`Matrix` の 6 `<number>` slot と `Rotate`/`Skew`/`SkewX`/
+/// `SkewY` の `<angle>` slot にはこの変換は不要 — 前者は既に fully
 /// resolved な `<number>`、後者は spec 上正規化されない `<angle>` で
 /// あり、どちらも percentage/box-size の話に関わらない)。
 #[non_exhaustive]

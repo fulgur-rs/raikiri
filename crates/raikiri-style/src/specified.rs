@@ -55,7 +55,7 @@ use crate::resolve::{
     resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
     resolve_length_or_normal, resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
-    resolve_outline, resolve_tab_size, resolve_text_shadow_item, resolve_vertical_align,
+    resolve_outline, resolve_tab_size, resolve_text_shadow_item, resolve_transform_function, resolve_vertical_align,
     used_line_height_length,
 };
 
@@ -461,9 +461,12 @@ pub struct SpecifiedValues {
     /// Computed value は "as specified, but with lengths made absolute" —
     /// `mask_image`/`filter` の "as specified" (絶対化不要) とは異なり、
     /// 埋め込まれた `Length` payload (`translate()`/`translateX()`/
-    /// `translateY()` の non-percentage 側) は本来 spec 上絶対化される
-    /// べきだが、本 crate はまだそれを実装していない ([`TransformFunction`]
-    /// doc参照)。`none` は空 list ([`empty_transform_list`]) で表現する。
+    /// `translateY()` の non-percentage 側) を phase 3
+    /// ([`Self::absolutize_with`]) で絶対化する — length 側は
+    /// font-size/root-font-size 基準で `Px` へ、percentage 側は symbolic な
+    /// `Percent` のまま残す ([`crate::resolve::resolve_length_percentage`]
+    /// と同じ split、[`crate::property::TransformFunction`] doc参照)。
+    /// `none` は空 list ([`empty_transform_list`]) で表現する。
     pub transform: Arc<Vec<TransformFunction>>,
     /// `filter` の **specified** value — `transform` と同じ shape
     /// (埋め込まれた `Length`/`Angle`/`f32` は絶対化しない、
@@ -1574,22 +1577,26 @@ impl SpecifiedValues {
             // (`ClipPath` doc's scope note).
             clip_path: self.clip_path,
             // CSS Transforms Level 1 §4: Computed value is "as specified,
-            // but with lengths made absolute" — this field's `<length>`
-            // payload (`translate()`'s non-percentage half, `matrix()`'s
-            // implicit-`<number>` slots aside) is therefore spec-required
-            // to be absolutized here, unlike `filter` below (whose own
-            // Computed value is plain "as specified", no such
-            // requirement). This crate does not yet do so — simply
-            // unimplemented, not blocked on a missing input: the same
-            // partial-absolutize shape already exists for `<length-
-            // percentage>` fields elsewhere (`resolve_css_position`/
-            // `resolve_length_percentage`, used by `background-position`/
-            // `object-position`, absolutizes the length half against
-            // font-size/root-font-size while leaving the percentage half
-            // symbolic for a later box-size-relative resolution) and
-            // could be applied here the same way — see
-            // `TransformFunction` doc's "Absolutization gap" section.
-            transform: self.transform,
+            // but with lengths made absolute" — `translate()`/
+            // `translateX()`/`translateY()`'s `<length-percentage>` payload
+            // の length 側だけを絶対化し percentage 側は `Percent` のまま残す
+            // (`resolve_length_percentage` と同じ split、`background-position`/
+            // `object-position` の `resolve_css_position` と同型)。
+            // `matrix()` の 6 `<number>` slot と `rotate()`/`skew()` 系の
+            // `<angle>` slot は対象外 — 前者は fully resolved、後者は
+            // spec 上正規化されない `<angle>` ([`crate::property::Angle`] doc)。
+            transform: if self.transform.is_empty() {
+                crate::resolve::empty_computed_transform_list()
+            } else {
+                Arc::new(
+                    self.transform
+                        .iter()
+                        .map(|f| {
+                            resolve_transform_function(*f, font_size, own_line_height, ctx)
+                        })
+                        .collect(),
+                )
+            },
             // CSS Filter Effects Level 1 §5: unlike `transform` above,
             // this property's own Computed value is plain "as specified"
             // — no absolutization is spec-required here at all
@@ -1774,7 +1781,14 @@ mod tests {
             ..SpecifiedValues::initial()
         };
         let computed = specified.finalize(&ComputedValues::initial(), &ResolveContext::initial());
-        assert_eq!(computed.transform, transform);
+        // `transform` の length 側だけが absolutize される — 2em は own font-size
+        // 16px 基準で 32px へ。`filter` は "as specified" なので素通し。
+        assert_eq!(
+            computed.transform,
+            Arc::new(vec![crate::resolve::ComputedTransformFunction::TranslateX(
+                crate::resolve::ComputedLengthPercentage::Px(32.0)
+            )])
+        );
         assert_eq!(computed.filter, filter);
     }
 
@@ -1982,7 +1996,9 @@ mod tests {
             // CSS Transforms Level 1 §4/CSS Filter Effects Level 1 §5:
             // 両方 non-inherited なので initial (`none` = 空 list) と
             // 異なる値にしておく。
-            transform: Arc::new(vec![TransformFunction::TranslateX(Length::Em(2.0))]),
+            transform: Arc::new(vec![crate::resolve::ComputedTransformFunction::TranslateX(
+                crate::resolve::ComputedLengthPercentage::Px(48.0),
+            )]),
             filter: Arc::new(vec![FilterFunction::Blur(Length::Px(3.0))]),
             custom_properties: crate::computed::empty_custom_properties(),
         }

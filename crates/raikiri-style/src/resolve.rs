@@ -184,11 +184,11 @@ use smol_str::SmolStr;
 
 use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{
-    BackgroundSize, Border, BorderColor, BorderRadius, BorderStyle, BoxShadowItem, CssPosition,
-    CssPositionOffset, FlexBasisValue, GridInflexibleBreadth, GridRepeatCount, GridTemplateTracks,
-    GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize,
-    Length, LengthOrAuto, LengthOrNormal, LineHeight, Outline, OutlineColor, OutlineStyle, TabSize,
-    TextShadowColor, TextShadowItem, VerticalAlign,
+    Angle, BackgroundSize, Border, BorderColor, BorderRadius, BorderStyle, BoxShadowItem,
+    CssPosition, CssPositionOffset, FlexBasisValue, GridInflexibleBreadth, GridRepeatCount,
+    GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
+    GridTrackSize, Length, LengthOrAuto, LengthOrNormal, LineHeight, Outline, OutlineColor,
+    OutlineStyle, TabSize, TextShadowColor, TextShadowItem, TransformFunction, VerticalAlign,
 };
 
 // ---------------------------------------------------------------------------
@@ -942,7 +942,86 @@ impl ComputedOutline {
     }
 }
 
-/// 空 `box-shadow` list (`none`) の computed 層 shared Arc。
+/// Computed `transform` の 1 function (CSS Transforms Level 1 §9.1 の
+/// computed 版 — [`crate::property::TransformFunction`] の specified 表現に
+/// 対し、`<length-percentage>` slot の length 側だけを絶対化し percentage 側は
+/// symbolic に残す)。
+///
+/// CSS Transforms Level 1 §4 "The transform property"
+/// <https://www.w3.org/TR/css-transforms-1/#transform-property> は Computed
+/// value を "as specified, but with lengths made absolute" と規定する —
+/// `matrix()` の 6 `<number>` slot と `rotate()`/`skew()`/`skewX()`/
+/// `skewY()` の `<angle>` slot にはこの変換は不要 (前者は既に fully resolved
+/// な `<number>`、後者は spec 上正規化されない `<angle>`)。`translate()`/
+/// `translateX()`/`translateY()` の `Length` だけが対象で、
+/// `ComputedLengthPercentage::Px` / `Percent` のいずれかに絶対化される
+/// (`background-position`/`object-position` の `ComputedCssPosition` と同型の
+/// 部分絶対化)。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ComputedTransformFunction {
+    /// `matrix(<number>{6})` — 6 係数は `<number>` のまま。
+    Matrix([f32; 6]),
+    /// `translate(<length-percentage>, <length-percentage>)` — 各軸絶対化済み。
+    Translate(ComputedLengthPercentage, ComputedLengthPercentage),
+    /// `translateX(<length-percentage>)` — 絶対化済み。
+    TranslateX(ComputedLengthPercentage),
+    /// `translateY(<length-percentage>)` — 絶対化済み。
+    TranslateY(ComputedLengthPercentage),
+    /// `scale(<number>, <number>)` — `<number>` のまま。
+    Scale(f32, f32),
+    /// `scaleX(<number>)`.
+    ScaleX(f32),
+    /// `scaleY(<number>)`.
+    ScaleY(f32),
+    /// `rotate(<angle>)` — `<angle>` のまま (正規化しない)。
+    Rotate(Angle),
+    /// `skew(<angle>, <angle>)`.
+    Skew(Angle, Angle),
+    /// `skewX(<angle>)`.
+    SkewX(Angle),
+    /// `skewY(<angle>)`.
+    SkewY(Angle),
+}
+
+/// 空 `transform` list (`none`) の computed 層 shared Arc — `none` は空 list
+/// 表現 ([`crate::property::empty_transform_list`] と同 precedent)。
+pub(crate) fn empty_computed_transform_list() -> Arc<Vec<ComputedTransformFunction>> {
+    static EMPTY: OnceLock<Arc<Vec<ComputedTransformFunction>>> = OnceLock::new();
+    EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
+}
+
+/// `transform` の 1 function を自 node の font-size / line-height 基準で
+/// 絶対化する — `<length-percentage>` slot の length 側だけを `Px` へ、
+/// 百分率側は `Percent` のまま残す。
+pub fn resolve_transform_function(
+    specified: TransformFunction,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedTransformFunction {
+    match specified {
+        TransformFunction::Matrix(m) => ComputedTransformFunction::Matrix(m),
+        TransformFunction::Translate(tx, ty) => ComputedTransformFunction::Translate(
+            resolve_length_percentage(tx, font_size, own_line_height, ctx),
+            resolve_length_percentage(ty, font_size, own_line_height, ctx),
+        ),
+        TransformFunction::TranslateX(v) => ComputedTransformFunction::TranslateX(
+            resolve_length_percentage(v, font_size, own_line_height, ctx),
+        ),
+        TransformFunction::TranslateY(v) => ComputedTransformFunction::TranslateY(
+            resolve_length_percentage(v, font_size, own_line_height, ctx),
+        ),
+        TransformFunction::Scale(x, y) => ComputedTransformFunction::Scale(x, y),
+        TransformFunction::ScaleX(v) => ComputedTransformFunction::ScaleX(v),
+        TransformFunction::ScaleY(v) => ComputedTransformFunction::ScaleY(v),
+        TransformFunction::Rotate(a) => ComputedTransformFunction::Rotate(a),
+        TransformFunction::Skew(ax, ay) => ComputedTransformFunction::Skew(ax, ay),
+        TransformFunction::SkewX(a) => ComputedTransformFunction::SkewX(a),
+        TransformFunction::SkewY(a) => ComputedTransformFunction::SkewY(a),
+    }
+}
+
+/// 空 `box-shadow` list (`none`) の computed 層 shared Arc.
 pub(crate) fn empty_computed_box_shadow_list() -> Arc<Vec<ComputedBoxShadowItem>> {
     static EMPTY: OnceLock<Arc<Vec<ComputedBoxShadowItem>>> = OnceLock::new();
     EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
