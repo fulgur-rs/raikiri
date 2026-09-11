@@ -14272,6 +14272,33 @@ fn css_position_center() -> CssPositionOffset {
     CssPositionOffset::Start(Length::Percent(50.0))
 }
 
+/// `<position>` grammar ([`CssPosition`] doc) の edge + optional offset
+/// を読む共通ヘルパー。`start_kw` (`left`/`top`) は [`CssPositionOffset::Start`]、
+/// `end_kw` (`right`/`bottom`) は [`CssPositionOffset::End`] にマップする。
+/// 戻り値の 2nd 要素の意味は [`parse_position_horizontal_edge`] doc 参照。
+fn parse_position_edge(
+    input: &mut Parser<'_, '_>,
+    start_kw: &str,
+    end_kw: &str,
+) -> Option<(CssPositionOffset, bool)> {
+    if input
+        .try_parse(|i| i.expect_ident_matching(start_kw))
+        .is_ok()
+    {
+        return Some(match input.try_parse(parse_length_percentage_res) {
+            Ok(offset) => (CssPositionOffset::Start(offset), true),
+            Err(_) => (CssPositionOffset::Start(Length::Percent(0.0)), false),
+        });
+    }
+    if input.try_parse(|i| i.expect_ident_matching(end_kw)).is_ok() {
+        return Some(match input.try_parse(parse_length_percentage_res) {
+            Ok(offset) => (CssPositionOffset::End(offset), true),
+            Err(_) => (CssPositionOffset::End(Length::Percent(0.0)), false),
+        });
+    }
+    None
+}
+
 /// `<position>` grammar ([`CssPosition`] doc) の `[ left | right ]
 /// <length-percentage>?` alternative — horizontal 軸の edge keyword を
 /// optional offset とともに読む。offset 省略時は edge そのもの (offset
@@ -14286,43 +14313,13 @@ fn css_position_center() -> CssPositionOffset {
 /// authored されている状態、`<position>` doc の Grammar 節参照) を検出・
 /// reject する。
 fn parse_position_horizontal_edge(input: &mut Parser<'_, '_>) -> Option<(CssPositionOffset, bool)> {
-    if input.try_parse(|i| i.expect_ident_matching("left")).is_ok() {
-        return Some(match input.try_parse(parse_length_percentage_res) {
-            Ok(offset) => (CssPositionOffset::Start(offset), true),
-            Err(_) => (CssPositionOffset::Start(Length::Percent(0.0)), false),
-        });
-    }
-    if input
-        .try_parse(|i| i.expect_ident_matching("right"))
-        .is_ok()
-    {
-        return Some(match input.try_parse(parse_length_percentage_res) {
-            Ok(offset) => (CssPositionOffset::End(offset), true),
-            Err(_) => (CssPositionOffset::End(Length::Percent(0.0)), false),
-        });
-    }
-    None
+    parse_position_edge(input, "left", "right")
 }
 
 /// [`parse_position_horizontal_edge`] の vertical 軸版 (`top`/`bottom`) —
 /// 戻り値の 2nd 要素の意味は同関数の doc 参照。
 fn parse_position_vertical_edge(input: &mut Parser<'_, '_>) -> Option<(CssPositionOffset, bool)> {
-    if input.try_parse(|i| i.expect_ident_matching("top")).is_ok() {
-        return Some(match input.try_parse(parse_length_percentage_res) {
-            Ok(offset) => (CssPositionOffset::Start(offset), true),
-            Err(_) => (CssPositionOffset::Start(Length::Percent(0.0)), false),
-        });
-    }
-    if input
-        .try_parse(|i| i.expect_ident_matching("bottom"))
-        .is_ok()
-    {
-        return Some(match input.try_parse(parse_length_percentage_res) {
-            Ok(offset) => (CssPositionOffset::End(offset), true),
-            Err(_) => (CssPositionOffset::End(Length::Percent(0.0)), false),
-        });
-    }
-    None
+    parse_position_edge(input, "top", "bottom")
 }
 
 /// `center | [ left | right ] <length-percentage>?` — horizontal 軸の
@@ -14480,13 +14477,22 @@ fn parse_position_branch3_strict(input: &mut Parser<'_, '_>) -> Option<CssPositi
     Some(position)
 }
 
-/// `[ left | center | right | <length-percentage> ]` — `<position>` grammar
-/// ([`CssPosition`] doc) の 2nd alternative の horizontal 側。bare
-/// `<length-percentage>` はこの alternative でのみ受理される (branch3 の
-/// group はどちらも bare LP を単独では受理しない) — edge keyword が無い
-/// ぶん offset ではなく「値そのもの」として `Start` に格納する。
-fn parse_position_branch2_horizontal(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
-    if input.try_parse(|i| i.expect_ident_matching("left")).is_ok() {
+/// `[ <start_kw> | center | <end_kw> | <length-percentage> ]` — `<position>`
+/// grammar ([`CssPosition`] doc) の 2nd alternative の axis 共通ヘルパー。
+/// `start_kw` は `Start(0%)` (`left`/`top`)、`end_kw` は `Start(100%)`
+/// (`right`/`bottom`) にマップする。bare `<length-percentage>` はこの
+/// alternative でのみ受理される (branch3 の group はどちらも bare LP を
+/// 単独では受理しない) — edge keyword が無いぶん offset ではなく「値そのもの」
+/// として `Start` に格納する。
+fn parse_position_branch2_axis(
+    input: &mut Parser<'_, '_>,
+    start_kw: &str,
+    end_kw: &str,
+) -> Option<CssPositionOffset> {
+    if input
+        .try_parse(|i| i.expect_ident_matching(start_kw))
+        .is_ok()
+    {
         return Some(CssPositionOffset::Start(Length::Percent(0.0)));
     }
     if input
@@ -14495,36 +14501,26 @@ fn parse_position_branch2_horizontal(input: &mut Parser<'_, '_>) -> Option<CssPo
     {
         return Some(css_position_center());
     }
-    if input
-        .try_parse(|i| i.expect_ident_matching("right"))
-        .is_ok()
-    {
+    if input.try_parse(|i| i.expect_ident_matching(end_kw)).is_ok() {
         return Some(CssPositionOffset::Start(Length::Percent(100.0)));
     }
     let lp = input.try_parse(parse_length_percentage_res).ok()?;
     Some(CssPositionOffset::Start(lp))
 }
 
+/// `[ left | center | right | <length-percentage> ]` — `<position>` grammar
+/// ([`CssPosition`] doc) の 2nd alternative の horizontal 側。bare
+/// `<length-percentage>` はこの alternative でのみ受理される (branch3 の
+/// group はどちらも bare LP を単独では受理しない) — edge keyword が無い
+/// ぶん offset ではなく「値そのもの」として `Start` に格納する。
+fn parse_position_branch2_horizontal(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
+    parse_position_branch2_axis(input, "left", "right")
+}
+
 /// [`parse_position_branch2_horizontal`] の vertical 側
-/// (`[ top | center | bottom | <length-percentage> ]`)。
+/// (`[ top | center | bottom | <length-percentage> ]`).
 fn parse_position_branch2_vertical(input: &mut Parser<'_, '_>) -> Option<CssPositionOffset> {
-    if input.try_parse(|i| i.expect_ident_matching("top")).is_ok() {
-        return Some(CssPositionOffset::Start(Length::Percent(0.0)));
-    }
-    if input
-        .try_parse(|i| i.expect_ident_matching("center"))
-        .is_ok()
-    {
-        return Some(css_position_center());
-    }
-    if input
-        .try_parse(|i| i.expect_ident_matching("bottom"))
-        .is_ok()
-    {
-        return Some(CssPositionOffset::Start(Length::Percent(100.0)));
-    }
-    let lp = input.try_parse(parse_length_percentage_res).ok()?;
-    Some(CssPositionOffset::Start(lp))
+    parse_position_branch2_axis(input, "top", "bottom")
 }
 
 /// `<position>` grammar ([`CssPosition`] doc) の 2nd alternative — 厳密に
