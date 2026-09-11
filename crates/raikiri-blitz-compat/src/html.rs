@@ -1,4 +1,3 @@
-
 #![allow(missing_docs)]
 //! `blitz_html::HtmlDocument` / `blitz_dom::Node` compat layer.
 //!
@@ -61,10 +60,7 @@ impl HtmlDocument {
     /// `raikiri::ParseOptions`; UA stylesheets are handled by raikiri's
     /// default UA CSS pipeline (extra sheets in `config` are ignored for now).
     pub fn from_html(html: &str, config: DocumentConfig) -> Self {
-        let base_url = config
-            .base_url
-            .as_deref()
-            .and_then(|s| Url::parse(s).ok());
+        let base_url = config.base_url.as_deref().and_then(|s| Url::parse(s).ok());
         // Viewport is retained for future `set_viewport` plumbing; parse
         // itself does not need it (raikiri resolves viewport-relative units
         // during layout, not parse).
@@ -74,7 +70,8 @@ impl HtmlDocument {
             network: None,
             base_url,
         };
-        let inner = parse_html(html.as_bytes(), &opts).unwrap_or_else(|e| panic!("HtmlDocument::from_html parse failed: {e:?}"));
+        let inner = parse_html(html.as_bytes(), &opts)
+            .unwrap_or_else(|e| panic!("HtmlDocument::from_html parse failed: {e:?}"));
         Self { inner }
     }
 
@@ -113,7 +110,9 @@ impl HtmlDocument {
         // we return a fresh empty document as placeholder and document the
         // limitation. Callers should prefer `into_inner().dom()` pattern.
         // For now, panic with guidance if misused.
-        panic!("HtmlDocument::into_base_document: use into_inner().dom() or document() — DOM clone not yet supported")
+        panic!(
+            "HtmlDocument::into_base_document: use into_inner().dom() or document() — DOM clone not yet supported"
+        )
     }
 
     /// Blitz-like `get_node` — delegates to `Document::get_node`.
@@ -165,7 +164,9 @@ impl DerefMut for HtmlDocument {
         // interior mutability, so this panics if called. Mutation in
         // raikiri is done via `DocumentMutator` / direct `Document` methods,
         // not via `HtmlDocument`.
-        panic!("HtmlDocument::DerefMut: raikiri HtmlDocument dom is immutable — mutate the Document directly")
+        panic!(
+            "HtmlDocument::DerefMut: raikiri HtmlDocument dom is immutable — mutate the Document directly"
+        )
     }
 }
 
@@ -184,14 +185,14 @@ impl From<HtmlDocument> for raikiri::HtmlDocument {
 
 // ── Node / BaseDocument re-exports for `blitz_dom::Node`-like imports ────
 
+pub use raikiri_dom::Document as BlitzBaseDocument;
+pub use raikiri_dom::ElementData;
 /// Re-exported `Node` — `use raikiri_blitz_compat::html::Node` mirrors `blitz_dom::Node`.
 pub use raikiri_dom::Node as BlitzNode;
 /// Re-exported `NodeData` — field names differ from blitz (`text_content` vs `content`);
 /// see module doc.
 pub use raikiri_dom::NodeData as BlitzNodeData;
-pub use raikiri_dom::ElementData;
 pub use raikiri_dom::TextData;
-pub use raikiri_dom::Document as BlitzBaseDocument;
 
 // ── Trait bridging ───────────────────────────────────────────────────
 
@@ -238,7 +239,10 @@ mod tests {
 
     #[test]
     fn deref_to_document_works() {
-        let doc = HtmlDocument::from_html("<html><body><p>hi</p></body></html>", DocumentConfig::default());
+        let doc = HtmlDocument::from_html(
+            "<html><body><p>hi</p></body></html>",
+            DocumentConfig::default(),
+        );
         // Deref lets us call Document::get_node directly
         let node = doc.get_node(0).unwrap();
         assert_eq!(node.children.len(), 1); // <html> under Document
