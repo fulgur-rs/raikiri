@@ -9,7 +9,9 @@ use std::path::Path;
 
 use crate::expectations::ExpectationSet;
 use crate::oracle::{BlitzOracle, OracleDiff};
-use crate::reftest::{ReftestConfig, ReftestPair, ReftestResult, compare_images, render_blitz, render_raikiri};
+use crate::reftest::{
+    ReftestConfig, ReftestPair, ReftestResult, compare_images, render_blitz, render_raikiri,
+};
 
 // ── Tolerance ──────────────────────────────────────────────────────────
 
@@ -25,11 +27,20 @@ pub struct Tolerance {
 
 impl Tolerance {
     /// Pixel-exact (Tier 1: Linux x86_64).
-    pub const EXACT: Self = Self { max_delta: 0, max_diff_fraction: 0.0 };
+    pub const EXACT: Self = Self {
+        max_delta: 0,
+        max_diff_fraction: 0.0,
+    };
     /// Tier 2 (Linux aarch64, macOS): max_delta=1, max_diff=0.1%.
-    pub const TIER2: Self = Self { max_delta: 1, max_diff_fraction: 0.001 };
+    pub const TIER2: Self = Self {
+        max_delta: 1,
+        max_diff_fraction: 0.001,
+    };
     /// Tier 3 (Windows): max_delta=2, max_diff=0.5%.
-    pub const TIER3: Self = Self { max_delta: 2, max_diff_fraction: 0.005 };
+    pub const TIER3: Self = Self {
+        max_delta: 2,
+        max_diff_fraction: 0.005,
+    };
 }
 
 impl Eq for Tolerance {}
@@ -67,11 +78,23 @@ impl WptRunner {
         // quarantine entries may be filtered by platform; for the runner's
         // default classify we treat any quarantine entry for the test_id as quarantined.
         // Platform-aware filtering is available via `classify_with_matrix`.
-        if self.expectations.quarantine.entries.iter().any(|e| e.test_id == test_id) {
+        if self
+            .expectations
+            .quarantine
+            .entries
+            .iter()
+            .any(|e| e.test_id == test_id)
+        {
             return Some(TestOutcome::Quarantined);
         }
         // known-issues => Skip (non-goal)
-        if self.expectations.known_issues.entries.iter().any(|(pat, _)| test_id_matches_pattern(test_id, pat)) {
+        if self
+            .expectations
+            .known_issues
+            .entries
+            .iter()
+            .any(|(pat, _)| test_id_matches_pattern(test_id, pat))
+        {
             return Some(TestOutcome::Skip("known-issue (non-goal)".to_owned()));
         }
         None
@@ -86,7 +109,10 @@ impl WptRunner {
     /// real execution).
     pub fn run_test(&self, test_id: &str) -> TestExecution {
         if let Some(outcome) = self.classify(test_id) {
-            return TestExecution { test_id: test_id.to_owned(), outcome };
+            return TestExecution {
+                test_id: test_id.to_owned(),
+                outcome,
+            };
         }
         // No WPT tree walk in this entry point; caller that wants real
         // reftest rendering should use `run_reftest_file` / `run_reftest_pair`.
@@ -133,7 +159,10 @@ impl WptRunner {
         let raikiri_result = self.run_reftest_pair(pair, config);
         // For filtered tests, fabricate a matching blitz outcome so the diff
         // doesn't report a false blitz-only signal.
-        let blitz_outcome = if matches!(raikiri_result.outcome, TestOutcome::Skip(_) | TestOutcome::Quarantined) {
+        let blitz_outcome = if matches!(
+            raikiri_result.outcome,
+            TestOutcome::Skip(_) | TestOutcome::Quarantined
+        ) {
             raikiri_result.outcome.clone()
         } else {
             // Compute blitz outcome for same pair
@@ -142,7 +171,11 @@ impl WptRunner {
                 Err(e) => TestOutcome::Fail(format!("blitz error: {e}")),
             }
         };
-        let diff = BlitzOracle::diff(&raikiri_result.outcome, &blitz_outcome, &raikiri_result.pair_test_id);
+        let diff = BlitzOracle::diff(
+            &raikiri_result.outcome,
+            &blitz_outcome,
+            &raikiri_result.pair_test_id,
+        );
         (raikiri_result, diff)
     }
 
@@ -150,9 +183,16 @@ impl WptRunner {
     ///
     /// Convenience for the nightly T3 sweep. Walks `wpt_root` via
     /// `crate::reftest::discover_all_pairs`.
-    pub fn run_all_under(&self, wpt_root: &Path, config: ReftestConfig) -> Vec<(ReftestResult, OracleDiff)> {
+    pub fn run_all_under(
+        &self,
+        wpt_root: &Path,
+        config: ReftestConfig,
+    ) -> Vec<(ReftestResult, OracleDiff)> {
         let pairs = crate::reftest::discover_all_pairs(wpt_root);
-        pairs.iter().map(|p| self.run_pair_with_oracle(p, config)).collect()
+        pairs
+            .iter()
+            .map(|p| self.run_pair_with_oracle(p, config))
+            .collect()
     }
 
     /// Compare raikiri vs blitz rendering of a single HTML string (non-reftest).
@@ -163,20 +203,35 @@ impl WptRunner {
         html: &str,
         config: ReftestConfig,
     ) -> Result<(crate::reftest::ImageDiff, OracleDiff), String> {
-        let raikiri_img = render_raikiri(html, config.width, config.height).map_err(|e| e.to_string())?;
-        let blitz_img = render_blitz(html, config.width, config.height).map_err(|e| e.to_string())?;
+        let raikiri_img =
+            render_raikiri(html, config.width, config.height).map_err(|e| e.to_string())?;
+        let blitz_img =
+            render_blitz(html, config.width, config.height).map_err(|e| e.to_string())?;
         let diff = compare_images(&raikiri_img, &blitz_img, config.tolerance);
         let raikiri = TestOutcome::Pass;
-        let blitz = if diff.matched { TestOutcome::Pass } else { TestOutcome::Fail(format!("oracle pixel mismatch {} / {}", diff.mismatched_pixels, diff.total_pixels)) };
+        let blitz = if diff.matched {
+            TestOutcome::Pass
+        } else {
+            TestOutcome::Fail(format!(
+                "oracle pixel mismatch {} / {}",
+                diff.mismatched_pixels, diff.total_pixels
+            ))
+        };
         let oracle = BlitzOracle::diff(&raikiri, &blitz, "<inline>");
         Ok((diff, oracle))
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-enum Engine { Blitz }
+enum Engine {
+    Blitz,
+}
 
-fn render_pair_with_engine(pair: &ReftestPair, config: ReftestConfig, engine: Engine) -> Result<TestOutcome, String> {
+fn render_pair_with_engine(
+    pair: &ReftestPair,
+    config: ReftestConfig,
+    engine: Engine,
+) -> Result<TestOutcome, String> {
     let test_html = std::fs::read_to_string(&pair.test).map_err(|e| e.to_string())?;
     let ref_html = std::fs::read_to_string(&pair.reference).map_err(|e| e.to_string())?;
     let (test_img, ref_img) = match engine {
@@ -190,7 +245,14 @@ fn render_pair_with_engine(pair: &ReftestPair, config: ReftestConfig, engine: En
         crate::reftest::ReftestKind::Match => d.matched,
         crate::reftest::ReftestKind::Mismatch => !d.matched,
     };
-    if pass { Ok(TestOutcome::Pass) } else { Ok(TestOutcome::Fail(format!("reftest {:?} failed: {} mismatched", pair.kind, d.mismatched_pixels))) }
+    if pass {
+        Ok(TestOutcome::Pass)
+    } else {
+        Ok(TestOutcome::Fail(format!(
+            "reftest {:?} failed: {} mismatched",
+            pair.kind, d.mismatched_pixels
+        )))
+    }
 }
 
 fn test_id_matches_pattern(test_id: &str, pat: &str) -> bool {
@@ -233,17 +295,27 @@ mod tests {
         ExpectationSet {
             tracked: TrackedWpt { entries: vec![] },
             known_issues: KnownIssues { entries: vec![] },
-            baseline: Baseline { entries: std::collections::HashSet::new() },
+            baseline: Baseline {
+                entries: std::collections::HashSet::new(),
+            },
             quarantine: Quarantine { entries: vec![] },
-            deprecated: Deprecated { entries: std::collections::HashSet::new() },
+            deprecated: Deprecated {
+                entries: std::collections::HashSet::new(),
+            },
         }
     }
 
     #[test]
     fn test_outcome_variants_are_constructible() {
         assert!(matches!(TestOutcome::Pass, TestOutcome::Pass));
-        assert!(matches!(TestOutcome::Fail("boom".to_owned()), TestOutcome::Fail(_)));
-        assert!(matches!(TestOutcome::Skip("non-goal".to_owned()), TestOutcome::Skip(_)));
+        assert!(matches!(
+            TestOutcome::Fail("boom".to_owned()),
+            TestOutcome::Fail(_)
+        ));
+        assert!(matches!(
+            TestOutcome::Skip("non-goal".to_owned()),
+            TestOutcome::Skip(_)
+        ));
         assert!(matches!(TestOutcome::Quarantined, TestOutcome::Quarantined));
     }
 
@@ -252,7 +324,10 @@ mod tests {
         let mut set = empty_set();
         set.deprecated.entries.insert("css/foo.html".to_owned());
         let runner = WptRunner::new(set);
-        assert!(matches!(runner.classify("css/foo.html"), Some(TestOutcome::Skip(_))));
+        assert!(matches!(
+            runner.classify("css/foo.html"),
+            Some(TestOutcome::Skip(_))
+        ));
     }
 
     #[test]

@@ -101,14 +101,16 @@ pub enum ReftestError {
     /// HTML contained no reftest link.
     NoReference {
         /// Path to the test file.
-        test_path: PathBuf },
+        test_path: PathBuf,
+    },
     /// A referenced file does not exist.
     /// Reference file does not exist.
     MissingReference {
         /// Path to the test file.
         test_path: PathBuf,
         /// Path to the missing reference file.
-        reference: PathBuf },
+        reference: PathBuf,
+    },
     /// Rendering failed for raikiri.
     RaikiriRender(String),
     /// Rendering failed for blitz.
@@ -124,7 +126,10 @@ impl std::fmt::Display for ReftestError {
                 "no reftest <link rel=match|mismatch> in {}",
                 test_path.display()
             ),
-            Self::MissingReference { test_path, reference } => write!(
+            Self::MissingReference {
+                test_path,
+                reference,
+            } => write!(
                 f,
                 "reftest reference {} not found (from {})",
                 reference.display(),
@@ -195,7 +200,10 @@ pub fn parse_reftest_links(html: &str) -> Vec<(String, ReftestKind)> {
         let tag = &html[abs_start..=abs_end];
         let tag_lower = &lower[abs_start..=abs_end];
         // extract rel and href attribute values
-        if let (Some(rel), Some(href)) = (extract_attr(tag, tag_lower, "rel"), extract_attr(tag, tag_lower, "href")) {
+        if let (Some(rel), Some(href)) = (
+            extract_attr(tag, tag_lower, "rel"),
+            extract_attr(tag, tag_lower, "href"),
+        ) {
             let rel_norm = rel.trim().to_ascii_lowercase();
             let kind = match rel_norm.as_str() {
                 "match" => Some(ReftestKind::Match),
@@ -380,12 +388,17 @@ pub fn discover_all_pairs(wpt_root: &Path) -> Vec<ReftestPair> {
 /// → `anyrender::render_to_buffer::<VelloCpuImageRenderer>`. Font selection
 /// is via `wpt/fonts` when available, otherwise `FontContext::new()`.
 pub fn render_raikiri(html: &str, width: u32, height: u32) -> Result<RenderedImage, ReftestError> {
-    render_raikiri_inner(html, width, height).map_err(|e| ReftestError::RaikiriRender(e.to_string()))
+    render_raikiri_inner(html, width, height)
+        .map_err(|e| ReftestError::RaikiriRender(e.to_string()))
 }
 
-fn render_raikiri_inner(html: &str, width: u32, height: u32) -> Result<RenderedImage, Box<dyn std::error::Error>> {
-    use raikiri::ParseOptions;
+fn render_raikiri_inner(
+    html: &str,
+    width: u32,
+    height: u32,
+) -> Result<RenderedImage, Box<dyn std::error::Error>> {
     use raikiri::PageBox;
+    use raikiri::ParseOptions;
     use raikiri::build_cascaded;
     use raikiri_dom::layout_single_page;
     use raikiri_html::parse;
@@ -405,7 +418,8 @@ fn render_raikiri_inner(html: &str, width: u32, height: u32) -> Result<RenderedI
     page_box.height = height as f32;
     // For WPT fixtures we prefer bundled fonts when wpt/fonts exists; fallback to system.
     let font_ctx = resolve_font_ctx();
-    layout_single_page(&mut dom, &cascade, page_box, font_ctx).map_err(|e| format!("layout: {e:?}"))?;
+    layout_single_page(&mut dom, &cascade, page_box, font_ctx)
+        .map_err(|e| format!("layout: {e:?}"))?;
     // Paint via PageScene rasterize path (reuses raikiri_paint verbatim)
     let scene = raikiri::build_page_scene(&dom, &cascade, page_box);
     // Rasterize produces PNG; we want raw RGBA for diff without encode/decode roundtrip.
@@ -423,7 +437,11 @@ fn render_raikiri_inner(html: &str, width: u32, height: u32) -> Result<RenderedI
     };
     // Ensure we actually used the scene (avoid dead-code warning); scene is still built for parity.
     let _ = scene;
-    Ok(RenderedImage { width, height, rgba })
+    Ok(RenderedImage {
+        width,
+        height,
+        rgba,
+    })
 }
 
 fn resolve_font_ctx() -> raikiri::FontContext {
@@ -454,14 +472,18 @@ pub fn render_blitz(html: &str, width: u32, height: u32) -> Result<RenderedImage
     render_blitz_inner(html, width, height).map_err(|e| ReftestError::BlitzRender(e.to_string()))
 }
 
-fn render_blitz_inner(html: &str, width: u32, height: u32) -> Result<RenderedImage, Box<dyn std::error::Error>> {
-    use blitz_dom::DocumentConfig;
-    use blitz_traits::shell::Viewport;
-    use blitz_html::HtmlDocument;
-    use blitz_traits::shell::ColorScheme;
-    use blitz_paint::paint_scene;
+fn render_blitz_inner(
+    html: &str,
+    width: u32,
+    height: u32,
+) -> Result<RenderedImage, Box<dyn std::error::Error>> {
     use anyrender::render_to_buffer;
     use anyrender_vello_cpu::VelloCpuImageRenderer;
+    use blitz_dom::DocumentConfig;
+    use blitz_html::HtmlDocument;
+    use blitz_paint::paint_scene;
+    use blitz_traits::shell::ColorScheme;
+    use blitz_traits::shell::Viewport;
 
     let viewport = Viewport {
         window_size: (width, height),
@@ -484,7 +506,11 @@ fn render_blitz_inner(html: &str, width: u32, height: u32) -> Result<RenderedIma
         width,
         height,
     );
-    Ok(RenderedImage { width, height, rgba })
+    Ok(RenderedImage {
+        width,
+        height,
+        rgba,
+    })
 }
 
 // ── Pixel diff ─────────────────────────────────────────────────────────
@@ -529,18 +555,35 @@ pub fn compare_images(a: &RenderedImage, b: &RenderedImage, tolerance: Tolerance
     let max_delta = i16::from(tolerance.max_delta);
     let mut mismatched: u64 = 0;
     let mut first: Option<(u32, u32, [u8; 4], [u8; 4])> = None;
-    for (i, (px_a, px_b)) in a.rgba.chunks_exact(4).zip(b.rgba.chunks_exact(4)).enumerate() {
-        let differs = px_a.iter().zip(px_b.iter()).any(|(&av, &bv)| (i16::from(av) - i16::from(bv)).abs() > max_delta);
+    for (i, (px_a, px_b)) in a
+        .rgba
+        .chunks_exact(4)
+        .zip(b.rgba.chunks_exact(4))
+        .enumerate()
+    {
+        let differs = px_a
+            .iter()
+            .zip(px_b.iter())
+            .any(|(&av, &bv)| (i16::from(av) - i16::from(bv)).abs() > max_delta);
         if differs {
             mismatched += 1;
             if first.is_none() {
                 let x = (i as u32) % a.width;
                 let y = (i as u32) / a.width;
-                first = Some((x, y, [px_b[0], px_b[1], px_b[2], px_b[3]], [px_a[0], px_a[1], px_a[2], px_a[3]]));
+                first = Some((
+                    x,
+                    y,
+                    [px_b[0], px_b[1], px_b[2], px_b[3]],
+                    [px_a[0], px_a[1], px_a[2], px_a[3]],
+                ));
             }
         }
     }
-    let fraction = if total == 0 { 0.0 } else { mismatched as f32 / total as f32 };
+    let fraction = if total == 0 {
+        0.0
+    } else {
+        mismatched as f32 / total as f32
+    };
     let matched = mismatched == 0 || fraction <= tolerance.max_diff_fraction;
     ImageDiff {
         mismatched_pixels: mismatched,
@@ -561,10 +604,19 @@ pub fn compare_images(a: &RenderedImage, b: &RenderedImage, tolerance: Tolerance
 /// `read_html` indirection exists so unit tests can supply inline strings
 /// without touching the filesystem.
 pub fn run_pair(pair: &ReftestPair, config: ReftestConfig) -> Result<ReftestResult, ReftestError> {
-    run_pair_with_reader(pair, config, |p| std::fs::read_to_string(p).map_err(|source| ReftestError::Io { path: p.to_path_buf(), source }))
+    run_pair_with_reader(pair, config, |p| {
+        std::fs::read_to_string(p).map_err(|source| ReftestError::Io {
+            path: p.to_path_buf(),
+            source,
+        })
+    })
 }
 
-fn run_pair_with_reader<F>(pair: &ReftestPair, config: ReftestConfig, read_html: F) -> Result<ReftestResult, ReftestError>
+fn run_pair_with_reader<F>(
+    pair: &ReftestPair,
+    config: ReftestConfig,
+    read_html: F,
+) -> Result<ReftestResult, ReftestError>
 where
     F: Fn(&Path) -> Result<String, ReftestError>,
 {
@@ -605,8 +657,14 @@ pub fn run_pair_with_oracle(
 ) -> Result<(ReftestResult, ReftestResult), ReftestError> {
     let raikiri_result = run_pair(pair, config)?;
     // Blitz oracle: render with blitz engine but evaluate with same kind rule.
-    let test_html = std::fs::read_to_string(&pair.test).map_err(|source| ReftestError::Io { path: pair.test.clone(), source })?;
-    let ref_html = std::fs::read_to_string(&pair.reference).map_err(|source| ReftestError::Io { path: pair.reference.clone(), source })?;
+    let test_html = std::fs::read_to_string(&pair.test).map_err(|source| ReftestError::Io {
+        path: pair.test.clone(),
+        source,
+    })?;
+    let ref_html = std::fs::read_to_string(&pair.reference).map_err(|source| ReftestError::Io {
+        path: pair.reference.clone(),
+        source,
+    })?;
     let test_img = render_blitz(&test_html, config.width, config.height)?;
     let ref_img = render_blitz(&ref_html, config.width, config.height)?;
     let diff = compare_images(&test_img, &ref_img, config.tolerance);
@@ -614,7 +672,14 @@ pub fn run_pair_with_oracle(
         ReftestKind::Match => diff.matched,
         ReftestKind::Mismatch => !diff.matched,
     };
-    let oracle_outcome = if pass { TestOutcome::Pass } else { TestOutcome::Fail(format!("blitz oracle reftest {:?} failed: {} mismatched", pair.kind, diff.mismatched_pixels)) };
+    let oracle_outcome = if pass {
+        TestOutcome::Pass
+    } else {
+        TestOutcome::Fail(format!(
+            "blitz oracle reftest {:?} failed: {} mismatched",
+            pair.kind, diff.mismatched_pixels
+        ))
+    };
     let oracle_result = ReftestResult {
         pair_test_id: format!("{}@blitz", pair.test.display()),
         outcome: oracle_outcome,
@@ -696,7 +761,11 @@ mod tests {
 
     #[test]
     fn compare_images_exact_identical() {
-        let img = RenderedImage { width: 2, height: 2, rgba: vec![255,0,0,255, 0,255,0,255, 0,0,255,255, 0,0,0,255] };
+        let img = RenderedImage {
+            width: 2,
+            height: 2,
+            rgba: vec![255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 0, 0, 0, 255],
+        };
         let diff = compare_images(&img, &img, Tolerance::EXACT);
         assert!(diff.matched);
         assert_eq!(diff.mismatched_pixels, 0);
@@ -704,8 +773,16 @@ mod tests {
 
     #[test]
     fn compare_images_exact_one_pixel_off() {
-        let a = RenderedImage { width: 1, height: 1, rgba: vec![0,0,0,255] };
-        let b = RenderedImage { width: 1, height: 1, rgba: vec![0,0,1,255] };
+        let a = RenderedImage {
+            width: 1,
+            height: 1,
+            rgba: vec![0, 0, 0, 255],
+        };
+        let b = RenderedImage {
+            width: 1,
+            height: 1,
+            rgba: vec![0, 0, 1, 255],
+        };
         let diff = compare_images(&a, &b, Tolerance::EXACT);
         assert!(!diff.matched);
         assert_eq!(diff.mismatched_pixels, 1);
@@ -713,8 +790,16 @@ mod tests {
 
     #[test]
     fn compare_images_tolerance_allows_small_delta() {
-        let a = RenderedImage { width: 1, height: 1, rgba: vec![100,100,100,255] };
-        let b = RenderedImage { width: 1, height: 1, rgba: vec![101,101,101,255] };
+        let a = RenderedImage {
+            width: 1,
+            height: 1,
+            rgba: vec![100, 100, 100, 255],
+        };
+        let b = RenderedImage {
+            width: 1,
+            height: 1,
+            rgba: vec![101, 101, 101, 255],
+        };
         // delta 1 allowed with TIER2
         assert!(compare_images(&a, &b, Tolerance::TIER2).matched);
         assert!(!compare_images(&a, &b, Tolerance::EXACT).matched);
@@ -723,15 +808,26 @@ mod tests {
     #[test]
     fn compare_images_fraction_threshold() {
         // 10 pixels, 1 differing => 10% > 0.1% => fail for TIER2
-        let a_rgba = vec![0u8; 10*4];
-        let mut b_rgba = vec![0u8; 10*4];
+        let a_rgba = vec![0u8; 10 * 4];
+        let mut b_rgba = vec![0u8; 10 * 4];
         b_rgba[0] = 255;
-        let a = RenderedImage { width: 10, height: 1, rgba: a_rgba };
-        let b = RenderedImage { width: 10, height: 1, rgba: b_rgba };
+        let a = RenderedImage {
+            width: 10,
+            height: 1,
+            rgba: a_rgba,
+        };
+        let b = RenderedImage {
+            width: 10,
+            height: 1,
+            rgba: b_rgba,
+        };
         // TIER2 allows 0.1% => 10% is too many => not matched
         assert!(!compare_images(&a, &b, Tolerance::TIER2).matched);
         // High tolerance 50% would pass
-        let high = Tolerance { max_delta: 0, max_diff_fraction: 0.5 };
+        let high = Tolerance {
+            max_delta: 0,
+            max_diff_fraction: 0.5,
+        };
         assert!(compare_images(&a, &b, high).matched);
     }
 
@@ -741,7 +837,7 @@ mod tests {
         let img = render_raikiri(html, 200, 100).expect("raikiri render Ok");
         assert_eq!(img.width, 200);
         assert_eq!(img.height, 100);
-        assert_eq!(img.rgba.len(), 200*100*4);
+        assert_eq!(img.rgba.len(), 200 * 100 * 4);
     }
 
     #[test]
@@ -750,7 +846,7 @@ mod tests {
         let img = render_blitz(html, 200, 100).expect("blitz render Ok");
         assert_eq!(img.width, 200);
         assert_eq!(img.height, 100);
-        assert_eq!(img.rgba.len(), 200*100*4);
+        assert_eq!(img.rgba.len(), 200 * 100 * 4);
     }
 
     #[test]
@@ -766,8 +862,20 @@ mod tests {
         let pairs = discover_pairs_for_file(&test_path).unwrap();
         assert_eq!(pairs.len(), 1);
         assert_eq!(pairs[0].kind, ReftestKind::Match);
-        let result = run_pair(&pairs[0], ReftestConfig { width: 200, height: 100, tolerance: Tolerance::EXACT }).unwrap();
-        assert!(matches!(result.outcome, TestOutcome::Pass), "got {:?}", result.outcome);
+        let result = run_pair(
+            &pairs[0],
+            ReftestConfig {
+                width: 200,
+                height: 100,
+                tolerance: Tolerance::EXACT,
+            },
+        )
+        .unwrap();
+        assert!(
+            matches!(result.outcome, TestOutcome::Pass),
+            "got {:?}",
+            result.outcome
+        );
     }
 
     #[test]
@@ -777,12 +885,27 @@ mod tests {
         let ref_path = dir.path().join("ref.html");
         // test has red, ref has blue => different pixels => Mismatch should Pass
         std::fs::write(&test_path, "<html><head><link rel=mismatch href=\"ref.html\"></head><body><p style=\"color:red\">a</p></body></html>").unwrap();
-        std::fs::write(&ref_path, "<html><body><p style=\"color:blue\">a</p></body></html>").unwrap();
+        std::fs::write(
+            &ref_path,
+            "<html><body><p style=\"color:blue\">a</p></body></html>",
+        )
+        .unwrap();
         let pairs = discover_pairs_for_file(&test_path).unwrap();
-        let result = run_pair(&pairs[0], ReftestConfig { width: 200, height: 100, tolerance: Tolerance::EXACT }).unwrap();
+        let result = run_pair(
+            &pairs[0],
+            ReftestConfig {
+                width: 200,
+                height: 100,
+                tolerance: Tolerance::EXACT,
+            },
+        )
+        .unwrap();
         // If rendering produced identical images (e.g., color not applied), this would Fail. Accept either but assertion documents expectation.
         // We assert that mismatched detection runs without error; outcome depends on actual color support.
         // So just ensure result is present.
-        assert!(matches!(result.outcome, TestOutcome::Pass | TestOutcome::Fail(_)));
+        assert!(matches!(
+            result.outcome,
+            TestOutcome::Pass | TestOutcome::Fail(_)
+        ));
     }
 }
