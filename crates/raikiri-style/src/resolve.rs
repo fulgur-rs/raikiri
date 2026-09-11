@@ -1716,12 +1716,23 @@ pub fn resolve_tab_size(
 }
 
 /// `vertical-align: baseline | sub | super | middle | text-top |
-/// text-bottom | <length>` の specified value を絶対化する (**phase 3** —
+/// text-bottom | <length> | <percentage>` の specified value を絶対化する (**phase 3** —
 /// 自 node 基準)。
 ///
 /// CSS 2.1 §10.8.1 propdef: "Computed value: for `<percentage>` and
 /// `<length>` the absolute length, otherwise as specified" — 6 keyword は
-/// computed 層でもそのまま keyword、`<length>` だけが絶対化対象。
+/// computed 層でもそのまま keyword、`<length>` / `<percentage>` が絶対化対象。
+///
+/// `<percentage>` は要素自身の used line-height に対する比率として解決する
+/// (propdef "Percentages: refer to the 'line-height' of the element itself")。
+/// `own_line_height` は呼び手が [`used_line_height_length`] であらかじめ
+/// 絶対化した値。`line-height: normal` で `None` のときは `0px` (= `baseline`
+/// 相当) に倒す — [`crate::property::VerticalAlign`] doc の
+/// "実装済み: `<percentage>`" 節および `Length::Lh` の `None` → `0px`
+/// fallback と同型の documented spec-deviation。`0%` 自体は spec 上
+/// `baseline` と同義のため、この fallback は `0%` に対しては spec 準拠、
+/// 非 0 に対してのみ deviation となる。font-metrics source (raikiri-spike-m3)
+/// 獲得後は自然に解消する。
 ///
 /// # 戻り値が [`VerticalAlign`] 自身であること (別の `ComputedVerticalAlign`
 /// 型を新設しない理由)
@@ -1751,6 +1762,10 @@ pub fn resolve_vertical_align(
         | VerticalAlign::Middle
         | VerticalAlign::TextTop
         | VerticalAlign::TextBottom => specified,
+        VerticalAlign::Length(Length::Percent(p)) => {
+            let px = own_line_height.map(|b| b.0 * p / 100.0).unwrap_or(0.0);
+            VerticalAlign::Length(Length::Px(px))
+        }
         VerticalAlign::Length(l) => VerticalAlign::Length(Length::Px(
             resolve_length(l, font_size, own_line_height, ctx).px(),
         )),
@@ -4009,6 +4024,75 @@ mod tests {
             resolve_vertical_align(
                 VerticalAlign::Length(Length::Lh(2.0)),
                 ComputedLength(20.0),
+                None,
+                &CTX
+            ),
+            VerticalAlign::Length(Length::Px(0.0)),
+        );
+    }
+
+    #[test]
+    fn resolve_vertical_align_percentage_resolves_against_own_line_height() {
+        // 50% of 20px = 10px; 100% = basis itself.
+        assert_eq!(
+            resolve_vertical_align(
+                VerticalAlign::Length(Length::Percent(50.0)),
+                ComputedLength(16.0),
+                Some(ComputedLength(20.0)),
+                &CTX
+            ),
+            VerticalAlign::Length(Length::Px(10.0)),
+        );
+        assert_eq!(
+            resolve_vertical_align(
+                VerticalAlign::Length(Length::Percent(100.0)),
+                ComputedLength(16.0),
+                Some(ComputedLength(30.0)),
+                &CTX
+            ),
+            VerticalAlign::Length(Length::Px(30.0)),
+        );
+    }
+
+    #[test]
+    fn resolve_vertical_align_percentage_falls_back_to_zero_when_line_height_normal() {
+        // `line-height: normal` → `own_line_height: None` → spec-deviation
+        // fallback to 0px (baseline-equivalent), pinned as documented deviation
+        // (`VerticalAlign` doc + `resolve_vertical_align` doc).
+        assert_eq!(
+            resolve_vertical_align(
+                VerticalAlign::Length(Length::Percent(50.0)),
+                ComputedLength(16.0),
+                None,
+                &CTX
+            ),
+            VerticalAlign::Length(Length::Px(0.0)),
+        );
+        // 0% with fallback is still 0 and spec-equivalent to baseline.
+        assert_eq!(
+            resolve_vertical_align(
+                VerticalAlign::Length(Length::Percent(0.0)),
+                ComputedLength(16.0),
+                None,
+                &CTX
+            ),
+            VerticalAlign::Length(Length::Px(0.0)),
+        );
+        // negative percentage preserves sign when basis is resolvable,
+        // falls back to 0 when not.
+        assert_eq!(
+            resolve_vertical_align(
+                VerticalAlign::Length(Length::Percent(-40.0)),
+                ComputedLength(16.0),
+                Some(ComputedLength(20.0)),
+                &CTX
+            ),
+            VerticalAlign::Length(Length::Px(-8.0)),
+        );
+        assert_eq!(
+            resolve_vertical_align(
+                VerticalAlign::Length(Length::Percent(-40.0)),
+                ComputedLength(16.0),
                 None,
                 &CTX
             ),
