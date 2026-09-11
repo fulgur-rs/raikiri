@@ -16858,7 +16858,7 @@ mod tests {
     fn padding_is_non_inherited_child_starts_from_initial_zero() {
         // Verification #7 の後半: <div style="padding: 10px 5%"> の子 <span> は
         // 自身 rule がなく padding は initial (Sides::all(0px))。
-        // 37n sibling: string_set / content / display / counter-* / running_templates
+        // sibling: string_set / content / display / counter-* / running_templates
         // の non-inheritance test と同じ shape。
         use crate::property::Sides;
         let mut doc = TestDoc::new();
@@ -17032,7 +17032,7 @@ mod tests {
     fn margin_non_inherited_child_starts_from_initial() {
         // Verification 6-b: CSS Box 3 §3.1 "Inherited: no"。<div style="margin:
         // 20px"> の子 <span> は自身 rule 無しで margin = initial (0 spread)。
-        // 37n sibling: display / string_set / content non-inherited と同 shape。
+        // sibling: display / string_set / content non-inherited と同 shape。
         let mut doc = TestDoc::new();
         let div = doc.push_element(0, "div", Some("margin: 20px"));
         let span = doc.push_element(div, "span", None);

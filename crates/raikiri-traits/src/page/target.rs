@@ -651,7 +651,7 @@ fn format_decimal(value: i32) -> String {
 /// case-insensitively — CSS keyword idents are case-insensitive generally,
 /// this file just extends the same rule to the rest of §6/§7.
 ///
-/// **Dispatch shape diverges from the og2 baseline (37n: sibling-convention
+/// **Dispatch shape diverges from the og2 baseline (sibling-convention
 /// divergence noted).** The 8 og2-era names above are matched with a plain
 /// `if`/`else if` chain (one `eq_ignore_ascii_case` per name, sometimes two
 /// for an alias pair) — readable at that scale. ce3k adds ~40 more names
@@ -716,7 +716,7 @@ fn format_named_counter(value: i32, name: &str) -> String {
         .find(|(n, _, _)| name.eq_ignore_ascii_case(n))
     {
         // Fallback chain diverges from every other arm's flat
-        // `.unwrap_or_else(|| format_decimal(value))` (37n: sibling
+        // `.unwrap_or_else(|| format_decimal(value))` (sibling
         // divergence noted). §7.1's opening paragraph
         // <https://www.w3.org/TR/css-counter-styles-3/#complex-predefined-counters>
         // states plainly, for the section as a whole: "all of the counter
@@ -865,7 +865,7 @@ fn format_alphabetic(value: i32, first_symbol: u8) -> Option<String> {
 /// `cambodian`'s digit table, shared as a single const with its `system:
 /// extends cambodian` alias `khmer` (both dispatch-table entries below copy
 /// this `Copy` array by value, but from one source of truth, not two
-/// independently hand-copied literals) (37n: unlike `lower-latin`/
+/// independently hand-copied literals) (unlike `lower-latin`/
 /// `upper-latin`, which
 /// alias-match by name in [`format_named_counter`]'s dispatch, `khmer` gets
 /// its own `NUMERIC_DIGIT_STYLES` entry — see the rationale on that table
@@ -1374,7 +1374,7 @@ const KATAKANA_IROHA: [char; 47] = [
 /// [`format_alphabetic`] to take an arbitrary symbol table instead of a
 /// contiguous ASCII range — needed because §6.2's non-Latin alphabets
 /// aren't a `first_symbol + offset` sequence of codepoints. Not merged
-/// into `format_alphabetic` itself (37n: sibling divergence noted):
+/// into `format_alphabetic` itself (sibling divergence noted):
 /// `format_alphabetic` stays allocation-free per digit (`(first_symbol +
 /// digit) as char`) for the two hottest names in this dispatcher
 /// (`lower-alpha`/`upper-alpha`), while this version indexes a borrowed
@@ -2220,7 +2220,7 @@ mod tests {
     }
 
     /// Test-only shorthand for `CounterStyle::Named(SmolStr::new(name))` —
-    /// introduced here (37n: sibling divergence noted) because the ce3k
+    /// introduced here (sibling divergence noted) because the ce3k
     /// additions below construct it ~60 times across 42 new styles; every
     /// pre-existing test above keeps the inline form untouched.
     fn named(name: &str) -> CounterStyle {

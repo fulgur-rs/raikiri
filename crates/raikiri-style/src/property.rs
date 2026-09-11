@@ -269,7 +269,7 @@ fn expand_hex_nibble(n: u8) -> u8 {
 /// CSS length or length-percentage value (box model 実装の足がかりとなる author CSS 型).
 ///
 /// 各 variant は authored value (raw number as written) を保持する。sibling arm
-/// convention (37n): [`Length::Px`] が `Px(16.0)` = `16px` の pattern を確立、
+/// convention: [`Length::Px`] が `Px(16.0)` = `16px` の pattern を確立、
 /// 他 variant も authored value をそのまま保持する (`Em(1.2)` = `1.2em`、
 /// `Percent(50.0)` = `50%` の literal 数字を格納)。
 ///
@@ -531,7 +531,7 @@ pub enum Length {
 ///
 /// `#[non_exhaustive]` は future variant (例: `<flex>` `auto-vs-fill-available`
 /// 系 CSS Box 4 拡張、または `min-content` / `max-content` 系 sizing keyword) の
-/// non-breaking 追加のため — 37n sibling [`Length`] / [`CounterStyle`] と同じ
+/// non-breaking 追加のため — sibling [`Length`] / [`CounterStyle`] と同じ
 /// pattern。
 ///
 /// [`Copy`] 導入は underlying [`Length`] が `Copy` (Px/Em/Rem/Percent/Pt は
@@ -743,13 +743,13 @@ impl<T> StartEnd<T> {
 ///   `parse_border_style_side` が `None` を返し、declaration ごと drop。
 ///
 /// `Default` は derive しない — 本 crate の convention は "derive `Default` iff
-/// `.default()` が call される" (37n sibling [`DisplayValue`] / [`TextAlign`] と
+/// `.default()` が call される" (sibling [`DisplayValue`] / [`TextAlign`] と
 /// 同じ、spec default は初期化側 [`crate::computed::ComputedValues::initial`]
 /// が [`BorderStyle::None`] を直接指定する)。
 ///
 /// `#[non_exhaustive]` は future variant (Draft CSS Backgrounds 4 拡張、または
 /// author-defined `border-image` 相当の new line style) の non-breaking 追加のため —
-/// 37n sibling [`DisplayValue`] / [`TextAlign`] / [`Length`] と同 pattern。
+/// sibling [`DisplayValue`] / [`TextAlign`] / [`Length`] と同 pattern。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BorderStyle {
@@ -860,7 +860,7 @@ pub enum OutlineStyle {
 /// Sibling [`Length`] / [`LengthOrAuto`] / [`BorderStyle`] / [`Border`] と
 /// 同 pattern — future variant 追加 (例: CSS Color 4 §6.2 "System Colors"
 /// <https://www.w3.org/TR/css-color-4/#css-system-colors> の system-color keyword)
-/// の forward-compat 契約 (37n sibling convention)。
+/// の forward-compat 契約 (sibling convention)。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BorderColor {
@@ -897,7 +897,7 @@ pub enum BorderColor {
 /// # `#[non_exhaustive]`
 ///
 /// future field (例: CSS Backgrounds 4 の `border-image-*` cascade 統合、あるいは
-/// per-side gradient support) の non-breaking 追加のため — 37n sibling
+/// per-side gradient support) の non-breaking 追加のため — sibling
 /// [`Length`] / [`LengthOrAuto`] / [`BorderStyle`] と同 pattern。
 ///
 /// # `Sides<Border>` 化
@@ -915,7 +915,7 @@ pub enum BorderColor {
 /// [`Length`] は f32 payload (`Px(f32)` etc.) を持つため `Eq` を実装できず、
 /// Border も PartialEq のみ (`Sides<Border>`: PartialEq が実質的 usage、`Sides` の
 /// derive は `where T: Eq` conditional bound として transparent に伝わる)。
-/// 37n sibling [`Length`] / [`LengthOrAuto`] と同じ制約。
+/// sibling [`Length`] / [`LengthOrAuto`] と同じ制約。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Border {
@@ -1970,7 +1970,7 @@ pub enum DisplayValue {
 /// "Computed value: specified keyword"。
 ///
 /// `#[non_exhaustive]` — [`DisplayValue`] と同じ forward-compat 契約。
-/// 37n sibling と同じ convention で `Default` を derive しない — 初期化側
+/// sibling と同じ convention で `Default` を derive しない — 初期化側
 /// ([`crate::specified::SpecifiedValues::initial`] /
 /// [`crate::computed::ComputedValues::initial`]) が [`Self::Row`] を直接指定する。
 #[non_exhaustive]
@@ -2037,7 +2037,7 @@ pub enum FlexWrapValue {
 /// bridge 側の scope carving は `crates/raikiri-dom/src/layout.rs` の
 /// `bridge_flex` doc を参照。
 ///
-/// `#[non_exhaustive]` — 37n sibling [`DisplayValue`] / [`LengthOrAuto`] と
+/// `#[non_exhaustive]` — sibling [`DisplayValue`] / [`LengthOrAuto`] と
 /// 同じ forward-compat 契約。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -2212,7 +2212,7 @@ pub enum SelfAlignmentValue {
 /// `auto` 以外の全 keyword は [`SelfAlignmentValue`] (= `align-items` の
 /// grammar) と同一 — [`Self`] doc の共有 rationale 参照。
 ///
-/// `#[non_exhaustive]` — 37n sibling [`SelfAlignmentValue`] と同じ
+/// `#[non_exhaustive]` — sibling [`SelfAlignmentValue`] と同じ
 /// forward-compat 契約。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2754,7 +2754,7 @@ pub(crate) fn initial_grid_auto_track_list() -> Arc<Vec<GridTrackSize>> {
 /// `apply_computed_to_style` bridge (dom scope、`taffy::Style::box_sizing`
 /// への翻訳) は future cross-scope task に defer。
 ///
-/// `#[non_exhaustive]` は 37n sibling [`DisplayValue`] / [`TextAlign`] /
+/// `#[non_exhaustive]` は sibling [`DisplayValue`] / [`TextAlign`] /
 /// [`PositionValue`] と同じ forward-compat 契約。
 ///
 /// [`ComputedValues.box_sizing`]: crate::computed::ComputedValues::box_sizing
@@ -2812,7 +2812,7 @@ pub enum BoxSizing {
 ///
 /// [`DisplayValue`] と同じ convention で `Default` を derive しない — 本 enum の
 /// `.default()` は呼ばれず、初期化側 [`crate::computed::ComputedValues::initial`]
-/// が [`TextAlign::Start`] を直接指定する (37n sibling pattern:
+/// が [`TextAlign::Start`] を直接指定する (sibling pattern:
 /// [`DisplayValue`] / [`PositionValue`] は spec に "omitted → default" が無いため
 /// non-derive、[`CounterStyle`] / [`StringFetchMode`] / [`ContentPart`] /
 /// [`ContentTextKeyword`] は spec に omitted-default があるため derive)。
@@ -2879,7 +2879,7 @@ pub enum TextAlign {
 ///
 /// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical。37n sibling [`TextAlign`] と同 convention)。
+///   が canonical。sibling [`TextAlign`] と同 convention)。
 /// - **(a) spec-invalid**: `ltr` / `rtl` 以外の ident は silent drop = `None`。
 ///   spec には旧 draft 相当の `auto` 値は無い (現行 §2.1 grammar は 2 keyword のみ)。
 /// - **Non-goal**: HTML `dir` attribute → UA-level `direction` mapping
@@ -2959,7 +2959,7 @@ pub enum Direction {
 /// - **Non-goal — vertical writing-mode rendering pipeline は未実装**:
 ///   `vertical-rl` / `vertical-lr` / `sideways-rl` / `sideways-lr` は spec
 ///   grammar どおり **構文としては受理する** (`None` を返さない、CSS 2.1 の
-///   「受理するが視覚効果は未実装」established pattern — 37n sibling
+///   「受理するが視覚効果は未実装」established pattern — sibling
 ///   [`WordBreak`] doc の deprecated `break-word` scope-cut と同じ精神)。ただし
 ///   raikiri は縦書きレンダリングパイプラインを持たないため、この 4 keyword の
 ///   **computed value はすべて [`HorizontalTb`](Self::HorizontalTb) と同じ表現に
@@ -3029,7 +3029,7 @@ pub enum WritingMode {
 ///   `crates/raikiri-html/src/ua/minimal.css` の `hr` rule comment が
 ///   `margin-block`/`margin-inline` について述べる carve out と同型の判断)。
 ///
-/// 37n sibling [`BoxSizing`] / [`Direction`] と同じ convention で `Default`
+/// sibling [`BoxSizing`] / [`Direction`] と同じ convention で `Default`
 /// を derive しない — 初期化側 ([`crate::specified::SpecifiedValues::initial`] /
 /// [`crate::computed::ComputedValues::initial`]) が [`OverflowValue::Visible`]
 /// を直接指定する。
@@ -3277,7 +3277,7 @@ pub enum PositionValue {
     /// `static` — spec default、running() を suppress。
     ///
     /// `Default` は derive しない — 本 crate の convention は "derive `Default`
-    /// iff `.default()` が call される" (37n sibling [`DisplayValue`] と同じ、
+    /// iff `.default()` が call される" (sibling [`DisplayValue`] と同じ、
     /// spec default は初期化側 [`crate::computed::ComputedValues::initial`] が
     /// 直接指定する)。
     Static,
@@ -3372,12 +3372,12 @@ impl TextDecorationLine {
 /// value grammar: `solid | double | dotted | dashed | wavy`、Initial: `solid`、
 /// Inherited: no、Computed value: specified keyword。
 ///
-/// `Default` は derive しない — 37n sibling [`DisplayValue`] / [`Direction`] と
+/// `Default` は derive しない — sibling [`DisplayValue`] / [`Direction`] と
 /// 同じ convention (spec default は初期化側
 /// [`crate::computed::ComputedValues::initial`] が直接指定する)。
 ///
 /// `#[non_exhaustive]` — sibling [`BorderStyle`] と同じ判断 (line-style 系
-/// keyword enum の 37n 慣行、future variant の non-breaking 追加)。
+/// keyword enum の慣行、future variant の non-breaking 追加)。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextDecorationStyle {
@@ -3622,7 +3622,7 @@ pub struct TextDecorationShorthand {
 /// `<percentage>` も対象外 (別種の raikiri-style 内部 gap、上記
 /// 「非対応: `<percentage>`」節 — cascade-regression risk とは無関係)。
 ///
-/// `Default` は derive しない — 37n sibling [`TextDecorationShorthand`] と
+/// `Default` は derive しない — sibling [`TextDecorationShorthand`] と
 /// 同じ convention (spec default は初期化側
 /// [`crate::computed::ComputedValues::initial`] が直接指定する)。
 ///
@@ -6262,7 +6262,7 @@ pub enum PropertyValue {
     ///
     /// margin (`<length-percentage> | auto`) の non-negative constraint が違うだけの
     /// grammar のため、payload 型は sibling [`Self::Width`] と同じ
-    /// [`LengthOrAuto`] を reuse (37n sibling: `parse_padding_side` の非負フィルタ +
+    /// [`LengthOrAuto`] を reuse (sibling: `parse_padding_side` の非負フィルタ +
     /// `parse_margin_side` の auto 分岐を合成、`parse_height` doc 参照)。
     ///
     /// resolve (percentage → containing block, `LengthOrAuto::Auto` の実 layout
@@ -9952,7 +9952,7 @@ fn linear_srgb_to_oklab(rgb: [f32; 3]) -> [f32; 3] {
 /// rationale は [`BorderColor`] enum doc 参照 (paint scope 責務)。
 ///
 /// 5 call site (4 longhand + [`parse_border_shorthand`] color slot) が本
-/// helper を経由する (37n sibling-arm convention consistency)。
+/// helper を経由する (sibling-arm convention consistency)。
 fn parse_border_color(input: &mut Parser<'_, '_>) -> Option<BorderColor> {
     // `expect_ident_matching` は ASCII case-insensitive (cssparser 慣行、
     // sibling `parse_margin_side` line 1892 と同 shape の keyword intercept)。
@@ -10954,7 +10954,7 @@ fn parse_border_width_side_res<'i>(
 /// Grammar: `<line-style>` = `none | hidden | dotted | dashed | solid | double
 /// | groove | ridge | inset | outset` (CSS Backgrounds 3 §3.2
 /// <https://www.w3.org/TR/css-backgrounds-3/#border-style>)。
-/// ASCII case-insensitive で ident と照合 (37n sibling
+/// ASCII case-insensitive で ident と照合 (sibling
 /// [`parse_display`] / [`parse_text_align`] と同 flavor)。
 ///
 /// # Non-goals
@@ -11075,7 +11075,7 @@ fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Border>> {
         // color slot — `parse_border_color` を reuse。hex / named / rgb(a) /
         // transparent の全 alternative + `currentcolor` keyword (CSS Color 3
         // §4.4) を受理。4 longhand parse site (border-{top,right,bottom,left}-color)
-        // と同じ helper を経由することで 37n sibling convention consistency を
+        // と同じ helper を経由することで sibling convention consistency を
         // 担保。
         if color.is_none()
             && let Ok(c) = input.try_parse(|i| -> Result<BorderColor, ParseError<'_, ()>> {
@@ -11155,7 +11155,7 @@ fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Border>> {
 /// spec `<length-percentage [0,∞]>` (§3.1.1) の非負制約は [`length_payload`]
 /// 経由で全 [`Length`] variant の payload に対し `>= 0.0` を確認 —
 /// [`parse_padding_side`] の同名 pattern を踏襲 (`<length-percentage [0,∞]>`
-/// grammar と非負フィルタが対応する 37n sibling)。`Percent(-10.0)` = `-10%` も
+/// grammar と非負フィルタが対応する sibling)。`Percent(-10.0)` = `-10%` も
 /// 含めて全 variant 経由で reject する。
 fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
@@ -12379,7 +12379,7 @@ fn parse_place_self_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceSelfSho
 ///   が親の computed weight から解決する。
 ///
 /// ASCII case-insensitive matching は CSS Values 3 §3.1 "Pre-defined Keywords"
-/// <https://www.w3.org/TR/css-values-3/#keywords> 準拠 (37n sibling
+/// <https://www.w3.org/TR/css-values-3/#keywords> 準拠 (sibling
 /// `parse_display` / `parse_content_*` と同 convention)。
 ///
 /// # Range (spec grammar)
@@ -12691,7 +12691,7 @@ fn parse_hyphens(input: &mut Parser<'_, '_>) -> Option<Hyphens> {
 /// §3.1 "Pre-defined Keywords" <https://www.w3.org/TR/css-values-3/#keywords>:
 /// keyword は ASCII case-insensitive)。
 fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
-    // 37n sibling multi-keyword idiom (parse_string_fetch / parse_content_part /
+    // sibling multi-keyword idiom (parse_string_fetch / parse_content_part /
     // parse_content_text_keyword) に揃える。ASCII case-insensitive matching は
     // to_ascii_lowercase() 経由 (parse-time allocation は一 declaration 一回)。
     let ident = input.expect_ident().ok()?.clone();
@@ -12713,7 +12713,7 @@ fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
 ///
 /// Spec value grammar (§3.3): `content-box | border-box`。ASCII
 /// case-insensitive で ident を比較する (CSS Values 3 §3.1 "Pre-defined
-/// Keywords"、37n sibling [`parse_display`] / [`parse_text_align`] と同 flavor)。
+/// Keywords"、sibling [`parse_display`] / [`parse_text_align`] と同 flavor)。
 ///
 /// # Scope carving ([`BoxSizing`] doc-comment に詳述)
 ///
@@ -12736,7 +12736,7 @@ fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<BoxSizing> {
 ///
 /// Spec value grammar (§6.1): `start | end | left | right | center | justify |
 /// match-parent | justify-all`。ASCII case-insensitive で ident を比較する
-/// (CSS spec 慣行、37n sibling [`parse_string_fetch`] / [`parse_content_part`] /
+/// (CSS spec 慣行、sibling [`parse_string_fetch`] / [`parse_content_part`] /
 /// [`parse_content_text_keyword`] と同 flavor)。
 ///
 /// # Scope carving ([`TextAlign`] doc-comment に詳述)
@@ -12769,7 +12769,7 @@ fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> {
 /// (CSS Writing Modes 4 §2.1 <https://www.w3.org/TR/css-writing-modes-4/#direction>)。
 ///
 /// Spec value grammar (§2.1): `ltr | rtl`。ASCII case-insensitive で ident を
-/// 比較する (37n sibling [`parse_text_align`] と同 flavor)。
+/// 比較する (sibling [`parse_text_align`] と同 flavor)。
 ///
 /// # Scope carving ([`Direction`] doc-comment に詳述)
 ///
@@ -12791,7 +12791,7 @@ fn parse_direction(input: &mut Parser<'_, '_>) -> Option<Direction> {
 ///
 /// Spec value grammar (§3.2): `horizontal-tb | vertical-rl | vertical-lr |
 /// sideways-rl | sideways-lr`。ASCII case-insensitive で ident を比較する
-/// (37n sibling [`parse_direction`] と同 flavor)。5 keyword とも spec 通り
+/// (sibling [`parse_direction`] と同 flavor)。5 keyword とも spec 通り
 /// 受理する — `vertical-rl` 以降 4 keyword の computed value normalization は
 /// 本関数の責務ではなく [`resolve_writing_mode`] が担う ([`WritingMode`] doc の
 /// Scope carving 節参照)。
@@ -12818,7 +12818,7 @@ fn parse_writing_mode(input: &mut Parser<'_, '_>) -> Option<WritingMode> {
 /// CSS Overflow 3 §3.1 <https://www.w3.org/TR/css-overflow-3/#overflow-properties>)。
 ///
 /// Spec value grammar (§3.1): `visible | hidden | clip | scroll | auto`。
-/// ASCII case-insensitive で ident を比較する (37n sibling [`parse_box_sizing`] /
+/// ASCII case-insensitive で ident を比較する (sibling [`parse_box_sizing`] /
 /// [`parse_direction`] と同 flavor)。
 ///
 /// # Scope carving ([`OverflowValue`] doc-comment に詳述)
@@ -12954,7 +12954,7 @@ fn parse_text_decoration_line(input: &mut Parser<'_, '_>) -> Option<TextDecorati
 /// `text-decoration-style: solid | double | dotted | dashed | wavy` を
 /// parse する (CSS Text Decoration Module Level 3 §2.2
 /// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-style-property>)。
-/// ASCII case-insensitive で ident を比較する (37n sibling
+/// ASCII case-insensitive で ident を比較する (sibling
 /// [`parse_border_style_side`] と同 flavor)。
 fn parse_text_decoration_style(input: &mut Parser<'_, '_>) -> Option<TextDecorationStyle> {
     let ident = input.expect_ident().ok()?.clone();
@@ -13058,7 +13058,7 @@ fn parse_text_decoration_shorthand(input: &mut Parser<'_, '_>) -> Option<TextDec
 /// `vertical-align: <ident> | <length>` を parse する (CSS 2.1 §10.8.1
 /// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>)。
 ///
-/// Ident は ASCII case-insensitive で比較する (37n sibling [`parse_direction`]
+/// Ident は ASCII case-insensitive で比較する (sibling [`parse_direction`]
 /// / [`parse_text_decoration_style`] と同 flavor)。ident 側を先に
 /// `try_parse` で試し、ident token でなければ (= dimension/number token
 /// の可能性があれば) `<length>` として再挑戦する — [`parse_flex_basis`]
@@ -18880,7 +18880,7 @@ mod tests {
     //   #3 padding-box → None (spec 外、CSS UI 3 draft の削除済 keyword)
     //   #4 initial + #5 non-inheritance test は crate::computed 側
     //
-    // 37n sibling: `display_*` / `text_align_*` の keyword parser test 群と同構造。
+    // sibling: `display_*` / `text_align_*` の keyword parser test 群と同構造。
 
     #[test]
     fn box_sizing_parse_content_box() {
@@ -18929,7 +18929,7 @@ mod tests {
     #[test]
     fn box_sizing_is_case_insensitive() {
         // CSS Values 3 §3.1 "Pre-defined Keywords": keyword は ASCII case-insensitive
-        // (37n sibling `display_is_case_insensitive` と同 flavor)。
+        // (sibling `display_is_case_insensitive` と同 flavor)。
         assert_eq!(
             parse("CONTENT-BOX", "box-sizing"),
             Some(PropertyValue::BoxSizing(BoxSizing::ContentBox))
@@ -20840,7 +20840,7 @@ mod tests {
     // <number [0,∞]> | <length-percentage [0,∞]>` — 4 accept branch + negative
     // reject + Number vs Length variant distinction を pin する。
     //
-    // 37n sibling: parse_display (keyword accept)、parse_font_size (Length
+    // sibling: parse_display (keyword accept)、parse_font_size (Length
     // post-filter for non-negative)、parse_length_value (unit dispatch)。
 
     #[test]
@@ -24225,7 +24225,7 @@ mod tests {
 
     #[test]
     fn sides_all_spreads_value_to_all_four() {
-        // Sides::all helper (37n reused by shorthand 1-value + initial value):
+        // Sides::all helper ( reused by shorthand 1-value + initial value):
         // 1 value → top/right/bottom/left が全て同値、Clone 経路 (最後の side は
         // move 消費) が正しく動く pin。
         let s = Sides::all(LengthOrAuto::Length(Length::Px(3.5)));
@@ -25139,7 +25139,7 @@ mod tests {
 
     #[test]
     fn border_shorthand_color_slot_accepts_currentcolor() {
-        // 37n sibling: border shorthand の color slot は 4 longhand と同じ
+        // sibling: border shorthand の color slot は 4 longhand と同じ
         // `parse_border_color` を経由するため、`currentcolor` keyword も
         // shorthand から受理される。
         let expected = Border {
@@ -25281,7 +25281,7 @@ mod tests {
     // 他 sizing keyword / global keyword / calc() / var() は silent drop
     // (parse_height doc の Scope carving 節参照)。
     //
-    // 37n sibling: sibling `width` と同 shape の非負 `<length-percentage>` +
+    // sibling: sibling `width` と同 shape の非負 `<length-percentage>` +
     // `auto` grammar、payload 型は共通 `LengthOrAuto`。
 
     #[test]
