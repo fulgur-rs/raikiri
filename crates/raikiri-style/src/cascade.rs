@@ -446,8 +446,7 @@ struct RankedDecl {
 /// # UA / User / Author の 3-origin 部分 (spec-verbatim)
 ///
 /// §6.1 "Cascade Sorting Order" は origin 優先度を降順 8 項目のリストで
-/// 定める (2026-08-12 再 fetch 確認、transition/animation の 2 項目は本
-/// crate 未実装のため以下では省略):
+/// 定める (transition/animation の 2 項目は本 crate 未実装のため以下では省略):
 /// - "Important user agent declarations"
 /// - "Important user declarations"
 /// - "Important author declarations"
@@ -467,10 +466,9 @@ struct RankedDecl {
 ///
 /// [`Origin::AuthorPresentationalHint`] は CSS Cascading L5 §6.5
 /// "Precedence of Non-CSS Presentational Hints"
-/// (<https://drafts.csswg.org/css-cascade-5/#preshint>, 2026-08-12 再 fetch
-/// 確認) が定める "author presentational hint origin"。L5 自身の §6.1 も
+/// (<https://drafts.csswg.org/css-cascade-5/#preshint>) が定める "author presentational hint origin"。L5 自身の §6.1 も
 /// 上記と同じ 8 項目リストのままで hint origin をそこに明示的には
-/// 挿入しない (2026-08-12 再 fetch で確認 — hint の位置付けは §6.5 側の
+/// 挿入しない (hint の位置付けは §6.5 側の
 /// 独立した記述に委ねられている)。以下は §6.5 の段落から**関連する抜粋を
 /// verbatim 引用**したもの (段落全体の逐語コピーではない — 完全性を主張
 /// しない):
@@ -937,8 +935,7 @@ fn collect_cascaded<D: StyleDom>(
 ///   anchor's own prose repeatedly truncated on WebFetch before reaching
 ///   normative text, same failure mode as [`match_combinator_chain`]'s
 ///   "Spec provenance note"; what loaded is the summary-table one-liner,
-///   "an E element, root of the document", 2026-08-12 direct fetch —
-///   sufficient to pin this simple a definition).
+///   "an E element, root of the document").
 /// - `Component::Empty` (`:empty`, CSS Selectors
 ///   L4 §13.2 <https://www.w3.org/TR/selectors-4/#the-empty-pseudo>) — see
 ///   [`matches_empty`] doc for the verbatim spec text and its L4-vs-L3
@@ -1260,8 +1257,7 @@ struct SiblingMatchContext<'a> {
 ///
 /// `of_type == false` (`:nth-child`/`:first-child`/`:last-child`/
 /// `:only-child`) counts **all** element siblings regardless of tag; CSS
-/// Selectors L3 §6.6 structural-pseudos preamble (verbatim, 2026-08-12
-/// direct fetch, <https://www.w3.org/TR/selectors-3/#structural-pseudos> —
+/// Selectors L3 §6.6 structural-pseudos preamble (verbatim, <https://www.w3.org/TR/selectors-3/#structural-pseudos> —
 /// same feature, L4 does not change this): "Standalone text and other
 /// non-element nodes are not counted when calculating the position of an
 /// element in its list of siblings; index numbering starts at 1."
@@ -1342,13 +1338,12 @@ fn sibling_position<D: StyleDom>(
 /// `selectors` crate itself parses all ten syntaxes into this one
 /// `Component` variant, distinguished only by `NthSelectorData::ty`
 /// (`selectors` 0.39.0 `parser.rs`'s `NthSelectorData::only`/`first`/`last`
-/// constructors and `parse_nth_pseudo_class`, 2026-08-12 direct fetch of
-/// the dependency's own public parse dispatch — not a Stylo reference).
+/// constructors and `parse_nth_pseudo_class`, the dependency's own public parse dispatch — not a Stylo reference).
 ///
 /// L4's own per-selector TR anchors truncated the same way documented on
 /// [`matches_empty`]; fell back to Selectors **Level 3** §6.6
 /// <https://www.w3.org/TR/selectors-3/#structural-pseudos> (verbatim,
-/// 2026-08-12 direct fetch — again the same feature, unchanged by L4
+/// again the same feature, unchanged by L4
 /// except for the `An+B of S` extension handled by [`matches_nth_of`]):
 /// "The :nth-child(an+b) pseudo-class notation represents an element that
 /// has an+b-1 siblings before it in the document tree... The
@@ -1479,8 +1474,7 @@ fn matches_nth_position(
 /// <https://www.w3.org/TR/selectors-4/#general-sibling-combinators>) を追加
 /// した (4 combinator 全対応、詳細は [`match_combinator_chain`] doc)。complex
 /// selector の一般的な match 条件は CSSWG Editor's Draft
-/// <https://drafts.csswg.org/selectors-4/#complex> (verbatim, 2026-08-12
-/// 直接 fetch 確認 — provenance の詳細は [`match_combinator_chain`] doc の
+/// <https://drafts.csswg.org/selectors-4/#complex> (verbatim — provenance の詳細は [`match_combinator_chain`] doc の
 /// note 参照) の記述: "A given element ... is said to match a complex
 /// selector when it matches the final compound selector ... in the
 /// sequence, and every preceding unit of the sequence also matches an
@@ -1779,8 +1773,8 @@ fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 /// への直接 WebFetch がページ全体の大きさのため section 14 (Combinators) は
 /// おろか `#complex` (§4) にすら到達する前に繰り返し切り詰められたことを
 /// 受け、代わりに同一文書の正典 source である CSSWG bikeshed 原稿
-/// (`raw.githubusercontent.com/w3c/csswg-drafts/main/selectors-4/Overview.bs`,
-/// 2026-08-12 直接 fetch) から確認したもの — TR ページの当該 anchor への
+/// (`raw.githubusercontent.com/w3c/csswg-drafts/main/selectors-4/Overview.bs`)
+/// から確認したもの — TR ページの当該 anchor への
 /// 直接到達はできていない。descendant/child/next-sibling/general-sibling
 /// combinator の文言 (定義文中心の安定した記述、4 つとも同じ `<h3 id=…>`
 /// 形式の見出し直下) はこの ED 原稿の内容が publish 済み TR とも一致して
@@ -1793,8 +1787,7 @@ fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 /// (<https://drafts.csswg.org/selectors-4/#complex>) 自体に紐付けている
 /// ([`match_complex_selector_list`] の引用も同様)。§14.3/§14.4 の節番号は
 /// 同じ ED 原稿内の `<h2 id="combinators">` 配下の `<h3>` 出現順
-/// (descendant, child, adjacent-sibling, general-sibling — 2026-08-12
-/// 直接確認) から数えたもの。
+/// (descendant, child, adjacent-sibling, general-sibling) から数えたもの。
 ///
 /// # Implementation: explicit `Vec` stack, not native recursion
 ///
@@ -2458,8 +2451,8 @@ fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
 
 /// Resolves an element's **content language** per HTML Living Standard
 /// §3.2.6.2 "The `lang` and `xml:lang` attributes"
-/// (<https://html.spec.whatwg.org/multipage/dom.html#the-lang-and-xml:lang-attributes>,
-/// 2026-08-12 direct fetch), simplified to the subset of "determine the
+/// (<https://html.spec.whatwg.org/multipage/dom.html#the-lang-and-xml:lang-attributes>),
+/// simplified to the subset of "determine the
 /// language of a node" this crate can express:
 ///
 /// > To determine the language of a node, user agents must use the first
@@ -2576,8 +2569,7 @@ fn own_html_or_svg_lang_attribute<E: StyleElement>(elem: &E) -> Option<&str> {
 /// Does `range` (one comma-separated argument of `:lang(...)`) match
 /// `content_language` (the resolved [`effective_language`])? Implements RFC
 /// 4647 §3.3.2 "Extended Filtering"
-/// (<https://www.rfc-editor.org/rfc/rfc4647.html#section-3.3.2>, 2026-08-12
-/// direct fetch), which CSS Selectors L4 §7.2 cites verbatim (bikeshed
+/// (<https://www.rfc-editor.org/rfc/rfc4647.html#section-3.3.2>), which CSS Selectors L4 §7.2 cites verbatim (bikeshed
 /// source `selectors-4/Overview.bs`, same fetch as [`Direction`]'s doc —
 /// the published TR page truncated before §7.2 for this crate's WebFetch
 /// tool):
@@ -4386,7 +4378,7 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
 
 /// `<img width>` / `<img height>` の HTML presentational-hint 昇格。
 ///
-/// # Spec mapping (verbatim, 2026-08-10 直接 fetch した live HTML Standard)
+/// # Spec mapping (verbatim, live HTML Standard)
 ///
 /// HTML Living Standard §15.4.3 "Attributes for embedded content and
 /// images" (<https://html.spec.whatwg.org/multipage/rendering.html#dimRendering>):
@@ -4494,7 +4486,7 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
 /// `img_width_presentational_hint_beats_extra_stylesheets_user_origin_via_umbrella`
 /// 参照。
 fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<CascadedDecl>) {
-    // HTML-namespace gate (Codex §8.3 final-review finding, 2026-08-11):
+    // HTML-namespace gate:
     // this mapping is HTML LS's own presentational hint, scoped to the HTML
     // namespace — a foreign-namespace element that merely shares the local
     // name "img" (SVG has no `img` element today, but `StyleElement` is a
@@ -4847,7 +4839,7 @@ fn push_margin_collapsing_quirk_declarations<D: StyleDom>(
 
 /// HTML LS "rules for parsing dimension values"
 /// (<https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-dimension-values>,
-/// verbatim algorithm, 2026-08-10 fetch 確認)。
+/// verbatim algorithm)。
 ///
 /// 1. 先頭の ASCII whitespace を skip。
 /// 2. 直後が ASCII digit でなければ (末尾も含め) 失敗 → `None`。
@@ -9148,7 +9140,7 @@ mod tests {
 
         let tree = build_rule_tree(&doc);
         let r = cascade(&doc, &tree).expect("cascade Ok");
-        // Positive control (Codex §8.3 finding): without this, a matcher
+        // Positive control: without this, a matcher
         // that never matches `.wrap p` anywhere would also make the
         // negative assertion below pass vacuously — assert the rule
         // actually fired where it should have before asserting it didn't
@@ -9178,7 +9170,7 @@ mod tests {
         // (`ancestors.split_last()`), not "any element in the remaining
         // set" — different `Descendant` anchor choices pin genuinely
         // different elements, not nested subsets of the same free search.
-        // See `match_combinator_chain`'s doc (2026-08-12 correction) for
+        // See `match_combinator_chain`'s doc for
         // the full argument this test exists to pin.
         //
         // Selector `.x > .y .target` against
@@ -17633,7 +17625,7 @@ mod tests {
 
     #[test]
     fn foreign_namespace_img_local_name_does_not_get_the_hint() {
-        // Codex §8.3 final-review finding 1 (2026-08-11): the mapping is
+        // The mapping is
         // HTML-namespace-specific (`push_img_dimension_hints` doc's
         // namespace-gate comment). A foreign-namespace element that merely
         // shares the local name "img" must not pick up the presentational
