@@ -1289,11 +1289,12 @@ pub struct ComputedValues {
     /// resolution to the runtime consumer, the same boundary
     /// [`crate::property::PropertyValue::Content`]'s `Image` component
     /// documents (raikiri-style doesn't depend on the `url` crate).
-    /// `Gradient(..)`'s `<length-percentage>`/`<angle>` payloads are held
-    /// unresolved too, for a different reason: absolutizing them needs the
-    /// gradient box's own dimensions, an input neither phase 3 pass
-    /// threads through (see [`crate::specified::SpecifiedValues::background_image`]
-    /// doc).
+    /// `Gradient(..)`'s `<length-percentage>` payloads are partially
+    /// absolutized (font-relative lengths → `Px`, `<percentage>` stays
+    /// symbolic — `resolve_background_image` doc) while `<angle>` stays
+    /// unresolved; the `<percentage>` half still needs the gradient box's
+    /// own dimensions (paint/used-value layer, see
+    /// [`crate::specified::SpecifiedValues::background_image`] doc).
     pub background_image: BackgroundImage,
     /// `object-fit`. **non-inherited**, initial: [`ObjectFit::Fill`] (CSS
     /// Images Module Level 3 §5.1 "Sizing the replaced element: the

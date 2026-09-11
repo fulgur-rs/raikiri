@@ -4769,7 +4769,10 @@ pub enum BackgroundImage {
     Url(String),
     /// `<gradient>` — 6 gradient function のいずれか。paint 側での実際の
     /// fill は未実装 (上記 doc 参照) — この variant は parse 結果を
-    /// [`ComputedValues`](crate::computed::ComputedValues) に保持するのみ。
+    /// [`ComputedValues`](crate::computed::ComputedValues) に保持するが、
+    /// `<length-percentage>` の font-relative 側は computed 層で `Px` へ
+    /// 絶対化され、`<percentage>` のみが paint 層へ defer される
+    /// (`resolve_background_image` doc参照)。
     Gradient(Gradient),
 }
 
