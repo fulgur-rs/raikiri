@@ -8,6 +8,8 @@ license.workspace = true
 
 [dependencies]
 raikiri = { workspace = true }
+raikiri-dom = { workspace = true }
+raikiri-html = { workspace = true }
 raikiri-traits = { workspace = true }
 bytes = { workspace = true }
 url = { workspace = true }

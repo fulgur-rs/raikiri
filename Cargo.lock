@@ -1745,6 +1745,8 @@ dependencies = [
  "cursor-icon",
  "http",
  "raikiri",
+ "raikiri-dom",
+ "raikiri-html",
  "raikiri-traits",
  "smol_str",
  "url",
