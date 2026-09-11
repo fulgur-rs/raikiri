@@ -33,5 +33,9 @@ assert_cmd          = { workspace = true }
 name = "validate-expectations"
 path = "src/bin/validate-expectations.rs"
 
+[[bin]]
+name = "generate-dashboard"
+path = "src/bin/generate-dashboard.rs"
+
 [lints]
 workspace = true

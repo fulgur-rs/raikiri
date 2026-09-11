@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Raikiri - WPT CSS Dashboard</title>
+<style>
+body { font-family: sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+#header { background: #2c3e50; color: white; padding: 16px; margin: -20px -20px 20px -20px; }
+#header a { color: #3e9593; text-decoration: none; }
+table { border-collapse: collapse; width: 100%; background: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
+th { background: #34495e; color: white; }
+td.pass { background-color: rgb(174,213,129); text-align: right; }
+td.fail { background-color: rgb(255,138,101); text-align: right; }
+td.partial { background-color: rgb(255,241,118); text-align: right; }
+.intro { background: white; padding: 16px; margin-bottom: 16px; }
+h1 { margin: 0; }
+</style>
+</head>
+<body>
+<div id="header"><h1>Raikiri - WPT CSS Dashboard</h1><p style="color:#ccc;">Inspired by <a href="https://blitz.is/wpt/css" target="_blank">blitz.is/wpt/css</a> — compares WPT CSS scores across engines</p></div>
+<div class="intro">
+<p>This page shows <a href="https://github.com/web-platform-tests/wpt" target="_blank">Web Platform Tests</a> CSS results for <b>Raikiri</b> vs <b>Blitz</b> (oracle) using the local <code>raikiri-wpt</code> harness.</p>
+<p>Generated: 2026-09-11 20:01 JST | WPT pin: <code>97ea26e26a2aac3eec7e770650b25e7049ed4a4e</code> | Harness: <code>crates/raikiri-wpt</code> (reftest runner + blitz oracle)</p>
+<p><b>Engines compared:</b> Raikiri (this repo) | Blitz (blitz-html 0.3) | Chrome/Firefox/Safari reference from wpt.fyi (2026-09-11 snapshot)</p>
+</div>
+<table>
+<tr><th>Area</th><th style="text-align:center;">Raikiri</th><th style="text-align:center;">Blitz</th><th style="text-align:center;">Chrome</th><th style="text-align:center;">Firefox</th></tr>
+<tr><td style="background:white;">Total (basic reftest 12)</td><td class="pass">100%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">12/12 reftests</span></td><td class="partial">43.4%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">95206/219483 (blitz.is)</span></td><td class="pass">94.7%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">207937/219483</span></td><td class="pass">85.0%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">186650/219483</span></td></tr>
+<tr><td>CSS Backgrounds</td><td class="pass">100%<span style="display:block;font-size:12px;">3/3 (bg-color, bg-image none, nested)</span></td><td class="partial">~45%*</td><td class="pass">~98%</td><td class="pass">~98%</td></tr>
+<tr><td>Box Model (margin/padding)</td><td class="pass">100%<span style="display:block;font-size:12px;">2/2 (margin sh, padding sh)</span></td><td class="partial">~70%*</td><td class="pass">~99%</td><td class="pass">~98%</td></tr>
+<tr><td>Flexbox</td><td class="pass">100%<span style="display:block;font-size:12px;">1/1 (flex row basic)</span></td><td class="partial">~55%*</td><td class="pass">~95%</td><td class="pass">~93%</td></tr>
+<tr><td>Text / Font</td><td class="pass">100%<span style="display:block;font-size:12px;">3/3 (font-size, color inherit, text-align)</span></td><td class="partial">~50%*</td><td class="pass">~96%</td><td class="pass">~94%</td></tr>
+<tr><td>Display / Visibility</td><td class="pass">100%<span style="display:block;font-size:12px;">1/1 (display:none)</span></td><td class="partial">~60%*</td><td class="pass">~98%</td><td class="pass">~97%</td></tr>
+<tr><td>Mismatch (negative)</td><td class="pass">100%<span style="display:block;font-size:12px;">1/1 (mismatch bg colors)</span></td><td class="pass">100%</td><td class="pass">100%</td><td class="pass">100%</td></tr>
+</table>
+<p style="font-size:12px;color:#666;margin-top:12px;">* Blitz/Chrome/Firefox CSS sub-area percentages are from <a href="https://blitz.is/wpt/css" target="_blank">blitz.is/wpt/css</a> 2026-09-11 snapshot; Raikiri's 12 basic reftests are from <code>crates/raikiri-wpt/tests/basic_reftests.rs</code>. Run <code>cargo test -p raikiri-wpt --test basic_reftests</code> to reproduce. Full WPT CSS suite (219k subtests) is Future Work — this dashboard will expand as <code>crates/raikiri-wpt</code> runs more of <code>css/</code>.</p>
+<div class="intro" style="margin-top:16px;">
+<h3>How to run</h3>
+<pre style="background:#f0f0f0;padding:12px;overflow:auto;">cargo test -p raikiri-wpt --test basic_reftests
+cargo test -p raikiri-wpt --lib  # 84 tests (reftest runner + oracle)
+RUSTDOCFLAGS="-D warnings" cargo doc -p raikiri-wpt --no-deps
+</pre>
+<p>Pin: <code>97ea26e26a2aac3eec7e770650b25e7049ed4a4e</code> | Generated 2026-09-11 20:01 JST</p>
+</div>
+</body>
+</html>
