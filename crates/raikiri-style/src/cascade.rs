@@ -15504,9 +15504,13 @@ mod tests {
 
     #[test]
     fn transform_wired_through_cascade_from_inline_style() {
-        use crate::property::{Angle, TransformFunction};
+        use crate::property::Angle;
+        use crate::resolve::ComputedTransformFunction;
         let cv = cascade_doc("", "div", Some("transform: rotate(45deg)"));
-        assert_eq!(*cv.transform, vec![TransformFunction::Rotate(Angle(45.0))]);
+        assert_eq!(
+            *cv.transform,
+            vec![ComputedTransformFunction::Rotate(Angle(45.0))]
+        );
     }
 
     #[test]
@@ -15517,7 +15521,8 @@ mod tests {
 
     #[test]
     fn transform_is_non_inherited() {
-        use crate::property::{Angle, TransformFunction};
+        use crate::property::Angle;
+        use crate::resolve::ComputedTransformFunction;
         let mut doc = TestDoc::new();
         let p = doc.push_element(0, "p", Some("transform: rotate(45deg)"));
         let span = doc.push_element(p, "span", None);
@@ -15525,7 +15530,7 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(
             *r.computed[p].transform,
-            vec![TransformFunction::Rotate(Angle(45.0))]
+            vec![ComputedTransformFunction::Rotate(Angle(45.0))]
         );
         assert!(r.computed[span].transform.is_empty());
     }
