@@ -1665,6 +1665,15 @@ impl ComputedValues {
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter)。
     ///
+    /// **手動同期リスト — drift に注意**: 上の prose 列挙は手動で維持される
+    /// リストであり、[`crate::specified::SpecifiedValues`] の対応表
+    /// (`crates/raikiri-style/src/specified.rs` の `SpecifiedValues` doc の
+    /// property → 層の対応表) と同期して更新する必要がある。片方だけを更新すると
+    /// silent な継承 bug になる。新しい inherited property を追加する際は両方の
+    /// doc を同時に更新すること。将来的には単一の const 配列 / 生成マクロから
+    /// 両方の doc と実装を駆動できれば drift を機械的に防げるが、現状は手動同期
+    /// である (bd `raikiri-spike-eawr`)。
+    ///
     /// # 実装 (delegation)
     ///
     /// cascade pipeline は本 method を使わない — winner の適用が staging 層

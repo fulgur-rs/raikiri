@@ -77,6 +77,15 @@ use crate::resolve::{
 /// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* / `object_fit` |
 /// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
 ///
+/// **手動同期 — drift に注意**: 上の表の property 名列挙は手動で維持される
+/// リストであり、[`crate::computed::ComputedValues::inherit_from`] の doc の
+/// inherited / non-inherited prose 列挙
+/// (`crates/raikiri-style/src/computed.rs`) と同期して更新する必要がある。
+/// 片方だけを更新すると drift して silent な継承 bug になる。新しい inherited
+/// property を追加する際は両方の doc を同時に更新すること。将来的には単一の
+/// const 配列 / 生成マクロから両方の doc と実装を駆動できれば drift を機械的に
+/// 防げるが、現状は手動同期である (bd `raikiri-spike-eawr`)。
+///
 /// \* `background_image` は `None`/`Url(String)` の 2 variant では文字通り
 /// この行の分類通りだが、`Gradient(..)` variant (CSS Images 4 §3) は
 /// `<length-percentage>`/`<angle>` を含む — それでも表の分類上は「既に
