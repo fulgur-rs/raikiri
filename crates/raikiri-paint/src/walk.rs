@@ -34,26 +34,26 @@ use peniko::{Color, Fill};
 use raikiri_dom::Document;
 use raikiri_style::CascadeResult;
 use raikiri_style::property::{
-    BackgroundImage, CssColor, DisplayValue, Gradient, GradientStopColor, VerticalAlign,
+    BackgroundImage, BorderStyle, CssColor, DisplayValue, Gradient, GradientStopColor,
+    VerticalAlign,
 };
 use raikiri_traits::{NodeKind, PageBox};
 
 use crate::text;
 
-/// Canvas 背景 fill site。現状は cascade に background-color が無く実質
-/// no-op で、future-proof pin として存在。将来 CSS Backgrounds L3 §2.11.2
-/// "canvas propagation" (html の background-color を取得、TRANSPARENT なら
-/// body に fallback、Some なら PageBox 全域を fill) を実装する予定。
+/// Canvas 背景 fill site — CSS Backgrounds 3 §2.11 canvas propagation の minimal 実装。
+///
+/// html の background を取得し、TRANSPARENT なら body に fallback。どちらかが opaque なら
+/// PageBox 全域をその色で fill。両方 transparent なら UA default white。
 pub(crate) fn paint_canvas_background(
     scene: &mut impl PaintScene,
-    _document: &Document,
-    _cascade: &CascadeResult,
+    document: &Document,
+    cascade: &CascadeResult,
     page_box: PageBox,
 ) {
-    // Minimal canvas background: fill page white (UA default) so transparent areas are not mismatched.
-    // Full CSS Backgrounds §2.11 canvas propagation (html/body) is future work; this ensures page is white.
-    let color = peniko::Color::from_rgba8(255, 255, 255, 255);
     let rect = kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64);
+    let canvas_color = canvas_background_color(document, cascade);
+    let color = canvas_color.unwrap_or(peniko::Color::from_rgba8(255, 255, 255, 255));
     scene.fill(
         peniko::Fill::NonZero,
         kurbo::Affine::IDENTITY,
@@ -61,6 +61,42 @@ pub(crate) fn paint_canvas_background(
         None,
         &rect,
     );
+}
+
+fn canvas_background_color(
+    document: &Document,
+    cascade: &CascadeResult,
+) -> Option<Color> {
+    if let Some(html_id) = find_html(document) {
+        let cv = &cascade.computed[html_id];
+        if let Some(c) = effective_background_color(cv.background_color, &cv.background_image, cv.color) {
+            return Some(Color::from_rgba8(c.r, c.g, c.b, c.a));
+        }
+    }
+    if let Some(body_id) = find_body(document) {
+        let cv = &cascade.computed[body_id];
+        if let Some(c) = effective_background_color(cv.background_color, &cv.background_image, cv.color) {
+            return Some(Color::from_rgba8(c.r, c.g, c.b, c.a));
+        }
+    }
+    None
+}
+
+fn find_html(doc: &Document) -> Option<usize> {
+    let mut stack: Vec<usize> = vec![doc.root_index()];
+    while let Some(id) = stack.pop() {
+        let node = doc.get_node(id)?;
+        if !node.is_in_document() {
+            continue;
+        }
+        if node.kind() == NodeKind::Element && node.tag_name() == Some("html") {
+            return Some(id);
+        }
+        for &c in node.children.iter().rev() {
+            stack.push(c);
+        }
+    }
+    None
 }
 
 /// Document arena を body から iterative DFS で walk する。fragment (no `<body>`)
@@ -146,6 +182,16 @@ pub(crate) fn paint_document(
                     cv.background_clip,
                     &cv.border,
                     &cv.padding,
+                );
+                // Paint border on top of background (CSS Backgrounds 3 §5).
+                paint_element_border(
+                    scene,
+                    layout.size.width,
+                    layout.size.height,
+                    abs_x,
+                    abs_y + child_shift_y,
+                    &cv.border,
+                    cv.color,
                 );
                 let child_font_size = cv.font_size.px();
                 // children を reverse push すると pop 時に document order で処理される。
@@ -281,10 +327,10 @@ fn paint_element_background(
     // - content-box: content box (inset by border + padding)
     // Width/height is border-box size from taffy layout.
     let (mut x0, mut y0, mut x1, mut y1) = (
-        abs_x as f64,
-        abs_y as f64,
-        (abs_x + width) as f64,
-        (abs_y + height) as f64,
+        (abs_x as f64).round(),
+        (abs_y as f64).round(),
+        ((abs_x + width) as f64).round(),
+        ((abs_y + height) as f64).round(),
     );
     // Helper to get padding px: for Px use directly, for Percent approximate as percent of width
     fn padding_px(v: raikiri_style::resolve::ComputedLengthPercentage, reference: f32) -> f32 {
@@ -354,10 +400,10 @@ fn paint_element_background(
             return;
         }
         raikiri_style::property::VisualBox::PaddingBox => {
-            x0 += border.left.width().px() as f64;
-            y0 += border.top.width().px() as f64;
-            x1 -= border.right.width().px() as f64;
-            y1 -= border.bottom.width().px() as f64;
+            x0 = (x0 + border.left.width().px() as f64).round();
+            y0 = (y0 + border.top.width().px() as f64).round();
+            x1 = (x1 - border.right.width().px() as f64).round();
+            y1 = (y1 - border.bottom.width().px() as f64).round();
         }
         raikiri_style::property::VisualBox::ContentBox => {
             // border inset
@@ -370,10 +416,10 @@ fn paint_element_background(
             let pt = padding_px(padding.top, width) as f64;
             let pr = padding_px(padding.right, width) as f64;
             let pb = padding_px(padding.bottom, width) as f64;
-            x0 += bl + pl;
-            y0 += bt + pt;
-            x1 -= br + pr;
-            y1 -= bb + pb;
+            x0 = (x0 + bl + pl).round();
+            y0 = (y0 + bt + pt).round();
+            x1 = (x1 - br - pr).round();
+            y1 = (y1 - bb - pb).round();
         }
         // BorderBox: no inset
         _ => {}
@@ -384,6 +430,82 @@ fn paint_element_background(
     }
     let rect = Rect::new(x0, y0, x1, y1);
     scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &rect);
+}
+
+fn paint_element_border(
+    scene: &mut impl PaintScene,
+    width: f32,
+    height: f32,
+    abs_x: f32,
+    abs_y: f32,
+    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
+    current_color: CssColor,
+) {
+    if width <= 0.0 || height <= 0.0 {
+        return;
+    }
+    let x0 = (abs_x as f64).round();
+    let y0 = (abs_y as f64).round();
+    let x1 = ((abs_x + width) as f64).round();
+    let y1 = ((abs_y + height) as f64).round();
+    let bl = border.left.width().px() as f64;
+    let bt = border.top.width().px() as f64;
+    let br = border.right.width().px() as f64;
+    let bb = border.bottom.width().px() as f64;
+    if bl <= 0.0 && bt <= 0.0 && br <= 0.0 && bb <= 0.0 {
+        return;
+    }
+    let resolve = |b: &raikiri_style::resolve::ComputedBorder| -> Option<Color> {
+        if matches!(b.style(), BorderStyle::None | BorderStyle::Hidden) {
+            return None;
+        }
+        let w = b.width().px();
+        if w <= 0.0 {
+            return None;
+        }
+        let c = match b.color {
+            raikiri_style::property::BorderColor::CurrentColor => current_color,
+            raikiri_style::property::BorderColor::Resolved(col) => col,
+            _ => current_color,
+        };
+        if c.a == 0 {
+            return None;
+        }
+        Some(Color::from_rgba8(c.r, c.g, c.b, c.a))
+    };
+    let c_left = resolve(&border.left);
+    let c_top = resolve(&border.top);
+    let c_right = resolve(&border.right);
+    let c_bottom = resolve(&border.bottom);
+    let inner_x0 = (x0 + bl).round();
+    let inner_y0 = (y0 + bt).round();
+    let inner_x1 = (x1 - br).round();
+    let inner_y1 = (y1 - bb).round();
+    let inner_valid = inner_x1 > inner_x0 && inner_y1 > inner_y0;
+    if bt > 0.0 {
+        if let Some(col) = c_top {
+            let r = Rect::new(x0, y0, x1, y0 + bt);
+            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
+        }
+    }
+    if bb > 0.0 {
+        if let Some(col) = c_bottom {
+            let r = Rect::new(x0, y1 - bb, x1, y1);
+            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
+        }
+    }
+    if bl > 0.0 && inner_valid {
+        if let Some(col) = c_left {
+            let r = Rect::new(x0, inner_y0, x0 + bl, inner_y1);
+            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
+        }
+    }
+    if br > 0.0 && inner_valid {
+        if let Some(col) = c_right {
+            let r = Rect::new(x1 - br, inner_y0, x1, inner_y1);
+            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
+        }
+    }
 }
 
 /// Resolve the effective background color for painting (CSS Backgrounds 3 S2).

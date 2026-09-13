@@ -1194,12 +1194,32 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
                     "css/css-backgrounds/background-clip/clip-text-text-emphasis.html",
                     "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
                 ),
+                (
+                    "css/css-backgrounds/background-clip/clip-border-area-border-on-top.html",
+                    "background-clip multi-layer (border-area, border-box) with background-image list not implemented (single-layer scope carving)",
+                ),
+                (
+                    "css/css-backgrounds/background-clip/clip-border-area-multiple-backgrounds.html",
+                    "background-clip multi-layer (border-area, border-box, content-box) with background-image list not implemented",
+                ),
+                (
+                    "css/css-backgrounds/background-clip/clip-border-area-text.html",
+                    "background-clip border-area text union (CSS Backgrounds 4 §2.6) requires glyph + border-area compositing not implemented",
+                ),
+                (
+                    "css/css-backgrounds/background-clip/clip-border-area-border-shape-background-position.html",
+                    "border-shape inset(0) background-position interaction not implemented (CSS Borders 4)",
+                ),
+                (
+                    "css/css-backgrounds/background-clip/clip-border-shape-table-part-background.html",
+                    "table-part background with border-shape not implemented",
+                ),
             ],
         );
 
-        // baseline is populated once a future runner PR lands; quarantine and
-        // deprecated stay empty until a developer PR adds a flake or crasher.
-        assert!(set.baseline.is_empty());
+        // baseline populated via chore(wpt): pin PASS file-level parsing tests (191 files, 31 categories, WPT 97ea26e)
+        // quarantine and deprecated stay empty until a developer PR adds a flake or crasher.
+        assert_eq!(set.baseline.entries.len(), 191);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
