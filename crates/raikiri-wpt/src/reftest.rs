@@ -358,21 +358,21 @@ pub fn discover_all_pairs(wpt_root: &Path) -> Vec<ReftestPair> {
             let Ok(ft) = entry.file_type() else { continue };
             if ft.is_dir() {
                 // Skip hidden and common non-tested dirs
-                if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                    if name.starts_with('.') || name == "fonts" {
-                        // fonts dir still may contain html? Skip anyway to reduce walk.
-                        // Actually we want to skip nothing critical; keep traversal simple.
-                    }
+                if let Some(name) = path.file_name().and_then(|s| s.to_str())
+                    && (name.starts_with('.') || name == "fonts")
+                {
+                    // fonts dir still may contain html? Skip anyway to reduce walk.
+                    // Actually we want to skip nothing critical; keep traversal simple.
                 }
                 stack.push(path);
-            } else if ft.is_file() {
-                if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                    let ext = ext.to_ascii_lowercase();
-                    if ext == "html" || ext == "htm" || ext == "xhtml" {
-                        if let Ok(mut pairs) = discover_pairs_for_file(&path) {
-                            out.append(&mut pairs);
-                        }
-                    }
+            } else if ft.is_file()
+                && let Some(ext) = path.extension().and_then(|s| s.to_str())
+            {
+                let ext = ext.to_ascii_lowercase();
+                if (ext == "html" || ext == "htm" || ext == "xhtml")
+                    && let Ok(mut pairs) = discover_pairs_for_file(&path)
+                {
+                    out.append(&mut pairs);
                 }
             }
         }
@@ -453,10 +453,10 @@ fn resolve_font_ctx() -> raikiri::FontContext {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../wpt/fonts"),
     ];
     for cand in candidates {
-        if cand.is_dir() {
-            if let Ok(ctx) = raikiri_dom::build_wpt_font_ctx(&cand) {
-                return ctx;
-            }
+        if cand.is_dir()
+            && let Ok(ctx) = raikiri_dom::build_wpt_font_ctx(&cand)
+        {
+            return ctx;
         }
     }
     raikiri::FontContext::new()
@@ -856,7 +856,11 @@ mod tests {
         let test_path = dir.path().join("test.html");
         let ref_path = dir.path().join("ref.html");
         let html = "<html><body><p>same</p></body></html>";
-        std::fs::write(&test_path, format!("<html><head><link rel=match href=\"ref.html\"></head><body><p>same</p></body></html>")).unwrap();
+        std::fs::write(
+            &test_path,
+            "<html><head><link rel=match href=\"ref.html\"></head><body><p>same</p></body></html>",
+        )
+        .unwrap();
         std::fs::write(&ref_path, html).unwrap();
         // Discover pairs via helper to ensure resolution works
         let pairs = discover_pairs_for_file(&test_path).unwrap();

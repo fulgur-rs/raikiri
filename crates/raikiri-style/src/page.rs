@@ -7957,7 +7957,7 @@ mod tests {
                         };
                         match g {
                             crate::property::Gradient::Linear(lg) => {
-                                lg.stops.iter().find_map(|s| stop_residue(s))
+                                lg.stops.iter().find_map(&stop_residue)
                             }
                             crate::property::Gradient::Radial(rg) => {
                                 let size_residue = match rg.size {
@@ -7970,7 +7970,7 @@ mod tests {
                                 size_residue
                                     .or_else(|| offset_residue(rg.position.horizontal))
                                     .or_else(|| offset_residue(rg.position.vertical))
-                                    .or_else(|| rg.stops.iter().find_map(|s| stop_residue(s)))
+                                    .or_else(|| rg.stops.iter().find_map(stop_residue))
                             }
                             crate::property::Gradient::Conic(cg) => offset_residue(cg.position.horizontal)
                                 .or_else(|| offset_residue(cg.position.vertical)),
@@ -7989,7 +7989,7 @@ mod tests {
                     }
                 };
                 image_residue
-                    .or_else(|| size_residue)
+                    .or(size_residue)
                     .or_else(|| {
                         fn offset_residue(o: CssPositionOffset) -> Option<&'static str> {
                             match o {
@@ -8018,7 +8018,7 @@ mod tests {
                         | crate::property::CssPositionOffset::End(l) => length(l),
                     };
                     match g {
-                        crate::property::Gradient::Linear(lg) => lg.stops.iter().find_map(|s| stop_residue(s)),
+                        crate::property::Gradient::Linear(lg) => lg.stops.iter().find_map(&stop_residue),
                         crate::property::Gradient::Radial(rg) => {
                             let size_residue = match rg.size {
                                 crate::property::RadialSize::Extent(_) => None,
@@ -8028,7 +8028,7 @@ mod tests {
                             size_residue
                                 .or_else(|| offset_residue(rg.position.horizontal))
                                 .or_else(|| offset_residue(rg.position.vertical))
-                                .or_else(|| rg.stops.iter().find_map(|s| stop_residue(s)))
+                                .or_else(|| rg.stops.iter().find_map(stop_residue))
                         }
                         crate::property::Gradient::Conic(cg) => offset_residue(cg.position.horizontal)
                             .or_else(|| offset_residue(cg.position.vertical)),
@@ -8050,7 +8050,7 @@ mod tests {
                         | crate::property::CssPositionOffset::End(l) => length(l),
                     };
                     match g {
-                        crate::property::Gradient::Linear(lg) => lg.stops.iter().find_map(|s| stop_residue(s)),
+                        crate::property::Gradient::Linear(lg) => lg.stops.iter().find_map(&stop_residue),
                         crate::property::Gradient::Radial(rg) => {
                             let size_residue = match rg.size {
                                 crate::property::RadialSize::Extent(_) => None,
@@ -8060,7 +8060,7 @@ mod tests {
                             size_residue
                                 .or_else(|| offset_residue(rg.position.horizontal))
                                 .or_else(|| offset_residue(rg.position.vertical))
-                                .or_else(|| rg.stops.iter().find_map(|s| stop_residue(s)))
+                                .or_else(|| rg.stops.iter().find_map(stop_residue))
                         }
                         crate::property::Gradient::Conic(cg) => offset_residue(cg.position.horizontal)
                             .or_else(|| offset_residue(cg.position.vertical)),
