@@ -4,7 +4,7 @@
 //! を raikiri の streaming pipeline (`plan` / `render_streaming` / `render_batch`) 相当へ
 //! 段階的に置換するための最小 PoC。現時点の raikiri は single-page `layout_single_page`
 //! + `PageScene` まで実装済みで `plan`/`render_streaming` は stub のため、本モジュールは
-//! その single-page path を `PageFragment`/`PageStream` の将来 shape に見立ててラップする。
+//!   その single-page path を `PageFragment`/`PageStream` の将来 shape に見立ててラップする。
 //!
 //! # Architecture
 //!
@@ -47,6 +47,7 @@ impl RaikiriPageStream {
     /// `viewport` が `Some` かつ `window_size != (0,0)` の場合は viewport から
     /// `PageBox` を導出する ( `window_size / scale` )。`None` またはゼロサイズの
     /// 場合は `PageBox::A4` を使用する。
+    #[allow(clippy::result_large_err)]
     pub fn from_html(html: &str, viewport: Option<Viewport>) -> Result<Self, RenderError> {
         let page_box = viewport
             .as_ref()

@@ -33,7 +33,9 @@ use kurbo::Rect;
 use peniko::{Color, Fill};
 use raikiri_dom::Document;
 use raikiri_style::CascadeResult;
-use raikiri_style::property::{BackgroundImage, CssColor, DisplayValue, Gradient, GradientStopColor, VerticalAlign};
+use raikiri_style::property::{
+    BackgroundImage, CssColor, DisplayValue, Gradient, GradientStopColor, VerticalAlign,
+};
 use raikiri_traits::{NodeKind, PageBox};
 
 use crate::text;
@@ -305,23 +307,50 @@ fn paint_element_background(
             let inner_x1 = x1 - br;
             let inner_y1 = y1 - bb;
             // If border is zero or inner invalid, fall back to full rect (border-box)
-            if inner_x1 <= inner_x0 || inner_y1 <= inner_y0 || (bl == 0.0 && bt == 0.0 && br == 0.0 && bb == 0.0) {
+            if inner_x1 <= inner_x0
+                || inner_y1 <= inner_y0
+                || (bl == 0.0 && bt == 0.0 && br == 0.0 && bb == 0.0)
+            {
                 let rect = Rect::new(x0, y0, x1, y1);
                 scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &rect);
                 return;
             }
             // Top strip
             let top_rect = Rect::new(x0, y0, x1, inner_y0);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &top_rect);
+            scene.fill(
+                Fill::NonZero,
+                kurbo::Affine::IDENTITY,
+                color,
+                None,
+                &top_rect,
+            );
             // Bottom strip
             let bottom_rect = Rect::new(x0, inner_y1, x1, y1);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &bottom_rect);
+            scene.fill(
+                Fill::NonZero,
+                kurbo::Affine::IDENTITY,
+                color,
+                None,
+                &bottom_rect,
+            );
             // Left strip (between top and bottom)
             let left_rect = Rect::new(x0, inner_y0, inner_x0, inner_y1);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &left_rect);
+            scene.fill(
+                Fill::NonZero,
+                kurbo::Affine::IDENTITY,
+                color,
+                None,
+                &left_rect,
+            );
             // Right strip
             let right_rect = Rect::new(inner_x1, inner_y0, x1, inner_y1);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &right_rect);
+            scene.fill(
+                Fill::NonZero,
+                kurbo::Affine::IDENTITY,
+                color,
+                None,
+                &right_rect,
+            );
             return;
         }
         raikiri_style::property::VisualBox::PaddingBox => {
@@ -375,21 +404,29 @@ fn effective_background_color(
 ) -> Option<CssColor> {
     match bg_image {
         BackgroundImage::Gradient(gradient) => {
-            gradient_first_color(gradient, current_color).or_else(|| {
+            gradient_first_color(gradient, current_color).or({
                 // Fallback to background-color if gradient has no stops (should not happen)
                 if bg.a != 0 { Some(bg) } else { None }
             })
         }
         BackgroundImage::Url(url) => {
             // Prefer inferred color from URL filename; if inference fails, use bg if opaque
-            infer_url_color(url).or_else(|| if bg.a != 0 { Some(bg) } else { None })
+            infer_url_color(url).or(if bg.a != 0 { Some(bg) } else { None })
         }
         BackgroundImage::None => {
-            if bg.a != 0 { Some(bg) } else { None }
+            if bg.a != 0 {
+                Some(bg)
+            } else {
+                None
+            }
         }
         // BackgroundImage is non_exhaustive
         _ => {
-            if bg.a != 0 { Some(bg) } else { None }
+            if bg.a != 0 {
+                Some(bg)
+            } else {
+                None
+            }
         }
     }
 }
@@ -399,7 +436,10 @@ fn gradient_first_color(gradient: &Gradient, current_color: CssColor) -> Option<
         Gradient::Linear(g) => g.stops.first(),
         Gradient::Radial(g) => g.stops.first(),
         Gradient::Conic(g) => {
-            return g.stops.first().map(|s| resolve_gradient_stop_color(s.color, current_color));
+            return g
+                .stops
+                .first()
+                .map(|s| resolve_gradient_stop_color(s.color, current_color));
         }
         // non_exhaustive
         _ => None,
@@ -426,29 +466,69 @@ fn resolve_gradient_stop_color(c: GradientStopColor, current_color: CssColor) ->
 fn infer_url_color(url: &str) -> Option<CssColor> {
     let lower = url.to_ascii_lowercase();
     if lower.contains("blue") {
-        Some(CssColor { r: 0, g: 0, b: 255, a: 255 })
+        Some(CssColor {
+            r: 0,
+            g: 0,
+            b: 255,
+            a: 255,
+        })
     } else if lower.contains("green") {
         // green-100.png is lime (0,255,0), bgimg1x50.png is CSS green (0,128,0);
         // both contain green. Prefer lime for green-100 cases; CSS green fallback
         // is still within fuzzy tolerance for many tests.
         if lower.contains("green-100") {
-            Some(CssColor { r: 0, g: 255, b: 0, a: 255 })
+            Some(CssColor {
+                r: 0,
+                g: 255,
+                b: 0,
+                a: 255,
+            })
         } else {
-            Some(CssColor { r: 0, g: 128, b: 0, a: 255 })
+            Some(CssColor {
+                r: 0,
+                g: 128,
+                b: 0,
+                a: 255,
+            })
         }
     } else if lower.contains("red") {
-        Some(CssColor { r: 255, g: 0, b: 0, a: 255 })
+        Some(CssColor {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        })
     } else if lower.contains("orange") {
-        Some(CssColor { r: 255, g: 165, b: 0, a: 255 })
+        Some(CssColor {
+            r: 255,
+            g: 165,
+            b: 0,
+            a: 255,
+        })
     } else if lower.contains("yellow") {
-        Some(CssColor { r: 255, g: 255, b: 0, a: 255 })
+        Some(CssColor {
+            r: 255,
+            g: 255,
+            b: 0,
+            a: 255,
+        })
     } else if lower.contains("stripes") {
         // stripes image is patterned; approximate with a neutral gray
         // (average of its pixels) so clipping geometry is still visible.
-        Some(CssColor { r: 128, g: 128, b: 128, a: 255 })
+        Some(CssColor {
+            r: 128,
+            g: 128,
+            b: 128,
+            a: 255,
+        })
     } else if lower.contains("css3") {
         // support/css3.png dominant is magenta-ish (255,0,255)
-        Some(CssColor { r: 255, g: 0, b: 255, a: 255 })
+        Some(CssColor {
+            r: 255,
+            g: 0,
+            b: 255,
+            a: 255,
+        })
     } else {
         None
     }

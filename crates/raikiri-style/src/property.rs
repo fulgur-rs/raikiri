@@ -14976,40 +14976,34 @@ fn parse_clip_path(input: &mut Parser<'_, '_>) -> Option<ClipPath> {
     }
     // Try [ <basic-shape> || <geometry-box> ] — either order, at least one.
     // First try basic-shape with optional trailing geometry-box.
-    if let Some(shape_with_box) = input
-        .try_parse(|i| -> Result<ClipPath, ParseError<'_, ()>> {
-            let shape = parse_basic_shape(i).ok_or_else(|| i.new_custom_error(()))?;
-            let geometry_box = i
-                .try_parse(|j| -> Result<GeometryBox, ParseError<'_, ()>> {
-                    parse_geometry_box(j).ok_or_else(|| j.new_custom_error(()))
-                })
-                .ok();
-            Ok(ClipPath::BasicShape {
-                shape: Box::new(shape),
-                geometry_box,
+    if let Ok(shape_with_box) = input.try_parse(|i| -> Result<ClipPath, ParseError<'_, ()>> {
+        let shape = parse_basic_shape(i).ok_or_else(|| i.new_custom_error(()))?;
+        let geometry_box = i
+            .try_parse(|j| -> Result<GeometryBox, ParseError<'_, ()>> {
+                parse_geometry_box(j).ok_or_else(|| j.new_custom_error(()))
             })
+            .ok();
+        Ok(ClipPath::BasicShape {
+            shape: Box::new(shape),
+            geometry_box,
         })
-        .ok()
-    {
+    }) {
         return Some(shape_with_box);
     }
     // Then try geometry-box with optional trailing basic-shape (the other order).
-    if let Some(box_with_shape) = input
-        .try_parse(|i| -> Result<ClipPath, ParseError<'_, ()>> {
-            let geometry_box = parse_geometry_box(i).ok_or_else(|| i.new_custom_error(()))?;
-            if let Ok(shape) = i.try_parse(|j| -> Result<BasicShape, ParseError<'_, ()>> {
-                parse_basic_shape(j).ok_or_else(|| j.new_custom_error(()))
-            }) {
-                Ok(ClipPath::BasicShape {
-                    shape: Box::new(shape),
-                    geometry_box: Some(geometry_box),
-                })
-            } else {
-                Ok(ClipPath::GeometryBox(geometry_box))
-            }
-        })
-        .ok()
-    {
+    if let Ok(box_with_shape) = input.try_parse(|i| -> Result<ClipPath, ParseError<'_, ()>> {
+        let geometry_box = parse_geometry_box(i).ok_or_else(|| i.new_custom_error(()))?;
+        if let Ok(shape) = i.try_parse(|j| -> Result<BasicShape, ParseError<'_, ()>> {
+            parse_basic_shape(j).ok_or_else(|| j.new_custom_error(()))
+        }) {
+            Ok(ClipPath::BasicShape {
+                shape: Box::new(shape),
+                geometry_box: Some(geometry_box),
+            })
+        } else {
+            Ok(ClipPath::GeometryBox(geometry_box))
+        }
+    }) {
         return Some(box_with_shape);
     }
     parse_url_value(input).map(ClipPath::Url)
@@ -15141,12 +15135,9 @@ fn parse_ellipse_shape(input: &mut Parser<'_, '_>) -> Option<EllipseShape> {
 fn parse_inset_shape(input: &mut Parser<'_, '_>) -> Option<InsetShape> {
     let mut insets: Vec<Length> = Vec::new();
     for _ in 0..4 {
-        if let Some(lp) = input
-            .try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
-                parse_length_value(i, true).ok_or_else(|| i.new_custom_error(()))
-            })
-            .ok()
-        {
+        if let Ok(lp) = input.try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
+            parse_length_value(i, true).ok_or_else(|| i.new_custom_error(()))
+        }) {
             if length_payload(lp).is_nan() {
                 return None;
             }
@@ -15188,16 +15179,13 @@ fn parse_inset_shape(input: &mut Parser<'_, '_>) -> Option<InsetShape> {
 fn parse_inset_border_radius(input: &mut Parser<'_, '_>) -> Option<InsetBorderRadius> {
     let mut horiz: Vec<Length> = Vec::new();
     for _ in 0..4 {
-        if let Some(lp) = input
-            .try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
-                let l = parse_length_value(i, true).ok_or_else(|| i.new_custom_error(()))?;
-                if length_payload(l) < 0.0 || length_payload(l).is_nan() {
-                    return Err(i.new_custom_error(()));
-                }
-                Ok(l)
-            })
-            .ok()
-        {
+        if let Ok(lp) = input.try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
+            let l = parse_length_value(i, true).ok_or_else(|| i.new_custom_error(()))?;
+            if length_payload(l) < 0.0 || length_payload(l).is_nan() {
+                return Err(i.new_custom_error(()));
+            }
+            Ok(l)
+        }) {
             horiz.push(lp);
         } else {
             break;
@@ -15209,16 +15197,13 @@ fn parse_inset_border_radius(input: &mut Parser<'_, '_>) -> Option<InsetBorderRa
     let vertical = if input.try_parse(|i| i.expect_delim('/')).is_ok() {
         let mut vert: Vec<Length> = Vec::new();
         for _ in 0..4 {
-            if let Some(lp) = input
-                .try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
-                    let l = parse_length_value(i, true).ok_or_else(|| i.new_custom_error(()))?;
-                    if length_payload(l) < 0.0 || length_payload(l).is_nan() {
-                        return Err(i.new_custom_error(()));
-                    }
-                    Ok(l)
-                })
-                .ok()
-            {
+            if let Ok(lp) = input.try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
+                let l = parse_length_value(i, true).ok_or_else(|| i.new_custom_error(()))?;
+                if length_payload(l) < 0.0 || length_payload(l).is_nan() {
+                    return Err(i.new_custom_error(()));
+                }
+                Ok(l)
+            }) {
                 vert.push(lp);
             } else {
                 break;

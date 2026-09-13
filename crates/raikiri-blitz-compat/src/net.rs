@@ -218,10 +218,9 @@ pub fn from_raikiri_request(req: raikiri_traits::Request) -> Request {
         raikiri_traits::Body::Form(_) => Body::Form(FormData::default()),
         _ => Body::Empty,
     };
-    let signal = req.signal.map(|s| {
-        let sig = AbortSignal(Arc::new(AtomicBool::new(s.is_aborted())));
-        sig
-    });
+    let signal = req
+        .signal
+        .map(|s| AbortSignal(Arc::new(AtomicBool::new(s.is_aborted()))));
     Request {
         url: req.url,
         method: match req.method {
