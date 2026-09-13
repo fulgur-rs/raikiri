@@ -223,3 +223,22 @@ grid-row-shorthand.html
 grid-shorthand-invalid.html
 grid-template-areas-valid.html
 grid-template-shorthand-invalid.html
+
+# --- additional batch 2026-09-13 (remaining categories) ---
+css/css-forced-color-adjust/parsing/forced-color-adjust-invalid.html
+css/css-logical/parsing/block-size-invalid.html
+css/css-logical/parsing/border-block-color-invalid.html
+css/css-logical/parsing/border-block-style-invalid.html
+css/css-logical/parsing/border-block-width-invalid.html
+css/css-logical/parsing/border-inline-color-invalid.html
+css/css-logical/parsing/border-inline-style-invalid.html
+css/css-logical/parsing/border-inline-width-invalid.html
+css/css-logical/parsing/inline-size-invalid.html
+css/css-logical/parsing/inset-block-inline-invalid.html
+css/css-logical/parsing/inset-invalid.html
+css/css-logical/parsing/margin-block-inline-shorthand.html
+css/css-logical/parsing/max-block-size-invalid.html
+css/css-logical/parsing/max-inline-size-invalid.html
+css/css-logical/parsing/min-block-size-invalid.html
+css/css-logical/parsing/min-inline-size-invalid.html
+css/css-logical/parsing/padding-block-inline-shorthand.html
