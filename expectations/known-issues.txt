@@ -40,4 +40,10 @@ css/css-backgrounds/background-clip/clip-text-stacking-context-child.html | back
 css/css-backgrounds/background-clip/clip-text-text-align.html | background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)
 css/css-backgrounds/background-clip/clip-text-text-decorations.html | background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)
 css/css-backgrounds/background-clip/clip-text-text-emphasis.html | background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)
+# --- background-clip Level 4 / multi-layer not yet implemented (2026-09-13) ---
+css/css-backgrounds/background-clip/clip-border-area-border-on-top.html | background-clip multi-layer (border-area, border-box) with background-image list not implemented (single-layer scope carving)
+css/css-backgrounds/background-clip/clip-border-area-multiple-backgrounds.html | background-clip multi-layer (border-area, border-box, content-box) with background-image list not implemented
+css/css-backgrounds/background-clip/clip-border-area-text.html | background-clip border-area text union (CSS Backgrounds 4 §2.6) requires glyph + border-area compositing not implemented
+css/css-backgrounds/background-clip/clip-border-area-border-shape-background-position.html | border-shape inset(0) background-position interaction not implemented (CSS Borders 4)
+css/css-backgrounds/background-clip/clip-border-shape-table-part-background.html | table-part background with border-shape not implemented
 
