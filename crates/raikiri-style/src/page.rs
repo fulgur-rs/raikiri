@@ -3096,6 +3096,10 @@ fn absolutize_in_page_context(
         // value = specified keyword (see `Hyphens`'s doc) — same as
         // `WhiteSpace` above.
         | PropertyValue::Hyphens(_)
+        | PropertyValue::LineBreak(_)
+        | PropertyValue::TextJustify(_)
+        | PropertyValue::TextAlignAll(_)
+        | PropertyValue::TextAlignLast(_)
         // `flex-direction`/`flex-wrap` (CSS Flexible Box Layout Module
         // Level 1 §5.1/§5.2) carry no length and computed value = specified
         // keyword — nothing for phase 3 to absolutize.
@@ -3790,6 +3794,7 @@ mod tests {
         GridRepeatCount, GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue,
         GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent,
         GridTrackRepeat, GridTrackSize, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal,
+        LineBreak, TextAlignAll, TextAlignLast, TextJustify,
         LineHeight, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineStyle, OverflowValue,
         OverflowWrap, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand,
         PositionValue, SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextDecorationColor,
@@ -6523,7 +6528,7 @@ mod tests {
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 84;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 88;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -6885,6 +6890,10 @@ mod tests {
         // absolutization (`resolve_tab_size`) instead of trivially
         // round-tripping an already-absolute length.
         TabSize => PropertyValue::TabSize(TabSize::Length(Length::Em(0.5))),
+        LineBreak => PropertyValue::LineBreak(LineBreak::Auto),
+        TextJustify => PropertyValue::TextJustify(TextJustify::Auto),
+        TextAlignAll => PropertyValue::TextAlignAll(TextAlignAll::Start),
+        TextAlignLast => PropertyValue::TextAlignLast(TextAlignLast::Auto),
         // No specified/computed distinction for `font-variant-caps`
         // (computed value = specified keyword, `FontVariantCaps` doc) — any
         // value is "worst case" (`Direction` sibling comment above uses the
@@ -7357,6 +7366,10 @@ mod tests {
         PlaceContent,
         Hyphens,
         TabSize,
+        LineBreak,
+        TextJustify,
+        TextAlignAll,
+        TextAlignLast,
         FontVariantCaps,
         Quotes,
         TextShadow,
@@ -7678,6 +7691,10 @@ mod tests {
         match value {
             PropertyValue::FontWeight(fw) => font_weight(*fw),
             PropertyValue::TextAlign(ta) => text_align(*ta),
+            PropertyValue::LineBreak(_) => None,
+            PropertyValue::TextJustify(_) => None,
+            PropertyValue::TextAlignAll(_) => None,
+            PropertyValue::TextAlignLast(_) => None,
             PropertyValue::LineHeight(lh) => line_height(*lh),
             // `font-size` だけは `%` も残滓 (§5.5.1 の明示的例外)。
             PropertyValue::FontSize(l) => length_absolute_only(*l, "font-size: <percentage>"),

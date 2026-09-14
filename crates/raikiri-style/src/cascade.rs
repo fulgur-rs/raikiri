@@ -7198,7 +7198,11 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Transform(_)
         | PropertyValue::Filter(_)
         | PropertyValue::CustomProperty(_)
-        | PropertyValue::Deferred(_)) => v,
+        | PropertyValue::Deferred(_)
+        | PropertyValue::LineBreak(_)
+        | PropertyValue::TextJustify(_)
+        | PropertyValue::TextAlignAll(_)
+        | PropertyValue::TextAlignLast(_)) => v,
     })
 }
 
@@ -7921,6 +7925,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // (`TransformFunction`/`FilterFunction` doc's scope notes).
         PropertyValue::Transform(v) => target.transform = v,
         PropertyValue::Filter(v) => target.filter = v,
+        // New Text 3 properties are keyword-only with no staging field yet (parsing only).
+        PropertyValue::LineBreak(_)
+        | PropertyValue::TextJustify(_)
+        | PropertyValue::TextAlignAll(_)
+        | PropertyValue::TextAlignLast(_) => {},
         // These values are resolved before ordinary winners reach this
         // function. Keeping an explicit no-op makes direct internal callers
         // panic-free without allowing raw deferred data into a computed field.
@@ -14512,11 +14521,7 @@ mod tests {
     // These tests pin that current prior-wins behaviour.
 
     #[test]
-    fn word_break_scope_cut_break_word_is_dropped_and_prior_wins_via_stylesheet() {
-        // Issue example verbatim: `p { word-break: break-all; } p {
-        // word-break: break-word; }` — spec says computed should be `normal`
-        // (second wins, browsers apply deprecated-keyword equivalent), but
-        // this crate leaves `break-all` in place since second is dropped.
+    fn word_break_break_word_is_now_accepted_and_wins_via_stylesheet() {
         use crate::property::WordBreak;
         let cv = cascade_doc(
             "p { word-break: break-all } p { word-break: break-word }",
@@ -14525,13 +14530,13 @@ mod tests {
         );
         assert_eq!(
             cv.word_break,
-            WordBreak::BreakAll,
-            "scope-cut `word-break: break-word` is dropped, prior `break-all` must remain winner (current crate behaviour, not spec)"
+            WordBreak::BreakWord,
+            "break-word is now implemented and must win over break-all"
         );
     }
 
     #[test]
-    fn word_break_scope_cut_break_word_is_dropped_and_prior_wins_via_inline() {
+    fn word_break_break_word_is_now_accepted_and_wins_via_inline() {
         use crate::property::WordBreak;
         let cv = cascade_doc(
             "",
@@ -14540,33 +14545,29 @@ mod tests {
         );
         assert_eq!(
             cv.word_break,
-            WordBreak::BreakAll,
-            "scope-cut `word-break: break-word` in inline style is dropped, prior `break-all` must remain winner"
+            WordBreak::BreakWord,
+            "break-word is now implemented and must win over break-all"
         );
     }
 
     #[test]
-    fn word_break_scope_cut_break_word_is_dropped_and_same_rule_prior_wins() {
-        // Same rule, later duplicate dropped → earlier stays winner
-        // (CSS Cascading L4 §6.1 Order of Appearance "last wins" would make
-        // the later win if it had parsed).
+    fn word_break_break_word_wins_over_keep_all_in_same_rule() {
         use crate::property::WordBreak;
         let cv = cascade_doc(
             "p { word-break: keep-all; word-break: break-word }",
             "p",
             None,
         );
-        assert_eq!(cv.word_break, WordBreak::KeepAll);
+        assert_eq!(cv.word_break, WordBreak::BreakWord);
     }
 
     #[test]
-    fn word_break_scope_cut_alone_falls_back_to_initial() {
-        // Lone `break-word` never wins → property stays at initial `normal`.
+    fn word_break_break_word_alone_is_accepted() {
         use crate::property::WordBreak;
         let cv = cascade_doc("", "p", Some("word-break: break-word"));
-        assert_eq!(cv.word_break, WordBreak::Normal);
+        assert_eq!(cv.word_break, WordBreak::BreakWord);
         let cv = cascade_doc("p { word-break: break-word }", "p", None);
-        assert_eq!(cv.word_break, WordBreak::Normal);
+        assert_eq!(cv.word_break, WordBreak::BreakWord);
     }
 
     #[test]
@@ -14660,10 +14661,7 @@ mod tests {
     // and not a single-property quirk.
 
     #[test]
-    fn white_space_scope_cut_break_spaces_is_dropped_and_prior_wins() {
-        // CSS Text 3 §4.1 `white-space: break-spaces` is spec-valid but
-        // unimplemented (`WhiteSpace` doc's Scope carving). Same prior-wins
-        // shape as `word-break: break-word`.
+    fn white_space_break_spaces_is_now_accepted_and_wins() {
         use crate::property::WhiteSpace;
         let cv = cascade_doc(
             "",
@@ -14672,18 +14670,11 @@ mod tests {
         );
         assert_eq!(
             cv.white_space,
-            WhiteSpace::PreWrap,
-            "scope-cut `white-space: break-spaces` is dropped, prior `pre-wrap` must remain winner"
+            WhiteSpace::BreakSpaces,
+            "break-spaces is now implemented and must win over pre-wrap"
         );
-        let cv = cascade_doc(
-            "p { white-space: pre-wrap } p { white-space: break-spaces }",
-            "p",
-            None,
-        );
-        assert_eq!(cv.white_space, WhiteSpace::PreWrap);
-        // Lone scope-cut alone falls back to initial `normal`.
         let cv = cascade_doc("", "p", Some("white-space: break-spaces"));
-        assert_eq!(cv.white_space, WhiteSpace::Normal);
+        assert_eq!(cv.white_space, WhiteSpace::BreakSpaces);
     }
 
     #[test]

@@ -330,3 +330,66 @@ css/css-backgrounds/inset-box-shadow-stacking-context-scroll.html
 css/css-backgrounds/subpixel-repeat-no-repeat-mix.html
 css/css-backgrounds/table-cell-background-local-003.html
 css/css-backgrounds/ttwf-reftest-borderRadius.html
+
+# --- css-values parsing pin 2026-09-14 goal D (14 files) ---
+css/css-values/acos-asin-atan-atan2-invalid.html
+css/css-values/calc-invalid-parsing.html
+css/css-values/calc-nesting.html
+css/css-values/clamp-color-invalid.html
+css/css-values/clamp-integer-invalid.html
+css/css-values/exp-log-invalid.html
+css/css-values/minmax-number-invalid.html
+css/css-values/minmax-time-invalid.html
+css/css-values/percentage-without-context.html
+css/css-values/progress-invalid.html
+css/css-values/random-invalid.tentative.html
+css/css-values/round-mod-rem-invalid.html
+css/css-values/sin-cos-tan-invalid.html
+css/css-values/urls/url-request-modifiers-invalid.sub.html
+#
+#    Quarantine handling section below); relaxing this exclusion becomes
+#    co-listing.
+#    excluded because M1 baseline has no per-tuple filter (see the
+#    known-issues.txt, quarantine.txt, or deprecated.txt. Quarantine is
+#    migration and requires 2-reviewer approval per §12.10.
+#    over ALL executable WPT tests — every test NOT excluded by
+#    possible only after raikiri-spike-a6s enables filter-disjoint
+# (a) baseline itself grows per-tuple filters, or (b) the CI matrix
+# (spec §12.10). Regression on these blocks PR merge.
+# --- Goal B: css-backgrounds reftest 86 PASS (400x300 EXACT, 2026-09-14) ---
+# --- additional batch 2026-09-13 (remaining categories) ---
+# --- css-values parsing pin 2026-09-14 goal D (14 files) ---
+# --- other categories batch pin 2026-09-13 (auto-aggregated from pilot+remaining, 28 categories) ---
+# 1. At M3 kickoff (once the reftest runner is operational), run the runner
+# 2. Filter runner output to tests with STATUS = PASS.
+# 3. Open a PR that adds them to this file. The PR is the initial baseline
+# Empty lines are ignored.
+# Format: one test_id per line. Lines starting with '#' are comments.
+# In M1, baseline has no per-tuple filter — one test_id per line — so
+# SOME CI tuple to match both, which is an intersection and thus a
+# Scope note: the baseline is *scope-independent* per §2 Goals ("regression
+# See blitz's wpt/runner/src/report.rs `generate_expectations` for a
+# Spec §12.10 semantics: baseline and quarantine may co-list a
+# Subsequent additions / removals follow the same 2-reviewer rule.
+# The current raikiri-wpt::lint::detect_conflicting enforces this
+# This file is *runner-generated*, NOT hand-authored:
+# conflict. The initial baseline PR at M3 kickoff must EXCLUDE any
+# detection の flat rule": any previously-passing test regressing blocks
+# environment; intersecting overlaps are Conflicting and rejected by
+# exclusion: every baseline∩quarantine pair is flagged as Conflicting,
+# expectations/raikiri-baseline.txt — T2 gate: WPT tests raikiri currently passes
+# future work to permit legal non-overlapping co-listing once either
+# its execution environment is effectively the entire CI matrix. Any
+# merge, whether or not the test's category is tracked). tracked-wpt.txt is
+# only a T3 reporting/prioritization view of the WPT surface; it does not
+# reference implementation of the runner-generated approach.
+# renderer, tolerance) does NOT intersect any baseline execution
+# restrict which tests qualify for the baseline.
+# scopes down enough for filter-disjoint quarantine entries to exist.
+# test_id ONLY when the quarantine filter tuple (platform, arch,
+# test_id present in both baseline and quarantine.txt therefore causes
+# test_id that also appears in quarantine.txt.
+# the lint.
+# which matches the M1 semantics above. raikiri-spike-a6s tracks the
+# ── Populate policy ─────────────────────────────────────────────────
+# ── Quarantine handling ──
