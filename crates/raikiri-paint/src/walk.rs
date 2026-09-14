@@ -168,14 +168,18 @@ pub(crate) fn paint_document(
                 let own_shift =
                     vertical_align_shift_px(cv.vertical_align, cv.display, parent_font_size);
                 let child_shift_y = shift_y + own_shift;
+                // Compute position:relative offset (CSS Positioned Layout 3 §3).
+                let (pos_dx, pos_dy) = position_offset_px(cv);
+                let paint_x = abs_x + pos_dx;
+                let paint_y = abs_y + child_shift_y + pos_dy;
                 // Paint element background (CSS Backgrounds 3 §2.2). Shift applies to the box itself
                 // per CSS 2.1 §10.8.1, so use `child_shift_y` not `abs_y`.
                 paint_element_background(
                     scene,
                     layout.size.width,
                     layout.size.height,
-                    abs_x,
-                    abs_y + child_shift_y,
+                    paint_x,
+                    paint_y,
                     cv.background_color,
                     &cv.background_image,
                     cv.color,
@@ -188,15 +192,18 @@ pub(crate) fn paint_document(
                     scene,
                     layout.size.width,
                     layout.size.height,
-                    abs_x,
-                    abs_y + child_shift_y,
+                    paint_x,
+                    paint_y,
                     &cv.border,
                     cv.color,
                 );
                 let child_font_size = cv.font_size.px();
                 // children を reverse push すると pop 時に document order で処理される。
+                // For position:relative, children are laid out at normal flow position but paint at offset position.
+                let child_parent_x = abs_x + pos_dx;
+                let child_parent_y = abs_y + pos_dy;
                 for &child in node.children.iter().rev() {
-                    stack.push((child, abs_x, abs_y, child_font_size, child_shift_y));
+                    stack.push((child, child_parent_x, child_parent_y, child_font_size, child_shift_y));
                 }
             }
             NodeKind::Text => {
@@ -654,6 +661,42 @@ fn infer_url_color(url: &str) -> Option<CssColor> {
     } else {
         None
     }
+}
+
+fn position_offset_px(cv: &raikiri_style::ComputedValues) -> (f32, f32) {
+    // Only position:relative contributes paint offset. static/absolute/fixed/sticky produce no shift here.
+    // Inset properties are <length-percentage> | auto. Percentages are resolved to px earlier (or auto -> 0).
+    // For relative, left vs right: if left != auto, dx = left, else if right != auto, dx = -right, else 0.
+    // Similarly top vs bottom for dy.
+    if !matches!(cv.position, raikiri_style::property::PositionValue::Relative) {
+        return (0.0, 0.0);
+    }
+    let to_px = |v: raikiri_style::resolve::ComputedLengthPercentageOrAuto| -> Option<f32> {
+        match v {
+            raikiri_style::resolve::ComputedLengthPercentageOrAuto::Auto => None,
+            raikiri_style::resolve::ComputedLengthPercentageOrAuto::Px(px) => Some(px),
+            raikiri_style::resolve::ComputedLengthPercentageOrAuto::Percent(_) => None,
+        }
+    };
+    let left = to_px(cv.left);
+    let right = to_px(cv.right);
+    let top = to_px(cv.top);
+    let bottom = to_px(cv.bottom);
+    let dx = if let Some(l) = left {
+        l
+    } else if let Some(r) = right {
+        -r
+    } else {
+        0.0
+    };
+    let dy = if let Some(t) = top {
+        t
+    } else if let Some(b) = bottom {
+        -b
+    } else {
+        0.0
+    };
+    (dx, dy)
 }
 
 fn vertical_align_shift_px(

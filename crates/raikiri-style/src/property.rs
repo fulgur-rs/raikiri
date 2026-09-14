@@ -3304,11 +3304,21 @@ pub enum PositionValue {
     /// spec default は初期化側 [`crate::computed::ComputedValues::initial`] が
     /// 直接指定する)。
     Static,
+    /// `relative` — CSS Positioned Layout Module Level 3 §3 relative positioning.
+    /// Normal flow 内でレイアウトされ、inset offsets で paint 時に shift。
+    Relative,
+    /// `absolute` — CSS Positioned Layout Module Level 3 §3 absolute positioning.
+    /// 現状 parse のみ、layout では static と同様 (future work)。
+    Absolute,
+    /// `fixed` — CSS Positioned Layout Module Level 3 §3 fixed positioning.
+    /// 現状 parse のみ、layout では static と同様 (future work)。
+    Fixed,
     /// `sticky` — CSS Positioned Layout Module Level 3 §3 sticky positioning
     /// (<https://www.w3.org/TR/css-position-3/#sticky-pos>)。normal flow 内で
-    /// レイアウトされつつ scroll に対して sticky に振る舞う。現状は parse のみ
-    /// 受理し layout 側の sticky 挙動は将来対応 — `apply_value` は `Static`
-    /// 同様に no-op。
+    /// レイアウトされつつ scroll に対して sticky に振る舞う。本 crate では parse 段階で [`PositionValue::Sticky`] として保持し、
+    /// layout 連携は将来対応 — 現状は `static` 同様に `apply_value` で no-op
+    /// (running template を emit しない) として扱う。`relative` / `absolute` /
+    /// `fixed` は未実装 (将来対応)、silent drop (`None`)。
     Sticky,
     /// `running(<custom-ident>)`。`<custom-ident>` は case-preserved の smol str。
     Running(SmolStr),
@@ -4109,6 +4119,10 @@ pub enum FloatValue {
     /// right, and content flows on the left side of the box, starting at
     /// the top." (CSS2 §9.5.1 verbatim)
     Right,
+    /// `inline-start` — logical equivalent of `left`/`right` (CSS Logical Properties §3).
+    InlineStart,
+    /// `inline-end` — logical equivalent of `left`/`right` (CSS Logical Properties §3).
+    InlineEnd,
 }
 
 /// `clear` property の value。
@@ -4168,6 +4182,12 @@ pub enum ClearValue {
     /// boxes that resulted from elements earlier in the source document."
     /// (CSS2 §9.5.2 verbatim)
     Both,
+    /// `inline-start` — logical equivalent of `left`/`right` depending on
+    /// writing direction (CSS Logical Properties §4). Maps to `left` in LTR.
+    InlineStart,
+    /// `inline-end` — logical equivalent of `left`/`right` depending on
+    /// writing direction (CSS Logical Properties §4). Maps to `right` in LTR.
+    InlineEnd,
 }
 
 /// `float` が `none` 以外のときに CSS2 §9.7 "Relationships between
@@ -6140,6 +6160,16 @@ pub enum PropertyValue {
     /// 保持するだけで sghtmltopdf 超えを満たす)。
     /// `relative` / `absolute` / `fixed` は未実装 (将来対応)、parser 段で drop。
     Position(PositionValue),
+    /// `top: auto | <length-percentage>` — **non-inherited**、initial: `auto`
+    /// (CSS Positioned Layout Module Level 3 §3 <https://www.w3.org/TR/css-position-3/>).
+    /// Used for `position: relative` offset (paint-time shift) and future absolute/fixed.
+    Top(LengthOrAuto),
+    /// `right: auto | <length-percentage>` — **non-inherited**、initial: `auto`.
+    Right(LengthOrAuto),
+    /// `bottom: auto | <length-percentage>` — **non-inherited**、initial: `auto`.
+    Bottom(LengthOrAuto),
+    /// `left: auto | <length-percentage>` — **non-inherited**、initial: `auto`.
+    Left(LengthOrAuto),
     /// `text-align: start | end | left | right | center | justify | match-parent
     /// | justify-all` — **inherited**、initial: [`TextAlign::Start`]
     /// (CSS Text 3 §6.1 "Text Alignment: the text-align shorthand"
@@ -6486,6 +6516,14 @@ pub enum PropertyValue {
     /// 高さ計算) は下流 (raikiri-dom `apply_computed_to_style` bridge、future task)
     /// 責務 — 本 crate は cascade static side に留まり raw specified value を保持。
     Height(LengthOrAuto),
+    /// `max-width: none | <length-percentage [0,∞]> | min-content | max-content | fit-content` — **non-inherited**、initial: `none`
+    /// (CSS Sizing 3 §3.2 <https://www.w3.org/TR/css-sizing-3/#max-size-properties>).
+    /// `none` maps to `LengthOrAuto::Auto` as placeholder (no max).
+    /// Intrinsic keywords map similarly to Auto (WPT parsing valid, layout pending).
+    MaxWidth(LengthOrAuto),
+    /// `max-height: none | <length-percentage [0,∞]> | min-content | max-content | fit-content` — **non-inherited**、initial: `none`
+    /// (CSS Sizing 3 §3.2 <https://www.w3.org/TR/css-sizing-3/#max-size-properties>).
+    MaxHeight(LengthOrAuto),
     /// `box-sizing: content-box | border-box` — **non-inherited**、initial:
     /// `content-box` (CSS Sizing 3 §3.3 "Box Edges for Sizing: the box-sizing
     /// property" <https://www.w3.org/TR/css-sizing-3/#box-sizing>)。
@@ -7176,6 +7214,10 @@ pub enum PropertyKey {
     Content,
     StringSet,
     Position,
+    Top,
+    Right,
+    Bottom,
+    Left,
     TextAlign,
     TextIndent,
     PaddingTop,
@@ -7241,6 +7283,8 @@ pub enum PropertyKey {
     // matching PropertyValue::Height variant; sibling PropertyKey variants
     // carry no per-variant docs per crate convention).
     Height,
+    MaxWidth,
+    MaxHeight,
     // box-sizing (CSS Sizing 3 §3.3、semantics on the
     // matching PropertyValue::BoxSizing variant; sibling PropertyKey variants
     // carry no per-variant docs per crate convention).
@@ -7522,6 +7566,10 @@ impl PropertyValue {
             PropertyValue::Content(_) => PropertyKey::Content,
             PropertyValue::StringSet(_) => PropertyKey::StringSet,
             PropertyValue::Position(_) => PropertyKey::Position,
+            PropertyValue::Top(_) => PropertyKey::Top,
+            PropertyValue::Right(_) => PropertyKey::Right,
+            PropertyValue::Bottom(_) => PropertyKey::Bottom,
+            PropertyValue::Left(_) => PropertyKey::Left,
             PropertyValue::TextAlign(_) => PropertyKey::TextAlign,
             PropertyValue::TextIndent(_) => PropertyKey::TextIndent,
             PropertyValue::PaddingTop(_) => PropertyKey::PaddingTop,
@@ -7553,6 +7601,8 @@ impl PropertyValue {
             PropertyValue::Border(_) => PropertyKey::Border,
             PropertyValue::Width(_) => PropertyKey::Width,
             PropertyValue::Height(_) => PropertyKey::Height,
+            PropertyValue::MaxWidth(_) => PropertyKey::MaxWidth,
+            PropertyValue::MaxHeight(_) => PropertyKey::MaxHeight,
             PropertyValue::BoxSizing(_) => PropertyKey::BoxSizing,
             PropertyValue::Direction(_) => PropertyKey::Direction,
             PropertyValue::OverflowX(_) => PropertyKey::OverflowX,
@@ -7644,6 +7694,7 @@ impl PropertyValue {
 }
 
 const DEFERRED_FUNCTIONS: [&str; 5] = ["var", "calc", "min", "max", "clamp"];
+const MATH_FUNCTIONS: [&str; 4] = ["calc", "min", "max", "clamp"];
 
 /// Shared upper bound for a deferred declaration value and every intermediate
 /// string produced while substituting variables or simplifying math functions.
@@ -7665,6 +7716,192 @@ fn is_deferred_function(name: &str) -> bool {
     DEFERRED_FUNCTIONS
         .iter()
         .any(|candidate| name.eq_ignore_ascii_case(candidate))
+}
+
+/// Validate that math functions (calc/min/max/clamp) contain only syntactically
+/// plausible inner tokens. `calc(foo)` has inner Ident(foo) which is not a
+/// length/percentage/dimension, so it should be rejected as invalid parsing
+/// rather than deferred. Valid examples like `calc(2em + 3ex)` or
+/// `min(20px, 10px)` contain only Dimension/Percentage/Number and operators.
+fn math_function_syntax_is_valid(input: &str) -> bool {
+    let mut parser_input = ParserInput::new(input);
+    let mut parser = Parser::new(&mut parser_input);
+    math_syntax_valid_in_parser(&mut parser, 0)
+}
+
+fn math_syntax_valid_in_parser(parser: &mut Parser<'_, '_>, depth: usize) -> bool {
+    if depth > MAX_DEFERRED_VALUE_NESTING_DEPTH {
+        return false;
+    }
+    loop {
+        let token = match parser.next() {
+            Ok(t) => t.clone(),
+            Err(_) => break,
+        };
+        match token {
+            Token::Function(name) => {
+                let is_math = MATH_FUNCTIONS.iter().any(|m| name.eq_ignore_ascii_case(m));
+                let valid = parser
+                    .parse_nested_block(|nested| {
+                        if is_math {
+                            // Inside math, check inner tokens are valid calc expression
+                            Ok::<_, ParseError<'_, ()>>(math_calc_inner_is_valid(nested, depth.saturating_add(1)))
+                        } else {
+                            // Non-math function: recursively check inside
+                            Ok::<_, ParseError<'_, ()>>(math_syntax_valid_in_parser(nested, depth.saturating_add(1)))
+                        }
+                    })
+                    .unwrap_or(false);
+                if !valid {
+                    return false;
+                }
+            }
+            Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
+                let valid = parser
+                    .parse_nested_block(|nested| {
+                        Ok::<_, ParseError<'_, ()>>(math_syntax_valid_in_parser(nested, depth.saturating_add(1)))
+                    })
+                    .unwrap_or(true);
+                if !valid {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+fn math_calc_inner_is_valid(parser: &mut Parser<'_, '_>, depth: usize) -> bool {
+    if depth > MAX_DEFERRED_VALUE_NESTING_DEPTH {
+        return false;
+    }
+    let mut has_content = false;
+    loop {
+        let token = match parser.next() {
+            Ok(t) => t.clone(),
+            Err(_) => break,
+        };
+        has_content = true;
+        match token {
+            Token::Dimension { .. } | Token::Percentage { .. } | Token::Number { .. } => {}
+            Token::Delim(c) if matches!(c, '+' | '-' | '*' | '/' | ',' | '(' | ')') => {}
+            Token::WhiteSpace(_) | Token::Comment(_) => {}
+            Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
+                let valid = parser
+                    .parse_nested_block(|nested| {
+                        Ok::<_, ParseError<'_, ()>>(math_calc_inner_is_valid(nested, depth.saturating_add(1)))
+                    })
+                    .unwrap_or(false);
+                if !valid {
+                    return false;
+                }
+            }
+            Token::Function(name) => {
+                // Nested math functions are allowed (e.g., calc(calc(...)))
+                let is_math = MATH_FUNCTIONS.iter().any(|m| name.eq_ignore_ascii_case(m));
+                let valid = parser
+                    .parse_nested_block(|nested| {
+                        if is_math {
+                            Ok::<_, ParseError<'_, ()>>(math_calc_inner_is_valid(nested, depth.saturating_add(1)))
+                        } else {
+                            // Non-math inner like var() is okay inside math
+                            Ok::<_, ParseError<'_, ()>>(true)
+                        }
+                    })
+                    .unwrap_or(false);
+                if !is_math && !valid {
+                    return false;
+                }
+                // For math nested, if valid is false, fail
+                if is_math && !valid {
+                    return false;
+                }
+            }
+            Token::Ident(_) | Token::IDHash(_) | Token::Hash(_) | Token::AtKeyword(_) | Token::UnquotedUrl(_) => {
+                // Bare ident like `foo` inside calc is invalid
+                return false;
+            }
+            Token::QuotedString(_) | Token::BadString(_) | Token::BadUrl(_) | Token::Colon | Token::Semicolon | Token::Comma | Token::IncludeMatch | Token::DashMatch | Token::PrefixMatch | Token::SuffixMatch | Token::SubstringMatch => {
+                // These inside calc are invalid
+                if !matches!(token, Token::Comma) {
+                    return false;
+                }
+            }
+            _ => {
+                // Any other token considered invalid for calc inner
+                return false;
+            }
+        }
+    }
+    has_content
+}
+
+fn deferred_dummy_is_valid_for_property(value: &str, prop: &str) -> bool {
+    // Replace math functions with dummy `1px` and check if the resulting value parses for the property.
+    // This validates overall structure (e.g. `margin-top: calc(...) auto` has 2 tokens, invalid for longhand).
+    let dummy = replace_math_with_dummy(value);
+    let mut input = ParserInput::new(&dummy);
+    let mut parser = Parser::new(&mut input);
+    // Avoid recursion into deferred path: dummy contains no deferred function, so parse_value will go to normal dispatch.
+    if let Some(_) = parse_value(prop, &mut parser) {
+        parser.expect_exhausted().is_ok()
+    } else {
+        false
+    }
+}
+
+fn replace_math_with_dummy(input: &str) -> String {
+    let mut result = String::new();
+    let mut i = 0;
+    let lower = input.to_ascii_lowercase();
+    let bytes = input.as_bytes();
+    while i < bytes.len() {
+        let mut matched = None;
+        for func in MATH_FUNCTIONS.iter() {
+            if lower[i..].starts_with(func) {
+                // Check that next char after func is '(' (allow optional whitespace? spec no whitespace, but be lenient)
+                let after = i + func.len();
+                if after < bytes.len() && bytes[after] == b'(' {
+                    matched = Some(*func);
+                    break;
+                }
+            }
+        }
+        if let Some(func) = matched {
+            // Find matching closing parenthesis, handling nested parens
+            let mut depth = 0;
+            let mut j = i + func.len();
+            let mut found_end = None;
+            while j < bytes.len() {
+                match bytes[j] {
+                    b'(' => depth += 1,
+                    b')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            found_end = Some(j);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                j += 1;
+            }
+            if let Some(end) = found_end {
+                result.push_str("1px");
+                i = end + 1;
+                continue;
+            } else {
+                // Unclosed, just push rest
+                result.push_str(&input[i..]);
+                break;
+            }
+        } else {
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    result
 }
 
 fn contains_deferred_function(input: &mut Parser<'_, '_>) -> bool {
@@ -7903,6 +8140,10 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "content" => PropertyKey::Content,
         "string-set" => PropertyKey::StringSet,
         "position" => PropertyKey::Position,
+        "top" => PropertyKey::Top,
+        "right" => PropertyKey::Right,
+        "bottom" => PropertyKey::Bottom,
+        "left" => PropertyKey::Left,
         "text-align" => PropertyKey::TextAlign,
         "text-indent" => PropertyKey::TextIndent,
         "padding-top" => PropertyKey::PaddingTop,
@@ -7949,6 +8190,8 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "border" => PropertyKey::Border,
         "width" => PropertyKey::Width,
         "height" => PropertyKey::Height,
+        "max-width" => PropertyKey::MaxWidth,
+        "max-height" => PropertyKey::MaxHeight,
         "box-sizing" => PropertyKey::BoxSizing,
         "direction" => PropertyKey::Direction,
         "overflow-x" => PropertyKey::OverflowX,
@@ -8060,12 +8303,43 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
             // as `width: calc(foo)` during declaration parsing, rather than
             // letting it override a valid earlier declaration and fail only
             // during cascade resolution.
-            let simplified = crate::cascade::simplify_math_functions(value.as_ref())?;
-            let mut reparsed_input = ParserInput::new(simplified.as_ref());
-            let mut reparsed = Parser::new(&mut reparsed_input);
-            let parsed = parse_value(name, &mut reparsed)?;
-            reparsed.expect_exhausted().ok()?;
-            return Some(parsed);
+            if let Some(simplified) = crate::cascade::simplify_math_functions(value.as_ref()) {
+                let mut reparsed_input = ParserInput::new(simplified.as_ref());
+                let mut reparsed = Parser::new(&mut reparsed_input);
+                if let Some(parsed) = parse_value(name, &mut reparsed) {
+                    if reparsed.expect_exhausted().is_ok() {
+                        return Some(parsed);
+                    }
+                }
+                // Simplification succeeded but reparsed value is still not a
+                // plain valid value (e.g. `calc(2em + 3ex)` for width). If the
+                // math syntax itself is valid and the overall value structure is valid
+                // for the property (e.g. `margin-top: calc(...)` single value vs
+                // `margin-top: calc(...) auto` two values), treat as deferred.
+                if math_function_syntax_is_valid(value.as_ref())
+                    && deferred_dummy_is_valid_for_property(value.as_ref(), name)
+                {
+                    return Some(PropertyValue::Deferred(DeferredValue {
+                        property: name.to_ascii_lowercase().into(),
+                        value,
+                        key: key?,
+                    }));
+                } else {
+                    return None;
+                }
+            }
+            // If simplification itself fails (oversized), check if math syntax is valid and structurally valid before deferring.
+            if math_function_syntax_is_valid(value.as_ref())
+                && deferred_dummy_is_valid_for_property(value.as_ref(), name)
+            {
+                return Some(PropertyValue::Deferred(DeferredValue {
+                    property: name.to_ascii_lowercase().into(),
+                    value,
+                    key: key?,
+                }));
+            } else {
+                return None;
+            }
         }
         return Some(PropertyValue::Deferred(DeferredValue {
             property: name.to_ascii_lowercase().into(),
@@ -8146,6 +8420,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // 現状 scope では `static` + `sticky` + `running(<custom-ident>)` を受理、
         // `relative` / `absolute` / `fixed` は未実装 (将来対応) につき silent drop。
         "position" => parse_position(input).map(PropertyValue::Position),
+        "top" => parse_inset(input).map(PropertyValue::Top),
+        "right" => parse_inset(input).map(PropertyValue::Right),
+        "bottom" => parse_inset(input).map(PropertyValue::Bottom),
+        "left" => parse_inset(input).map(PropertyValue::Left),
         // CSS Text 3 §6.1 text-align。
         // spec 上 shorthand (text-align-all + text-align-last) だが単一 field で保持
         // ((b) 非対応、`TextAlign` doc-comment 参照)。
@@ -8260,10 +8538,11 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // violation として drop (parse_width が enforce)。
         "width" => parse_width(input).map(PropertyValue::Width),
         // CSS Sizing 3 §3.1.1 preferred size — height。
-        // grammar: `auto | <length-percentage [0,∞]>` + spec-valid だが現状
-        // scope 外の `min-content` / `max-content` / `fit-content()` は silent drop
-        // (parse_height 内で ident branch が auto のみ受理して他 keyword 落とし)。
         "height" => parse_height(input).map(PropertyValue::Height),
+        // CSS Sizing 3 §3.2 max-size properties.
+        // `none | <length-percentage [0,∞]> | min-content | max-content | fit-content`
+        "max-width" => parse_max_size(input).map(PropertyValue::MaxWidth),
+        "max-height" => parse_max_size(input).map(PropertyValue::MaxHeight),
         // CSS Sizing 3 §3.3 box-sizing。
         // value grammar `content-box | border-box`、initial `content-box`、
         // not inherited、computed value = specified keyword。
@@ -10955,10 +11234,36 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
+    if input.try_parse(|i| i.expect_ident_matching("min-content")).is_ok() {
+        return Some(LengthOrAuto::Auto);
+    }
+    if input.try_parse(|i| i.expect_ident_matching("max-content")).is_ok() {
+        return Some(LengthOrAuto::Auto);
+    }
+    if input.try_parse(|i| i.expect_ident_matching("fit-content")).is_ok() {
+        let _ = input.try_parse(|i| {
+            i.expect_parenthesis_block()?;
+            i.parse_nested_block(|nested| {
+                parse_length_value(nested, true).ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
+                Ok::<_, cssparser::ParseError<'_, ()>>(())
+            })
+        });
+        return Some(LengthOrAuto::Auto);
+    }
+    if input
+        .try_parse(|i| {
+            i.expect_function_matching("fit-content")?;
+            i.parse_nested_block(|nested| {
+                parse_length_value(nested, true).ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
+                nested.expect_exhausted()?;
+                Ok::<_, cssparser::ParseError<'_, ()>>(())
+            })
+        })
+        .is_ok()
+    {
+        return Some(LengthOrAuto::Auto);
+    }
     let length = parse_length_value(input, true)?;
-    // spec §3.1.1 grammar `<length-percentage [0,∞]>` の non-negative constraint
-    // (padding と同 pattern、`length_payload` 経由の
-    // precedent)。
     (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
@@ -11526,9 +11831,73 @@ fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
+    if input.try_parse(|i| i.expect_ident_matching("min-content")).is_ok() {
+        return Some(LengthOrAuto::Auto);
+    }
+    if input.try_parse(|i| i.expect_ident_matching("max-content")).is_ok() {
+        return Some(LengthOrAuto::Auto);
+    }
+    if input.try_parse(|i| i.expect_ident_matching("fit-content")).is_ok() {
+        let _ = input.try_parse(|i| {
+            i.expect_parenthesis_block()?;
+            i.parse_nested_block(|nested| {
+                parse_length_value(nested, true).ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
+                Ok::<_, cssparser::ParseError<'_, ()>>(())
+            })
+        });
+        return Some(LengthOrAuto::Auto);
+    }
+    if input
+        .try_parse(|i| {
+            i.expect_function_matching("fit-content")?;
+            i.parse_nested_block(|nested| {
+                parse_length_value(nested, true).ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
+                nested.expect_exhausted()?;
+                Ok::<_, cssparser::ParseError<'_, ()>>(())
+            })
+        })
+        .is_ok()
+    {
+        return Some(LengthOrAuto::Auto);
+    }
     let length = parse_length_value(input, true)?;
-    // spec §3.1.1: <length-percentage `[0,∞]`>。負値 → drop (parse_padding_side
-    // の同 pattern)。
+    (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
+}
+
+fn parse_max_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(LengthOrAuto::Auto);
+    }
+    if input.try_parse(|i| i.expect_ident_matching("min-content")).is_ok() {
+        return Some(LengthOrAuto::Auto);
+    }
+    if input.try_parse(|i| i.expect_ident_matching("max-content")).is_ok() {
+        return Some(LengthOrAuto::Auto);
+    }
+    if input.try_parse(|i| i.expect_ident_matching("fit-content")).is_ok() {
+        let _ = input.try_parse(|i| {
+            i.expect_parenthesis_block()?;
+            i.parse_nested_block(|nested| {
+                parse_length_value(nested, true).ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
+                Ok::<_, cssparser::ParseError<'_, ()>>(())
+            })
+        });
+        return Some(LengthOrAuto::Auto);
+    }
+    if input
+        .try_parse(|i| {
+            i.expect_function_matching("fit-content")?;
+            i.parse_nested_block(|nested| {
+                parse_length_value(nested, true).ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
+                nested.expect_exhausted()?;
+                Ok::<_, cssparser::ParseError<'_, ()>>(())
+            })
+        })
+        .is_ok()
+    {
+        return Some(LengthOrAuto::Auto);
+    }
+    let length = parse_length_value(input, true)?;
     (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
@@ -12960,6 +13329,8 @@ fn parse_float(input: &mut Parser<'_, '_>) -> Option<FloatValue> {
         "none" => Some(FloatValue::None),
         "left" => Some(FloatValue::Left),
         "right" => Some(FloatValue::Right),
+        "inline-start" => Some(FloatValue::InlineStart),
+        "inline-end" => Some(FloatValue::InlineEnd),
         _ => None,
     }
 }
@@ -12978,6 +13349,8 @@ fn parse_clear(input: &mut Parser<'_, '_>) -> Option<ClearValue> {
         "left" => Some(ClearValue::Left),
         "right" => Some(ClearValue::Right),
         "both" => Some(ClearValue::Both),
+        "inline-start" => Some(ClearValue::InlineStart),
+        "inline-end" => Some(ClearValue::InlineEnd),
         _ => None,
     }
 }
@@ -14126,6 +14499,24 @@ fn parse_position(input: &mut Parser<'_, '_>) -> Option<PositionValue> {
         return Some(PositionValue::Static);
     }
     if input
+        .try_parse(|i| i.expect_ident_matching("relative"))
+        .is_ok()
+    {
+        return Some(PositionValue::Relative);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("absolute"))
+        .is_ok()
+    {
+        return Some(PositionValue::Absolute);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("fixed"))
+        .is_ok()
+    {
+        return Some(PositionValue::Fixed);
+    }
+    if input
         .try_parse(|i| i.expect_ident_matching("sticky"))
         .is_ok()
     {
@@ -14147,6 +14538,16 @@ fn parse_position(input: &mut Parser<'_, '_>) -> Option<PositionValue> {
         })
     });
     running.ok().map(PositionValue::Running)
+}
+
+/// `top` / `right` / `bottom` / `left: auto | <length-percentage>` を parse する
+/// (CSS Positioned Layout Module Level 3 §3).
+fn parse_inset(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(LengthOrAuto::Auto);
+    }
+    let length = parse_length_value(input, false)?;
+    Some(LengthOrAuto::Length(length))
 }
 
 /// `z-index: auto | <integer>` を parse する (CSS2 §9.9.1
@@ -20905,12 +21306,14 @@ mod tests {
 
     #[test]
     fn position_rejects_out_of_scope_keywords() {
-        // relative / absolute / fixed は本 crate では
-        // 認識せず None を返す (spec-correct: invalid → drop)。
-        // `sticky` は本タスクで受理するのでここでは除外。
-        assert_eq!(parse("relative", "position"), None);
-        assert_eq!(parse("absolute", "position"), None);
-        assert_eq!(parse("fixed", "position"), None);
+        // relative / absolute / fixed は受理する (position:relative offset 実装)。
+        // `sticky` も受理。
+        assert_eq!(parse("relative", "position"), Some(PropertyValue::Position(PositionValue::Relative)));
+        assert_eq!(parse("absolute", "position"), Some(PropertyValue::Position(PositionValue::Absolute)));
+        assert_eq!(parse("fixed", "position"), Some(PropertyValue::Position(PositionValue::Fixed)));
+        // それ以外の keyword は drop
+        assert_eq!(parse("inherit", "position"), None);
+        assert_eq!(parse("initial", "position"), None);
     }
 
     #[test]
@@ -25651,23 +26054,19 @@ mod tests {
 
     #[test]
     fn width_rejects_min_content_keyword() {
-        // Verification #5: (b) 非対応 — intrinsic sizing keyword は
-        // 未実装、silent drop。auto ident 分岐は expect_ident_matching("auto")
-        // で fail → parse_length_value に落ちて Dimension/Percentage arm 外の
-        // Ident token として drop。
-        assert_eq!(parse("min-content", "width"), None);
+        // Intrinsic sizing keyword — now accepted as valid parsing (placeholder Auto).
+        assert_eq!(parse("min-content", "width"), Some(PropertyValue::Width(LengthOrAuto::Auto)));
     }
 
     #[test]
     fn width_rejects_max_content_keyword() {
-        // 同上、max-content も silent drop。
-        assert_eq!(parse("max-content", "width"), None);
+        assert_eq!(parse("max-content", "width"), Some(PropertyValue::Width(LengthOrAuto::Auto)));
     }
 
     #[test]
     fn width_rejects_fit_content_function() {
-        // fit-content(<length-percentage>) は function token — 受理せず drop。
-        assert_eq!(parse("fit-content(50%)", "width"), None);
+        assert_eq!(parse("fit-content(50%)", "width"), Some(PropertyValue::Width(LengthOrAuto::Auto)));
+        assert_eq!(parse("fit-content", "width"), Some(PropertyValue::Width(LengthOrAuto::Auto)));
     }
 
     #[test]
@@ -26162,13 +26561,10 @@ mod tests {
 
     #[test]
     fn height_rejects_unsupported_sizing_keyword() {
-        // Non-goal (b) 非対応: `min-content` / `max-content` /
-        // `fit-content()` は spec-valid だが現状 scope 外、silent drop。
-        // ident branch は `auto` matching のみ、length parser の Dimension /
-        // Percentage arm でも受理されず None に落ちる pin。
-        assert_eq!(parse("min-content", "height"), None);
-        assert_eq!(parse("max-content", "height"), None);
-        assert_eq!(parse("fit-content(50%)", "height"), None);
+        assert_eq!(parse("min-content", "height"), Some(PropertyValue::Height(LengthOrAuto::Auto)));
+        assert_eq!(parse("max-content", "height"), Some(PropertyValue::Height(LengthOrAuto::Auto)));
+        assert_eq!(parse("fit-content(50%)", "height"), Some(PropertyValue::Height(LengthOrAuto::Auto)));
+        assert_eq!(parse("fit-content", "height"), Some(PropertyValue::Height(LengthOrAuto::Auto)));
     }
 
     #[test]

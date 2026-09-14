@@ -33,7 +33,7 @@ use crate::property::{
     BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, Border, BorderColor, BorderRadius,
     BorderStyle, BoxShadowItem, BoxSizing, BreakBetween, BreakInside, ClearValue, ClipPath,
     ContentAlignmentValue, ContentComponent, CssColor, CssPosition, CssPositionOffset, Direction,
-    DisplayValue, FilterFunction, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
+    DisplayValue, PositionValue, FilterFunction, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
     FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
     GridTemplateTracks, GridTrackSize, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal,
     LineHeight, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle,
@@ -189,6 +189,8 @@ pub struct SpecifiedValues {
     pub string_set: Arc<Vec<(SmolStr, Vec<ContentComponent>)>>,
     /// [`ComputedValues::running_templates`] の staging。層は computed-equivalent。
     pub running_templates: Vec<RunningTemplate>,
+    /// `position` の staging — running_templates とは別に position keyword を保持 (relative 判定用)。
+    pub position: PositionValue,
     /// [`ComputedValues::text_align`] の staging。層は computed-equivalent。
     /// `match-parent` はここでは**解決されない** — [`Self`] doc の
     /// "`text_align: match-parent` は D5 と同型ではない" 節参照。
@@ -237,6 +239,18 @@ pub struct SpecifiedValues {
     pub width: LengthOrAuto,
     /// `height` の **specified** value。phase 3 で絶対化される。
     pub height: LengthOrAuto,
+    /// `max-width` の **specified** value。phase 3 で絶対化される。
+    pub max_width: LengthOrAuto,
+    /// `max-height` の **specified** value。phase 3 で絶対化される。
+    pub max_height: LengthOrAuto,
+    /// `top` の **specified** value。phase 3 で絶対化される。
+    pub top: LengthOrAuto,
+    /// `right` の **specified** value。phase 3 で絶対化される。
+    pub right: LengthOrAuto,
+    /// `bottom` の **specified** value。phase 3 で絶対化される。
+    pub bottom: LengthOrAuto,
+    /// `left` の **specified** value。phase 3 で絶対化される。
+    pub left: LengthOrAuto,
     /// [`ComputedValues::box_sizing`] の staging。層は computed-equivalent。
     pub box_sizing: BoxSizing,
     /// [`ComputedValues::overflow`] の staging。層は computed-equivalent
@@ -505,6 +519,7 @@ impl SpecifiedValues {
             content: empty_content_list(),
             string_set: empty_string_set_entries(),
             running_templates: Vec::new(),
+            position: PositionValue::Static,
             text_align: TextAlign::Start,
             // CSS Writing Modes 4 §2.1: direction initial は `ltr`。
             direction: Direction::Ltr,
@@ -539,6 +554,12 @@ impl SpecifiedValues {
             outline_offset: Length::Px(0.0),
             width: LengthOrAuto::Auto,
             height: LengthOrAuto::Auto,
+            max_width: LengthOrAuto::Auto,
+            max_height: LengthOrAuto::Auto,
+            top: LengthOrAuto::Auto,
+            right: LengthOrAuto::Auto,
+            bottom: LengthOrAuto::Auto,
+            left: LengthOrAuto::Auto,
             box_sizing: BoxSizing::ContentBox,
             // CSS Overflow 3 §3.1: overflow-x/overflow-y initial は
             // `visible`。
@@ -826,6 +847,7 @@ impl SpecifiedValues {
             content: empty_content_list(),
             string_set: empty_string_set_entries(),
             running_templates: Vec::new(),
+            position: PositionValue::Static,
             padding: Sides::all(Length::Px(0.0)),
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
             border: Sides::all(INITIAL_BORDER),
@@ -845,6 +867,12 @@ impl SpecifiedValues {
             outline_offset: Length::Px(0.0),
             width: LengthOrAuto::Auto,
             height: LengthOrAuto::Auto,
+            max_width: LengthOrAuto::Auto,
+            max_height: LengthOrAuto::Auto,
+            top: LengthOrAuto::Auto,
+            right: LengthOrAuto::Auto,
+            bottom: LengthOrAuto::Auto,
+            left: LengthOrAuto::Auto,
             box_sizing: BoxSizing::ContentBox,
             // non-inherited (CSS Overflow 3 §3.1)。
             overflow: OverflowXY::both(OverflowValue::Visible),
@@ -1234,6 +1262,7 @@ impl SpecifiedValues {
             content: self.content,
             string_set: self.string_set,
             running_templates: self.running_templates,
+            position: self.position,
             // 呼び手が既に match-parent を解決した後の値 (関数 doc 参照)。
             text_align,
             // computed value = specified value、相対解決なし (`Direction` doc
@@ -1294,6 +1323,12 @@ impl SpecifiedValues {
             outline_offset: resolve_length(self.outline_offset, font_size, own_line_height, ctx),
             width: resolve_length_percentage_or_auto(self.width, font_size, own_line_height, ctx),
             height: resolve_length_percentage_or_auto(self.height, font_size, own_line_height, ctx),
+            max_width: resolve_length_percentage_or_auto(self.max_width, font_size, own_line_height, ctx),
+            max_height: resolve_length_percentage_or_auto(self.max_height, font_size, own_line_height, ctx),
+            top: resolve_length_percentage_or_auto(self.top, font_size, own_line_height, ctx),
+            right: resolve_length_percentage_or_auto(self.right, font_size, own_line_height, ctx),
+            bottom: resolve_length_percentage_or_auto(self.bottom, font_size, own_line_height, ctx),
+            left: resolve_length_percentage_or_auto(self.left, font_size, own_line_height, ctx),
             box_sizing: self.box_sizing,
             // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.7/§2.8 — computed value =
             // specified keyword(s), no length payload (`TextDecorationLine`
@@ -1868,6 +1903,13 @@ mod tests {
             outline_offset: ComputedLength(5.0),
             width: ComputedLengthPercentageOrAuto::Px(200.0),
             height: ComputedLengthPercentageOrAuto::Px(200.0),
+            max_width: ComputedLengthPercentageOrAuto::Auto,
+            max_height: ComputedLengthPercentageOrAuto::Auto,
+            top: ComputedLengthPercentageOrAuto::Px(10.0),
+            right: ComputedLengthPercentageOrAuto::Px(20.0),
+            bottom: ComputedLengthPercentageOrAuto::Px(30.0),
+            left: ComputedLengthPercentageOrAuto::Px(40.0),
+            position: PositionValue::Relative,
             box_sizing: BoxSizing::BorderBox,
             overflow: OverflowXY {
                 x: OverflowValue::Hidden,

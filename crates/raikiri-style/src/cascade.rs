@@ -6927,6 +6927,12 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Border(_)
         | PropertyValue::Width(_)
         | PropertyValue::Height(_)
+        | PropertyValue::MaxWidth(_)
+        | PropertyValue::MaxHeight(_)
+        | PropertyValue::Top(_)
+        | PropertyValue::Right(_)
+        | PropertyValue::Bottom(_)
+        | PropertyValue::Left(_)
         | PropertyValue::BoxSizing(_)
         // `overflow-x`/`overflow-y`/`overflow` join this arm — CSS Overflow 3
         // §3.1's cross-axis coupling (`resolve_overflow`) depends only on the
@@ -7427,8 +7433,21 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         //   (position は spec 上 単一値)、per-document 集約は下流 (raikiri-dom)
         //   の 2-tier キャッシュ static side 責務 (design doc §7.3)。
         PropertyValue::Position(pv) => match pv {
-            PositionValue::Static => {}
-            PositionValue::Sticky => {}
+            PositionValue::Static => {
+                target.position = PositionValue::Static;
+            }
+            PositionValue::Sticky => {
+                target.position = PositionValue::Sticky;
+            }
+            PositionValue::Relative => {
+                target.position = PositionValue::Relative;
+            }
+            PositionValue::Absolute => {
+                target.position = PositionValue::Absolute;
+            }
+            PositionValue::Fixed => {
+                target.position = PositionValue::Fixed;
+            }
             PositionValue::Running(name) => {
                 target.running_templates.push(RunningTemplate { name });
             }
@@ -7588,6 +7607,12 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // `LengthOrAuto` は Copy)。resolve (`Percent` / `Auto` の実 layout 高さ
         // 計算) は下流責務。
         PropertyValue::Height(v) => target.height = v,
+        PropertyValue::MaxWidth(v) => target.max_width = v,
+        PropertyValue::MaxHeight(v) => target.max_height = v,
+        PropertyValue::Top(v) => target.top = v,
+        PropertyValue::Right(v) => target.right = v,
+        PropertyValue::Bottom(v) => target.bottom = v,
+        PropertyValue::Left(v) => target.left = v,
         // CSS Sizing 3 §3.3 box-sizing。non-inherited、
         // cascade winner が specified keyword をそのまま computed value に反映。
         // BoxSizing は Copy、by-value 代入で十分。
