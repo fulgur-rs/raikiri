@@ -39,6 +39,9 @@ use taffy::{
     TrackSizingFunction, compute_root_layout, style_helpers as taffy_style_helpers,
 };
 
+pub(crate) mod table;
+
+
 /// Document arena を DFS で walk し、最初の `<body>` element の arena index を返す。
 ///
 /// iterative `Vec` stack で実装 (cascade §deep_nesting の pattern と一貫、
@@ -128,6 +131,12 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
             continue;
         }
         let cv = &cascade.computed[idx];
+        // Preserve full DisplayValue for table dispatch before taffy collapses it.
+        doc.nodes[idx].display = cv.display;
+        // Table engine inputs — no taffy::Style counterpart (taffy 0.12
+        // has no table layout), carried Node-side like `display` above.
+        doc.nodes[idx].table_layout = cv.table_layout;
+        doc.nodes[idx].border_collapse = cv.border_collapse;
         let style = &mut doc.nodes[idx].style;
         bridge_display(style, cv);
         bridge_float(style, cv);
@@ -142,6 +151,21 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         bridge_grid(style, cv, &mut doc.layout_warnings);
     }
     establish_minimal_line_boxes(doc, cascade);
+    // Mark table formatting roots for blitz-compat bit preservation.
+    for idx in 0..doc.nodes.len() {
+        if doc.nodes[idx].kind() != NodeKind::Element {
+            continue;
+        }
+        let is_table = matches!(
+            doc.nodes[idx].display,
+            DisplayValue::Table | DisplayValue::InlineTable
+        );
+        if is_table {
+            doc.nodes[idx].flags.insert(NodeFlags::IS_TABLE_ROOT);
+        } else {
+            doc.nodes[idx].flags.remove(NodeFlags::IS_TABLE_ROOT);
+        }
+    }
 }
 
 /// [`DisplayValue`] → [`taffy::Display`] mapping。
@@ -161,6 +185,15 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
 ///   outer-defaulting rule で `block grid` と等価。
 ///   [`crate::taffy_impl`]'s `LayoutGridContainer` impl + taffy's
 ///   `compute_grid_layout` が実 layout を担う)
+/// - Table internal types (`table` / `inline-table` / `table-row-group` /
+///   `table-header-group` / `table-footer-group` / `table-row` /
+///   `table-column-group` / `table-column` / `table-cell` / `table-caption`)
+///   → `Block` (暫定: taffy 0.12 は table layout 未対応のため block 近似。
+///   TODO(table-layout): [`crate::layout::table`] の dedicated table
+///   formatting context (CSS 2.1 §17.2.1 anonymous table object generation
+///   含む) が landing したら専用 Display / layout へ置換)
+/// - `list-item` / `contents` → `Block` (catch-all 経由、将来専用 handling
+///   が入るまで block 近似)
 /// - catch-all arm → `Block` (`non_exhaustive` forward-compat)
 fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
     style.display = match cv.display {
@@ -170,8 +203,24 @@ fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
         DisplayValue::None => Display::None,
         DisplayValue::Flex => Display::Flex,
         DisplayValue::Grid => Display::Grid,
+        // Table model — CSS Display 3 §2 / CSS 2.1 §17.2. Taffy 0.12 has no
+        // table layout, so map to Block as temporary approximation.
+        // Real table routing uses `Node::display` (preserved in
+        // `apply_computed_to_style` before this collapse) rather than
+        // `Style::display`.
+        DisplayValue::Table => Display::Block,
+        DisplayValue::InlineTable => Display::Block,
+        DisplayValue::TableRowGroup => Display::Block,
+        DisplayValue::TableHeaderGroup => Display::Block,
+        DisplayValue::TableFooterGroup => Display::Block,
+        DisplayValue::TableRow => Display::Block,
+        DisplayValue::TableColumnGroup => Display::Block,
+        DisplayValue::TableColumn => Display::Block,
+        DisplayValue::TableCell => Display::Block,
+        DisplayValue::TableCaption => Display::Block,
         _ => {
-            // non_exhaustive catch-all — unknown future variant goes to Block
+            // non_exhaustive catch-all — unknown future variant (e.g.
+            // `list-item` / `contents`) goes to Block
             Display::Block
         }
     };

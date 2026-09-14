@@ -123,14 +123,14 @@ use crate::cascade::{
 use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_properties};
 #[allow(unused_imports)]
 use crate::property::{
-    BackgroundShorthand, BackgroundSize, Border, BorderColor, BorderRadius, BorderStyle,
-    BoxShadowItem, CssPosition, CssPositionOffset, CustomProperty, FlexBasisValue, FlexShorthand,
-    GapShorthand, GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
-    GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
-    Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue,
-    TextCombineUpright, TextOrientation, UnicodeBidi,
-    Sides, TextShadowItem, TransformFunction, parse_length_allow_negative,
-    parse_non_negative_length, parse_value, resolve_overflow, resolve_writing_mode,
+    BackgroundShorthand, BackgroundSize, Border, BorderCollapseValue, BorderColor, BorderRadius,
+    BorderStyle, BoxShadowItem, CssPosition, CssPositionOffset, CustomProperty, FlexBasisValue,
+    FlexShorthand, GapShorthand, GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth,
+    GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto,
+    LengthOrNormal, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowXY, PropertyKey,
+    PropertyValue, Sides, TableLayoutValue, TextCombineUpright, TextOrientation, TextShadowItem,
+    TransformFunction, UnicodeBidi, parse_length_allow_negative, parse_non_negative_length,
+    parse_value, resolve_overflow, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedCssPositionOffset, ComputedFlexBasis,
@@ -3209,7 +3209,16 @@ fn absolutize_in_page_context(
         // (`FilterFunction` doc's "Range restriction is reject, not clamp"
         // section establishes the same "as specified" fact for a different
         // purpose).
-        | PropertyValue::Filter(_)) => v,
+        | PropertyValue::Filter(_)
+        // `table-layout` (CSS Tables 3 §4) / `border-collapse` (CSS Tables
+        // 3 §6) carry no length and computed value = specified keyword
+        // (`TableLayoutValue`/`BorderCollapseValue` docs) — nothing for
+        // phase 3 to absolutize. A page box is not a table wrapper box, so
+        // neither property has layout meaning in this path; both are opaque
+        // pass-through values here, the same treatment `ZIndex` gets (see
+        // that arm's doc).
+        | PropertyValue::TableLayout(_)
+        | PropertyValue::BorderCollapse(_)) => v,
         // ── background-image / mask-image ───────────────────────────────
         // `None`/`Url(String)` are computed-equivalent. `Gradient(..)`'s
         // `<length-percentage>` payloads (`GradientColorStop::position`,
@@ -6533,7 +6542,7 @@ mod tests {
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 91;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 93;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -7166,6 +7175,14 @@ mod tests {
         Right => PropertyValue::Right(LengthOrAuto::Auto),
         Bottom => PropertyValue::Bottom(LengthOrAuto::Auto),
         Left => PropertyValue::Left(LengthOrAuto::Auto),
+        // CSS Tables 3 §4 table-layout — non-initial (`fixed`, not `auto`)
+        // so a would-be pass-through regression (accidentally routing this
+        // arm through a transform) is visible (`Isolation` sibling comment
+        // above uses the same rationale).
+        TableLayout => PropertyValue::TableLayout(TableLayoutValue::Fixed),
+        // CSS Tables 3 §6 border-collapse — non-initial (`collapse`, not
+        // `separate`), same rationale as `TableLayout` above.
+        BorderCollapse => PropertyValue::BorderCollapse(BorderCollapseValue::Collapse),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -7427,6 +7444,8 @@ mod tests {
         ClipPath,
         Transform,
         Filter,
+        TableLayout,
+        BorderCollapse,
         Top,
         Right,
         Bottom,
@@ -7936,6 +7955,12 @@ mod tests {
                 | TransformFunction::SkewY(_) => None,
             }),
             | PropertyValue::Filter(_) => None,
+            // `table-layout` (CSS Tables 3 §4) / `border-collapse` (CSS
+            // Tables 3 §6) carry bare keyword payloads (no `Length` at all,
+            // unlike `Opacity`'s `f32`) — always `None` (`Isolation`/
+            // `MixBlendMode` sibling arms above use the same reasoning).
+            | PropertyValue::TableLayout(_)
+            | PropertyValue::BorderCollapse(_) => None,
             // Custom properties and deferred values are pre-computed cascade
             // representations, not page-context computed length payloads.
             | PropertyValue::CustomProperty(_)

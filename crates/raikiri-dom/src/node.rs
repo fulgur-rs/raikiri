@@ -8,6 +8,7 @@
 use smol_str::SmolStr;
 use taffy::{Cache, Layout, Style};
 
+use raikiri_style::property::{BorderCollapseValue, DisplayValue, TableLayoutValue};
 use raikiri_traits::NodeKind;
 
 bitflags::bitflags! {
@@ -208,6 +209,20 @@ pub struct TextData {
 pub struct Node {
     /// Taffy layout style。
     pub(crate) style: Style,
+    /// Computed `display` for table dispatch. Bridged to `style.display` for Block/Flex/Grid/None
+    /// but retains the full `DisplayValue` (including `Table` family) so table engine routing
+    /// does not need post-bridge `style.display` which collapses table variants to `Block`.
+    pub(crate) display: DisplayValue,
+    /// Computed `table-layout` for the table engine. No `taffy::Style`
+    /// counterpart exists (taffy 0.12 has no table layout), so the keyword
+    /// is carried here alongside [`Self::display`] and read by
+    /// [`crate::layout::table`] (`Node::display` bridge precedent).
+    pub(crate) table_layout: TableLayoutValue,
+    /// Computed `border-collapse` for the table engine. Same `Node`-side
+    /// carrying shape as [`Self::table_layout`] above (`border-collapse`
+    /// is inherited — the value here is already the post-inheritance
+    /// computed value, seed handling lives in raikiri-style).
+    pub(crate) border_collapse: BorderCollapseValue,
     /// Child arena indices (`Document::nodes` の usize)。
     pub children: Vec<usize>,
     /// Taffy layout cache (per-node)。
@@ -265,6 +280,9 @@ impl Node {
     pub(crate) fn new_document() -> Self {
         Self {
             style: Style::default(),
+            display: DisplayValue::Inline,
+            table_layout: TableLayoutValue::Auto,
+            border_collapse: BorderCollapseValue::Separate,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -283,6 +301,9 @@ impl Node {
     pub(crate) fn new_element(tag: SmolStr, style: Style, inline_style: Option<SmolStr>) -> Self {
         Self {
             style,
+            display: DisplayValue::Inline,
+            table_layout: TableLayoutValue::Auto,
+            border_collapse: BorderCollapseValue::Separate,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -301,6 +322,9 @@ impl Node {
     pub(crate) fn new_text(text: SmolStr) -> Self {
         Self {
             style: Style::default(),
+            display: DisplayValue::Inline,
+            table_layout: TableLayoutValue::Auto,
+            border_collapse: BorderCollapseValue::Separate,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -320,6 +344,9 @@ impl Node {
     pub(crate) fn new_comment(text: SmolStr) -> Self {
         Self {
             style: Style::default(),
+            display: DisplayValue::Inline,
+            table_layout: TableLayoutValue::Auto,
+            border_collapse: BorderCollapseValue::Separate,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -334,6 +361,9 @@ impl Node {
     pub(crate) fn new_processing_instruction(target: SmolStr, data: SmolStr) -> Self {
         Self {
             style: Style::default(),
+            display: DisplayValue::Inline,
+            table_layout: TableLayoutValue::Auto,
+            border_collapse: BorderCollapseValue::Separate,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -350,6 +380,9 @@ impl Node {
     pub(crate) fn new_document_fragment() -> Self {
         Self {
             style: Style::default(),
+            display: DisplayValue::Inline,
+            table_layout: TableLayoutValue::Auto,
+            border_collapse: BorderCollapseValue::Separate,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),

@@ -7197,6 +7197,8 @@ pub(crate) fn resolve_against_inherited(
         // `TransformFunction`/`FilterFunction` doc's scope notes).
         | PropertyValue::Transform(_)
         | PropertyValue::Filter(_)
+        | PropertyValue::TableLayout(_)
+        | PropertyValue::BorderCollapse(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)
         | PropertyValue::LineBreak(_)
@@ -7928,6 +7930,14 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // (`TransformFunction`/`FilterFunction` doc's scope notes).
         PropertyValue::Transform(v) => target.transform = v,
         PropertyValue::Filter(v) => target.filter = v,
+        // CSS Tables 3 §4 table-layout。non-inherited、computed value =
+        // specified keyword — simple assignment、length payload 無し
+        // (`BackgroundRepeat` arm と同じ shape)。
+        PropertyValue::TableLayout(v) => target.table_layout = v,
+        // CSS Tables 3 §6 border-collapse。inherited だが keyword のため
+        // inherit 解決は `SpecifiedValues::inherit_from` の素朴なコピーが担い、
+        // ここは winner の単純代入 (`Visibility` arm と同じ shape)。
+        PropertyValue::BorderCollapse(v) => target.border_collapse = v,
         // New Text 3 / Writing Modes 3 properties are keyword-only with no staging field yet (parsing only).
         PropertyValue::LineBreak(_)
         | PropertyValue::TextJustify(_)
@@ -14445,6 +14455,61 @@ mod tests {
             r.computed[span].visibility,
             Visibility::Hidden,
             "child should inherit visibility from parent (CSS Display 3 §4 Inherited: yes)"
+        );
+    }
+
+    // ── table-layout / border-collapse wire-through (CSS Tables 3 §4/§6) ──
+
+    #[test]
+    fn table_layout_wired_through_cascade_from_inline_style() {
+        use crate::property::TableLayoutValue;
+        let cv = cascade_doc("", "table", Some("table-layout: fixed"));
+        assert_eq!(cv.table_layout, TableLayoutValue::Fixed);
+    }
+
+    #[test]
+    fn table_layout_does_not_inherit_from_parent_element() {
+        // CSS Tables 3 §4: table-layout は **non-inherited**.
+        use crate::property::TableLayoutValue;
+        let mut doc = TestDoc::new();
+        let table = doc.push_element(0, "table", Some("table-layout: fixed"));
+        let td = doc.push_element(table, "td", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[table].table_layout, TableLayoutValue::Fixed);
+        assert_eq!(
+            r.computed[td].table_layout,
+            TableLayoutValue::Auto,
+            "child should reset table-layout to initial (CSS Tables 3 §4 Inherited: no)"
+        );
+    }
+
+    #[test]
+    fn border_collapse_wired_through_cascade_from_inline_style() {
+        use crate::property::BorderCollapseValue;
+        let cv = cascade_doc("", "table", Some("border-collapse: collapse"));
+        assert_eq!(cv.border_collapse, BorderCollapseValue::Collapse);
+    }
+
+    #[test]
+    fn border_collapse_inherits_from_parent_element() {
+        // CSS Tables 3 §6: border-collapse は **inherited**.
+        use crate::property::BorderCollapseValue;
+        let mut doc = TestDoc::new();
+        let table = doc.push_element(0, "table", Some("border-collapse: collapse"));
+        let td = doc.push_element(table, "td", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[table].border_collapse,
+            BorderCollapseValue::Collapse
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            r.computed[td].border_collapse,
+            BorderCollapseValue::Collapse,
+            "child should inherit border-collapse from parent (CSS Tables 3 §6 Inherited: yes)"
         );
     }
 

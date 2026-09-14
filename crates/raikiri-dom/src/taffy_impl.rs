@@ -180,6 +180,16 @@ impl Document {
         }
         compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
             let idx = usize::from(node_id);
+            // Table dispatch uses preserved DisplayValue (not taffy's collapsed Display::Block).
+            // Taffy 0.12 has no table layout; we route to native table engine in parallel with
+            // Block/Flex/Grid (spec requirement: Display::Block/Flex/Grid並列).
+            {
+                use raikiri_style::property::DisplayValue;
+                let dv = tree.nodes[idx].display;
+                if dv == DisplayValue::Table || dv == DisplayValue::InlineTable {
+                    return crate::layout::table::compute_table_layout(tree, node_id, inputs);
+                }
+            }
             let display = tree.nodes[idx].style.display;
             if display == Display::None {
                 return LayoutOutput::HIDDEN;
