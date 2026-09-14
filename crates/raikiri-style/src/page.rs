@@ -124,7 +124,7 @@ use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_pr
 #[allow(unused_imports)]
 use crate::property::{
     BackgroundShorthand, BackgroundSize, Border, BorderColor, BorderRadius, BorderStyle,
-    BoxShadowItem, CssPosition, CssPositionOffset, CustomProperty, FlexBasisValue, FlexShorthand,
+    BoxShadowItem, CssPosition, CssPositionOffset, CustomProperty, FlexBasisValue, FlexFlow, FlexShorthand,
     GapShorthand, GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
     Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue,
@@ -3116,6 +3116,14 @@ fn absolutize_in_page_context(
         // `<length-percentage>` and gets its own transform arm).
         | PropertyValue::FlexGrow(_)
         | PropertyValue::FlexShrink(_)
+        // `flex-flow` shorthand — neither component carries a length (see
+        // `place-content` below for the same shape); structurally
+        // unreachable here regardless (`expand_shorthand_into` expands it
+        // before this function runs).
+        | PropertyValue::FlexFlow(_)
+        // `order` (§4.2) carries a bare `<integer>`, not a length —
+        // nothing for phase 3 to absolutize.
+        | PropertyValue::Order(_)
         // `justify-content`/`align-content` (CSS Box Alignment Module Level
         // 3 §5.1) / `align-items` (§7.2) / `align-self` (§6.2) carry no
         // length — same shape as `WordBreak` above.
@@ -6533,7 +6541,7 @@ mod tests {
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 91;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 93;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -6862,6 +6870,11 @@ mod tests {
             shrink: 1.0,
             basis: FlexBasisValue::Length(Length::Rem(1.5)),
         }),
+        FlexFlow => PropertyValue::FlexFlow(FlexFlow {
+            direction: FlexDirectionValue::Column,
+            wrap: FlexWrapValue::Wrap,
+        }),
+        Order => PropertyValue::Order(5),
         // No specified/computed distinction for `justify-content`/
         // `align-content`/`align-items`/`align-self` — any value is "worst
         // case" (`Direction` sibling comment above uses the same reasoning).
@@ -7364,6 +7377,8 @@ mod tests {
         FlexShrink,
         FlexBasis,
         Flex,
+        FlexFlow,
+        Order,
         JustifyContent,
         AlignContent,
         AlignItems,
@@ -7847,6 +7862,11 @@ mod tests {
             // length.
             | PropertyValue::FlexGrow(_)
             | PropertyValue::FlexShrink(_)
+            // `flex-flow` shorthand — neither component carries a length
+            // (see `place-content` below for the same shape).
+            | PropertyValue::FlexFlow(_)
+            // `order` carries a bare `<integer>`, not a length.
+            | PropertyValue::Order(_)
             // `ContentAlignmentValue`/`SelfAlignmentValue`/`AlignSelfValue`
             // carry no length either.
             | PropertyValue::JustifyContent(_)

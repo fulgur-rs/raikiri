@@ -350,6 +350,9 @@ pub struct SpecifiedValues {
     /// 絶対化される (`auto`/`content` keyword は保持、`<length-percentage>`
     /// のみ絶対化) — [`Self::width`] と同じ絶対化 shape。
     pub flex_basis: FlexBasisValue,
+    /// [`ComputedValues::order`] の staging。層は computed-equivalent
+    /// (`<integer>` は絶対化不要 — [`Self::flex_grow`] と同じ扱い)。
+    pub order: i32,
     /// [`ComputedValues::justify_content`] の staging。層は computed-equivalent
     /// (`ContentAlignmentValue` は length を運ばない)。
     pub justify_content: ContentAlignmentValue,
@@ -615,6 +618,9 @@ impl SpecifiedValues {
             // CSS Flexible Box Layout Module Level 1 §7.2.3: flex-basis
             // initial は `auto`。
             flex_basis: FlexBasisValue::Auto,
+            // CSS Flexible Box Layout Module Level 1 §4.2: order initial
+            // は `0`。
+            order: 0,
             // CSS Box Alignment Module Level 3 §5.1 (justify-content /
             // align-content) / §7.2 (align-items): initial は `normal`、
             // §6.2 (align-self) の initial は `auto`。
@@ -900,6 +906,7 @@ impl SpecifiedValues {
             flex_grow: 0.0,
             flex_shrink: 1.0,
             flex_basis: FlexBasisValue::Auto,
+            order: 0,
             // non-inherited (CSS Box Alignment Module Level 3 §5.1/§5.1/
             // §7.2/§6.2, all "Inherited: no")。
             justify_content: ContentAlignmentValue::Normal,
@@ -1482,6 +1489,10 @@ impl SpecifiedValues {
             // `flex-basis` — `width`/`height` と同じ絶対化 shape
             // (`resolve_flex_basis` doc 参照)。
             flex_basis: resolve_flex_basis(self.flex_basis, font_size, own_line_height, ctx),
+            // computed value = specified integer (CSS Flexible Box Layout
+            // Module Level 1 §4.2 参照、`<integer>` は絶対化不要) —
+            // 自 node の winner 適用結果をそのまま素通し。
+            order: self.order,
             // computed value = specified keyword(s) (`ContentAlignmentValue`
             // / `SelfAlignmentValue` / `AlignSelfValue` docs 参照、length を
             // 運ばないため相対解決なし)。
@@ -1941,6 +1952,7 @@ mod tests {
             flex_grow: 2.0,
             flex_shrink: 3.0,
             flex_basis: ComputedFlexBasis::Px(50.0),
+            order: 5,
             justify_content: ContentAlignmentValue::SpaceBetween,
             align_content: ContentAlignmentValue::Center,
             align_items: SelfAlignmentValue::FlexEnd,
