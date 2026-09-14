@@ -8973,13 +8973,16 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // CSS Box Alignment Module Level 3 §8.1
         // <https://www.w3.org/TR/css-align-3/#propdef-row-gap>.
         "row-gap" => parse_gap_value(input).map(PropertyValue::RowGap),
+        "grid-row-gap" => parse_gap_value(input).map(PropertyValue::RowGap),
         // CSS Box Alignment Module Level 3 §8.1
         // <https://www.w3.org/TR/css-align-3/#propdef-column-gap>.
         "column-gap" => parse_gap_value(input).map(PropertyValue::ColumnGap),
+        "grid-column-gap" => parse_gap_value(input).map(PropertyValue::ColumnGap),
         // CSS Box Alignment Module Level 3 §8.2 "Gap Shorthand: the gap
         // property"
         // <https://www.w3.org/TR/css-align-3/#propdef-gap>.
         "gap" => parse_gap_shorthand(input).map(PropertyValue::Gap),
+        "grid-gap" => parse_gap_shorthand(input).map(PropertyValue::Gap),
         // CSS Box Alignment Module Level 3 §5.2
         // <https://www.w3.org/TR/css-align-3/#propdef-place-content>.
         "place-content" => parse_place_content_shorthand(input).map(PropertyValue::PlaceContent),
