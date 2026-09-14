@@ -2948,8 +2948,7 @@ pub(crate) fn preshape_text(
         line_height_raw: ComputedLineHeight,
     }
 
-    let mut jobs: Vec<Job> = Vec::new();
-    jobs.reserve(doc.nodes.len() / 2);
+    let mut jobs: Vec<Job> = Vec::with_capacity(doc.nodes.len() / 2);
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Text {
             continue;

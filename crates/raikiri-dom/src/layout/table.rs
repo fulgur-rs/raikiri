@@ -403,10 +403,10 @@ fn collect_cells_in_row(
 fn get_colspan(doc: &Document, node_id: usize) -> u16 {
     if let crate::node::NodeData::Element(data) = &doc.nodes[node_id].data {
         for a in &data.attributes {
-            if a.local.as_str() == "colspan" {
-                if let Ok(v) = a.value.parse::<u16>() {
-                    return v.max(1);
-                }
+            if a.local.as_str() == "colspan"
+                && let Ok(v) = a.value.parse::<u16>()
+            {
+                return v.max(1);
             }
         }
     }
@@ -418,10 +418,10 @@ fn get_colspan(doc: &Document, node_id: usize) -> u16 {
 fn get_rowspan(doc: &Document, node_id: usize) -> u16 {
     if let crate::node::NodeData::Element(data) = &doc.nodes[node_id].data {
         for a in &data.attributes {
-            if a.local.as_str() == "rowspan" {
-                if let Ok(v) = a.value.parse::<u16>() {
-                    return v.clamp(1, 65534);
-                }
+            if a.local.as_str() == "rowspan"
+                && let Ok(v) = a.value.parse::<u16>()
+            {
+                return v.clamp(1, 65534);
             }
         }
     }
@@ -508,15 +508,15 @@ fn resolve_column_widths(
         let cur_min: f32 = col_min_full[s..e].iter().sum();
         if cell_min[i] > cur_min {
             let add = (cell_min[i] - cur_min) / cnt;
-            for c in s..e {
-                col_min_full[c] += add;
+            for slot in col_min_full[s..e].iter_mut() {
+                *slot += add;
             }
         }
         let cur_max: f32 = col_max_full[s..e].iter().sum();
         if cell_max[i] > cur_max {
             let add = (cell_max[i] - cur_max) / cnt;
-            for c in s..e {
-                col_max_full[c] += add;
+            for slot in col_max_full[s..e].iter_mut() {
+                *slot += add;
             }
         }
         if grid.cells[i].specified_width.tag() == CompactLength::PERCENT_TAG {
@@ -524,8 +524,8 @@ fn resolve_column_widths(
             let cur_p: f32 = col_pct[s..e].iter().sum();
             if p > cur_p {
                 let add = (p - cur_p) / cnt;
-                for c in s..e {
-                    col_pct[c] += add;
+                for slot in col_pct[s..e].iter_mut() {
+                    *slot += add;
                 }
             }
         }
@@ -535,10 +535,12 @@ fn resolve_column_widths(
     let mut col_len: Vec<Option<f32>> = vec![None; n];
     for cell in &grid.cells {
         let c = cell.col_start as usize;
-        if cell.col_span == 1 && c < n {
-            if cell.specified_width.tag() == CompactLength::LENGTH_TAG && col_len[c].is_none() {
-                col_len[c] = Some(cell.specified_width.value());
-            }
+        if cell.col_span == 1
+            && c < n
+            && cell.specified_width.tag() == CompactLength::LENGTH_TAG
+            && col_len[c].is_none()
+        {
+            col_len[c] = Some(cell.specified_width.value());
         }
     }
     for c in 0..n {
@@ -696,8 +698,8 @@ fn resolve_row_heights(doc: &mut Document, grid: &TableGrid, column_widths: &[f3
                 let cur: f32 = row_heights[start..end_row].iter().sum();
                 if h > cur {
                     let add = (h - cur) / cnt;
-                    for r in start..end_row {
-                        row_heights[r] += add;
+                    for slot in row_heights[start..end_row].iter_mut() {
+                        *slot += add;
                     }
                 }
             }
@@ -737,8 +739,7 @@ fn place_cells(
     col_x: &[f32],
     row_y: &[f32],
 ) {
-    let mut order = 0u32;
-    for cell in &mut grid.cells {
+    for (order, cell) in grid.cells.iter_mut().enumerate() {
         let end_col = (cell.col_start as usize + cell.col_span as usize).min(column_widths.len());
         let end_row = (cell.row as usize + cell.row_span as usize).min(row_heights.len());
         let cell_x = col_x[cell.col_start as usize];
@@ -772,7 +773,7 @@ fn place_cells(
             },
         );
         let layout = TaffyLayout {
-            order,
+            order: order as u32,
             location: Point {
                 x: cell_x,
                 y: cell_y,
@@ -794,7 +795,6 @@ fn place_cells(
             doc.nodes[cell.node_id].unrounded_layout = sanitized;
         }
         let _ = output;
-        order += 1;
     }
 }
 

@@ -8067,7 +8067,7 @@ fn math_calc_inner_is_valid(parser: &mut Parser<'_, '_>, depth: usize) -> bool {
         has_content = true;
         match token {
             Token::Dimension { .. } | Token::Percentage { .. } | Token::Number { .. } => {}
-            Token::Delim(c) if matches!(c, '+' | '-' | '*' | '/' | ',' | '(' | ')') => {}
+            Token::Delim('+' | '-' | '*' | '/' | ',' | '(' | ')') => {}
             Token::WhiteSpace(_) | Token::Comment(_) => {}
             Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
                 let valid = parser
@@ -8146,7 +8146,7 @@ fn deferred_dummy_is_valid_for_property(value: &str, prop: &str) -> bool {
     let mut input = ParserInput::new(&dummy);
     let mut parser = Parser::new(&mut input);
     // Avoid recursion into deferred path: dummy contains no deferred function, so parse_value will go to normal dispatch.
-    if let Some(_) = parse_value(prop, &mut parser) {
+    if parse_value(prop, &mut parser).is_some() {
         parser.expect_exhausted().is_ok()
     } else {
         false
@@ -8619,10 +8619,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
             if let Some(simplified) = crate::cascade::simplify_math_functions(value.as_ref()) {
                 let mut reparsed_input = ParserInput::new(simplified.as_ref());
                 let mut reparsed = Parser::new(&mut reparsed_input);
-                if let Some(parsed) = parse_value(name, &mut reparsed) {
-                    if reparsed.expect_exhausted().is_ok() {
-                        return Some(parsed);
-                    }
+                if let Some(parsed) = parse_value(name, &mut reparsed)
+                    && reparsed.expect_exhausted().is_ok()
+                {
+                    return Some(parsed);
                 }
                 // Simplification succeeded but reparsed value is still not a
                 // plain valid value (e.g. `calc(2em + 3ex)` for width). If the
@@ -11450,33 +11450,31 @@ fn parse_text_indent(input: &mut Parser<'_, '_>) -> Option<Length> {
     let mut each_line = false;
     loop {
         // Try length-percentage (allow_percentage true)
-        if length.is_none() {
-            if let Ok(l) = input.try_parse(|i| {
+        if length.is_none()
+            && let Ok(l) = input.try_parse(|i| {
                 parse_length_value(i, true).ok_or_else(|| i.new_custom_error::<(), ()>(()))
-            }) {
-                length = Some(l);
-                continue;
-            }
+            })
+        {
+            length = Some(l);
+            continue;
         }
         // Try hanging
-        if !hanging {
-            if input
+        if !hanging
+            && input
                 .try_parse(|i| i.expect_ident_matching("hanging"))
                 .is_ok()
-            {
-                hanging = true;
-                continue;
-            }
+        {
+            hanging = true;
+            continue;
         }
         // Try each-line
-        if !each_line {
-            if input
+        if !each_line
+            && input
                 .try_parse(|i| i.expect_ident_matching("each-line"))
                 .is_ok()
-            {
-                each_line = true;
-                continue;
-            }
+        {
+            each_line = true;
+            continue;
         }
         break;
     }

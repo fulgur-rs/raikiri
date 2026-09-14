@@ -496,29 +496,31 @@ fn paint_element_border(
     let inner_x1 = (x1 - br).round();
     let inner_y1 = (y1 - bb).round();
     let inner_valid = inner_x1 > inner_x0 && inner_y1 > inner_y0;
-    if bt > 0.0 {
-        if let Some(col) = c_top {
-            let r = Rect::new(x0, y0, x1, y0 + bt);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
-        }
+    if bt > 0.0
+        && let Some(col) = c_top
+    {
+        let r = Rect::new(x0, y0, x1, y0 + bt);
+        scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
     }
-    if bb > 0.0 {
-        if let Some(col) = c_bottom {
-            let r = Rect::new(x0, y1 - bb, x1, y1);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
-        }
+    if bb > 0.0
+        && let Some(col) = c_bottom
+    {
+        let r = Rect::new(x0, y1 - bb, x1, y1);
+        scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
     }
-    if bl > 0.0 && inner_valid {
-        if let Some(col) = c_left {
-            let r = Rect::new(x0, inner_y0, x0 + bl, inner_y1);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
-        }
+    if bl > 0.0
+        && inner_valid
+        && let Some(col) = c_left
+    {
+        let r = Rect::new(x0, inner_y0, x0 + bl, inner_y1);
+        scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
     }
-    if br > 0.0 && inner_valid {
-        if let Some(col) = c_right {
-            let r = Rect::new(x1 - br, inner_y0, x1, inner_y1);
-            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
-        }
+    if br > 0.0
+        && inner_valid
+        && let Some(col) = c_right
+    {
+        let r = Rect::new(x1 - br, inner_y0, x1, inner_y1);
+        scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
     }
 }
 
