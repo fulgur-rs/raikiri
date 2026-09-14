@@ -5298,6 +5298,13 @@ fn project_deferred_value(
             crate::property::PropertyKey::FlexBasis => PropertyValue::FlexBasis(shorthand.basis),
             _ => return None,
         },
+        PropertyValue::FlexFlow(shorthand) => match key {
+            crate::property::PropertyKey::FlexDirection => {
+                PropertyValue::FlexDirection(shorthand.direction)
+            }
+            crate::property::PropertyKey::FlexWrap => PropertyValue::FlexWrap(shorthand.wrap),
+            _ => return None,
+        },
         PropertyValue::Gap(shorthand) => match key {
             crate::property::PropertyKey::RowGap => PropertyValue::RowGap(shorthand.row),
             crate::property::PropertyKey::ColumnGap => PropertyValue::ColumnGap(shorthand.column),
@@ -7053,6 +7060,8 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::FlexShrink(_)
         | PropertyValue::FlexBasis(_)
         | PropertyValue::Flex(_)
+        | PropertyValue::FlexFlow(_)
+        | PropertyValue::Order(_)
         | PropertyValue::JustifyContent(_)
         | PropertyValue::AlignContent(_)
         | PropertyValue::AlignItems(_)
@@ -7765,6 +7774,14 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.flex_shrink = f.shrink;
             target.flex_basis = f.basis;
         }
+        // `flex-flow` shorthand fall-through (`Flex` arm と同じ位置付け)。
+        PropertyValue::FlexFlow(f) => {
+            target.flex_direction = f.direction;
+            target.flex_wrap = f.wrap;
+        }
+        // CSS Flexible Box Layout Module Level 1 §4.2。non-inherited、
+        // computed value = specified integer — 単純代入で十分。
+        PropertyValue::Order(o) => target.order = o,
         // CSS Box Alignment Module Level 3 §5.1 (justify-content /
         // align-content) / §7.2 (align-items) / §6.2 (align-self)。
         // non-inherited、computed value = specified keyword(s) —
@@ -16355,6 +16372,46 @@ mod tests {
         use crate::property::ZIndexValue;
         let cv = cascade_doc("", "p", Some("z-index: 3"));
         assert_eq!(cv.z_index, ZIndexValue::Integer(3));
+    }
+
+    // ── order wire-through (CSS Flexible Box Layout Module Level 1 §4.2) ──
+
+    #[test]
+    fn order_wired_through_cascade_from_inline_style() {
+        // <p style="order: 2"> → ComputedValues.order に 2 が届く。parser →
+        // PropertyValue::Order → apply_value → ComputedValues の end-to-end
+        // 疎通 smoke (`z_index_wired_through_cascade_from_inline_style` と
+        // 同 pattern)。
+        let cv = cascade_doc("", "p", Some("order: 2"));
+        assert_eq!(cv.order, 2);
+    }
+
+    #[test]
+    fn order_non_inherited_child_starts_from_initial() {
+        // CSS Flexible Box Layout Module Level 1 §4.2 propdef:
+        // "Inherited: no" (`z_index_non_inherited_child_starts_from_initial`
+        // と同じ pattern)。
+        let mut doc = TestDoc::new();
+        let div = doc.push_element(0, "div", Some("order: 5"));
+        let span = doc.push_element(div, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].order, 5);
+        assert_eq!(
+            r.computed[span].order, 0,
+            "order must not inherit from parent (CSS Flexbox 1 §4.2 Inherited: no)"
+        );
+    }
+
+    #[test]
+    fn flex_flow_shorthand_wired_through_cascade_from_inline_style() {
+        // <p style="flex-flow: column wrap"> → ComputedValues.flex_direction /
+        // flex_wrap に Column / Wrap が届く (parse → expand → apply_value の
+        // end-to-end 疎通 smoke)。
+        use crate::property::{FlexDirectionValue, FlexWrapValue};
+        let cv = cascade_doc("", "p", Some("flex-flow: column wrap"));
+        assert_eq!(cv.flex_direction, FlexDirectionValue::Column);
+        assert_eq!(cv.flex_wrap, FlexWrapValue::Wrap);
     }
 
     #[test]

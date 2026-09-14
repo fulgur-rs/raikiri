@@ -10,7 +10,8 @@ use selectors::parser::SelectorList;
 
 use crate::RaikiriSelectorImpl;
 use crate::property::{
-    BackgroundShorthand, Border, DeferredValue, FlexShorthand, GapShorthand, GridLineShorthand,
+    BackgroundShorthand, Border, DeferredValue, FlexFlow, FlexShorthand, GapShorthand,
+    GridLineShorthand,
     Length, LengthOrAuto, Outline, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand,
     PlaceSelfShorthand, PropertyKey, PropertyValue, Sides, StartEnd, TextDecorationShorthand,
     parse_value,
@@ -550,6 +551,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::FlexGrow(_)
         | PropertyValue::FlexShrink(_)
         | PropertyValue::FlexBasis(_)
+        | PropertyValue::Order(_)
         | PropertyValue::JustifyContent(_)
         | PropertyValue::AlignContent(_)
         | PropertyValue::AlignItems(_)
@@ -632,6 +634,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::TextAlignAll(_)
         | PropertyValue::TextAlignLast(_) | PropertyValue::TextCombineUpright(_) | PropertyValue::TextOrientation(_) | PropertyValue::UnicodeBidi(_) => expand_none(d, push),
         PropertyValue::Flex(f) => expand_flex(f, d.important, push),
+        PropertyValue::FlexFlow(f) => expand_flex_flow(f, d.important, push),
         PropertyValue::Gap(g) => expand_gap(g, d.important, push),
         PropertyValue::PlaceContent(p) => expand_place_content(p, d.important, push),
         // `GridLineShorthand` は `SmolStr` を持ち Copy ではない — 他の
@@ -721,6 +724,7 @@ fn expand_deferred(
             PropertyKey::FlexShrink,
             PropertyKey::FlexBasis,
         ],
+        PropertyKey::FlexFlow => &[PropertyKey::FlexDirection, PropertyKey::FlexWrap],
         PropertyKey::Gap => &[PropertyKey::RowGap, PropertyKey::ColumnGap],
         PropertyKey::PlaceContent => &[PropertyKey::AlignContent, PropertyKey::JustifyContent],
         PropertyKey::GridRow => &[PropertyKey::GridRowStart, PropertyKey::GridRowEnd],
@@ -975,6 +979,22 @@ fn expand_flex(f: FlexShorthand, important: bool, mut push: impl FnMut(Declarati
     });
     push(Declaration {
         value: PropertyValue::FlexBasis(f.basis),
+        important,
+    });
+}
+
+/// `flex-flow` shorthand を `flex-direction` / `flex-wrap` の 2 longhand に
+/// 展開する cold helper。`expand_flex` と同 pattern — shorthand parser
+/// (`parse_flex_flow`) が既に省略成分の initial (row / nowrap) を埋めて
+/// いるため、本関数は 2 field をそのまま 2 declaration に分配するだけでよい。
+#[inline(never)]
+fn expand_flex_flow(f: FlexFlow, important: bool, mut push: impl FnMut(Declaration)) {
+    push(Declaration {
+        value: PropertyValue::FlexDirection(f.direction),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::FlexWrap(f.wrap),
         important,
     });
 }
