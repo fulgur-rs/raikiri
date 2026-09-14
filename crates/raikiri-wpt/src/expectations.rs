@@ -1097,123 +1097,123 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
             .collect();
         // Check that all expected baseline entries are present (allow additional quarantines)
         let expected_baseline = vec![
-                (
-                    "css/css-animations/",
-                    "Non-goal (interactive, §2 Non-Goals + §12.9)",
-                ),
-                (
-                    "css/css-transitions/",
-                    "Non-goal (interactive, §2 Non-Goals + §12.9)",
-                ),
-                (
-                    "html/interaction/",
-                    "Non-goal (interactive rendering, §2 Non-Goals + §12.9)",
-                ),
-                (
-                    "css/css-ruby/",
-                    "Non-goal for MVP (JIS X 4051 / 縦書き outside MVP scope, §2 Non-Goals)",
-                ),
-                (
-                    "accname/",
-                    "Non-goal (Consumer builds a11y tree from hints, §2 Non-Goals)",
-                ),
-                (
-                    "wai-aria/",
-                    "Non-goal (Consumer builds a11y tree from hints, §2 Non-Goals)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-blend-mode.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-descendants.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-ellipsis.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-flex.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-fragmentation.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-inline-block-child.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-inline.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-multiline-background-image.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-multiline-linebreak.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-on-body-not-propagated-to-root.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-on-body-scroll.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-out-of-flow-child.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-relative-child.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-scaled.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-stacking-context-child.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-text-align.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-text-decorations.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-text-text-emphasis.html",
-                    "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-border-area-border-on-top.html",
-                    "background-clip multi-layer (border-area, border-box) with background-image list not implemented (single-layer scope carving)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-border-area-multiple-backgrounds.html",
-                    "background-clip multi-layer (border-area, border-box, content-box) with background-image list not implemented",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-border-area-text.html",
-                    "background-clip border-area text union (CSS Backgrounds 4 §2.6) requires glyph + border-area compositing not implemented",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-border-area-border-shape-background-position.html",
-                    "border-shape inset(0) background-position interaction not implemented (CSS Borders 4)",
-                ),
-                (
-                    "css/css-backgrounds/background-clip/clip-border-shape-table-part-background.html",
-                    "table-part background with border-shape not implemented",
-                ),
-            ];
+            (
+                "css/css-animations/",
+                "Non-goal (interactive, §2 Non-Goals + §12.9)",
+            ),
+            (
+                "css/css-transitions/",
+                "Non-goal (interactive, §2 Non-Goals + §12.9)",
+            ),
+            (
+                "html/interaction/",
+                "Non-goal (interactive rendering, §2 Non-Goals + §12.9)",
+            ),
+            (
+                "css/css-ruby/",
+                "Non-goal for MVP (JIS X 4051 / 縦書き outside MVP scope, §2 Non-Goals)",
+            ),
+            (
+                "accname/",
+                "Non-goal (Consumer builds a11y tree from hints, §2 Non-Goals)",
+            ),
+            (
+                "wai-aria/",
+                "Non-goal (Consumer builds a11y tree from hints, §2 Non-Goals)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-blend-mode.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-descendants.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-ellipsis.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-flex.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-fragmentation.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-inline-block-child.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-inline.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-multiline-background-image.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-multiline-linebreak.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-on-body-not-propagated-to-root.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-on-body-scroll.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-out-of-flow-child.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-relative-child.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-scaled.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-stacking-context-child.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-text-align.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-text-decorations.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-text-text-emphasis.html",
+                "background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-border-area-border-on-top.html",
+                "background-clip multi-layer (border-area, border-box) with background-image list not implemented (single-layer scope carving)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-border-area-multiple-backgrounds.html",
+                "background-clip multi-layer (border-area, border-box, content-box) with background-image list not implemented",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-border-area-text.html",
+                "background-clip border-area text union (CSS Backgrounds 4 §2.6) requires glyph + border-area compositing not implemented",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-border-area-border-shape-background-position.html",
+                "border-shape inset(0) background-position interaction not implemented (CSS Borders 4)",
+            ),
+            (
+                "css/css-backgrounds/background-clip/clip-border-shape-table-part-background.html",
+                "table-part background with border-shape not implemented",
+            ),
+        ];
         // Allow additional entries beyond baseline (goal B quarantines)
         for exp in &expected_baseline {
             assert!(

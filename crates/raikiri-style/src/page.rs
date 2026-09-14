@@ -3816,13 +3816,13 @@ mod tests {
         GridRepeatCount, GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue,
         GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent,
         GridTrackRepeat, GridTrackSize, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal,
-        LineBreak, TextAlignAll, TextAlignLast, TextJustify,
-        LineHeight, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineStyle, OverflowValue,
-        OverflowWrap, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand,
-        PositionValue, SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextDecorationColor,
-        TextDecorationLine, TextDecorationShorthand, TextDecorationStyle, TextShadowColor,
-        TextTransform, TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace,
-        WordBreak, WritingMode, ZIndexValue,
+        LineBreak, LineHeight, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineStyle,
+        OverflowValue, OverflowWrap, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand,
+        PlaceSelfShorthand, PositionValue, SelfAlignmentValue, StartEnd, TabSize, TextAlign,
+        TextAlignAll, TextAlignLast, TextDecorationColor, TextDecorationLine,
+        TextDecorationShorthand, TextDecorationStyle, TextJustify, TextShadowColor, TextTransform,
+        TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak,
+        WritingMode, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use crate::ruletree::build_rule_tree;

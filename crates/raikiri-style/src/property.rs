@@ -8018,10 +8018,16 @@ fn math_syntax_valid_in_parser(parser: &mut Parser<'_, '_>, depth: usize) -> boo
                     .parse_nested_block(|nested| {
                         if is_math {
                             // Inside math, check inner tokens are valid calc expression
-                            Ok::<_, ParseError<'_, ()>>(math_calc_inner_is_valid(nested, depth.saturating_add(1)))
+                            Ok::<_, ParseError<'_, ()>>(math_calc_inner_is_valid(
+                                nested,
+                                depth.saturating_add(1),
+                            ))
                         } else {
                             // Non-math function: recursively check inside
-                            Ok::<_, ParseError<'_, ()>>(math_syntax_valid_in_parser(nested, depth.saturating_add(1)))
+                            Ok::<_, ParseError<'_, ()>>(math_syntax_valid_in_parser(
+                                nested,
+                                depth.saturating_add(1),
+                            ))
                         }
                     })
                     .unwrap_or(false);
@@ -8032,7 +8038,10 @@ fn math_syntax_valid_in_parser(parser: &mut Parser<'_, '_>, depth: usize) -> boo
             Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
                 let valid = parser
                     .parse_nested_block(|nested| {
-                        Ok::<_, ParseError<'_, ()>>(math_syntax_valid_in_parser(nested, depth.saturating_add(1)))
+                        Ok::<_, ParseError<'_, ()>>(math_syntax_valid_in_parser(
+                            nested,
+                            depth.saturating_add(1),
+                        ))
                     })
                     .unwrap_or(true);
                 if !valid {
@@ -8063,7 +8072,10 @@ fn math_calc_inner_is_valid(parser: &mut Parser<'_, '_>, depth: usize) -> bool {
             Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
                 let valid = parser
                     .parse_nested_block(|nested| {
-                        Ok::<_, ParseError<'_, ()>>(math_calc_inner_is_valid(nested, depth.saturating_add(1)))
+                        Ok::<_, ParseError<'_, ()>>(math_calc_inner_is_valid(
+                            nested,
+                            depth.saturating_add(1),
+                        ))
                     })
                     .unwrap_or(false);
                 if !valid {
@@ -8076,7 +8088,10 @@ fn math_calc_inner_is_valid(parser: &mut Parser<'_, '_>, depth: usize) -> bool {
                 let valid = parser
                     .parse_nested_block(|nested| {
                         if is_math {
-                            Ok::<_, ParseError<'_, ()>>(math_calc_inner_is_valid(nested, depth.saturating_add(1)))
+                            Ok::<_, ParseError<'_, ()>>(math_calc_inner_is_valid(
+                                nested,
+                                depth.saturating_add(1),
+                            ))
                         } else {
                             // Non-math inner like var() is okay inside math
                             Ok::<_, ParseError<'_, ()>>(true)
@@ -8091,11 +8106,25 @@ fn math_calc_inner_is_valid(parser: &mut Parser<'_, '_>, depth: usize) -> bool {
                     return false;
                 }
             }
-            Token::Ident(_) | Token::IDHash(_) | Token::Hash(_) | Token::AtKeyword(_) | Token::UnquotedUrl(_) => {
+            Token::Ident(_)
+            | Token::IDHash(_)
+            | Token::Hash(_)
+            | Token::AtKeyword(_)
+            | Token::UnquotedUrl(_) => {
                 // Bare ident like `foo` inside calc is invalid
                 return false;
             }
-            Token::QuotedString(_) | Token::BadString(_) | Token::BadUrl(_) | Token::Colon | Token::Semicolon | Token::Comma | Token::IncludeMatch | Token::DashMatch | Token::PrefixMatch | Token::SuffixMatch | Token::SubstringMatch => {
+            Token::QuotedString(_)
+            | Token::BadString(_)
+            | Token::BadUrl(_)
+            | Token::Colon
+            | Token::Semicolon
+            | Token::Comma
+            | Token::IncludeMatch
+            | Token::DashMatch
+            | Token::PrefixMatch
+            | Token::SuffixMatch
+            | Token::SubstringMatch => {
                 // These inside calc are invalid
                 if !matches!(token, Token::Comma) {
                     return false;
@@ -9046,7 +9075,9 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // CSS Text 3 §6.1 text-align-last longhand.
         "text-align-last" => parse_text_align_last(input).map(PropertyValue::TextAlignLast),
         // CSS Writing Modes 3 §9.1 text-combine-upright. grammar: `none | all`.
-        "text-combine-upright" => parse_text_combine_upright(input).map(PropertyValue::TextCombineUpright),
+        "text-combine-upright" => {
+            parse_text_combine_upright(input).map(PropertyValue::TextCombineUpright)
+        }
         // CSS Writing Modes 3 §5.1 text-orientation. grammar: `mixed | upright | sideways`.
         "text-orientation" => parse_text_orientation(input).map(PropertyValue::TextOrientation),
         // CSS Writing Modes 3 §2.2 unicode-bidi. grammar: `normal | embed | isolate | bidi-override | isolate-override | plaintext`.
@@ -9347,7 +9378,12 @@ fn parse_color_float(input: &mut Parser<'_, '_>, color_mix_depth: usize) -> Opti
             Some(ParsedColor::from_css_color(CssColor::TRANSPARENT))
         }
         Token::Ident(ref name) if name.eq_ignore_ascii_case("currentcolor") => {
-            Some(ParsedColor::from_css_color(CssColor { r: 0, g: 0, b: 0, a: 255 }))
+            Some(ParsedColor::from_css_color(CssColor {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255,
+            }))
         }
         Token::Ident(ref name) => {
             let (r, g, b) = parse_named_color(name).ok()?;
@@ -9378,9 +9414,7 @@ fn parse_color_float(input: &mut Parser<'_, '_>, color_mix_depth: usize) -> Opti
         {
             input.parse_nested_block(parse_hsl_function).ok()
         }
-        Token::Function(ref name)
-            if name.eq_ignore_ascii_case("hwb") =>
-        {
+        Token::Function(ref name) if name.eq_ignore_ascii_case("hwb") => {
             input.parse_nested_block(parse_hwb_function).ok()
         }
         Token::Function(ref name) if name.eq_ignore_ascii_case("color-mix") => {
@@ -9781,9 +9815,8 @@ fn parse_color_function<'i>(input: &mut Parser<'i, '_>) -> Result<ParsedColor, P
         // spaces as srgb fallback (treat coordinates as srgb). This allows
         // `none` vectors in those spaces to count as valid without
         // widening the public value model to 8-bit gamut for those spaces.
-        "a98-rgb" | "display-p3" | "display-p3-linear" | "rec2020" | "prophoto-rgb" | "xyz" | "xyz-d50" | "xyz-d65" => {
-            (ParsedColorSpace::Srgb, [first, second, third])
-        }
+        "a98-rgb" | "display-p3" | "display-p3-linear" | "rec2020" | "prophoto-rgb" | "xyz"
+        | "xyz-d50" | "xyz-d65" => (ParsedColorSpace::Srgb, [first, second, third]),
         _ => return Err(input.new_custom_error(())),
     };
     Ok(ParsedColor::from_coordinates(space, coordinates, alpha))
@@ -10977,7 +11010,9 @@ fn parse_modern_alpha<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<
     Ok(expect_number_stable(input)?.clamp(0.0, 1.0))
 }
 
-fn parse_modern_rgb_function<'i>(input: &mut Parser<'i, '_>) -> Result<ParsedColor, ParseError<'i, ()>> {
+fn parse_modern_rgb_function<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<ParsedColor, ParseError<'i, ()>> {
     let r = parse_modern_channel(input)?;
     let g = parse_modern_channel(input)?;
     let b = parse_modern_channel(input)?;
@@ -11416,21 +11451,29 @@ fn parse_text_indent(input: &mut Parser<'_, '_>) -> Option<Length> {
     loop {
         // Try length-percentage (allow_percentage true)
         if length.is_none() {
-            if let Ok(l) = input.try_parse(|i| parse_length_value(i, true).ok_or_else(|| i.new_custom_error::<(), ()>(()))) {
+            if let Ok(l) = input.try_parse(|i| {
+                parse_length_value(i, true).ok_or_else(|| i.new_custom_error::<(), ()>(()))
+            }) {
                 length = Some(l);
                 continue;
             }
         }
         // Try hanging
         if !hanging {
-            if input.try_parse(|i| i.expect_ident_matching("hanging")).is_ok() {
+            if input
+                .try_parse(|i| i.expect_ident_matching("hanging"))
+                .is_ok()
+            {
                 hanging = true;
                 continue;
             }
         }
         // Try each-line
         if !each_line {
-            if input.try_parse(|i| i.expect_ident_matching("each-line")).is_ok() {
+            if input
+                .try_parse(|i| i.expect_ident_matching("each-line"))
+                .is_ok()
+            {
                 each_line = true;
                 continue;
             }
@@ -11591,17 +11634,27 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
-    if input.try_parse(|i| i.expect_ident_matching("min-content")).is_ok() {
+    if input
+        .try_parse(|i| i.expect_ident_matching("min-content"))
+        .is_ok()
+    {
         return Some(LengthOrAuto::Auto);
     }
-    if input.try_parse(|i| i.expect_ident_matching("max-content")).is_ok() {
+    if input
+        .try_parse(|i| i.expect_ident_matching("max-content"))
+        .is_ok()
+    {
         return Some(LengthOrAuto::Auto);
     }
-    if input.try_parse(|i| i.expect_ident_matching("fit-content")).is_ok() {
+    if input
+        .try_parse(|i| i.expect_ident_matching("fit-content"))
+        .is_ok()
+    {
         let _ = input.try_parse(|i| {
             i.expect_parenthesis_block()?;
             i.parse_nested_block(|nested| {
-                parse_length_value(nested, true).ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
+                parse_length_value(nested, true)
+                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
                 Ok::<_, cssparser::ParseError<'_, ()>>(())
             })
         });
@@ -11611,7 +11664,8 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
         .try_parse(|i| {
             i.expect_function_matching("fit-content")?;
             i.parse_nested_block(|nested| {
-                parse_length_value(nested, true).ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
+                parse_length_value(nested, true)
+                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
                 nested.expect_exhausted()?;
                 Ok::<_, cssparser::ParseError<'_, ()>>(())
             })
@@ -12188,17 +12242,27 @@ fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
-    if input.try_parse(|i| i.expect_ident_matching("min-content")).is_ok() {
+    if input
+        .try_parse(|i| i.expect_ident_matching("min-content"))
+        .is_ok()
+    {
         return Some(LengthOrAuto::Auto);
     }
-    if input.try_parse(|i| i.expect_ident_matching("max-content")).is_ok() {
+    if input
+        .try_parse(|i| i.expect_ident_matching("max-content"))
+        .is_ok()
+    {
         return Some(LengthOrAuto::Auto);
     }
-    if input.try_parse(|i| i.expect_ident_matching("fit-content")).is_ok() {
+    if input
+        .try_parse(|i| i.expect_ident_matching("fit-content"))
+        .is_ok()
+    {
         let _ = input.try_parse(|i| {
             i.expect_parenthesis_block()?;
             i.parse_nested_block(|nested| {
-                parse_length_value(nested, true).ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
+                parse_length_value(nested, true)
+                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
                 Ok::<_, cssparser::ParseError<'_, ()>>(())
             })
         });
@@ -12208,7 +12272,8 @@ fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
         .try_parse(|i| {
             i.expect_function_matching("fit-content")?;
             i.parse_nested_block(|nested| {
-                parse_length_value(nested, true).ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
+                parse_length_value(nested, true)
+                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
                 nested.expect_exhausted()?;
                 Ok::<_, cssparser::ParseError<'_, ()>>(())
             })
@@ -12225,17 +12290,27 @@ fn parse_max_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
-    if input.try_parse(|i| i.expect_ident_matching("min-content")).is_ok() {
+    if input
+        .try_parse(|i| i.expect_ident_matching("min-content"))
+        .is_ok()
+    {
         return Some(LengthOrAuto::Auto);
     }
-    if input.try_parse(|i| i.expect_ident_matching("max-content")).is_ok() {
+    if input
+        .try_parse(|i| i.expect_ident_matching("max-content"))
+        .is_ok()
+    {
         return Some(LengthOrAuto::Auto);
     }
-    if input.try_parse(|i| i.expect_ident_matching("fit-content")).is_ok() {
+    if input
+        .try_parse(|i| i.expect_ident_matching("fit-content"))
+        .is_ok()
+    {
         let _ = input.try_parse(|i| {
             i.expect_parenthesis_block()?;
             i.parse_nested_block(|nested| {
-                parse_length_value(nested, true).ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
+                parse_length_value(nested, true)
+                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
                 Ok::<_, cssparser::ParseError<'_, ()>>(())
             })
         });
@@ -12245,7 +12320,8 @@ fn parse_max_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
         .try_parse(|i| {
             i.expect_function_matching("fit-content")?;
             i.parse_nested_block(|nested| {
-                parse_length_value(nested, true).ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
+                parse_length_value(nested, true)
+                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
                 nested.expect_exhausted()?;
                 Ok::<_, cssparser::ParseError<'_, ()>>(())
             })
@@ -21872,9 +21948,18 @@ mod tests {
     fn position_rejects_out_of_scope_keywords() {
         // relative / absolute / fixed は受理する (position:relative offset 実装)。
         // `sticky` も受理。
-        assert_eq!(parse("relative", "position"), Some(PropertyValue::Position(PositionValue::Relative)));
-        assert_eq!(parse("absolute", "position"), Some(PropertyValue::Position(PositionValue::Absolute)));
-        assert_eq!(parse("fixed", "position"), Some(PropertyValue::Position(PositionValue::Fixed)));
+        assert_eq!(
+            parse("relative", "position"),
+            Some(PropertyValue::Position(PositionValue::Relative))
+        );
+        assert_eq!(
+            parse("absolute", "position"),
+            Some(PropertyValue::Position(PositionValue::Absolute))
+        );
+        assert_eq!(
+            parse("fixed", "position"),
+            Some(PropertyValue::Position(PositionValue::Fixed))
+        );
         // それ以外の keyword は drop
         assert_eq!(parse("inherit", "position"), None);
         assert_eq!(parse("initial", "position"), None);
@@ -26633,18 +26718,30 @@ mod tests {
     #[test]
     fn width_rejects_min_content_keyword() {
         // Intrinsic sizing keyword — now accepted as valid parsing (placeholder Auto).
-        assert_eq!(parse("min-content", "width"), Some(PropertyValue::Width(LengthOrAuto::Auto)));
+        assert_eq!(
+            parse("min-content", "width"),
+            Some(PropertyValue::Width(LengthOrAuto::Auto))
+        );
     }
 
     #[test]
     fn width_rejects_max_content_keyword() {
-        assert_eq!(parse("max-content", "width"), Some(PropertyValue::Width(LengthOrAuto::Auto)));
+        assert_eq!(
+            parse("max-content", "width"),
+            Some(PropertyValue::Width(LengthOrAuto::Auto))
+        );
     }
 
     #[test]
     fn width_rejects_fit_content_function() {
-        assert_eq!(parse("fit-content(50%)", "width"), Some(PropertyValue::Width(LengthOrAuto::Auto)));
-        assert_eq!(parse("fit-content", "width"), Some(PropertyValue::Width(LengthOrAuto::Auto)));
+        assert_eq!(
+            parse("fit-content(50%)", "width"),
+            Some(PropertyValue::Width(LengthOrAuto::Auto))
+        );
+        assert_eq!(
+            parse("fit-content", "width"),
+            Some(PropertyValue::Width(LengthOrAuto::Auto))
+        );
     }
 
     #[test]
@@ -27139,10 +27236,22 @@ mod tests {
 
     #[test]
     fn height_rejects_unsupported_sizing_keyword() {
-        assert_eq!(parse("min-content", "height"), Some(PropertyValue::Height(LengthOrAuto::Auto)));
-        assert_eq!(parse("max-content", "height"), Some(PropertyValue::Height(LengthOrAuto::Auto)));
-        assert_eq!(parse("fit-content(50%)", "height"), Some(PropertyValue::Height(LengthOrAuto::Auto)));
-        assert_eq!(parse("fit-content", "height"), Some(PropertyValue::Height(LengthOrAuto::Auto)));
+        assert_eq!(
+            parse("min-content", "height"),
+            Some(PropertyValue::Height(LengthOrAuto::Auto))
+        );
+        assert_eq!(
+            parse("max-content", "height"),
+            Some(PropertyValue::Height(LengthOrAuto::Auto))
+        );
+        assert_eq!(
+            parse("fit-content(50%)", "height"),
+            Some(PropertyValue::Height(LengthOrAuto::Auto))
+        );
+        assert_eq!(
+            parse("fit-content", "height"),
+            Some(PropertyValue::Height(LengthOrAuto::Auto))
+        );
     }
 
     #[test]
