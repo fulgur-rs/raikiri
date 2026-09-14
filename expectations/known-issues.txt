@@ -165,3 +165,53 @@ css/css-backgrounds/box-shadow-radius-generated.html | box-shadow paint not impl
 css/css-backgrounds/box-shadow-table-border-collapse-001.html | box-shadow paint not implemented (CSS Backgrounds 3 §6.1, blur/spread requires layer) (quarantine 2026-09-14 goal B)
 css/css-backgrounds/box-shadow-table-row-display-ref.html | box-shadow paint not implemented (CSS Backgrounds 3 §6.1, blur/spread requires layer) (quarantine 2026-09-14 goal B)
 css/css-backgrounds/box-shadow-table-row-display.html | box-shadow paint not implemented (CSS Backgrounds 3 §6.1, blur/spread requires layer) (quarantine 2026-09-14 goal B)
+
+# ── css-text Level4 parsing quarantine (2026-09-14, goal C, not in MVP) ──
+css/css-text/parsing/hanging-punctuation-valid.html | hanging-punctuation Level4 not in MVP (CSS Text 4)
+css/css-text/parsing/hyphenate-character-valid.html | hyphenate-character Level4 not in MVP
+css/css-text/parsing/hyphenate-limit-chars-valid.html | hyphenate-limit-chars Level4 not in MVP
+css/css-text/parsing/text-autospace-valid.html | text-autospace Level4 not in MVP
+css/css-text/parsing/text-group-align-valid.html | text-group-align Level4 not in MVP
+css/css-text/parsing/text-spacing-trim-valid.html | text-spacing-trim Level4 not in MVP
+css/css-text/parsing/text-spacing-valid.html | text-spacing Level4 not in MVP
+css/css-text/parsing/text-wrap-mode-valid.html | text-wrap-mode Level4 not in MVP
+css/css-text/parsing/text-wrap-pretty.html | text-wrap pretty Level4 not in MVP
+css/css-text/parsing/text-wrap-style-valid.html | text-wrap-style Level4 not in MVP
+css/css-text/parsing/text-wrap-valid.html | text-wrap Level4 not in MVP
+css/css-text/parsing/white-space-collapse-valid.html | white-space-collapse Level4 not in MVP
+css/css-text/parsing/word-space-transform-valid.html | word-space-transform Level4 not in MVP
+css/css-text/parsing/text-transform-valid.html | text-transform Level4 combos (full-width/full-size-kana/math-auto) not in MVP, MVP only none/capitalize/uppercase/lowercase
+
+
+# --- css-values quarantine 2026-09-14 goal D (calc foundations, Level4+ not in MVP) ---
+css/css-values/calc-size/calc-size-parsing.html | calc-size() not implemented (CSS Values 4 calc-size, not in MVP)
+css/css-values/calc-size/interpolate-size-parsing.html | interpolate-size not implemented (CSS Values 4, not in MVP)
+css/css-values/clamp-length-invalid.html | clamp() invalid syntax strictness not implemented (type-checking follow-up, not in MVP)
+css/css-values/clamp-length-serialize.html | clamp() with none keyword serialization not implemented (not in MVP)
+css/css-values/clamp-partial-serialize.tentative.html | clamp() partial serialize tentative not implemented
+css/css-values/hypot-pow-sqrt-invalid.html | hypot/pow/sqrt math functions not implemented (CSS Values 4 Level4, not in MVP)
+css/css-values/ident-function-parsing.html | ident() not implemented (CSS Values 4 view-transition, not in MVP)
+css/css-values/inherit-function-parsing.html | inherit() function not implemented (CSS Values 4, not in MVP)
+css/css-values/minmax-angle-invalid.html | min/max angle type-checking not implemented (not in MVP)
+css/css-values/minmax-length-invalid.html | min/max length type-checking not implemented (not in MVP)
+css/css-values/minmax-length-percent-invalid.html | min/max length-percent type-checking not implemented
+css/css-values/minmax-percentage-invalid.html | min/max percentage type-checking not implemented
+css/css-values/position/position-invalid.tentative.html | position x-start/x-end logical position not implemented
+css/css-values/position/position-valid.tentative.html | position x-start/x-end logical position not implemented
+css/css-values/random-serialize.tentative.html | random() not implemented (CSS Values 4 tentative, not in MVP)
+css/css-values/signs-abs-invalid.html | sign()/abs() Level4 math functions not in MVP (partial support only)
+css/css-values/tree-counting/calc-sibling-function-parsing.html | sibling-index()/sibling-count() not implemented (CSS Values 4 tree-counting, not in MVP)
+css/css-values/urls/url-request-modifiers-serialize.sub.html | url request modifiers cross-origin/integrity not implemented
+css/css-values/viewport-units-parsing.html | viewport units vw/vh etc not implemented (style layer has no viewport, follow-up)
+
+# ── css-text reftest Level4 quarantine (2026-09-14, goal C, not in MVP) ──
+css/css-text/hanging-punctuation/ | hanging-punctuation Level4 not in MVP
+css/css-text/hyphens/hyphenate-character | hyphenate-character Level4 not in MVP
+css/css-text/hyphens/hyphenate-limit-chars | hyphenate-limit-chars Level4 not in MVP
+css/css-text/text-autospace/ | text-autospace Level4 not in MVP
+css/css-text/text-group-align/ | text-group-align Level4 not in MVP
+css/css-text/text-spacing/ | text-spacing Level4 not in MVP
+css/css-text/text-spacing-trim/ | text-spacing-trim Level4 not in MVP
+css/css-text/word-space-transform/ | word-space-transform Level4 not in MVP
+css/css-text/white-space/white-space-collapse | white-space-collapse Level4 not in MVP
+

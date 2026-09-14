@@ -624,7 +624,11 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         // transform (CSS Transforms Level 1 §4) / filter (CSS Filter
         // Effects Level 1 §5) — same shape as mask-image/clip-path above.
         | PropertyValue::Transform(_)
-        | PropertyValue::Filter(_) => expand_none(d, push),
+        | PropertyValue::Filter(_)
+        | PropertyValue::LineBreak(_)
+        | PropertyValue::TextJustify(_)
+        | PropertyValue::TextAlignAll(_)
+        | PropertyValue::TextAlignLast(_) => expand_none(d, push),
         PropertyValue::Flex(f) => expand_flex(f, d.important, push),
         PropertyValue::Gap(g) => expand_gap(g, d.important, push),
         PropertyValue::PlaceContent(p) => expand_place_content(p, d.important, push),
@@ -1556,14 +1560,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_extra_ident_after_text_indent() {
-        // "2em hanging" — `hanging` is spec-valid (CSS Text 3 §8.1) but this
-        // crate's `PropertyValue::TextIndent` only carries the
-        // `<length-percentage>` component, so `hanging` is unconsumed
-        // garbage from `expect_exhausted`'s point of view and the whole
-        // declaration drops — mirrors `rejects_extra_length_after_font_size`.
+    fn accepts_hanging_after_text_indent() {
+        // "2em hanging" — now accepted (CSS Text 3 §8.1 hanging keyword).
         let decls = parse_block("text-indent: 2em hanging;");
-        assert!(decls.is_empty());
+        assert_eq!(decls.len(), 1);
     }
 
     #[test]

@@ -3839,6 +3839,12 @@ pub enum WordBreak {
     KeepAll,
     /// `break-all`。
     BreakAll,
+    /// `manual` — CSS Text 4 / WPT word-break-valid.
+    Manual,
+    /// `auto-phrase` — CSS Text 4 / WPT word-break-valid.
+    AutoPhrase,
+    /// `break-word` — deprecated but WPT expects valid (word-break-valid.html).
+    BreakWord,
 }
 
 /// `overflow-wrap` property の value (legacy name alias `word-wrap` は同一
@@ -4358,6 +4364,8 @@ pub enum WhiteSpace {
     PreWrap,
     /// `pre-line`。
     PreLine,
+    /// `break-spaces`。
+    BreakSpaces,
 }
 
 /// `hyphens` property の value。
@@ -4483,7 +4491,55 @@ pub enum TabSize {
     Length(Length),
 }
 
-/// `text-shadow` の 1 shadow entry が運ぶ `<color>` 成分 — [`BorderColor`] /
+/// `line-break` property の value (CSS Text 3 §5.2).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineBreak {
+    Auto,
+    Loose,
+    Normal,
+    Strict,
+    Anywhere,
+}
+
+/// `text-justify` property の value (CSS Text 3 §6.2).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextJustify {
+    Auto,
+    None,
+    InterWord,
+    InterCharacter,
+}
+
+/// `text-align-all` property の value (CSS Text 3 §6.1 longhand).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextAlignAll {
+    Start,
+    End,
+    Left,
+    Right,
+    Center,
+    Justify,
+    MatchParent,
+}
+
+/// `text-align-last` property の value (CSS Text 3 §6.1 longhand).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextAlignLast {
+    Auto,
+    Start,
+    End,
+    Left,
+    Right,
+    Center,
+    Justify,
+    MatchParent,
+}
+
+/// `text-shadow`/// `text-shadow` の 1 shadow entry が運ぶ `<color>` 成分 — [`BorderColor`] /
 /// [`TextDecorationColor`] と同型の `currentcolor` keyword / resolved
 /// `<color>` distinction。
 ///
@@ -6834,6 +6890,14 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     TabSize(TabSize),
+    /// `line-break: auto | loose | normal | strict | anywhere` — **inherited** (CSS Text 3 §5.2).
+    LineBreak(LineBreak),
+    /// `text-justify: auto | none | inter-word | inter-character` — **inherited** (CSS Text 3 §6.2).
+    TextJustify(TextJustify),
+    /// `text-align-all: start | end | left | right | center | justify | match-parent` — **inherited** (CSS Text 3 §6.1).
+    TextAlignAll(TextAlignAll),
+    /// `text-align-last: auto | start | end | left | right | center | justify | match-parent` — **inherited** (CSS Text 3 §6.1).
+    TextAlignLast(TextAlignLast),
     /// `font-variant-caps: normal | small-caps | all-small-caps |
     /// petite-caps | all-petite-caps | unicase | titling-caps` —
     /// **inherited**、initial: [`FontVariantCaps::Normal`] (CSS Fonts 3
@@ -7537,6 +7601,13 @@ pub enum PropertyKey {
     // background-repeat 等と同節参照 (1:1 disjoint な新 field)。
     Transform,
     Filter,
+    // line-break (CSS Text 3 §5.2、semantics on PropertyValue::LineBreak).
+    LineBreak,
+    // text-justify (CSS Text 3 §6.2、semantics on PropertyValue::TextJustify).
+    TextJustify,
+    // text-align-all / text-align-last (CSS Text 3 §6.1 longhands)
+    TextAlignAll,
+    TextAlignLast,
 }
 
 impl PropertyValue {
@@ -7643,6 +7714,10 @@ impl PropertyValue {
             PropertyValue::PlaceContent(_) => PropertyKey::PlaceContent,
             PropertyValue::Hyphens(_) => PropertyKey::Hyphens,
             PropertyValue::TabSize(_) => PropertyKey::TabSize,
+            PropertyValue::LineBreak(_) => PropertyKey::LineBreak,
+            PropertyValue::TextJustify(_) => PropertyKey::TextJustify,
+            PropertyValue::TextAlignAll(_) => PropertyKey::TextAlignAll,
+            PropertyValue::TextAlignLast(_) => PropertyKey::TextAlignLast,
             PropertyValue::FontVariantCaps(_) => PropertyKey::FontVariantCaps,
             PropertyValue::Quotes(_) => PropertyKey::Quotes,
             PropertyValue::TextShadow(_) => PropertyKey::TextShadow,
@@ -8232,6 +8307,10 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "place-content" => PropertyKey::PlaceContent,
         "hyphens" => PropertyKey::Hyphens,
         "tab-size" => PropertyKey::TabSize,
+        "line-break" => PropertyKey::LineBreak,
+        "text-justify" => PropertyKey::TextJustify,
+        "text-align-all" => PropertyKey::TextAlignAll,
+        "text-align-last" => PropertyKey::TextAlignLast,
         "font-variant-caps" => PropertyKey::FontVariantCaps,
         "quotes" => PropertyKey::Quotes,
         "text-shadow" => PropertyKey::TextShadow,
@@ -8316,6 +8395,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 // math syntax itself is valid and the overall value structure is valid
                 // for the property (e.g. `margin-top: calc(...)` single value vs
                 // `margin-top: calc(...) auto` two values), treat as deferred.
+                // Tab-size never allows percentages, even inside calc (Percentages: N/A).
+                if normalized_name == "tab-size" && value.contains('%') {
+                    return None;
+                }
                 if math_function_syntax_is_valid(value.as_ref())
                     && deferred_dummy_is_valid_for_property(value.as_ref(), name)
                 {
@@ -8329,6 +8412,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 }
             }
             // If simplification itself fails (oversized), check if math syntax is valid and structurally valid before deferring.
+            // Tab-size never allows percentages, even inside calc (Percentages: N/A).
+            if normalized_name == "tab-size" && value.contains('%') {
+                return None;
+            }
             if math_function_syntax_is_valid(value.as_ref())
                 && deferred_dummy_is_valid_for_property(value.as_ref(), name)
             {
@@ -8736,6 +8823,14 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // handoff" section — this crate does not collapse it to `manual` at
         // parse time).
         "hyphens" => parse_hyphens(input).map(PropertyValue::Hyphens),
+        // CSS Text 3 §5.2 line-break. grammar: `auto | loose | normal | strict | anywhere`.
+        "line-break" => parse_line_break(input).map(PropertyValue::LineBreak),
+        // CSS Text 3 §6.2 text-justify. grammar: `auto | none | inter-word | inter-character`.
+        "text-justify" => parse_text_justify(input).map(PropertyValue::TextJustify),
+        // CSS Text 3 §6.1 text-align-all longhand.
+        "text-align-all" => parse_text_align_all(input).map(PropertyValue::TextAlignAll),
+        // CSS Text 3 §6.1 text-align-last longhand.
+        "text-align-last" => parse_text_align_last(input).map(PropertyValue::TextAlignLast),
         // CSS Text Module Level 3 §4.2
         // <https://www.w3.org/TR/css-text-3/#tab-size-property>.
         "tab-size" => parse_tab_size(input).map(PropertyValue::TabSize),
@@ -11080,7 +11175,38 @@ pub(crate) fn parse_length_allow_negative(input: &mut Parser<'_, '_>) -> Option<
 /// [`parse_margin_side`] applies the same "no filter" treatment for the same
 /// reason its own grammar allows negative values).
 fn parse_text_indent(input: &mut Parser<'_, '_>) -> Option<Length> {
-    parse_length_value(input, true)
+    // CSS Text 3 §8.1 grammar: `<length-percentage> && hanging? && each-line?`
+    // Order-independent, but at least the length component must be present.
+    // We collect optional hanging/each-line idents and one length-percentage,
+    // in any order, then ensure no extra tokens.
+    let mut length: Option<Length> = None;
+    let mut hanging = false;
+    let mut each_line = false;
+    loop {
+        // Try length-percentage (allow_percentage true)
+        if length.is_none() {
+            if let Ok(l) = input.try_parse(|i| parse_length_value(i, true).ok_or_else(|| i.new_custom_error::<(), ()>(()))) {
+                length = Some(l);
+                continue;
+            }
+        }
+        // Try hanging
+        if !hanging {
+            if input.try_parse(|i| i.expect_ident_matching("hanging")).is_ok() {
+                hanging = true;
+                continue;
+            }
+        }
+        // Try each-line
+        if !each_line {
+            if input.try_parse(|i| i.expect_ident_matching("each-line")).is_ok() {
+                each_line = true;
+                continue;
+            }
+        }
+        break;
+    }
+    length
 }
 
 /// `<length-percentage> | auto` の共通 parser — margin longhand 1 side 分。
@@ -12071,9 +12197,9 @@ fn parse_letter_or_word_spacing(input: &mut Parser<'_, '_>) -> Option<LengthOrNo
     {
         return Some(LengthOrNormal::Normal);
     }
-    // 2. `<length>` — percentage 非対応 (`allow_percentage = false`)、sign は
-    //    制限しない (上記 doc "Negative length は許容" 節)。
-    parse_length_value(input, false).map(LengthOrNormal::Length)
+    // 2. `<length-percentage>` — CSS Text 4 adds percentage support
+    //    (WPT letter-spacing-valid expects 120% / -10%). Sign not restricted.
+    parse_length_value(input, true).map(LengthOrNormal::Length)
 }
 
 /// `flex-direction: row | row-reverse | column | column-reverse` を parse
@@ -13293,6 +13419,9 @@ fn parse_word_break(input: &mut Parser<'_, '_>) -> Option<WordBreak> {
         "normal" => Some(WordBreak::Normal),
         "keep-all" => Some(WordBreak::KeepAll),
         "break-all" => Some(WordBreak::BreakAll),
+        "manual" => Some(WordBreak::Manual),
+        "auto-phrase" => Some(WordBreak::AutoPhrase),
+        "break-word" => Some(WordBreak::BreakWord),
         _ => None,
     }
 }
@@ -13373,6 +13502,7 @@ fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<WhiteSpace> {
         "nowrap" => Some(WhiteSpace::Nowrap),
         "pre-wrap" => Some(WhiteSpace::PreWrap),
         "pre-line" => Some(WhiteSpace::PreLine),
+        "break-spaces" => Some(WhiteSpace::BreakSpaces),
         _ => None,
     }
 }
@@ -13392,6 +13522,58 @@ fn parse_hyphens(input: &mut Parser<'_, '_>) -> Option<Hyphens> {
         "none" => Some(Hyphens::None),
         "manual" => Some(Hyphens::Manual),
         "auto" => Some(Hyphens::Auto),
+        _ => None,
+    }
+}
+
+fn parse_line_break(input: &mut Parser<'_, '_>) -> Option<LineBreak> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "auto" => Some(LineBreak::Auto),
+        "loose" => Some(LineBreak::Loose),
+        "normal" => Some(LineBreak::Normal),
+        "strict" => Some(LineBreak::Strict),
+        "anywhere" => Some(LineBreak::Anywhere),
+        _ => None,
+    }
+}
+
+fn parse_text_justify(input: &mut Parser<'_, '_>) -> Option<TextJustify> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "auto" => Some(TextJustify::Auto),
+        "none" => Some(TextJustify::None),
+        "inter-word" => Some(TextJustify::InterWord),
+        "inter-character" => Some(TextJustify::InterCharacter),
+        _ => None,
+    }
+}
+
+fn parse_text_align_all(input: &mut Parser<'_, '_>) -> Option<TextAlignAll> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "start" => Some(TextAlignAll::Start),
+        "end" => Some(TextAlignAll::End),
+        "left" => Some(TextAlignAll::Left),
+        "right" => Some(TextAlignAll::Right),
+        "center" => Some(TextAlignAll::Center),
+        "justify" => Some(TextAlignAll::Justify),
+        "match-parent" => Some(TextAlignAll::MatchParent),
+        _ => None,
+    }
+}
+
+fn parse_text_align_last(input: &mut Parser<'_, '_>) -> Option<TextAlignLast> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "auto" => Some(TextAlignLast::Auto),
+        "start" => Some(TextAlignLast::Start),
+        "end" => Some(TextAlignLast::End),
+        "left" => Some(TextAlignLast::Left),
+        "right" => Some(TextAlignLast::Right),
+        "center" => Some(TextAlignLast::Center),
+        "justify" => Some(TextAlignLast::Justify),
+        "match-parent" => Some(TextAlignLast::MatchParent),
         _ => None,
     }
 }
@@ -24004,13 +24186,19 @@ mod tests {
     }
 
     #[test]
-    fn word_break_rejects_deprecated_break_word() {
-        // (b) not supported — the deprecated `break-word` value on
-        // `word-break` itself is spec-valid but unimplemented (`WordBreak`
-        // doc's "Scope carving" section — its compound `normal` +
-        // `overflow-wrap: anywhere` cross-property semantics have no slot
-        // in this crate's per-property model), not (a) spec-invalid.
-        assert_eq!(parse("break-word", "word-break"), None);
+    fn word_break_accepts_break_word_and_level4_keywords() {
+        assert_eq!(
+            parse("break-word", "word-break"),
+            Some(PropertyValue::WordBreak(WordBreak::BreakWord))
+        );
+        assert_eq!(
+            parse("manual", "word-break"),
+            Some(PropertyValue::WordBreak(WordBreak::Manual))
+        );
+        assert_eq!(
+            parse("auto-phrase", "word-break"),
+            Some(PropertyValue::WordBreak(WordBreak::AutoPhrase))
+        );
     }
 
     #[test]
@@ -24595,13 +24783,23 @@ mod tests {
     // n/a" — percentage is rejected at parse time, unlike `line-height`'s
     // `<length-percentage>`.
     #[test]
-    fn letter_spacing_rejects_percentage() {
-        assert_eq!(parse("5%", "letter-spacing"), None);
+    fn letter_spacing_accepts_percentage() {
+        assert_eq!(
+            parse("5%", "letter-spacing"),
+            Some(PropertyValue::LetterSpacing(LengthOrNormal::Length(
+                Length::Percent(5.0)
+            )))
+        );
     }
 
     #[test]
-    fn word_spacing_rejects_percentage() {
-        assert_eq!(parse("5%", "word-spacing"), None);
+    fn word_spacing_accepts_percentage() {
+        assert_eq!(
+            parse("5%", "word-spacing"),
+            Some(PropertyValue::WordSpacing(LengthOrNormal::Length(
+                Length::Percent(5.0)
+            )))
+        );
     }
 
     #[test]
@@ -24833,13 +25031,11 @@ mod tests {
     }
 
     #[test]
-    fn white_space_rejects_unimplemented_break_spaces() {
-        // (b) not supported — the 6th spec-valid keyword `break-spaces` is
-        // unimplemented (`WhiteSpace` doc's "Scope carving" section — its
-        // hanging-vs-taking-space distinction at end of line is a
-        // line-breaking used-value concern this crate does not compute
-        // yet), not (a) spec-invalid.
-        assert_eq!(parse("break-spaces", "white-space"), None);
+    fn white_space_accepts_break_spaces() {
+        assert_eq!(
+            parse("break-spaces", "white-space"),
+            Some(PropertyValue::WhiteSpace(WhiteSpace::BreakSpaces))
+        );
     }
 
     #[test]
