@@ -4539,6 +4539,35 @@ pub enum TextAlignLast {
     MatchParent,
 }
 
+/// `text-combine-upright` property の value (CSS Writing Modes 3 §9.1).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextCombineUpright {
+    None,
+    All,
+}
+
+/// `text-orientation` property の value (CSS Writing Modes 3 §5.1).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextOrientation {
+    Mixed,
+    Upright,
+    Sideways,
+}
+
+/// `unicode-bidi` property の value (CSS Writing Modes 3 §2.2).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnicodeBidi {
+    Normal,
+    Embed,
+    Isolate,
+    BidiOverride,
+    IsolateOverride,
+    Plaintext,
+}
+
 /// `text-shadow`/// `text-shadow` の 1 shadow entry が運ぶ `<color>` 成分 — [`BorderColor`] /
 /// [`TextDecorationColor`] と同型の `currentcolor` keyword / resolved
 /// `<color>` distinction。
@@ -6898,6 +6927,12 @@ pub enum PropertyValue {
     TextAlignAll(TextAlignAll),
     /// `text-align-last: auto | start | end | left | right | center | justify | match-parent` — **inherited** (CSS Text 3 §6.1).
     TextAlignLast(TextAlignLast),
+    /// `text-combine-upright: none | all` — (CSS Writing Modes 3 §9.1).
+    TextCombineUpright(TextCombineUpright),
+    /// `text-orientation: mixed | upright | sideways` — (CSS Writing Modes 3 §5.1).
+    TextOrientation(TextOrientation),
+    /// `unicode-bidi: normal | embed | isolate | bidi-override | isolate-override | plaintext` — (CSS Writing Modes 3 §2.2).
+    UnicodeBidi(UnicodeBidi),
     /// `font-variant-caps: normal | small-caps | all-small-caps |
     /// petite-caps | all-petite-caps | unicase | titling-caps` —
     /// **inherited**、initial: [`FontVariantCaps::Normal`] (CSS Fonts 3
@@ -7608,6 +7643,12 @@ pub enum PropertyKey {
     // text-align-all / text-align-last (CSS Text 3 §6.1 longhands)
     TextAlignAll,
     TextAlignLast,
+    // text-combine-upright (CSS Writing Modes 3 §9.1)
+    TextCombineUpright,
+    // text-orientation (CSS Writing Modes 3 §5.1)
+    TextOrientation,
+    // unicode-bidi (CSS Writing Modes 3 §2.2)
+    UnicodeBidi,
 }
 
 impl PropertyValue {
@@ -7718,6 +7759,9 @@ impl PropertyValue {
             PropertyValue::TextJustify(_) => PropertyKey::TextJustify,
             PropertyValue::TextAlignAll(_) => PropertyKey::TextAlignAll,
             PropertyValue::TextAlignLast(_) => PropertyKey::TextAlignLast,
+            PropertyValue::TextCombineUpright(_) => PropertyKey::TextCombineUpright,
+            PropertyValue::TextOrientation(_) => PropertyKey::TextOrientation,
+            PropertyValue::UnicodeBidi(_) => PropertyKey::UnicodeBidi,
             PropertyValue::FontVariantCaps(_) => PropertyKey::FontVariantCaps,
             PropertyValue::Quotes(_) => PropertyKey::Quotes,
             PropertyValue::TextShadow(_) => PropertyKey::TextShadow,
@@ -8311,6 +8355,9 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "text-justify" => PropertyKey::TextJustify,
         "text-align-all" => PropertyKey::TextAlignAll,
         "text-align-last" => PropertyKey::TextAlignLast,
+        "text-combine-upright" => PropertyKey::TextCombineUpright,
+        "text-orientation" => PropertyKey::TextOrientation,
+        "unicode-bidi" => PropertyKey::UnicodeBidi,
         "font-variant-caps" => PropertyKey::FontVariantCaps,
         "quotes" => PropertyKey::Quotes,
         "text-shadow" => PropertyKey::TextShadow,
@@ -8831,6 +8878,12 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "text-align-all" => parse_text_align_all(input).map(PropertyValue::TextAlignAll),
         // CSS Text 3 §6.1 text-align-last longhand.
         "text-align-last" => parse_text_align_last(input).map(PropertyValue::TextAlignLast),
+        // CSS Writing Modes 3 §9.1 text-combine-upright. grammar: `none | all`.
+        "text-combine-upright" => parse_text_combine_upright(input).map(PropertyValue::TextCombineUpright),
+        // CSS Writing Modes 3 §5.1 text-orientation. grammar: `mixed | upright | sideways`.
+        "text-orientation" => parse_text_orientation(input).map(PropertyValue::TextOrientation),
+        // CSS Writing Modes 3 §2.2 unicode-bidi. grammar: `normal | embed | isolate | bidi-override | isolate-override | plaintext`.
+        "unicode-bidi" => parse_unicode_bidi(input).map(PropertyValue::UnicodeBidi),
         // CSS Text Module Level 3 §4.2
         // <https://www.w3.org/TR/css-text-3/#tab-size-property>.
         "tab-size" => parse_tab_size(input).map(PropertyValue::TabSize),
@@ -13606,6 +13659,39 @@ fn parse_text_align_last(input: &mut Parser<'_, '_>) -> Option<TextAlignLast> {
 /// (`None`)。ASCII case-insensitive で ident を比較する (CSS Values 3
 /// §3.1 "Pre-defined Keywords" <https://www.w3.org/TR/css-values-3/#keywords>:
 /// keyword は ASCII case-insensitive)。
+fn parse_text_combine_upright(input: &mut Parser<'_, '_>) -> Option<TextCombineUpright> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "none" => Some(TextCombineUpright::None),
+        "all" => Some(TextCombineUpright::All),
+        _ => None,
+    }
+}
+
+fn parse_text_orientation(input: &mut Parser<'_, '_>) -> Option<TextOrientation> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "mixed" => Some(TextOrientation::Mixed),
+        "upright" => Some(TextOrientation::Upright),
+        "sideways" => Some(TextOrientation::Sideways),
+        _ => None,
+    }
+}
+
+fn parse_unicode_bidi(input: &mut Parser<'_, '_>) -> Option<UnicodeBidi> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "normal" => Some(UnicodeBidi::Normal),
+        "embed" => Some(UnicodeBidi::Embed),
+        "isolate" => Some(UnicodeBidi::Isolate),
+        "bidi-override" => Some(UnicodeBidi::BidiOverride),
+        "isolate-override" => Some(UnicodeBidi::IsolateOverride),
+        "plaintext" => Some(UnicodeBidi::Plaintext),
+        _ => None,
+    }
+}
+
+
 fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
     // sibling multi-keyword idiom (parse_string_fetch / parse_content_part /
     // parse_content_text_keyword) に揃える。ASCII case-insensitive matching は

@@ -2,6 +2,34 @@
 # needs bundled fonts for cross-machine determinism.
 # Future test subsets (css/css-page, etc.) added under separate issues.
 fonts
+css/selectors/parsing
 css/css-text/parsing
 css/css-text
 css/css-values
+
+# remaining 19 parsing categories (goal G 2026-09-14)
+css/compositing/parsing
+css/css-color/parsing
+css/css-gaps/parsing
+css/css-images/parsing
+css/css-lists/parsing
+css/css-masking/parsing
+css/css-overscroll-behavior/parsing
+css/css-page/parsing
+css/css-pseudo/parsing
+css/css-rhythm/parsing
+css/css-scroll-anchoring/parsing
+css/css-size-adjust/parsing
+css/css-sizing/parsing
+css/css-transitions/parsing
+css/css-view-transitions/parsing
+css/css-will-change/parsing
+css/css-writing-modes/parsing
+css/css-writing-modes
+css/cssom-view/parsing
+css/filter-effects/parsing
+css/css-text-decor/parsing
+css/css-flexbox/parsing
+css/css-flexbox
+css/css-grid/parsing
+css/css-grid
