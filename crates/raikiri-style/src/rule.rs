@@ -11,10 +11,9 @@ use selectors::parser::SelectorList;
 use crate::RaikiriSelectorImpl;
 use crate::property::{
     BackgroundShorthand, Border, DeferredValue, FlexFlow, FlexShorthand, GapShorthand,
-    GridLineShorthand,
-    Length, LengthOrAuto, Outline, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand,
-    PlaceSelfShorthand, PropertyKey, PropertyValue, Sides, StartEnd, TextDecorationShorthand,
-    parse_value,
+    GridLineShorthand, Length, LengthOrAuto, Outline, OverflowXY, PlaceContentShorthand,
+    PlaceItemsShorthand, PlaceSelfShorthand, PropertyKey, PropertyValue, Sides, StartEnd,
+    TextDecorationShorthand, parse_value,
 };
 
 /// 1 property declaration = value + `!important` flag。

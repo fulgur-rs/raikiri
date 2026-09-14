@@ -7962,7 +7962,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         | PropertyValue::TextAlignLast(_)
         | PropertyValue::TextCombineUpright(_)
         | PropertyValue::TextOrientation(_)
-        | PropertyValue::UnicodeBidi(_) => {},
+        | PropertyValue::UnicodeBidi(_) => {}
         // These values are resolved before ordinary winners reach this
         // function. Keeping an explicit no-op makes direct internal callers
         // panic-free without allowing raw deferred data into a computed field.

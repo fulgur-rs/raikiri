@@ -63,19 +63,20 @@ pub(crate) fn paint_canvas_background(
     );
 }
 
-fn canvas_background_color(
-    document: &Document,
-    cascade: &CascadeResult,
-) -> Option<Color> {
+fn canvas_background_color(document: &Document, cascade: &CascadeResult) -> Option<Color> {
     if let Some(html_id) = find_html(document) {
         let cv = &cascade.computed[html_id];
-        if let Some(c) = effective_background_color(cv.background_color, &cv.background_image, cv.color) {
+        if let Some(c) =
+            effective_background_color(cv.background_color, &cv.background_image, cv.color)
+        {
             return Some(Color::from_rgba8(c.r, c.g, c.b, c.a));
         }
     }
     if let Some(body_id) = find_body(document) {
         let cv = &cascade.computed[body_id];
-        if let Some(c) = effective_background_color(cv.background_color, &cv.background_image, cv.color) {
+        if let Some(c) =
+            effective_background_color(cv.background_color, &cv.background_image, cv.color)
+        {
             return Some(Color::from_rgba8(c.r, c.g, c.b, c.a));
         }
     }
@@ -203,7 +204,13 @@ pub(crate) fn paint_document(
                 let child_parent_x = abs_x + pos_dx;
                 let child_parent_y = abs_y + pos_dy;
                 for &child in node.children.iter().rev() {
-                    stack.push((child, child_parent_x, child_parent_y, child_font_size, child_shift_y));
+                    stack.push((
+                        child,
+                        child_parent_x,
+                        child_parent_y,
+                        child_font_size,
+                        child_shift_y,
+                    ));
                 }
             }
             NodeKind::Text => {
@@ -668,7 +675,10 @@ fn position_offset_px(cv: &raikiri_style::ComputedValues) -> (f32, f32) {
     // Inset properties are <length-percentage> | auto. Percentages are resolved to px earlier (or auto -> 0).
     // For relative, left vs right: if left != auto, dx = left, else if right != auto, dx = -right, else 0.
     // Similarly top vs bottom for dy.
-    if !matches!(cv.position, raikiri_style::property::PositionValue::Relative) {
+    if !matches!(
+        cv.position,
+        raikiri_style::property::PositionValue::Relative
+    ) {
         return (0.0, 0.0);
     }
     let to_px = |v: raikiri_style::resolve::ComputedLengthPercentageOrAuto| -> Option<f32> {
