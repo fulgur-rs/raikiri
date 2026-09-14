@@ -121,12 +121,14 @@ use crate::cascade::{
     resolve_custom_property_environment, resolve_deferred_value, resolve_relative_font_size,
 };
 use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_properties};
+#[allow(unused_imports)]
 use crate::property::{
     BackgroundShorthand, BackgroundSize, Border, BorderColor, BorderRadius, BorderStyle,
     BoxShadowItem, CssPosition, CssPositionOffset, CustomProperty, FlexBasisValue, FlexShorthand,
     GapShorthand, GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
     Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue,
+    TextCombineUpright, TextOrientation, UnicodeBidi,
     Sides, TextShadowItem, TransformFunction, parse_length_allow_negative,
     parse_non_negative_length, parse_value, resolve_overflow, resolve_writing_mode,
 };
@@ -3100,6 +3102,9 @@ fn absolutize_in_page_context(
         | PropertyValue::TextJustify(_)
         | PropertyValue::TextAlignAll(_)
         | PropertyValue::TextAlignLast(_)
+        | PropertyValue::TextCombineUpright(_)
+        | PropertyValue::TextOrientation(_)
+        | PropertyValue::UnicodeBidi(_)
         // `flex-direction`/`flex-wrap` (CSS Flexible Box Layout Module
         // Level 1 §5.1/§5.2) carry no length and computed value = specified
         // keyword — nothing for phase 3 to absolutize.
@@ -6528,7 +6533,7 @@ mod tests {
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 88;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 91;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -6894,6 +6899,9 @@ mod tests {
         TextJustify => PropertyValue::TextJustify(TextJustify::Auto),
         TextAlignAll => PropertyValue::TextAlignAll(TextAlignAll::Start),
         TextAlignLast => PropertyValue::TextAlignLast(TextAlignLast::Auto),
+        TextCombineUpright => PropertyValue::TextCombineUpright(TextCombineUpright::None),
+        TextOrientation => PropertyValue::TextOrientation(TextOrientation::Mixed),
+        UnicodeBidi => PropertyValue::UnicodeBidi(UnicodeBidi::Normal),
         // No specified/computed distinction for `font-variant-caps`
         // (computed value = specified keyword, `FontVariantCaps` doc) — any
         // value is "worst case" (`Direction` sibling comment above uses the
@@ -7370,6 +7378,9 @@ mod tests {
         TextJustify,
         TextAlignAll,
         TextAlignLast,
+        TextCombineUpright,
+        TextOrientation,
+        UnicodeBidi,
         FontVariantCaps,
         Quotes,
         TextShadow,
@@ -7694,7 +7705,10 @@ mod tests {
             PropertyValue::LineBreak(_) => None,
             PropertyValue::TextJustify(_) => None,
             PropertyValue::TextAlignAll(_) => None,
-            PropertyValue::TextAlignLast(_) => None,
+            PropertyValue::TextAlignLast(_)
+            | PropertyValue::TextCombineUpright(_)
+            | PropertyValue::TextOrientation(_)
+            | PropertyValue::UnicodeBidi(_) => None,
             PropertyValue::LineHeight(lh) => line_height(*lh),
             // `font-size` だけは `%` も残滓 (§5.5.1 の明示的例外)。
             PropertyValue::FontSize(l) => length_absolute_only(*l, "font-size: <percentage>"),

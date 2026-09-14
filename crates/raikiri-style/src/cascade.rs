@@ -7202,7 +7202,10 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::LineBreak(_)
         | PropertyValue::TextJustify(_)
         | PropertyValue::TextAlignAll(_)
-        | PropertyValue::TextAlignLast(_)) => v,
+        | PropertyValue::TextAlignLast(_)
+        | PropertyValue::TextCombineUpright(_)
+        | PropertyValue::TextOrientation(_)
+        | PropertyValue::UnicodeBidi(_)) => v,
     })
 }
 
@@ -7925,11 +7928,14 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // (`TransformFunction`/`FilterFunction` doc's scope notes).
         PropertyValue::Transform(v) => target.transform = v,
         PropertyValue::Filter(v) => target.filter = v,
-        // New Text 3 properties are keyword-only with no staging field yet (parsing only).
+        // New Text 3 / Writing Modes 3 properties are keyword-only with no staging field yet (parsing only).
         PropertyValue::LineBreak(_)
         | PropertyValue::TextJustify(_)
         | PropertyValue::TextAlignAll(_)
-        | PropertyValue::TextAlignLast(_) => {},
+        | PropertyValue::TextAlignLast(_)
+        | PropertyValue::TextCombineUpright(_)
+        | PropertyValue::TextOrientation(_)
+        | PropertyValue::UnicodeBidi(_) => {},
         // These values are resolved before ordinary winners reach this
         // function. Keeping an explicit no-op makes direct internal callers
         // panic-free without allowing raw deferred data into a computed field.

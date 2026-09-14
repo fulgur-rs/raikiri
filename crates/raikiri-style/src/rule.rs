@@ -628,7 +628,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::LineBreak(_)
         | PropertyValue::TextJustify(_)
         | PropertyValue::TextAlignAll(_)
-        | PropertyValue::TextAlignLast(_) => expand_none(d, push),
+        | PropertyValue::TextAlignLast(_) | PropertyValue::TextCombineUpright(_) | PropertyValue::TextOrientation(_) | PropertyValue::UnicodeBidi(_) => expand_none(d, push),
         PropertyValue::Flex(f) => expand_flex(f, d.important, push),
         PropertyValue::Gap(g) => expand_gap(g, d.important, push),
         PropertyValue::PlaceContent(p) => expand_place_content(p, d.important, push),

@@ -1223,9 +1223,9 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
             );
         }
 
-        // baseline populated via chore(wpt): pin PASS file-level parsing tests (191 files, 31 categories, WPT 97ea26e)
+        // baseline populated via chore(wpt): pin PASS file-level parsing tests + goal G (79) + selectors (10) (WPT 97ea26e)
         // quarantine and deprecated stay empty until a developer PR adds a flake or crasher.
-        assert_eq!(set.baseline.entries.len(), 291); // 191 parsing + 86 reftest (goal B) + 14 css-values parsing (goal D)
+        assert_eq!(set.baseline.entries.len(), 403);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
