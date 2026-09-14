@@ -1092,6 +1092,12 @@ pub struct ComputedValues {
     /// `content`) or a computed `<length-percentage>` value
     /// ([`ComputedFlexBasis`] doc).
     pub flex_basis: ComputedFlexBasis,
+    /// `order`. **non-inherited**, initial: `0` (CSS Flexible Box Layout
+    /// Module Level 1 §4.2
+    /// <https://www.w3.org/TR/css-flexbox-1/#order-property>, "Inherited:
+    /// no"). Computed value = specified integer (no length payload —
+    /// same opaque pass-through as [`Self::flex_grow`]).
+    pub order: i32,
     /// `justify-content`. **non-inherited**, initial:
     /// [`ContentAlignmentValue::Normal`] (CSS Box Alignment Module Level 3
     /// §5.1 <https://www.w3.org/TR/css-align-3/#propdef-justify-content>,
@@ -1584,6 +1590,9 @@ impl ComputedValues {
             // CSS Flexible Box Layout Module Level 1 §7.2.3: flex-basis
             // initial は `auto`。
             flex_basis: ComputedFlexBasis::Auto,
+            // CSS Flexible Box Layout Module Level 1 §4.2: order initial
+            // は `0`。
+            order: 0,
             // CSS Box Alignment Module Level 3 §5.1: justify-content /
             // align-content initial は `normal`。
             justify_content: ContentAlignmentValue::Normal,
@@ -2120,6 +2129,9 @@ mod tests {
             // CSS Flexible Box Layout Module Level 1 §7.2.3: initial
             // (`auto`) と異なる値。
             flex_basis: ComputedFlexBasis::Px(50.0),
+            // CSS Flexible Box Layout Module Level 1 §4.2: initial (`0`)
+            // と異なる値。
+            order: 5,
             // CSS Box Alignment Module Level 3 §5.1/§5.1/§7.2: initial
             // (`normal`) と異なる値。
             justify_content: ContentAlignmentValue::SpaceBetween,
