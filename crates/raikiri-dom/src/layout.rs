@@ -8,6 +8,7 @@
 //! 全 helper は crate-private、pub 型は [`layout_single_page`] のみ。
 
 use raikiri_traits::NodeKind;
+use rayon::prelude::*;
 
 use crate::document::Document;
 use crate::node::NodeFlags;
@@ -2885,14 +2886,26 @@ pub(crate) fn preshape_text(
     layout_cx: &mut LayoutContext<()>,
     max_advance: f32,
 ) {
+    // Cheap threshold: for tiny DOMs sequential is faster than rayon overhead.
+    // Collect eligible Text nodes first to avoid borrowing `doc.nodes` mutably
+    // across parallel tasks (which would require Sync on Document). Owned jobs
+    // are Send and avoid sharing &Document across threads.
+    struct Job {
+        idx: usize,
+        text: String,
+        family_str: String,
+        font_size_raw: f32,
+        font_weight_raw: f32,
+        font_style: StyleFontStyle,
+        line_height_raw: ComputedLineHeight,
+    }
+
+    let mut jobs: Vec<Job> = Vec::new();
+    jobs.reserve(doc.nodes.len() / 2);
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Text {
             continue;
         }
-        // template subtree /
-        // detached な text は paint も layout tree (taffy) からも filter される。
-        // 無駄な parley shape + intrinsic size 計算を避けるため、bit gate で
-        // 早期 skip する。paint / cascade の gate と一貫。
         if !doc.nodes[idx].is_in_document() {
             continue;
         }
@@ -2902,78 +2915,111 @@ pub(crate) fn preshape_text(
             }
             _ => continue,
         };
-        // cascade は Text node 位置にも ComputedValues を populate する
-        // (親から inherit)。test `text_node_inherits_from_element_parent`
-        // で確認済。
         let cv = &cascade.computed[idx];
-
-        // font-family: Arc<Vec<Atom>> → parley::FontFamily。Atom は SmolStr
-        // newtype なので as_str() で &str に落として parley に食わせる
-        // (`cv.font_family.iter()` は Arc の Deref 経由でそのまま動く)。
-        //
-        // API tuning: brief pseudo-code は `parley::FontStack` を想定していたが
-        // parley 0.10 実 API には FontStack 型が存在せず、代わりに
-        // `parley::style::FontFamily` (re-export元は `parlance` crate) を使う。
-        // `FontFamily::from(&str)` は CSS 形式の family list をそのまま source
-        // string として保持する `FontFamily::Source` variant を返す。
         let family_str: String = cv
             .font_family
             .iter()
             .map(|a| a.0.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        let font_family = FontFamily::from(family_str.as_str());
+        jobs.push(Job {
+            idx,
+            text,
+            family_str,
+            font_size_raw: cv.font_size.px(),
+            font_weight_raw: cv.font_weight,
+            font_style: cv.font_style,
+            line_height_raw: cv.line_height,
+        });
+    }
 
-        // `cv.font_size` は computed 層の
-        // `ComputedLength` (px) になったので match も fallback も要らない。
-        // 以前は specified 層の `Length` を受けていたため
-        // `LayoutError::Internal` を返す wildcard arm があったが、`em` / `rem` /
-        // `pt` は cascade の phase 2 で絶対化されるようになり到達しない。
-        //
-        // site 5: ただし**値**は非有限になり得るので
-        // parley に渡す直前で有限化する。下限 0.0 は grammar
-        // `<length-percentage [0,∞]>` (CSS Fonts 4 §2.5) に一致。clamp が
-        // 実際に発火した場合は `doc.layout_warnings` に積む (silent から
-        // stderr-visible への降格 — `sanitize_finite` の doc参照)。
-        let font_size_px = sanitize_finite(
-            cv.font_size.px(),
-            0.0,
-            MAX_FONT_SIZE_PX,
-            "font-size",
-            &mut doc.layout_warnings,
-        );
+    if jobs.is_empty() {
+        return;
+    }
 
-        let mut builder = layout_cx.ranged_builder(fonts, &text, 1.0, true);
-        builder.push_default(StyleProperty::FontFamily(font_family));
-        builder.push_default(StyleProperty::FontSize(font_size_px));
-        // `cv.font_weight` はすでに `f32` に格上げ済み
-        // (旧 `u16`) — `parley::FontWeight::new` が要求する型そのものなので
-        // cast は不要 (`as f32` を残すと `clippy::unnecessary_cast` に抵触する)。
-        //
-        // site 6 (前述の 5 site に続く 6 本目): 値は
-        // 非有限になり得るので (`ComputedValues` は全 field が `pub` — 詳細は
-        // `sanitize_font_weight` の doc) parley に渡す直前で有限化する。
-        let font_weight = sanitize_font_weight(cv.font_weight, &mut doc.layout_warnings);
-        builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
-        builder.push_default(StyleProperty::FontStyle(font_style_to_parley(
-            cv.font_style,
-        )));
-        // sites 7-8: `cv.line_height` も他の numeric field 同様
-        // 非有限になり得るので (`sanitize_line_height` の doc参照) parley に
-        // 渡す直前で有限化してから mapping する。
-        let line_height = sanitize_line_height(cv.line_height, &mut doc.layout_warnings);
-        builder.push_default(StyleProperty::LineHeight(line_height_to_parley(
-            line_height,
-        )));
-        let mut layout: Layout<()> = builder.build(&text);
-        layout.break_all_lines(Some(max_advance));
-        // API tuning: brief pseudo-code は `align(Some(max_advance), Alignment::Start,
-        // AlignmentOptions::default())` (3 引数) を想定していたが、parley 0.10 実 API の
-        // `Layout::align` は 2 引数 (`alignment`, `options`) のみ。max_advance は
-        // 直前の `break_all_lines(Some(max_advance))` で既に確定済のため、align 側では
-        // 再指定不要 (内部的に break 時の width を使う)。
-        layout.align(Alignment::Start, AlignmentOptions::default());
+    // Copy original FontContext once; each rayon task clones from this base.
+    // LayoutContext is cheap (clone returns new empty), so per-task new() is fine.
+    // For very small job counts rayon overhead dominates; use sequential fallback.
+    const PAR_THRESHOLD: usize = 32;
+    if jobs.len() < PAR_THRESHOLD {
+        for job in jobs {
+            let mut warnings: Vec<LayoutWarn> = Vec::new();
+            let font_size_px = sanitize_finite(
+                job.font_size_raw,
+                0.0,
+                MAX_FONT_SIZE_PX,
+                "font-size",
+                &mut warnings,
+            );
+            let font_weight = sanitize_font_weight(job.font_weight_raw, &mut warnings);
+            let line_height = sanitize_line_height(job.line_height_raw, &mut warnings);
+            let font_family = FontFamily::from(job.family_str.as_str());
+            let mut builder = layout_cx.ranged_builder(fonts, &job.text, 1.0, true);
+            builder.push_default(StyleProperty::FontFamily(font_family));
+            builder.push_default(StyleProperty::FontSize(font_size_px));
+            builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
+            builder.push_default(StyleProperty::FontStyle(font_style_to_parley(
+                job.font_style,
+            )));
+            builder.push_default(StyleProperty::LineHeight(line_height_to_parley(
+                line_height,
+            )));
+            let mut layout: Layout<()> = builder.build(&job.text);
+            layout.break_all_lines(Some(max_advance));
+            layout.align(Alignment::Start, AlignmentOptions::default());
+            doc.layout_warnings.extend(warnings);
+            if let Some(t) = doc.nodes[job.idx].data.as_text_mut() {
+                t.text_layout = Some(layout);
+            }
+        }
+        return;
+    }
 
+    let base_fonts: FontContext = fonts.clone();
+    // Parallel shaping: chunked to amortize FontContext/LayoutContext setup.
+    // Per-job `LayoutContext::new()` is expensive (ICU AnalysisDataSources etc.)
+    // so we reuse one FontContext+LayoutContext per rayon chunk.
+    // Chunk size 128 reduces clones to ~4/16 for 500/2000 jobs.
+    let results: Vec<(usize, Layout<()>, Vec<LayoutWarn>)> = jobs
+        .par_iter()
+        .chunks(256)
+        .flat_map(|chunk| {
+            let mut fonts_thread = base_fonts.clone();
+            let mut lcx = LayoutContext::<()>::new();
+            let mut out = Vec::with_capacity(chunk.len());
+            for job in chunk {
+                let mut warnings: Vec<LayoutWarn> = Vec::new();
+                let font_size_px = sanitize_finite(
+                    job.font_size_raw,
+                    0.0,
+                    MAX_FONT_SIZE_PX,
+                    "font-size",
+                    &mut warnings,
+                );
+                let font_weight = sanitize_font_weight(job.font_weight_raw, &mut warnings);
+                let line_height = sanitize_line_height(job.line_height_raw, &mut warnings);
+                let font_family = FontFamily::from(job.family_str.as_str());
+                let mut builder = lcx.ranged_builder(&mut fonts_thread, &job.text, 1.0, true);
+                builder.push_default(StyleProperty::FontFamily(font_family));
+                builder.push_default(StyleProperty::FontSize(font_size_px));
+                builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
+                builder.push_default(StyleProperty::FontStyle(font_style_to_parley(
+                    job.font_style,
+                )));
+                builder.push_default(StyleProperty::LineHeight(line_height_to_parley(
+                    line_height,
+                )));
+                let mut layout: Layout<()> = builder.build(&job.text);
+                layout.break_all_lines(Some(max_advance));
+                layout.align(Alignment::Start, AlignmentOptions::default());
+                out.push((job.idx, layout, warnings));
+            }
+            out
+        })
+        .collect();
+
+    for (idx, layout, warnings) in results {
+        doc.layout_warnings.extend(warnings);
         if let Some(t) = doc.nodes[idx].data.as_text_mut() {
             t.text_layout = Some(layout);
         }
