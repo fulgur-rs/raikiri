@@ -3425,9 +3425,15 @@ fn absolutize_in_page_context(
                 resolve_length(v, font_size, own_line_height, ctx).px(),
             ))
         }
-        // ── width / height ────────────────────────────────────────────────
+        // ── width / height / max-* ────────────────────────────────────────
         PropertyValue::Width(v) => PropertyValue::Width(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Height(v) => PropertyValue::Height(lpa(v, font_size, own_line_height, ctx)),
+        PropertyValue::MaxWidth(v) => PropertyValue::MaxWidth(lpa(v, font_size, own_line_height, ctx)),
+        PropertyValue::MaxHeight(v) => PropertyValue::MaxHeight(lpa(v, font_size, own_line_height, ctx)),
+        PropertyValue::Top(v) => PropertyValue::Top(lpa(v, font_size, own_line_height, ctx)),
+        PropertyValue::Right(v) => PropertyValue::Right(lpa(v, font_size, own_line_height, ctx)),
+        PropertyValue::Bottom(v) => PropertyValue::Bottom(lpa(v, font_size, own_line_height, ctx)),
+        PropertyValue::Left(v) => PropertyValue::Left(lpa(v, font_size, own_line_height, ctx)),
         // ── background-size / background-position ───────────────────────
         // CSS Backgrounds and Borders 3 §2.9/§2.6: both carry
         // `<length-percentage>` components, absolutized against this page
@@ -6517,7 +6523,7 @@ mod tests {
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 80;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 84;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -6718,6 +6724,8 @@ mod tests {
         })),
         Width => PropertyValue::Width(LengthOrAuto::Length(Length::Em(3.0))),
         Height => PropertyValue::Height(LengthOrAuto::Length(Length::Em(4.0))),
+        MaxWidth => PropertyValue::MaxWidth(LengthOrAuto::Length(Length::Em(5.0))),
+        MaxHeight => PropertyValue::MaxHeight(LengthOrAuto::Length(Length::Em(6.0))),
         BoxSizing => PropertyValue::BoxSizing(BoxSizing::BorderBox),
         // No specified/computed distinction for `direction` (computed
         // value = specified value) — any value is "worst case".
@@ -7137,6 +7145,10 @@ mod tests {
         // CSS Filter Effects Level 1 §5 — non-initial (a `blur()` with an
         // `Em` payload), same rationale as `Transform` above.
         Filter => PropertyValue::Filter(Arc::new(vec![FilterFunction::Blur(Length::Em(1.0))])),
+        Top => PropertyValue::Top(LengthOrAuto::Auto),
+        Right => PropertyValue::Right(LengthOrAuto::Auto),
+        Bottom => PropertyValue::Bottom(LengthOrAuto::Auto),
+        Left => PropertyValue::Left(LengthOrAuto::Auto),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -7303,6 +7315,8 @@ mod tests {
         Border,
         Width,
         Height,
+        MaxWidth,
+        MaxHeight,
         BoxSizing,
         Direction,
         OverflowX,
@@ -7389,6 +7403,10 @@ mod tests {
         ClipPath,
         Transform,
         Filter,
+        Top,
+        Right,
+        Bottom,
+        Left,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -7682,7 +7700,9 @@ mod tests {
             | PropertyValue::MarginBottom(l)
             | PropertyValue::MarginLeft(l)
             | PropertyValue::Width(l)
-            | PropertyValue::Height(l) => length_or_auto(*l),
+            | PropertyValue::Height(l)
+            | PropertyValue::MaxWidth(l)
+            | PropertyValue::MaxHeight(l) => length_or_auto(*l),
             PropertyValue::Padding(s) => sides(*s, length),
             PropertyValue::Margin(s) => sides(*s, length_or_auto),
             PropertyValue::PaddingInline(p) | PropertyValue::PaddingBlock(p) => {
@@ -7723,6 +7743,10 @@ mod tests {
             | PropertyValue::Content(_)
             | PropertyValue::StringSet(_)
             | PropertyValue::Position(_)
+        | PropertyValue::Top(_)
+        | PropertyValue::Right(_)
+        | PropertyValue::Bottom(_)
+        | PropertyValue::Left(_)
             | PropertyValue::Direction(_)
             | PropertyValue::BorderTopStyle(_)
             | PropertyValue::BorderRightStyle(_)

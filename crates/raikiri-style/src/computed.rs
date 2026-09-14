@@ -17,7 +17,7 @@ use crate::property::{
     AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
     BackgroundRepeatKeyword, BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside,
     ClearValue, ClipPath, ContentAlignmentValue, ContentComponent, CssColor, Direction,
-    DisplayValue, FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle,
+    DisplayValue, PositionValue, FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle,
     FontVariantCaps, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Hyphens, Isolation,
     MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
     OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
@@ -424,6 +424,8 @@ pub struct ComputedValues {
     /// が per-document `Vec<RunningTemplate>` を組み立てる際に per-node seed を
     /// concatenate する。design doc §7.3 の 2-tier キャッシュ static side に相当。
     pub running_templates: Vec<RunningTemplate>,
+    /// `position` — **non-inherited**, initial: `static` (CSS Positioned Layout Module Level 3 §3).
+    pub position: PositionValue,
     /// `text-align`。**inherited**、initial: [`TextAlign::Start`]
     /// (CSS Text 3 §6.1 "Text Alignment: the text-align shorthand"
     /// <https://www.w3.org/TR/css-text-3/#text-align-property>)。
@@ -666,6 +668,18 @@ pub struct ComputedValues {
     ///   "Initial: auto", "Applies to: all elements except non-replaced
     ///   inlines", "Inherited: no", "Percentages: relative to containing block".
     pub height: ComputedLengthPercentageOrAuto,
+    /// `max-width` — **non-inherited**, initial `none` (mapped to Auto as placeholder).
+    pub max_width: ComputedLengthPercentageOrAuto,
+    /// `max-height` — **non-inherited**, initial `none` (mapped to Auto as placeholder).
+    pub max_height: ComputedLengthPercentageOrAuto,
+    /// `top`。**non-inherited**、initial: `auto`.
+    pub top: ComputedLengthPercentageOrAuto,
+    /// `right`。**non-inherited**、initial: `auto`.
+    pub right: ComputedLengthPercentageOrAuto,
+    /// `bottom`。**non-inherited**、initial: `auto`.
+    pub bottom: ComputedLengthPercentageOrAuto,
+    /// `left`。**non-inherited**、initial: `auto`.
+    pub left: ComputedLengthPercentageOrAuto,
     /// `box-sizing`。**non-inherited**、initial: [`BoxSizing::ContentBox`]
     /// (CSS Sizing 3 §3.3 "Box Edges for Sizing: the box-sizing property"
     /// <https://www.w3.org/TR/css-sizing-3/#box-sizing>、"Initial: `content-box`"
@@ -1453,6 +1467,7 @@ impl ComputedValues {
             // CSS GCPM 3 §1.2.1: position: running() seed initial は empty
             // (position の initial は `static`、running(name) 無し)。
             running_templates: Vec::new(),
+            position: PositionValue::Static,
             // CSS Text 3 §6.1: text-align initial is `start`
             text_align: TextAlign::Start,
             // CSS Writing Modes 4 §2.1: direction initial is `ltr`。
@@ -1504,7 +1519,13 @@ impl ComputedValues {
             width: ComputedLengthPercentageOrAuto::Auto,
             // CSS Sizing 3 §3.1.1: height initial は `auto`。
             height: ComputedLengthPercentageOrAuto::Auto,
-            // CSS Sizing 3 §3.3: box-sizing initial は `content-box`。
+            max_width: ComputedLengthPercentageOrAuto::Auto,
+            max_height: ComputedLengthPercentageOrAuto::Auto,
+            top: ComputedLengthPercentageOrAuto::Auto,
+            right: ComputedLengthPercentageOrAuto::Auto,
+            bottom: ComputedLengthPercentageOrAuto::Auto,
+            left: ComputedLengthPercentageOrAuto::Auto,
+            // CSS Sizing 3 §3.3: box-sizing initial は `content-box`.
             box_sizing: BoxSizing::ContentBox,
             // CSS Overflow 3 §3.1: overflow-x/overflow-y initial は `visible`。
             // 両 axis が `visible` なので cross-axis
@@ -2014,6 +2035,13 @@ mod tests {
             outline_offset: ComputedLength(5.0),
             width: ComputedLengthPercentageOrAuto::Px(200.0),
             height: ComputedLengthPercentageOrAuto::Px(200.0),
+            max_width: ComputedLengthPercentageOrAuto::Px(200.0),
+            max_height: ComputedLengthPercentageOrAuto::Px(200.0),
+            top: ComputedLengthPercentageOrAuto::Px(10.0),
+            right: ComputedLengthPercentageOrAuto::Px(20.0),
+            bottom: ComputedLengthPercentageOrAuto::Px(30.0),
+            left: ComputedLengthPercentageOrAuto::Px(40.0),
+            position: PositionValue::Relative,
             box_sizing: BoxSizing::BorderBox,
             // CSS Overflow 3 §3.1: `Hidden`/`Scroll` — non-initial (`visible`)
             // pair, and one that is also stable under `resolve_overflow`
