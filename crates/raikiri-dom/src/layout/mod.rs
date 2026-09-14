@@ -41,7 +41,6 @@ use taffy::{
 
 pub(crate) mod table;
 
-
 /// Document arena を DFS で walk し、最初の `<body>` element の arena index を返す。
 ///
 /// iterative `Vec` stack で実装 (cascade §deep_nesting の pattern と一貫、
