@@ -2112,6 +2112,26 @@ pub struct FlexShorthand {
     pub basis: FlexBasisValue,
 }
 
+/// `flex-flow` shorthand の specified value.
+///
+/// CSS Flexible Box Layout Module Level 1 §5.3 "Flex Direction and Wrap: the
+/// flex-flow shorthand"
+/// <https://www.w3.org/TR/css-flexbox-1/#flex-flow-property>: value grammar
+/// `<'flex-direction'> || <'flex-wrap'>`、
+/// "Initial: see individual properties"、"Inherited: no"、
+/// "Applies to: flex containers"、"Computed value: see individual properties".
+///
+/// `||` (any-order、each component at most once、at least 1 必須) —
+/// 省略成分は対応 longhand の initial (direction=row / wrap=nowrap) に
+/// 展開される ([`parse_flex_flow`] が適用)。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FlexFlow {
+    /// [`Self`] doc 参照 — `<'flex-direction'>` 成分、省略時 Row。
+    pub direction: FlexDirectionValue,
+    /// [`Self`] doc 参照 — `<'flex-wrap'>` 成分、省略時 NoWrap。
+    pub wrap: FlexWrapValue,
+}
+
 /// `justify-content` / `align-content` 共有 value ("content-distribution"
 /// alignment)。
 ///
@@ -6958,6 +6978,19 @@ pub enum PropertyValue {
     /// 3 longhand に展開するため、element cascade 段には通常到達しない
     /// (`Self::Margin` 等の shorthand precedent と同じ shape)。
     Flex(FlexShorthand),
+    /// `flex-flow: <'flex-direction'> || <'flex-wrap'>` shorthand —
+    /// non-inherited、initial: `row nowrap`
+    /// ([`FlexFlow`] doc 参照)。[`crate::rule::expand_shorthand_into`]
+    /// が [`Self::FlexDirection`] / [`Self::FlexWrap`] の 2 longhand に
+    /// 展開するため、element cascade 段には通常到達しない
+    /// ([`Self::Flex`] と同じ shape)。
+    FlexFlow(FlexFlow),
+    /// `order: <integer>` — non-inherited、initial: `0`
+    /// (CSS Flexible Box Layout Module Level 1 §4.2 "Display Order: the order
+    /// property" <https://www.w3.org/TR/css-flexbox-1/#order-property>)。
+    /// Computed value = specified integer (相対解決なし、length を運ばない
+    /// ため [`Self::ZIndex`] と同じ opaque pass-through)。
+    Order(i32),
     /// `justify-content` — non-inherited、initial:
     /// [`ContentAlignmentValue::Normal`] ([`ContentAlignmentValue`] doc 参照)。
     JustifyContent(ContentAlignmentValue),
@@ -7589,6 +7622,8 @@ pub enum PropertyKey {
     FlexShrink,
     FlexBasis,
     Flex,
+    FlexFlow,
+    Order,
     // justify-content / align-content (CSS Box Alignment Module Level 3
     // §5.1) / align-items (§7.2) / align-self (§6.2), semantics on the
     // matching PropertyValue::* variants; sibling PropertyKey variants
@@ -7860,6 +7895,8 @@ impl PropertyValue {
             PropertyValue::FlexShrink(_) => PropertyKey::FlexShrink,
             PropertyValue::FlexBasis(_) => PropertyKey::FlexBasis,
             PropertyValue::Flex(_) => PropertyKey::Flex,
+            PropertyValue::FlexFlow(_) => PropertyKey::FlexFlow,
+            PropertyValue::Order(_) => PropertyKey::Order,
             PropertyValue::JustifyContent(_) => PropertyKey::JustifyContent,
             PropertyValue::AlignContent(_) => PropertyKey::AlignContent,
             PropertyValue::AlignItems(_) => PropertyKey::AlignItems,
@@ -8458,6 +8495,8 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "flex-shrink" => PropertyKey::FlexShrink,
         "flex-basis" => PropertyKey::FlexBasis,
         "flex" => PropertyKey::Flex,
+        "flex-flow" => PropertyKey::FlexFlow,
+        "order" => PropertyKey::Order,
         "justify-content" => PropertyKey::JustifyContent,
         "align-content" => PropertyKey::AlignContent,
         "align-items" => PropertyKey::AlignItems,
@@ -8958,6 +8997,12 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // CSS Flexible Box Layout Module Level 1 §7.1 "The flex Shorthand"
         // <https://www.w3.org/TR/css-flexbox-1/#flex-property>.
         "flex" => parse_flex_shorthand(input).map(PropertyValue::Flex),
+        // CSS Flexible Box Layout Module Level 1 §5.3
+        // <https://www.w3.org/TR/css-flexbox-1/#flex-flow-property>.
+        "flex-flow" => parse_flex_flow(input).map(PropertyValue::FlexFlow),
+        // CSS Flexible Box Layout Module Level 1 §4.2
+        // <https://www.w3.org/TR/css-flexbox-1/#order-property>.
+        "order" => parse_order(input).map(PropertyValue::Order),
         // CSS Box Alignment Module Level 3 §5.1
         // <https://www.w3.org/TR/css-align-3/#propdef-justify-content>.
         "justify-content" => parse_content_alignment(input).map(PropertyValue::JustifyContent),
@@ -12573,6 +12618,76 @@ fn parse_flex_shorthand(input: &mut Parser<'_, '_>) -> Option<FlexShorthand> {
         grow: grow.unwrap_or(1.0),
         shrink: shrink.unwrap_or(1.0),
         basis: basis.unwrap_or(FlexBasisValue::Length(Length::Px(0.0))),
+    })
+}
+
+/// `order: <integer>` を parse する (CSS Flexible Box Layout Module Level 1
+/// §4.2 "Display Order: the order property"
+/// <https://www.w3.org/TR/css-flexbox-1/#order-property>、
+/// [`PropertyValue::Order`] doc 参照)。
+///
+/// `expect_integer` 直接呼び出し — [`parse_z_index`] と同じ pattern。spec
+/// value grammar は `<integer>` のみ (符号付き、range 制限なし)。
+fn parse_order(input: &mut Parser<'_, '_>) -> Option<i32> {
+    input.try_parse(|i| i.expect_integer()).ok()
+}
+
+/// [`parse_flex_direction`] の `Result` 版 ([`parse_padding_side_res`] と
+/// 同じ wrapper pattern、[`parse_flex_flow`] の `try_parse` 用)。
+fn parse_flex_direction_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<FlexDirectionValue, ParseError<'i, ()>> {
+    parse_flex_direction(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// [`parse_flex_wrap`] の `Result` 版 ([`parse_flex_direction_res`] と同じ
+/// wrapper pattern、[`parse_flex_flow`] の `try_parse` 用)。
+fn parse_flex_wrap_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<FlexWrapValue, ParseError<'i, ()>> {
+    parse_flex_wrap(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `flex-flow: <'flex-direction'> || <'flex-wrap'>` を parse する (CSS
+/// Flexible Box Layout Module Level 1 §5.3 "Flex Direction and Wrap: the
+/// flex-flow shorthand"
+/// <https://www.w3.org/TR/css-flexbox-1/#flex-flow-property>、
+/// [`FlexFlow`] doc 参照)。
+///
+/// `||` (any-order、each component at most once、at least 1 必須) —
+/// 最大 2 回のループで両 component を試す。省略成分は対応 longhand の
+/// initial (direction=row / wrap=nowrap) を適用する。
+/// leftover token は本関数では consume せず、caller
+/// (`rule.rs::DeclParser`) の `expect_exhausted` が declaration ごと drop
+/// する ([`parse_flex_shorthand`] と同じ contract)。
+fn parse_flex_flow(input: &mut Parser<'_, '_>) -> Option<FlexFlow> {
+    let mut direction: Option<FlexDirectionValue> = None;
+    let mut wrap: Option<FlexWrapValue> = None;
+    for _ in 0..2 {
+        let mut progressed = false;
+        if direction.is_none()
+            && let Ok(d) = input.try_parse(parse_flex_direction_res)
+        {
+            direction = Some(d);
+            progressed = true;
+        }
+        if !progressed
+            && wrap.is_none()
+            && let Ok(w) = input.try_parse(parse_flex_wrap_res)
+        {
+            wrap = Some(w);
+            progressed = true;
+        }
+        if !progressed {
+            break;
+        }
+    }
+    if direction.is_none() && wrap.is_none() {
+        return None;
+    }
+    Some(FlexFlow {
+        direction: direction.unwrap_or(FlexDirectionValue::Row),
+        wrap: wrap.unwrap_or(FlexWrapValue::NoWrap),
     })
 }
 
@@ -27380,6 +27495,90 @@ mod tests {
     #[test]
     fn flex_shorthand_empty_is_none() {
         assert_eq!(parse("", "flex"), None);
+    }
+
+    // ── flex-flow shorthand (CSS Flexible Box Layout Module Level 1 §5.3)
+
+    #[test]
+    fn flex_flow_direction_only() {
+        assert_eq!(
+            parse("column", "flex-flow"),
+            Some(PropertyValue::FlexFlow(FlexFlow {
+                direction: FlexDirectionValue::Column,
+                wrap: FlexWrapValue::NoWrap,
+            }))
+        );
+    }
+
+    #[test]
+    fn flex_flow_wrap_only() {
+        assert_eq!(
+            parse("wrap", "flex-flow"),
+            Some(PropertyValue::FlexFlow(FlexFlow {
+                direction: FlexDirectionValue::Row,
+                wrap: FlexWrapValue::Wrap,
+            }))
+        );
+    }
+
+    #[test]
+    fn flex_flow_both_components_either_order() {
+        let both = || {
+            PropertyValue::FlexFlow(FlexFlow {
+                direction: FlexDirectionValue::RowReverse,
+                wrap: FlexWrapValue::WrapReverse,
+            })
+        };
+        assert_eq!(parse("row-reverse wrap-reverse", "flex-flow"), Some(both()));
+        assert_eq!(parse("wrap-reverse row-reverse", "flex-flow"), Some(both()));
+    }
+
+    #[test]
+    fn flex_flow_rejects_empty_and_unknown() {
+        assert_eq!(parse("", "flex-flow"), None);
+        assert_eq!(parse("diagonal", "flex-flow"), None);
+    }
+
+    #[test]
+    fn flex_flow_rejects_duplicate_components() {
+        // `parse_value` 契約では leftover token を consume せず caller
+        // (`DeclParser` の `expect_exhausted`) が declaration ごと drop する
+        // (`parse_flex_shorthand` と同じ contract) — ここでは
+        // `parse_entire` で declaration-level の exhaustiveness を再現する。
+        assert_eq!(parse_entire("row row", "flex-flow"), None);
+        assert_eq!(parse_entire("wrap wrap", "flex-flow"), None);
+        assert_eq!(parse_entire("row wrap nowrap", "flex-flow"), None);
+    }
+
+    #[test]
+    fn flex_flow_key_maps_to_flex_flow_property_key() {
+        let v = PropertyValue::FlexFlow(FlexFlow {
+            direction: FlexDirectionValue::Row,
+            wrap: FlexWrapValue::NoWrap,
+        });
+        assert_eq!(v.key(), PropertyKey::FlexFlow);
+    }
+
+    // ── order (CSS Flexible Box Layout Module Level 1 §4.2) ────────────
+
+    #[test]
+    fn order_parses_integers() {
+        assert_eq!(parse("0", "order"), Some(PropertyValue::Order(0)));
+        assert_eq!(parse("3", "order"), Some(PropertyValue::Order(3)));
+        assert_eq!(parse("-1", "order"), Some(PropertyValue::Order(-1)));
+    }
+
+    #[test]
+    fn order_rejects_non_integers() {
+        assert_eq!(parse("auto", "order"), None);
+        assert_eq!(parse("1.5", "order"), None);
+        assert_eq!(parse("row", "order"), None);
+    }
+
+    #[test]
+    fn order_key_maps_to_order_property_key() {
+        let v = PropertyValue::Order(2);
+        assert_eq!(v.key(), PropertyKey::Order);
     }
 
     // ── justify-content / align-content (CSS Box Alignment Module Level 3
