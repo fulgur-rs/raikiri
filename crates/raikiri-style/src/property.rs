@@ -1818,8 +1818,11 @@ pub enum ContentComponent {
 /// は `inline`、not inherited。
 ///
 /// 現状受理する keyword は `block` / `inline` / `inline-block`
-/// / `none` / `flex` / `grid` / `list-item` / `contents` の 8 値。`table*` /
-/// `flow-root` (standalone) 等 spec-valid だが未実装
+/// / `none` / `flex` / `grid` / `list-item` / `contents` / `table`
+/// / `inline-table` / `table-row-group` / `table-header-group`
+/// / `table-footer-group` / `table-row` / `table-column-group`
+/// / `table-column` / `table-cell` / `table-caption` の 18 値。
+/// `flow-root` (standalone) 等残りの spec-valid だが未実装
 /// (将来対応) の keyword は `parse_display` が `None` を返し、
 /// declaration が silent drop される (rule.rs 側 invalid-value drop path)。
 ///
@@ -1958,6 +1961,29 @@ pub enum DisplayValue {
     /// rule for `contents` is not implemented (nor is any other
     /// `display`-specific root transformation).
     Contents,
+    /// `table` — CSS Display 3 §2 `<display-internal>` / CSS 2.1 §17.2 "The CSS table model"
+    /// <https://www.w3.org/TR/css-display-3/#propdef-display>
+    /// <https://www.w3.org/TR/CSS2/tables.html#table-display>: block-level table wrapper box.
+    Table,
+    /// `inline-table` — CSS Display 3 §2 / CSS 2.1 §17.2: inline-level table wrapper box
+    /// (inline-outside, table-inside). Floated `inline-table` computes to `table` per CSS2 §9.7.
+    InlineTable,
+    /// `table-row-group` — CSS Display 3 §2 `<display-internal>` / CSS 2.1 §17.2: groups rows (`<tbody>`).
+    TableRowGroup,
+    /// `table-header-group` — CSS Display 3 §2 `<display-internal>` / CSS 2.1 §17.2: header rows (`<thead>`).
+    TableHeaderGroup,
+    /// `table-footer-group` — CSS Display 3 §2 `<display-internal>` / CSS 2.1 §17.2: footer rows (`<tfoot>`).
+    TableFooterGroup,
+    /// `table-row` — CSS Display 3 §2 `<display-internal>` / CSS 2.1 §17.2: single row (`<tr>`).
+    TableRow,
+    /// `table-column-group` — CSS Display 3 §2 `<display-internal>` / CSS 2.1 §17.2: groups columns (`<colgroup>`).
+    TableColumnGroup,
+    /// `table-column` — CSS Display 3 §2 `<display-internal>` / CSS 2.1 §17.2: single column (`<col>`).
+    TableColumn,
+    /// `table-cell` — CSS Display 3 §2 `<display-internal>` / CSS 2.1 §17.2: cell (`<td>`, `<th>`).
+    TableCell,
+    /// `table-caption` — CSS Display 3 §2 `<display-internal>` / CSS 2.1 §17.2: caption (`<caption>`).
+    TableCaption,
 }
 
 /// `flex-direction` property の value。
@@ -4212,16 +4238,19 @@ pub enum ClearValue {
 /// | `inline`, `table-row-group`, `table-column`, `table-column-group`, `table-header-group`, `table-footer-group`, `table-row`, `table-cell`, `table-caption`, `inline-block` | `block` |
 /// | others | same as specified |
 ///
-/// この crate の [`DisplayValue`] scope (`block` / `inline` / `inline-block`
-/// / `none` / `flex` / `grid` / `list-item` / `contents`) に絞ると、表の中段に該当するのは
-/// [`DisplayValue::Inline`] と [`DisplayValue::InlineBlock`] の 2 variant
-/// だけ ([`DisplayValue`] は table 系 keyword を実装していない)。
-/// [`DisplayValue::Flex`] / [`DisplayValue::Grid`] / [`DisplayValue::ListItem`]
-/// は表に**登場しない** ("others" 側、same as specified) — floated
-/// flex/grid container は float してもそのまま `flex`/`grid` の computed
-/// value を保ち、`list-item` も同様に float 後も `list-item` のまま
-/// (`list-item` は表の中段 `inline-block` 等とは別 keyword であり、
-/// under `others` に落ちる)。
+/// この crate の [`DisplayValue`] scope は table 系も含む 18 variant
+/// (`block` / `inline` / `inline-block` / `none` / `flex` / `grid`
+/// / `list-item` / `contents` / `table` / `inline-table` / `table-row-group`
+/// / `table-header-group` / `table-footer-group` / `table-row`
+/// / `table-column-group` / `table-column` / `table-cell` / `table-caption`)
+/// を持つ。CSS2 §9.7 の表に照らすと:
+/// - `inline-table` → `table` (表 1 行目)
+/// - `inline`, `table-row-group`, `table-column`, `table-column-group`,
+///   `table-header-group`, `table-footer-group`, `table-row`, `table-cell`,
+///   `table-caption`, `inline-block` → `block` (表 2 行目)
+/// - `block`, `table`, `flex`, `grid`, `list-item`, `none`, `contents` は
+///   "others" (same as specified) — floated でもそのまま。`flex`/`grid`/
+///   `list-item` が "others" に落ちるのは従来通り。
 ///
 /// # `display: none` は本関数の呼び出し前に別枝で処理される
 ///
@@ -4272,17 +4301,27 @@ pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue
         // box を生成しない display type には blockification 自体が
         // 適用されない (CSS Display Module Level 3 §2.7 verbatim)。
         DisplayValue::Contents => DisplayValue::Contents,
-        DisplayValue::Inline | DisplayValue::InlineBlock => DisplayValue::Block,
-        // `DisplayValue::None` の doc 直上の rationale と同じ理由で、この
-        // arm もあえて `_` に潰さない — `Block` / `Flex` / `Grid` /
-        // `ListItem` を明示列挙することで、将来 `DisplayValue` に
-        // table-family variant (CSS2 §9.7 表の `inline-table` /
-        // `table-row-group` 等) が追加された時、この match が非網羅になり
-        // compile error で呼び出し元に再考を強制する (`#[non_exhaustive]`
-        // は crate 外部 consumer 向けの属性であり、定義 crate 内部のこの
-        // match には適用されない)。silent に「specified のまま」へ
-        // pass-through させてしまうと §9.7 表を under-apply する。
+        // CSS2 §9.7 表 1 行目: `inline-table` → `table`
+        DisplayValue::InlineTable => DisplayValue::Table,
+        // CSS2 §9.7 表 2 行目: `inline`, `table-row-group`, `table-column`,
+        // `table-column-group`, `table-header-group`, `table-footer-group`,
+        // `table-row`, `table-cell`, `table-caption`, `inline-block` → `block`
+        DisplayValue::Inline
+        | DisplayValue::InlineBlock
+        | DisplayValue::TableRowGroup
+        | DisplayValue::TableColumn
+        | DisplayValue::TableColumnGroup
+        | DisplayValue::TableHeaderGroup
+        | DisplayValue::TableFooterGroup
+        | DisplayValue::TableRow
+        | DisplayValue::TableCell
+        | DisplayValue::TableCaption => DisplayValue::Block,
+        // 残りは "others" — same as specified。`Block` / `Table` / `Flex` /
+        // `Grid` / `ListItem` を明示列挙し、将来 variant 追加時に非網羅で
+        // compile error にする (`#[non_exhaustive]` は crate 外部向け、
+        // 定義 crate 内部のこの match には適用されない)。
         same @ (DisplayValue::Block
+        | DisplayValue::Table
         | DisplayValue::Flex
         | DisplayValue::Grid
         | DisplayValue::ListItem) => same,
@@ -4566,6 +4605,58 @@ pub enum UnicodeBidi {
     BidiOverride,
     IsolateOverride,
     Plaintext,
+}
+
+/// `table-layout` property の value.
+///
+/// CSS Tables 3 §4 "Table Layout Algorithm"
+/// <https://www.w3.org/TR/css-tables-3/#table-layout-property>
+/// (前身 CSS 2.1 §17.5.2 "Table width algorithms: the 'table-layout'
+/// property" <https://www.w3.org/TR/CSS2/tables.html#width-layout>).
+/// Value: `auto | fixed`、Initial: `auto`、Applies to: `table` /
+/// `inline-table`、Inherited: **no**、Computed value: "as specified".
+///
+/// - `auto` — automatic table layout (content-driven column sizing、
+///   CSS Tables 3 §5)。
+/// - `fixed` — fixed table layout (table width + first-row / `col`
+///   specified widths drive column sizing、content は overflow しうる、
+///   CSS Tables 3 §5 の fixed branch)。
+///
+/// Layout-time の column sizing 自体は raikiri-dom scope
+/// ([`crate::computed::ComputedValues::table_layout`] 参照) — 本 crate は
+/// cascaded keyword を運ぶのみ。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TableLayoutValue {
+    /// `auto` — spec initial value (automatic table layout)。
+    Auto,
+    /// `fixed` — fixed table layout。
+    Fixed,
+}
+
+/// `border-collapse` property の value.
+///
+/// CSS Tables 3 §6 "Borders"
+/// <https://www.w3.org/TR/css-tables-3/#border-collapse-property>
+/// (前身 CSS 2.1 §17.6 "Borders"
+/// <https://www.w3.org/TR/CSS2/tables.html#borders>).
+/// Value: `collapse | separate`、Initial: `separate`、Applies to: `table` /
+/// `inline-table`、Inherited: **yes**、Computed value: "as specified".
+///
+/// - `separate` — separated borders model (cell spacing あり)。
+/// - `collapse` — collapsing borders model (隣接 border は conflict
+///   resolution で 1 本に潰れる)。
+///
+/// Conflict resolution 自体は raikiri-dom scope
+/// ([`crate::computed::ComputedValues::border_collapse`] 参照) — 本 crate は
+/// cascaded keyword を運ぶのみ。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BorderCollapseValue {
+    /// `separate` — spec initial value (separated borders model)。
+    Separate,
+    /// `collapse` — collapsing borders model。
+    Collapse,
 }
 
 /// `text-shadow`/// `text-shadow` の 1 shadow entry が運ぶ `<color>` 成分 — [`BorderColor`] /
@@ -7247,6 +7338,20 @@ pub enum PropertyValue {
     /// 空-list-means-none convention ([`empty_filter_list`])。末尾に追加
     /// (1:1 disjoint な新 field、[`PropertyKey`] doc の判断規則)。
     Filter(Arc<Vec<FilterFunction>>),
+    /// `table-layout: auto | fixed` — **non-inherited**、initial:
+    /// [`TableLayoutValue::Auto`] (CSS Tables 3 §4 [`TableLayoutValue`] doc
+    /// 参照)。computed value = specified keyword (length を運ばないため
+    /// 相対解決なし)。
+    /// (末尾に追加 — 既存 variant の discriminant を
+    /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
+    /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
+    TableLayout(TableLayoutValue),
+    /// `border-collapse: collapse | separate` — **inherited**、initial:
+    /// [`BorderCollapseValue::Separate`] (CSS Tables 3 §6
+    /// [`BorderCollapseValue`] doc 参照)。computed value = specified
+    /// keyword (length を運ばないため相対解決なし)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    BorderCollapse(BorderCollapseValue),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -7649,6 +7754,16 @@ pub enum PropertyKey {
     TextOrientation,
     // unicode-bidi (CSS Writing Modes 3 §2.2)
     UnicodeBidi,
+    // table-layout (CSS Tables 3 §4、semantics on the matching
+    // PropertyValue::TableLayout variant; sibling PropertyKey variants carry
+    // no per-variant docs per crate convention). 末尾配置の理由は
+    // background-repeat 等と同節参照 (1:1 disjoint な新 field)。
+    TableLayout,
+    // border-collapse (CSS Tables 3 §6、semantics on the matching
+    // PropertyValue::BorderCollapse variant; sibling PropertyKey variants
+    // carry no per-variant docs per crate convention). 末尾配置の理由は
+    // background-repeat 等と同節参照 (1:1 disjoint な新 field)。
+    BorderCollapse,
 }
 
 impl PropertyValue {
@@ -7808,6 +7923,8 @@ impl PropertyValue {
             PropertyValue::ClipPath(_) => PropertyKey::ClipPath,
             PropertyValue::Transform(_) => PropertyKey::Transform,
             PropertyValue::Filter(_) => PropertyKey::Filter,
+            PropertyValue::TableLayout(_) => PropertyKey::TableLayout,
+            PropertyValue::BorderCollapse(_) => PropertyKey::BorderCollapse,
         }
     }
 }
@@ -8358,6 +8475,8 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "text-combine-upright" => PropertyKey::TextCombineUpright,
         "text-orientation" => PropertyKey::TextOrientation,
         "unicode-bidi" => PropertyKey::UnicodeBidi,
+        "table-layout" => PropertyKey::TableLayout,
+        "border-collapse" => PropertyKey::BorderCollapse,
         "font-variant-caps" => PropertyKey::FontVariantCaps,
         "quotes" => PropertyKey::Quotes,
         "text-shadow" => PropertyKey::TextShadow,
@@ -8884,6 +9003,17 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "text-orientation" => parse_text_orientation(input).map(PropertyValue::TextOrientation),
         // CSS Writing Modes 3 §2.2 unicode-bidi. grammar: `normal | embed | isolate | bidi-override | isolate-override | plaintext`.
         "unicode-bidi" => parse_unicode_bidi(input).map(PropertyValue::UnicodeBidi),
+        // CSS Tables 3 §4 table-layout. grammar: `auto | fixed`
+        // <https://www.w3.org/TR/css-tables-3/#table-layout-property>
+        // (initial `auto`, not inherited). ASCII case-insensitive
+        // matching は sibling `parse_float` と同 flavor、余剰 token は
+        // caller (`rule.rs::DeclParser`) の `expect_exhausted` が drop する。
+        "table-layout" => parse_table_layout(input).map(PropertyValue::TableLayout),
+        // CSS Tables 3 §6 border-collapse. grammar: `collapse | separate`
+        // <https://www.w3.org/TR/css-tables-3/#border-collapse-property>
+        // (initial `separate`, inherited). matching 規則は直上の
+        // `table-layout` arm と同じ。
+        "border-collapse" => parse_border_collapse(input).map(PropertyValue::BorderCollapse),
         // CSS Text Module Level 3 §4.2
         // <https://www.w3.org/TR/css-text-3/#tab-size-property>.
         "tab-size" => parse_tab_size(input).map(PropertyValue::TabSize),
@@ -13635,7 +13765,7 @@ fn parse_text_align_last(input: &mut Parser<'_, '_>) -> Option<TextAlignLast> {
 ///
 /// CSS Display 3 §2 "Box Layout Modes: the display property"
 /// <https://www.w3.org/TR/css-display-3/#propdef-display>。現状受理する
-/// keyword は 8 つ:
+/// keyword は 18 つ:
 ///
 /// - `block` — `<display-outside>` (block flow)
 /// - `inline` — `<display-outside>` (inline flow、initial value)
@@ -13653,9 +13783,18 @@ fn parse_text_align_last(input: &mut Parser<'_, '_>) -> Option<TextAlignLast> {
 ///   — marker box 生成は本 crate scope 外。
 /// - `contents` — `<display-box>` (§2.5)、要素自身が box を生成しない
 ///   ([`DisplayValue::Contents`] doc 参照)
+/// - `table` — `<display-internal>` (block-level table wrapper)
+/// - `inline-table` — `<display-internal>` (inline-level table wrapper)
+/// - `table-row-group` — `<display-internal>` (`<tbody>`)
+/// - `table-header-group` — `<display-internal>` (`<thead>`)
+/// - `table-footer-group` — `<display-internal>` (`<tfoot>`)
+/// - `table-row` — `<display-internal>` (`<tr>`)
+/// - `table-column-group` — `<display-internal>` (`<colgroup>`)
+/// - `table-column` — `<display-internal>` (`<col>`)
+/// - `table-cell` — `<display-internal>` (`<td>`, `<th>`)
+/// - `table-caption` — `<display-internal>` (`<caption>`)
 ///
-/// 他 keyword (`inline-flex` / `inline-grid` / `table*` /
-/// `flow-root` 等) は spec-valid だが未実装のため silent drop
+/// 他 keyword (`inline-flex` / `inline-grid` / `flow-root` 等) は spec-valid だが未実装のため silent drop
 /// (`None`)。ASCII case-insensitive で ident を比較する (CSS Values 3
 /// §3.1 "Pre-defined Keywords" <https://www.w3.org/TR/css-values-3/#keywords>:
 /// keyword は ASCII case-insensitive)。
@@ -13691,6 +13830,37 @@ fn parse_unicode_bidi(input: &mut Parser<'_, '_>) -> Option<UnicodeBidi> {
     }
 }
 
+/// `table-layout: <ident>` を parse する (CSS Tables 3 §4
+/// <https://www.w3.org/TR/css-tables-3/#table-layout-property>,
+/// [`TableLayoutValue`] doc 参照)。
+///
+/// Value grammar: `auto | fixed`。ASCII case-insensitive matching は
+/// sibling [`parse_unicode_bidi`] と同 flavor、余剰 token
+/// (`table-layout: auto fixed` 等) は caller (`rule.rs::DeclParser`) の
+/// `expect_exhausted` が drop する。
+fn parse_table_layout(input: &mut Parser<'_, '_>) -> Option<TableLayoutValue> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "auto" => Some(TableLayoutValue::Auto),
+        "fixed" => Some(TableLayoutValue::Fixed),
+        _ => None,
+    }
+}
+
+/// `border-collapse: <ident>` を parse する (CSS Tables 3 §6
+/// <https://www.w3.org/TR/css-tables-3/#border-collapse-property>,
+/// [`BorderCollapseValue`] doc 参照)。
+///
+/// Value grammar: `collapse | separate`。matching 規則は sibling
+/// [`parse_table_layout`] と同じ。
+fn parse_border_collapse(input: &mut Parser<'_, '_>) -> Option<BorderCollapseValue> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "collapse" => Some(BorderCollapseValue::Collapse),
+        "separate" => Some(BorderCollapseValue::Separate),
+        _ => None,
+    }
+}
 
 fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
     // sibling multi-keyword idiom (parse_string_fetch / parse_content_part /
@@ -13706,6 +13876,16 @@ fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
         "grid" => Some(DisplayValue::Grid),
         "list-item" => Some(DisplayValue::ListItem),
         "contents" => Some(DisplayValue::Contents),
+        "table" => Some(DisplayValue::Table),
+        "inline-table" => Some(DisplayValue::InlineTable),
+        "table-row-group" => Some(DisplayValue::TableRowGroup),
+        "table-header-group" => Some(DisplayValue::TableHeaderGroup),
+        "table-footer-group" => Some(DisplayValue::TableFooterGroup),
+        "table-row" => Some(DisplayValue::TableRow),
+        "table-column-group" => Some(DisplayValue::TableColumnGroup),
+        "table-column" => Some(DisplayValue::TableColumn),
+        "table-cell" => Some(DisplayValue::TableCell),
+        "table-caption" => Some(DisplayValue::TableCaption),
         _ => None,
     }
 }
@@ -20179,13 +20359,11 @@ mod tests {
     #[test]
     fn display_rejects_unknown_ident() {
         // block / inline / inline-block / none / flex / grid / list-item /
-        // contents 以外は spec-valid でも未実装のため silent drop。
-        // inline-flex / inline-grid / table* / flow-root は
+        // contents / table* 以外は spec-valid でも未実装のため silent drop。
+        // inline-flex / inline-grid / flow-root は
         // 将来の layout 対応で扱う予定。
         assert_eq!(parse("inline-flex", "display"), None);
         assert_eq!(parse("inline-grid", "display"), None);
-        assert_eq!(parse("table", "display"), None);
-        assert_eq!(parse("table-row", "display"), None);
         assert_eq!(parse("flow-root", "display"), None);
     }
 
@@ -32946,5 +33124,105 @@ mod tests {
     fn filter_key_maps_to_filter_property_key() {
         let v = PropertyValue::Filter(empty_filter_list());
         assert_eq!(v.key(), PropertyKey::Filter);
+    }
+
+    // ── table-layout (CSS Tables 3 §4) ────────────────────────────────────
+    //
+    // WPT css/css-tables/parsing/table-layout-{valid,invalid}.html の
+    // grammar (`auto | fixed`) を pin する。invalid 側 2 case
+    // (`none` / `auto fixed`) は caller の `expect_exhausted`
+    // (rule.rs::DeclParser) が落とす — ここでは `parse_entire` で同条件を
+    // 再現する。
+
+    #[test]
+    fn table_layout_accepts_auto_and_fixed() {
+        assert_eq!(
+            parse("auto", "table-layout"),
+            Some(PropertyValue::TableLayout(TableLayoutValue::Auto))
+        );
+        assert_eq!(
+            parse("fixed", "table-layout"),
+            Some(PropertyValue::TableLayout(TableLayoutValue::Fixed))
+        );
+        // ASCII case-insensitive (CSS Values 3 §3.1)。
+        assert_eq!(
+            parse("FIXED", "table-layout"),
+            Some(PropertyValue::TableLayout(TableLayoutValue::Fixed))
+        );
+    }
+
+    #[test]
+    fn table_layout_rejects_invalid() {
+        assert_eq!(parse("none", "table-layout"), None);
+        assert_eq!(parse_entire("auto fixed", "table-layout"), None);
+        assert_eq!(parse("collapse", "table-layout"), None);
+    }
+
+    #[test]
+    fn table_layout_key_maps_to_table_layout_property_key() {
+        let v = PropertyValue::TableLayout(TableLayoutValue::Auto);
+        assert_eq!(v.key(), PropertyKey::TableLayout);
+    }
+
+    // ── border-collapse (CSS Tables 3 §6) ─────────────────────────────────
+    //
+    // WPT css/css-tables/parsing/border-collapse-{valid,invalid}.html の
+    // grammar (`collapse | separate`) を pin する (同上の構成)。
+
+    #[test]
+    fn border_collapse_accepts_collapse_and_separate() {
+        assert_eq!(
+            parse("collapse", "border-collapse"),
+            Some(PropertyValue::BorderCollapse(BorderCollapseValue::Collapse))
+        );
+        assert_eq!(
+            parse("separate", "border-collapse"),
+            Some(PropertyValue::BorderCollapse(BorderCollapseValue::Separate))
+        );
+        // ASCII case-insensitive (CSS Values 3 §3.1)。
+        assert_eq!(
+            parse("COLLAPSE", "border-collapse"),
+            Some(PropertyValue::BorderCollapse(BorderCollapseValue::Collapse))
+        );
+    }
+
+    #[test]
+    fn border_collapse_rejects_invalid() {
+        assert_eq!(parse("none", "border-collapse"), None);
+        assert_eq!(parse_entire("separate collapse", "border-collapse"), None);
+        assert_eq!(parse("fixed", "border-collapse"), None);
+    }
+
+    #[test]
+    fn border_collapse_key_maps_to_border_collapse_property_key() {
+        let v = PropertyValue::BorderCollapse(BorderCollapseValue::Separate);
+        assert_eq!(v.key(), PropertyKey::BorderCollapse);
+    }
+
+    // ── 未実装 table property の silent-drop 維持 ─────────────────────────
+    //
+    // `border-spacing` / `caption-side` / `empty-cells` は本 task の scope 外
+    // (未実装) のため未知 property として drop され続ける — WPT
+    // css/css-tables/parsing/{border-spacing,caption-side,empty-cells}-invalid.html
+    // (いずれも baseline 収録) の全 invalid case が `None` になることの pin。
+    // 新 property 追加時の dispatch 変更でこれらが受理側に倒れたらここで落ちる。
+
+    #[test]
+    fn unimplemented_table_properties_still_drop_invalid_values() {
+        let cases = [
+            ("border-spacing", "10%"),
+            ("border-spacing", "-20px"),
+            ("border-spacing", "30"),
+            ("border-spacing", "40px 50px 60px"),
+            ("caption-side", "auto"),
+            ("caption-side", "left"),
+            ("caption-side", "right"),
+            ("caption-side", "top bottom"),
+            ("empty-cells", "auto"),
+            ("empty-cells", "show hide"),
+        ];
+        for (name, value) in cases {
+            assert_eq!(parse_entire(value, name), None, "{name}: {value}");
+        }
     }
 }

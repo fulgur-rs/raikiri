@@ -30,21 +30,21 @@ use crate::Atom;
 use crate::computed::{ComputedValues, RunningTemplate};
 use crate::property::{
     AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage,
-    BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, Border, BorderColor, BorderRadius,
-    BorderStyle, BoxShadowItem, BoxSizing, BreakBetween, BreakInside, ClearValue, ClipPath,
-    ContentAlignmentValue, ContentComponent, CssColor, CssPosition, CssPositionOffset, Direction,
-    DisplayValue, PositionValue, FilterFunction, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
-    FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
-    GridTemplateTracks, GridTrackSize, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal,
-    LineHeight, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle,
-    OverflowValue, OverflowWrap, OverflowXY, SelfAlignmentValue, Sides, TabSize, TextAlign,
-    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextShadowItem, TextTransform,
-    TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode,
-    ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
-    empty_filter_list, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
-    empty_transform_list, initial_font_family, initial_grid_auto_track_list,
-    resolve_display_for_float, resolve_overflow, resolve_text_align_match_parent,
-    resolve_writing_mode,
+    BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, Border, BorderCollapseValue,
+    BorderColor, BorderRadius, BorderStyle, BoxShadowItem, BoxSizing, BreakBetween, BreakInside,
+    ClearValue, ClipPath, ContentAlignmentValue, ContentComponent, CssColor, CssPosition,
+    CssPositionOffset, Direction, DisplayValue, FilterFunction, FlexBasisValue, FlexDirectionValue,
+    FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue,
+    GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, Hyphens, Isolation, Length,
+    LengthOrAuto, LengthOrNormal, LineHeight, MaskImage, MixBlendMode, ObjectFit, Outline,
+    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
+    SelfAlignmentValue, Sides, TabSize, TableLayoutValue, TextAlign, TextDecorationColor,
+    TextDecorationLine, TextDecorationStyle, TextShadowItem, TextTransform, TransformFunction,
+    VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue,
+    empty_box_shadow_list, empty_content_list, empty_counter_entries, empty_filter_list,
+    empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list, empty_transform_list,
+    initial_font_family, initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
+    resolve_text_align_match_parent, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ResolveContext,
@@ -74,7 +74,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `border_radius` / `box_shadow` / `outline` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` / `background_size` / `background_position` / `object_position` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* / `object_fit` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* / `object_fit` / `table_layout` / `border_collapse` |
 /// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
 ///
 /// **手動同期 — drift に注意**: 上の表の property 名列挙は手動で維持される
@@ -488,6 +488,23 @@ pub struct SpecifiedValues {
     /// [`FilterFunction`] doc参照)。`none` は空 list
     /// ([`empty_filter_list`]) で表現する。
     pub filter: Arc<Vec<FilterFunction>>,
+    /// `table-layout` の **specified** value — **non-inherited**、initial:
+    /// [`TableLayoutValue::Auto`] (CSS Tables 3 §4
+    /// <https://www.w3.org/TR/css-tables-3/#table-layout-property>)。
+    /// computed value = specified keyword のため
+    /// [`crate::computed::ComputedValues::table_layout`]
+    /// の staging として素通しする ([`Self::float`] と同じ
+    /// computed-equivalent 分類)。
+    pub table_layout: TableLayoutValue,
+    /// `border-collapse` の **specified** value — **inherited**、initial:
+    /// [`BorderCollapseValue::Separate`] (CSS Tables 3 §6
+    /// <https://www.w3.org/TR/css-tables-3/#border-collapse-property>)。
+    /// computed value = specified keyword のため
+    /// [`crate::computed::ComputedValues::border_collapse`]
+    /// の staging として素通しする。**inherited** なので `Self::inherit_from`
+    /// は親の computed 値を seed する ([`Self::text_indent`] と同じ扱いではなく
+    /// 素朴なコピー — keyword のため lift 不要、[`Self::visibility`] と同じ)。
+    pub border_collapse: BorderCollapseValue,
 }
 
 impl SpecifiedValues {
@@ -719,6 +736,13 @@ impl SpecifiedValues {
             // CSS Filter Effects Level 1 §5: filter initial は `none`
             // (空 list)。
             filter: empty_filter_list(),
+            // CSS Tables 3 §4: table-layout initial は `auto`
+            // (non-inherited)。
+            table_layout: TableLayoutValue::Auto,
+            // CSS Tables 3 §6: border-collapse initial は `separate`
+            // (inherited — 親を持つ node は `Self::inherit_from` が親値で
+            // 上書きする)。
+            border_collapse: BorderCollapseValue::Separate,
         }
     }
 
@@ -811,6 +835,9 @@ impl SpecifiedValues {
             tab_size: lift_tab_size(parent.tab_size),
             // CSS Text 3 §3: white-space は inherited。
             white_space: parent.white_space,
+            // CSS Tables 3 §6: border-collapse は inherited。keyword のため
+            // lift 不要の素朴なコピー (`visibility` と同じ扱い)。
+            border_collapse: parent.border_collapse,
             // CSS Text 3 §5.3: hyphens は inherited。
             hyphens: parent.hyphens,
             // CSS Content 3 §2.4.1: quotes は inherited。Arc bump のみ
@@ -969,6 +996,13 @@ impl SpecifiedValues {
             transform: empty_transform_list(),
             // non-inherited (CSS Filter Effects Level 1 §5 "Inherited: no").
             filter: empty_filter_list(),
+            // non-inherited (CSS Tables 3 §4 "Inherited: no")、initial
+            // `auto` — child は winner が無ければ常にこの値に戻る
+            // (`float` と同じ扱い)。
+            table_layout: TableLayoutValue::Auto,
+            // non-inherited 側に置くのは `table_layout` のみ —
+            // `border_collapse` は inherited のため上記 inherited 節で
+            // seed 済み (`visibility` と同じ配置)。
         }
     }
 
@@ -1646,6 +1680,15 @@ impl SpecifiedValues {
             // clamp" section already establishes this same "as specified"
             // fact for a different purpose) — 素通し。
             filter: self.filter,
+            // computed value = specified keyword (`TableLayoutValue` doc
+            // 参照、length を運ばないため相対解決なし) — 自 node の winner
+            // 適用結果 (non-inherited のため inherit seed は常に initial)
+            // をそのまま素通し。
+            table_layout: self.table_layout,
+            // computed value = specified keyword (`BorderCollapseValue` doc
+            // 参照、同上) — 自 node の winner 適用結果 (または inherit_from
+            // で継承した親値) をそのまま素通し。
+            border_collapse: self.border_collapse,
             custom_properties: crate::computed::empty_custom_properties(),
         }
     }
@@ -2049,6 +2092,12 @@ mod tests {
                 crate::resolve::ComputedLengthPercentage::Px(48.0),
             )]),
             filter: Arc::new(vec![FilterFunction::Blur(Length::Px(3.0))]),
+            // CSS Tables 3 §4: table-layout は non-inherited なので initial
+            // (`auto`) と異なる値にしておく。
+            table_layout: TableLayoutValue::Fixed,
+            // CSS Tables 3 §6: border-collapse は inherited なので initial
+            // (`separate`) と異なる値にしておく。
+            border_collapse: BorderCollapseValue::Collapse,
             custom_properties: crate::computed::empty_custom_properties(),
         }
     }

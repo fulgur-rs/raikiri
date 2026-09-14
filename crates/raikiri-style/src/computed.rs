@@ -15,12 +15,13 @@ use smol_str::SmolStr;
 use crate::Atom;
 use crate::property::{
     AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
-    BackgroundRepeatKeyword, BorderColor, BorderStyle, BoxSizing, BreakBetween, BreakInside,
-    ClearValue, ClipPath, ContentAlignmentValue, ContentComponent, CssColor, Direction,
-    DisplayValue, PositionValue, FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle,
-    FontVariantCaps, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Hyphens, Isolation,
-    MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
-    OverflowXY, SelfAlignmentValue, Sides, TextAlign, TextDecorationColor, TextDecorationLine,
+    BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderStyle, BoxSizing,
+    BreakBetween, BreakInside, ClearValue, ClipPath, ContentAlignmentValue, ContentComponent,
+    CssColor, Direction, DisplayValue, FilterFunction, FlexDirectionValue, FlexWrapValue,
+    FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue,
+    GridTemplateAreasValue, Hyphens, Isolation, MaskImage, MixBlendMode, ObjectFit, OutlineColor,
+    OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue, SelfAlignmentValue,
+    Sides, TableLayoutValue, TextAlign, TextDecorationColor, TextDecorationLine,
     TextDecorationStyle, TextTransform, VerticalAlign, Visibility, VisualBox, WhiteSpace,
     WordBreak, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
     empty_filter_list, empty_quotes_entries, empty_string_set_entries, initial_font_family,
@@ -345,8 +346,11 @@ pub struct ComputedValues {
     pub line_height: ComputedLineHeight,
     /// `display`。**non-inherited**、initial: `DisplayValue::Inline`
     /// (CSS Display 3 §2 <https://www.w3.org/TR/css-display-3/#propdef-display>)。
-    /// 現状 `block` / `inline` / `inline-block` / `none`
-    /// (詳細は [`DisplayValue`] doc)。
+    /// 現状 18 keyword (`block` / `inline` / `inline-block` / `none` / `flex`
+    /// / `grid` / `list-item` / `contents` / `table` / `inline-table`
+    /// / `table-row-group` / `table-header-group` / `table-footer-group`
+    /// / `table-row` / `table-column-group` / `table-column` / `table-cell`
+    /// / `table-caption` — 詳細は [`DisplayValue`] doc)。
     pub display: DisplayValue,
     /// `counter-reset`。**non-inherited**。spec initial は `none`
     /// (CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#counter-reset>)、
@@ -1422,6 +1426,34 @@ pub struct ComputedValues {
     /// implementation gap). Same `Arc<Vec<..>>` payload shape as
     /// [`Self::transform`] otherwise.
     pub filter: Arc<Vec<FilterFunction>>,
+    /// `table-layout`. **non-inherited**, initial:
+    /// [`TableLayoutValue::Auto`] (CSS Tables 3 §4 "Table Layout Algorithm"
+    /// <https://www.w3.org/TR/css-tables-3/#table-layout-property>,
+    /// "Initial: auto" / "Inherited: no"). Computed value = specified
+    /// keyword ([`TableLayoutValue`] doc — no length payload, so no relative
+    /// resolution is needed).
+    ///
+    /// # Scope carving
+    ///
+    /// This field carries the cascaded value only. The fixed/auto column
+    /// sizing algorithm it drives is layout-time behavior (raikiri-dom
+    /// scope — the downstream table engine reads this field via the `Node`
+    /// bridge) — same split [`Self::float`] doc describes for float
+    /// positioning.
+    pub table_layout: TableLayoutValue,
+    /// `border-collapse`. **inherited**, initial:
+    /// [`BorderCollapseValue::Separate`] (CSS Tables 3 §6 "Borders"
+    /// <https://www.w3.org/TR/css-tables-3/#border-collapse-property>,
+    /// "Initial: separate" / "Inherited: yes"). Computed value = specified
+    /// keyword ([`BorderCollapseValue`] doc — no length payload).
+    ///
+    /// # Scope carving
+    ///
+    /// This field carries the cascaded value only. Border conflict
+    /// resolution (collapsing borders model) is layout-time behavior
+    /// (raikiri-dom scope) — [`Self::table_layout`] doc's split applies
+    /// here as well.
+    pub border_collapse: BorderCollapseValue,
     /// Resolved custom properties for the page-context inheritance bridge.
     ///
     /// This is deliberately crate-private: `ComputedValues`' public property
@@ -1687,6 +1719,12 @@ impl ComputedValues {
             // CSS Filter Effects Level 1 §5: filter initial は `none`
             // (空 list)。
             filter: empty_filter_list(),
+            // CSS Tables 3 §4: table-layout initial は `auto`
+            // (non-inherited)。
+            table_layout: TableLayoutValue::Auto,
+            // CSS Tables 3 §6: border-collapse initial は `separate`
+            // (inherited — root seed 用)。
+            border_collapse: BorderCollapseValue::Separate,
             custom_properties: empty_custom_properties(),
         }
     }
@@ -1699,9 +1737,9 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows / border_collapse、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter)。
+    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout)。
     ///
     /// **手動同期リスト — drift に注意**: 上の prose 列挙は手動で維持される
     /// リストであり、[`crate::specified::SpecifiedValues`] の対応表
@@ -2239,6 +2277,12 @@ mod tests {
                 ComputedLengthPercentage::Px(32.0),
             )]),
             filter: Arc::new(vec![FilterFunction::Blur(Length::Px(3.0))]),
+            // CSS Tables 3 §4: table-layout は non-inherited なので initial
+            // (`auto`) と異なる値にしておく (non_initial_parent の趣旨どおり)。
+            table_layout: TableLayoutValue::Fixed,
+            // CSS Tables 3 §6: border-collapse は inherited なので initial
+            // (`separate`) と異なる値にしておく (同上)。
+            border_collapse: BorderCollapseValue::Collapse,
             custom_properties: CustomPropertyEnvironment::from_map(HashMap::from([(
                 SmolStr::new("--fixture"),
                 SmolStr::new("1px"),

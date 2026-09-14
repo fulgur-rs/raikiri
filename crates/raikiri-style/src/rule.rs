@@ -625,6 +625,8 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         // Effects Level 1 §5) — same shape as mask-image/clip-path above.
         | PropertyValue::Transform(_)
         | PropertyValue::Filter(_)
+        | PropertyValue::TableLayout(_)
+        | PropertyValue::BorderCollapse(_)
         | PropertyValue::LineBreak(_)
         | PropertyValue::TextJustify(_)
         | PropertyValue::TextAlignAll(_)

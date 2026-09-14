@@ -423,3 +423,36 @@ code, kbd, samp, tt { font-family: monospace; }
  * display deferral (see file header's `<pre>` scope note), unrelated to
  * and not resolved by this rule. */
 listing, plaintext, pre, xmp { font-family: monospace; white-space: pre; }
+
+/* HTML Living Standard "Rendering" §tables (15.3.9) + CSS 2.1 §17.2 / Appendix D
+ * — table model display types. Each HTML table-related element maps to its
+ * corresponding internal display value (CSS Display 3 §2 `<display-internal>`).
+ * Cleanroom UA rules derived from spec vocabulary, not copied from any engine's
+ * bundled UA stylesheet — same provenance policy as the flow-content and
+ * phrasing-content rules above.
+ *
+ * Coverage: all 10 table display keywords now parsed by `DisplayValue`
+ * (`table` / `inline-table` / `table-row-group` / `table-header-group` /
+ * `table-footer-group` / `table-row` / `table-column-group` / `table-column`
+ * / `table-cell` / `table-caption`) have a UA rule. Only `table` and the
+ * 9 internal types have an HTML element that defaults to them; `inline-table`
+ * has no default HTML host and is author-specified only — no UA rule needed
+ * for it, but the keyword is now accepted so author `display: inline-table`
+ * parses.
+ *
+ * Layout-time table formatting (row/column/cell track sizing, border-collapse,
+ * anonymous table object generation per CSS 2.1 §17.2.1) is not yet implemented
+ * in raikiri-dom — `bridge_display` maps these display values to `Display::Block`
+ * with a TODO until a dedicated table layout is wired. These UA rules still
+ * land so cascade/computed/selector matching for `display: table*` is
+ * observable (and WPT table display tests can assert the computed value)
+ * even while layout remains block-approximation. */
+table { display: table; }
+caption { display: table-caption; }
+col { display: table-column; }
+colgroup { display: table-column-group; }
+tbody { display: table-row-group; }
+thead { display: table-header-group; }
+tfoot { display: table-footer-group; }
+tr { display: table-row; }
+td, th { display: table-cell; }
