@@ -7236,6 +7236,14 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Filter(_)
         | PropertyValue::TableLayout(_)
         | PropertyValue::BorderCollapse(_)
+        // `border-spacing` (CSS Tables 3 §6.1) — `<length>{1,2}` の絶対化は
+        // 宣言 node 自身の font-size を要するため phase 3 の仕事
+        // (`Padding`/`Margin` arm と同じ "nothing for phase 2" 形)。
+        // `caption-side` (§7) / `empty-cells` (§8) は bare keyword payload
+        // のため phase 2 依存なし (`BorderCollapse` と同じ)。
+        | PropertyValue::BorderSpacing(_)
+        | PropertyValue::CaptionSide(_)
+        | PropertyValue::EmptyCells(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)
         | PropertyValue::LineBreak(_)
@@ -8009,6 +8017,20 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // inherit 解決は `SpecifiedValues::inherit_from` の素朴なコピーが担い、
         // ここは winner の単純代入 (`Visibility` arm と同じ shape)。
         PropertyValue::BorderCollapse(v) => target.border_collapse = v,
+        // CSS Tables 3 §6.1 border-spacing。inherited だが `<length>` のため
+        // inherit 解決は `SpecifiedValues::inherit_from` の lift
+        // (`lift_border_spacing`、`tab_size` の `Length` arm と同じ) が担い、
+        // ここは winner の単純代入 (`BorderCollapse` arm と同じ shape —
+        // 絶対化は phase 3 `finalize` の仕事)。
+        PropertyValue::BorderSpacing(v) => target.border_spacing = v,
+        // CSS Tables 3 §7 caption-side。inherited だが keyword のため
+        // inherit 解決は `SpecifiedValues::inherit_from` の素朴なコピーが担い、
+        // ここは winner の単純代入 (`Visibility` arm と同じ shape)。
+        PropertyValue::CaptionSide(v) => target.caption_side = v,
+        // CSS Tables 3 §8 empty-cells。inherited だが keyword のため
+        // inherit 解決は `SpecifiedValues::inherit_from` の素朴なコピーが担い、
+        // ここは winner の単純代入 (`Visibility` arm と同じ shape)。
+        PropertyValue::EmptyCells(v) => target.empty_cells = v,
         // New Text 3 / Writing Modes 3 properties are keyword-only with no staging field yet (parsing only).
         PropertyValue::LineBreak(_)
         | PropertyValue::TextJustify(_)
@@ -14581,6 +14603,127 @@ mod tests {
             r.computed[td].border_collapse,
             BorderCollapseValue::Collapse,
             "child should inherit border-collapse from parent (CSS Tables 3 §6 Inherited: yes)"
+        );
+    }
+
+    // ── border-spacing wire-through (CSS Tables 3 §6.1) ──
+    //
+    // WPT css/css-tables/parsing/border-spacing-computed.html の
+    // plain-length 3 case の pin (`"10px 20px"` / `"0"` → `"0px"` /
+    // single-doubles)。`calc()` + relative-unit 混じり 2 case は本 engine
+    // の math evaluator が mixed-unit calc を解決しない
+    // (`mixed_length_percentage_math_is_intentionally_not_supported` 参照)
+    // ため対象外 — baseline pin 側の注記参照。
+
+    #[test]
+    fn border_spacing_wired_through_cascade_from_inline_style() {
+        let cv = cascade_doc("", "table", Some("border-spacing: 10px 20px"));
+        assert_eq!(
+            cv.border_spacing.horizontal,
+            crate::resolve::ComputedLength(10.0)
+        );
+        assert_eq!(
+            cv.border_spacing.vertical,
+            crate::resolve::ComputedLength(20.0)
+        );
+        // WPT computed: `"10px 20px"` stays two lengths.
+        assert_eq!(cv.border_spacing.serialized(), "10px 20px");
+    }
+
+    #[test]
+    fn border_spacing_zero_serializes_shortest() {
+        // WPT computed: `"0"` → `"0px"` (not `"0px 0px"`, CSSOM §2.1
+        // shortest serialization).
+        let cv = cascade_doc("", "table", Some("border-spacing: 0"));
+        assert_eq!(cv.border_spacing.serialized(), "0px");
+    }
+
+    #[test]
+    fn border_spacing_single_value_doubles_to_both_axes() {
+        let cv = cascade_doc("", "table", Some("border-spacing: 10px"));
+        assert_eq!(cv.border_spacing.serialized(), "10px");
+    }
+
+    #[test]
+    fn border_spacing_resolves_em_against_own_font_size() {
+        // font-size 40px の node での `0.5em` → 20px (WPT computed file が
+        // `#target` に `font-size: 40px` を指定するのと同じ基準)。
+        let cv = cascade_doc(
+            "",
+            "table",
+            Some("font-size: 40px; border-spacing: 0.5em 10px"),
+        );
+        assert_eq!(cv.border_spacing.serialized(), "20px 10px");
+    }
+
+    #[test]
+    fn border_spacing_inherits_from_parent_element() {
+        // CSS Tables 3 §6.1: border-spacing は **inherited**.
+        let mut doc = TestDoc::new();
+        let table = doc.push_element(0, "table", Some("border-spacing: 10px 20px"));
+        let td = doc.push_element(table, "td", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[td].border_spacing.serialized(),
+            "10px 20px",
+            "child should inherit border-spacing from parent (CSS Tables 3 §6.1 Inherited: yes)"
+        );
+    }
+
+    // ── caption-side wire-through (CSS Tables 3 §7) ──
+
+    #[test]
+    fn caption_side_wired_through_cascade_from_inline_style() {
+        use crate::property::CaptionSideValue;
+        let cv = cascade_doc("", "table", Some("caption-side: bottom"));
+        assert_eq!(cv.caption_side, CaptionSideValue::Bottom);
+        // WPT caption-side-computed.html: single keyword serializes as-is.
+        let cv_top = cascade_doc("", "table", Some("caption-side: top"));
+        assert_eq!(cv_top.caption_side, CaptionSideValue::Top);
+    }
+
+    #[test]
+    fn caption_side_inherits_from_parent_element() {
+        // CSS Tables 3 §7: caption-side は **inherited**.
+        use crate::property::CaptionSideValue;
+        let mut doc = TestDoc::new();
+        let table = doc.push_element(0, "table", Some("caption-side: bottom"));
+        let td = doc.push_element(table, "td", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[td].caption_side,
+            CaptionSideValue::Bottom,
+            "child should inherit caption-side from parent (CSS Tables 3 §7 Inherited: yes)"
+        );
+    }
+
+    // ── empty-cells wire-through (CSS Tables 3 §8) ──
+
+    #[test]
+    fn empty_cells_wired_through_cascade_from_inline_style() {
+        use crate::property::EmptyCellsValue;
+        let cv = cascade_doc("", "table", Some("empty-cells: hide"));
+        assert_eq!(cv.empty_cells, EmptyCellsValue::Hide);
+        // WPT empty-cells-computed.html: single keyword serializes as-is.
+        let cv_show = cascade_doc("", "table", Some("empty-cells: show"));
+        assert_eq!(cv_show.empty_cells, EmptyCellsValue::Show);
+    }
+
+    #[test]
+    fn empty_cells_inherits_from_parent_element() {
+        // CSS Tables 3 §8: empty-cells は **inherited**.
+        use crate::property::EmptyCellsValue;
+        let mut doc = TestDoc::new();
+        let table = doc.push_element(0, "table", Some("empty-cells: hide"));
+        let td = doc.push_element(table, "td", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[td].empty_cells,
+            EmptyCellsValue::Hide,
+            "child should inherit empty-cells from parent (CSS Tables 3 §8 Inherited: yes)"
         );
     }
 
