@@ -836,3 +836,33 @@ fn dialog_display_reflects_open_attribute_via_ua_css() {
         );
     }
 }
+
+#[test]
+fn div_direction_reflects_dir_attribute_via_ua_css() {
+    // HTML LS Rendering §15.3.5 bidirectional rules carried in minimal.css:
+    // `[dir]:dir(ltr) { direction: ltr; }` / `[dir]:dir(rtl) { direction: rtl; }`
+    // (bdi/input-tel special cases and unicode-bidi:isolate excluded, see
+    // that file's comment). Exercises the real parse -> build_cascaded path.
+    // Author declarations override the UA rule (presentational-hint rank).
+    use raikiri_style::property::Direction;
+    let cases = [
+        ("<div>Hi</div>", Direction::Ltr),
+        ("<div dir=ltr>Hi</div>", Direction::Ltr),
+        ("<div dir=rtl>Hi</div>", Direction::Rtl),
+        (
+            "<div dir=rtl style=\"direction: ltr\">Hi</div>",
+            Direction::Ltr,
+        ),
+    ];
+    for (fragment, expected) in cases {
+        let html = format!("<html><body>{fragment}</body></html>");
+        let doc = parse_html(&html);
+        let result = build_cascaded(&doc);
+        let div_id = find_by_tag(&doc.dom, "div").expect("<div> exists");
+        let direction = result.computed[div_id.0 as usize].direction;
+        assert_eq!(
+            direction, expected,
+            "div direction should reflect the dir attribute per minimal.css (fragment: {fragment:?})"
+        );
+    }
+}

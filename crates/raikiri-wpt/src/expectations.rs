@@ -1230,8 +1230,14 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + page-valid + flex-basis-valid + flex-invalid parsing tgag (+3).
         // - hyphens-punctuation-001 (-1, 9q1p: container-width re-break exposed
         //   a false pass; genuine pass needs hyphenation dictionaries, bd u94v).
+        // + text-align end-001..008 (sans 009/010) + start-001..008 + start-010
+        //   (+17, dir-attribute UA rules: explicit-direction and dir=ltr/rtl/auto
+        //   cases now resolve; 009/010 need zero-width RLM handling, follow-up).
+        // - bidi-tab-001 (-1: dir rules made direction real, exposing
+        //   direction-naive tab-stop expansion in RTL spans; needs bidi-aware
+        //   tab stops, follow-up).
         // quarantine and deprecated stay empty until a developer PR adds a flake or crasher.
-        assert_eq!(set.baseline.entries.len(), 833);
+        assert_eq!(set.baseline.entries.len(), 849);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
