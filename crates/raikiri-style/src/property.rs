@@ -2072,6 +2072,17 @@ pub enum FlexBasisValue {
     Auto,
     /// `content` — spec §7.1 "plus the content keyword"。
     Content,
+    /// `min-content` — CSS Sizing 3 の intrinsic keyword (WPT
+    /// `flex-basis-valid.html` が要求)。computed 層では区別を保つが、
+    /// taffy bridge は `auto` 近似 ([`crate::resolve`] の
+    /// `ComputedFlexBasis::MinContent` doc・`crates/raikiri-dom/src/layout.rs`
+    /// の `bridge_flex` doc 参照)。
+    MinContent,
+    /// `max-content` — 同上。
+    MaxContent,
+    /// bare `fit-content` keyword — 同上。`<length-percentage>` 引数付きの
+    /// `fit-content()` function 形は scope 外 (WPT vector に現れない)。
+    FitContent,
     /// `<length-percentage [0,∞]>` — `width` と同じ non-negative constraint
     /// ([`parse_flex_basis`] doc 参照)。
     Length(Length),
@@ -3754,6 +3765,28 @@ impl TextUnderlinePosition {
         left: false,
         right: false,
     };
+}
+
+/// `page: auto | <custom-ident>` の value。
+///
+/// CSS Paged Media 3 §8.1 "Using named pages: page"
+/// (<https://www.w3.org/TR/css-page-3/#using-named-pages>)。
+/// Value: `auto | <custom-ident>`、Initial: `auto`、
+/// Applies to: boxes that create class A break points、Inherited: **no**、
+/// Computed value: specified value。
+/// `<custom-ident>` は CSS-wide keyword を除く単一 ident —
+/// WPT (`page-invalid.html`) が `default` も reject するため
+/// 同様に除外する。`not valid` (2 ident) / `123px` /
+/// `calc()` は grammar 外のため一般 mechanism
+/// (single-ident parse + caller `expect_exhausted`) で drop される。
+/// parsing-only ([`PropertyValue::Page`] doc 参照)。
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PageValue {
+    /// `auto` — spec initial value。
+    Auto,
+    /// 名前付きページ (`<custom-ident>`)。
+    Named(Atom),
 }
 
 /// `vertical-align` property の value.
@@ -7648,6 +7681,12 @@ pub enum PropertyValue {
     /// [`TextUnderlinePosition::AUTO`]。parsing-only (同上)。
     /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
     TextUnderlinePosition(TextUnderlinePosition),
+    /// `page: auto | <custom-ident>` — **non-inherited**、initial:
+    /// [`PageValue::Auto`] (CSS Paged Media 3 §8.1 [`PageValue`] doc 参照)。
+    /// parsing-only: cascade は winner を staging field に載せず drop する
+    /// (E/F/G の `TextCombineUpright` 等と同 pattern)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    Page(PageValue),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -8085,6 +8124,12 @@ pub enum PropertyKey {
     TextEmphasisPosition,
     // text-underline-position (ED §2.7、同上)。
     TextUnderlinePosition,
+    // page (CSS Paged Media 3 §8.1、semantics on the matching
+    // PropertyValue::Page variant; sibling PropertyKey variants carry no
+    // per-variant docs per crate convention). 末尾配置の理由は
+    // background-repeat 等と同節参照 (staging field なしの parsing-only
+    // だが discriminant 順は同様に自由)。
+    Page,
 }
 
 impl PropertyValue {
@@ -8255,6 +8300,7 @@ impl PropertyValue {
             PropertyValue::TextDecorationInset(_) => PropertyKey::TextDecorationInset,
             PropertyValue::TextEmphasisPosition(_) => PropertyKey::TextEmphasisPosition,
             PropertyValue::TextUnderlinePosition(_) => PropertyKey::TextUnderlinePosition,
+            PropertyValue::Page(_) => PropertyKey::Page,
         }
     }
 }
@@ -8432,10 +8478,72 @@ fn math_calc_inner_is_valid(parser: &mut Parser<'_, '_>, depth: usize) -> bool {
     has_content
 }
 
+/// Whether `value` contains any dimension or percentage token inside a
+/// math function (`calc`/`min`/`max`/`clamp`).
+///
+/// CSS Values 4 calc type resolution: a math expression built only from
+/// `<number>`s has type `<number>` and must not satisfy
+/// `<length>`-expecting positions — WPT `flex: 1 2 calc(0)` (invalid,
+/// number-typed calc as basis) vs `flex: calc(-1) calc(-1) 0` (valid,
+/// number-typed calc as factors). [`deferred_dummy_is_valid_for_property`]
+/// picks the dummy from this: `"1px"` when dimensions are present (current
+/// behavior), `"1"` for pure-number math (so only `<number>` positions
+/// validate).
+fn math_source_has_dimension_or_percentage(input: &str) -> bool {
+    // NOTE: no early `return true` anywhere in this walk — `parse_nested_block`
+    // runs its closure via `parse_entirely`, which fails when the closure
+    // leaves input unconsumed (e.g. returning at the first dimension of
+    // `min(20px, 10px)` leaves `, 10px)` behind and the whole block scores
+    // false). Accumulate into `found` and always walk to exhaustion.
+    fn scan(parser: &mut Parser<'_, '_>, in_math: bool) -> bool {
+        let mut found = false;
+        loop {
+            let token = match parser.next() {
+                Ok(token) => token.clone(),
+                Err(_) => break,
+            };
+            match token {
+                Token::Dimension { .. } | Token::Percentage { .. } if in_math => {
+                    found = true;
+                }
+                Token::Function(name) => {
+                    let is_math = MATH_FUNCTIONS.iter().any(|m| name.eq_ignore_ascii_case(m));
+                    let inner = parser
+                        .parse_nested_block(|nested| {
+                            Ok::<_, ParseError<'_, ()>>(scan(nested, in_math || is_math))
+                        })
+                        .unwrap_or(false);
+                    found = found || inner;
+                }
+                Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
+                    let inner = parser
+                        .parse_nested_block(|nested| {
+                            Ok::<_, ParseError<'_, ()>>(scan(nested, in_math))
+                        })
+                        .unwrap_or(false);
+                    found = found || inner;
+                }
+                _ => {}
+            }
+        }
+        found
+    }
+
+    let mut parser_input = ParserInput::new(input);
+    let mut parser = Parser::new(&mut parser_input);
+    scan(&mut parser, false)
+}
+
 fn deferred_dummy_is_valid_for_property(value: &str, prop: &str) -> bool {
-    // Replace math functions with dummy `1px` and check if the resulting value parses for the property.
+    // Replace math functions with a dummy and check if the resulting value parses for the property.
     // This validates overall structure (e.g. `margin-top: calc(...) auto` has 2 tokens, invalid for longhand).
-    let dummy = replace_math_with_dummy(value);
+    // The dummy is type-aware (`math_source_has_dimension_or_percentage`):
+    // pure-number math substitutes `1` so only `<number>` positions validate.
+    let dummy = if math_source_has_dimension_or_percentage(value) {
+        replace_math_with_dummy(value)
+    } else {
+        replace_math_with_number_dummy(value)
+    };
     let mut input = ParserInput::new(&dummy);
     let mut parser = Parser::new(&mut input);
     // Avoid recursion into deferred path: dummy contains no deferred function, so parse_value will go to normal dispatch.
@@ -8447,6 +8555,20 @@ fn deferred_dummy_is_valid_for_property(value: &str, prop: &str) -> bool {
 }
 
 fn replace_math_with_dummy(input: &str) -> String {
+    replace_math_with_dummy_and_number(input, "1px")
+}
+
+/// [`replace_math_with_dummy`] with a pure-number dummy (`1` instead of
+/// `1px`) — for math sources that carry no dimension or percentage
+/// ([`math_source_has_dimension_or_percentage`]), so the structural check
+/// in [`deferred_dummy_is_valid_for_property`] only validates `<number>`
+/// positions (CSS calc type rule).
+fn replace_math_with_number_dummy(input: &str) -> String {
+    replace_math_with_dummy_and_number(input, "1")
+}
+
+/// [`replace_math_with_dummy`] generalized over the dummy payload.
+fn replace_math_with_dummy_and_number(input: &str, dummy: &str) -> String {
     let mut result = String::new();
     let mut i = 0;
     let lower = input.to_ascii_lowercase();
@@ -8455,7 +8577,6 @@ fn replace_math_with_dummy(input: &str) -> String {
         let mut matched = None;
         for func in MATH_FUNCTIONS.iter() {
             if lower[i..].starts_with(func) {
-                // Check that next char after func is '(' (allow optional whitespace? spec no whitespace, but be lenient)
                 let after = i + func.len();
                 if after < bytes.len() && bytes[after] == b'(' {
                     matched = Some(*func);
@@ -8464,7 +8585,6 @@ fn replace_math_with_dummy(input: &str) -> String {
             }
         }
         if let Some(func) = matched {
-            // Find matching closing parenthesis, handling nested parens
             let mut depth = 0;
             let mut j = i + func.len();
             let mut found_end = None;
@@ -8483,11 +8603,10 @@ fn replace_math_with_dummy(input: &str) -> String {
                 j += 1;
             }
             if let Some(end) = found_end {
-                result.push_str("1px");
+                result.push_str(dummy);
                 i = end + 1;
                 continue;
             } else {
-                // Unclosed, just push rest
                 result.push_str(&input[i..]);
                 break;
             }
@@ -8845,6 +8964,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "text-decoration-inset" => PropertyKey::TextDecorationInset,
         "text-emphasis-position" => PropertyKey::TextEmphasisPosition,
         "text-underline-position" => PropertyKey::TextUnderlinePosition,
+        "page" => PropertyKey::Page,
         "font-variant-caps" => PropertyKey::FontVariantCaps,
         "quotes" => PropertyKey::Quotes,
         "text-shadow" => PropertyKey::TextShadow,
@@ -8916,7 +9036,19 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
             // as `width: calc(foo)` during declaration parsing, rather than
             // letting it override a valid earlier declaration and fail only
             // during cascade resolution.
-            if let Some(simplified) = crate::cascade::simplify_math_functions(value.as_ref()) {
+            //
+            // Pure-number math (`calc(0)`, `calc(3 - 3)` — no dimension or
+            // percentage anywhere, see
+            // `math_source_has_dimension_or_percentage`) skips this
+            // simplification: it would erase the calc type and let a
+            // number-typed result satisfy `<length>` positions through the
+            // unitless-zero rule (`flex: 1 2 calc(0)` must stay invalid
+            // while `flex: calc(-1) calc(-1) 0` stays valid). Such values go
+            // straight to the type-aware dummy check below.
+            let has_dimension = math_source_has_dimension_or_percentage(value.as_ref());
+            if has_dimension
+                && let Some(simplified) = crate::cascade::simplify_math_functions(value.as_ref())
+            {
                 let mut reparsed_input = ParserInput::new(simplified.as_ref());
                 let mut reparsed = Parser::new(&mut reparsed_input);
                 if let Some(parsed) = parse_value(name, &mut reparsed)
@@ -9242,6 +9374,9 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "text-underline-position" => {
             parse_text_underline_position(input).map(PropertyValue::TextUnderlinePosition)
         }
+        // CSS Paged Media 3 §8.1 page. grammar: `auto | <custom-ident>`
+        // (`PageValue` doc 参照)。
+        "page" => parse_page_value(input).map(PropertyValue::Page),
         // CSS 2.1 §10.8.1 vertical-align, restricted to `baseline` / `sub` /
         // `super` / `middle` / `text-top` / `text-bottom` / `<length>`
         // (`VerticalAlign` doc's "Scope carving" section — `top` / `bottom`
@@ -12935,6 +13070,24 @@ fn parse_flex_basis(input: &mut Parser<'_, '_>) -> Option<FlexBasisValue> {
     {
         return Some(FlexBasisValue::Content);
     }
+    if input
+        .try_parse(|i| i.expect_ident_matching("min-content"))
+        .is_ok()
+    {
+        return Some(FlexBasisValue::MinContent);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("max-content"))
+        .is_ok()
+    {
+        return Some(FlexBasisValue::MaxContent);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("fit-content"))
+        .is_ok()
+    {
+        return Some(FlexBasisValue::FitContent);
+    }
     let length = parse_length_value(input, true)?;
     // `<'width'>` reuse: CSS Sizing 3 §3.1.1 の `[0,∞]` non-negative
     // constraint (`parse_width` と同 pattern)。
@@ -15030,6 +15183,25 @@ fn parse_vertical_align(input: &mut Parser<'_, '_>) -> Option<VerticalAlign> {
         };
     }
     parse_length_value(input, true).map(VerticalAlign::Length)
+}
+
+/// CSS Paged Media 3 §8.1 の `page` を parse する
+/// (<https://www.w3.org/TR/css-page-3/#using-named-pages>)。
+///
+/// Grammar: `auto | <custom-ident>`。`auto` 単独、それ以外は CSS-wide keyword
+/// (`inherit`/`initial`/`unset`/`revert`/`revert-layer`) と `default`
+/// を除く単一 ident ([`PageValue`] doc 参照)。
+/// ASCII case-insensitive で比較し、保持する値は
+/// authored のまま (Atom は case-sensitive)。
+fn parse_page_value(input: &mut Parser<'_, '_>) -> Option<PageValue> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(PageValue::Auto);
+    }
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "default" => None,
+        _ => Some(PageValue::Named(Atom::from(ident.as_ref()))),
+    }
 }
 
 /// `counter-reset` / `counter-increment` / `counter-set` の value を parse する。
@@ -24597,27 +24769,20 @@ mod tests {
         // ED §2.6: thickness participates in the `||` loop like the other
         // 3 components (WPT `text-decoration-shorthand.html` maps
         // `overline from-font dotted green` to all 4 longhands).
-        let decls = parse("overline from-font dotted green", "text-decoration");
-        match decls {
-            Some(PropertyValue::TextDecoration(shorthand)) => {
-                assert_eq!(shorthand.line, TextDecorationLine::OVERLINE);
-                assert_eq!(shorthand.thickness, TextDecorationThickness::FromFont);
-                assert_eq!(shorthand.style, TextDecorationStyle::Dotted);
-                assert_eq!(
-                    shorthand.color,
-                    TextDecorationColor::Resolved(CssColor {
-                        r: 0,
-                        g: 128,
-                        b: 0,
-                        a: 255,
-                    })
-                );
-            }
-            // cov:ignore: `parse` above must produce the shorthand variant;
-            // any other outcome means the parser itself regressed, which the
-            // surrounding asserts already cover.
-            other => panic!("expected PropertyValue::TextDecoration, got {other:?}"),
-        }
+        assert_eq!(
+            parse("overline from-font dotted green", "text-decoration"),
+            Some(PropertyValue::TextDecoration(TextDecorationShorthand {
+                line: TextDecorationLine::OVERLINE,
+                style: TextDecorationStyle::Dotted,
+                color: TextDecorationColor::Resolved(CssColor {
+                    r: 0,
+                    g: 128,
+                    b: 0,
+                    a: 255,
+                }),
+                thickness: TextDecorationThickness::FromFont,
+            }))
+        );
     }
 
     #[test]
@@ -24955,6 +25120,44 @@ mod tests {
             thickness: TextDecorationThickness::Auto,
         });
         assert_eq!(shorthand.key(), PropertyKey::TextDecoration);
+    }
+
+    // ── page (CSS Paged Media 3 §8.1) ──
+
+    #[test]
+    fn page_value_parses_auto_and_custom_ident() {
+        assert_eq!(
+            parse("auto", "page"),
+            Some(PropertyValue::Page(PageValue::Auto))
+        );
+        assert_eq!(
+            parse("table", "page"),
+            Some(PropertyValue::Page(PageValue::Named(Atom::from("table"))))
+        );
+        assert_eq!(
+            parse("xyzabc", "page"),
+            Some(PropertyValue::Page(PageValue::Named(Atom::from("xyzabc"))))
+        );
+        // CSS-wide keywords and `default` are not custom idents.
+        for kw in [
+            "inherit",
+            "initial",
+            "unset",
+            "revert",
+            "revert-layer",
+            "default",
+        ] {
+            assert_eq!(parse_entire(kw, "page"), None, "{kw}");
+        }
+        // two idents / dimension are grammar-outside (caller drops).
+        assert_eq!(parse_entire("not valid", "page"), None);
+        assert_eq!(parse_entire("123px", "page"), None);
+    }
+
+    #[test]
+    fn page_value_key_maps_to_page_property_key() {
+        let v = PropertyValue::Page(PageValue::Auto);
+        assert_eq!(v.key(), PropertyKey::Page);
     }
 
     // ── vertical-align (CSS 2.1 §10.8.1) ──
@@ -28608,6 +28811,25 @@ mod tests {
     }
 
     #[test]
+    fn flex_basis_parse_min_max_fit_content_keywords() {
+        // CSS Sizing 3 intrinsic keywords (WPT `flex-basis-valid.html`).
+        // Bare `fit-content` only — the `fit-content(<length-percentage>)`
+        // function form stays out of scope.
+        assert_eq!(
+            parse("min-content", "flex-basis"),
+            Some(PropertyValue::FlexBasis(FlexBasisValue::MinContent))
+        );
+        assert_eq!(
+            parse("max-content", "flex-basis"),
+            Some(PropertyValue::FlexBasis(FlexBasisValue::MaxContent))
+        );
+        assert_eq!(
+            parse("fit-content", "flex-basis"),
+            Some(PropertyValue::FlexBasis(FlexBasisValue::FitContent))
+        );
+    }
+
+    #[test]
     fn flex_basis_parse_length_and_percentage() {
         assert_eq!(
             parse("200px", "flex-basis"),
@@ -30510,6 +30732,35 @@ mod tests {
     fn math_without_var_is_validated_during_declaration_parsing() {
         assert!(parse("calc(foo)", "width").is_none());
         assert!(parse("min(10px, 20px)", "width").is_some());
+    }
+
+    #[test]
+    fn math_dummy_selection_is_type_aware() {
+        // `math_source_has_dimension_or_percentage`: dimensions and
+        // percentages count even through nesting and across comma-separated
+        // arguments (no early exit — `parse_nested_block` runs its closure
+        // via `parse_entirely`).
+        assert!(math_source_has_dimension_or_percentage("calc(10px)"));
+        assert!(math_source_has_dimension_or_percentage("min(20px, 10px)"));
+        assert!(math_source_has_dimension_or_percentage("calc((1px))"));
+        assert!(math_source_has_dimension_or_percentage("calc(10% + 1)"));
+        assert!(!math_source_has_dimension_or_percentage("calc(0)"));
+        assert!(!math_source_has_dimension_or_percentage("calc(3 - 3)"));
+        // `deferred_dummy_is_valid_for_property`: pure-number math validates
+        // only `<number>` positions (WPT `flex: 1 2 calc(0)` invalid), while
+        // dimension-carrying math keeps the `1px` behavior.
+        assert!(deferred_dummy_is_valid_for_property(
+            "calc(-1)",
+            "flex-grow"
+        ));
+        assert!(!deferred_dummy_is_valid_for_property(
+            "calc(0)",
+            "flex-basis"
+        ));
+        assert!(deferred_dummy_is_valid_for_property(
+            "calc(2em + 3ex)",
+            "width"
+        ));
     }
 
     // ── orphans / widows (CSS Fragmentation Module Level 3 §3.3) ──

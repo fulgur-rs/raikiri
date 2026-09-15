@@ -99,9 +99,11 @@ css/css-color-adjust/parsing/color-scheme-invalid.html
 css/css-contain/parsing/contain-invalid.html
 css/css-content/parsing/content-counter-valid.html
 css/css-content/parsing/content-valid.html
+css/css-flexbox/parsing/flex-basis-valid.html
 css/css-flexbox/parsing/flex-direction-valid.html
 css/css-flexbox/parsing/flex-flow-invalid.html
 css/css-flexbox/parsing/flex-grow-valid.html
+css/css-flexbox/parsing/flex-invalid.html
 css/css-flexbox/parsing/flex-shorthand.html
 css/css-flexbox/parsing/flex-shrink-valid.html
 css/css-flexbox/parsing/flex-wrap-valid.html
@@ -424,6 +426,7 @@ css/css-masking/parsing/mask-type-invalid.html
 css/css-overscroll-behavior/parsing/overscroll-behavior-invalid.html
 css/css-page/parsing/page-invalid.html
 css/css-page/parsing/page-orientation-invalid.tentative.html
+css/css-page/parsing/page-valid.html
 css/css-page/parsing/size-invalid.html
 css/css-rhythm/parsing/block-step-align-invalid.html
 css/css-rhythm/parsing/block-step-insert-invalid.html

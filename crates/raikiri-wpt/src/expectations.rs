@@ -1226,9 +1226,10 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // baseline populated via chore(wpt): pin PASS file-level parsing tests + goal G (79) + selectors (10) (WPT 97ea26e)
         // + grid reftest H (+20) + text reftest retry2 J2 (+176) + flexbox reftest retry2 I2 (+191)
         // + css-tables reftest sweep (+29) + table-layout/border-collapse parsing-valid (+2)
-        // + css-text-decor parsing jqg8 (+10).
+        // + css-text-decor parsing jqg8 (+10)
+        // + page-valid + flex-basis-valid + flex-invalid parsing tgag (+3).
         // quarantine and deprecated stay empty until a developer PR adds a flake or crasher.
-        assert_eq!(set.baseline.entries.len(), 831);
+        assert_eq!(set.baseline.entries.len(), 834);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
