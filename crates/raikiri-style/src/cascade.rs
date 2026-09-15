@@ -7532,6 +7532,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // invariant への違反になる。詳細は
         // `crate::property::resolve_text_align_match_parent` の doc。
         PropertyValue::TextAlign(t) => target.text_align = t,
+        // CSS Text 3 §6.2 text-justify — **inherited** keyword、単純代入。
+        PropertyValue::TextJustify(v) => target.text_justify = v,
+        // CSS Text 3 §6.1 text-align-last — **inherited** keyword、単純代入。
+        // `auto` の解決は consumer 側 (raikiri-dom realign)。
+        PropertyValue::TextAlignLast(v) => target.text_align_last = v,
         // CSS Text 3 §8.1 text-indent — **inherited**. `Length` is `Copy`,
         // by-value assignment suffices (sibling `TextAlign`/`Direction`
         // pattern). Absolutization (`em`/`rem`/`%` etc.) happens later in
@@ -8038,9 +8043,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // path (`crate::page::absolutize_in_page_context`'s arms), same
         // split as the phase-2/phase-3 division above.
         PropertyValue::LineBreak(_)
-        | PropertyValue::TextJustify(_)
         | PropertyValue::TextAlignAll(_)
-        | PropertyValue::TextAlignLast(_)
         | PropertyValue::TextCombineUpright(_)
         | PropertyValue::TextOrientation(_)
         | PropertyValue::UnicodeBidi(_)
@@ -14126,6 +14129,59 @@ mod tests {
             "later `position: static` must suppress earlier `running(hdr)` — \
              running_templates should stay empty when Static wins the cascade"
         );
+    }
+
+    // ── text-justify / text-align-last wire-through + inheritance ──
+
+    #[test]
+    fn text_justify_wired_through_cascade_from_inline_style() {
+        // <p style="text-justify: inter-word"> → ComputedValues.text_justify。
+        // 上記 text-align pattern を踏襲 (bd raikiri-spike-5u1y)。
+        use crate::property::TextJustify;
+        let cv = cascade_doc("", "p", Some("text-justify: inter-word"));
+        assert_eq!(cv.text_justify, TextJustify::InterWord);
+    }
+
+    #[test]
+    fn text_justify_distribute_parses() {
+        // legacy `distribute` を受理する (WPT text-justify-distribute-001)。
+        use crate::property::TextJustify;
+        let cv = cascade_doc("", "p", Some("text-justify: distribute"));
+        assert_eq!(cv.text_justify, TextJustify::Distribute);
+    }
+
+    #[test]
+    fn text_justify_inherits_from_parent_element() {
+        // CSS Text 3 §6.2: text-justify は **inherited**。
+        use crate::property::TextJustify;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("text-justify: none"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].text_justify, TextJustify::None);
+        assert_eq!(r.computed[span].text_justify, TextJustify::None);
+    }
+
+    #[test]
+    fn text_align_last_wired_through_cascade_from_inline_style() {
+        // <p style="text-align-last: justify"> → ComputedValues.text_align_last。
+        use crate::property::TextAlignLast;
+        let cv = cascade_doc("", "p", Some("text-align-last: justify"));
+        assert_eq!(cv.text_align_last, TextAlignLast::Justify);
+    }
+
+    #[test]
+    fn text_align_last_inherits_from_parent_element() {
+        // CSS Text 3 §6.1: text-align-last は **inherited**。
+        use crate::property::TextAlignLast;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("text-align-last: center"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].text_align_last, TextAlignLast::Center);
+        assert_eq!(r.computed[span].text_align_last, TextAlignLast::Center);
     }
 
     // ── text-align wire-through + inheritance (CSS Text 3 §6.1) ──

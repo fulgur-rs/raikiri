@@ -4815,6 +4815,10 @@ pub enum TextJustify {
     None,
     InterWord,
     InterCharacter,
+    /// legacy `distribute` (CSS Text 3 §6.2 で `inter-character` の別名扱い
+    /// だった旧値 — WPT text-justify-distribute-001 が使用)。
+    /// parley 側に区別が無いため consumer では `Justify` と同扱い。
+    Distribute,
 }
 
 /// `text-align-all` property の value (CSS Text 3 §6.1 longhand).
@@ -14413,6 +14417,7 @@ fn parse_text_justify(input: &mut Parser<'_, '_>) -> Option<TextJustify> {
         "none" => Some(TextJustify::None),
         "inter-word" => Some(TextJustify::InterWord),
         "inter-character" => Some(TextJustify::InterCharacter),
+        "distribute" => Some(TextJustify::Distribute),
         _ => None,
     }
 }
