@@ -447,6 +447,10 @@ fn measure_cell_inline(doc: &mut Document, cell_id: usize, axis: AvailableSpace)
                 width: axis,
                 height: AvailableSpace::MAX_CONTENT,
             },
+            known_dimensions_are_definite: taffy::geometry::Size {
+                width: true,
+                height: true,
+            },
             vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
         },
     );
@@ -681,6 +685,10 @@ fn resolve_row_heights(doc: &mut Document, grid: &TableGrid, column_widths: &[f3
                     width: AvailableSpace::Definite(cell_width),
                     height: AvailableSpace::MAX_CONTENT,
                 },
+                known_dimensions_are_definite: taffy::geometry::Size {
+                    width: true,
+                    height: true,
+                },
                 vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
             },
         );
@@ -769,6 +777,10 @@ fn place_cells(
                     width: AvailableSpace::Definite(cell_width),
                     height: AvailableSpace::Definite(cell_height),
                 },
+                known_dimensions_are_definite: taffy::geometry::Size {
+                    width: true,
+                    height: true,
+                },
                 vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
             },
         );
@@ -782,7 +794,7 @@ fn place_cells(
                 width: cell_width,
                 height: cell_height,
             },
-            content_size: output.content_size,
+            scrollable_overflow_rect: output.scrollable_overflow_rect,
             scrollbar_size: Size::ZERO,
             padding: Rect::ZERO,
             border: Rect::ZERO,

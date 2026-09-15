@@ -2073,10 +2073,8 @@ pub enum FlexBasisValue {
     /// `content` — spec §7.1 "plus the content keyword"。
     Content,
     /// `min-content` — CSS Sizing 3 の intrinsic keyword (WPT
-    /// `flex-basis-valid.html` が要求)。computed 層では区別を保つが、
-    /// taffy bridge は `auto` 近似 ([`crate::resolve`] の
-    /// `ComputedFlexBasis::MinContent` doc・`crates/raikiri-dom/src/layout.rs`
-    /// の `bridge_flex` doc 参照)。
+    /// `flex-basis-valid.html` が要求)。taffy 0.14 の同名 `Dimension`
+    /// variant に写像する (`bridge_flex` doc 参照)。
     MinContent,
     /// `max-content` — 同上。
     MaxContent,
