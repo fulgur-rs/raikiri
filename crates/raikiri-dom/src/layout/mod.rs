@@ -1376,29 +1376,48 @@ fn is_block_content(doc: &Document, cascade: &CascadeResult, sib: usize) -> bool
 /// nearest block-container 祖先まで登りながら先行 sibling を scan し、
 /// content が 1 つでもあれば false。
 /// block 祖先が無い場合は true (fail-safe — 従来挙動を維持)。
-fn is_first_in_block(
-    doc: &Document,
-    cascade: &CascadeResult,
-    parent_of: &[Option<usize>],
-    idx: usize,
-) -> bool {
-    let block = nearest_block_container(doc, cascade, parent_of, idx);
-    let mut cur = idx;
-    loop {
-        let Some(p) = parent_of.get(cur).copied().flatten() else {
-            return true;
-        };
-        if let Some(pos) = doc.nodes[p].children.iter().position(|&c| c == cur) {
-            for &sib in doc.nodes[p].children[..pos].iter().rev() {
-                if is_block_content(doc, cascade, sib) {
-                    return false;
-                }
-            }
-        }
-        if Some(p) == block {
-            return true;
-        }
-        cur = p;
+/// Maps computed hanging/each-line flags plus node line position to parley
+/// [`IndentOptions`] (CSS Text 3 §8.1, bd raikiri-spike-5u1y).
+///
+/// Returns `None` when the node must not indent at all. Position semantics:
+/// - [`LineStart::MidLine`] (mid-line inline split): never indent — parley
+///   cannot know the layout starts mid-line, so any amount would shift
+///   already-placed content.
+/// - [`LineStart::BlockStart`]: the layout's first line is the block's first
+///   line — pass the flags through unchanged (parley resolves first/wrap/
+///   hard-break lines itself, including hanging+each-line combined via XOR).
+/// - [`LineStart::AfterBreak`]: every layout line is a non-first block line.
+///   basic skips; each-line and combined pass through unchanged (exact per
+///   parley scope-line semantics); hanging-only maps to
+///   `{ each_line: true, hanging: false }`, which is exact for single-line
+///   and post-hard-break lines — soft-wrapped continuations inside the node
+///   are missed (no parley option indents all lines unconditionally).
+///   Documented approximation; the common test shape (short lines) is exact.
+fn indent_options_for_node(
+    hanging: bool,
+    each_line: bool,
+    start: LineStart,
+) -> Option<IndentOptions> {
+    match (hanging, each_line, start) {
+        (_, _, LineStart::MidLine) => None,
+        (false, false, LineStart::BlockStart) => Some(IndentOptions::default()),
+        (false, false, LineStart::AfterBreak) => None,
+        (false, true, _) => Some(IndentOptions {
+            each_line: true,
+            hanging: false,
+        }),
+        (true, false, LineStart::BlockStart) => Some(IndentOptions {
+            each_line: false,
+            hanging: true,
+        }),
+        (true, false, LineStart::AfterBreak) => Some(IndentOptions {
+            each_line: true,
+            hanging: false,
+        }),
+        (true, true, _) => Some(IndentOptions {
+            each_line: true,
+            hanging: true,
+        }),
     }
 }
 
@@ -1645,17 +1664,25 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
             Alignment::End if cv.direction == Direction::Rtl => Alignment::Left,
             a => a,
         };
-        // `text-indent` (CSS Text 3 §8.1): basic `<length-percentage>` のみ。
-        // `hanging` / `each-line` は parse 層で drop されるため常に default
-        // (bd raikiri-spike-5u1y slice 2 で payload 化予定)。
-        // `%` は containing block inline size 基準 — preshape 時点では不明の
-        // ため本 pass で解決する (align と同じ幅基準問題)。
-        // 先頭行のみ (each-line 無し)。`<br>` 後・2 番目以降の node・
-        // nested block 後の bare text は除外 (length-002 が pin)。
-        let needs_indent = match cv.text_indent {
+        // `text-indent` (CSS Text 3 §8.1): length plus hanging/each-line
+        // flags, resolved against the containing block width for `%`
+        // (unknown at preshape time — same width-basis problem as align).
+        // The indent applies per node position (see `indent_options_for_node`
+        // doc): MidLine never, BlockStart always, AfterBreak per flags.
+        let nonzero_indent = match cv.text_indent {
             ComputedLengthPercentage::Px(px) => px != 0.0,
             ComputedLengthPercentage::Percent(p) => p != 0.0,
-        } && is_first_in_block(doc, cascade, &parent_of, idx);
+        };
+        let indent_options = if nonzero_indent {
+            indent_options_for_node(
+                cv.text_indent_hanging,
+                cv.text_indent_each_line,
+                line_start_pos(doc, cascade, &parent_of, idx),
+            )
+        } else {
+            None
+        };
+        let needs_indent = indent_options.is_some();
         // preshape は page 幅で break するため、narrow container 内の text の
         // 折り返しは container 幅に整合しない (bd raikiri-spike-5u1y slice 1b で
         // 実測: length-001 の 3-line article が single-line のまま残る)。
@@ -1693,12 +1720,12 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
         else {
             continue;
         };
-        if needs_indent {
+        if let Some(options) = indent_options {
             let amount = match cv.text_indent {
                 ComputedLengthPercentage::Px(px) => px,
                 ComputedLengthPercentage::Percent(p) => containing_width * p / 100.0,
             };
-            layout.set_text_indent(amount, IndentOptions::default());
+            layout.set_text_indent(amount, options);
         }
         layout.break_all_lines(Some(containing_width));
         let mut align = parley_align;
@@ -4573,10 +4600,10 @@ mod tests {
         );
     }
 
-    /// `is_first_in_block` 用 fixture: `<article>` block 内の DOM を組み、
-    /// 対象 Text node の first-in-block 判定を返す helper。
-    /// `build` closure が `(doc, article)` から対象 node を作る。
-    fn first_in_block_of(build: impl FnOnce(&mut Document, usize) -> usize) -> bool {
+    /// Fixture helper: builds a DOM inside an `<article>` block and returns
+    /// the target text node's [`LineStart`] classification.
+    /// The `build` closure creates the target node from `(doc, article)`.
+    fn first_in_block_of(build: impl FnOnce(&mut Document, usize) -> usize) -> LineStart {
         use raikiri_style::{build_rule_tree, cascade};
 
         let mut doc = Document::new();
@@ -4599,58 +4626,71 @@ mod tests {
                 }
             }
         }
-        is_first_in_block(&doc, &cr, &parent_of, target)
+        line_start_pos(&doc, &cr, &parent_of, target)
     }
 
     #[test]
-    fn first_in_block_single_text_is_first() {
-        assert!(first_in_block_of(|doc, article| {
-            doc.append_text(article, "Hello")
-        }));
+    fn line_start_single_text_is_block_start() {
+        assert_eq!(
+            first_in_block_of(|doc, article| { doc.append_text(article, "Hello") }),
+            LineStart::BlockStart
+        );
     }
 
     #[test]
-    fn first_in_block_second_text_is_not_first() {
-        assert!(!first_in_block_of(|doc, article| {
-            doc.append_text(article, "Hello");
-            doc.append_text(article, "World")
-        }));
+    fn line_start_second_text_is_mid_line() {
+        assert_eq!(
+            first_in_block_of(|doc, article| {
+                doc.append_text(article, "Hello");
+                doc.append_text(article, "World")
+            }),
+            LineStart::MidLine
+        );
     }
 
     #[test]
-    fn first_in_block_after_br_is_not_first() {
-        assert!(!first_in_block_of(|doc, article| {
-            doc.append_text(article, "Hello");
-            doc.append_element(Some(article), "br", Style::default(), None::<&str>);
-            doc.append_text(article, "World")
-        }));
+    fn line_start_after_br_is_after_break() {
+        assert_eq!(
+            first_in_block_of(|doc, article| {
+                doc.append_text(article, "Hello");
+                doc.append_element(Some(article), "br", Style::default(), None::<&str>);
+                doc.append_text(article, "World")
+            }),
+            LineStart::AfterBreak
+        );
     }
 
     #[test]
-    fn first_in_block_nested_div_first_text_is_first() {
-        assert!(first_in_block_of(|doc, article| {
-            let div = doc.append_element(
-                Some(article),
-                "div",
-                Style::default(),
-                Some("display: block"),
-            );
-            doc.append_text(div, "Hello")
-        }));
+    fn line_start_nested_div_first_text_is_block_start() {
+        assert_eq!(
+            first_in_block_of(|doc, article| {
+                let div = doc.append_element(
+                    Some(article),
+                    "div",
+                    Style::default(),
+                    Some("display: block"),
+                );
+                doc.append_text(div, "Hello")
+            }),
+            LineStart::BlockStart
+        );
     }
 
     #[test]
-    fn first_in_block_bare_text_after_div_is_not_first() {
-        assert!(!first_in_block_of(|doc, article| {
-            let div = doc.append_element(
-                Some(article),
-                "div",
-                Style::default(),
-                Some("display: block"),
-            );
-            doc.append_text(div, "Hello");
-            doc.append_text(article, "World")
-        }));
+    fn line_start_bare_text_after_div_is_after_break() {
+        assert_eq!(
+            first_in_block_of(|doc, article| {
+                let div = doc.append_element(
+                    Some(article),
+                    "div",
+                    Style::default(),
+                    Some("display: block"),
+                );
+                doc.append_text(div, "Hello");
+                doc.append_text(article, "World")
+            }),
+            LineStart::AfterBreak
+        );
     }
 
     #[test]
@@ -4763,6 +4803,37 @@ mod tests {
             first_x,
             last_end
         );
+    }
+
+    #[test]
+    fn indent_options_matrix() {
+        use LineStart::{AfterBreak, BlockStart, MidLine};
+        // MidLine never indents.
+        assert!(indent_options_for_node(false, false, MidLine).is_none());
+        assert!(indent_options_for_node(true, true, MidLine).is_none());
+        // Basic: block start only.
+        assert_eq!(
+            indent_options_for_node(false, false, BlockStart),
+            Some(IndentOptions::default())
+        );
+        assert!(indent_options_for_node(false, false, AfterBreak).is_none());
+        // Each-line: block start and after break.
+        for start in [BlockStart, AfterBreak] {
+            let o = indent_options_for_node(false, true, start).expect("each-line applies");
+            assert!(o.each_line && !o.hanging);
+        }
+        // Hanging block start passes through.
+        let o = indent_options_for_node(true, false, BlockStart).expect("hanging applies");
+        assert!(!o.each_line && o.hanging);
+        // Hanging after break degrades to each-line shape (documents the
+        // soft-wrap approximation in `indent_options_for_node` doc).
+        let o = indent_options_for_node(true, false, AfterBreak).expect("hanging applies");
+        assert!(o.each_line && !o.hanging);
+        // Combined passes through in both positions.
+        for start in [BlockStart, AfterBreak] {
+            let o = indent_options_for_node(true, true, start).expect("combined applies");
+            assert!(o.each_line && o.hanging);
+        }
     }
 
     #[test]

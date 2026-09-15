@@ -537,6 +537,10 @@ pub struct ComputedValues {
     /// ([`crate::specified::SpecifiedValues::inherit_from`]'s
     /// `lift_length_percentage` seed), not reset to the initial `0`.
     pub text_indent: ComputedLengthPercentage,
+    /// `text-indent`'s `hanging` flag. Inherited, initial `false`.
+    pub text_indent_hanging: bool,
+    /// `text-indent`'s `each-line` flag. Inherited, initial `false`.
+    pub text_indent_each_line: bool,
     /// `padding` — 4-side box-model padding。**non-inherited**、initial:
     /// `Sides::all(ComputedLengthPercentage::Px(0.0))` — CSS Box 3 §4.1
     /// <https://www.w3.org/TR/css-box-3/#padding-physical> initial "0"。
@@ -1531,6 +1535,8 @@ impl ComputedValues {
             writing_mode: WritingMode::HorizontalTb,
             // CSS Text 3 §8.1: text-indent initial is `0`。
             text_indent: ComputedLengthPercentage::Px(0.0),
+            text_indent_hanging: false,
+            text_indent_each_line: false,
             // CSS Box 3 §4.1: padding initial = 0 (all 4 sides)。
             padding: Sides::all(ComputedLengthPercentage::Px(0.0)),
             // CSS Box 3 §3.1: margin-* physical の initial は `0` (`Sides::all(0)`
@@ -2072,6 +2078,8 @@ mod tests {
             // CSS Text 3 §8.1: initial (`0`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             text_indent: ComputedLengthPercentage::Px(9.0),
+            text_indent_hanging: false,
+            text_indent_each_line: false,
             padding: Sides::all(ComputedLengthPercentage::Px(7.0)),
             margin: Sides::all(ComputedLengthPercentageOrAuto::Px(12.0)),
             border: Sides::all(ComputedBorder {

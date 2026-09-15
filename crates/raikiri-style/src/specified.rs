@@ -220,6 +220,10 @@ pub struct SpecifiedValues {
     /// で lift して seed する。CSS Text 3 §8.1
     /// <https://www.w3.org/TR/css-text-3/#text-indent-property>。
     pub text_indent: Length,
+    /// `text-indent`'s `hanging` flag staging. Inherited, initial `false`.
+    pub text_indent_hanging: bool,
+    /// `text-indent`'s `each-line` flag staging. Inherited, initial `false`.
+    pub text_indent_each_line: bool,
     /// `padding` の **specified** value。phase 3
     /// ([`resolve_length_percentage`]) で絶対化される (percentage は素通し)。
     pub padding: Sides<Length>,
@@ -559,6 +563,8 @@ impl SpecifiedValues {
             writing_mode: WritingMode::HorizontalTb,
             // CSS Text 3 §8.1: text-indent initial は `0`。
             text_indent: Length::Px(0.0),
+            text_indent_hanging: false,
+            text_indent_each_line: false,
             padding: Sides::all(Length::Px(0.0)),
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
             // CSS Backgrounds 3 §3.3 / §3.2 / §3.1: width=medium (3px) /
@@ -831,6 +837,8 @@ impl SpecifiedValues {
             // `Px` / `Percent` どちらも不動点、`lift_length_percentage` doc
             // 参照)。
             text_indent: lift_length_percentage(parent.text_indent),
+            text_indent_hanging: parent.text_indent_hanging,
+            text_indent_each_line: parent.text_indent_each_line,
             // CSS Fonts 4 §2.4: font-style は inherited。
             font_style: parent.font_style,
             // CSS Fonts Module Level 3 §6.6: font-variant-caps は inherited。
@@ -1349,6 +1357,9 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
+            // Flags pass through untouched (no absolutization needed).
+            text_indent_hanging: self.text_indent_hanging,
+            text_indent_each_line: self.text_indent_each_line,
             padding: self
                 .padding
                 .map(|l| resolve_length_percentage(l, font_size, own_line_height, ctx)),
@@ -1958,6 +1969,8 @@ mod tests {
             // `WritingMode` doc's Non-goal section.
             writing_mode: WritingMode::VerticalRl,
             text_indent: ComputedLengthPercentage::Px(9.0),
+            text_indent_hanging: true,
+            text_indent_each_line: false,
             padding: Sides::all(ComputedLengthPercentage::Px(7.0)),
             margin: Sides::all(ComputedLengthPercentageOrAuto::Px(12.0)),
             border: Sides::all(ComputedBorder {
@@ -2175,6 +2188,9 @@ mod tests {
         // CSS Text 3 §8.1: text-indent は inherited — computed → specified
         // の lift (`lift_length_percentage`)。
         assert_eq!(child.text_indent, Length::Px(9.0));
+        // CSS Text 3 §8.1: hanging/each-line flags inherit like the length.
+        assert!(child.text_indent_hanging);
+        assert!(!child.text_indent_each_line);
         // CSS Text 3 §5.1: word-break は inherited。
         assert_eq!(child.word_break, WordBreak::KeepAll);
         // CSS Text 3 §5.4: overflow-wrap は inherited。

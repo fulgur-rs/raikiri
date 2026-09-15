@@ -131,9 +131,9 @@ use crate::property::{
     OverflowValue, OverflowXY, PageValue, PropertyKey, PropertyValue, Sides, TableLayoutValue,
     TextCombineUpright, TextDecorationInset, TextDecorationShorthand, TextDecorationSkipInk,
     TextDecorationSkipSpaces, TextDecorationThickness, TextEmphasisHEdge, TextEmphasisPosition,
-    TextEmphasisVEdge, TextOrientation, TextShadowItem, TextUnderlinePosition, TransformFunction,
-    UnicodeBidi, parse_length_allow_negative, parse_non_negative_length, parse_value,
-    resolve_overflow, resolve_writing_mode,
+    TextEmphasisVEdge, TextIndentValue, TextOrientation, TextShadowItem, TextUnderlinePosition,
+    TransformFunction, UnicodeBidi, parse_length_allow_negative, parse_non_negative_length,
+    parse_value, resolve_overflow, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedCssPositionOffset, ComputedFlexBasis,
@@ -3312,7 +3312,11 @@ fn absolutize_in_page_context(
         // `font_size`/`own_line_height` basis, same as every other box
         // property here.
         PropertyValue::TextIndent(v) => {
-            PropertyValue::TextIndent(lp(v, font_size, own_line_height, ctx))
+            PropertyValue::TextIndent(TextIndentValue {
+                length: lp(v.length, font_size, own_line_height, ctx),
+                hanging: v.hanging,
+                each_line: v.each_line,
+            })
         }
         // ── padding ───────────────────────────────────────────────────────
         PropertyValue::PaddingTop(v) => {
@@ -6967,7 +6971,11 @@ mod tests {
         )])),
         Position => PropertyValue::Position(PositionValue::Static),
         TextAlign => PropertyValue::TextAlign(TextAlign::MatchParent),
-        TextIndent => PropertyValue::TextIndent(Length::Em(2.0)),
+        TextIndent => PropertyValue::TextIndent(TextIndentValue {
+            length: Length::Em(2.0),
+            hanging: false,
+            each_line: false,
+        }),
         PaddingTop => PropertyValue::PaddingTop(Length::Em(2.0)),
         PaddingRight => PropertyValue::PaddingRight(Length::Em(2.0)),
         PaddingBottom => PropertyValue::PaddingBottom(Length::Em(2.0)),
@@ -8126,8 +8134,8 @@ mod tests {
                 TextDecorationThickness::Auto | TextDecorationThickness::FromFont => None,
                 TextDecorationThickness::Length(l) => length(l),
             },
-            PropertyValue::TextIndent(l)
-            | PropertyValue::PaddingTop(l)
+            PropertyValue::TextIndent(v) => length(v.length),
+            PropertyValue::PaddingTop(l)
             | PropertyValue::PaddingRight(l)
             | PropertyValue::PaddingBottom(l)
             | PropertyValue::PaddingLeft(l)
