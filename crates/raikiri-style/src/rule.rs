@@ -10,10 +10,10 @@ use selectors::parser::SelectorList;
 
 use crate::RaikiriSelectorImpl;
 use crate::property::{
-    BackgroundShorthand, Border, DeferredValue, FlexFlow, FlexShorthand, GapShorthand,
-    GridLineShorthand, Length, LengthOrAuto, Outline, OverflowXY, PlaceContentShorthand,
-    PlaceItemsShorthand, PlaceSelfShorthand, PropertyKey, PropertyValue, Sides, StartEnd,
-    TextDecorationShorthand, parse_value,
+    BackgroundShorthand, Border, DeferredValue, FlexFlow, FlexShorthand, FontShorthand,
+    FontShorthandSize, GapShorthand, GridLineShorthand, Length, LengthOrAuto, Outline, OverflowXY,
+    PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PropertyKey, PropertyValue,
+    Sides, StartEnd, TextDecorationShorthand, parse_value,
 };
 
 /// 1 property declaration = value + `!important` flag。
@@ -466,6 +466,11 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
             expand_text_decoration(shorthand, d.important, push)
         }
         PropertyValue::Outline(outline) => expand_outline(outline, d.important, push),
+        // `FontShorthand` は `family: Arc<Vec<Atom>>` を持ち `Copy` ではない —
+        // 他の shorthand payload (`Sides<..>` / `FlexShorthand` 等、全て Copy)
+        // と異なり値を move できないため、`ref` binding で参照のまま渡す
+        // (`Background` arm と同じ理由、`GridRow` arm の comment 参照)。
+        PropertyValue::Font(ref shorthand) => expand_font(shorthand, d.important, push),
         PropertyValue::Deferred(ref deferred) => {
             expand_deferred(d, deferred, d.important, push)
         }
@@ -717,6 +722,19 @@ fn expand_deferred(
             PropertyKey::OutlineWidth,
             PropertyKey::OutlineStyle,
             PropertyKey::OutlineColor,
+        ],
+        // `font` shorthand — 6 longhand (style/variant-caps/weight/size/
+        // line-height/family)。`size` は `PropertyValue::FontSize` /
+        // `PropertyValue::FontSizeRelative` のどちらで勝っても key は
+        // `PropertyKey::FontSize` の 1 つのため slice は 6 要素
+        // (`property.rs` の `FontShorthandSize` doc 参照)。
+        PropertyKey::Font => &[
+            PropertyKey::FontStyle,
+            PropertyKey::FontVariantCaps,
+            PropertyKey::FontWeight,
+            PropertyKey::FontSize,
+            PropertyKey::LineHeight,
+            PropertyKey::FontFamily,
         ],
         PropertyKey::Flex => &[
             PropertyKey::FlexGrow,
@@ -1156,6 +1174,47 @@ fn expand_outline(outline: Outline, important: bool, mut push: impl FnMut(Declar
     });
 }
 
+/// `font` shorthand を 6 longhand (style/variant-caps/weight/size/
+/// line-height/family) に展開する cold helper ([`FontShorthand`] doc 参照)。
+/// 省略成分は shorthand parser (`property.rs` の `parse_font_shorthand`、
+/// private fn のため直接 link 不可) が既に spec initial value で埋めているため
+/// ([`FontShorthand`] doc の "Initial value fill" 節)、本関数は 6 field を
+/// そのまま 6 declaration に分配するだけでよい —
+/// [`expand_text_decoration`] と同じ形。`family` は `Arc` のため `.clone()` は
+/// bump のみ ([`BackgroundShorthand`] の `image.clone()` と同じ理由付け)。
+/// `size` の 2 通りは対応する [`PropertyValue`] variant にそのまま載せる
+/// (どちらも key は [`PropertyKey::FontSize`])。
+#[inline(never)]
+fn expand_font(shorthand: &FontShorthand, important: bool, mut push: impl FnMut(Declaration)) {
+    push(Declaration {
+        value: PropertyValue::FontStyle(shorthand.style),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::FontVariantCaps(shorthand.variant),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::FontWeight(shorthand.weight),
+        important,
+    });
+    push(Declaration {
+        value: match shorthand.size {
+            FontShorthandSize::Absolute(length) => PropertyValue::FontSize(length),
+            FontShorthandSize::Relative(relative) => PropertyValue::FontSizeRelative(relative),
+        },
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::LineHeight(shorthand.line_height),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::FontFamily(shorthand.family.clone()),
+        important,
+    });
+}
+
 /// `background` shorthand を 8 longhand (color/image/repeat/attachment/
 /// position/size/clip/origin) に展開する cold helper
 /// ([`BackgroundShorthand`] doc 参照)。`image` は `Copy` ではないため
@@ -1255,8 +1314,8 @@ mod tests {
 
     use super::*;
     use crate::property::{
-        BorderColor, BorderStyle, CssColor, FontWeightValue, Length, LengthOrAuto, OutlineColor,
-        OutlineStyle, OverflowValue,
+        BorderColor, BorderStyle, CssColor, FontStyle, FontVariantCaps, FontWeightValue, Length,
+        LengthOrAuto, LineHeight, OutlineColor, OutlineStyle, OverflowValue, RelativeFontSize,
     };
     use cssparser::ParserInput;
 
@@ -1294,7 +1353,8 @@ mod tests {
         let decls = parse_block(
             "margin: 1px; padding: 2px; border: 3px solid red; outline: auto 2px red; \
              margin-top: 4px; padding-left: 5px; border-top-width: 6px; \
-             text-decoration: underline overline; color: red; font-size: 10px",
+             text-decoration: underline overline; color: red; font-size: 10px; \
+             font: italic small-caps bold 12px/1.5 serif",
         );
         assert!(
             !decls.is_empty(),
@@ -1310,6 +1370,7 @@ mod tests {
                         | PropertyKey::Padding
                         | PropertyKey::Border
                         | PropertyKey::Outline
+                        | PropertyKey::Font
                         | PropertyKey::TextDecoration
                 ),
                 "shorthand key {key:?} が cascade 段へ漏れている — \
@@ -1380,6 +1441,17 @@ mod tests {
                     PropertyKey::OutlineWidth,
                     PropertyKey::OutlineStyle,
                     PropertyKey::OutlineColor,
+                ],
+            ),
+            (
+                PropertyKey::Font,
+                &[
+                    PropertyKey::FontStyle,
+                    PropertyKey::FontVariantCaps,
+                    PropertyKey::FontWeight,
+                    PropertyKey::FontSize,
+                    PropertyKey::LineHeight,
+                    PropertyKey::FontFamily,
                 ],
             ),
             (
@@ -1945,6 +2017,92 @@ mod tests {
         let decls = parse_block("outline: auto !important;");
         assert_eq!(decls.len(), 3);
         assert!(decls.iter().all(|declaration| declaration.important));
+    }
+
+    // ── font shorthand expansion (CSS Fonts 4 §2.1) ──
+
+    #[test]
+    fn font_shorthand_expands_into_six_longhand_declarations() {
+        // CSS Fonts 4 §2.1: the shorthand sets each of font-style,
+        // font-variant (here: font-variant-caps), font-weight, font-size,
+        // line-height and font-family as if expanded in place, in that
+        // order.
+        let decls = parse_block("font: italic small-caps bold 12px/1.5 serif;");
+        assert_eq!(decls.len(), 6, "shorthand must expand to 6 longhand decls");
+        assert_eq!(decls[0].value, PropertyValue::FontStyle(FontStyle::Italic));
+        assert_eq!(
+            decls[1].value,
+            PropertyValue::FontVariantCaps(FontVariantCaps::SmallCaps)
+        );
+        assert_eq!(
+            decls[2].value,
+            PropertyValue::FontWeight(FontWeightValue::Absolute(700.0))
+        );
+        assert_eq!(decls[3].value, PropertyValue::FontSize(Length::Px(12.0)));
+        assert_eq!(
+            decls[4].value,
+            PropertyValue::LineHeight(LineHeight::Number(1.5))
+        );
+        assert_eq!(
+            decls[5].value,
+            PropertyValue::FontFamily(Arc::new(vec!["serif".into()]))
+        );
+    }
+
+    #[test]
+    fn font_shorthand_omitted_components_expand_to_initial_values() {
+        // CSS Fonts 4 §2.1: omitted components are set to their initial
+        // values (`FontShorthand` doc's "Initial value fill" section).
+        let decls = parse_block("font: 12px serif;");
+        assert_eq!(decls.len(), 6);
+        assert_eq!(decls[0].value, PropertyValue::FontStyle(FontStyle::Normal));
+        assert_eq!(
+            decls[1].value,
+            PropertyValue::FontVariantCaps(FontVariantCaps::Normal)
+        );
+        assert_eq!(
+            decls[2].value,
+            PropertyValue::FontWeight(FontWeightValue::Absolute(400.0))
+        );
+        assert_eq!(
+            decls[4].value,
+            PropertyValue::LineHeight(LineHeight::Normal)
+        );
+    }
+
+    #[test]
+    fn font_shorthand_relative_size_expands_to_font_size_relative_longhand() {
+        // `larger` keeps its `FontSizeRelative` carrier (same `PropertyKey`
+        // as `FontSize`, so cascade still sees a single slot).
+        let decls = parse_block("font: italic larger serif;");
+        assert_eq!(decls.len(), 6);
+        assert_eq!(
+            decls[3].value,
+            PropertyValue::FontSizeRelative(RelativeFontSize::Larger)
+        );
+        assert_eq!(
+            decls[3].value.key(),
+            PropertyValue::FontSize(Length::Px(16.0)).key()
+        );
+    }
+
+    #[test]
+    fn font_shorthand_important_flag_propagates_to_all_longhand() {
+        // CSS Cascading 4 §3: shorthand `!important` は全 longhand に copy
+        // される (outline / overflow important 拡張と同 pattern)。
+        let decls = parse_block("font: italic 12px serif !important;");
+        assert_eq!(decls.len(), 6);
+        for d in &decls {
+            assert!(d.important, "important must propagate to every longhand");
+        }
+    }
+
+    #[test]
+    fn font_shorthand_invalid_declaration_expands_to_nothing() {
+        // System-font keyword / missing family は declaration ごと drop
+        // されるため、block 出口には何も残らない。
+        assert!(parse_block("font: menu;").is_empty());
+        assert!(parse_block("font: italic 12px;").is_empty());
     }
 
     // ── overflow shorthand expansion (CSS Overflow 3 §3.1) ──

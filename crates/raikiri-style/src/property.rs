@@ -7385,6 +7385,22 @@ pub enum PropertyValue {
     /// keyword (length を運ばないため相対解決なし)。
     /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
     BorderCollapse(BorderCollapseValue),
+    /// `font` shorthand — **inherited**。6 成分 (style/variant-caps/weight/
+    /// size/line-height/family) を保持する ([`FontShorthand`] doc 参照)。
+    /// CSS Fonts 4 §2.1
+    /// <https://www.w3.org/TR/css-fonts-4/#font-prop> の
+    /// `[ <'font-style'> || <font-variant-css2> || <'font-weight'> ]? <'font-size'> [ / <'line-height'> ]? <'font-family'>#`
+    /// subset (system-font keyword・`font-stretch` 非 `normal`・CSS2 外の
+    /// `font-variant` は scope 外、[`FontShorthand`] doc の Scope carving 節
+    /// 参照)。[`crate::rule::expand_shorthand_into`] が
+    /// [`Self::FontStyle`] / [`Self::FontVariantCaps`] /
+    /// [`Self::FontWeight`] / [`Self::FontSize`]・[`Self::FontSizeRelative`] /
+    /// [`Self::LineHeight`] / [`Self::FontFamily`] の 6 longhand に展開する。
+    /// 末尾に追加 (shorthand は cascade 段に到達しない
+    /// ([`crate::rule::expand_shorthand_into`] doc) ので discriminant 順は
+    /// 意味を持たない — 既存 variant を shift させない配置を優先する、
+    /// [`PropertyKey`] doc の「宣言順は load-bearing」節参照)。
+    Font(FontShorthand),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -7799,6 +7815,13 @@ pub enum PropertyKey {
     // carry no per-variant docs per crate convention). 末尾配置の理由は
     // background-repeat 等と同節参照 (1:1 disjoint な新 field)。
     BorderCollapse,
+    // font shorthand (CSS Fonts 4 §2.1、semantics on the matching
+    // PropertyValue::Font variant; sibling PropertyKey variants carry no
+    // per-variant docs per crate convention). 末尾配置の理由は
+    // background-repeat 等と同節参照 — shorthand は cascade 段に到達しない
+    // (`crate::rule::expand_shorthand_into` が展開する) ため discriminant
+    // 順は意味を持たない。
+    Font,
 }
 
 impl PropertyValue {
@@ -7962,6 +7985,7 @@ impl PropertyValue {
             PropertyValue::Filter(_) => PropertyKey::Filter,
             PropertyValue::TableLayout(_) => PropertyKey::TableLayout,
             PropertyValue::BorderCollapse(_) => PropertyKey::BorderCollapse,
+            PropertyValue::Font(_) => PropertyKey::Font,
         }
     }
 }
@@ -8545,6 +8569,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "unicode-bidi" => PropertyKey::UnicodeBidi,
         "table-layout" => PropertyKey::TableLayout,
         "border-collapse" => PropertyKey::BorderCollapse,
+        "font" => PropertyKey::Font,
         "font-variant-caps" => PropertyKey::FontVariantCaps,
         "quotes" => PropertyKey::Quotes,
         "text-shadow" => PropertyKey::TextShadow,
@@ -9093,6 +9118,9 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // (initial `separate`, inherited). matching 規則は直上の
         // `table-layout` arm と同じ。
         "border-collapse" => parse_border_collapse(input).map(PropertyValue::BorderCollapse),
+        // CSS Fonts 4 §2.1 font shorthand — 6 longhand への展開は
+        // `crate::rule::expand_shorthand_into` が行う (同 doc 参照)。
+        "font" => parse_font_shorthand(input).map(PropertyValue::Font),
         // CSS Text Module Level 3 §4.2
         // <https://www.w3.org/TR/css-text-3/#tab-size-property>.
         "tab-size" => parse_tab_size(input).map(PropertyValue::TabSize),
@@ -17691,6 +17719,219 @@ fn parse_background_position_and_size(
         })
         .ok();
     Some((position, size))
+}
+
+/// `font` shorthand の `font-size` 成分 — [`parse_font_size`] の返す
+/// 2 通り ([`PropertyValue::FontSize`] / [`PropertyValue::FontSizeRelative`])
+/// をそのまま運ぶ small enum。[`FontShorthand`] の payload 専用で、
+/// [`ComputedValues`] / [`SpecifiedValues`] には入らず、umbrella crate からも
+/// re-export しない ([`BackgroundShorthand`] と同じ扱い)。
+///
+/// [`ComputedValues`]: crate::computed::ComputedValues
+/// [`SpecifiedValues`]: crate::specified::SpecifiedValues
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FontShorthandSize {
+    /// `<length-percentage>` / absolute-size keyword — [`parse_font_size`] の
+    /// [`PropertyValue::FontSize`] 側。展開先は同 variant。
+    Absolute(Length),
+    /// `larger` / `smaller` — [`parse_font_size`] の
+    /// [`PropertyValue::FontSizeRelative`] 側。展開先は同 variant
+    /// (key はどちらも [`PropertyKey::FontSize`])。
+    Relative(RelativeFontSize),
+}
+
+/// `font` shorthand の specified value carrier — CSS Fonts 4 §2.1 "Font
+/// shorthand: the font property"
+/// (<https://www.w3.org/TR/css-fonts-4/#font-prop>)。
+///
+/// Spec grammar (full): `[ [ <'font-style'> || <font-variant-css2> ||
+/// <'font-weight'> || <font-width-css3> ]? <'font-size'> [ / <'line-height'> ]?
+/// <'font-family'># ] | <system-font>`。本実装の subset:
+///
+/// # Scope carving
+///
+/// - **Preface** (`||` 3 slot): `font-style` は [`parse_font_style`] の範囲
+///   (`normal` / `italic` / bare `oblique`)、`font-weight` は
+///   [`parse_font_weight`] の全範囲 (`normal` / `bold` / `bolder` /
+///   `lighter` / `<number [1,1000]>`) を受理。`font-variant-css2`
+///   (`normal` / `small-caps`) は [`FontVariantCaps::Normal`] /
+///   [`FontVariantCaps::SmallCaps`] に畳む — CSS Fonts 3 §6.9 の `font-variant`
+///   shorthand 全体ではなく CSS2 subset のみ対応 (本 crate が持つのは
+///   `font-variant-caps` longhand だけで、他 sub-property が無いため)。
+///   `font-width-css3` (`font-stretch`) longhand は本 crate に存在しないため
+///   `normal` のみ consume して捨てる (initial と同じ値なので reset 効果は
+///   observable ではない)。`normal` 以外の stretch keyword
+///   (`condensed` 等)・`font-variant-css2` 外の variant 指定は preface の
+///   どの slot にも match せず、後続の `font-size` parse が失敗するため
+///   declaration 全体が drop される (spec-valid だが未対応 = silent drop、
+///   本 crate の一般 policy)。
+/// - **System fonts** (`caption` / `icon` / `menu` / `message-box` /
+///   `small-caption` / `status-bar`) は受理しない — longhand への分解が
+///   UA 依存で本 crate の font model に載らないため、declaration ごと drop。
+/// - **`font-size`** は [`parse_font_size`] をそのまま使う (absolute-size
+///   keyword / `larger` / `smaller` / `<length-percentage>` 全範囲)。
+/// - **`line-height`** (`/ ...` 付きの場合のみ) は [`parse_line_height`] を
+///   そのまま使う (`normal` / `<number>` / `<length-percentage>` 全範囲)。
+/// - **`font-family`** は [`parse_font_family`] をそのまま使う
+///   (`<family-name>#`、1 要素以上必須)。
+///
+/// # Initial value fill (omitted components)
+///
+/// CSS Fonts 4 §2.1 verbatim: "The 'font' property is a shorthand for
+/// [font-style, font-variant, font-weight, font-size, line-height,
+/// font-family]" — 省略成分は spec initial value で埋める
+/// ([`BackgroundShorthand`] doc の同名節と同じ規則)。
+/// [`parse_font_shorthand`] は省略された `style` → [`FontStyle::Normal`]、
+/// `variant` → [`FontVariantCaps::Normal`]、 `weight` → `400`、
+/// `line-height` → [`LineHeight::Normal`] で埋める (`size` と `family` は
+/// 必須のため省略不可)。埋め値は各 standalone longhand の initial と同一
+/// ([`crate::specified::SpecifiedValues::initial`] の対応 field が canonical)。
+///
+/// [`crate::rule::expand_shorthand_into`] が [`PropertyValue::Font`] を
+/// [`PropertyValue::FontStyle`] / [`PropertyValue::FontVariantCaps`] /
+/// [`PropertyValue::FontWeight`] / size ([`PropertyValue::FontSize`] /
+/// [`PropertyValue::FontSizeRelative`]) / [`PropertyValue::LineHeight`] /
+/// [`PropertyValue::FontFamily`] の 6 longhand に展開する —
+/// margin/padding/border/outline shorthand precedent と同じ
+/// "parse-time expansion, never reaches cascade" 設計 (詳細は同関数の doc)。
+///
+/// `#[non_exhaustive]` は付けない — sibling shorthand-only carrier
+/// ([`GridLineShorthand`] / [`TextDecorationShorthand`] /
+/// [`BackgroundShorthand`]) と同じ理由 (本型は [`PropertyValue::Font`] の
+/// payload 専用で、[`ComputedValues`] / [`SpecifiedValues`] には入らず、
+/// umbrella crate からも re-export しない)。
+///
+/// [`ComputedValues`]: crate::computed::ComputedValues
+/// [`SpecifiedValues`]: crate::specified::SpecifiedValues
+#[derive(Clone, Debug, PartialEq)]
+pub struct FontShorthand {
+    /// `font-style` 成分 — 省略時は [`FontStyle::Normal`] (spec initial)。
+    pub style: FontStyle,
+    /// `font-variant-css2` 成分 — 省略時は [`FontVariantCaps::Normal`]
+    /// (spec initial)。`small-caps` は [`FontVariantCaps::SmallCaps`]。
+    pub variant: FontVariantCaps,
+    /// `font-weight` 成分 — 省略時は `400` (`normal`、spec initial)。
+    pub weight: FontWeightValue,
+    /// `font-size` 成分 (必須) — [`FontShorthandSize`] 参照。
+    pub size: FontShorthandSize,
+    /// `line-height` 成分 — 省略時は [`LineHeight::Normal`] (spec initial)。
+    pub line_height: LineHeight,
+    /// `font-family` 成分 (必須) — [`parse_font_family`] の結果を共有する
+    /// `Arc` ([`PropertyValue::FontFamily`] と同じ DoS 対策 pattern)。
+    pub family: Arc<Vec<Atom>>,
+}
+
+/// `font` shorthand を parse する ([`FontShorthand`] doc の grammar 節参照)。
+///
+/// [`parse_background_shorthand`] と同じ loop 構造: preface の各 unfilled
+/// slot を `try_parse` で順に試し、成功したら slot を埋めて loop 先頭に戻る。
+/// preface が確定したら必須の `font-size`、任意の `/ line-height`、必須の
+/// `font-family` を順に parse する。`font-size` / `font-family` のいずれかが
+/// 無い場合は `None` (declaration 全体が drop される)。leftover は呼び出し元
+/// (`rule.rs` の declaration parser) の `expect_exhausted` が丸ごと drop する
+/// ([`parse_background_shorthand`] と同じ契約)。
+fn parse_font_shorthand(input: &mut Parser<'_, '_>) -> Option<FontShorthand> {
+    // System-font keyword は longhand に分解できないため先に reject
+    // (`font: menu` 等が preface の `normal` 扱いで誤って受理されるのを防ぐ)。
+    // `try_parse` で囲むため cursor は消費されない。
+    let is_system_font = [
+        "caption",
+        "icon",
+        "menu",
+        "message-box",
+        "small-caption",
+        "status-bar",
+    ]
+    .iter()
+    .any(|keyword| {
+        input
+            .try_parse(|i| i.expect_ident_matching(keyword))
+            .is_ok()
+    });
+    if is_system_font {
+        return None;
+    }
+
+    let mut style: Option<FontStyle> = None;
+    let mut variant: Option<FontVariantCaps> = None;
+    let mut weight: Option<FontWeightValue> = None;
+    // `font-stretch` longhand は本 crate に無いため `normal` のみ consume
+    // して捨てる (`FontShorthand` doc の Scope carving 節参照)。
+    let mut stretch_seen = false;
+
+    loop {
+        if style.is_none()
+            && let Ok(v) = input.try_parse(|i| -> Result<FontStyle, ParseError<'_, ()>> {
+                parse_font_style(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            style = Some(v);
+            continue;
+        }
+        if variant.is_none()
+            && let Ok(v) = input.try_parse(|i| -> Result<FontVariantCaps, ParseError<'_, ()>> {
+                if i.try_parse(|j| j.expect_ident_matching("normal")).is_ok() {
+                    Ok(FontVariantCaps::Normal)
+                } else if i
+                    .try_parse(|j| j.expect_ident_matching("small-caps"))
+                    .is_ok()
+                {
+                    Ok(FontVariantCaps::SmallCaps)
+                } else {
+                    Err(i.new_custom_error(()))
+                }
+            })
+        {
+            variant = Some(v);
+            continue;
+        }
+        if weight.is_none()
+            && let Ok(v) = input.try_parse(|i| -> Result<FontWeightValue, ParseError<'_, ()>> {
+                parse_font_weight(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            weight = Some(v);
+            continue;
+        }
+        if !stretch_seen
+            && input
+                .try_parse(|i| i.expect_ident_matching("normal"))
+                .is_ok()
+        {
+            stretch_seen = true;
+            continue;
+        }
+        break;
+    }
+
+    // 必須の `font-size` (`parse_font_size` が `PropertyValue` を返すため
+    // `FontShorthandSize` に畳む — 同関数はこの 2 variant しか返さない)。
+    let size = match parse_font_size(input)? {
+        PropertyValue::FontSize(length) => FontShorthandSize::Absolute(length),
+        PropertyValue::FontSizeRelative(relative) => FontShorthandSize::Relative(relative),
+        // cov:ignore: `parse_font_size` は上記 2 variant しか返さない
+        // (同関数の 2 return path が canonical) — 到達不能。
+        _ => return None,
+    };
+
+    // 任意の `/ line-height`。
+    let line_height = if input.try_parse(|i| i.expect_delim('/')).is_ok() {
+        parse_line_height(input)?
+    } else {
+        LineHeight::Normal
+    };
+
+    // 必須の `font-family` (`<family-name>#`、1 要素以上)。
+    let family = parse_font_family(input)?;
+
+    Some(FontShorthand {
+        style: style.unwrap_or(FontStyle::Normal),
+        variant: variant.unwrap_or(FontVariantCaps::Normal),
+        weight: weight.unwrap_or(FontWeightValue::Absolute(400.0)),
+        size,
+        line_height,
+        family: Arc::new(family),
+    })
 }
 
 /// `background` shorthand を parse する ([`BackgroundShorthand`] doc の
@@ -32079,6 +32320,211 @@ mod tests {
             origin: VisualBox::PaddingBox,
         });
         assert_eq!(v.key(), PropertyKey::Background);
+    }
+
+    // ── font shorthand (CSS Fonts 4 §2.1) ──
+
+    fn expect_font(value: Option<PropertyValue>) -> FontShorthand {
+        match value {
+            Some(PropertyValue::Font(shorthand)) => shorthand,
+            // cov:ignore: this branch only executes when a caller's
+            // `parse(..., "font")` unexpectedly fails to parse or parses to
+            // the wrong variant; every call site in this test module passes
+            // valid `font` shorthand input, so the panic never fires while
+            // the tests pass.
+            other => panic!("expected PropertyValue::Font, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn font_shorthand_minimal_size_and_family_fill_the_rest_with_initial_values() {
+        assert_eq!(
+            expect_font(parse_entire("16px serif", "font")),
+            FontShorthand {
+                style: FontStyle::Normal,
+                variant: FontVariantCaps::Normal,
+                weight: FontWeightValue::Absolute(400.0),
+                size: FontShorthandSize::Absolute(Length::Px(16.0)),
+                line_height: LineHeight::Normal,
+                family: Arc::new(vec![Atom::from("serif")]),
+            }
+        );
+    }
+
+    #[test]
+    fn font_shorthand_full_preface_with_slash_line_height_and_family_list() {
+        assert_eq!(
+            expect_font(parse_entire(
+                "italic small-caps bold 16px/1.5 \"Times New Roman\", serif",
+                "font"
+            )),
+            FontShorthand {
+                style: FontStyle::Italic,
+                variant: FontVariantCaps::SmallCaps,
+                weight: FontWeightValue::Absolute(700.0),
+                size: FontShorthandSize::Absolute(Length::Px(16.0)),
+                line_height: LineHeight::Number(1.5),
+                family: Arc::new(vec![Atom::from("Times New Roman"), Atom::from("serif")]),
+            }
+        );
+    }
+
+    #[test]
+    fn font_shorthand_preface_accepts_any_order() {
+        let forward = expect_font(parse_entire("italic bold 16px serif", "font"));
+        let backward = expect_font(parse_entire("bold italic 16px serif", "font"));
+        assert_eq!(forward, backward);
+        assert_eq!(forward.style, FontStyle::Italic);
+        assert_eq!(forward.weight, FontWeightValue::Absolute(700.0));
+    }
+
+    #[test]
+    fn font_shorthand_numeric_weight_and_absolute_unit_size() {
+        let shorthand = expect_font(parse_entire("600 14pt Georgia", "font"));
+        assert_eq!(shorthand.weight, FontWeightValue::Absolute(600.0));
+        assert_eq!(
+            shorthand.size,
+            FontShorthandSize::Absolute(Length::Pt(14.0))
+        );
+    }
+
+    #[test]
+    fn font_shorthand_relative_size_keywords() {
+        assert_eq!(
+            expect_font(parse_entire("larger serif", "font")).size,
+            FontShorthandSize::Relative(RelativeFontSize::Larger)
+        );
+        assert_eq!(
+            expect_font(parse_entire("italic smaller serif", "font")).size,
+            FontShorthandSize::Relative(RelativeFontSize::Smaller)
+        );
+    }
+
+    #[test]
+    fn font_shorthand_absolute_size_keyword() {
+        assert_eq!(
+            expect_font(parse_entire("x-large serif", "font")).size,
+            FontShorthandSize::Absolute(Length::Px(24.0))
+        );
+    }
+
+    #[test]
+    fn font_shorthand_slash_line_height_length_and_percentage() {
+        assert_eq!(
+            expect_font(parse_entire("16px/24px serif", "font")).line_height,
+            LineHeight::Length(Length::Px(24.0))
+        );
+        assert_eq!(
+            expect_font(parse_entire("16px/150% serif", "font")).line_height,
+            LineHeight::Length(Length::Percent(150.0))
+        );
+    }
+
+    #[test]
+    fn font_shorthand_triple_normal_fills_three_preface_slots() {
+        let shorthand = expect_font(parse_entire("normal normal normal 16px serif", "font"));
+        assert_eq!(shorthand.style, FontStyle::Normal);
+        assert_eq!(shorthand.variant, FontVariantCaps::Normal);
+        assert_eq!(shorthand.weight, FontWeightValue::Absolute(400.0));
+    }
+
+    #[test]
+    fn font_shorthand_stretch_normal_consumed_after_full_preface() {
+        // `normal` after style + variant + weight can only be the
+        // `font-stretch` slot (`FontShorthand` doc's Scope carving section) —
+        // consumed and dropped, longhands keep their fills.
+        let shorthand = expect_font(parse_entire(
+            "italic small-caps bold normal 16px serif",
+            "font",
+        ));
+        assert_eq!(shorthand.style, FontStyle::Italic);
+        assert_eq!(shorthand.variant, FontVariantCaps::SmallCaps);
+        assert_eq!(shorthand.weight, FontWeightValue::Absolute(700.0));
+    }
+
+    #[test]
+    fn font_shorthand_oblique_style() {
+        assert_eq!(
+            expect_font(parse_entire("oblique 16px serif", "font")).style,
+            FontStyle::Oblique
+        );
+    }
+
+    #[test]
+    fn font_shorthand_rejects_system_font_keywords() {
+        for keyword in [
+            "caption",
+            "icon",
+            "menu",
+            "message-box",
+            "small-caption",
+            "status-bar",
+        ] {
+            assert_eq!(parse_entire(keyword, "font"), None, "{keyword}");
+        }
+    }
+
+    #[test]
+    fn font_shorthand_rejects_missing_size_or_family() {
+        // preface only, no size/family
+        assert_eq!(parse_entire("italic", "font"), None);
+        // size without family
+        assert_eq!(parse_entire("italic 16px", "font"), None);
+        assert_eq!(parse_entire("16px", "font"), None);
+        // family without size
+        assert_eq!(parse_entire("serif", "font"), None);
+        assert_eq!(parse_entire("italic serif", "font"), None);
+        // empty
+        assert_eq!(parse_entire("", "font"), None);
+    }
+
+    #[test]
+    fn font_shorthand_rejects_non_normal_font_stretch() {
+        // `condensed` matches no preface slot, so the `font-size` parse runs
+        // on it and fails — the whole declaration is dropped rather than
+        // silently ignoring the stretch (`FontShorthand` doc's Scope
+        // carving section).
+        assert_eq!(parse_entire("condensed 16px serif", "font"), None);
+    }
+
+    #[test]
+    fn font_shorthand_rejects_non_css2_font_variant() {
+        // `unicase` is a valid `font-variant-caps` keyword but not part of
+        // CSS2's `font-variant-css2` (`normal` / `small-caps`) subset the
+        // shorthand accepts — same drop shape as the stretch case above.
+        assert_eq!(parse_entire("italic unicase 16px serif", "font"), None);
+    }
+
+    #[test]
+    fn font_shorthand_rejects_repeated_preface_component() {
+        // `||` semantics: each preface component at most once. The 2nd
+        // `italic` matches no remaining slot, so the `font-size` parse runs
+        // on it and fails.
+        assert_eq!(parse_entire("italic italic 16px serif", "font"), None);
+    }
+
+    #[test]
+    fn font_shorthand_rejects_slash_with_missing_or_invalid_line_height() {
+        assert_eq!(parse_entire("16px/ serif", "font"), None);
+        assert_eq!(parse_entire("16px/bogus serif", "font"), None);
+    }
+
+    #[test]
+    fn font_shorthand_rejects_unknown_keyword() {
+        assert_eq!(parse_entire("bogus 16px serif", "font"), None);
+    }
+
+    #[test]
+    fn font_shorthand_key_maps_to_font_property_key() {
+        let v = PropertyValue::Font(FontShorthand {
+            style: FontStyle::Normal,
+            variant: FontVariantCaps::Normal,
+            weight: FontWeightValue::Absolute(400.0),
+            size: FontShorthandSize::Absolute(Length::Px(16.0)),
+            line_height: LineHeight::Normal,
+            family: Arc::new(vec![Atom::from("serif")]),
+        });
+        assert_eq!(v.key(), PropertyKey::Font);
     }
 
     // ── object-fit (CSS Images Module Level 3 §5.1) ──
