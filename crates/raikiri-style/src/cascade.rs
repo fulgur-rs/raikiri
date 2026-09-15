@@ -7080,6 +7080,9 @@ pub(crate) fn resolve_against_inherited(
         // doc) and does not depend on the inheritance parent — nothing for
         // phase 2 to resolve.
         | PropertyValue::WhiteSpace(_)
+        // `text-wrap` (CSS Text 4 §5 subset) carries no length and does not
+        // depend on the inheritance parent — nothing for phase 2 to resolve.
+        | PropertyValue::TextWrap(_)
         // `flex-*` / alignment / `row-gap`/`column-gap` (and their
         // shorthands) — same "nothing for phase 2 to resolve" shape as
         // `Padding`/`Margin`/`Width`/`Height` above for the length-bearing
@@ -7809,6 +7812,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // specified value (相対解決なし) — sibling `WordBreak` と同じく
         // 単純代入で十分。
         PropertyValue::WhiteSpace(ws) => target.white_space = ws,
+        // CSS Text 4 §5 text-wrap (subset). Inherited keyword, computed value =
+        // specified keyword — simple assignment like `WhiteSpace` above.
+        PropertyValue::TextWrap(v) => target.text_wrap = v,
         // CSS Text 3 §5.3 hyphens。inherited property、computed value =
         // specified keyword (相対解決なし、`Hyphens` doc 参照) — sibling
         // `WordBreak` と同じく単純代入で十分。
@@ -14189,6 +14195,29 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(r.computed[p].text_align_last, TextAlignLast::Center);
         assert_eq!(r.computed[span].text_align_last, TextAlignLast::Center);
+    }
+
+    // ── text-wrap wire-through + inheritance (CSS Text 4 §5 subset) ──
+
+    #[test]
+    fn text_wrap_nowrap_wired_through_cascade_from_inline_style() {
+        use crate::property::TextWrapMode;
+        let cv = cascade_doc("", "p", Some("text-wrap: nowrap"));
+        assert_eq!(cv.text_wrap, TextWrapMode::Nowrap);
+    }
+
+    #[test]
+    fn text_wrap_wrap_is_default_and_inherited() {
+        use crate::property::TextWrapMode;
+        let cv = cascade_doc("", "p", None);
+        assert_eq!(cv.text_wrap, TextWrapMode::Wrap);
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("text-wrap: nowrap"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].text_wrap, TextWrapMode::Nowrap);
+        assert_eq!(r.computed[span].text_wrap, TextWrapMode::Nowrap);
     }
 
     // ── text-align wire-through + inheritance (CSS Text 3 §6.1) ──

@@ -4656,6 +4656,23 @@ pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue
 /// しない — 初期化側 ([`crate::specified::SpecifiedValues::initial`] /
 /// [`crate::computed::ComputedValues::initial`]) が [`WhiteSpace::Normal`]
 /// を直接指定する。
+/// `text-wrap-mode` value (CSS Text 4 §5.1), carried as the `text-wrap`
+/// shorthand's wrapping component.
+///
+/// Only the single-keyword `wrap | nowrap` subset is parsed; the full
+/// `text-wrap` shorthand (wrap-style `auto | balance | pretty | stable`)
+/// is deferred. Inherited, initial `wrap`, computed value = specified
+/// keyword. `nowrap` suppresses soft wrapping in raikiri-dom preshape and
+/// realign (bd raikiri-spike-9q1p).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextWrapMode {
+    /// `wrap` — spec initial value.
+    Wrap,
+    /// `nowrap`.
+    Nowrap,
+}
+
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WhiteSpace {
@@ -7199,6 +7216,8 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     WhiteSpace(WhiteSpace),
+    /// `text-wrap: wrap | nowrap` (subset — see [`TextWrapMode`] doc).
+    TextWrap(TextWrapMode),
     /// `flex-direction: row | row-reverse | column | column-reverse` —
     /// non-inherited、initial: [`FlexDirectionValue::Row`]
     /// ([`FlexDirectionValue`] doc 参照)。
@@ -7916,6 +7935,8 @@ pub enum PropertyKey {
     // no per-variant docs per crate convention). 末尾配置の理由は
     // PropertyValue::WhiteSpace の doc 参照。
     WhiteSpace,
+    // text-wrap (CSS Text 4 §5、semantics on PropertyValue::TextWrap).
+    TextWrap,
     // flex-* container/item longhands + `flex` shorthand (CSS Flexible Box
     // Layout Module Level 1 §5.1/§5.2/§7.2.1/§7.2.2/§7.2.3/§7.1, semantics
     // on the matching PropertyValue::Flex* variants; sibling PropertyKey
@@ -8224,6 +8245,7 @@ impl PropertyValue {
             PropertyValue::Float(_) => PropertyKey::Float,
             PropertyValue::Clear(_) => PropertyKey::Clear,
             PropertyValue::WhiteSpace(_) => PropertyKey::WhiteSpace,
+            PropertyValue::TextWrap(_) => PropertyKey::TextWrap,
             PropertyValue::FlexDirection(_) => PropertyKey::FlexDirection,
             PropertyValue::FlexWrap(_) => PropertyKey::FlexWrap,
             PropertyValue::FlexGrow(_) => PropertyKey::FlexGrow,
@@ -8934,6 +8956,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "float" => PropertyKey::Float,
         "clear" => PropertyKey::Clear,
         "white-space" => PropertyKey::WhiteSpace,
+        "text-wrap" => PropertyKey::TextWrap,
         "flex-direction" => PropertyKey::FlexDirection,
         "flex-wrap" => PropertyKey::FlexWrap,
         "flex-grow" => PropertyKey::FlexGrow,
@@ -9486,6 +9509,9 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // carving" section). initial `normal`, inherited, computed value =
         // specified keyword.
         "white-space" => parse_white_space(input).map(PropertyValue::WhiteSpace),
+        // CSS Text 4 §5 text-wrap (subset: single `wrap | nowrap` keyword;
+        // full shorthand with wrap-style deferred — see [`TextWrapMode`] doc).
+        "text-wrap" => parse_text_wrap_mode(input).map(PropertyValue::TextWrap),
         // CSS Flexible Box Layout Module Level 1 §5.1
         // <https://www.w3.org/TR/css-flexbox-1/#flex-direction-property>.
         "flex-direction" => parse_flex_direction(input).map(PropertyValue::FlexDirection),
@@ -14393,6 +14419,16 @@ fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<WhiteSpace> {
 /// handoff」節 — 両者の扱いの一致は downstream consumer 側の実装判断であり、
 /// この parser の責務ではない)。ASCII case-insensitive で ident を比較する
 /// (sibling `parse_word_break` と同 flavor)。
+/// Parses `text-wrap: wrap | nowrap` (subset, CSS Text 4 §5).
+fn parse_text_wrap_mode(input: &mut Parser<'_, '_>) -> Option<TextWrapMode> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "wrap" => Some(TextWrapMode::Wrap),
+        "nowrap" => Some(TextWrapMode::Nowrap),
+        _ => None,
+    }
+}
+
 fn parse_hyphens(input: &mut Parser<'_, '_>) -> Option<Hyphens> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
@@ -24078,6 +24114,28 @@ mod tests {
                 each_line: true,
             }))
         );
+    }
+
+    #[test]
+    fn text_wrap_parse_nowrap() {
+        assert_eq!(
+            parse("nowrap", "text-wrap"),
+            Some(PropertyValue::TextWrap(TextWrapMode::Nowrap))
+        );
+    }
+
+    #[test]
+    fn text_wrap_parse_wrap() {
+        assert_eq!(
+            parse("wrap", "text-wrap"),
+            Some(PropertyValue::TextWrap(TextWrapMode::Wrap))
+        );
+    }
+
+    #[test]
+    fn text_wrap_rejects_balance() {
+        // Full shorthand (wrap-style) is deferred — see [`TextWrapMode`] doc.
+        assert_eq!(parse("balance", "text-wrap"), None);
     }
 
     #[test]
