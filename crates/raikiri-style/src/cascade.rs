@@ -5622,6 +5622,19 @@ fn absolute_length_factor(unit: &str) -> Option<f32> {
 }
 
 fn normalize_math_pair(left: &mut MathValue, right: &mut MathValue) -> Option<()> {
+    // Additive zero vanishes regardless of unit (CSS Values 4 §10.7
+    // calculation simplification): `calc(50% + 0px)` is `50%`, `calc(0em
+    // + 10px)` is `10px`. Zero is zero in every unit, so the surviving
+    // side keeps its own unit for downstream (possibly percentage)
+    // resolution. Both-zero keeps the left side as-is.
+    if left.number == 0.0 {
+        left.unit = right.unit.clone();
+        return Some(());
+    }
+    if right.number == 0.0 {
+        right.unit = left.unit.clone();
+        return Some(());
+    }
     match (&left.unit, &right.unit) {
         (None, None) => Some(()),
         (Some(left_unit), Some(right_unit)) if left_unit == right_unit => Some(()),
@@ -20223,6 +20236,19 @@ mod tests {
             Some("3".to_owned())
         );
         assert_eq!(evaluate_math_function("calc", "1 + 2px"), None);
+        // Additive zero vanishes across units (CSS Values 4 §10.7).
+        assert_eq!(
+            evaluate_math_function("calc", "50% + 0px"),
+            Some("50%".to_owned())
+        );
+        assert_eq!(
+            evaluate_math_function("calc", "0px + 50%"),
+            Some("50%".to_owned())
+        );
+        assert_eq!(
+            evaluate_math_function("calc", "10px + 0"),
+            Some("10px".to_owned())
+        );
 
         assert_eq!(evaluate_math_function("min", ""), None);
         assert_eq!(evaluate_math_function("min", "1px, 2em"), None);
