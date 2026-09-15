@@ -7545,7 +7545,14 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // is that this field is inherited, so `SpecifiedValues::inherit_from`
         // (not this function) is what seeds a child with no winner of its
         // own.
-        PropertyValue::TextIndent(v) => target.text_indent = v,
+        // CSS Text 3 §8.1 text-indent — **inherited**. The length goes to
+        // `text_indent`; the flags go to their own staging fields so the
+        // specified/computed layers keep the full grammar (bd raikiri-spike-5u1y).
+        PropertyValue::TextIndent(v) => {
+            target.text_indent = v.length;
+            target.text_indent_hanging = v.hanging;
+            target.text_indent_each_line = v.each_line;
+        }
         // direction は CSS Writing Modes 4 §2.1。
         // inherited property、computed value = specified value (相対解決なし) —
         // text-align と同じく単純代入で十分。
@@ -14265,6 +14272,14 @@ mod tests {
         // と同 pattern)。
         let cv = cascade_doc("", "p", Some("text-indent: 20px"));
         assert_eq!(cv.text_indent, ComputedLengthPercentage::Px(20.0));
+    }
+
+    #[test]
+    fn text_indent_flags_wired_through_cascade_from_inline_style() {
+        // <p style="text-indent: 2em hanging each-line"> → length plus flags.
+        let cv = cascade_doc("", "p", Some("text-indent: 2em hanging each-line"));
+        assert!(cv.text_indent_hanging);
+        assert!(cv.text_indent_each_line);
     }
 
     #[test]
