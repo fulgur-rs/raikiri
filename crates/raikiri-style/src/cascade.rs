@@ -7259,7 +7259,8 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::TextAlignLast(_)
         | PropertyValue::TextCombineUpright(_)
         | PropertyValue::TextOrientation(_)
-        | PropertyValue::UnicodeBidi(_)) => v,
+        | PropertyValue::UnicodeBidi(_)
+        | PropertyValue::Page(_)) => v,
     })
 }
 
@@ -8048,7 +8049,8 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         | PropertyValue::TextDecorationThickness(_)
         | PropertyValue::TextDecorationInset(_)
         | PropertyValue::TextEmphasisPosition(_)
-        | PropertyValue::TextUnderlinePosition(_) => {}
+        | PropertyValue::TextUnderlinePosition(_)
+        | PropertyValue::Page(_) => {}
         // These values are resolved before ordinary winners reach this
         // function. Keeping an explicit no-op makes direct internal callers
         // panic-free without allowing raw deferred data into a computed field.
@@ -13156,6 +13158,20 @@ mod tests {
             cv.align_self,
             crate::property::AlignSelfValue::Value(crate::property::SelfAlignmentValue::FlexEnd)
         );
+    }
+
+    #[test]
+    fn author_flex_basis_intrinsic_keywords_compute_through_cascade() {
+        // `min-content` / `max-content` / bare `fit-content` survive the
+        // full stylesheet -> cascade path as distinct computed keywords
+        // (WPT `flex-basis-valid.html`; rendering approximation lives at
+        // the taffy bridge, `bridge_flex` doc).
+        let cv = cascade_doc("", "div", Some("flex-basis: min-content"));
+        assert_eq!(cv.flex_basis, crate::resolve::ComputedFlexBasis::MinContent);
+        let cv = cascade_doc("", "div", Some("flex-basis: max-content"));
+        assert_eq!(cv.flex_basis, crate::resolve::ComputedFlexBasis::MaxContent);
+        let cv = cascade_doc("", "div", Some("flex-basis: fit-content"));
+        assert_eq!(cv.flex_basis, crate::resolve::ComputedFlexBasis::FitContent);
     }
 
     #[test]

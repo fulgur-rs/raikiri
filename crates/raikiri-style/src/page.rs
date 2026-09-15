@@ -128,7 +128,7 @@ use crate::property::{
     FlexFlow, FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand, GridInflexibleBreadth,
     GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
     GridTrackSize, Length, LengthOrAuto, LengthOrNormal, Outline, OutlineColor, OutlineStyle,
-    OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides, TableLayoutValue,
+    OverflowValue, OverflowXY, PageValue, PropertyKey, PropertyValue, Sides, TableLayoutValue,
     TextCombineUpright, TextDecorationInset, TextDecorationShorthand, TextDecorationSkipInk,
     TextDecorationSkipSpaces, TextDecorationThickness, TextEmphasisHEdge, TextEmphasisPosition,
     TextEmphasisVEdge, TextOrientation, TextShadowItem, TextUnderlinePosition, TransformFunction,
@@ -2622,6 +2622,9 @@ fn absolutize_in_page_context(
         match resolve_flex_basis(specified, font_size, own_line_height, ctx) {
             ComputedFlexBasis::Auto => FlexBasisValue::Auto,
             ComputedFlexBasis::Content => FlexBasisValue::Content,
+            ComputedFlexBasis::MinContent => FlexBasisValue::MinContent,
+            ComputedFlexBasis::MaxContent => FlexBasisValue::MaxContent,
+            ComputedFlexBasis::FitContent => FlexBasisValue::FitContent,
             ComputedFlexBasis::Px(v) => FlexBasisValue::Length(Length::Px(v)),
             ComputedFlexBasis::Percent(p) => FlexBasisValue::Length(Length::Percent(p)),
         }
@@ -3114,6 +3117,9 @@ fn absolutize_in_page_context(
         | PropertyValue::TextCombineUpright(_)
         | PropertyValue::TextOrientation(_)
         | PropertyValue::UnicodeBidi(_)
+        // `page` (CSS Paged Media 3 §8.1) carries no length and computed
+        // value = specified value — nothing for phase 3 to absolutize.
+        | PropertyValue::Page(_)
         // `flex-direction`/`flex-wrap` (CSS Flexible Box Layout Module
         // Level 1 §5.1/§5.2) carry no length and computed value = specified
         // keyword — nothing for phase 3 to absolutize.
@@ -3904,14 +3910,15 @@ mod tests {
         GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
         GridTrackListComponent, GridTrackRepeat, GridTrackSize, Hyphens, Isolation, Length,
         LengthOrAuto, LengthOrNormal, LineBreak, LineHeight, MaskImage, MixBlendMode, ObjectFit,
-        Outline, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PlaceContentShorthand,
-        PlaceItemsShorthand, PlaceSelfShorthand, PositionValue, RelativeFontSize,
-        SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextAlignAll, TextAlignLast,
-        TextDecorationColor, TextDecorationInset, TextDecorationLine, TextDecorationShorthand,
-        TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle,
-        TextDecorationThickness, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisVEdge,
-        TextJustify, TextShadowColor, TextTransform, TextUnderlinePosition, TransformFunction,
-        VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue,
+        Outline, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue,
+        PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
+        RelativeFontSize, SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextAlignAll,
+        TextAlignLast, TextDecorationColor, TextDecorationInset, TextDecorationLine,
+        TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces,
+        TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge, TextEmphasisPosition,
+        TextEmphasisVEdge, TextJustify, TextShadowColor, TextTransform, TextUnderlinePosition,
+        TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak,
+        WritingMode, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use crate::ruletree::build_rule_tree;
@@ -5913,6 +5920,27 @@ mod tests {
             ),
             PropertyValue::TextDecorationInset(TextDecorationInset::Auto),
         );
+        // `flex-basis` intrinsic keywords round-trip as keywords through
+        // the `fb` helper (same shape as `Content`, which the corpus pins
+        // via its own sample).
+        for basis in [
+            FlexBasisValue::MinContent,
+            FlexBasisValue::MaxContent,
+            FlexBasisValue::FitContent,
+        ] {
+            assert_eq!(
+                absolutize_in_page_context(
+                    ResolvedAgainstInherited::for_test(PropertyValue::FlexBasis(basis)),
+                    fs,
+                    None,
+                    &ctx,
+                    styles,
+                    OutlineStyle::None,
+                    OverflowXY::both(OverflowValue::Visible),
+                ),
+                PropertyValue::FlexBasis(basis),
+            );
+        }
         // Bare `TextDecorationThickness` longhands — `Auto`/`FromFont`
         // survive as keywords (the `Length` shape is already pinned via the
         // corpus sample + the shorthand case above).
@@ -6769,11 +6797,14 @@ mod tests {
     /// the transform side: its `-thickness` component carries
     /// `<length-percentage>` — dedicated fall-through arm, same shape as
     /// `Background` above).
+    /// 98 → 99 (`Page`, CSS Paged Media 3 §8.1 — keyword-only, carries no
+    /// length payload, same identity-pass-through reasoning as
+    /// `TextCombineUpright` above).
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 98;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 99;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -7480,6 +7511,11 @@ mod tests {
             line_height: LineHeight::Number(1.5),
             family: Arc::new(vec![Atom::from("serif")]),
         }),
+        // CSS Paged Media 3 §8.1 — keyword-only, carries no length.
+        // `Named` is the non-initial worst case (`Auto` is the spec
+        // initial, same reasoning as `BackgroundAttachment`'s `Fixed`
+        // sample above).
+        Page => PropertyValue::Page(PageValue::Named(Atom::from("cover"))),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -7756,6 +7792,7 @@ mod tests {
         TextDecorationInset,
         TextEmphasisPosition,
         TextUnderlinePosition,
+        Page,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -7886,7 +7923,11 @@ mod tests {
         /// doc 参照)、`<length-percentage>` は [`length`] に delegate。
         fn flex_basis(fb: FlexBasisValue) -> Option<&'static str> {
             match fb {
-                FlexBasisValue::Auto | FlexBasisValue::Content => None,
+                FlexBasisValue::Auto
+                | FlexBasisValue::Content
+                | FlexBasisValue::MinContent
+                | FlexBasisValue::MaxContent
+                | FlexBasisValue::FitContent => None,
                 FlexBasisValue::Length(l) => length(l),
             }
         }
@@ -8033,7 +8074,9 @@ mod tests {
             PropertyValue::TextAlignLast(_)
             | PropertyValue::TextCombineUpright(_)
             | PropertyValue::TextOrientation(_)
-            | PropertyValue::UnicodeBidi(_) => None,
+            | PropertyValue::UnicodeBidi(_)
+            // `page` carries no length either (`auto` / named page).
+            | PropertyValue::Page(_) => None,
             PropertyValue::LineHeight(lh) => line_height(*lh),
             // `font-size` だけは `%` も残滓 (§5.5.1 の明示的例外)。
             PropertyValue::FontSize(l) => length_absolute_only(*l, "font-size: <percentage>"),
