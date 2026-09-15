@@ -390,7 +390,7 @@ fn collect_col_widths(doc: &Document, table_idx: usize) -> Vec<ColSizing> {
 /// FIRST header group floats to the top and the FIRST footer group sinks to
 /// the bottom — matching `HTMLTableElement.tHead`/`tFoot` (first match) and
 /// reproducing row-group-order-ref exactly. Nested groups keep DOM order.
-fn section_order(order: &mut Vec<usize>, displays: &[DisplayValue]) {
+fn section_order(order: &mut [usize], displays: &[DisplayValue]) {
     let first_head = order
         .iter()
         .find(|&&i| displays[i] == DisplayValue::TableHeaderGroup)
@@ -731,8 +731,8 @@ fn resolve_column_widths(
         for cell in grid.cells.iter() {
             let s = cell.col_start as usize;
             let e = (s + cell.col_span as usize).min(n);
-            for c in s..e {
-                occ[c] = true;
+            for slot in occ.iter_mut().take(e).skip(s) {
+                *slot = true;
             }
         }
         occ

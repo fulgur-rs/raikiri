@@ -957,3 +957,8 @@ css/css-tables/parsing/caption-side-computed.html
 css/css-tables/parsing/empty-cells-computed.html
 css/css-tables/parsing/table-layout-computed.html
 css/css-tables/parsing/border-collapse-computed.html
+# --- css-tables reftest pin 2026-09-15 (tables-sweep: rowspan=0 section-end + first-thead/first-tfoot order + css/reference unlock, EXACT 800x600) ---
+css/css-tables/zero-rowspan-001.html
+css/css-tables/row-group-order.html
+css/css-tables/percent-height-replaced-in-percent-cell.tentative.html
+css/css-tables/table-cell-baseline-static-position.html
