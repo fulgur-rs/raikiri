@@ -798,7 +798,6 @@ fn resolve_column_widths(
         }
         occ
     };
-    let mut col_cap: Vec<Option<f32>> = vec![None; n];
     for (c, sz) in grid.col_widths.iter().enumerate() {
         if c >= n {
             break;
@@ -838,23 +837,10 @@ fn resolve_column_widths(
             col_min_full[c] = f32_max_compat(col_min_full[c], f);
             col_max_full[c] = f32_max_compat(col_max_full[c], f);
         }
-        // Max cap applies to content-driven growth as well (col-definite-max-*).
-        if let Some(mx) = max_w
-            && !(min_w.is_some_and(|mn| mn > mx))
-        {
-            col_cap[c] = Some(mx);
-        }
     }
     for i in 0..n {
         col_max[i] = f32_max_compat(col_max[i], col_min[i]);
         col_max_full[i] = f32_max_compat(col_max_full[i], col_min_full[i]);
-    }
-    // `<col>` max-width caps (min-wins case already excluded above).
-    for (i, cap) in col_cap.iter().enumerate() {
-        if let Some(mx) = cap {
-            col_max[i] = col_max[i].min(*mx);
-            col_max_full[i] = col_max_full[i].min(*mx);
-        }
     }
 
     // (C.4) Distribute - auto only (fixed deferred to Wave4)
