@@ -52,7 +52,7 @@ taffy = { version = "0.14", default-features = false, features = [
 ] }
 
 # ── Text (parley) ──────────────────────────────────────────────────────
-parley = { version = "0.10", default-features = false, features = ["std", "system"] }
+parley = { version = "0.11", default-features = false, features = ["std", "system"] }
 
 # ── Rendering (anyrender + peniko + kurbo) ─────────────────────────────
 anyrender = "0.11"
