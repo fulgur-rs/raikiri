@@ -99,6 +99,10 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
 /// - [`bridge_size`] — [`ComputedLengthPercentageOrAuto`] `cv.width` / `cv.height` →
 ///   [`taffy::Style::size`] (`Size<Dimension>`)。width / height 両 field を
 ///   struct literal 1 発 assign で書く。
+/// - [`bridge_min_max_size`] — [`ComputedLengthPercentageOrAuto`]
+///   `cv.min_width` / `cv.min_height` → [`taffy::Style::min_size`]、
+///   `cv.max_width` / `cv.max_height` → [`taffy::Style::max_size`]。
+///   min/max 4 field を 2 struct literal で書く ([`bridge_size`] と同 shape)。
 /// - [`bridge_border`] — `Sides<ComputedBorder>` → [`taffy::Rect<LengthPercentage>`]
 ///   。**border-style gating は本 bridge ではなく上流の
 ///   `raikiri_style::resolve_border` (computed 層) が持つ** — CSS Backgrounds 3
@@ -142,6 +146,7 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         bridge_margin(style, cv, &mut doc.layout_warnings);
         bridge_padding(style, cv, &mut doc.layout_warnings);
         bridge_size(style, cv, &mut doc.layout_warnings);
+        bridge_min_max_size(style, cv, &mut doc.layout_warnings);
         bridge_border(style, cv, &mut doc.layout_warnings);
         bridge_box_sizing(style, cv);
         bridge_flex(style, cv, &mut doc.layout_warnings);
@@ -389,6 +394,52 @@ fn bridge_size(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Lay
     style.size = Size {
         width: computed_length_percentage_or_auto_to_taffy_dimension(cv.width, "width", diag),
         height: computed_length_percentage_or_auto_to_taffy_dimension(cv.height, "height", diag),
+    };
+}
+/// [`ComputedValues::min_width`] / [`ComputedValues::min_height`] /
+/// [`ComputedValues::max_width`] / [`ComputedValues::max_height`]
+/// ([`ComputedLengthPercentageOrAuto`]) → [`taffy::Style::min_size`] /
+/// [`taffy::Style::max_size`] (`Size<Dimension>`) bridge (CSS Sizing 3 §4
+/// "Minimum Size Properties" / §5 "Maximum Size Properties").
+///
+/// min 側 initial `auto` / max 側 initial `none` は共に computed 層で
+/// [`ComputedLengthPercentageOrAuto::Auto`] に正規化済み (specified 層の
+/// `none` → `Auto` placeholder mapping は sibling `parse_max_size` が担う)
+/// ので、4 field とも [`bridge_size`] と全く同じ helper
+/// ([`computed_length_percentage_or_auto_to_taffy_dimension`]) で `Auto` →
+/// `Dimension::auto()` に translate する — max の `none` 用の特別扱いは本
+/// bridge に要らない。`none` (no max) と `auto` (no minimum) は共に
+/// "制約なし" として taffy に委譲する。
+///
+/// Length policy / Percent policy / 非有限 guard は同 helper の doc 参照。
+/// `site` label は 4 caller ごとに `min-width` / `min-height` /
+/// `max-width` / `max-height` を渡す ([`LayoutWarn::NonFiniteClamped`] の診断用)。
+fn bridge_min_max_size(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
+    // min/max 各 2 field を同時に書くので struct literal を 2 発採用
+    // (bridge_size と同 shape — default 保持は cv 側の Auto で自然に達成)。
+    style.min_size = Size {
+        width: computed_length_percentage_or_auto_to_taffy_dimension(
+            cv.min_width,
+            "min-width",
+            diag,
+        ),
+        height: computed_length_percentage_or_auto_to_taffy_dimension(
+            cv.min_height,
+            "min-height",
+            diag,
+        ),
+    };
+    style.max_size = Size {
+        width: computed_length_percentage_or_auto_to_taffy_dimension(
+            cv.max_width,
+            "max-width",
+            diag,
+        ),
+        height: computed_length_percentage_or_auto_to_taffy_dimension(
+            cv.max_height,
+            "max-height",
+            diag,
+        ),
     };
 }
 
@@ -4644,6 +4695,92 @@ mod tests {
         // Case 3: `height: 50%` → Dimension::percent(0.5)。CSS spec の authored
         //   0-100 → taffy fraction 0.0-1.0 の div-by-100 policy を pin。
         assert_eq!(height_for("height: 50%"), Dimension::percent(0.5));
+    }
+
+    #[test]
+    fn apply_computed_to_style_bridges_min_size_to_taffy() {
+        // bridge_min_max_size の min 側。cv.min_width / cv.min_height:
+        // ComputedLengthPercentageOrAuto を taffy::Style::min_size:
+        // Size<Dimension> に translate することを pin する。sibling test
+        // `apply_computed_to_style_bridges_height_to_taffy` と同 fixture
+        // pattern (非 body element `<p>` — body は apply_page_box_to_body
+        // が size のみ clobber し min/max には触らないが、size 系 test と
+        // 同じ fixture に揃える)。
+        //
+        // CSS Sizing 3 §4 initial `auto` の identity round-trip (unspecified
+        // → taffy default と一致) も同時に pin — bridge が unspecified 時に
+        // default を壊さないことの regression guard。
+        use raikiri_style::{build_rule_tree, cascade};
+
+        fn min_for(inline: Option<&str>) -> Size<Dimension> {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let p = doc.append_element(Some(body), "p", Style::default(), inline);
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            apply_computed_to_style(&mut doc, &cr);
+            doc.nodes[p].style.min_size
+        }
+
+        // Case 1: unspecified → taffy default (min initial `auto` round-trip)。
+        assert_eq!(min_for(None), <taffy::Style as Default>::default().min_size);
+
+        // Case 2: `min-width: 100px; min-height: 50%` → length + percent。
+        assert_eq!(
+            min_for(Some("min-width: 100px; min-height: 50%")),
+            Size {
+                width: Dimension::length(100.0),
+                height: Dimension::percent(0.5),
+            }
+        );
+
+        // Case 3: `min-width: auto` → Dimension::auto() (no minimum)。
+        assert_eq!(min_for(Some("min-width: auto")).width, Dimension::auto());
+
+        // Case 4: 負値は grammar `[0,∞]` 違反で declaration drop → Auto のまま。
+        assert_eq!(min_for(Some("min-width: -10px")).width, Dimension::auto());
+    }
+
+    #[test]
+    fn apply_computed_to_style_bridges_max_size_to_taffy() {
+        // bridge_min_max_size の max 側。cv.max_width / cv.max_height を
+        // taffy::Style::max_size: Size<Dimension> に translate することを pin
+        // する。sibling min test と同 fixture pattern。
+        //
+        // CSS Sizing 3 §5 initial `none` → computed Auto placeholder →
+        // `Dimension::auto()` (no max) の連鎖を pin — unspecified が taffy
+        // default と一致することも同時に確認する。
+        use raikiri_style::{build_rule_tree, cascade};
+
+        fn max_for(inline: Option<&str>) -> Size<Dimension> {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let p = doc.append_element(Some(body), "p", Style::default(), inline);
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            apply_computed_to_style(&mut doc, &cr);
+            doc.nodes[p].style.max_size
+        }
+
+        // Case 1: unspecified → taffy default (max initial `none` round-trip)。
+        assert_eq!(max_for(None), <taffy::Style as Default>::default().max_size);
+
+        // Case 2: `max-width: 100px; max-height: 50%` → length + percent。
+        assert_eq!(
+            max_for(Some("max-width: 100px; max-height: 50%")),
+            Size {
+                width: Dimension::length(100.0),
+                height: Dimension::percent(0.5),
+            }
+        );
+
+        // Case 3: `max-width: none` → Dimension::auto() (no max)。
+        assert_eq!(max_for(Some("max-width: none")).width, Dimension::auto());
+
+        // Case 4: 負値は grammar `[0,∞]` 違反で declaration drop → Auto のまま。
+        assert_eq!(max_for(Some("max-height: -10px")).height, Dimension::auto());
     }
 
     #[test]

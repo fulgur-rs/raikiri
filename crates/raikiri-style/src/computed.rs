@@ -676,6 +676,12 @@ pub struct ComputedValues {
     pub max_width: ComputedLengthPercentageOrAuto,
     /// `max-height` — **non-inherited**, initial `none` (mapped to Auto as placeholder).
     pub max_height: ComputedLengthPercentageOrAuto,
+    /// `min-width` — **non-inherited**, initial `auto` (CSS Sizing 3 §4
+    /// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>).
+    pub min_width: ComputedLengthPercentageOrAuto,
+    /// `min-height` — **non-inherited**, initial `auto` (CSS Sizing 3 §4
+    /// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>).
+    pub min_height: ComputedLengthPercentageOrAuto,
     /// `top`。**non-inherited**、initial: `auto`.
     pub top: ComputedLengthPercentageOrAuto,
     /// `right`。**non-inherited**、initial: `auto`.
@@ -1559,6 +1565,8 @@ impl ComputedValues {
             height: ComputedLengthPercentageOrAuto::Auto,
             max_width: ComputedLengthPercentageOrAuto::Auto,
             max_height: ComputedLengthPercentageOrAuto::Auto,
+            min_width: ComputedLengthPercentageOrAuto::Auto,
+            min_height: ComputedLengthPercentageOrAuto::Auto,
             top: ComputedLengthPercentageOrAuto::Auto,
             right: ComputedLengthPercentageOrAuto::Auto,
             bottom: ComputedLengthPercentageOrAuto::Auto,
@@ -2084,6 +2092,8 @@ mod tests {
             height: ComputedLengthPercentageOrAuto::Px(200.0),
             max_width: ComputedLengthPercentageOrAuto::Px(200.0),
             max_height: ComputedLengthPercentageOrAuto::Px(200.0),
+            min_width: ComputedLengthPercentageOrAuto::Px(200.0),
+            min_height: ComputedLengthPercentageOrAuto::Px(200.0),
             top: ComputedLengthPercentageOrAuto::Px(10.0),
             right: ComputedLengthPercentageOrAuto::Px(20.0),
             bottom: ComputedLengthPercentageOrAuto::Px(30.0),

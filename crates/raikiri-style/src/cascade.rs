@@ -6956,6 +6956,8 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Height(_)
         | PropertyValue::MaxWidth(_)
         | PropertyValue::MaxHeight(_)
+        | PropertyValue::MinWidth(_)
+        | PropertyValue::MinHeight(_)
         | PropertyValue::Top(_)
         | PropertyValue::Right(_)
         | PropertyValue::Bottom(_)
@@ -7655,6 +7657,8 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::Height(v) => target.height = v,
         PropertyValue::MaxWidth(v) => target.max_width = v,
         PropertyValue::MaxHeight(v) => target.max_height = v,
+        PropertyValue::MinWidth(v) => target.min_width = v,
+        PropertyValue::MinHeight(v) => target.min_height = v,
         PropertyValue::Top(v) => target.top = v,
         PropertyValue::Right(v) => target.right = v,
         PropertyValue::Bottom(v) => target.bottom = v,
@@ -19001,6 +19005,72 @@ mod tests {
         assert_eq!(
             result.computed[child].width,
             ComputedLengthPercentageOrAuto::Auto
+        );
+    }
+
+    #[test]
+    fn min_width_length_end_to_end() {
+        // CSS Sizing 3 §4: `div { min-width: 100px }` が
+        // `ComputedValues.min_width` に Px(100) として届く。sibling
+        // `width_length_end_to_end` と同 pattern (parse_min_size →
+        // PropertyValue::MinWidth → apply_value → finalize の end-to-end
+        // smoke)。
+        let cv = cascade_doc("", "div", Some("min-width: 100px"));
+        assert_eq!(cv.min_width, ComputedLengthPercentageOrAuto::Px(100.0));
+    }
+
+    #[test]
+    fn min_height_auto_and_negative_reject() {
+        // CSS Sizing 3 §4 initial `auto` の identity round-trip + `[0,∞]`
+        // 違反の drop pin。負値は parse 段で declaration drop するため
+        // initial (Auto) のまま残る。
+        let cv = cascade_doc("", "div", Some("min-height: auto"));
+        assert_eq!(cv.min_height, ComputedLengthPercentageOrAuto::Auto);
+        let cv_neg = cascade_doc("", "div", Some("min-height: -10px"));
+        assert_eq!(cv_neg.min_height, ComputedLengthPercentageOrAuto::Auto);
+    }
+
+    #[test]
+    fn min_max_child_does_not_inherit_from_parent() {
+        // CSS Sizing 3 §4/§5: min/max は **non-inherited**。parent が
+        // min-width / max-width を持っていても child は initial を保持する
+        // (sibling `width_child_does_not_inherit_from_parent` と同 pattern)。
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "div { min-width: 100px; max-width: 200px }");
+        let parent = doc.push_element(0, "div", None);
+        let child = doc.push_element(parent, "span", None);
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).unwrap();
+        assert_eq!(
+            result.computed[parent].min_width,
+            ComputedLengthPercentageOrAuto::Px(100.0)
+        );
+        assert_eq!(
+            result.computed[parent].max_width,
+            ComputedLengthPercentageOrAuto::Px(200.0)
+        );
+        assert_eq!(
+            result.computed[child].min_width,
+            ComputedLengthPercentageOrAuto::Auto
+        );
+        assert_eq!(
+            result.computed[child].max_width,
+            ComputedLengthPercentageOrAuto::Auto
+        );
+    }
+
+    #[test]
+    fn max_width_none_maps_to_auto() {
+        // CSS Sizing 3 §5 initial `none` → computed Auto placeholder の連鎖
+        // pin (specified `parse_max_size` の `none` 分岐 + bridge の
+        // `Dimension::auto()` 委譲の上流側)。
+        let cv = cascade_doc("", "div", Some("max-width: none"));
+        assert_eq!(cv.max_width, ComputedLengthPercentageOrAuto::Auto);
+        let cv_px = cascade_doc("", "div", Some("max-height: 50%"));
+        assert_eq!(
+            cv_px.max_height,
+            ComputedLengthPercentageOrAuto::Percent(50.0)
         );
     }
 
