@@ -16,20 +16,20 @@ use crate::Atom;
 use crate::property::{
     AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
     BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderStyle, BoxSizing,
-    BreakBetween, BreakInside, ClearValue, ClipPath, ContentAlignmentValue, ContentComponent,
-    CssColor, Direction, DisplayValue, FilterFunction, FlexDirectionValue, FlexWrapValue,
-    FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue,
-    GridTemplateAreasValue, Hyphens, Isolation, MaskImage, MixBlendMode, ObjectFit, OutlineColor,
-    OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue, SelfAlignmentValue,
-    Sides, TableLayoutValue, TextAlign, TextDecorationColor, TextDecorationLine,
-    TextDecorationStyle, TextTransform, VerticalAlign, Visibility, VisualBox, WhiteSpace,
-    WordBreak, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
+    BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ContentAlignmentValue,
+    ContentComponent, CssColor, Direction, DisplayValue, EmptyCellsValue, FilterFunction,
+    FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue,
+    GridLineValue, GridTemplateAreasValue, Hyphens, Isolation, MaskImage, MixBlendMode, ObjectFit,
+    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
+    SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextDecorationColor,
+    TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign, Visibility, VisualBox,
+    WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
     empty_filter_list, empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
-    ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem,
-    ComputedCssPosition, ComputedCssPositionOffset, ComputedFlexBasis, ComputedGridTemplateTracks,
-    ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
+    ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
+    ComputedBoxShadowItem, ComputedCssPosition, ComputedCssPositionOffset, ComputedFlexBasis,
+    ComputedGridTemplateTracks, ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
     ComputedOutline, ComputedTabSize, ComputedTextShadow, ComputedTransformFunction,
     empty_computed_box_shadow_list, empty_computed_text_shadow_list, empty_computed_transform_list,
@@ -1460,6 +1460,46 @@ pub struct ComputedValues {
     /// (raikiri-dom scope) — [`Self::table_layout`] doc's split applies
     /// here as well.
     pub border_collapse: BorderCollapseValue,
+    /// `border-spacing`. **inherited**, initial: `0` (both axes `0px`)
+    /// (CSS Tables 3 §6.1 "Separated borders: the border-spacing property"
+    /// <https://www.w3.org/TR/css-tables-3/#border-spacing-property>,
+    /// "Initial: 0" / "Inherited: yes"). Computed value = two absolute
+    /// lengths ([`ComputedBorderSpacing`] doc — phase 3 resolves each
+    /// axis against the node's own font metrics).
+    ///
+    /// # Scope carving
+    ///
+    /// This field carries the cascaded + absolutized value only. Whether
+    /// cell separation actually gaps the table grid at layout time is
+    /// layout-time behavior (raikiri-dom scope — parse + cascade + compute
+    /// only in this task, no table layout wiring) — [`Self::table_layout`]
+    /// doc's split applies here as well.
+    pub border_spacing: ComputedBorderSpacing,
+    /// `caption-side`. **inherited**, initial:
+    /// [`CaptionSideValue::Top`] (CSS Tables 3 §7 "Caption Position"
+    /// <https://www.w3.org/TR/css-tables-3/#caption-side-property>,
+    /// "Initial: top" / "Inherited: yes"). Computed value = specified
+    /// keyword ([`CaptionSideValue`] doc — no length payload).
+    ///
+    /// # Scope carving
+    ///
+    /// This field carries the cascaded value only. Caption box placement
+    /// is layout-time behavior (raikiri-dom scope) — [`Self::table_layout`]
+    /// doc's split applies here as well.
+    pub caption_side: CaptionSideValue,
+    /// `empty-cells`. **inherited**, initial:
+    /// [`EmptyCellsValue::Show`] (CSS Tables 3 §8 "Empty Cells"
+    /// <https://www.w3.org/TR/css-tables-3/#empty-cells-property>,
+    /// "Initial: show" / "Inherited: yes"). Computed value = specified
+    /// keyword ([`EmptyCellsValue`] doc — no length payload).
+    ///
+    /// # Scope carving
+    ///
+    /// This field carries the cascaded value only. Empty-cell border /
+    /// background painting is layout/paint-time behavior (raikiri-dom /
+    /// raikiri-paint scope) — [`Self::table_layout`] doc's split applies
+    /// here as well.
+    pub empty_cells: EmptyCellsValue,
     /// Resolved custom properties for the page-context inheritance bridge.
     ///
     /// This is deliberately crate-private: `ComputedValues`' public property
@@ -1734,6 +1774,18 @@ impl ComputedValues {
             // CSS Tables 3 §6: border-collapse initial は `separate`
             // (inherited — root seed 用)。
             border_collapse: BorderCollapseValue::Separate,
+            // CSS Tables 3 §6.1: border-spacing initial は `0`
+            // (inherited — root seed 用、両軸 0px)。
+            border_spacing: ComputedBorderSpacing {
+                horizontal: ComputedLength::ZERO,
+                vertical: ComputedLength::ZERO,
+            },
+            // CSS Tables 3 §7: caption-side initial は `top`
+            // (inherited — root seed 用)。
+            caption_side: CaptionSideValue::Top,
+            // CSS Tables 3 §8: empty-cells initial は `show`
+            // (inherited — root seed 用)。
+            empty_cells: EmptyCellsValue::Show,
             custom_properties: empty_custom_properties(),
         }
     }
@@ -1746,7 +1798,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows / border_collapse、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout)。
     ///
@@ -2295,6 +2347,18 @@ mod tests {
             // CSS Tables 3 §6: border-collapse は inherited なので initial
             // (`separate`) と異なる値にしておく (同上)。
             border_collapse: BorderCollapseValue::Collapse,
+            // CSS Tables 3 §6.1: border-spacing は inherited なので initial
+            // (両軸 `0px`) と異なる値にしておく (同上)。
+            border_spacing: ComputedBorderSpacing {
+                horizontal: ComputedLength(10.0),
+                vertical: ComputedLength(20.0),
+            },
+            // CSS Tables 3 §7: caption-side は inherited なので initial
+            // (`top`) と異なる値にしておく (同上)。
+            caption_side: CaptionSideValue::Bottom,
+            // CSS Tables 3 §8: empty-cells は inherited なので initial
+            // (`show`) と異なる値にしておく (同上)。
+            empty_cells: EmptyCellsValue::Hide,
             custom_properties: CustomPropertyEnvironment::from_map(HashMap::from([(
                 SmolStr::new("--fixture"),
                 SmolStr::new("1px"),
@@ -2369,6 +2433,12 @@ mod tests {
         // inherited。
         assert_eq!(child.orphans, parent.orphans);
         assert_eq!(child.widows, parent.widows);
+        // CSS Tables 3 §6.1: border-spacing は inherited。
+        assert_eq!(child.border_spacing, parent.border_spacing);
+        // CSS Tables 3 §7: caption-side は inherited。
+        assert_eq!(child.caption_side, parent.caption_side);
+        // CSS Tables 3 §8: empty-cells は inherited。
+        assert_eq!(child.empty_cells, parent.empty_cells);
         assert_eq!(child.custom_properties, parent.custom_properties);
 
         // non-inherited — initial に戻る。

@@ -938,3 +938,22 @@ css/css-flexbox/table-item-flex-percentage-min-width.html
 css/css-flexbox/table-item-flex-percentage-width.html
 css/css-flexbox/text-overflow-on-flexbox-001.html
 css/css-flexbox/webkit-box-vertical-writing-mode.html
+
+# --- css-tables parsing-8 pin 2026-09-15 (border-spacing/caption-side/empty-cells valid + 4 computed; raikiri-style parse+cascade+compute only, no layout wiring) ---
+# border-spacing-valid: all 3 valid accepted (plain lengths direct, calc pair via
+# Deferred — specified calc normalization serialization has no engine surface,
+# same as all calc properties); all 4 invalid rejected (unit tests pin each case).
+# caption-side / empty-cells valid+computed: keyword as-specified round-trip.
+# table-layout / border-collapse computed: keyword as-specified (valid files
+# already pinned 2026-09-14).
+# NOT pinned: border-spacing-computed.html — its 2 calc+relative-unit cases
+# (calc(10px +/- 0.5em) at font-size 40px) need mixed-unit calc resolution the
+# math evaluator intentionally lacks (measured: declaration drops to initial;
+# same class as cascade's mixed_length_percentage_math_is_intentionally_not_supported).
+css/css-tables/parsing/border-spacing-valid.html
+css/css-tables/parsing/caption-side-valid.html
+css/css-tables/parsing/empty-cells-valid.html
+css/css-tables/parsing/caption-side-computed.html
+css/css-tables/parsing/empty-cells-computed.html
+css/css-tables/parsing/table-layout-computed.html
+css/css-tables/parsing/border-collapse-computed.html
