@@ -39,13 +39,14 @@ use crate::property::{
     GridTemplateTracks, GridTrackSize, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal,
     LineHeight, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle,
     OverflowValue, OverflowWrap, OverflowXY, PositionValue, SelfAlignmentValue, Sides, TabSize,
-    TableLayoutValue, TextAlign, TextDecorationColor, TextDecorationLine, TextDecorationStyle,
-    TextShadowItem, TextTransform, TransformFunction, VerticalAlign, Visibility, VisualBox,
-    WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_box_shadow_list, empty_content_list,
-    empty_counter_entries, empty_filter_list, empty_quotes_entries, empty_string_set_entries,
-    empty_text_shadow_list, empty_transform_list, initial_font_family,
-    initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
-    resolve_text_align_match_parent, resolve_writing_mode,
+    TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine,
+    TextDecorationStyle, TextJustify, TextShadowItem, TextTransform, TextWrapMode,
+    TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode,
+    ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
+    empty_filter_list, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
+    empty_transform_list, initial_font_family, initial_grid_auto_track_list,
+    resolve_display_for_float, resolve_overflow, resolve_text_align_match_parent,
+    resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ResolveContext,
@@ -197,6 +198,12 @@ pub struct SpecifiedValues {
     /// `match-parent` はここでは**解決されない** — [`Self`] doc の
     /// "`text_align: match-parent` は D5 と同型ではない" 節参照。
     pub text_align: TextAlign,
+    /// [`ComputedValues::text_justify`](crate::computed::ComputedValues::text_justify)
+    /// の staging。keyword のため computed-equivalent、inherited。
+    pub text_justify: TextJustify,
+    /// [`ComputedValues::text_align_last`](crate::computed::ComputedValues::text_align_last)
+    /// の staging。keyword のため computed-equivalent、inherited。
+    pub text_align_last: TextAlignLast,
     /// [`ComputedValues::direction`] の staging。層は computed-equivalent。
     pub direction: Direction,
     /// [`ComputedValues::writing_mode`] の staging。**層は computed-equivalent
@@ -215,6 +222,10 @@ pub struct SpecifiedValues {
     /// で lift して seed する。CSS Text 3 §8.1
     /// <https://www.w3.org/TR/css-text-3/#text-indent-property>。
     pub text_indent: Length,
+    /// `text-indent`'s `hanging` flag staging. Inherited, initial `false`.
+    pub text_indent_hanging: bool,
+    /// `text-indent`'s `each-line` flag staging. Inherited, initial `false`.
+    pub text_indent_each_line: bool,
     /// `padding` の **specified** value。phase 3
     /// ([`resolve_length_percentage`]) で絶対化される (percentage は素通し)。
     pub padding: Sides<Length>,
@@ -338,6 +349,8 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::white_space`] の staging。層は computed-equivalent
     /// (`WhiteSpace` は length を運ばない)。
     pub white_space: WhiteSpace,
+    /// `text-wrap` wrapping component staging. Inherited, initial `wrap`.
+    pub text_wrap: TextWrapMode,
     /// [`ComputedValues::hyphens`] の staging。層は computed-equivalent
     /// (`Hyphens` は length を運ばない)。
     pub hyphens: Hyphens,
@@ -576,6 +589,10 @@ impl SpecifiedValues {
             running_templates: Vec::new(),
             position: PositionValue::Static,
             text_align: TextAlign::Start,
+            // CSS Text 3 §6.2: text-justify initial is `auto`.
+            text_justify: TextJustify::Auto,
+            // CSS Text 3 §6.1: text-align-last initial is `auto`.
+            text_align_last: TextAlignLast::Auto,
             // CSS Writing Modes 4 §2.1: direction initial は `ltr`。
             direction: Direction::Ltr,
             // CSS Writing Modes 4 §3.2: writing-mode initial は
@@ -583,6 +600,8 @@ impl SpecifiedValues {
             writing_mode: WritingMode::HorizontalTb,
             // CSS Text 3 §8.1: text-indent initial は `0`。
             text_indent: Length::Px(0.0),
+            text_indent_hanging: false,
+            text_indent_each_line: false,
             padding: Sides::all(Length::Px(0.0)),
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
             // CSS Backgrounds 3 §3.3 / §3.2 / §3.1: width=medium (3px) /
@@ -659,6 +678,7 @@ impl SpecifiedValues {
             clear: ClearValue::None,
             // CSS Text 3 §3: white-space initial は `normal`。
             white_space: WhiteSpace::Normal,
+            text_wrap: TextWrapMode::Wrap,
             // CSS Text 3 §5.3: hyphens initial は `manual`。
             hyphens: Hyphens::Manual,
             // CSS Flexible Box Layout Module Level 1 §5.1/§5.2:
@@ -856,6 +876,9 @@ impl SpecifiedValues {
             // `ComputedValues` を明示的に受け取って行う (`Self` doc の
             // "D5 と同型ではない" 節)。
             text_align: parent.text_align,
+            // CSS Text 3 §6.2 / §6.1: いずれも inherited、keyword の素朴なコピー。
+            text_justify: parent.text_justify,
+            text_align_last: parent.text_align_last,
             direction: parent.direction,
             // CSS Writing Modes 4 §3.2: writing-mode は inherited。親の
             // `ComputedValues::writing_mode` は既に
@@ -869,6 +892,8 @@ impl SpecifiedValues {
             // `Px` / `Percent` どちらも不動点、`lift_length_percentage` doc
             // 参照)。
             text_indent: lift_length_percentage(parent.text_indent),
+            text_indent_hanging: parent.text_indent_hanging,
+            text_indent_each_line: parent.text_indent_each_line,
             // CSS Fonts 4 §2.4: font-style は inherited。
             font_style: parent.font_style,
             // CSS Fonts Module Level 3 §6.6: font-variant-caps は inherited。
@@ -893,6 +918,7 @@ impl SpecifiedValues {
             tab_size: lift_tab_size(parent.tab_size),
             // CSS Text 3 §3: white-space は inherited。
             white_space: parent.white_space,
+            text_wrap: parent.text_wrap,
             // CSS Tables 3 §6: border-collapse は inherited。keyword のため
             // lift 不要の素朴なコピー (`visibility` と同じ扱い)。
             border_collapse: parent.border_collapse,
@@ -1370,6 +1396,9 @@ impl SpecifiedValues {
             position: self.position,
             // 呼び手が既に match-parent を解決した後の値 (関数 doc 参照)。
             text_align,
+            // keyword の素通し (解決不要)。
+            text_justify: self.text_justify,
+            text_align_last: self.text_align_last,
             // computed value = specified value、相対解決なし (`Direction` doc
             // 参照) — 自 node の winner 適用結果をそのまま素通し。
             direction: self.direction,
@@ -1396,6 +1425,9 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
+            // Flags pass through untouched (no absolutization needed).
+            text_indent_hanging: self.text_indent_hanging,
+            text_indent_each_line: self.text_indent_each_line,
             padding: self
                 .padding
                 .map(|l| resolve_length_percentage(l, font_size, own_line_height, ctx)),
@@ -1592,6 +1624,7 @@ impl SpecifiedValues {
             // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
             // そのまま素通し。
             white_space: self.white_space,
+            text_wrap: self.text_wrap,
             // computed value = specified keyword (`Hyphens` doc 参照、
             // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
             // そのまま素通し。
@@ -2024,6 +2057,8 @@ mod tests {
                 name: SmolStr::new("hdr"),
             }],
             text_align: TextAlign::Center,
+            text_justify: TextJustify::InterWord,
+            text_align_last: TextAlignLast::Justify,
             direction: Direction::Rtl,
             // `VerticalRl` — non-initial, and safe to compare verbatim below
             // (unlike `computed::tests::non_initial_parent`'s fixture): this
@@ -2033,6 +2068,8 @@ mod tests {
             // `WritingMode` doc's Non-goal section.
             writing_mode: WritingMode::VerticalRl,
             text_indent: ComputedLengthPercentage::Px(9.0),
+            text_indent_hanging: true,
+            text_indent_each_line: false,
             padding: Sides::all(ComputedLengthPercentage::Px(7.0)),
             margin: Sides::all(ComputedLengthPercentageOrAuto::Px(12.0)),
             border: Sides::all(ComputedBorder {
@@ -2095,6 +2132,7 @@ mod tests {
             float: FloatValue::Left,
             clear: ClearValue::Both,
             white_space: WhiteSpace::Pre,
+            text_wrap: TextWrapMode::Nowrap,
             hyphens: Hyphens::None,
             flex_direction: FlexDirectionValue::Column,
             flex_wrap: FlexWrapValue::Wrap,
@@ -2264,6 +2302,9 @@ mod tests {
         // CSS Text 3 §8.1: text-indent は inherited — computed → specified
         // の lift (`lift_length_percentage`)。
         assert_eq!(child.text_indent, Length::Px(9.0));
+        // CSS Text 3 §8.1: hanging/each-line flags inherit like the length.
+        assert!(child.text_indent_hanging);
+        assert!(!child.text_indent_each_line);
         // CSS Text 3 §5.1: word-break は inherited。
         assert_eq!(child.word_break, WordBreak::KeepAll);
         // CSS Text 3 §5.4: overflow-wrap は inherited。

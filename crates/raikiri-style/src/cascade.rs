@@ -5333,6 +5333,9 @@ fn project_deferred_value(
             crate::property::PropertyKey::TextDecorationLine => {
                 PropertyValue::TextDecorationLine(shorthand.line)
             }
+            crate::property::PropertyKey::TextDecorationThickness => {
+                PropertyValue::TextDecorationThickness(shorthand.thickness)
+            }
             crate::property::PropertyKey::TextDecorationStyle => {
                 PropertyValue::TextDecorationStyle(shorthand.style)
             }
@@ -7059,7 +7062,19 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::TextDecorationLine(_)
         | PropertyValue::TextDecorationStyle(_)
         | PropertyValue::TextDecorationColor(_)
+        | PropertyValue::TextDecorationSkipInk(_)
+        | PropertyValue::TextDecorationSkipSpaces(_)
+        | PropertyValue::TextEmphasisPosition(_)
+        | PropertyValue::TextUnderlinePosition(_)
         | PropertyValue::TextDecoration(_)
+        // `text-decoration-thickness` / `text-decoration-inset` carry a
+        // `<length-percentage>` that needs the *declaring node's own*
+        // font-size (phase 3), not the inheritance parent's — same shape
+        // as `Padding`/`Margin`/`Width` above, nothing for phase 2 to
+        // resolve here. (`TextDecoration` shorthand itself joins the group
+        // above since expansion removes it before this function runs.)
+        | PropertyValue::TextDecorationThickness(_)
+        | PropertyValue::TextDecorationInset(_)
         // `vertical-align`'s 6 keywords (`baseline`/`sub`/`super`/`middle`/
         // `text-top`/`text-bottom`) describe a shift *relative to the
         // parent's font metrics*, but that relation is a used-value/layout
@@ -7136,6 +7151,9 @@ pub(crate) fn resolve_against_inherited(
         // doc) and does not depend on the inheritance parent — nothing for
         // phase 2 to resolve.
         | PropertyValue::WhiteSpace(_)
+        // `text-wrap` (CSS Text 4 §5 subset) carries no length and does not
+        // depend on the inheritance parent — nothing for phase 2 to resolve.
+        | PropertyValue::TextWrap(_)
         // `flex-*` / alignment / `row-gap`/`column-gap` (and their
         // shorthands) — same "nothing for phase 2 to resolve" shape as
         // `Padding`/`Margin`/`Width`/`Height` above for the length-bearing
@@ -7323,7 +7341,8 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::TextAlignLast(_)
         | PropertyValue::TextCombineUpright(_)
         | PropertyValue::TextOrientation(_)
-        | PropertyValue::UnicodeBidi(_)) => v,
+        | PropertyValue::UnicodeBidi(_)
+        | PropertyValue::Page(_)) => v,
     })
 }
 
@@ -7595,6 +7614,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // invariant への違反になる。詳細は
         // `crate::property::resolve_text_align_match_parent` の doc。
         PropertyValue::TextAlign(t) => target.text_align = t,
+        // CSS Text 3 §6.2 text-justify — **inherited** keyword、単純代入。
+        PropertyValue::TextJustify(v) => target.text_justify = v,
+        // CSS Text 3 §6.1 text-align-last — **inherited** keyword、単純代入。
+        // `auto` の解決は consumer 側 (raikiri-dom realign)。
+        PropertyValue::TextAlignLast(v) => target.text_align_last = v,
         // CSS Text 3 §8.1 text-indent — **inherited**. `Length` is `Copy`,
         // by-value assignment suffices (sibling `TextAlign`/`Direction`
         // pattern). Absolutization (`em`/`rem`/`%` etc.) happens later in
@@ -7603,7 +7627,14 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // is that this field is inherited, so `SpecifiedValues::inherit_from`
         // (not this function) is what seeds a child with no winner of its
         // own.
-        PropertyValue::TextIndent(v) => target.text_indent = v,
+        // CSS Text 3 §8.1 text-indent — **inherited**. The length goes to
+        // `text_indent`; the flags go to their own staging fields so the
+        // specified/computed layers keep the full grammar (bd raikiri-spike-5u1y).
+        PropertyValue::TextIndent(v) => {
+            target.text_indent = v.length;
+            target.text_indent_hanging = v.hanging;
+            target.text_indent_each_line = v.each_line;
+        }
         // direction は CSS Writing Modes 4 §2.1。
         // inherited property、computed value = specified value (相対解決なし) —
         // text-align と同じく単純代入で十分。
@@ -7779,6 +7810,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.text_decoration_line = shorthand.line;
             target.text_decoration_style = shorthand.style;
             target.text_decoration_color = shorthand.color;
+            // `thickness` has no staging field (parsing-only,
+            // `PropertyValue::TextDecorationThickness` doc) — nothing to
+            // write here. Same unreachability contract as the 3 staged
+            // longhands above.
         }
         // CSS 2.1 §10.8.1 vertical-align。non-inherited、cascade winner を
         // このまま staging (`SpecifiedValues`) へ書き込む — `<length>`
@@ -7858,6 +7893,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // specified value (相対解決なし) — sibling `WordBreak` と同じく
         // 単純代入で十分。
         PropertyValue::WhiteSpace(ws) => target.white_space = ws,
+        // CSS Text 4 §5 text-wrap (subset). Inherited keyword, computed value =
+        // specified keyword — simple assignment like `WhiteSpace` above.
+        PropertyValue::TextWrap(v) => target.text_wrap = v,
         // CSS Text 3 §5.3 hyphens。inherited property、computed value =
         // specified keyword (相対解決なし、`Hyphens` doc 参照) — sibling
         // `WordBreak` と同じく単純代入で十分。
@@ -8125,14 +8163,26 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // inherit 解決は `SpecifiedValues::inherit_from` の素朴なコピーが担い、
         // ここは winner の単純代入 (`Visibility` arm と同じ shape)。
         PropertyValue::EmptyCells(v) => target.empty_cells = v,
-        // New Text 3 / Writing Modes 3 properties are keyword-only with no staging field yet (parsing only).
+        // New Text 3 / Writing Modes 3 / Text Decoration 4 properties with no
+        // staging field yet (parsing only). The keyword-only ones
+        // (`LineBreak`...`UnicodeBidi`, `TextDecorationSkipInk`...
+        // `TextUnderlinePosition`) carry no length; `TextDecorationThickness`
+        // / `TextDecorationInset` carry `<length-percentage>` but are still
+        // staging-less — their absolutization lives only on the `@page`
+        // path (`crate::page::absolutize_in_page_context`'s arms), same
+        // split as the phase-2/phase-3 division above.
         PropertyValue::LineBreak(_)
-        | PropertyValue::TextJustify(_)
         | PropertyValue::TextAlignAll(_)
-        | PropertyValue::TextAlignLast(_)
         | PropertyValue::TextCombineUpright(_)
         | PropertyValue::TextOrientation(_)
-        | PropertyValue::UnicodeBidi(_) => {}
+        | PropertyValue::UnicodeBidi(_)
+        | PropertyValue::TextDecorationSkipInk(_)
+        | PropertyValue::TextDecorationSkipSpaces(_)
+        | PropertyValue::TextDecorationThickness(_)
+        | PropertyValue::TextDecorationInset(_)
+        | PropertyValue::TextEmphasisPosition(_)
+        | PropertyValue::TextUnderlinePosition(_)
+        | PropertyValue::Page(_) => {}
         // These values are resolved before ordinary winners reach this
         // function. Keeping an explicit no-op makes direct internal callers
         // panic-free without allowing raw deferred data into a computed field.
@@ -8149,7 +8199,7 @@ mod tests {
     use crate::property::{
         Border, BorderColor, BorderStyle, Length, LengthOrAuto, OutlineColor, OutlineStyle,
         OverflowValue, OverflowXY, PropertyKey, Sides, TextDecorationColor, TextDecorationLine,
-        TextDecorationShorthand, TextDecorationStyle, TextShadowColor,
+        TextDecorationShorthand, TextDecorationStyle, TextDecorationThickness, TextShadowColor,
     };
     use crate::resolve::{
         ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedLength,
@@ -13243,6 +13293,20 @@ mod tests {
     }
 
     #[test]
+    fn author_flex_basis_intrinsic_keywords_compute_through_cascade() {
+        // `min-content` / `max-content` / bare `fit-content` survive the
+        // full stylesheet -> cascade path as distinct computed keywords
+        // (WPT `flex-basis-valid.html`; rendering approximation lives at
+        // the taffy bridge, `bridge_flex` doc).
+        let cv = cascade_doc("", "div", Some("flex-basis: min-content"));
+        assert_eq!(cv.flex_basis, crate::resolve::ComputedFlexBasis::MinContent);
+        let cv = cascade_doc("", "div", Some("flex-basis: max-content"));
+        assert_eq!(cv.flex_basis, crate::resolve::ComputedFlexBasis::MaxContent);
+        let cv = cascade_doc("", "div", Some("flex-basis: fit-content"));
+        assert_eq!(cv.flex_basis, crate::resolve::ComputedFlexBasis::FitContent);
+    }
+
+    #[test]
     fn author_flex_shorthand_expands_into_3_longhands_through_cascade() {
         // Proves `crate::rule::expand_shorthand_into`'s `Flex` arm is
         // actually wired into the real parse -> cascade pipeline (not just
@@ -14196,6 +14260,82 @@ mod tests {
         );
     }
 
+    // ── text-justify / text-align-last wire-through + inheritance ──
+
+    #[test]
+    fn text_justify_wired_through_cascade_from_inline_style() {
+        // <p style="text-justify: inter-word"> → ComputedValues.text_justify。
+        // 上記 text-align pattern を踏襲 (bd raikiri-spike-5u1y)。
+        use crate::property::TextJustify;
+        let cv = cascade_doc("", "p", Some("text-justify: inter-word"));
+        assert_eq!(cv.text_justify, TextJustify::InterWord);
+    }
+
+    #[test]
+    fn text_justify_distribute_parses() {
+        // legacy `distribute` を受理する (WPT text-justify-distribute-001)。
+        use crate::property::TextJustify;
+        let cv = cascade_doc("", "p", Some("text-justify: distribute"));
+        assert_eq!(cv.text_justify, TextJustify::Distribute);
+    }
+
+    #[test]
+    fn text_justify_inherits_from_parent_element() {
+        // CSS Text 3 §6.2: text-justify は **inherited**。
+        use crate::property::TextJustify;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("text-justify: none"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].text_justify, TextJustify::None);
+        assert_eq!(r.computed[span].text_justify, TextJustify::None);
+    }
+
+    #[test]
+    fn text_align_last_wired_through_cascade_from_inline_style() {
+        // <p style="text-align-last: justify"> → ComputedValues.text_align_last。
+        use crate::property::TextAlignLast;
+        let cv = cascade_doc("", "p", Some("text-align-last: justify"));
+        assert_eq!(cv.text_align_last, TextAlignLast::Justify);
+    }
+
+    #[test]
+    fn text_align_last_inherits_from_parent_element() {
+        // CSS Text 3 §6.1: text-align-last は **inherited**。
+        use crate::property::TextAlignLast;
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("text-align-last: center"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].text_align_last, TextAlignLast::Center);
+        assert_eq!(r.computed[span].text_align_last, TextAlignLast::Center);
+    }
+
+    // ── text-wrap wire-through + inheritance (CSS Text 4 §5 subset) ──
+
+    #[test]
+    fn text_wrap_nowrap_wired_through_cascade_from_inline_style() {
+        use crate::property::TextWrapMode;
+        let cv = cascade_doc("", "p", Some("text-wrap: nowrap"));
+        assert_eq!(cv.text_wrap, TextWrapMode::Nowrap);
+    }
+
+    #[test]
+    fn text_wrap_wrap_is_default_and_inherited() {
+        use crate::property::TextWrapMode;
+        let cv = cascade_doc("", "p", None);
+        assert_eq!(cv.text_wrap, TextWrapMode::Wrap);
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("text-wrap: nowrap"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].text_wrap, TextWrapMode::Nowrap);
+        assert_eq!(r.computed[span].text_wrap, TextWrapMode::Nowrap);
+    }
+
     // ── text-align wire-through + inheritance (CSS Text 3 §6.1) ──
 
     #[test]
@@ -14277,6 +14417,14 @@ mod tests {
         // と同 pattern)。
         let cv = cascade_doc("", "p", Some("text-indent: 20px"));
         assert_eq!(cv.text_indent, ComputedLengthPercentage::Px(20.0));
+    }
+
+    #[test]
+    fn text_indent_flags_wired_through_cascade_from_inline_style() {
+        // <p style="text-indent: 2em hanging each-line"> → length plus flags.
+        let cv = cascade_doc("", "p", Some("text-indent: 2em hanging each-line"));
+        assert!(cv.text_indent_hanging);
+        assert!(cv.text_indent_each_line);
     }
 
     #[test]
@@ -18578,6 +18726,7 @@ mod tests {
             line: TextDecorationLine::UNDERLINE,
             style: TextDecorationStyle::Wavy,
             color: TextDecorationColor::Resolved(RED),
+            thickness: TextDecorationThickness::Auto,
         };
         apply_value(PropertyValue::TextDecoration(shorthand), &mut cv);
         assert_eq!(cv.text_decoration_line, shorthand.line);
@@ -19128,7 +19277,7 @@ mod tests {
         // wins" cascade order (CSS Cascading L4 §6.1 "Order of Appearance").
         // This is the test that actually discriminates a spec-correct
         // expansion from one that merely "leaves the others alone" — see
-        // `crate::rule::tests::text_decoration_shorthand_always_overwrites_all_three_longhand` // doc-pointer-lint:ignore: opt-out-3, #[test]-item body (test doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+        // `crate::rule::tests::text_decoration_shorthand_always_overwrites_all_four_longhand` // doc-pointer-lint:ignore: opt-out-3, #[test]-item body (test doc) — rustdoc-blind, confirmed via わざと壊して確かめる
         // for the declaration-list-shape version of the same fact.
         let cv = cascade_doc(
             "",
@@ -20159,6 +20308,7 @@ mod tests {
                 "underline wavy red",
                 vec![
                     PropertyKey::TextDecorationLine,
+                    PropertyKey::TextDecorationThickness,
                     PropertyKey::TextDecorationStyle,
                     PropertyKey::TextDecorationColor,
                 ],

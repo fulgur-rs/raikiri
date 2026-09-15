@@ -99,9 +99,11 @@ css/css-color-adjust/parsing/color-scheme-invalid.html
 css/css-contain/parsing/contain-invalid.html
 css/css-content/parsing/content-counter-valid.html
 css/css-content/parsing/content-valid.html
+css/css-flexbox/parsing/flex-basis-valid.html
 css/css-flexbox/parsing/flex-direction-valid.html
 css/css-flexbox/parsing/flex-flow-invalid.html
 css/css-flexbox/parsing/flex-grow-valid.html
+css/css-flexbox/parsing/flex-invalid.html
 css/css-flexbox/parsing/flex-shorthand.html
 css/css-flexbox/parsing/flex-shrink-valid.html
 css/css-flexbox/parsing/flex-wrap-valid.html
@@ -424,6 +426,7 @@ css/css-masking/parsing/mask-type-invalid.html
 css/css-overscroll-behavior/parsing/overscroll-behavior-invalid.html
 css/css-page/parsing/page-invalid.html
 css/css-page/parsing/page-orientation-invalid.tentative.html
+css/css-page/parsing/page-valid.html
 css/css-page/parsing/size-invalid.html
 css/css-rhythm/parsing/block-step-align-invalid.html
 css/css-rhythm/parsing/block-step-insert-invalid.html
@@ -499,6 +502,17 @@ css/selectors/parsing/parse-id.html
 css/selectors/parsing/parse-sibling.html
 css/selectors/parsing/parse-universal.html
 
+# --- css-text-decor parsing pin 2026-09-15 (jqg8, 10 more files PASS, specified 200/201 vectors) ---
+css/css-text-decor/parsing/text-decoration-color-invalid.html
+css/css-text-decor/parsing/text-decoration-inset-valid.html
+css/css-text-decor/parsing/text-decoration-invalid.html
+css/css-text-decor/parsing/text-decoration-line-invalid.html
+css/css-text-decor/parsing/text-decoration-line-valid.html
+css/css-text-decor/parsing/text-decoration-skip-ink-valid.html
+css/css-text-decor/parsing/text-decoration-skip-spaces-valid.html
+css/css-text-decor/parsing/text-decoration-valid.html
+css/css-text-decor/parsing/text-emphasis-position-valid.html
+css/css-text-decor/parsing/text-underline-position-valid.html
 # --- css-text-decor parsing pin 2026-09-14 (retry E1, 8 files PASS, 152/201 vectors) ---
 css/css-text-decor/parsing/text-decoration-color-valid.html
 css/css-text-decor/parsing/text-decoration-inset-invalid.html
@@ -578,13 +592,11 @@ css/css-grid/abspos/grid-abspos-staticpos-align-self-img-last-baseline-001.html
 css/css-grid/abspos/grid-abspos-staticpos-align-self-img-last-baseline-002.html
 css/css-grid/abspos/grid-abspos-staticpos-align-self-safe-001.html
 # --- css-text reftest pin 2026-09-14 (retry2, goal J2: 180/1339 pair PASS at 800x600 EXACT, 176 all-pass files pinned, WPT 97ea26e) ---
-css/css-text/bidi/bidi-tab-001.html
 css/css-text/boundary-shaping/boundary-shaping-002.html
 css/css-text/boundary-shaping/boundary-shaping-006.html
 css/css-text/boundary-shaping/boundary-shaping-007.html
 css/css-text/boundary-shaping/boundary-shaping-008.html
 css/css-text/hyphens/hyphens-manual-010.html
-css/css-text/hyphens/hyphens-punctuation-001.html
 css/css-text/hyphens/hyphens-shaping-001.html
 css/css-text/hyphens/hyphens-span-002.html
 css/css-text/letter-spacing/letter-spacing-animating-letter-spacing.html
@@ -663,6 +675,23 @@ css/css-text/shaping/reference/shaping-012-ref.html
 css/css-text/shaping/shaping-012.html
 css/css-text/shaping/shaping-013.html
 css/css-text/tab-size/tab-min-rendered-width-1.html
+css/css-text/text-align/text-align-end-001.html
+css/css-text/text-align/text-align-end-002.html
+css/css-text/text-align/text-align-end-003.html
+css/css-text/text-align/text-align-end-004.html
+css/css-text/text-align/text-align-end-005.html
+css/css-text/text-align/text-align-end-006.html
+css/css-text/text-align/text-align-end-007.html
+css/css-text/text-align/text-align-end-008.html
+css/css-text/text-align/text-align-start-001.html
+css/css-text/text-align/text-align-start-002.html
+css/css-text/text-align/text-align-start-003.html
+css/css-text/text-align/text-align-start-004.html
+css/css-text/text-align/text-align-start-005.html
+css/css-text/text-align/text-align-start-006.html
+css/css-text/text-align/text-align-start-007.html
+css/css-text/text-align/text-align-start-008.html
+css/css-text/text-align/text-align-start-010.html
 css/css-text/text-align/text-align-006.html
 css/css-text/text-align/text-align-007.html
 css/css-text/text-align/text-align-center-last-default.html

@@ -2072,6 +2072,15 @@ pub enum FlexBasisValue {
     Auto,
     /// `content` — spec §7.1 "plus the content keyword"。
     Content,
+    /// `min-content` — CSS Sizing 3 の intrinsic keyword (WPT
+    /// `flex-basis-valid.html` が要求)。taffy 0.14 の同名 `Dimension`
+    /// variant に写像する (`bridge_flex` doc 参照)。
+    MinContent,
+    /// `max-content` — 同上。
+    MaxContent,
+    /// bare `fit-content` keyword — 同上。`<length-percentage>` 引数付きの
+    /// `fit-content()` function 形は scope 外 (WPT vector に現れない)。
+    FitContent,
     /// `<length-percentage [0,∞]>` — `width` と同じ non-negative constraint
     /// ([`parse_flex_basis`] doc 参照)。
     Length(Length),
@@ -3394,10 +3403,17 @@ pub enum PositionValue {
 /// — `none` は全 flag `false` (spec 上 `none` と「4 keyword とも
 /// 不使用」は同じ状態)。
 ///
+/// CSS Text Decoration 4 の `spelling-error` / `grammar-error` は `||`
+/// group の外側の top-level alternative (`none | [ ... ] |
+/// spelling-error | grammar-error`) のため、残り 2 `bool` field
+/// ([`Self::spelling_error`] / [`Self::grammar_error`]) として保持し、
+/// `||` group との併記は parser 側で reject する
+/// ([`parse_text_decoration_line`] 参照)。
+///
 /// `#[non_exhaustive]` を付けない — sibling [`OverflowXY`] と同じ判断
 /// (umbrella (`raikiri` crate) へ再 export されておらず、CSS spec が
-/// 定める 4 keyword は Level 4 時点でも増えていないため、将来 field 追加の
-/// 蓋然性が [`Border`] ほど高くない)。
+/// 定める keyword は Level 4 時点で 6 (`||` group 4 + top-level 2) のため、
+/// 将来 field 追加の蓋然性が [`Border`] ほど高くない)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TextDecorationLine {
     /// `underline` — テキストの under edge に沿って装飾線を引く。
@@ -3409,15 +3425,25 @@ pub struct TextDecorationLine {
     /// `blink` — 装飾線を点滅させる (spec note: UA は本 keyword を無視してよい、
     /// paint 側の実装判断)。
     pub blink: bool,
+    /// `spelling-error` — UA 定義の綴り誤り装飾 (CSS Text Decoration 4 §2.1
+    /// <https://www.w3.org/TR/css-text-decor-4/#propdef-text-decoration-line>
+    /// の `none | [ underline || overline || line-through || blink ] |
+    /// spelling-error | grammar-error` — top-level alternative のため `||`
+    /// group とは併記不可)。
+    pub spelling_error: bool,
+    /// `grammar-error` — 同上、文法誤り装飾。
+    pub grammar_error: bool,
 }
 
 impl TextDecorationLine {
-    /// `none` — spec initial value。装飾線なし (4 flag 全て `false`)。
+    /// `none` — spec initial value。装飾線なし (6 flag 全て `false`)。
     pub const NONE: Self = Self {
         underline: false,
         overline: false,
         line_through: false,
         blink: false,
+        spelling_error: false,
+        grammar_error: false,
     };
     /// `underline` 単独。
     pub const UNDERLINE: Self = Self {
@@ -3425,6 +3451,8 @@ impl TextDecorationLine {
         overline: false,
         line_through: false,
         blink: false,
+        spelling_error: false,
+        grammar_error: false,
     };
     /// `overline` 単独。
     pub const OVERLINE: Self = Self {
@@ -3432,6 +3460,8 @@ impl TextDecorationLine {
         overline: true,
         line_through: false,
         blink: false,
+        spelling_error: false,
+        grammar_error: false,
     };
     /// `line-through` 単独。
     pub const LINE_THROUGH: Self = Self {
@@ -3439,6 +3469,8 @@ impl TextDecorationLine {
         overline: false,
         line_through: true,
         blink: false,
+        spelling_error: false,
+        grammar_error: false,
     };
     /// `blink` 単独。
     pub const BLINK: Self = Self {
@@ -3446,6 +3478,26 @@ impl TextDecorationLine {
         overline: false,
         line_through: false,
         blink: true,
+        spelling_error: false,
+        grammar_error: false,
+    };
+    /// `spelling-error` 単独。
+    pub const SPELLING_ERROR: Self = Self {
+        underline: false,
+        overline: false,
+        line_through: false,
+        blink: false,
+        spelling_error: true,
+        grammar_error: false,
+    };
+    /// `grammar-error` 単独。
+    pub const GRAMMAR_ERROR: Self = Self {
+        underline: false,
+        overline: false,
+        line_through: false,
+        blink: false,
+        spelling_error: false,
+        grammar_error: true,
     };
 }
 
@@ -3509,13 +3561,15 @@ pub enum TextDecorationColor {
 /// "This property is a shorthand for setting text-decoration-line,
 /// text-decoration-color, and text-decoration-style in one declaration.
 /// Omitted values are set to their initial values." — grammar
-/// `<'text-decoration-line'> || <'text-decoration-style'> ||
-/// <'text-decoration-color'>`。
+/// `<'text-decoration-line'> || <'text-decoration-thickness'> ||
+/// `<'text-decoration-style'> || <'text-decoration-color'>`
+/// (Level 3 §2.4 の 3 成分に Level 4 の thickness が追加、
+/// ED <https://drafts.csswg.org/css-text-decor-4/#text-decoration-property>)。
 ///
 /// [`PropertyValue::TextDecoration`] の payload としてのみ存在し、
 /// [`crate::rule::expand_shorthand_into`] が
-/// [`PropertyValue::TextDecorationLine`] / [`PropertyValue::TextDecorationStyle`] /
-/// [`PropertyValue::TextDecorationColor`] の 3 longhand へ展開した後は捨てられる
+/// [`PropertyValue::TextDecorationLine`] / [`PropertyValue::TextDecorationThickness`] /
+/// [`PropertyValue::TextDecorationStyle`] / [`PropertyValue::TextDecorationColor`] の 4 longhand へ展開した後は捨てられる
 /// — margin/padding/border/overflow shorthand precedent と同じ「parse-time
 /// expansion, never reaches cascade」設計 (詳細は同関数 doc)。[`ComputedValues`]
 /// / [`SpecifiedValues`] は本型を **field として持たない** — 3 longhand が
@@ -3528,7 +3582,7 @@ pub enum TextDecorationColor {
 ///
 /// [`ComputedValues`]: crate::computed::ComputedValues
 /// [`SpecifiedValues`]: crate::specified::SpecifiedValues
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextDecorationShorthand {
     /// `text-decoration-line` 成分 — 省略時は [`TextDecorationLine::NONE`]
     /// (spec initial)。
@@ -3539,9 +3593,201 @@ pub struct TextDecorationShorthand {
     /// `text-decoration-color` 成分 — 省略時は [`TextDecorationColor::CurrentColor`]
     /// (spec initial)。
     pub color: TextDecorationColor,
+    /// `text-decoration-thickness` 成分 — 省略時は
+    /// [`TextDecorationThickness::Auto`] (ED §2.4.1 initial)。
+    pub thickness: TextDecorationThickness,
 }
 
-/// `vertical-align` property の value。
+/// `text-decoration-skip-ink: auto | none | all` の value.
+///
+/// CSS Text Decoration 4
+/// (<https://www.w3.org/TR/css-text-decor-4/#propdef-text-decoration-skip-ink>)。
+/// Value: `auto | none | all`、Initial: `auto`、Inherited: **yes**、
+/// Computed value: specified keyword。
+/// parsing-only ([`PropertyValue::TextDecorationSkipInk`] doc 参照)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextDecorationSkipInk {
+    /// `auto` — spec initial value。
+    Auto,
+    /// `none`。
+    None,
+    /// `all`。
+    All,
+}
+
+/// `text-decoration-skip-spaces: none | all | [ start || end ]` の value.
+///
+/// CSS Text Decoration 4
+/// (<https://www.w3.org/TR/css-text-decor-4/#propdef-text-decoration-skip-spaces>)。
+/// Value: `none | all | [ start || end ]`、Initial: `start end`、
+/// Inherited: **yes**、Computed value: specified keyword(s)。
+/// `all` は `start end` と区別する (initial が `start end` であって
+/// `all` ではないため) — 5 variant enum で表現する。
+/// parsing-only ([`PropertyValue::TextDecorationSkipSpaces`] doc 参照)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextDecorationSkipSpaces {
+    /// `none`。
+    None,
+    /// `all`。
+    All,
+    /// `start` のみ。
+    Start,
+    /// `end` のみ。
+    End,
+    /// `start end` / `end start` (順序自由、spec initial value)。
+    StartEnd,
+}
+
+/// `text-decoration-thickness: auto | from-font | <length-percentage>` の value.
+///
+/// CSS Text Decoration 4
+/// (<https://www.w3.org/TR/css-text-decor-4/#propdef-text-decoration-thickness>,
+/// ED §2.4.1 は `<line-width>` も含む、下の Scope carving 参照)。
+/// Value: `auto | from-font | <length-percentage>`、Initial: `auto`、
+/// Inherited: **no**、Percentages: N/A、Computed value: specified keyword
+/// or absolute length。
+/// ED grammar は `<line-width>` (`thin`/`medium`/`thick`) も含むが、本実装は
+/// scope 外として drop する (WPT vector に現れない — scope carving)。
+/// `<percentage>` は受理して保持する (同)。
+/// parsing-only ([`PropertyValue::TextDecorationThickness`] doc 参照)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TextDecorationThickness {
+    /// `auto` — spec initial value。
+    Auto,
+    /// `from-font`。
+    FromFont,
+    /// `<length-percentage>` ([`parse_length_value`] の `allow_percentage=true`
+    /// 範囲 — [`Length::Percent`] を含む)。
+    Length(Length),
+}
+
+/// `text-decoration-inset: <length>{1,2} | auto` の value.
+///
+/// CSS Text Decoration 4 ED §2.9.1 (<https://drafts.csswg.org/css-text-decor-4/#text-decoration-inset-property>)。
+/// ED grammar は `<length-percentage>{1,2} | auto` だが、WPT
+/// (`text-decoration-inset-invalid.html` の `10%` reject) が `%` を認めない
+/// ため、本実装は `<length>{1,2} | auto` に絞る (vector が ground truth —
+/// 乖離としてここに記録する)。
+/// Initial: `0`、Inherited: **no**。2 値目は省略時に 1 値目を複製する
+/// (margin/padding の 2-value 規則と同型)。
+/// parsing-only ([`PropertyValue::TextDecorationInset`] doc 参照)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TextDecorationInset {
+    /// `auto`。
+    Auto,
+    /// 1-2 `<length>`。`end` 省略時は `start` と同値。
+    Lengths {
+        /// start endpoint offset。
+        start: Length,
+        /// end endpoint offset。
+        end: Length,
+    },
+}
+
+/// `text-emphasis-position` の vertical 成分 (`[ over | under ]`)。
+///
+/// CSS Text Decoration 3 §3.4 (<https://www.w3.org/TR/css-text-decor-3/#text-emphasis-position-property>)
+/// …ではなく ED <https://drafts.csswg.org/css-text-decor-4/#text-emphasis-position-property>
+/// の `[ over | under ] && [ right | left ]?` の前半 (vertical は必須)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextEmphasisVEdge {
+    /// `over`。
+    Over,
+    /// `under`。
+    Under,
+}
+
+/// `text-emphasis-position` の horizontal 成分 (`[ right | left ]?`)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextEmphasisHEdge {
+    /// `right`。
+    Right,
+    /// `left`。
+    Left,
+}
+
+/// `text-emphasis-position: auto | ([ over | under ] && [ right | left ]?)` の value.
+///
+/// ED §3.4 (<https://drafts.csswg.org/css-text-decor-4/#text-emphasis-position-property>)。
+/// Value: `[ over | under ] && [ right | left ]?` (+ `auto`)、
+/// Initial: `over right`、Inherited: **yes**。vertical 必須・horizontal
+/// 任意・順序自由 (`right under` valid、`left over right` invalid)。
+/// parsing-only ([`PropertyValue::TextEmphasisPosition`] doc 参照)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextEmphasisPosition {
+    /// `auto`。
+    Auto,
+    /// vertical (+ optional horizontal)。
+    Position {
+        /// `[ over | under ]` (必須)。
+        vertical: TextEmphasisVEdge,
+        /// `[ right | left ]?` (任意)。
+        horizontal: Option<TextEmphasisHEdge>,
+    },
+}
+
+/// `text-underline-position: auto | [ from-font | under ] || [ left | right ]` の value.
+///
+/// CSS Text Decoration 4 ED §2.7 (<https://drafts.csswg.org/css-text-decor-4/#text-underline-position-property>)。
+/// Value: `auto | [ from-font | under ] || [ left | right ]`、
+/// Initial: `auto`、Inherited: **yes**。
+/// `from-font` と `under` は排他 (`under from-font` invalid)、`left` と
+/// `right` も排他 (`left right` invalid)、`auto` は単独
+/// (`auto under` invalid) — [`TextDecorationLine`] と同じ bool-flag +
+/// parser-enforcement 表現。
+/// parsing-only ([`PropertyValue::TextUnderlinePosition`] doc 参照)。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextUnderlinePosition {
+    /// `from-font` (`under` と排他)。
+    pub from_font: bool,
+    /// `under` (`from-font` と排他)。
+    pub under: bool,
+    /// `left` (`right` と排他)。
+    pub left: bool,
+    /// `right` (`left` と排他)。
+    pub right: bool,
+}
+
+impl TextUnderlinePosition {
+    /// `auto` — spec initial value (全 flag `false`)。
+    pub const AUTO: Self = Self {
+        from_font: false,
+        under: false,
+        left: false,
+        right: false,
+    };
+}
+
+/// `page: auto | <custom-ident>` の value。
+///
+/// CSS Paged Media 3 §8.1 "Using named pages: page"
+/// (<https://www.w3.org/TR/css-page-3/#using-named-pages>)。
+/// Value: `auto | <custom-ident>`、Initial: `auto`、
+/// Applies to: boxes that create class A break points、Inherited: **no**、
+/// Computed value: specified value。
+/// `<custom-ident>` は CSS-wide keyword を除く単一 ident —
+/// WPT (`page-invalid.html`) が `default` も reject するため
+/// 同様に除外する。`not valid` (2 ident) / `123px` /
+/// `calc()` は grammar 外のため一般 mechanism
+/// (single-ident parse + caller `expect_exhausted`) で drop される。
+/// parsing-only ([`PropertyValue::Page`] doc 参照)。
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PageValue {
+    /// `auto` — spec initial value。
+    Auto,
+    /// 名前付きページ (`<custom-ident>`)。
+    Named(Atom),
+}
+
+/// `vertical-align` property の value.
 ///
 /// CSS 2.1 §10.8.1 "Vertical alignment: the 'vertical-align' property"
 /// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>。
@@ -4410,6 +4656,23 @@ pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue
 /// しない — 初期化側 ([`crate::specified::SpecifiedValues::initial`] /
 /// [`crate::computed::ComputedValues::initial`]) が [`WhiteSpace::Normal`]
 /// を直接指定する。
+/// `text-wrap-mode` value (CSS Text 4 §5.1), carried as the `text-wrap`
+/// shorthand's wrapping component.
+///
+/// Only the single-keyword `wrap | nowrap` subset is parsed; the full
+/// `text-wrap` shorthand (wrap-style `auto | balance | pretty | stable`)
+/// is deferred. Inherited, initial `wrap`, computed value = specified
+/// keyword. `nowrap` suppresses soft wrapping in raikiri-dom preshape and
+/// realign (bd raikiri-spike-9q1p).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextWrapMode {
+    /// `wrap` — spec initial value.
+    Wrap,
+    /// `nowrap`.
+    Nowrap,
+}
+
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WhiteSpace {
@@ -4569,6 +4832,10 @@ pub enum TextJustify {
     None,
     InterWord,
     InterCharacter,
+    /// legacy `distribute` (CSS Text 3 §6.2 で `inter-character` の別名扱い
+    /// だった旧値 — WPT text-justify-distribute-001 が使用)。
+    /// parley 側に区別が無いため consumer では `Justify` と同扱い。
+    Distribute,
 }
 
 /// `text-align-all` property の value (CSS Text 3 §6.1 longhand).
@@ -6243,6 +6510,20 @@ pub enum FilterFunction {
 /// **透過的に継続動作** する (`&Arc<Vec<T>>` は autoderef で `&[T]` として使える)。
 /// 一方、`PropertyValue::Content(vec![...])` のように payload を **construct** する
 /// 場合は `PropertyValue::Content(Arc::new(vec![...]))` への書き換えが必要。
+/// `text-indent` の payload ([`TextIndentValue`])。
+///
+/// CSS Text 3 §8.1 grammar `<length-percentage> && hanging? && each-line?`
+/// の全成分を保持する。`Copy` (全 field が `Copy`) のため cascade の
+/// by-value 代入・inheritance copy が素朴に書ける。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextIndentValue {
+    /// `<length-percentage>` 成分。
+    pub length: Length,
+    /// `hanging` keyword の有無。
+    pub hanging: bool,
+    /// `each-line` keyword の有無。
+    pub each_line: bool,
+}
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropertyValue {
@@ -6474,23 +6755,11 @@ pub enum PropertyValue {
     /// same shape as [`Self::MarginTop`]'s `<length-percentage> | auto`
     /// (minus the `auto` alternative, which `text-indent` does not have).
     ///
-    /// # Scope carving ((b) 非対応)
-    ///
-    /// The `hanging` and `each-line` keywords are not implemented — this
-    /// variant's payload is a bare [`Length`], not a struct that could also
-    /// carry them. `hanging` reverses which lines an indent applies to
-    /// (normally the first line only; with `hanging`, every line *except*
-    /// the first) and `each-line` extends the indent to every line after a
-    /// forced break; both require multi-line layout state this crate's
-    /// cascade static side does not have. `parse_text_indent` itself only
-    /// consumes the leading `<length-percentage>` and does not check for
-    /// leftover tokens — `text-indent: 2em hanging` is still rejected as a
-    /// whole declaration (not silently truncated to `2em`), but that rejection
-    /// happens one layer up, at the `expect_exhausted` check [`crate::rule`]'s
-    /// `DeclParser` runs on every declaration's leftover tokens (same
-    /// mechanism the `rejects_extra_length_after_font_size` test in
-    /// `crate::rule` pins for an unrelated property).
-    TextIndent(Length),
+    /// payload は [`TextIndentValue`] (length + hanging/each-line flags)。
+    /// cascade 層は length を `text_indent` へ、flags を `text_indent_hanging` /
+    /// `text_indent_each_line` へ分配する。consumer (raikiri-dom realign) は
+    /// parley の `IndentOptions` へ写像する (bd raikiri-spike-5u1y)。
+    TextIndent(TextIndentValue),
     /// `padding-top: <length-percentage [0,∞]>` — non-inherited、initial: `0`。
     /// CSS Box 3 §4.1 <https://www.w3.org/TR/css-box-3/#padding-physical>。
     /// spec grammar `<length-percentage [0,∞]>` の non-negative constraint は
@@ -7055,6 +7324,8 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     WhiteSpace(WhiteSpace),
+    /// `text-wrap: wrap | nowrap` (subset — see [`TextWrapMode`] doc).
+    TextWrap(TextWrapMode),
     /// `flex-direction: row | row-reverse | column | column-reverse` —
     /// non-inherited、initial: [`FlexDirectionValue::Row`]
     /// ([`FlexDirectionValue`] doc 参照)。
@@ -7528,6 +7799,44 @@ pub enum PropertyValue {
     /// 意味を持たない — 既存 variant を shift させない配置を優先する、
     /// [`PropertyKey`] doc の「宣言順は load-bearing」節参照)。
     Font(FontShorthand),
+    /// `text-decoration-skip-ink` — **inherited**、initial:
+    /// [`TextDecorationSkipInk::Auto`] ([`TextDecorationSkipInk`] doc 参照)。
+    /// parsing-only: cascade は winner を staging field に載せず drop する
+    /// (E/F/G fa04ac3 の `TextCombineUpright` 等と同 pattern —
+    /// [`crate::cascade::apply_value`] の同名 no-op arm 参照)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    TextDecorationSkipInk(TextDecorationSkipInk),
+    /// `text-decoration-skip-spaces` — **inherited**、initial は `start end`
+    /// ([`TextDecorationSkipSpaces::StartEnd`])。parsing-only (同上)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    TextDecorationSkipSpaces(TextDecorationSkipSpaces),
+    /// `text-decoration-thickness` — **non-inherited**、initial:
+    /// [`TextDecorationThickness::Auto`] ([`TextDecorationThickness`] doc
+    /// 参照)。parsing-only (同上 — `<length-percentage>` を運ぶが phase 3
+    /// の絶対化対象にはしない。`@page` 経路の
+    /// [`crate::page`] の `absolutize_in_page_context` の同名 arm だけが
+    /// length 成分を absolutize する)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    TextDecorationThickness(TextDecorationThickness),
+    /// `text-decoration-inset` — **non-inherited**、initial: `0`
+    /// (ED)。parsing-only (同上 — 2 `<length>` を運ぶが element 経路では
+    /// 絶対化しない。`@page` 経路のみ同名 arm で absolutize)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    TextDecorationInset(TextDecorationInset),
+    /// `text-emphasis-position` — **inherited**、initial: `over right`
+    /// (ED)。parsing-only (同上)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    TextEmphasisPosition(TextEmphasisPosition),
+    /// `text-underline-position` — **inherited**、initial:
+    /// [`TextUnderlinePosition::AUTO`]。parsing-only (同上)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    TextUnderlinePosition(TextUnderlinePosition),
+    /// `page: auto | <custom-ident>` — **non-inherited**、initial:
+    /// [`PageValue::Auto`] (CSS Paged Media 3 §8.1 [`PageValue`] doc 参照)。
+    /// parsing-only: cascade は winner を staging field に載せず drop する
+    /// (E/F/G の `TextCombineUpright` 等と同 pattern)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    Page(PageValue),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -7760,6 +8069,8 @@ pub enum PropertyKey {
     // no per-variant docs per crate convention). 末尾配置の理由は
     // PropertyValue::WhiteSpace の doc 参照。
     WhiteSpace,
+    // text-wrap (CSS Text 4 §5、semantics on PropertyValue::TextWrap).
+    TextWrap,
     // flex-* container/item longhands + `flex` shorthand (CSS Flexible Box
     // Layout Module Level 1 §5.1/§5.2/§7.2.1/§7.2.2/§7.2.3/§7.1, semantics
     // on the matching PropertyValue::Flex* variants; sibling PropertyKey
@@ -7971,6 +8282,28 @@ pub enum PropertyKey {
     // (`crate::rule::expand_shorthand_into` が展開する) ため discriminant
     // 順は意味を持たない。
     Font,
+    // text-decoration-skip-ink (ED §2.10.4、semantics on the matching
+    // PropertyValue::TextDecorationSkipInk variant; sibling PropertyKey
+    // variants carry no per-variant docs per crate convention). 末尾配置の
+    // 理由は background-repeat 等と同節参照 (1:1 disjoint な新 field…
+    // parsing-only のため field 自体は無いが discriminant 順は同様に自由)。
+    TextDecorationSkipInk,
+    // text-decoration-skip-spaces (ED §2.10.3、同上)。
+    TextDecorationSkipSpaces,
+    // text-decoration-thickness (ED §2.4.1、TR §2.4、同上)。
+    TextDecorationThickness,
+    // text-decoration-inset (ED §2.9.1、同上)。
+    TextDecorationInset,
+    // text-emphasis-position (ED §3.4、同上)。
+    TextEmphasisPosition,
+    // text-underline-position (ED §2.7、同上)。
+    TextUnderlinePosition,
+    // page (CSS Paged Media 3 §8.1、semantics on the matching
+    // PropertyValue::Page variant; sibling PropertyKey variants carry no
+    // per-variant docs per crate convention). 末尾配置の理由は
+    // background-repeat 等と同節参照 (staging field なしの parsing-only
+    // だが discriminant 順は同様に自由)。
+    Page,
 }
 
 impl PropertyValue {
@@ -8066,6 +8399,7 @@ impl PropertyValue {
             PropertyValue::Float(_) => PropertyKey::Float,
             PropertyValue::Clear(_) => PropertyKey::Clear,
             PropertyValue::WhiteSpace(_) => PropertyKey::WhiteSpace,
+            PropertyValue::TextWrap(_) => PropertyKey::TextWrap,
             PropertyValue::FlexDirection(_) => PropertyKey::FlexDirection,
             PropertyValue::FlexWrap(_) => PropertyKey::FlexWrap,
             PropertyValue::FlexGrow(_) => PropertyKey::FlexGrow,
@@ -8143,6 +8477,13 @@ impl PropertyValue {
             PropertyValue::CaptionSide(_) => PropertyKey::CaptionSide,
             PropertyValue::EmptyCells(_) => PropertyKey::EmptyCells,
             PropertyValue::Font(_) => PropertyKey::Font,
+            PropertyValue::TextDecorationSkipInk(_) => PropertyKey::TextDecorationSkipInk,
+            PropertyValue::TextDecorationSkipSpaces(_) => PropertyKey::TextDecorationSkipSpaces,
+            PropertyValue::TextDecorationThickness(_) => PropertyKey::TextDecorationThickness,
+            PropertyValue::TextDecorationInset(_) => PropertyKey::TextDecorationInset,
+            PropertyValue::TextEmphasisPosition(_) => PropertyKey::TextEmphasisPosition,
+            PropertyValue::TextUnderlinePosition(_) => PropertyKey::TextUnderlinePosition,
+            PropertyValue::Page(_) => PropertyKey::Page,
         }
     }
 }
@@ -8320,10 +8661,72 @@ fn math_calc_inner_is_valid(parser: &mut Parser<'_, '_>, depth: usize) -> bool {
     has_content
 }
 
+/// Whether `value` contains any dimension or percentage token inside a
+/// math function (`calc`/`min`/`max`/`clamp`).
+///
+/// CSS Values 4 calc type resolution: a math expression built only from
+/// `<number>`s has type `<number>` and must not satisfy
+/// `<length>`-expecting positions — WPT `flex: 1 2 calc(0)` (invalid,
+/// number-typed calc as basis) vs `flex: calc(-1) calc(-1) 0` (valid,
+/// number-typed calc as factors). [`deferred_dummy_is_valid_for_property`]
+/// picks the dummy from this: `"1px"` when dimensions are present (current
+/// behavior), `"1"` for pure-number math (so only `<number>` positions
+/// validate).
+fn math_source_has_dimension_or_percentage(input: &str) -> bool {
+    // NOTE: no early `return true` anywhere in this walk — `parse_nested_block`
+    // runs its closure via `parse_entirely`, which fails when the closure
+    // leaves input unconsumed (e.g. returning at the first dimension of
+    // `min(20px, 10px)` leaves `, 10px)` behind and the whole block scores
+    // false). Accumulate into `found` and always walk to exhaustion.
+    fn scan(parser: &mut Parser<'_, '_>, in_math: bool) -> bool {
+        let mut found = false;
+        loop {
+            let token = match parser.next() {
+                Ok(token) => token.clone(),
+                Err(_) => break,
+            };
+            match token {
+                Token::Dimension { .. } | Token::Percentage { .. } if in_math => {
+                    found = true;
+                }
+                Token::Function(name) => {
+                    let is_math = MATH_FUNCTIONS.iter().any(|m| name.eq_ignore_ascii_case(m));
+                    let inner = parser
+                        .parse_nested_block(|nested| {
+                            Ok::<_, ParseError<'_, ()>>(scan(nested, in_math || is_math))
+                        })
+                        .unwrap_or(false);
+                    found = found || inner;
+                }
+                Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
+                    let inner = parser
+                        .parse_nested_block(|nested| {
+                            Ok::<_, ParseError<'_, ()>>(scan(nested, in_math))
+                        })
+                        .unwrap_or(false);
+                    found = found || inner;
+                }
+                _ => {}
+            }
+        }
+        found
+    }
+
+    let mut parser_input = ParserInput::new(input);
+    let mut parser = Parser::new(&mut parser_input);
+    scan(&mut parser, false)
+}
+
 fn deferred_dummy_is_valid_for_property(value: &str, prop: &str) -> bool {
-    // Replace math functions with dummy `1px` and check if the resulting value parses for the property.
+    // Replace math functions with a dummy and check if the resulting value parses for the property.
     // This validates overall structure (e.g. `margin-top: calc(...) auto` has 2 tokens, invalid for longhand).
-    let dummy = replace_math_with_dummy(value);
+    // The dummy is type-aware (`math_source_has_dimension_or_percentage`):
+    // pure-number math substitutes `1` so only `<number>` positions validate.
+    let dummy = if math_source_has_dimension_or_percentage(value) {
+        replace_math_with_dummy(value)
+    } else {
+        replace_math_with_number_dummy(value)
+    };
     let mut input = ParserInput::new(&dummy);
     let mut parser = Parser::new(&mut input);
     // Avoid recursion into deferred path: dummy contains no deferred function, so parse_value will go to normal dispatch.
@@ -8335,6 +8738,20 @@ fn deferred_dummy_is_valid_for_property(value: &str, prop: &str) -> bool {
 }
 
 fn replace_math_with_dummy(input: &str) -> String {
+    replace_math_with_dummy_and_number(input, "1px")
+}
+
+/// [`replace_math_with_dummy`] with a pure-number dummy (`1` instead of
+/// `1px`) — for math sources that carry no dimension or percentage
+/// ([`math_source_has_dimension_or_percentage`]), so the structural check
+/// in [`deferred_dummy_is_valid_for_property`] only validates `<number>`
+/// positions (CSS calc type rule).
+fn replace_math_with_number_dummy(input: &str) -> String {
+    replace_math_with_dummy_and_number(input, "1")
+}
+
+/// [`replace_math_with_dummy`] generalized over the dummy payload.
+fn replace_math_with_dummy_and_number(input: &str, dummy: &str) -> String {
     let mut result = String::new();
     let mut i = 0;
     let lower = input.to_ascii_lowercase();
@@ -8343,7 +8760,6 @@ fn replace_math_with_dummy(input: &str) -> String {
         let mut matched = None;
         for func in MATH_FUNCTIONS.iter() {
             if lower[i..].starts_with(func) {
-                // Check that next char after func is '(' (allow optional whitespace? spec no whitespace, but be lenient)
                 let after = i + func.len();
                 if after < bytes.len() && bytes[after] == b'(' {
                     matched = Some(*func);
@@ -8352,7 +8768,6 @@ fn replace_math_with_dummy(input: &str) -> String {
             }
         }
         if let Some(func) = matched {
-            // Find matching closing parenthesis, handling nested parens
             let mut depth = 0;
             let mut j = i + func.len();
             let mut found_end = None;
@@ -8371,11 +8786,10 @@ fn replace_math_with_dummy(input: &str) -> String {
                 j += 1;
             }
             if let Some(end) = found_end {
-                result.push_str("1px");
+                result.push_str(dummy);
                 i = end + 1;
                 continue;
             } else {
-                // Unclosed, just push rest
                 result.push_str(&input[i..]);
                 break;
             }
@@ -8704,6 +9118,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "float" => PropertyKey::Float,
         "clear" => PropertyKey::Clear,
         "white-space" => PropertyKey::WhiteSpace,
+        "text-wrap" => PropertyKey::TextWrap,
         "flex-direction" => PropertyKey::FlexDirection,
         "flex-wrap" => PropertyKey::FlexWrap,
         "flex-grow" => PropertyKey::FlexGrow,
@@ -8735,6 +9150,13 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "caption-side" => PropertyKey::CaptionSide,
         "empty-cells" => PropertyKey::EmptyCells,
         "font" => PropertyKey::Font,
+        "text-decoration-skip-ink" => PropertyKey::TextDecorationSkipInk,
+        "text-decoration-skip-spaces" => PropertyKey::TextDecorationSkipSpaces,
+        "text-decoration-thickness" => PropertyKey::TextDecorationThickness,
+        "text-decoration-inset" => PropertyKey::TextDecorationInset,
+        "text-emphasis-position" => PropertyKey::TextEmphasisPosition,
+        "text-underline-position" => PropertyKey::TextUnderlinePosition,
+        "page" => PropertyKey::Page,
         "font-variant-caps" => PropertyKey::FontVariantCaps,
         "quotes" => PropertyKey::Quotes,
         "text-shadow" => PropertyKey::TextShadow,
@@ -8806,7 +9228,19 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
             // as `width: calc(foo)` during declaration parsing, rather than
             // letting it override a valid earlier declaration and fail only
             // during cascade resolution.
-            if let Some(simplified) = crate::cascade::simplify_math_functions(value.as_ref()) {
+            //
+            // Pure-number math (`calc(0)`, `calc(3 - 3)` — no dimension or
+            // percentage anywhere, see
+            // `math_source_has_dimension_or_percentage`) skips this
+            // simplification: it would erase the calc type and let a
+            // number-typed result satisfy `<length>` positions through the
+            // unitless-zero rule (`flex: 1 2 calc(0)` must stay invalid
+            // while `flex: calc(-1) calc(-1) 0` stays valid). Such values go
+            // straight to the type-aware dummy check below.
+            let has_dimension = math_source_has_dimension_or_percentage(value.as_ref());
+            if has_dimension
+                && let Some(simplified) = crate::cascade::simplify_math_functions(value.as_ref())
+            {
                 let mut reparsed_input = ParserInput::new(simplified.as_ref());
                 let mut reparsed = Parser::new(&mut reparsed_input);
                 if let Some(parsed) = parse_value(name, &mut reparsed)
@@ -9085,8 +9519,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // parse_overflow_shorthand (mapped to physical x/y — `OverflowValue`
         // doc's Non-goal note).
         "overflow" => parse_overflow_shorthand(input).map(PropertyValue::Overflow),
-        // CSS Text Decoration Module Level 3 §2.1 text-decoration-line
-        // grammar: `none | [ underline || overline || line-through || blink ]`.
+        // CSS Text Decoration 4 §2.1 text-decoration-line grammar:
+        // `none | [ underline || overline || line-through || blink ] |
+        // spelling-error | grammar-error` (Level 3 の 4 keyword に Level 4
+        // の top-level 2 alternative が追加、`TextDecorationLine` doc 参照)。
         "text-decoration-line" => {
             parse_text_decoration_line(input).map(PropertyValue::TextDecorationLine)
         }
@@ -9100,10 +9536,50 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
             parse_text_decoration_color(input).map(PropertyValue::TextDecorationColor)
         }
         // §2.4 text-decoration shorthand: `<'text-decoration-line'> ||
-        // <'text-decoration-style'> || <'text-decoration-color'>`.
+        // <'text-decoration-style'> || <'text-decoration-color'> ||
+        // <'text-decoration-thickness'> (ED に thickness が追加、
+        // `TextDecorationShorthand` doc 参照)。
         "text-decoration" => {
             parse_text_decoration_shorthand(input).map(PropertyValue::TextDecoration)
         }
+        // CSS Text Decoration 4 ED §2.10.4 text-decoration-skip-ink.
+        // grammar: `auto | none | all` (`TextDecorationSkipInk` doc 参照)。
+        "text-decoration-skip-ink" => {
+            parse_text_decoration_skip_ink(input).map(PropertyValue::TextDecorationSkipInk)
+        }
+        // ED §2.10.3 text-decoration-skip-spaces. grammar:
+        // `none | all | [ start || end ]` (`TextDecorationSkipSpaces`
+        // doc 参照)。
+        "text-decoration-skip-spaces" => {
+            parse_text_decoration_skip_spaces(input).map(PropertyValue::TextDecorationSkipSpaces)
+        }
+        // ED §2.4.1 text-decoration-thickness. grammar:
+        // `auto | from-font | <length-percentage>` (`<line-width>` は scope
+        // 外、`TextDecorationThickness` doc 参照)。
+        "text-decoration-thickness" => {
+            parse_text_decoration_thickness(input).map(PropertyValue::TextDecorationThickness)
+        }
+        // ED §2.9.1 text-decoration-inset. grammar: `<length>{1,2} | auto`
+        // (`<percentage>` は WPT が reject するため scope 外、
+        // `TextDecorationInset` doc 参照)。
+        "text-decoration-inset" => {
+            parse_text_decoration_inset(input).map(PropertyValue::TextDecorationInset)
+        }
+        // ED §3.4 text-emphasis-position. grammar:
+        // `auto | ([ over | under ] && [ right | left ]?)`
+        // (`TextEmphasisPosition` doc 参照)。
+        "text-emphasis-position" => {
+            parse_text_emphasis_position(input).map(PropertyValue::TextEmphasisPosition)
+        }
+        // ED §2.7 text-underline-position. grammar:
+        // `auto | [ from-font | under ] || [ left | right ]`
+        // (`TextUnderlinePosition` doc 参照)。
+        "text-underline-position" => {
+            parse_text_underline_position(input).map(PropertyValue::TextUnderlinePosition)
+        }
+        // CSS Paged Media 3 §8.1 page. grammar: `auto | <custom-ident>`
+        // (`PageValue` doc 参照)。
+        "page" => parse_page_value(input).map(PropertyValue::Page),
         // CSS 2.1 §10.8.1 vertical-align, restricted to `baseline` / `sub` /
         // `super` / `middle` / `text-top` / `text-bottom` / `<length>`
         // (`VerticalAlign` doc's "Scope carving" section — `top` / `bottom`
@@ -9209,6 +9685,9 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // carving" section). initial `normal`, inherited, computed value =
         // specified keyword.
         "white-space" => parse_white_space(input).map(PropertyValue::WhiteSpace),
+        // CSS Text 4 §5 text-wrap (subset: single `wrap | nowrap` keyword;
+        // full shorthand with wrap-style deferred — see [`TextWrapMode`] doc).
+        "text-wrap" => parse_text_wrap_mode(input).map(PropertyValue::TextWrap),
         // CSS Flexible Box Layout Module Level 1 §5.1
         // <https://www.w3.org/TR/css-flexbox-1/#flex-direction-property>.
         "flex-direction" => parse_flex_direction(input).map(PropertyValue::FlexDirection),
@@ -11648,19 +12127,18 @@ pub(crate) fn parse_length_allow_negative(input: &mut Parser<'_, '_>) -> Option<
     parse_length_value(input, false)
 }
 
-/// `text-indent`'s `<length-percentage>` component.
+/// `text-indent`'s full grammar.
 ///
 /// grammar reference: CSS Text 3 §8.1
 /// <https://www.w3.org/TR/css-text-3/#text-indent-property>, whose full
 /// grammar is `<length-percentage> && hanging? && each-line?` — this helper
-/// covers only the `<length-percentage>` part ([`PropertyValue::TextIndent`]
-/// doc's "Scope carving" section).
+/// covers all three components, returning [`TextIndentValue`].
 ///
 /// No non-negative filter, unlike [`parse_padding_side`] — the spec places no
 /// `[0,∞]` restriction on this grammar (negative indents are valid, sibling
 /// [`parse_margin_side`] applies the same "no filter" treatment for the same
 /// reason its own grammar allows negative values).
-fn parse_text_indent(input: &mut Parser<'_, '_>) -> Option<Length> {
+fn parse_text_indent(input: &mut Parser<'_, '_>) -> Option<TextIndentValue> {
     // CSS Text 3 §8.1 grammar: `<length-percentage> && hanging? && each-line?`
     // Order-independent, but at least the length component must be present.
     // We collect optional hanging/each-line idents and one length-percentage,
@@ -11698,7 +12176,11 @@ fn parse_text_indent(input: &mut Parser<'_, '_>) -> Option<Length> {
         }
         break;
     }
-    length
+    length.map(|length| TextIndentValue {
+        length,
+        hanging,
+        each_line,
+    })
 }
 
 /// `<length-percentage> | auto` の共通 parser — margin longhand 1 side 分。
@@ -12989,6 +13471,24 @@ fn parse_flex_basis(input: &mut Parser<'_, '_>) -> Option<FlexBasisValue> {
         .is_ok()
     {
         return Some(FlexBasisValue::Content);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("min-content"))
+        .is_ok()
+    {
+        return Some(FlexBasisValue::MinContent);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("max-content"))
+        .is_ok()
+    {
+        return Some(FlexBasisValue::MaxContent);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("fit-content"))
+        .is_ok()
+    {
+        return Some(FlexBasisValue::FitContent);
     }
     let length = parse_length_value(input, true)?;
     // `<'width'>` reuse: CSS Sizing 3 §3.1.1 の `[0,∞]` non-negative
@@ -14288,6 +14788,16 @@ fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<WhiteSpace> {
 /// handoff」節 — 両者の扱いの一致は downstream consumer 側の実装判断であり、
 /// この parser の責務ではない)。ASCII case-insensitive で ident を比較する
 /// (sibling `parse_word_break` と同 flavor)。
+/// Parses `text-wrap: wrap | nowrap` (subset, CSS Text 4 §5).
+fn parse_text_wrap_mode(input: &mut Parser<'_, '_>) -> Option<TextWrapMode> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "wrap" => Some(TextWrapMode::Wrap),
+        "nowrap" => Some(TextWrapMode::Nowrap),
+        _ => None,
+    }
+}
+
 fn parse_hyphens(input: &mut Parser<'_, '_>) -> Option<Hyphens> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
@@ -14317,6 +14827,7 @@ fn parse_text_justify(input: &mut Parser<'_, '_>) -> Option<TextJustify> {
         "none" => Some(TextJustify::None),
         "inter-word" => Some(TextJustify::InterWord),
         "inter-character" => Some(TextJustify::InterCharacter),
+        "distribute" => Some(TextJustify::Distribute),
         _ => None,
     }
 }
@@ -14732,6 +15243,22 @@ fn parse_text_decoration_line(input: &mut Parser<'_, '_>) -> Option<TextDecorati
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(TextDecorationLine::NONE);
     }
+    // top-level alternative: `spelling-error` / `grammar-error`。互いに
+    // 排他、かつ `||` group とも併記不可 — 単独 ident の場合のみ受理し、
+    // 後続 token が残れば caller の `expect_exhausted` が落とす
+    // (spec grammar `none | [ ... ] | spelling-error | grammar-error`)。
+    if input
+        .try_parse(|i| i.expect_ident_matching("spelling-error"))
+        .is_ok()
+    {
+        return Some(TextDecorationLine::SPELLING_ERROR);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("grammar-error"))
+        .is_ok()
+    {
+        return Some(TextDecorationLine::GRAMMAR_ERROR);
+    }
 
     let mut line = TextDecorationLine::NONE;
     loop {
@@ -14837,9 +15364,10 @@ fn parse_text_decoration_shorthand(input: &mut Parser<'_, '_>) -> Option<TextDec
     let mut line: Option<TextDecorationLine> = None;
     let mut style: Option<TextDecorationStyle> = None;
     let mut color: Option<TextDecorationColor> = None;
+    let mut thickness: Option<TextDecorationThickness> = None;
 
     loop {
-        if line.is_some() && style.is_some() && color.is_some() {
+        if line.is_some() && style.is_some() && color.is_some() && thickness.is_some() {
             break;
         }
         if line.is_none()
@@ -14866,12 +15394,21 @@ fn parse_text_decoration_shorthand(input: &mut Parser<'_, '_>) -> Option<TextDec
             color = Some(v);
             continue;
         }
+        if thickness.is_none()
+            && let Ok(v) =
+                input.try_parse(|i| -> Result<TextDecorationThickness, ParseError<'_, ()>> {
+                    parse_text_decoration_thickness(i).ok_or_else(|| i.new_custom_error(()))
+                })
+        {
+            thickness = Some(v);
+            continue;
+        }
         break;
     }
 
     // spec `||` grammar: at least 1 component 必須。0 component は `None` =
     // declaration drop (`parse_border_shorthand` と同じ判断)。
-    if line.is_none() && style.is_none() && color.is_none() {
+    if line.is_none() && style.is_none() && color.is_none() && thickness.is_none() {
         return None;
     }
 
@@ -14879,7 +15416,200 @@ fn parse_text_decoration_shorthand(input: &mut Parser<'_, '_>) -> Option<TextDec
         line: line.unwrap_or(TextDecorationLine::NONE),
         style: style.unwrap_or(TextDecorationStyle::Solid),
         color: color.unwrap_or(TextDecorationColor::CurrentColor),
+        thickness: thickness.unwrap_or(TextDecorationThickness::Auto),
     })
+}
+
+/// `text-decoration-skip-ink: auto | none | all` を parse する
+/// (ED §2.10.4 <https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property>)。
+/// ASCII case-insensitive で ident を比較する (sibling [`parse_text_decoration_style`]
+/// と同 flavor)。
+fn parse_text_decoration_skip_ink(input: &mut Parser<'_, '_>) -> Option<TextDecorationSkipInk> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "auto" => Some(TextDecorationSkipInk::Auto),
+        "none" => Some(TextDecorationSkipInk::None),
+        "all" => Some(TextDecorationSkipInk::All),
+        _ => None,
+    }
+}
+
+/// `text-decoration-skip-spaces: none | all | [ start || end ]` を parse する
+/// (ED §2.10.3 <https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-spaces-property>)。
+/// `none` / `all` は単独 (top-level alternative)、`start` / `end` は `||`
+/// loop で各最大 1 回 ([`parse_text_decoration_line`] の 4-keyword loop と同形)。
+fn parse_text_decoration_skip_spaces(
+    input: &mut Parser<'_, '_>,
+) -> Option<TextDecorationSkipSpaces> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(TextDecorationSkipSpaces::None);
+    }
+    if input.try_parse(|i| i.expect_ident_matching("all")).is_ok() {
+        return Some(TextDecorationSkipSpaces::All);
+    }
+    let mut start = false;
+    let mut end = false;
+    loop {
+        if !start
+            && input
+                .try_parse(|i| i.expect_ident_matching("start"))
+                .is_ok()
+        {
+            start = true;
+            continue;
+        }
+        if !end && input.try_parse(|i| i.expect_ident_matching("end")).is_ok() {
+            end = true;
+            continue;
+        }
+        break;
+    }
+    match (start, end) {
+        (true, false) => Some(TextDecorationSkipSpaces::Start),
+        (false, true) => Some(TextDecorationSkipSpaces::End),
+        (true, true) => Some(TextDecorationSkipSpaces::StartEnd),
+        (false, false) => None,
+    }
+}
+
+/// `text-decoration-thickness: auto | from-font | <length-percentage>` を parse する
+/// (ED §2.4.1 <https://drafts.csswg.org/css-text-decor-4/#text-decoration-thickness-property>)。
+/// `<line-width>` (`thin`/`medium`/`thick`) は scope 外のため drop
+/// ([`TextDecorationThickness`] doc 参照)。`<length-percentage>` は
+/// [`parse_length_value`] (`allow_percentage=true`) に委譲し、sign check
+/// はしない (spec grammar に range 制限なし)。
+fn parse_text_decoration_thickness(input: &mut Parser<'_, '_>) -> Option<TextDecorationThickness> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(TextDecorationThickness::Auto);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("from-font"))
+        .is_ok()
+    {
+        return Some(TextDecorationThickness::FromFont);
+    }
+    parse_length_value(input, true).map(TextDecorationThickness::Length)
+}
+
+/// `text-decoration-inset: <length>{1,2} | auto` を parse する
+/// (ED §2.9.1 <https://drafts.csswg.org/css-text-decor-4/#text-decoration-inset-property>)。
+/// ED grammar は `<length-percentage>` だが WPT が `%` を reject するため
+/// `allow_percentage=false` ([`TextDecorationInset`] doc 参照)。負値・
+/// `calc()` は受理する (`calc` は [`parse_value`] の deferred 経路が
+/// 事前に `DeferredValue` 化し、`純粋 [`Length`] のみ
+/// ここに届く)。1 値目の場合は 2 値目を 1 値目に複製する
+/// (margin/padding の 2-value 規則と同型)。
+fn parse_text_decoration_inset(input: &mut Parser<'_, '_>) -> Option<TextDecorationInset> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(TextDecorationInset::Auto);
+    }
+    let start = parse_length_value(input, false)?;
+    let end = input
+        .try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
+            parse_length_value(i, false).ok_or_else(|| i.new_custom_error(()))
+        })
+        .unwrap_or(start);
+    Some(TextDecorationInset::Lengths { start, end })
+}
+
+/// `text-emphasis-position: auto | ([ over | under ] && [ right | left ]?)` を parse する
+/// (ED §3.4 <https://drafts.csswg.org/css-text-decor-4/#text-emphasis-position-property>)。
+/// `auto` 単独、それ以外は vertical 必須 (`over`/`under`) +
+/// horizontal 任意 (`right`/`left`)、順序自由・各最大 1 回。
+///
+/// `auto` 以外の位置に `auto` が来たら leftover として caller が drop する
+/// ([`parse_font_style`] の oblique-angle 取扱いと同 mechanism)。
+fn parse_text_emphasis_position(input: &mut Parser<'_, '_>) -> Option<TextEmphasisPosition> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(TextEmphasisPosition::Auto);
+    }
+    let mut vertical: Option<TextEmphasisVEdge> = None;
+    let mut horizontal: Option<TextEmphasisHEdge> = None;
+    loop {
+        if vertical.is_none() {
+            if input.try_parse(|i| i.expect_ident_matching("over")).is_ok() {
+                vertical = Some(TextEmphasisVEdge::Over);
+                continue;
+            }
+            if input
+                .try_parse(|i| i.expect_ident_matching("under"))
+                .is_ok()
+            {
+                vertical = Some(TextEmphasisVEdge::Under);
+                continue;
+            }
+        }
+        if horizontal.is_none() {
+            if input
+                .try_parse(|i| i.expect_ident_matching("right"))
+                .is_ok()
+            {
+                horizontal = Some(TextEmphasisHEdge::Right);
+                continue;
+            }
+            if input.try_parse(|i| i.expect_ident_matching("left")).is_ok() {
+                horizontal = Some(TextEmphasisHEdge::Left);
+                continue;
+            }
+        }
+        break;
+    }
+    Some(TextEmphasisPosition::Position {
+        vertical: vertical?,
+        horizontal,
+    })
+}
+
+/// `text-underline-position: auto | [ from-font | under ] || [ left | right ]` を parse する
+/// (ED §2.7 <https://drafts.csswg.org/css-text-decor-4/#text-underline-position-property>)。
+/// 3 slot (`from-font` / `under` / horizontal) の `||` loop +
+/// post-check: `from-font` と `under` の併記は reject
+/// (`under from-font` invalid)、`left`+`right` 併記も reject
+/// (`left right` invalid、horizontal slot が 1 個のため
+/// loop 段階で保証)、`auto` 単独 (leftover は caller が drop)。
+fn parse_text_underline_position(input: &mut Parser<'_, '_>) -> Option<TextUnderlinePosition> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(TextUnderlinePosition::AUTO);
+    }
+    let mut pos = TextUnderlinePosition::AUTO;
+    loop {
+        if !pos.from_font
+            && !pos.under
+            && input
+                .try_parse(|i| i.expect_ident_matching("from-font"))
+                .is_ok()
+        {
+            pos.from_font = true;
+            continue;
+        }
+        if !pos.under
+            && !pos.from_font
+            && input
+                .try_parse(|i| i.expect_ident_matching("under"))
+                .is_ok()
+        {
+            pos.under = true;
+            continue;
+        }
+        if !pos.left && !pos.right && input.try_parse(|i| i.expect_ident_matching("left")).is_ok() {
+            pos.left = true;
+            continue;
+        }
+        if !pos.right
+            && !pos.left
+            && input
+                .try_parse(|i| i.expect_ident_matching("right"))
+                .is_ok()
+        {
+            pos.right = true;
+            continue;
+        }
+        break;
+    }
+    if pos == TextUnderlinePosition::AUTO {
+        return None;
+    }
+    Some(pos)
 }
 
 /// `vertical-align: <ident> | <length>` を parse する (CSS 2.1 §10.8.1
@@ -14922,6 +15652,25 @@ fn parse_vertical_align(input: &mut Parser<'_, '_>) -> Option<VerticalAlign> {
         };
     }
     parse_length_value(input, true).map(VerticalAlign::Length)
+}
+
+/// CSS Paged Media 3 §8.1 の `page` を parse する
+/// (<https://www.w3.org/TR/css-page-3/#using-named-pages>)。
+///
+/// Grammar: `auto | <custom-ident>`。`auto` 単独、それ以外は CSS-wide keyword
+/// (`inherit`/`initial`/`unset`/`revert`/`revert-layer`) と `default`
+/// を除く単一 ident ([`PageValue`] doc 参照)。
+/// ASCII case-insensitive で比較し、保持する値は
+/// authored のまま (Atom は case-sensitive)。
+fn parse_page_value(input: &mut Parser<'_, '_>) -> Option<PageValue> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(PageValue::Auto);
+    }
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "default" => None,
+        _ => Some(PageValue::Named(Atom::from(ident.as_ref()))),
+    }
 }
 
 /// `counter-reset` / `counter-increment` / `counter-set` の value を parse する。
@@ -23695,7 +24444,11 @@ mod tests {
     fn text_indent_parse_px() {
         assert_eq!(
             parse("20px", "text-indent"),
-            Some(PropertyValue::TextIndent(Length::Px(20.0)))
+            Some(PropertyValue::TextIndent(TextIndentValue {
+                length: Length::Px(20.0),
+                hanging: false,
+                each_line: false
+            }))
         );
     }
 
@@ -23703,7 +24456,11 @@ mod tests {
     fn text_indent_parse_percentage() {
         assert_eq!(
             parse("10%", "text-indent"),
-            Some(PropertyValue::TextIndent(Length::Percent(10.0)))
+            Some(PropertyValue::TextIndent(TextIndentValue {
+                length: Length::Percent(10.0),
+                hanging: false,
+                each_line: false
+            }))
         );
     }
 
@@ -23711,7 +24468,11 @@ mod tests {
     fn text_indent_parse_em() {
         assert_eq!(
             parse("2em", "text-indent"),
-            Some(PropertyValue::TextIndent(Length::Em(2.0)))
+            Some(PropertyValue::TextIndent(TextIndentValue {
+                length: Length::Em(2.0),
+                hanging: false,
+                each_line: false
+            }))
         );
     }
 
@@ -23721,7 +24482,11 @@ mod tests {
         // (unlike `padding-top` — `PropertyValue::TextIndent` doc).
         assert_eq!(
             parse("-2em", "text-indent"),
-            Some(PropertyValue::TextIndent(Length::Em(-2.0)))
+            Some(PropertyValue::TextIndent(TextIndentValue {
+                length: Length::Em(-2.0),
+                hanging: false,
+                each_line: false
+            }))
         );
     }
 
@@ -23730,8 +24495,72 @@ mod tests {
         // CSS Values 3 §5 unitless-zero clause — bare `0` is a valid `<length>`.
         assert_eq!(
             parse("0", "text-indent"),
-            Some(PropertyValue::TextIndent(Length::Px(0.0)))
+            Some(PropertyValue::TextIndent(TextIndentValue {
+                length: Length::Px(0.0),
+                hanging: false,
+                each_line: false
+            }))
         );
+    }
+
+    #[test]
+    fn text_indent_parse_hanging() {
+        // CSS Text 3 §8.1 `hanging` keyword is kept, not dropped.
+        assert_eq!(
+            parse("2em hanging", "text-indent"),
+            Some(PropertyValue::TextIndent(TextIndentValue {
+                length: Length::Em(2.0),
+                hanging: true,
+                each_line: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn text_indent_parse_each_line() {
+        assert_eq!(
+            parse("each-line 2em", "text-indent"),
+            Some(PropertyValue::TextIndent(TextIndentValue {
+                length: Length::Em(2.0),
+                hanging: false,
+                each_line: true,
+            }))
+        );
+    }
+
+    #[test]
+    fn text_indent_parse_hanging_each_line_combined() {
+        // Order-independent `&&`: flags may precede the length.
+        assert_eq!(
+            parse("hanging each-line 2em", "text-indent"),
+            Some(PropertyValue::TextIndent(TextIndentValue {
+                length: Length::Em(2.0),
+                hanging: true,
+                each_line: true,
+            }))
+        );
+    }
+
+    #[test]
+    fn text_wrap_parse_nowrap() {
+        assert_eq!(
+            parse("nowrap", "text-wrap"),
+            Some(PropertyValue::TextWrap(TextWrapMode::Nowrap))
+        );
+    }
+
+    #[test]
+    fn text_wrap_parse_wrap() {
+        assert_eq!(
+            parse("wrap", "text-wrap"),
+            Some(PropertyValue::TextWrap(TextWrapMode::Wrap))
+        );
+    }
+
+    #[test]
+    fn text_wrap_rejects_balance() {
+        // Full shorthand (wrap-style) is deferred — see [`TextWrapMode`] doc.
+        assert_eq!(parse("balance", "text-wrap"), None);
     }
 
     #[test]
@@ -23746,19 +24575,21 @@ mod tests {
     fn text_indent_rejects_auto() {
         // Unlike `margin` / `width`, `text-indent`'s grammar has no `auto`
         // alternative — the `hanging`/`each-line` keywords are the only
-        // idents the full grammar accepts, and this crate does not parse
-        // them either ((b) 非対応, `PropertyValue::TextIndent` doc's "Scope
-        // carving" section). `parse_length_value` reads one token via
-        // `input.next()` and only has match arms for `Token::Dimension` /
-        // `Token::Percentage` / a zero `Token::Number` — an `Ident` token
-        // (`auto` included) matches none of them and falls through to the
-        // trailing `_ => None`.
+        // idents the full grammar accepts. `parse_length_value` reads one
+        // token via `input.next()` and only has match arms for
+        // `Token::Dimension` / `Token::Percentage` / a zero `Token::Number` —
+        // an `Ident` token (`auto` included) matches none of them and falls
+        // through to the trailing `_ => None`.
         assert_eq!(parse("auto", "text-indent"), None);
     }
 
     #[test]
     fn text_indent_key_maps_to_text_indent_property_key() {
-        let v = PropertyValue::TextIndent(Length::Px(20.0));
+        let v = PropertyValue::TextIndent(TextIndentValue {
+            length: Length::Px(20.0),
+            hanging: false,
+            each_line: false,
+        });
         assert_eq!(v.key(), PropertyKey::TextIndent);
     }
 
@@ -24134,6 +24965,8 @@ mod tests {
                 overline: true,
                 line_through: false,
                 blink: false,
+                spelling_error: false,
+                grammar_error: false,
             }))
         );
         assert_eq!(
@@ -24143,7 +24976,45 @@ mod tests {
                 overline: true,
                 line_through: false,
                 blink: false,
+                spelling_error: false,
+                grammar_error: false,
             }))
+        );
+    }
+
+    #[test]
+    fn text_decoration_line_parses_spelling_and_grammar_error_alone() {
+        // CSS Text Decoration 4 §2.1: `spelling-error` / `grammar-error`
+        // are top-level alternatives, each accepted only on its own.
+        assert_eq!(
+            parse("spelling-error", "text-decoration-line"),
+            Some(PropertyValue::TextDecorationLine(
+                TextDecorationLine::SPELLING_ERROR
+            ))
+        );
+        assert_eq!(
+            parse("grammar-error", "text-decoration-line"),
+            Some(PropertyValue::TextDecorationLine(
+                TextDecorationLine::GRAMMAR_ERROR
+            ))
+        );
+    }
+
+    #[test]
+    fn text_decoration_line_rejects_spelling_error_combined() {
+        // Same grammar: neither combines with the `||` group nor with
+        // each other — leftover makes the caller drop the declaration.
+        assert_eq!(
+            parse_entire("underline spelling-error", "text-decoration-line"),
+            None
+        );
+        assert_eq!(
+            parse_entire("spelling-error underline", "text-decoration-line"),
+            None
+        );
+        assert_eq!(
+            parse_entire("spelling-error grammar-error", "text-decoration-line"),
+            None
         );
     }
 
@@ -24159,6 +25030,8 @@ mod tests {
                 overline: true,
                 line_through: true,
                 blink: true,
+                spelling_error: false,
+                grammar_error: false,
             }))
         );
     }
@@ -24337,19 +25210,20 @@ mod tests {
     // initial values.").
 
     #[test]
-    fn text_decoration_shorthand_line_only_fills_other_two_with_initial() {
+    fn text_decoration_shorthand_line_only_fills_the_rest_with_initial() {
         assert_eq!(
             parse("underline", "text-decoration"),
             Some(PropertyValue::TextDecoration(TextDecorationShorthand {
                 line: TextDecorationLine::UNDERLINE,
                 style: TextDecorationStyle::Solid,
                 color: TextDecorationColor::CurrentColor,
+                thickness: TextDecorationThickness::Auto,
             }))
         );
     }
 
     #[test]
-    fn text_decoration_shorthand_style_only_fills_other_two_with_initial() {
+    fn text_decoration_shorthand_style_only_fills_the_rest_with_initial() {
         // A bare style keyword is a spec-valid shorthand value under `||`
         // (`text-decoration: wavy;`) — this was previously unreachable
         // (pre-longhand-decomposition `text-decoration` only accepted
@@ -24360,12 +25234,13 @@ mod tests {
                 line: TextDecorationLine::NONE,
                 style: TextDecorationStyle::Wavy,
                 color: TextDecorationColor::CurrentColor,
+                thickness: TextDecorationThickness::Auto,
             }))
         );
     }
 
     #[test]
-    fn text_decoration_shorthand_color_only_fills_other_two_with_initial() {
+    fn text_decoration_shorthand_color_only_fills_the_rest_with_initial() {
         // Likewise a bare color (`text-decoration: red;`) was rejected
         // wholesale pre-decomposition; `||` makes it valid on its own.
         assert_eq!(
@@ -24379,12 +25254,13 @@ mod tests {
                     b: 0,
                     a: 255,
                 }),
+                thickness: TextDecorationThickness::Auto,
             }))
         );
     }
 
     #[test]
-    fn text_decoration_shorthand_parses_all_three_in_any_order() {
+    fn text_decoration_shorthand_parses_all_four_in_any_order() {
         let expected = Some(PropertyValue::TextDecoration(TextDecorationShorthand {
             line: TextDecorationLine::UNDERLINE,
             style: TextDecorationStyle::Wavy,
@@ -24394,6 +25270,7 @@ mod tests {
                 b: 0,
                 a: 255,
             }),
+            thickness: TextDecorationThickness::Auto,
         }));
         assert_eq!(parse("underline wavy red", "text-decoration"), expected);
         assert_eq!(parse("red wavy underline", "text-decoration"), expected);
@@ -24410,6 +25287,8 @@ mod tests {
                     overline: true,
                     line_through: false,
                     blink: false,
+                    spelling_error: false,
+                    grammar_error: false,
                 },
                 style: TextDecorationStyle::Wavy,
                 color: TextDecorationColor::Resolved(CssColor {
@@ -24418,8 +25297,327 @@ mod tests {
                     b: 0,
                     a: 255,
                 }),
+                thickness: TextDecorationThickness::Auto,
             }))
         );
+    }
+
+    #[test]
+    fn text_decoration_shorthand_thickness_only_fills_the_rest_with_initial() {
+        assert_eq!(
+            parse("from-font", "text-decoration"),
+            Some(PropertyValue::TextDecoration(TextDecorationShorthand {
+                line: TextDecorationLine::NONE,
+                style: TextDecorationStyle::Solid,
+                color: TextDecorationColor::CurrentColor,
+                thickness: TextDecorationThickness::FromFont,
+            }))
+        );
+    }
+
+    #[test]
+    fn text_decoration_shorthand_thickness_combines_with_other_components() {
+        // ED §2.6: thickness participates in the `||` loop like the other
+        // 3 components (WPT `text-decoration-shorthand.html` maps
+        // `overline from-font dotted green` to all 4 longhands).
+        assert_eq!(
+            parse("overline from-font dotted green", "text-decoration"),
+            Some(PropertyValue::TextDecoration(TextDecorationShorthand {
+                line: TextDecorationLine::OVERLINE,
+                style: TextDecorationStyle::Dotted,
+                color: TextDecorationColor::Resolved(CssColor {
+                    r: 0,
+                    g: 128,
+                    b: 0,
+                    a: 255,
+                }),
+                thickness: TextDecorationThickness::FromFont,
+            }))
+        );
+    }
+
+    #[test]
+    fn text_decoration_shorthand_length_thickness_combines() {
+        assert_eq!(
+            parse("line-through 20px", "text-decoration"),
+            Some(PropertyValue::TextDecoration(TextDecorationShorthand {
+                line: TextDecorationLine::LINE_THROUGH,
+                style: TextDecorationStyle::Solid,
+                color: TextDecorationColor::CurrentColor,
+                thickness: TextDecorationThickness::Length(Length::Px(20.0)),
+            }))
+        );
+    }
+
+    // ── text-decoration-skip-ink (ED §2.10.4) ──
+
+    #[test]
+    fn text_decoration_skip_ink_parses_all_three_keywords() {
+        assert_eq!(
+            parse("auto", "text-decoration-skip-ink"),
+            Some(PropertyValue::TextDecorationSkipInk(
+                TextDecorationSkipInk::Auto
+            ))
+        );
+        assert_eq!(
+            parse("none", "text-decoration-skip-ink"),
+            Some(PropertyValue::TextDecorationSkipInk(
+                TextDecorationSkipInk::None
+            ))
+        );
+        assert_eq!(
+            parse("all", "text-decoration-skip-ink"),
+            Some(PropertyValue::TextDecorationSkipInk(
+                TextDecorationSkipInk::All
+            ))
+        );
+        assert_eq!(parse_entire("auto none", "text-decoration-skip-ink"), None);
+        assert_eq!(parse_entire("bogus", "text-decoration-skip-ink"), None);
+    }
+
+    #[test]
+    fn text_decoration_skip_ink_key_maps_to_property_key() {
+        let v = PropertyValue::TextDecorationSkipInk(TextDecorationSkipInk::Auto);
+        assert_eq!(v.key(), PropertyKey::TextDecorationSkipInk);
+    }
+
+    // ── text-decoration-skip-spaces (ED §2.10.3) ──
+
+    #[test]
+    fn text_decoration_skip_spaces_parses_all_forms() {
+        assert_eq!(
+            parse("none", "text-decoration-skip-spaces"),
+            Some(PropertyValue::TextDecorationSkipSpaces(
+                TextDecorationSkipSpaces::None
+            ))
+        );
+        assert_eq!(
+            parse("all", "text-decoration-skip-spaces"),
+            Some(PropertyValue::TextDecorationSkipSpaces(
+                TextDecorationSkipSpaces::All
+            ))
+        );
+        assert_eq!(
+            parse("start", "text-decoration-skip-spaces"),
+            Some(PropertyValue::TextDecorationSkipSpaces(
+                TextDecorationSkipSpaces::Start
+            ))
+        );
+        assert_eq!(
+            parse("end", "text-decoration-skip-spaces"),
+            Some(PropertyValue::TextDecorationSkipSpaces(
+                TextDecorationSkipSpaces::End
+            ))
+        );
+        // `||` order-independence, both orders map to `StartEnd`.
+        assert_eq!(
+            parse("start end", "text-decoration-skip-spaces"),
+            Some(PropertyValue::TextDecorationSkipSpaces(
+                TextDecorationSkipSpaces::StartEnd
+            ))
+        );
+        assert_eq!(
+            parse("end start", "text-decoration-skip-spaces"),
+            Some(PropertyValue::TextDecorationSkipSpaces(
+                TextDecorationSkipSpaces::StartEnd
+            ))
+        );
+        assert_eq!(
+            parse_entire("none start", "text-decoration-skip-spaces"),
+            None
+        );
+        assert_eq!(
+            parse_entire("start start", "text-decoration-skip-spaces"),
+            None
+        );
+        assert_eq!(parse_entire("bogus", "text-decoration-skip-spaces"), None);
+    }
+
+    #[test]
+    fn text_decoration_skip_spaces_key_maps_to_property_key() {
+        let v = PropertyValue::TextDecorationSkipSpaces(TextDecorationSkipSpaces::StartEnd);
+        assert_eq!(v.key(), PropertyKey::TextDecorationSkipSpaces);
+    }
+
+    // ── text-decoration-thickness (ED §2.4.1) ──
+
+    #[test]
+    fn text_decoration_thickness_parses_all_forms() {
+        assert_eq!(
+            parse("auto", "text-decoration-thickness"),
+            Some(PropertyValue::TextDecorationThickness(
+                TextDecorationThickness::Auto
+            ))
+        );
+        assert_eq!(
+            parse("from-font", "text-decoration-thickness"),
+            Some(PropertyValue::TextDecorationThickness(
+                TextDecorationThickness::FromFont
+            ))
+        );
+        assert_eq!(
+            parse("3em", "text-decoration-thickness"),
+            Some(PropertyValue::TextDecorationThickness(
+                TextDecorationThickness::Length(Length::Em(3.0))
+            ))
+        );
+        assert_eq!(
+            parse("50%", "text-decoration-thickness"),
+            Some(PropertyValue::TextDecorationThickness(
+                TextDecorationThickness::Length(Length::Percent(50.0))
+            ))
+        );
+        // `<line-width>` keywords are out of scope (dropped).
+        assert_eq!(parse_entire("thin", "text-decoration-thickness"), None);
+        assert_eq!(parse_entire("medium", "text-decoration-thickness"), None);
+    }
+
+    #[test]
+    fn text_decoration_thickness_key_maps_to_property_key() {
+        let v = PropertyValue::TextDecorationThickness(TextDecorationThickness::Auto);
+        assert_eq!(v.key(), PropertyKey::TextDecorationThickness);
+    }
+
+    // ── text-decoration-inset (ED §2.9.1) ──
+
+    #[test]
+    fn text_decoration_inset_parses_auto_and_one_or_two_lengths() {
+        assert_eq!(
+            parse("auto", "text-decoration-inset"),
+            Some(PropertyValue::TextDecorationInset(
+                TextDecorationInset::Auto
+            ))
+        );
+        assert_eq!(
+            parse("-1em", "text-decoration-inset"),
+            Some(PropertyValue::TextDecorationInset(
+                TextDecorationInset::Lengths {
+                    start: Length::Em(-1.0),
+                    end: Length::Em(-1.0),
+                }
+            ))
+        );
+        assert_eq!(
+            parse("1px 2px", "text-decoration-inset"),
+            Some(PropertyValue::TextDecorationInset(
+                TextDecorationInset::Lengths {
+                    start: Length::Px(1.0),
+                    end: Length::Px(2.0),
+                }
+            ))
+        );
+        // `<percentage>` is rejected (WPT ground truth over ED grammar).
+        assert_eq!(parse_entire("10%", "text-decoration-inset"), None);
+        assert_eq!(parse_entire("none", "text-decoration-inset"), None);
+        assert_eq!(parse_entire("auto auto", "text-decoration-inset"), None);
+    }
+
+    #[test]
+    fn text_decoration_inset_key_maps_to_property_key() {
+        let v = PropertyValue::TextDecorationInset(TextDecorationInset::Auto);
+        assert_eq!(v.key(), PropertyKey::TextDecorationInset);
+    }
+
+    // ── text-emphasis-position (ED §3.4) ──
+
+    #[test]
+    fn text_emphasis_position_parses_auto_and_axis_combinations() {
+        assert_eq!(
+            parse("auto", "text-emphasis-position"),
+            Some(PropertyValue::TextEmphasisPosition(
+                TextEmphasisPosition::Auto
+            ))
+        );
+        assert_eq!(
+            parse("over", "text-emphasis-position"),
+            Some(PropertyValue::TextEmphasisPosition(
+                TextEmphasisPosition::Position {
+                    vertical: TextEmphasisVEdge::Over,
+                    horizontal: None,
+                }
+            ))
+        );
+        assert_eq!(
+            parse("right under", "text-emphasis-position"),
+            Some(PropertyValue::TextEmphasisPosition(
+                TextEmphasisPosition::Position {
+                    vertical: TextEmphasisVEdge::Under,
+                    horizontal: Some(TextEmphasisHEdge::Right),
+                }
+            ))
+        );
+        // vertical is required; doubled axes rejected.
+        assert_eq!(parse_entire("left", "text-emphasis-position"), None);
+        assert_eq!(
+            parse_entire("left over right", "text-emphasis-position"),
+            None
+        );
+        assert_eq!(
+            parse_entire("under right over", "text-emphasis-position"),
+            None
+        );
+    }
+
+    #[test]
+    fn text_emphasis_position_key_maps_to_property_key() {
+        let v = PropertyValue::TextEmphasisPosition(TextEmphasisPosition::Auto);
+        assert_eq!(v.key(), PropertyKey::TextEmphasisPosition);
+    }
+
+    // ── text-underline-position (ED §2.7) ──
+
+    #[test]
+    fn text_underline_position_parses_auto_and_combinations() {
+        assert_eq!(
+            parse("auto", "text-underline-position"),
+            Some(PropertyValue::TextUnderlinePosition(
+                TextUnderlinePosition::AUTO
+            ))
+        );
+        assert_eq!(
+            parse("under", "text-underline-position"),
+            Some(PropertyValue::TextUnderlinePosition(
+                TextUnderlinePosition {
+                    under: true,
+                    ..TextUnderlinePosition::AUTO
+                }
+            ))
+        );
+        assert_eq!(
+            parse("from-font left", "text-underline-position"),
+            Some(PropertyValue::TextUnderlinePosition(
+                TextUnderlinePosition {
+                    from_font: true,
+                    left: true,
+                    ..TextUnderlinePosition::AUTO
+                }
+            ))
+        );
+        assert_eq!(
+            parse("right under", "text-underline-position"),
+            Some(PropertyValue::TextUnderlinePosition(
+                TextUnderlinePosition {
+                    under: true,
+                    right: true,
+                    ..TextUnderlinePosition::AUTO
+                }
+            ))
+        );
+        // `auto` is exclusive; `from-font`+`under` and `left`+`right`
+        // never combine.
+        assert_eq!(parse_entire("auto under", "text-underline-position"), None);
+        assert_eq!(
+            parse_entire("under from-font", "text-underline-position"),
+            None
+        );
+        assert_eq!(parse_entire("left right", "text-underline-position"), None);
+        assert_eq!(parse_entire("bogus", "text-underline-position"), None);
+    }
+
+    #[test]
+    fn text_underline_position_key_maps_to_property_key() {
+        let v = PropertyValue::TextUnderlinePosition(TextUnderlinePosition::AUTO);
+        assert_eq!(v.key(), PropertyKey::TextUnderlinePosition);
     }
 
     #[test]
@@ -24445,6 +25643,7 @@ mod tests {
                 line: TextDecorationLine::NONE,
                 style: TextDecorationStyle::Solid,
                 color: TextDecorationColor::CurrentColor,
+                thickness: TextDecorationThickness::Auto,
             })
         );
         assert!(!parser.is_exhausted());
@@ -24469,8 +25668,47 @@ mod tests {
             line: TextDecorationLine::NONE,
             style: TextDecorationStyle::Solid,
             color: TextDecorationColor::CurrentColor,
+            thickness: TextDecorationThickness::Auto,
         });
         assert_eq!(shorthand.key(), PropertyKey::TextDecoration);
+    }
+
+    // ── page (CSS Paged Media 3 §8.1) ──
+
+    #[test]
+    fn page_value_parses_auto_and_custom_ident() {
+        assert_eq!(
+            parse("auto", "page"),
+            Some(PropertyValue::Page(PageValue::Auto))
+        );
+        assert_eq!(
+            parse("table", "page"),
+            Some(PropertyValue::Page(PageValue::Named(Atom::from("table"))))
+        );
+        assert_eq!(
+            parse("xyzabc", "page"),
+            Some(PropertyValue::Page(PageValue::Named(Atom::from("xyzabc"))))
+        );
+        // CSS-wide keywords and `default` are not custom idents.
+        for kw in [
+            "inherit",
+            "initial",
+            "unset",
+            "revert",
+            "revert-layer",
+            "default",
+        ] {
+            assert_eq!(parse_entire(kw, "page"), None, "{kw}");
+        }
+        // two idents / dimension are grammar-outside (caller drops).
+        assert_eq!(parse_entire("not valid", "page"), None);
+        assert_eq!(parse_entire("123px", "page"), None);
+    }
+
+    #[test]
+    fn page_value_key_maps_to_page_property_key() {
+        let v = PropertyValue::Page(PageValue::Auto);
+        assert_eq!(v.key(), PropertyKey::Page);
     }
 
     // ── vertical-align (CSS 2.1 §10.8.1) ──
@@ -28191,6 +29429,25 @@ mod tests {
     }
 
     #[test]
+    fn flex_basis_parse_min_max_fit_content_keywords() {
+        // CSS Sizing 3 intrinsic keywords (WPT `flex-basis-valid.html`).
+        // Bare `fit-content` only — the `fit-content(<length-percentage>)`
+        // function form stays out of scope.
+        assert_eq!(
+            parse("min-content", "flex-basis"),
+            Some(PropertyValue::FlexBasis(FlexBasisValue::MinContent))
+        );
+        assert_eq!(
+            parse("max-content", "flex-basis"),
+            Some(PropertyValue::FlexBasis(FlexBasisValue::MaxContent))
+        );
+        assert_eq!(
+            parse("fit-content", "flex-basis"),
+            Some(PropertyValue::FlexBasis(FlexBasisValue::FitContent))
+        );
+    }
+
+    #[test]
     fn flex_basis_parse_length_and_percentage() {
         assert_eq!(
             parse("200px", "flex-basis"),
@@ -30093,6 +31350,35 @@ mod tests {
     fn math_without_var_is_validated_during_declaration_parsing() {
         assert!(parse("calc(foo)", "width").is_none());
         assert!(parse("min(10px, 20px)", "width").is_some());
+    }
+
+    #[test]
+    fn math_dummy_selection_is_type_aware() {
+        // `math_source_has_dimension_or_percentage`: dimensions and
+        // percentages count even through nesting and across comma-separated
+        // arguments (no early exit — `parse_nested_block` runs its closure
+        // via `parse_entirely`).
+        assert!(math_source_has_dimension_or_percentage("calc(10px)"));
+        assert!(math_source_has_dimension_or_percentage("min(20px, 10px)"));
+        assert!(math_source_has_dimension_or_percentage("calc((1px))"));
+        assert!(math_source_has_dimension_or_percentage("calc(10% + 1)"));
+        assert!(!math_source_has_dimension_or_percentage("calc(0)"));
+        assert!(!math_source_has_dimension_or_percentage("calc(3 - 3)"));
+        // `deferred_dummy_is_valid_for_property`: pure-number math validates
+        // only `<number>` positions (WPT `flex: 1 2 calc(0)` invalid), while
+        // dimension-carrying math keeps the `1px` behavior.
+        assert!(deferred_dummy_is_valid_for_property(
+            "calc(-1)",
+            "flex-grow"
+        ));
+        assert!(!deferred_dummy_is_valid_for_property(
+            "calc(0)",
+            "flex-basis"
+        ));
+        assert!(deferred_dummy_is_valid_for_property(
+            "calc(2em + 3ex)",
+            "width"
+        ));
     }
 
     // ── orphans / widows (CSS Fragmentation Module Level 3 §3.3) ──

@@ -3429,6 +3429,19 @@ mod tests {
             has_selector_rule("dialog[open]"),
             "MINIMAL_UA_CSS is missing selector rule `dialog[open] {{ … }}`",
         );
+        // `dir` directionality mapping (HTML LS Rendering §15.3.5, see
+        // minimal.css comment): both `[dir]:dir(...)` rules must be present.
+        // Non-vacuous cascade behavior is pinned end-to-end in
+        // `crates/raikiri/tests/build_cascaded.rs`
+        // (`div_direction_reflects_dir_attribute_via_ua_css`).
+        assert!(
+            has_selector_rule("[dir]:dir(ltr)"),
+            "MINIMAL_UA_CSS is missing selector rule `[dir]:dir(ltr) {{ … }}`",
+        );
+        assert!(
+            has_selector_rule("[dir]:dir(rtl)"),
+            "MINIMAL_UA_CSS is missing selector rule `[dir]:dir(rtl) {{ … }}`",
+        );
         // spec 参照コメントが含まれていること (CSS 2.1 App.D 由来の cleanroom 印)
         assert!(
             MINIMAL_UA_CSS.contains("CSS 2.1 App.D"),

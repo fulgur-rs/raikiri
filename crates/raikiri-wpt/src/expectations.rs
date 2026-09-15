@@ -1228,8 +1228,18 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + css-tables reftest sweep (+29) + table-layout/border-collapse parsing-valid (+2)
         // + css-tables parsing-8 (+7: border-spacing/caption-side/empty-cells valid + caption-side/empty-cells/table-layout/border-collapse computed)
         // + css-tables reftest tables-sweep (+4: zero-rowspan-001, row-group-order, percent-height-replaced-in-percent-cell.tentative, table-cell-baseline-static-position).
+        // + css-text-decor parsing jqg8 (+10)
+        // + page-valid + flex-basis-valid + flex-invalid parsing tgag (+3).
+        // - hyphens-punctuation-001 (-1, 9q1p: container-width re-break exposed
+        //   a false pass; genuine pass needs hyphenation dictionaries, bd u94v).
+        // + text-align end-001..008 (sans 009/010) + start-001..008 + start-010
+        //   (+17, dir-attribute UA rules: explicit-direction and dir=ltr/rtl/auto
+        //   cases now resolve; 009/010 need zero-width RLM handling, follow-up).
+        // - bidi-tab-001 (-1: dir rules made direction real, exposing
+        //   direction-naive tab-stop expansion in RTL spans; needs bidi-aware
+        //   tab stops, follow-up).
         // quarantine and deprecated stay empty until a developer PR adds a flake or crasher.
-        assert_eq!(set.baseline.entries.len(), 828);
+        assert_eq!(set.baseline.entries.len(), 856);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }

@@ -21,10 +21,11 @@ use crate::property::{
     FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue,
     GridLineValue, GridTemplateAreasValue, Hyphens, Isolation, MaskImage, MixBlendMode, ObjectFit,
     OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
-    SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextDecorationColor,
-    TextDecorationLine, TextDecorationStyle, TextTransform, VerticalAlign, Visibility, VisualBox,
-    WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
-    empty_filter_list, empty_quotes_entries, empty_string_set_entries, initial_font_family,
+    SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor,
+    TextDecorationLine, TextDecorationStyle, TextJustify, TextTransform, TextWrapMode,
+    VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue,
+    empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
+    empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
@@ -455,6 +456,17 @@ pub struct ComputedValues {
     /// ([`crate::cascade::resolve_against_inherited`]) — から同じ関数へ
     /// funnel する。
     pub text_align: TextAlign,
+    /// `text-justify` (CSS Text 3 §6.2)。**inherited**、initial: `auto`。
+    /// keyword のため computed = specified (by-value copy、`Copy`)。
+    /// `distribute` は legacy 値として受理し parley 側では `Justify` と
+    /// 同扱い (parley に inter-word/inter-character/distribute の区別無し)。
+    pub text_justify: TextJustify,
+    /// `text-align-last` (CSS Text 3 §6.1)。**inherited**、initial: `auto`。
+    /// keyword のため computed = specified (by-value copy、`Copy`)。
+    /// `auto` の解決 (`justify`→`start`、他は `text-align` 値通り) は
+    /// consumer (raikiri-dom realign) 側で行う — cascade 層に
+    /// `text-align` との結合解決を持ち込まない。
+    pub text_align_last: TextAlignLast,
     /// `direction`。**inherited**、initial: [`Direction::Ltr`]
     /// (CSS Writing Modes 4 §2.1 "Specifying Directionality: the direction
     /// property" <https://www.w3.org/TR/css-writing-modes-4/#direction>)。
@@ -526,6 +538,10 @@ pub struct ComputedValues {
     /// ([`crate::specified::SpecifiedValues::inherit_from`]'s
     /// `lift_length_percentage` seed), not reset to the initial `0`.
     pub text_indent: ComputedLengthPercentage,
+    /// `text-indent`'s `hanging` flag. Inherited, initial `false`.
+    pub text_indent_hanging: bool,
+    /// `text-indent`'s `each-line` flag. Inherited, initial `false`.
+    pub text_indent_each_line: bool,
     /// `padding` — 4-side box-model padding。**non-inherited**、initial:
     /// `Sides::all(ComputedLengthPercentage::Px(0.0))` — CSS Box 3 §4.1
     /// <https://www.w3.org/TR/css-box-3/#padding-physical> initial "0"。
@@ -1052,6 +1068,8 @@ pub struct ComputedValues {
     /// table describes belongs to a text layout / line-breaking consumer
     /// (raikiri-dom / raikiri-paint) this crate does not implement yet.
     pub white_space: WhiteSpace,
+    /// `text-wrap` wrapping component. Inherited, initial `wrap`.
+    pub text_wrap: TextWrapMode,
     /// `hyphens`. **inherited**, initial: [`Hyphens::Manual`] (CSS Text
     /// Module Level 3 §5.3 "Hyphenation: the hyphens property"
     /// <https://www.w3.org/TR/css-text-3/#hyphens-property>, "Initial:
@@ -1554,6 +1572,10 @@ impl ComputedValues {
             position: PositionValue::Static,
             // CSS Text 3 §6.1: text-align initial is `start`
             text_align: TextAlign::Start,
+            // CSS Text 3 §6.2: text-justify initial is `auto`.
+            text_justify: TextJustify::Auto,
+            // CSS Text 3 §6.1: text-align-last initial is `auto`.
+            text_align_last: TextAlignLast::Auto,
             // CSS Writing Modes 4 §2.1: direction initial is `ltr`。
             direction: Direction::Ltr,
             // CSS Writing Modes 4 §3.2: writing-mode initial is
@@ -1562,6 +1584,8 @@ impl ComputedValues {
             writing_mode: WritingMode::HorizontalTb,
             // CSS Text 3 §8.1: text-indent initial is `0`。
             text_indent: ComputedLengthPercentage::Px(0.0),
+            text_indent_hanging: false,
+            text_indent_each_line: false,
             // CSS Box 3 §4.1: padding initial = 0 (all 4 sides)。
             padding: Sides::all(ComputedLengthPercentage::Px(0.0)),
             // CSS Box 3 §3.1: margin-* physical の initial は `0` (`Sides::all(0)`
@@ -1655,6 +1679,7 @@ impl ComputedValues {
             clear: ClearValue::None,
             // CSS Text 3 §3: white-space initial は `normal`。
             white_space: WhiteSpace::Normal,
+            text_wrap: TextWrapMode::Wrap,
             // CSS Text 3 §5.3: hyphens initial は `manual`。
             hyphens: Hyphens::Manual,
             // CSS Flexible Box Layout Module Level 1 §5.1: flex-direction
@@ -2092,6 +2117,9 @@ mod tests {
                 name: SmolStr::new("hdr"),
             }],
             text_align: TextAlign::Center,
+            // non-initial 値 (上記 fixture doc の全 field 非 initial 方針)。
+            text_justify: TextJustify::InterWord,
+            text_align_last: TextAlignLast::Justify,
             // CSS Writing Modes 4 §2.1: `Rtl` — initial (`Ltr`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             direction: Direction::Rtl,
@@ -2114,6 +2142,8 @@ mod tests {
             // CSS Text 3 §8.1: initial (`0`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             text_indent: ComputedLengthPercentage::Px(9.0),
+            text_indent_hanging: false,
+            text_indent_each_line: false,
             padding: Sides::all(ComputedLengthPercentage::Px(7.0)),
             margin: Sides::all(ComputedLengthPercentageOrAuto::Px(12.0)),
             border: Sides::all(ComputedBorder {
@@ -2214,6 +2244,7 @@ mod tests {
             // CSS Text 3 §3: `Pre` — initial (`Normal`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             white_space: WhiteSpace::Pre,
+            text_wrap: TextWrapMode::Nowrap,
             // CSS Text 3 §5.3: `None` — initial (`Manual`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             hyphens: Hyphens::None,

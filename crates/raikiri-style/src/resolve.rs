@@ -416,6 +416,14 @@ pub enum ComputedFlexBasis {
     /// `content` keyword ([`crate::property::FlexBasisValue`] doc の
     /// "`content` と `auto` の意味差" 節参照)。
     Content,
+    /// `min-content` keyword — computed 層では区別を保つ。taffy bridge は
+    /// `auto` 近似 (`crates/raikiri-dom/src/layout.rs` の `bridge_flex`
+    /// doc 参照)。
+    MinContent,
+    /// `max-content` keyword — 同上。
+    MaxContent,
+    /// bare `fit-content` keyword — 同上。
+    FitContent,
 }
 
 /// Computed `row-gap` / `column-gap`。
@@ -2297,6 +2305,9 @@ pub fn resolve_flex_basis(
 ) -> ComputedFlexBasis {
     match specified {
         FlexBasisValue::Content => ComputedFlexBasis::Content,
+        FlexBasisValue::MinContent => ComputedFlexBasis::MinContent,
+        FlexBasisValue::MaxContent => ComputedFlexBasis::MaxContent,
+        FlexBasisValue::FitContent => ComputedFlexBasis::FitContent,
         FlexBasisValue::Auto => ComputedFlexBasis::Auto,
         FlexBasisValue::Length(len) => {
             match resolve_length_percentage_or_auto(

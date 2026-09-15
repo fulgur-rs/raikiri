@@ -77,7 +77,7 @@ impl TraversePartialTree for Document {
 impl TraverseTree for Document {}
 
 impl CacheTree for Document {
-    fn cache_get(&self, node_id: NodeId, inputs: &LayoutInput) -> Option<LayoutOutput> {
+    fn cache_get(&mut self, node_id: NodeId, inputs: &LayoutInput) -> Option<LayoutOutput> {
         self.nodes[usize::from(node_id)].cache.get(inputs)
     }
 
@@ -230,7 +230,9 @@ impl Document {
                 )
             } else {
                 match display {
-                    Display::Block => compute_block_layout(tree, node_id, inputs, block_ctx),
+                    Display::Block | Display::FlowRoot => {
+                        compute_block_layout(tree, node_id, inputs, block_ctx)
+                    }
                     Display::Flex => compute_flexbox_layout(tree, node_id, inputs),
                     Display::Grid => compute_grid_layout(tree, node_id, inputs),
                     Display::None => unreachable!("Display::None handled above"),

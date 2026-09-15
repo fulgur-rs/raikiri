@@ -129,9 +129,12 @@ use crate::property::{
     FontShorthand, FontShorthandSize, GapShorthand, GridInflexibleBreadth, GridTemplateTracks,
     GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize,
     Length, LengthOrAuto, LengthOrNormal, Outline, OutlineColor, OutlineStyle, OverflowValue,
-    OverflowXY, PropertyKey, PropertyValue, Sides, TableLayoutValue, TextCombineUpright,
-    TextOrientation, TextShadowItem, TransformFunction, UnicodeBidi, parse_length_allow_negative,
-    parse_non_negative_length, parse_value, resolve_overflow, resolve_writing_mode,
+    OverflowXY, PageValue, PropertyKey, PropertyValue, Sides, TableLayoutValue, TextCombineUpright,
+    TextDecorationInset, TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces,
+    TextDecorationThickness, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisVEdge,
+    TextIndentValue, TextOrientation, TextShadowItem, TextUnderlinePosition, TextWrapMode,
+    TransformFunction, UnicodeBidi, parse_length_allow_negative, parse_non_negative_length,
+    parse_value, resolve_overflow, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedCssPositionOffset, ComputedFlexBasis,
@@ -2620,6 +2623,9 @@ fn absolutize_in_page_context(
         match resolve_flex_basis(specified, font_size, own_line_height, ctx) {
             ComputedFlexBasis::Auto => FlexBasisValue::Auto,
             ComputedFlexBasis::Content => FlexBasisValue::Content,
+            ComputedFlexBasis::MinContent => FlexBasisValue::MinContent,
+            ComputedFlexBasis::MaxContent => FlexBasisValue::MaxContent,
+            ComputedFlexBasis::FitContent => FlexBasisValue::FitContent,
             ComputedFlexBasis::Px(v) => FlexBasisValue::Length(Length::Px(v)),
             ComputedFlexBasis::Percent(p) => FlexBasisValue::Length(Length::Percent(p)),
         }
@@ -3032,17 +3038,23 @@ fn absolutize_in_page_context(
         // computed value = specified keyword(s)/color (see
         // `TextDecorationLine`/`TextDecorationStyle`/`TextDecorationColor`
         // docs) — nothing for phase 3 to absolutize. The `text-decoration`
-        // shorthand joins the same bucket as identity pass-through: none of
-        // its 3 components need absolutizing either, so there is nothing
-        // gained by giving it its own transform arm (unlike `Margin`/
-        // `Border`/`Overflow` above, whose shorthand fall-through *does*
-        // resolve lengths/coupling if ever reached) — it is structurally
-        // unreachable here regardless (`expand_shorthand_into` expands it
-        // before this function runs), same as every other shorthand.
+        // shorthand itself does NOT join this bucket: its `-thickness`
+        // component carries `<length-percentage>` (ED §2.4.1), so it gets
+        // its own fall-through transform arm below (same "structurally
+        // unreachable, pinned directly" shape as `Margin`/`Border`/
+        // `Background` above).
         | PropertyValue::TextDecorationLine(_)
         | PropertyValue::TextDecorationStyle(_)
         | PropertyValue::TextDecorationColor(_)
-        | PropertyValue::TextDecoration(_)
+        // `text-decoration-skip-ink`/`-skip-spaces`/`text-emphasis-position`/
+        // `text-underline-position` carry no length and computed value =
+        // specified keyword(s) (see each type's doc) — nothing for phase 3
+        // to absolutize, same bucket shape as the 3 `text-decoration`
+        // longhands above.
+        | PropertyValue::TextDecorationSkipInk(_)
+        | PropertyValue::TextDecorationSkipSpaces(_)
+        | PropertyValue::TextEmphasisPosition(_)
+        | PropertyValue::TextUnderlinePosition(_)
         // `font-style` carries no length at this crate's scope
         // (`normal`/`italic`/`oblique` implemented, `oblique`'s `<angle>`
         // argument is not — see `FontStyle`'s doc) and computed value =
@@ -3095,6 +3107,9 @@ fn absolutize_in_page_context(
         // computed value = specified keyword (see `WhiteSpace`'s doc) —
         // nothing for phase 3 to absolutize.
         | PropertyValue::WhiteSpace(_)
+        // `text-wrap` (CSS Text 4 §5 subset) carries no length either —
+        // same as `WhiteSpace` above.
+        | PropertyValue::TextWrap(_)
         // `hyphens` (CSS Text 3 §5.3) carries no length either and computed
         // value = specified keyword (see `Hyphens`'s doc) — same as
         // `WhiteSpace` above.
@@ -3106,6 +3121,9 @@ fn absolutize_in_page_context(
         | PropertyValue::TextCombineUpright(_)
         | PropertyValue::TextOrientation(_)
         | PropertyValue::UnicodeBidi(_)
+        // `page` (CSS Paged Media 3 §8.1) carries no length and computed
+        // value = specified value — nothing for phase 3 to absolutize.
+        | PropertyValue::Page(_)
         // `flex-direction`/`flex-wrap` (CSS Flexible Box Layout Module
         // Level 1 §5.1/§5.2) carry no length and computed value = specified
         // keyword — nothing for phase 3 to absolutize.
@@ -3302,7 +3320,11 @@ fn absolutize_in_page_context(
         // `font_size`/`own_line_height` basis, same as every other box
         // property here.
         PropertyValue::TextIndent(v) => {
-            PropertyValue::TextIndent(lp(v, font_size, own_line_height, ctx))
+            PropertyValue::TextIndent(TextIndentValue {
+                length: lp(v.length, font_size, own_line_height, ctx),
+                hanging: v.hanging,
+                each_line: v.each_line,
+            })
         }
         // ── padding ───────────────────────────────────────────────────────
         PropertyValue::PaddingTop(v) => {
@@ -3535,6 +3557,57 @@ fn absolutize_in_page_context(
             size: background_size(shorthand.size, font_size, own_line_height, ctx),
             ..shorthand
         }),
+        // ── text-decoration-thickness / text-decoration-inset ────────────
+        // ED §2.4.1/§2.9.1: both carry `<length-percentage>` components,
+        // absolutized against this page context's own font-size/line-height
+        // (same basis and same `Length::Px(resolve_length(..).px())` shape
+        // as `OutlineOffset` above). `auto`/`from-font` survive as keywords
+        // by spec, same as `LineHeight::Normal`.
+        PropertyValue::TextDecorationThickness(t) => {
+            PropertyValue::TextDecorationThickness(match t {
+                TextDecorationThickness::Auto | TextDecorationThickness::FromFont => t,
+                TextDecorationThickness::Length(l) => {
+                    TextDecorationThickness::Length(Length::Px(
+                        resolve_length(l, font_size, own_line_height, ctx).px(),
+                    ))
+                }
+            })
+        }
+        PropertyValue::TextDecorationInset(inset) => {
+            PropertyValue::TextDecorationInset(match inset {
+                TextDecorationInset::Auto => TextDecorationInset::Auto,
+                TextDecorationInset::Lengths { start, end } => {
+                    TextDecorationInset::Lengths {
+                        start: Length::Px(resolve_length(start, font_size, own_line_height, ctx).px()),
+                        end: Length::Px(resolve_length(end, font_size, own_line_height, ctx).px()),
+                    }
+                }
+            })
+        }
+        // `text-decoration` shorthand fall-through (see `Padding` above for
+        // the unreachability rationale) — unreachable in practice
+        // (`expand_shorthand_into` expands it before this function ever sees
+        // a winner). `thickness` is the only length-bearing component this
+        // function absolutizes here (same basis as the
+        // `TextDecorationThickness` longhand arm just above); the other 3
+        // pass through via the struct-update `..shorthand`. Pinned directly
+        // by `tests::absolutize_in_page_context_shorthand_fall_throughs`'s
+        // `TextDecoration` case.
+        PropertyValue::TextDecoration(shorthand) => {
+            PropertyValue::TextDecoration(TextDecorationShorthand {
+                thickness: match shorthand.thickness {
+                    TextDecorationThickness::Auto | TextDecorationThickness::FromFont => {
+                        shorthand.thickness
+                    }
+                    TextDecorationThickness::Length(l) => {
+                        TextDecorationThickness::Length(Length::Px(
+                            resolve_length(l, font_size, own_line_height, ctx).px(),
+                        ))
+                    }
+                },
+                ..shorthand
+            })
+        }
         // `font` shorthand fall-through (see `Padding` above for the
         // unreachability rationale) — unreachable in practice
         // (`expand_shorthand_into` expands it before this function ever sees
@@ -3901,12 +3974,15 @@ mod tests {
         GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
         GridTrackListComponent, GridTrackRepeat, GridTrackSize, Hyphens, Isolation, Length,
         LengthOrAuto, LengthOrNormal, LineBreak, LineHeight, MaskImage, MixBlendMode, ObjectFit,
-        Outline, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PlaceContentShorthand,
-        PlaceItemsShorthand, PlaceSelfShorthand, PositionValue, RelativeFontSize,
-        SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextAlignAll, TextAlignLast,
-        TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
-        TextJustify, TextShadowColor, TextTransform, TransformFunction, VerticalAlign, Visibility,
-        VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue,
+        Outline, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue,
+        PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
+        RelativeFontSize, SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextAlignAll,
+        TextAlignLast, TextDecorationColor, TextDecorationInset, TextDecorationLine,
+        TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces,
+        TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge, TextEmphasisPosition,
+        TextEmphasisVEdge, TextJustify, TextShadowColor, TextTransform, TextUnderlinePosition,
+        TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak,
+        WritingMode, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use crate::ruletree::build_rule_tree;
@@ -5856,6 +5932,101 @@ mod tests {
                 ..font
             }),
         );
+        // `text-decoration` shorthand fall-through — only `thickness` is
+        // absolutized (same basis as the `TextDecorationThickness` longhand
+        // arm above); line/style/color pass through untouched. `Auto`
+        // thickness survives as a keyword, `Length` converges to `Px`.
+        for thickness in [
+            TextDecorationThickness::Auto,
+            TextDecorationThickness::Length(Length::Em(1.5)),
+        ] {
+            let decoration = TextDecorationShorthand {
+                line: TextDecorationLine::UNDERLINE,
+                style: TextDecorationStyle::Wavy,
+                color: TextDecorationColor::CurrentColor,
+                thickness,
+            };
+            let expected_thickness = match thickness {
+                TextDecorationThickness::Auto | TextDecorationThickness::FromFont => thickness,
+                TextDecorationThickness::Length(_) => {
+                    TextDecorationThickness::Length(Length::Px(30.0))
+                }
+            };
+            assert_eq!(
+                absolutize_in_page_context(
+                    ResolvedAgainstInherited::for_test(PropertyValue::TextDecoration(decoration)),
+                    fs,
+                    None,
+                    &ctx,
+                    styles,
+                    OutlineStyle::None,
+                    OverflowXY::both(OverflowValue::Visible),
+                ),
+                PropertyValue::TextDecoration(TextDecorationShorthand {
+                    thickness: expected_thickness,
+                    ..decoration
+                }),
+            );
+        }
+        // `text-decoration-inset` fall-through — `Auto` survives as a
+        // keyword (same shape as the `Auto` thickness case above).
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::TextDecorationInset(
+                    TextDecorationInset::Auto
+                )),
+                fs,
+                None,
+                &ctx,
+                styles,
+                OutlineStyle::None,
+                OverflowXY::both(OverflowValue::Visible),
+            ),
+            PropertyValue::TextDecorationInset(TextDecorationInset::Auto),
+        );
+        // `flex-basis` intrinsic keywords round-trip as keywords through
+        // the `fb` helper (same shape as `Content`, which the corpus pins
+        // via its own sample).
+        for basis in [
+            FlexBasisValue::MinContent,
+            FlexBasisValue::MaxContent,
+            FlexBasisValue::FitContent,
+        ] {
+            assert_eq!(
+                absolutize_in_page_context(
+                    ResolvedAgainstInherited::for_test(PropertyValue::FlexBasis(basis)),
+                    fs,
+                    None,
+                    &ctx,
+                    styles,
+                    OutlineStyle::None,
+                    OverflowXY::both(OverflowValue::Visible),
+                ),
+                PropertyValue::FlexBasis(basis),
+            );
+        }
+        // Bare `TextDecorationThickness` longhands — `Auto`/`FromFont`
+        // survive as keywords (the `Length` shape is already pinned via the
+        // corpus sample + the shorthand case above).
+        for thickness in [
+            TextDecorationThickness::Auto,
+            TextDecorationThickness::FromFont,
+        ] {
+            assert_eq!(
+                absolutize_in_page_context(
+                    ResolvedAgainstInherited::for_test(PropertyValue::TextDecorationThickness(
+                        thickness
+                    )),
+                    fs,
+                    None,
+                    &ctx,
+                    styles,
+                    OutlineStyle::None,
+                    OverflowXY::both(OverflowValue::Visible),
+                ),
+                PropertyValue::TextDecorationThickness(thickness),
+            );
+        }
     }
 
     /// Sibling of `absolutize_in_page_context_shorthand_fall_throughs` for
@@ -6681,20 +6852,26 @@ mod tests {
     /// currently-unimplemented gap — see the identity-pass-through arm's
     /// own doc comment above and `TransformFunction`/`FilterFunction`
     /// doc's scope notes for the full distinction).
+    /// 95 → 99 (`TextDecorationSkipInk` / `TextDecorationSkipSpaces` /
+    /// `TextEmphasisPosition` / `TextUnderlinePosition`, CSS Text
+    /// Decoration 4 ED — all keyword-only, carry no length payload, same
+    /// identity-pass-through reasoning as the 3 `text-decoration`
+    /// longhands above).
+    /// 99 → 98 (`TextDecoration` shorthand leaves the identity bucket for
+    /// the transform side: its `-thickness` component carries
+    /// `<length-percentage>` — dedicated fall-through arm, same shape as
+    /// `Background` above).
+    /// 98 → 99 (`Page`, CSS Paged Media 3 §8.1 — keyword-only, carries no
+    /// length payload, same identity-pass-through reasoning as
+    /// `TextCombineUpright` above).
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
-    /// であり、明示的に別途判断としている。`border-spacing` 1 variant は
-    /// transform 側 (`TabSize` と同じ round-trip arm) のため本定数に含めない。
-    /// 95 → 97 (CSS Tables 3 §7 `caption-side` / §8 `empty-cells` —
-    /// keyword-only のため pass-through bucket。§6.1 `border-spacing` は
-    /// length-bearing の実 transform arm を持つためこちら側ではなく
-    /// `phase_3_transformed_variants()` 側に +1 される)。
-    /// 97 → 99 (`border-style` / `border-color` shorthands — keyword-only
-    /// のため pass-through bucket。`border-width` shorthand は
-    /// length-bearing の実 transform arm を持つためこちら側ではなく
-    /// `phase_3_transformed_variants()` 側に +1 される)。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 99;
+    /// であり、明示的に別途判断している。`border-spacing` は phase 3 で
+    /// absolutize するため transform bucket に含めず、`caption-side` と
+    /// `empty-cells` は keyword-only の pass-through bucket に含める。
+    /// この値は `page_corpus` の現在の identity/pass-through arms と同期する。
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 104;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -6708,7 +6885,11 @@ mod tests {
     /// helper 参照) / transform 1 (`translate` 系の `<length-percentage>`
     /// を `lp` と同じ split で絶対化する `transform_function` helper
     /// 参照) / border-spacing 1 (2 軸の `<length>` を絶対化する実 transform
-    /// arm、`TabSize` と同じ round-trip 形)。
+    /// arm、`TabSize` と同じ round-trip 形) / text-decoration-thickness 1 /
+    /// text-decoration-inset 1 / `text-decoration` shorthand 1 (3 者とも
+    /// `<length-percentage>` 成分のみを absolutize する実 transform arm)。
+    /// (keyword-only の skip-ink / skip-spaces / emphasis-position /
+    /// underline-position 4 者は素通し側に数える。)
     ///
     /// 以前は `PROPERTY_VALUE_VARIANTS -
     /// PHASE_3_PASS_THROUGH_VARIANTS` という `const` 式だった。
@@ -6854,7 +7035,11 @@ mod tests {
         )])),
         Position => PropertyValue::Position(PositionValue::Static),
         TextAlign => PropertyValue::TextAlign(TextAlign::MatchParent),
-        TextIndent => PropertyValue::TextIndent(Length::Em(2.0)),
+        TextIndent => PropertyValue::TextIndent(TextIndentValue {
+            length: Length::Em(2.0),
+            hanging: false,
+            each_line: false,
+        }),
         PaddingTop => PropertyValue::PaddingTop(Length::Em(2.0)),
         PaddingRight => PropertyValue::PaddingRight(Length::Em(2.0)),
         PaddingBottom => PropertyValue::PaddingBottom(Length::Em(2.0)),
@@ -6938,6 +7123,48 @@ mod tests {
             line: TextDecorationLine::UNDERLINE,
             style: TextDecorationStyle::Wavy,
             color: TextDecorationColor::CurrentColor,
+            thickness: TextDecorationThickness::Length(Length::Em(0.5)),
+        }),
+        // CSS Text Decoration 4 ED §2.10.4 — keyword-only, carries no
+        // length. `All` is the non-initial worst case (`auto` is the spec
+        // initial, same reasoning as `BackgroundAttachment`'s `Fixed`
+        // sample above).
+        TextDecorationSkipInk => {
+            PropertyValue::TextDecorationSkipInk(TextDecorationSkipInk::All)
+        },
+        // ED §2.10.3 — keyword-only, carries no length. `All` is distinct
+        // from the spec initial (`start end`, not `all`).
+        TextDecorationSkipSpaces => {
+            PropertyValue::TextDecorationSkipSpaces(TextDecorationSkipSpaces::All)
+        },
+        // ED §2.4.1 — `Length::Em` worst-case payload (same convention as
+        // `BackgroundSize` above) so this raw sample is caught by
+        // `specified_layer_residue` before phase 3 absolutizes it.
+        TextDecorationThickness => PropertyValue::TextDecorationThickness(
+            TextDecorationThickness::Length(Length::Em(0.5)),
+        ),
+        // ED §2.9.1 — `Em`/`Rem` worst-case payloads on start/end
+        // (distinct edges, same convention as `BackgroundPosition` above).
+        TextDecorationInset => {
+            PropertyValue::TextDecorationInset(TextDecorationInset::Lengths {
+                start: Length::Em(1.0),
+                end: Length::Rem(2.0),
+            })
+        },
+        // ED §3.4 — keyword-only, carries no length. Both axes non-initial
+        // (`over right` is the spec initial).
+        TextEmphasisPosition => PropertyValue::TextEmphasisPosition(
+            TextEmphasisPosition::Position {
+                vertical: TextEmphasisVEdge::Under,
+                horizontal: Some(TextEmphasisHEdge::Left),
+            },
+        ),
+        // ED §2.7 — keyword-only, carries no length. Non-`auto` worst case.
+        TextUnderlinePosition => PropertyValue::TextUnderlinePosition(TextUnderlinePosition {
+            from_font: false,
+            under: true,
+            left: false,
+            right: true,
         }),
         // Unlike `Direction`/`TextDecorationLine` above, `vertical-align`
         // *does* have a specified/computed distinction now that it carries
@@ -7010,6 +7237,7 @@ mod tests {
         // keyword, the same "not the initial value" reasoning
         // `WordBreak`/`OverflowWrap` samples above use.
         WhiteSpace => PropertyValue::WhiteSpace(WhiteSpace::Pre),
+        TextWrap => PropertyValue::TextWrap(TextWrapMode::Nowrap),
         // No specified/computed distinction for `flex-direction`/`flex-wrap`
         // (computed value = specified keyword) — any value is "worst case"
         // (`Direction` sibling comment above uses the same reasoning).
@@ -7376,6 +7604,11 @@ mod tests {
             line_height: LineHeight::Number(1.5),
             family: Arc::new(vec![Atom::from("serif")]),
         }),
+        // CSS Paged Media 3 §8.1 — keyword-only, carries no length.
+        // `Named` is the non-initial worst case (`Auto` is the spec
+        // initial, same reasoning as `BackgroundAttachment`'s `Fixed`
+        // sample above).
+        Page => PropertyValue::Page(PageValue::Named(Atom::from("cover"))),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -7573,6 +7806,7 @@ mod tests {
         Float,
         Clear,
         WhiteSpace,
+        TextWrap,
         FlexDirection,
         FlexWrap,
         FlexGrow,
@@ -7654,6 +7888,13 @@ mod tests {
         Bottom,
         Left,
         Font,
+        TextDecorationSkipInk,
+        TextDecorationSkipSpaces,
+        TextDecorationThickness,
+        TextDecorationInset,
+        TextEmphasisPosition,
+        TextUnderlinePosition,
+        Page,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -7784,7 +8025,11 @@ mod tests {
         /// doc 参照)、`<length-percentage>` は [`length`] に delegate。
         fn flex_basis(fb: FlexBasisValue) -> Option<&'static str> {
             match fb {
-                FlexBasisValue::Auto | FlexBasisValue::Content => None,
+                FlexBasisValue::Auto
+                | FlexBasisValue::Content
+                | FlexBasisValue::MinContent
+                | FlexBasisValue::MaxContent
+                | FlexBasisValue::FitContent => None,
                 FlexBasisValue::Length(l) => length(l),
             }
         }
@@ -7931,7 +8176,9 @@ mod tests {
             PropertyValue::TextAlignLast(_)
             | PropertyValue::TextCombineUpright(_)
             | PropertyValue::TextOrientation(_)
-            | PropertyValue::UnicodeBidi(_) => None,
+            | PropertyValue::UnicodeBidi(_)
+            // `page` carries no length either (`auto` / named page).
+            | PropertyValue::Page(_) => None,
             PropertyValue::LineHeight(lh) => line_height(*lh),
             // `font-size` だけは `%` も残滓 (§5.5.1 の明示的例外)。
             PropertyValue::FontSize(l) => length_absolute_only(*l, "font-size: <percentage>"),
@@ -7957,8 +8204,32 @@ mod tests {
                     .or_else(|| line_height(shorthand.line_height))
                     .or_else(|| font_weight(shorthand.weight))
             }
-            PropertyValue::TextIndent(l)
-            | PropertyValue::PaddingTop(l)
+            // `text-decoration-thickness` stores `auto`/`from-font` (never
+            // residue, same as `LineHeight::Normal`) or `<length-percentage>`
+            // — `Percent` stays symbolic here (TR propdef says
+            // "Percentages: N/A", so unlike `font-size` there is no
+            // compute-away rule to mirror with `length_absolute_only`).
+            PropertyValue::TextDecorationThickness(t) => match t {
+                TextDecorationThickness::Auto | TextDecorationThickness::FromFont => None,
+                TextDecorationThickness::Length(l) => length(*l),
+            },
+            // `text-decoration-inset` stores `auto` (never residue) or 1-2
+            // `<length>` (`%` never parses, `TextDecorationInset` doc).
+            PropertyValue::TextDecorationInset(inset) => match inset {
+                TextDecorationInset::Auto => None,
+                TextDecorationInset::Lengths { start, end } => {
+                    length(*start).or_else(|| length(*end))
+                }
+            },
+            // `text-decoration` shorthand fall-through — only `thickness`
+            // delegates (same `length` split as the longhand arm above);
+            // line/style/color carry no length.
+            PropertyValue::TextDecoration(shorthand) => match shorthand.thickness {
+                TextDecorationThickness::Auto | TextDecorationThickness::FromFont => None,
+                TextDecorationThickness::Length(l) => length(l),
+            },
+            PropertyValue::TextIndent(v) => length(v.length),
+            PropertyValue::PaddingTop(l)
             | PropertyValue::PaddingRight(l)
             | PropertyValue::PaddingBottom(l)
             | PropertyValue::PaddingLeft(l)
@@ -8048,11 +8319,21 @@ mod tests {
             | PropertyValue::OverflowY(_)
             | PropertyValue::Overflow(_)
             // `TextDecorationLine`/`TextDecorationStyle`/`TextDecorationColor`
-            // (and the `text-decoration` shorthand) carry no length either.
+            // carry no length either. The `text-decoration` shorthand itself
+            // does NOT join this bucket: its `-thickness` component carries
+            // `<length-percentage>`, so it gets its own residue arm below
+            // (same "length-bearing fields only" shape as its
+            // `absolutize_in_page_context` fall-through).
             | PropertyValue::TextDecorationLine(_)
             | PropertyValue::TextDecorationStyle(_)
             | PropertyValue::TextDecorationColor(_)
-            | PropertyValue::TextDecoration(_)
+            // `text-decoration-skip-ink`/`-skip-spaces`/
+            // `text-emphasis-position`/`text-underline-position` carry no
+            // length either (see each type's doc).
+            | PropertyValue::TextDecorationSkipInk(_)
+            | PropertyValue::TextDecorationSkipSpaces(_)
+            | PropertyValue::TextEmphasisPosition(_)
+            | PropertyValue::TextUnderlinePosition(_)
             // `FontStyle` carries no length either, at this crate's scope
             // (`normal`/`italic`/`oblique` implemented, `oblique`'s
             // `<angle>` argument is not).
@@ -8085,6 +8366,8 @@ mod tests {
             | PropertyValue::Clear(_)
             // `WhiteSpace` (CSS Text 3 §3) carries no length either.
             | PropertyValue::WhiteSpace(_)
+            // `TextWrapMode` (CSS Text 4 §5 subset) carries no length either.
+            | PropertyValue::TextWrap(_)
             // `Hyphens` (CSS Text 3 §5.3) carries no length either.
             | PropertyValue::Hyphens(_)
             // `FlexDirectionValue`/`FlexWrapValue` carry no length either.
@@ -8645,6 +8928,35 @@ mod tests {
         assert_eq!(
             specified_layer_residue(&PropertyValue::Font(shorthand)),
             Some("font-size: larger/smaller"),
+        );
+    }
+
+    /// Sibling of `font_shorthand_relative_size_is_specified_layer_residue`
+    /// for the `text-decoration` family — keyword payloads (`Auto` /
+    /// `FromFont` thickness, `Auto` inset, `Auto`-thickness shorthand) are
+    /// never residue; only `<length>` is.
+    #[test]
+    fn text_decoration_keyword_payloads_are_not_specified_layer_residue() {
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::TextDecorationThickness(
+                TextDecorationThickness::Auto
+            )),
+            None,
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::TextDecorationInset(
+                TextDecorationInset::Auto
+            )),
+            None,
+        );
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::TextDecoration(TextDecorationShorthand {
+                line: TextDecorationLine::UNDERLINE,
+                style: TextDecorationStyle::Wavy,
+                color: TextDecorationColor::CurrentColor,
+                thickness: TextDecorationThickness::Auto,
+            })),
+            None,
         );
     }
 

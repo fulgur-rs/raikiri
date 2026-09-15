@@ -41,7 +41,7 @@ html5ever   = "0.39"
 markup5ever = "0.39"
 
 # ── Layout (taffy) ─────────────────────────────────────────────────────
-taffy = { version = "0.12", default-features = false, features = [
+taffy = { version = "0.14", default-features = false, features = [
     "std",
     "flexbox",
     "grid",
@@ -52,7 +52,7 @@ taffy = { version = "0.12", default-features = false, features = [
 ] }
 
 # ── Text (parley) ──────────────────────────────────────────────────────
-parley = { version = "0.10", default-features = false, features = ["std", "system"] }
+parley = { version = "0.11", default-features = false, features = ["std", "system"] }
 
 # ── Rendering (anyrender + peniko + kurbo) ─────────────────────────────
 anyrender = "0.11"

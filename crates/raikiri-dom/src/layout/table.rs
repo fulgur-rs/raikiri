@@ -264,10 +264,10 @@ pub fn compute_table_layout(
     // max on conflict. Extra min-height grows rows (same path as a definite
     // height); max-height only clamps the box (content overflows visibly).
     let st = &doc.nodes[table_idx].style;
-    let min_w = resolve_dimension(st.min_size.width, inputs.parent_size.width);
-    let max_w = resolve_dimension(st.max_size.width, inputs.parent_size.width);
-    let min_h = resolve_dimension(st.min_size.height, inputs.parent_size.height);
-    let max_h = resolve_dimension(st.max_size.height, inputs.parent_size.height);
+    let min_w = resolve_dimension(st.min_size.width.into(), inputs.parent_size.width);
+    let max_w = resolve_dimension(st.max_size.width.into(), inputs.parent_size.width);
+    let min_h = resolve_dimension(st.min_size.height.into(), inputs.parent_size.height);
+    let max_h = resolve_dimension(st.max_size.height.into(), inputs.parent_size.height);
     if let Some(mn) = min_h {
         let target = f32_max_compat(mn - distrib_insets.height, 0.0);
         distribute_extra_height(&mut row_heights, target);
@@ -404,8 +404,8 @@ fn collect_col_widths(doc: &Document, table_idx: usize) -> Vec<ColSizing> {
         let st = &doc.nodes[col_id].style;
         ColSizing {
             width: st.size.width,
-            min_width: st.min_size.width,
-            max_width: st.max_size.width,
+            min_width: st.min_size.width.into(),
+            max_width: st.max_size.width.into(),
         }
     }
     let mut out = Vec::new();
@@ -673,6 +673,10 @@ fn measure_cell_inline(doc: &mut Document, cell_id: usize, axis: AvailableSpace)
             available_space: Size {
                 width: axis,
                 height: AvailableSpace::MAX_CONTENT,
+            },
+            known_dimensions_are_definite: taffy::geometry::Size {
+                width: true,
+                height: true,
             },
             vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
         },
@@ -979,6 +983,10 @@ fn resolve_row_heights(doc: &mut Document, grid: &TableGrid, column_widths: &[f3
                     width: AvailableSpace::Definite(cell_width),
                     height: AvailableSpace::MAX_CONTENT,
                 },
+                known_dimensions_are_definite: taffy::geometry::Size {
+                    width: true,
+                    height: true,
+                },
                 vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
             },
         );
@@ -1067,6 +1075,10 @@ fn place_cells(
                     width: AvailableSpace::Definite(cell_width),
                     height: AvailableSpace::Definite(cell_height),
                 },
+                known_dimensions_are_definite: taffy::geometry::Size {
+                    width: true,
+                    height: true,
+                },
                 vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
             },
         );
@@ -1080,7 +1092,7 @@ fn place_cells(
                 width: cell_width,
                 height: cell_height,
             },
-            content_size: output.content_size,
+            scrollable_overflow_rect: output.scrollable_overflow_rect,
             scrollbar_size: Size::ZERO,
             padding: Rect::ZERO,
             border: Rect::ZERO,
