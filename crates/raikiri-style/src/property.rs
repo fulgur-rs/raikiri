@@ -6800,6 +6800,16 @@ pub enum PropertyValue {
     /// `max-height: none | <length-percentage [0,∞]> | min-content | max-content | fit-content` — **non-inherited**、initial: `none`
     /// (CSS Sizing 3 §3.2 <https://www.w3.org/TR/css-sizing-3/#max-size-properties>).
     MaxHeight(LengthOrAuto),
+    /// `min-width: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content` — **non-inherited**、initial: `auto`
+    /// (CSS Sizing 3 §4 <https://www.w3.org/TR/css-sizing-3/#min-size-properties>).
+    /// `auto` maps to [`LengthOrAuto::Auto`] (no minimum). Intrinsic keywords map
+    /// similarly to Auto (WPT parsing valid, layout pending) — sibling
+    /// [`Self::Width`] arms use the same placeholder shape.
+    MinWidth(LengthOrAuto),
+    /// `min-height: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content` — **non-inherited**、initial: `auto`
+    /// (CSS Sizing 3 §4 <https://www.w3.org/TR/css-sizing-3/#min-size-properties>).
+    /// Same placeholder shape as sibling [`Self::MinWidth`].
+    MinHeight(LengthOrAuto),
     /// `box-sizing: content-box | border-box` — **non-inherited**、initial:
     /// `content-box` (CSS Sizing 3 §3.3 "Box Edges for Sizing: the box-sizing
     /// property" <https://www.w3.org/TR/css-sizing-3/#box-sizing>)。
@@ -7637,6 +7647,8 @@ pub enum PropertyKey {
     Height,
     MaxWidth,
     MaxHeight,
+    MinWidth,
+    MinHeight,
     // box-sizing (CSS Sizing 3 §3.3、semantics on the
     // matching PropertyValue::BoxSizing variant; sibling PropertyKey variants
     // carry no per-variant docs per crate convention).
@@ -8002,6 +8014,8 @@ impl PropertyValue {
             PropertyValue::Height(_) => PropertyKey::Height,
             PropertyValue::MaxWidth(_) => PropertyKey::MaxWidth,
             PropertyValue::MaxHeight(_) => PropertyKey::MaxHeight,
+            PropertyValue::MinWidth(_) => PropertyKey::MinWidth,
+            PropertyValue::MinHeight(_) => PropertyKey::MinHeight,
             PropertyValue::BoxSizing(_) => PropertyKey::BoxSizing,
             PropertyValue::Direction(_) => PropertyKey::Direction,
             PropertyValue::OverflowX(_) => PropertyKey::OverflowX,
@@ -8635,6 +8649,8 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "height" => PropertyKey::Height,
         "max-width" => PropertyKey::MaxWidth,
         "max-height" => PropertyKey::MaxHeight,
+        "min-width" => PropertyKey::MinWidth,
+        "min-height" => PropertyKey::MinHeight,
         "box-sizing" => PropertyKey::BoxSizing,
         "direction" => PropertyKey::Direction,
         "overflow-x" => PropertyKey::OverflowX,
@@ -9015,6 +9031,8 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // `none | <length-percentage [0,∞]> | min-content | max-content | fit-content`
         "max-width" => parse_max_size(input).map(PropertyValue::MaxWidth),
         "max-height" => parse_max_size(input).map(PropertyValue::MaxHeight),
+        "min-width" => parse_min_size(input).map(PropertyValue::MinWidth),
+        "min-height" => parse_min_size(input).map(PropertyValue::MinHeight),
         // CSS Sizing 3 §3.3 box-sizing。
         // value grammar `content-box | border-box`、initial `content-box`、
         // not inherited、computed value = specified keyword。
@@ -12454,8 +12472,74 @@ fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
+/// `min-width` / `min-height: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content` を parse する。
+///
+/// Grammar reference: CSS Sizing 3 §4 "Minimum Size Properties"
+/// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>。initial value
+/// `auto`、Inheritance `No`。sibling [`parse_max_size`] (CSS Sizing 3 §5) と
+/// 同 shape で、`none` keyword 分岐が `auto` に置き換わる点だけが異なる
+/// (min の initial は `auto`、`none` は max-only grammar)。
+/// 非負制約 (`[0,∞]` → [`length_payload`] post-filter) と intrinsic keyword の
+/// Auto placeholder mapping は sibling と同一。
 fn parse_max_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(LengthOrAuto::Auto);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("min-content"))
+        .is_ok()
+    {
+        return Some(LengthOrAuto::Auto);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("max-content"))
+        .is_ok()
+    {
+        return Some(LengthOrAuto::Auto);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("fit-content"))
+        .is_ok()
+    {
+        let _ = input.try_parse(|i| {
+            i.expect_parenthesis_block()?;
+            i.parse_nested_block(|nested| {
+                parse_length_value(nested, true)
+                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
+                Ok::<_, cssparser::ParseError<'_, ()>>(())
+            })
+        });
+        return Some(LengthOrAuto::Auto);
+    }
+    if input
+        .try_parse(|i| {
+            i.expect_function_matching("fit-content")?;
+            i.parse_nested_block(|nested| {
+                parse_length_value(nested, true)
+                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
+                nested.expect_exhausted()?;
+                Ok::<_, cssparser::ParseError<'_, ()>>(())
+            })
+        })
+        .is_ok()
+    {
+        return Some(LengthOrAuto::Auto);
+    }
+    let length = parse_length_value(input, true)?;
+    (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
+}
+
+/// `min-width` / `min-height: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content` を parse する.
+///
+/// Grammar reference: CSS Sizing 3 §4 "Minimum Size Properties"
+/// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>。initial value
+/// `auto`、Inheritance `No`。sibling `parse_max_size` (CSS Sizing 3 §5) と
+/// 同 shape で、`none` keyword 分岐が `auto` に置き換わる点だけが異なる
+/// (min の initial は `auto`、`none` は max-only grammar)。
+/// 非負制約 (`[0,∞]` → `length_payload` post-filter) と intrinsic keyword の
+/// Auto placeholder mapping は sibling と同一。
+fn parse_min_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
     if input

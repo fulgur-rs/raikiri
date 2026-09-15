@@ -245,6 +245,10 @@ pub struct SpecifiedValues {
     pub max_width: LengthOrAuto,
     /// `max-height` の **specified** value。phase 3 で絶対化される。
     pub max_height: LengthOrAuto,
+    /// `min-width` の **specified** value。phase 3 で絶対化される。
+    pub min_width: LengthOrAuto,
+    /// `min-height` の **specified** value。phase 3 で絶対化される。
+    pub min_height: LengthOrAuto,
     /// `top` の **specified** value。phase 3 で絶対化される。
     pub top: LengthOrAuto,
     /// `right` の **specified** value。phase 3 で絶対化される。
@@ -607,6 +611,8 @@ impl SpecifiedValues {
             height: LengthOrAuto::Auto,
             max_width: LengthOrAuto::Auto,
             max_height: LengthOrAuto::Auto,
+            min_width: LengthOrAuto::Auto,
+            min_height: LengthOrAuto::Auto,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
             bottom: LengthOrAuto::Auto,
@@ -958,6 +964,8 @@ impl SpecifiedValues {
             height: LengthOrAuto::Auto,
             max_width: LengthOrAuto::Auto,
             max_height: LengthOrAuto::Auto,
+            min_width: LengthOrAuto::Auto,
+            min_height: LengthOrAuto::Auto,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
             bottom: LengthOrAuto::Auto,
@@ -1428,6 +1436,18 @@ impl SpecifiedValues {
             ),
             max_height: resolve_length_percentage_or_auto(
                 self.max_height,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
+            min_width: resolve_length_percentage_or_auto(
+                self.min_width,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
+            min_height: resolve_length_percentage_or_auto(
+                self.min_height,
                 font_size,
                 own_line_height,
                 ctx,
@@ -2043,6 +2063,8 @@ mod tests {
             height: ComputedLengthPercentageOrAuto::Px(200.0),
             max_width: ComputedLengthPercentageOrAuto::Auto,
             max_height: ComputedLengthPercentageOrAuto::Auto,
+            min_width: ComputedLengthPercentageOrAuto::Auto,
+            min_height: ComputedLengthPercentageOrAuto::Auto,
             top: ComputedLengthPercentageOrAuto::Px(10.0),
             right: ComputedLengthPercentageOrAuto::Px(20.0),
             bottom: ComputedLengthPercentageOrAuto::Px(30.0),

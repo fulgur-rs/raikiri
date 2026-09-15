@@ -3456,11 +3456,13 @@ fn absolutize_in_page_context(
                 resolve_length(v, font_size, own_line_height, ctx).px(),
             ))
         }
-        // ── width / height / max-* ────────────────────────────────────────
+        // ── width / height / max-* / min-* ──────────────────────────────
         PropertyValue::Width(v) => PropertyValue::Width(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Height(v) => PropertyValue::Height(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::MaxWidth(v) => PropertyValue::MaxWidth(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::MaxHeight(v) => PropertyValue::MaxHeight(lpa(v, font_size, own_line_height, ctx)),
+        PropertyValue::MinWidth(v) => PropertyValue::MinWidth(lpa(v, font_size, own_line_height, ctx)),
+        PropertyValue::MinHeight(v) => PropertyValue::MinHeight(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Top(v) => PropertyValue::Top(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Right(v) => PropertyValue::Right(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Bottom(v) => PropertyValue::Bottom(lpa(v, font_size, own_line_height, ctx)),
@@ -6859,6 +6861,8 @@ mod tests {
         Height => PropertyValue::Height(LengthOrAuto::Length(Length::Em(4.0))),
         MaxWidth => PropertyValue::MaxWidth(LengthOrAuto::Length(Length::Em(5.0))),
         MaxHeight => PropertyValue::MaxHeight(LengthOrAuto::Length(Length::Em(6.0))),
+        MinWidth => PropertyValue::MinWidth(LengthOrAuto::Length(Length::Em(7.0))),
+        MinHeight => PropertyValue::MinHeight(LengthOrAuto::Length(Length::Em(8.0))),
         BoxSizing => PropertyValue::BoxSizing(BoxSizing::BorderBox),
         // No specified/computed distinction for `direction` (computed
         // value = specified value) — any value is "worst case".
@@ -7499,6 +7503,8 @@ mod tests {
         Height,
         MaxWidth,
         MaxHeight,
+        MinWidth,
+        MinHeight,
         BoxSizing,
         Direction,
         OverflowX,
@@ -7924,7 +7930,9 @@ mod tests {
             | PropertyValue::Width(l)
             | PropertyValue::Height(l)
             | PropertyValue::MaxWidth(l)
-            | PropertyValue::MaxHeight(l) => length_or_auto(*l),
+            | PropertyValue::MaxHeight(l)
+            | PropertyValue::MinWidth(l)
+            | PropertyValue::MinHeight(l) => length_or_auto(*l),
             PropertyValue::Padding(s) => sides(*s, length),
             PropertyValue::Margin(s) => sides(*s, length_or_auto),
             PropertyValue::PaddingInline(p) | PropertyValue::PaddingBlock(p) => {
