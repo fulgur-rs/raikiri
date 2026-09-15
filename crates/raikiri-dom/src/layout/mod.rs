@@ -20,7 +20,7 @@ use raikiri_style::property::{
     AlignSelfValue, BoxSizing as StyleBoxSizing, ClearValue, ContentAlignmentValue, Direction,
     DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle as StyleFontStyle,
     GridAutoFlowValue, GridLineValue, GridRepeatCount, GridTemplateAreasValue, SelfAlignmentValue,
-    TextAlign, TextJustify, WhiteSpace,
+    TextAlign, TextJustify, TextWrapMode, WhiteSpace,
 };
 use raikiri_style::{
     CascadeResult, ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth,
@@ -1664,6 +1664,16 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
             Alignment::End if cv.direction == Direction::Rtl => Alignment::Left,
             a => a,
         };
+        // `text-justify: none` disables justification (CSS Text 3 §6.2):
+        // combined with `text-align: justify` it falls back to the start
+        // edge (direction-aware).
+        let mut align = parley_align;
+        if cv.text_justify == TextJustify::None && align == Alignment::Justify {
+            align = match cv.direction {
+                Direction::Rtl => Alignment::Right,
+                _ => Alignment::Start,
+            };
+        }
         // `text-indent` (CSS Text 3 §8.1): length plus hanging/each-line
         // flags, resolved against the containing block width for `%`
         // (unknown at preshape time — same width-basis problem as align).
@@ -1682,7 +1692,6 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
         } else {
             None
         };
-        let needs_indent = indent_options.is_some();
         // preshape は page 幅で break するため、narrow container 内の text の
         // 折り返しは container 幅に整合しない (bd raikiri-spike-5u1y slice 1b で
         // 実測: length-001 の 3-line article が single-line のまま残る)。
@@ -1690,10 +1699,12 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
         // revert した (当該 experiment は別途 full-baseline 判定が必要 —
         // bd raikiri-spike-5u1y コメント参照)。したがって re-break は
         // indent 付き / 非 Start の node のみに限定する。
-        // Start + indent 無しは preshape のまま (wrap は page 幅の既知の限界)。
-        if parley_align == Alignment::Start && !needs_indent {
-            continue;
-        }
+        // All non-flex text re-breaks against the containing width here
+        // (bd raikiri-spike-9q1p): preshape only knows the page width, so
+        // narrow-container wrapping would otherwise never apply. `nowrap`
+        // nodes are handled by the branch below without re-breaking.
+        // `Start` alignment after re-break is a no-op offset-wise; only the
+        // wrap points change.
         // `Justify` / `End` 等も同じ幅基準問題を持つため同じ経路で扱うが、
         // 本 goal の主 target は `Center`。他値もここで正しい幅基準になる。
         let Some(parent_idx) = *parent else {
@@ -1720,6 +1731,22 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
         else {
             continue;
         };
+        // No-wrap (`white-space: nowrap` or `text-wrap: nowrap`): preshape
+        // already broke without a width cap, so re-breaking here would wrap.
+        // Apply indent and align onto the preshaped single line instead.
+        // Single-line Justify is a parley no-op (last line excluded), which
+        // matches `text-align: justify` under nowrap.
+        if cv.white_space == WhiteSpace::Nowrap || cv.text_wrap == TextWrapMode::Nowrap {
+            if let Some(options) = indent_options {
+                let amount = match cv.text_indent {
+                    ComputedLengthPercentage::Px(px) => px,
+                    ComputedLengthPercentage::Percent(p) => containing_width * p / 100.0,
+                };
+                layout.set_text_indent(amount, options);
+            }
+            layout.align(align, AlignmentOptions::default());
+            continue;
+        }
         if let Some(options) = indent_options {
             let amount = match cv.text_indent {
                 ComputedLengthPercentage::Px(px) => px,
@@ -1728,15 +1755,6 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
             layout.set_text_indent(amount, options);
         }
         layout.break_all_lines(Some(containing_width));
-        let mut align = parley_align;
-        // `text-justify: none` は justification を無効化する (CSS Text 3 §6.2):
-        // `text-align: justify` との組合せでも行頭側に倒す (direction 考慮)。
-        if cv.text_justify == TextJustify::None && align == Alignment::Justify {
-            align = match cv.direction {
-                Direction::Rtl => Alignment::Right,
-                _ => Alignment::Start,
-            };
-        }
         // `text-align-last` (CSS Text 3 §6.1): 明示 last 値の適用は対象外。
         // parley の `align(Justify)` は最終行 (`BreakReason::None`) を
         // 意図的に除外するため (parley alignment.rs 実測)、single-line を含む
@@ -3625,6 +3643,9 @@ pub(crate) fn preshape_text(
         line_height_raw: ComputedLineHeight,
         tab_size: ComputedTabSize,
         white_space: WhiteSpace,
+        // Soft wrapping suppressed (`white-space: nowrap` or
+        // `text-wrap: nowrap`, bd raikiri-spike-9q1p).
+        nowrap: bool,
         // tab-stop metrics 用 font (block-container 祖先、無ければ自要素)。
         metrics_family: String,
         metrics_size: f32,
@@ -3704,6 +3725,7 @@ pub(crate) fn preshape_text(
             line_height_raw: cv.line_height,
             tab_size: cv.tab_size,
             white_space: cv.white_space,
+            nowrap: cv.white_space == WhiteSpace::Nowrap || cv.text_wrap == TextWrapMode::Nowrap,
             metrics_family: family_str_of(mcv),
             metrics_size: mcv.font_size.px(),
             metrics_weight: mcv.font_weight,
@@ -3773,7 +3795,7 @@ pub(crate) fn preshape_text(
                 line_height,
             )));
             let mut layout: Layout<()> = builder.build(&job.text);
-            layout.break_all_lines(Some(max_advance));
+            layout.break_all_lines(if job.nowrap { None } else { Some(max_advance) });
             layout.align(Alignment::Start, AlignmentOptions::default());
             doc.layout_warnings.extend(warnings);
             if let Some(t) = doc.nodes[job.idx].data.as_text_mut() {
@@ -3818,7 +3840,7 @@ pub(crate) fn preshape_text(
                     line_height,
                 )));
                 let mut layout: Layout<()> = builder.build(&job.text);
-                layout.break_all_lines(Some(max_advance));
+                layout.break_all_lines(if job.nowrap { None } else { Some(max_advance) });
                 layout.align(Alignment::Start, AlignmentOptions::default());
                 out.push((job.idx, layout, warnings));
             }
@@ -4834,6 +4856,35 @@ mod tests {
             let o = indent_options_for_node(true, true, start).expect("combined applies");
             assert!(o.each_line && o.hanging);
         }
+    }
+
+    #[test]
+    fn text_wrap_nowrap_keeps_single_line_in_narrow_container() {
+        // `text-wrap: nowrap` suppresses soft wrapping (CSS Text 4 §5,
+        // bd raikiri-spike-9q1p): long text in a narrow block stays one line.
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let div = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display: block; width: 60px; text-wrap: nowrap"),
+        );
+        let t = doc.append_text(div, "aaaa bbbb cccc dddd eeee ffff");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let layout = doc.nodes[t].text_layout().expect("text shaped");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(layout.len(), 1, "nowrap text must not soft-wrap");
     }
 
     #[test]

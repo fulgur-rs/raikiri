@@ -22,9 +22,10 @@ use crate::property::{
     GridTemplateAreasValue, Hyphens, Isolation, MaskImage, MixBlendMode, ObjectFit, OutlineColor,
     OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue, SelfAlignmentValue,
     Sides, TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine,
-    TextDecorationStyle, TextJustify, TextTransform, VerticalAlign, Visibility, VisualBox,
-    WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
-    empty_filter_list, empty_quotes_entries, empty_string_set_entries, initial_font_family,
+    TextDecorationStyle, TextJustify, TextTransform, TextWrapMode, VerticalAlign, Visibility,
+    VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_content_list,
+    empty_counter_entries, empty_filter_list, empty_quotes_entries, empty_string_set_entries,
+    initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem,
@@ -1061,6 +1062,8 @@ pub struct ComputedValues {
     /// table describes belongs to a text layout / line-breaking consumer
     /// (raikiri-dom / raikiri-paint) this crate does not implement yet.
     pub white_space: WhiteSpace,
+    /// `text-wrap` wrapping component. Inherited, initial `wrap`.
+    pub text_wrap: TextWrapMode,
     /// `hyphens`. **inherited**, initial: [`Hyphens::Manual`] (CSS Text
     /// Module Level 3 §5.3 "Hyphenation: the hyphens property"
     /// <https://www.w3.org/TR/css-text-3/#hyphens-property>, "Initial:
@@ -1628,6 +1631,7 @@ impl ComputedValues {
             clear: ClearValue::None,
             // CSS Text 3 §3: white-space initial は `normal`。
             white_space: WhiteSpace::Normal,
+            text_wrap: TextWrapMode::Wrap,
             // CSS Text 3 §5.3: hyphens initial は `manual`。
             hyphens: Hyphens::Manual,
             // CSS Flexible Box Layout Module Level 1 §5.1: flex-direction
@@ -2178,6 +2182,7 @@ mod tests {
             // CSS Text 3 §3: `Pre` — initial (`Normal`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             white_space: WhiteSpace::Pre,
+            text_wrap: TextWrapMode::Nowrap,
             // CSS Text 3 §5.3: `None` — initial (`Manual`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             hyphens: Hyphens::None,
