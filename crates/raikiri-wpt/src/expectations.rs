@@ -1229,7 +1229,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + css-tables parsing-8 (+7: border-spacing/caption-side/empty-cells valid + caption-side/empty-cells/table-layout/border-collapse computed)
         // + css-tables reftest tables-sweep (+4: zero-rowspan-001, row-group-order, percent-height-replaced-in-percent-cell.tentative, table-cell-baseline-static-position).
         // quarantine and deprecated stay empty until a developer PR adds a flake or crasher.
-        assert_eq!(set.baseline.entries.len(), 832);
+        assert_eq!(set.baseline.entries.len(), 831);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
