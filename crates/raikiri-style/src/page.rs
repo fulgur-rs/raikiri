@@ -125,12 +125,13 @@ use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_pr
 use crate::property::{
     BackgroundShorthand, BackgroundSize, Border, BorderCollapseValue, BorderColor, BorderRadius,
     BorderStyle, BoxShadowItem, CssPosition, CssPositionOffset, CustomProperty, FlexBasisValue,
-    FlexFlow, FlexShorthand, GapShorthand, GridInflexibleBreadth, GridTemplateTracks,
-    GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize,
-    Length, LengthOrAuto, LengthOrNormal, Outline, OutlineColor, OutlineStyle, OverflowValue,
-    OverflowXY, PropertyKey, PropertyValue, Sides, TableLayoutValue, TextCombineUpright,
-    TextOrientation, TextShadowItem, TransformFunction, UnicodeBidi, parse_length_allow_negative,
-    parse_non_negative_length, parse_value, resolve_overflow, resolve_writing_mode,
+    FlexFlow, FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand, GridInflexibleBreadth,
+    GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
+    GridTrackSize, Length, LengthOrAuto, LengthOrNormal, Outline, OutlineColor, OutlineStyle,
+    OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides, TableLayoutValue,
+    TextCombineUpright, TextOrientation, TextShadowItem, TransformFunction, UnicodeBidi,
+    parse_length_allow_negative, parse_non_negative_length, parse_value, resolve_overflow,
+    resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedCssPositionOffset, ComputedFlexBasis,
@@ -3495,6 +3496,33 @@ fn absolutize_in_page_context(
             size: background_size(shorthand.size, font_size, own_line_height, ctx),
             ..shorthand
         }),
+        // `font` shorthand fall-through (see `Padding` above for the
+        // unreachability rationale) — unreachable in practice
+        // (`expand_shorthand_into` expands it before this function ever sees
+        // a winner). `size`/`line-height` are the length-bearing components
+        // this function absolutizes here — same basis as the `FontSize`/
+        // `LineHeight` longhand arms just above (`Flex`/`Gap`/`Background`
+        // above use the same "only the length-bearing fields get
+        // transformed" shape). Pinned directly by
+        // `tests::absolutize_in_page_context_shorthand_fall_throughs`'s
+        // `Font` case.
+        PropertyValue::Font(shorthand) => PropertyValue::Font(FontShorthand {
+            size: match shorthand.size {
+                FontShorthandSize::Absolute(length) => FontShorthandSize::Absolute(Length::Px(
+                    resolve_length(length, font_size, own_line_height, ctx).px(),
+                )),
+                FontShorthandSize::Relative(relative) => FontShorthandSize::Absolute(Length::Px(
+                    resolve_relative_font_size(relative, font_size.px()),
+                )),
+            },
+            line_height: lift_line_height(resolve_line_height(
+                shorthand.line_height,
+                font_size,
+                ctx.root_line_height,
+                ctx,
+            )),
+            ..shorthand
+        }),
         // ── object-position ──────────────────────────────────────────────
         // CSS Images Module Level 3 §5.2: carries `<length-percentage>`
         // components via the reused `CssPosition` type (same shape and same
@@ -3811,18 +3839,18 @@ mod tests {
         BackgroundRepeatKeyword, BackgroundShorthand, BorderRadius, BoxShadowItem, BoxSizing,
         BreakBetween, BreakInside, ClearValue, ClipPath, ContentAlignmentValue, ContentComponent,
         CssColor, CustomProperty, Direction, DisplayValue, FilterFunction, FlexDirectionValue,
-        FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, FontWeightValue, GeometryBox,
-        GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand, GridLineValue,
-        GridRepeatCount, GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue,
-        GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent,
-        GridTrackRepeat, GridTrackSize, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal,
-        LineBreak, LineHeight, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineStyle,
-        OverflowValue, OverflowWrap, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand,
-        PlaceSelfShorthand, PositionValue, SelfAlignmentValue, StartEnd, TabSize, TextAlign,
-        TextAlignAll, TextAlignLast, TextDecorationColor, TextDecorationLine,
-        TextDecorationShorthand, TextDecorationStyle, TextJustify, TextShadowColor, TextTransform,
-        TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak,
-        WritingMode, ZIndexValue,
+        FlexWrapValue, FloatValue, FontShorthand, FontShorthandSize, FontStyle, FontVariantCaps,
+        FontWeightValue, GeometryBox, GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand,
+        GridLineValue, GridRepeatCount, GridTemplateAreaEntry, GridTemplateAreas,
+        GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+        GridTrackListComponent, GridTrackRepeat, GridTrackSize, Hyphens, Isolation, Length,
+        LengthOrAuto, LengthOrNormal, LineBreak, LineHeight, MaskImage, MixBlendMode, ObjectFit,
+        Outline, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PlaceContentShorthand,
+        PlaceItemsShorthand, PlaceSelfShorthand, PositionValue, RelativeFontSize,
+        SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextAlignAll, TextAlignLast,
+        TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
+        TextJustify, TextShadowColor, TextTransform, TransformFunction, VerticalAlign, Visibility,
+        VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use crate::ruletree::build_rule_tree;
@@ -5721,6 +5749,57 @@ mod tests {
                 ..shorthand
             }),
         );
+        // `font` shorthand fall-through — resolves its own `size`/
+        // `line-height` fields (distinct em/rem values, same
+        // field-swap-detecting shape as the `background` case above),
+        // leaving the other 4 fields untouched via the struct-update
+        // `..shorthand`.
+        let font = FontShorthand {
+            style: FontStyle::Italic,
+            variant: FontVariantCaps::SmallCaps,
+            weight: FontWeightValue::Absolute(700.0),
+            size: FontShorthandSize::Absolute(Length::Em(1.5)),
+            line_height: LineHeight::Length(Length::Rem(2.0)),
+            family: Arc::new(vec![Atom::from("serif")]),
+        };
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::Font(font.clone())),
+                fs,
+                None,
+                &ctx,
+                styles,
+                OutlineStyle::None,
+                OverflowXY::both(OverflowValue::Visible),
+            ),
+            PropertyValue::Font(FontShorthand {
+                size: FontShorthandSize::Absolute(Length::Px(30.0)),
+                line_height: LineHeight::Length(Length::Px(32.0)),
+                ..font.clone()
+            }),
+        );
+        // `Relative` size converges to the same `Absolute(Px(_))` shape the
+        // `FontSizeRelative` longhand arm produces (same basis).
+        let relative_font = FontShorthand {
+            size: FontShorthandSize::Relative(RelativeFontSize::Larger),
+            ..font.clone()
+        };
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::Font(relative_font)),
+                fs,
+                None,
+                &ctx,
+                styles,
+                OutlineStyle::None,
+                OverflowXY::both(OverflowValue::Visible),
+            ),
+            PropertyValue::Font(FontShorthand {
+                size: FontShorthandSize::Absolute(Length::Px(24.0)),
+                line_height: LineHeight::Length(Length::Px(32.0)),
+                ..font
+            }),
+        );
     }
 
     /// Sibling of `absolutize_in_page_context_shorthand_fall_throughs` for
@@ -7196,6 +7275,20 @@ mod tests {
         // CSS Tables 3 §6 border-collapse — non-initial (`collapse`, not
         // `separate`), same rationale as `TableLayout` above.
         BorderCollapse => PropertyValue::BorderCollapse(BorderCollapseValue::Collapse),
+        // CSS Fonts 4 §2.1 — shorthand fall-through (`Background` above
+        // uses the same "sample a shorthand with a length-bearing
+        // component" shape). `size`/`line-height` carry the lengths; the
+        // other 4 components reuse non-initial payloads distinct from
+        // their standalone longhand samples above, to catch a field-swap
+        // regression in the shorthand's own fall-through arms.
+        Font => PropertyValue::Font(FontShorthand {
+            style: FontStyle::Italic,
+            variant: FontVariantCaps::SmallCaps,
+            weight: FontWeightValue::Absolute(700.0),
+            size: FontShorthandSize::Absolute(Length::Em(1.5)),
+            line_height: LineHeight::Number(1.5),
+            family: Arc::new(vec![Atom::from("serif")]),
+        }),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -7465,6 +7558,7 @@ mod tests {
         Right,
         Bottom,
         Left,
+        Font,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -7750,6 +7844,24 @@ mod tests {
             // 常に未解決の残滓。`page_corpus` の worst-case
             // payload としても使う。
             PropertyValue::FontSizeRelative(_) => Some("font-size: larger/smaller"),
+            // `font` shorthand fall-through — `size` は `FontSize` /
+            // `FontSizeRelative` longhand arm と同じ delegate
+            // (`length_absolute_only` / 常に残滓)、`line-height` は
+            // `LineHeight` arm と同じ `line_height` delegate、`weight` は
+            // `FontWeight` arm と同じ `font_weight` delegate。style /
+            // variant / family は length を運ばない (各 longhand arm と
+            // 同じく無 residue)。
+            PropertyValue::Font(shorthand) => {
+                let size_residue = match shorthand.size {
+                    FontShorthandSize::Absolute(l) => {
+                        length_absolute_only(l, "font-size: <percentage>")
+                    }
+                    FontShorthandSize::Relative(_) => Some("font-size: larger/smaller"),
+                };
+                size_residue
+                    .or_else(|| line_height(shorthand.line_height))
+                    .or_else(|| font_weight(shorthand.weight))
+            }
             PropertyValue::TextIndent(l)
             | PropertyValue::PaddingTop(l)
             | PropertyValue::PaddingRight(l)
@@ -8401,6 +8513,28 @@ mod tests {
                 BackgroundSize::Contain
             ))),
             None,
+        );
+    }
+
+    /// Sibling of `background_shorthand_size_cover_and_contain_are_not_specified_layer_residue`
+    /// above, for the `font` shorthand's own `size` field —
+    /// `page_corpus`'s `Font` sample always uses the `Absolute` variant
+    /// (`sample_for`), so this `Relative` arm of the shorthand's
+    /// fall-through isn't exercised via the corpus. Here directly: same
+    /// residue string as the `FontSizeRelative` longhand arm.
+    #[test]
+    fn font_shorthand_relative_size_is_specified_layer_residue() {
+        let shorthand = FontShorthand {
+            style: FontStyle::Normal,
+            variant: FontVariantCaps::Normal,
+            weight: FontWeightValue::Absolute(400.0),
+            size: FontShorthandSize::Relative(RelativeFontSize::Larger),
+            line_height: LineHeight::Normal,
+            family: Arc::new(vec![Atom::from("serif")]),
+        };
+        assert_eq!(
+            specified_layer_residue(&PropertyValue::Font(shorthand)),
+            Some("font-size: larger/smaller"),
         );
     }
 

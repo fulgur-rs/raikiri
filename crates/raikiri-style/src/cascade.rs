@@ -5349,6 +5349,26 @@ fn project_deferred_value(
             }
             _ => return None,
         },
+        PropertyValue::Font(shorthand) => match key {
+            crate::property::PropertyKey::FontStyle => PropertyValue::FontStyle(shorthand.style),
+            crate::property::PropertyKey::FontVariantCaps => {
+                PropertyValue::FontVariantCaps(shorthand.variant)
+            }
+            crate::property::PropertyKey::FontWeight => PropertyValue::FontWeight(shorthand.weight),
+            crate::property::PropertyKey::FontSize => match shorthand.size {
+                crate::property::FontShorthandSize::Absolute(length) => {
+                    PropertyValue::FontSize(length)
+                }
+                crate::property::FontShorthandSize::Relative(relative) => {
+                    PropertyValue::FontSizeRelative(relative)
+                }
+            },
+            crate::property::PropertyKey::LineHeight => {
+                PropertyValue::LineHeight(shorthand.line_height)
+            }
+            crate::property::PropertyKey::FontFamily => PropertyValue::FontFamily(shorthand.family),
+            _ => return None,
+        },
         PropertyValue::Background(shorthand) => match key {
             crate::property::PropertyKey::BackgroundColor => {
                 PropertyValue::BackgroundColor(shorthand.color)
@@ -7167,6 +7187,14 @@ pub(crate) fn resolve_against_inherited(
         // parent's, and it is structurally unreachable here regardless
         // (`expand_shorthand_into` expands it before this function runs).
         | PropertyValue::Background(_)
+        // `font` shorthand — same "nothing for phase 2 to resolve" shape as
+        // `Padding`/`Margin`/`Border`/`Flex`/`Gap`/`Background` above: its
+        // length-bearing components (`size` as <length-percentage>,
+        // `line-height` as <number>/<length-percentage>) need the
+        // *declaring node's own* font-size (phase 3), not the inheritance
+        // parent's, and it is structurally unreachable here regardless
+        // (`expand_shorthand_into` expands it before this function runs).
+        | PropertyValue::Font(_)
         // object-fit (CSS Images Module Level 3 §5.1) — non-inherited,
         // keyword-only, same "nothing for phase 2 to resolve" shape as
         // `BackgroundRepeat` above.
@@ -7916,6 +7944,32 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.background_size = shorthand.size;
             target.background_clip = shorthand.clip;
             target.background_origin = shorthand.origin;
+        }
+        // `font` shorthand fall-through (see `Padding`/`Flex`/`Background` arm
+        // docs above for the "not a safety net" framing) — unreachable in
+        // practice, `expand_shorthand_into` expands it to the 6
+        // `FontStyle`/`FontVariantCaps`/`FontWeight`/`FontSize`-or-
+        // `FontSizeRelative`/`LineHeight`/`FontFamily` longhands before
+        // `apply_value` ever sees it. Delegates to the 6 longhand arms
+        // above (rather than duplicating their logic) so the
+        // inheritance-seed reads (`FontWeight`'s `bolder`/`lighter`,
+        // `FontSizeRelative`'s `larger`/`smaller`) behave exactly as if
+        // the shorthand had been expanded — `target` still holds the
+        // parent seeds here since no longhand arm ran yet for this node.
+        PropertyValue::Font(shorthand) => {
+            apply_value(PropertyValue::FontStyle(shorthand.style), target);
+            apply_value(PropertyValue::FontVariantCaps(shorthand.variant), target);
+            apply_value(PropertyValue::FontWeight(shorthand.weight), target);
+            match shorthand.size {
+                crate::property::FontShorthandSize::Absolute(length) => {
+                    apply_value(PropertyValue::FontSize(length), target);
+                }
+                crate::property::FontShorthandSize::Relative(relative) => {
+                    apply_value(PropertyValue::FontSizeRelative(relative), target);
+                }
+            }
+            apply_value(PropertyValue::LineHeight(shorthand.line_height), target);
+            apply_value(PropertyValue::FontFamily(shorthand.family), target);
         }
         // CSS Images Module Level 3 §5.1. non-inherited, computed value =
         // specified keyword — simple assignment, no length payload
@@ -18680,6 +18734,119 @@ mod tests {
         assert_eq!(cv.background_color, RED);
     }
 
+    // ── font shorthand (CSS Fonts 4 §2.1) wire-through ──
+
+    #[test]
+    fn font_shorthand_expands_to_6_longhands_through_real_cascade() {
+        // `background_shorthand_expands_to_8_longhands_through_real_cascade`
+        // の sibling — literal な `font:` declaration が parse → cascade
+        // pipeline を通り 6 longhand に展開されることの pin。
+        use crate::property::{FontStyle, FontVariantCaps};
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("font: italic small-caps bold 20px/1.5 serif"),
+        );
+        assert_eq!(cv.font_style, FontStyle::Italic);
+        assert_eq!(cv.font_variant_caps, FontVariantCaps::SmallCaps);
+        assert_eq!(cv.font_weight, 700.0);
+        assert_eq!(cv.font_size, ComputedLength(20.0));
+        assert_eq!(cv.line_height, ComputedLineHeight::Number(1.5));
+        assert_eq!(cv.font_family[0].to_string(), "serif");
+    }
+
+    #[test]
+    fn font_shorthand_and_font_style_longhand_interleave_by_source_order() {
+        // `background_shorthand_and_background_color_longhand_interleave_by_source_order`
+        // の sibling — shorthand と longhand の競合は source order で決まる。
+        use crate::property::FontStyle;
+        let shorthand_first = cascade_doc(
+            "",
+            "div",
+            Some("font: italic 20px serif; font-style: normal"),
+        );
+        assert_eq!(shorthand_first.font_style, FontStyle::Normal);
+
+        let longhand_first = cascade_doc("", "div", Some("font-style: italic; font: 20px serif"));
+        assert_eq!(longhand_first.font_style, FontStyle::Normal);
+    }
+
+    #[test]
+    fn font_shorthand_relative_size_and_weight_resolve_against_parent() {
+        // `div` は root (16px / 400) の子 — `larger` / `bolder` は親基準で
+        // 解決される (longhand arm と同じ roll)。
+        let cv = cascade_doc("", "div", Some("font: bolder larger serif"));
+        assert_eq!(cv.font_weight, 700.0);
+        assert_eq!(cv.font_size, ComputedLength(19.2));
+    }
+
+    #[test]
+    fn var_in_font_shorthand_projects_each_deferred_longhand() {
+        // `var_in_background_shorthand_projects_each_deferred_longhand` の
+        // sibling — `font: var(--f)` は `PropertyKey::Font` の deferred
+        // として 6 longhand に fan-out し、各々が substitution 後に
+        // re-parse される (`expand_deferred` + `project_deferred_value` 経路)。
+        use crate::property::{FontStyle, FontVariantCaps};
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("--f: italic small-caps bold 20px/1.5 serif; font: var(--f)"),
+        );
+        assert_eq!(cv.font_style, FontStyle::Italic);
+        assert_eq!(cv.font_variant_caps, FontVariantCaps::SmallCaps);
+        assert_eq!(cv.font_weight, 700.0);
+        assert_eq!(cv.font_size, ComputedLength(20.0));
+        assert_eq!(cv.line_height, ComputedLineHeight::Number(1.5));
+        assert_eq!(cv.font_family[0].to_string(), "serif");
+    }
+
+    #[test]
+    fn apply_value_direct_font_shorthand_fall_through() {
+        // `apply_value_direct_margin_shorthand_fall_through` の sibling —
+        // cascade 経路では unreachable (`expand_shorthand_into` が展開済み)
+        // の canary。relative 成分 (`bolder` / `larger`) は longhand arm と
+        // 同じく parent seed (ここでは initial: 400 / 16px) 基準で解決される。
+        use crate::Atom;
+        use crate::property::{
+            FontShorthand, FontShorthandSize, FontStyle, FontVariantCaps, FontWeightValue,
+            LineHeight, RelativeFontSize,
+        };
+        use std::sync::Arc;
+        let mut cv = SpecifiedValues::initial();
+        apply_value(
+            PropertyValue::Font(FontShorthand {
+                style: FontStyle::Italic,
+                variant: FontVariantCaps::SmallCaps,
+                weight: FontWeightValue::Bolder,
+                size: FontShorthandSize::Relative(RelativeFontSize::Larger),
+                line_height: LineHeight::Number(1.5),
+                family: Arc::new(vec![Atom::from("serif")]),
+            }),
+            &mut cv,
+        );
+        assert_eq!(cv.font_style, FontStyle::Italic);
+        assert_eq!(cv.font_variant_caps, FontVariantCaps::SmallCaps);
+        assert_eq!(cv.font_weight, 700.0);
+        assert_eq!(cv.font_size, Length::Px(19.2));
+        assert_eq!(cv.line_height, LineHeight::Number(1.5));
+        assert_eq!(cv.font_family[0].to_string(), "serif");
+        // Absolute size takes the plain `FontSize` longhand arm (same
+        // delegation shape as the `Relative` case above).
+        let mut cv = SpecifiedValues::initial();
+        apply_value(
+            PropertyValue::Font(FontShorthand {
+                style: FontStyle::Normal,
+                variant: FontVariantCaps::Normal,
+                weight: FontWeightValue::Absolute(400.0),
+                size: FontShorthandSize::Absolute(Length::Px(12.0)),
+                line_height: LineHeight::Normal,
+                family: Arc::new(vec![Atom::from("serif")]),
+            }),
+            &mut cv,
+        );
+        assert_eq!(cv.font_size, Length::Px(12.0));
+    }
+
     #[test]
     fn background_shorthand_and_background_color_longhand_interleave_by_source_order() {
         // Mirror of `var_in_margin_shorthand_preserves_later_longhand_cascade`'s
@@ -19744,6 +19911,30 @@ mod tests {
                     PropertyKey::BackgroundSize,
                     PropertyKey::BackgroundClip,
                     PropertyKey::BackgroundOrigin,
+                ],
+            ),
+            (
+                "font",
+                "italic small-caps bold 12px/1.5 serif",
+                vec![
+                    PropertyKey::FontStyle,
+                    PropertyKey::FontVariantCaps,
+                    PropertyKey::FontWeight,
+                    PropertyKey::FontSize,
+                    PropertyKey::LineHeight,
+                    PropertyKey::FontFamily,
+                ],
+            ),
+            (
+                "font",
+                "italic larger serif",
+                vec![
+                    PropertyKey::FontStyle,
+                    PropertyKey::FontVariantCaps,
+                    PropertyKey::FontWeight,
+                    PropertyKey::FontSize,
+                    PropertyKey::LineHeight,
+                    PropertyKey::FontFamily,
                 ],
             ),
         ];
