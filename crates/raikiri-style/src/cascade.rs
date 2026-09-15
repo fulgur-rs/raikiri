@@ -5284,6 +5284,9 @@ fn project_deferred_value(
             crate::property::PropertyKey::TextDecorationLine => {
                 PropertyValue::TextDecorationLine(shorthand.line)
             }
+            crate::property::PropertyKey::TextDecorationThickness => {
+                PropertyValue::TextDecorationThickness(shorthand.thickness)
+            }
             crate::property::PropertyKey::TextDecorationStyle => {
                 PropertyValue::TextDecorationStyle(shorthand.style)
             }
@@ -5347,6 +5350,26 @@ fn project_deferred_value(
             crate::property::PropertyKey::JustifySelf => {
                 PropertyValue::JustifySelf(shorthand.justify)
             }
+            _ => return None,
+        },
+        PropertyValue::Font(shorthand) => match key {
+            crate::property::PropertyKey::FontStyle => PropertyValue::FontStyle(shorthand.style),
+            crate::property::PropertyKey::FontVariantCaps => {
+                PropertyValue::FontVariantCaps(shorthand.variant)
+            }
+            crate::property::PropertyKey::FontWeight => PropertyValue::FontWeight(shorthand.weight),
+            crate::property::PropertyKey::FontSize => match shorthand.size {
+                crate::property::FontShorthandSize::Absolute(length) => {
+                    PropertyValue::FontSize(length)
+                }
+                crate::property::FontShorthandSize::Relative(relative) => {
+                    PropertyValue::FontSizeRelative(relative)
+                }
+            },
+            crate::property::PropertyKey::LineHeight => {
+                PropertyValue::LineHeight(shorthand.line_height)
+            }
+            crate::property::PropertyKey::FontFamily => PropertyValue::FontFamily(shorthand.family),
             _ => return None,
         },
         PropertyValue::Background(shorthand) => match key {
@@ -6968,7 +6991,19 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::TextDecorationLine(_)
         | PropertyValue::TextDecorationStyle(_)
         | PropertyValue::TextDecorationColor(_)
+        | PropertyValue::TextDecorationSkipInk(_)
+        | PropertyValue::TextDecorationSkipSpaces(_)
+        | PropertyValue::TextEmphasisPosition(_)
+        | PropertyValue::TextUnderlinePosition(_)
         | PropertyValue::TextDecoration(_)
+        // `text-decoration-thickness` / `text-decoration-inset` carry a
+        // `<length-percentage>` that needs the *declaring node's own*
+        // font-size (phase 3), not the inheritance parent's — same shape
+        // as `Padding`/`Margin`/`Width` above, nothing for phase 2 to
+        // resolve here. (`TextDecoration` shorthand itself joins the group
+        // above since expansion removes it before this function runs.)
+        | PropertyValue::TextDecorationThickness(_)
+        | PropertyValue::TextDecorationInset(_)
         // `vertical-align`'s 6 keywords (`baseline`/`sub`/`super`/`middle`/
         // `text-top`/`text-bottom`) describe a shift *relative to the
         // parent's font metrics*, but that relation is a used-value/layout
@@ -7167,6 +7202,14 @@ pub(crate) fn resolve_against_inherited(
         // parent's, and it is structurally unreachable here regardless
         // (`expand_shorthand_into` expands it before this function runs).
         | PropertyValue::Background(_)
+        // `font` shorthand — same "nothing for phase 2 to resolve" shape as
+        // `Padding`/`Margin`/`Border`/`Flex`/`Gap`/`Background` above: its
+        // length-bearing components (`size` as <length-percentage>,
+        // `line-height` as <number>/<length-percentage>) need the
+        // *declaring node's own* font-size (phase 3), not the inheritance
+        // parent's, and it is structurally unreachable here regardless
+        // (`expand_shorthand_into` expands it before this function runs).
+        | PropertyValue::Font(_)
         // object-fit (CSS Images Module Level 3 §5.1) — non-inherited,
         // keyword-only, same "nothing for phase 2 to resolve" shape as
         // `BackgroundRepeat` above.
@@ -7670,6 +7713,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.text_decoration_line = shorthand.line;
             target.text_decoration_style = shorthand.style;
             target.text_decoration_color = shorthand.color;
+            // `thickness` has no staging field (parsing-only,
+            // `PropertyValue::TextDecorationThickness` doc) — nothing to
+            // write here. Same unreachability contract as the 3 staged
+            // longhands above.
         }
         // CSS 2.1 §10.8.1 vertical-align。non-inherited、cascade winner を
         // このまま staging (`SpecifiedValues`) へ書き込む — `<length>`
@@ -7917,6 +7964,32 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.background_clip = shorthand.clip;
             target.background_origin = shorthand.origin;
         }
+        // `font` shorthand fall-through (see `Padding`/`Flex`/`Background` arm
+        // docs above for the "not a safety net" framing) — unreachable in
+        // practice, `expand_shorthand_into` expands it to the 6
+        // `FontStyle`/`FontVariantCaps`/`FontWeight`/`FontSize`-or-
+        // `FontSizeRelative`/`LineHeight`/`FontFamily` longhands before
+        // `apply_value` ever sees it. Delegates to the 6 longhand arms
+        // above (rather than duplicating their logic) so the
+        // inheritance-seed reads (`FontWeight`'s `bolder`/`lighter`,
+        // `FontSizeRelative`'s `larger`/`smaller`) behave exactly as if
+        // the shorthand had been expanded — `target` still holds the
+        // parent seeds here since no longhand arm ran yet for this node.
+        PropertyValue::Font(shorthand) => {
+            apply_value(PropertyValue::FontStyle(shorthand.style), target);
+            apply_value(PropertyValue::FontVariantCaps(shorthand.variant), target);
+            apply_value(PropertyValue::FontWeight(shorthand.weight), target);
+            match shorthand.size {
+                crate::property::FontShorthandSize::Absolute(length) => {
+                    apply_value(PropertyValue::FontSize(length), target);
+                }
+                crate::property::FontShorthandSize::Relative(relative) => {
+                    apply_value(PropertyValue::FontSizeRelative(relative), target);
+                }
+            }
+            apply_value(PropertyValue::LineHeight(shorthand.line_height), target);
+            apply_value(PropertyValue::FontFamily(shorthand.family), target);
+        }
         // CSS Images Module Level 3 §5.1. non-inherited, computed value =
         // specified keyword — simple assignment, no length payload
         // (`BackgroundRepeat` arm と同じ shape)。
@@ -7955,14 +8028,27 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // inherit 解決は `SpecifiedValues::inherit_from` の素朴なコピーが担い、
         // ここは winner の単純代入 (`Visibility` arm と同じ shape)。
         PropertyValue::BorderCollapse(v) => target.border_collapse = v,
-        // New Text 3 / Writing Modes 3 properties are keyword-only with no staging field yet (parsing only).
+        // New Text 3 / Writing Modes 3 / Text Decoration 4 properties with no
+        // staging field yet (parsing only). The keyword-only ones
+        // (`LineBreak`...`UnicodeBidi`, `TextDecorationSkipInk`...
+        // `TextUnderlinePosition`) carry no length; `TextDecorationThickness`
+        // / `TextDecorationInset` carry `<length-percentage>` but are still
+        // staging-less — their absolutization lives only on the `@page`
+        // path (`crate::page::absolutize_in_page_context`'s arms), same
+        // split as the phase-2/phase-3 division above.
         PropertyValue::LineBreak(_)
         | PropertyValue::TextJustify(_)
         | PropertyValue::TextAlignAll(_)
         | PropertyValue::TextAlignLast(_)
         | PropertyValue::TextCombineUpright(_)
         | PropertyValue::TextOrientation(_)
-        | PropertyValue::UnicodeBidi(_) => {}
+        | PropertyValue::UnicodeBidi(_)
+        | PropertyValue::TextDecorationSkipInk(_)
+        | PropertyValue::TextDecorationSkipSpaces(_)
+        | PropertyValue::TextDecorationThickness(_)
+        | PropertyValue::TextDecorationInset(_)
+        | PropertyValue::TextEmphasisPosition(_)
+        | PropertyValue::TextUnderlinePosition(_) => {}
         // These values are resolved before ordinary winners reach this
         // function. Keeping an explicit no-op makes direct internal callers
         // panic-free without allowing raw deferred data into a computed field.
@@ -7979,7 +8065,7 @@ mod tests {
     use crate::property::{
         Border, BorderColor, BorderStyle, Length, LengthOrAuto, OutlineColor, OutlineStyle,
         OverflowValue, OverflowXY, PropertyKey, Sides, TextDecorationColor, TextDecorationLine,
-        TextDecorationShorthand, TextDecorationStyle, TextShadowColor,
+        TextDecorationShorthand, TextDecorationStyle, TextDecorationThickness, TextShadowColor,
     };
     use crate::resolve::{
         ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedLength,
@@ -18287,6 +18373,7 @@ mod tests {
             line: TextDecorationLine::UNDERLINE,
             style: TextDecorationStyle::Wavy,
             color: TextDecorationColor::Resolved(RED),
+            thickness: TextDecorationThickness::Auto,
         };
         apply_value(PropertyValue::TextDecoration(shorthand), &mut cv);
         assert_eq!(cv.text_decoration_line, shorthand.line);
@@ -18680,6 +18767,119 @@ mod tests {
         assert_eq!(cv.background_color, RED);
     }
 
+    // ── font shorthand (CSS Fonts 4 §2.1) wire-through ──
+
+    #[test]
+    fn font_shorthand_expands_to_6_longhands_through_real_cascade() {
+        // `background_shorthand_expands_to_8_longhands_through_real_cascade`
+        // の sibling — literal な `font:` declaration が parse → cascade
+        // pipeline を通り 6 longhand に展開されることの pin。
+        use crate::property::{FontStyle, FontVariantCaps};
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("font: italic small-caps bold 20px/1.5 serif"),
+        );
+        assert_eq!(cv.font_style, FontStyle::Italic);
+        assert_eq!(cv.font_variant_caps, FontVariantCaps::SmallCaps);
+        assert_eq!(cv.font_weight, 700.0);
+        assert_eq!(cv.font_size, ComputedLength(20.0));
+        assert_eq!(cv.line_height, ComputedLineHeight::Number(1.5));
+        assert_eq!(cv.font_family[0].to_string(), "serif");
+    }
+
+    #[test]
+    fn font_shorthand_and_font_style_longhand_interleave_by_source_order() {
+        // `background_shorthand_and_background_color_longhand_interleave_by_source_order`
+        // の sibling — shorthand と longhand の競合は source order で決まる。
+        use crate::property::FontStyle;
+        let shorthand_first = cascade_doc(
+            "",
+            "div",
+            Some("font: italic 20px serif; font-style: normal"),
+        );
+        assert_eq!(shorthand_first.font_style, FontStyle::Normal);
+
+        let longhand_first = cascade_doc("", "div", Some("font-style: italic; font: 20px serif"));
+        assert_eq!(longhand_first.font_style, FontStyle::Normal);
+    }
+
+    #[test]
+    fn font_shorthand_relative_size_and_weight_resolve_against_parent() {
+        // `div` は root (16px / 400) の子 — `larger` / `bolder` は親基準で
+        // 解決される (longhand arm と同じ roll)。
+        let cv = cascade_doc("", "div", Some("font: bolder larger serif"));
+        assert_eq!(cv.font_weight, 700.0);
+        assert_eq!(cv.font_size, ComputedLength(19.2));
+    }
+
+    #[test]
+    fn var_in_font_shorthand_projects_each_deferred_longhand() {
+        // `var_in_background_shorthand_projects_each_deferred_longhand` の
+        // sibling — `font: var(--f)` は `PropertyKey::Font` の deferred
+        // として 6 longhand に fan-out し、各々が substitution 後に
+        // re-parse される (`expand_deferred` + `project_deferred_value` 経路)。
+        use crate::property::{FontStyle, FontVariantCaps};
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("--f: italic small-caps bold 20px/1.5 serif; font: var(--f)"),
+        );
+        assert_eq!(cv.font_style, FontStyle::Italic);
+        assert_eq!(cv.font_variant_caps, FontVariantCaps::SmallCaps);
+        assert_eq!(cv.font_weight, 700.0);
+        assert_eq!(cv.font_size, ComputedLength(20.0));
+        assert_eq!(cv.line_height, ComputedLineHeight::Number(1.5));
+        assert_eq!(cv.font_family[0].to_string(), "serif");
+    }
+
+    #[test]
+    fn apply_value_direct_font_shorthand_fall_through() {
+        // `apply_value_direct_margin_shorthand_fall_through` の sibling —
+        // cascade 経路では unreachable (`expand_shorthand_into` が展開済み)
+        // の canary。relative 成分 (`bolder` / `larger`) は longhand arm と
+        // 同じく parent seed (ここでは initial: 400 / 16px) 基準で解決される。
+        use crate::Atom;
+        use crate::property::{
+            FontShorthand, FontShorthandSize, FontStyle, FontVariantCaps, FontWeightValue,
+            LineHeight, RelativeFontSize,
+        };
+        use std::sync::Arc;
+        let mut cv = SpecifiedValues::initial();
+        apply_value(
+            PropertyValue::Font(FontShorthand {
+                style: FontStyle::Italic,
+                variant: FontVariantCaps::SmallCaps,
+                weight: FontWeightValue::Bolder,
+                size: FontShorthandSize::Relative(RelativeFontSize::Larger),
+                line_height: LineHeight::Number(1.5),
+                family: Arc::new(vec![Atom::from("serif")]),
+            }),
+            &mut cv,
+        );
+        assert_eq!(cv.font_style, FontStyle::Italic);
+        assert_eq!(cv.font_variant_caps, FontVariantCaps::SmallCaps);
+        assert_eq!(cv.font_weight, 700.0);
+        assert_eq!(cv.font_size, Length::Px(19.2));
+        assert_eq!(cv.line_height, LineHeight::Number(1.5));
+        assert_eq!(cv.font_family[0].to_string(), "serif");
+        // Absolute size takes the plain `FontSize` longhand arm (same
+        // delegation shape as the `Relative` case above).
+        let mut cv = SpecifiedValues::initial();
+        apply_value(
+            PropertyValue::Font(FontShorthand {
+                style: FontStyle::Normal,
+                variant: FontVariantCaps::Normal,
+                weight: FontWeightValue::Absolute(400.0),
+                size: FontShorthandSize::Absolute(Length::Px(12.0)),
+                line_height: LineHeight::Normal,
+                family: Arc::new(vec![Atom::from("serif")]),
+            }),
+            &mut cv,
+        );
+        assert_eq!(cv.font_size, Length::Px(12.0));
+    }
+
     #[test]
     fn background_shorthand_and_background_color_longhand_interleave_by_source_order() {
         // Mirror of `var_in_margin_shorthand_preserves_later_longhand_cascade`'s
@@ -18724,7 +18924,7 @@ mod tests {
         // wins" cascade order (CSS Cascading L4 §6.1 "Order of Appearance").
         // This is the test that actually discriminates a spec-correct
         // expansion from one that merely "leaves the others alone" — see
-        // `crate::rule::tests::text_decoration_shorthand_always_overwrites_all_three_longhand` // doc-pointer-lint:ignore: opt-out-3, #[test]-item body (test doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+        // `crate::rule::tests::text_decoration_shorthand_always_overwrites_all_four_longhand` // doc-pointer-lint:ignore: opt-out-3, #[test]-item body (test doc) — rustdoc-blind, confirmed via わざと壊して確かめる
         // for the declaration-list-shape version of the same fact.
         let cv = cascade_doc(
             "",
@@ -19689,6 +19889,7 @@ mod tests {
                 "underline wavy red",
                 vec![
                     PropertyKey::TextDecorationLine,
+                    PropertyKey::TextDecorationThickness,
                     PropertyKey::TextDecorationStyle,
                     PropertyKey::TextDecorationColor,
                 ],
@@ -19744,6 +19945,30 @@ mod tests {
                     PropertyKey::BackgroundSize,
                     PropertyKey::BackgroundClip,
                     PropertyKey::BackgroundOrigin,
+                ],
+            ),
+            (
+                "font",
+                "italic small-caps bold 12px/1.5 serif",
+                vec![
+                    PropertyKey::FontStyle,
+                    PropertyKey::FontVariantCaps,
+                    PropertyKey::FontWeight,
+                    PropertyKey::FontSize,
+                    PropertyKey::LineHeight,
+                    PropertyKey::FontFamily,
+                ],
+            ),
+            (
+                "font",
+                "italic larger serif",
+                vec![
+                    PropertyKey::FontStyle,
+                    PropertyKey::FontVariantCaps,
+                    PropertyKey::FontWeight,
+                    PropertyKey::FontSize,
+                    PropertyKey::LineHeight,
+                    PropertyKey::FontFamily,
                 ],
             ),
         ];

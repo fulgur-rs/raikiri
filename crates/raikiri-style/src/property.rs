@@ -3394,10 +3394,17 @@ pub enum PositionValue {
 /// — `none` は全 flag `false` (spec 上 `none` と「4 keyword とも
 /// 不使用」は同じ状態)。
 ///
+/// CSS Text Decoration 4 の `spelling-error` / `grammar-error` は `||`
+/// group の外側の top-level alternative (`none | [ ... ] |
+/// spelling-error | grammar-error`) のため、残り 2 `bool` field
+/// ([`Self::spelling_error`] / [`Self::grammar_error`]) として保持し、
+/// `||` group との併記は parser 側で reject する
+/// ([`parse_text_decoration_line`] 参照)。
+///
 /// `#[non_exhaustive]` を付けない — sibling [`OverflowXY`] と同じ判断
 /// (umbrella (`raikiri` crate) へ再 export されておらず、CSS spec が
-/// 定める 4 keyword は Level 4 時点でも増えていないため、将来 field 追加の
-/// 蓋然性が [`Border`] ほど高くない)。
+/// 定める keyword は Level 4 時点で 6 (`||` group 4 + top-level 2) のため、
+/// 将来 field 追加の蓋然性が [`Border`] ほど高くない)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TextDecorationLine {
     /// `underline` — テキストの under edge に沿って装飾線を引く。
@@ -3409,15 +3416,25 @@ pub struct TextDecorationLine {
     /// `blink` — 装飾線を点滅させる (spec note: UA は本 keyword を無視してよい、
     /// paint 側の実装判断)。
     pub blink: bool,
+    /// `spelling-error` — UA 定義の綴り誤り装飾 (CSS Text Decoration 4 §2.1
+    /// <https://www.w3.org/TR/css-text-decor-4/#propdef-text-decoration-line>
+    /// の `none | [ underline || overline || line-through || blink ] |
+    /// spelling-error | grammar-error` — top-level alternative のため `||`
+    /// group とは併記不可)。
+    pub spelling_error: bool,
+    /// `grammar-error` — 同上、文法誤り装飾。
+    pub grammar_error: bool,
 }
 
 impl TextDecorationLine {
-    /// `none` — spec initial value。装飾線なし (4 flag 全て `false`)。
+    /// `none` — spec initial value。装飾線なし (6 flag 全て `false`)。
     pub const NONE: Self = Self {
         underline: false,
         overline: false,
         line_through: false,
         blink: false,
+        spelling_error: false,
+        grammar_error: false,
     };
     /// `underline` 単独。
     pub const UNDERLINE: Self = Self {
@@ -3425,6 +3442,8 @@ impl TextDecorationLine {
         overline: false,
         line_through: false,
         blink: false,
+        spelling_error: false,
+        grammar_error: false,
     };
     /// `overline` 単独。
     pub const OVERLINE: Self = Self {
@@ -3432,6 +3451,8 @@ impl TextDecorationLine {
         overline: true,
         line_through: false,
         blink: false,
+        spelling_error: false,
+        grammar_error: false,
     };
     /// `line-through` 単独。
     pub const LINE_THROUGH: Self = Self {
@@ -3439,6 +3460,8 @@ impl TextDecorationLine {
         overline: false,
         line_through: true,
         blink: false,
+        spelling_error: false,
+        grammar_error: false,
     };
     /// `blink` 単独。
     pub const BLINK: Self = Self {
@@ -3446,6 +3469,26 @@ impl TextDecorationLine {
         overline: false,
         line_through: false,
         blink: true,
+        spelling_error: false,
+        grammar_error: false,
+    };
+    /// `spelling-error` 単独。
+    pub const SPELLING_ERROR: Self = Self {
+        underline: false,
+        overline: false,
+        line_through: false,
+        blink: false,
+        spelling_error: true,
+        grammar_error: false,
+    };
+    /// `grammar-error` 単独。
+    pub const GRAMMAR_ERROR: Self = Self {
+        underline: false,
+        overline: false,
+        line_through: false,
+        blink: false,
+        spelling_error: false,
+        grammar_error: true,
     };
 }
 
@@ -3509,13 +3552,15 @@ pub enum TextDecorationColor {
 /// "This property is a shorthand for setting text-decoration-line,
 /// text-decoration-color, and text-decoration-style in one declaration.
 /// Omitted values are set to their initial values." — grammar
-/// `<'text-decoration-line'> || <'text-decoration-style'> ||
-/// <'text-decoration-color'>`。
+/// `<'text-decoration-line'> || <'text-decoration-thickness'> ||
+/// `<'text-decoration-style'> || <'text-decoration-color'>`
+/// (Level 3 §2.4 の 3 成分に Level 4 の thickness が追加、
+/// ED <https://drafts.csswg.org/css-text-decor-4/#text-decoration-property>)。
 ///
 /// [`PropertyValue::TextDecoration`] の payload としてのみ存在し、
 /// [`crate::rule::expand_shorthand_into`] が
-/// [`PropertyValue::TextDecorationLine`] / [`PropertyValue::TextDecorationStyle`] /
-/// [`PropertyValue::TextDecorationColor`] の 3 longhand へ展開した後は捨てられる
+/// [`PropertyValue::TextDecorationLine`] / [`PropertyValue::TextDecorationThickness`] /
+/// [`PropertyValue::TextDecorationStyle`] / [`PropertyValue::TextDecorationColor`] の 4 longhand へ展開した後は捨てられる
 /// — margin/padding/border/overflow shorthand precedent と同じ「parse-time
 /// expansion, never reaches cascade」設計 (詳細は同関数 doc)。[`ComputedValues`]
 /// / [`SpecifiedValues`] は本型を **field として持たない** — 3 longhand が
@@ -3528,7 +3573,7 @@ pub enum TextDecorationColor {
 ///
 /// [`ComputedValues`]: crate::computed::ComputedValues
 /// [`SpecifiedValues`]: crate::specified::SpecifiedValues
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextDecorationShorthand {
     /// `text-decoration-line` 成分 — 省略時は [`TextDecorationLine::NONE`]
     /// (spec initial)。
@@ -3539,9 +3584,179 @@ pub struct TextDecorationShorthand {
     /// `text-decoration-color` 成分 — 省略時は [`TextDecorationColor::CurrentColor`]
     /// (spec initial)。
     pub color: TextDecorationColor,
+    /// `text-decoration-thickness` 成分 — 省略時は
+    /// [`TextDecorationThickness::Auto`] (ED §2.4.1 initial)。
+    pub thickness: TextDecorationThickness,
 }
 
-/// `vertical-align` property の value。
+/// `text-decoration-skip-ink: auto | none | all` の value.
+///
+/// CSS Text Decoration 4
+/// (<https://www.w3.org/TR/css-text-decor-4/#propdef-text-decoration-skip-ink>)。
+/// Value: `auto | none | all`、Initial: `auto`、Inherited: **yes**、
+/// Computed value: specified keyword。
+/// parsing-only ([`PropertyValue::TextDecorationSkipInk`] doc 参照)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextDecorationSkipInk {
+    /// `auto` — spec initial value。
+    Auto,
+    /// `none`。
+    None,
+    /// `all`。
+    All,
+}
+
+/// `text-decoration-skip-spaces: none | all | [ start || end ]` の value.
+///
+/// CSS Text Decoration 4
+/// (<https://www.w3.org/TR/css-text-decor-4/#propdef-text-decoration-skip-spaces>)。
+/// Value: `none | all | [ start || end ]`、Initial: `start end`、
+/// Inherited: **yes**、Computed value: specified keyword(s)。
+/// `all` は `start end` と区別する (initial が `start end` であって
+/// `all` ではないため) — 5 variant enum で表現する。
+/// parsing-only ([`PropertyValue::TextDecorationSkipSpaces`] doc 参照)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextDecorationSkipSpaces {
+    /// `none`。
+    None,
+    /// `all`。
+    All,
+    /// `start` のみ。
+    Start,
+    /// `end` のみ。
+    End,
+    /// `start end` / `end start` (順序自由、spec initial value)。
+    StartEnd,
+}
+
+/// `text-decoration-thickness: auto | from-font | <length-percentage>` の value.
+///
+/// CSS Text Decoration 4
+/// (<https://www.w3.org/TR/css-text-decor-4/#propdef-text-decoration-thickness>,
+/// ED §2.4.1 は `<line-width>` も含む、下の Scope carving 参照)。
+/// Value: `auto | from-font | <length-percentage>`、Initial: `auto`、
+/// Inherited: **no**、Percentages: N/A、Computed value: specified keyword
+/// or absolute length。
+/// ED grammar は `<line-width>` (`thin`/`medium`/`thick`) も含むが、本実装は
+/// scope 外として drop する (WPT vector に現れない — scope carving)。
+/// `<percentage>` は受理して保持する (同)。
+/// parsing-only ([`PropertyValue::TextDecorationThickness`] doc 参照)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TextDecorationThickness {
+    /// `auto` — spec initial value。
+    Auto,
+    /// `from-font`。
+    FromFont,
+    /// `<length-percentage>` ([`parse_length_value`] の `allow_percentage=true`
+    /// 範囲 — [`Length::Percent`] を含む)。
+    Length(Length),
+}
+
+/// `text-decoration-inset: <length>{1,2} | auto` の value.
+///
+/// CSS Text Decoration 4 ED §2.9.1 (<https://drafts.csswg.org/css-text-decor-4/#text-decoration-inset-property>)。
+/// ED grammar は `<length-percentage>{1,2} | auto` だが、WPT
+/// (`text-decoration-inset-invalid.html` の `10%` reject) が `%` を認めない
+/// ため、本実装は `<length>{1,2} | auto` に絞る (vector が ground truth —
+/// 乖離としてここに記録する)。
+/// Initial: `0`、Inherited: **no**。2 値目は省略時に 1 値目を複製する
+/// (margin/padding の 2-value 規則と同型)。
+/// parsing-only ([`PropertyValue::TextDecorationInset`] doc 参照)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TextDecorationInset {
+    /// `auto`。
+    Auto,
+    /// 1-2 `<length>`。`end` 省略時は `start` と同値。
+    Lengths {
+        /// start endpoint offset。
+        start: Length,
+        /// end endpoint offset。
+        end: Length,
+    },
+}
+
+/// `text-emphasis-position` の vertical 成分 (`[ over | under ]`)。
+///
+/// CSS Text Decoration 3 §3.4 (<https://www.w3.org/TR/css-text-decor-3/#text-emphasis-position-property>)
+/// …ではなく ED <https://drafts.csswg.org/css-text-decor-4/#text-emphasis-position-property>
+/// の `[ over | under ] && [ right | left ]?` の前半 (vertical は必須)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextEmphasisVEdge {
+    /// `over`。
+    Over,
+    /// `under`。
+    Under,
+}
+
+/// `text-emphasis-position` の horizontal 成分 (`[ right | left ]?`)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextEmphasisHEdge {
+    /// `right`。
+    Right,
+    /// `left`。
+    Left,
+}
+
+/// `text-emphasis-position: auto | ([ over | under ] && [ right | left ]?)` の value.
+///
+/// ED §3.4 (<https://drafts.csswg.org/css-text-decor-4/#text-emphasis-position-property>)。
+/// Value: `[ over | under ] && [ right | left ]?` (+ `auto`)、
+/// Initial: `over right`、Inherited: **yes**。vertical 必須・horizontal
+/// 任意・順序自由 (`right under` valid、`left over right` invalid)。
+/// parsing-only ([`PropertyValue::TextEmphasisPosition`] doc 参照)。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextEmphasisPosition {
+    /// `auto`。
+    Auto,
+    /// vertical (+ optional horizontal)。
+    Position {
+        /// `[ over | under ]` (必須)。
+        vertical: TextEmphasisVEdge,
+        /// `[ right | left ]?` (任意)。
+        horizontal: Option<TextEmphasisHEdge>,
+    },
+}
+
+/// `text-underline-position: auto | [ from-font | under ] || [ left | right ]` の value.
+///
+/// CSS Text Decoration 4 ED §2.7 (<https://drafts.csswg.org/css-text-decor-4/#text-underline-position-property>)。
+/// Value: `auto | [ from-font | under ] || [ left | right ]`、
+/// Initial: `auto`、Inherited: **yes**。
+/// `from-font` と `under` は排他 (`under from-font` invalid)、`left` と
+/// `right` も排他 (`left right` invalid)、`auto` は単独
+/// (`auto under` invalid) — [`TextDecorationLine`] と同じ bool-flag +
+/// parser-enforcement 表現。
+/// parsing-only ([`PropertyValue::TextUnderlinePosition`] doc 参照)。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextUnderlinePosition {
+    /// `from-font` (`under` と排他)。
+    pub from_font: bool,
+    /// `under` (`from-font` と排他)。
+    pub under: bool,
+    /// `left` (`right` と排他)。
+    pub left: bool,
+    /// `right` (`left` と排他)。
+    pub right: bool,
+}
+
+impl TextUnderlinePosition {
+    /// `auto` — spec initial value (全 flag `false`)。
+    pub const AUTO: Self = Self {
+        from_font: false,
+        under: false,
+        left: false,
+        right: false,
+    };
+}
+
+/// `vertical-align` property の value.
 ///
 /// CSS 2.1 §10.8.1 "Vertical alignment: the 'vertical-align' property"
 /// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>。
@@ -7385,6 +7600,54 @@ pub enum PropertyValue {
     /// keyword (length を運ばないため相対解決なし)。
     /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
     BorderCollapse(BorderCollapseValue),
+    /// `font` shorthand — **inherited**。6 成分 (style/variant-caps/weight/
+    /// size/line-height/family) を保持する ([`FontShorthand`] doc 参照)。
+    /// CSS Fonts 4 §2.1
+    /// <https://www.w3.org/TR/css-fonts-4/#font-prop> の
+    /// `[ <'font-style'> || <font-variant-css2> || <'font-weight'> ]? <'font-size'> [ / <'line-height'> ]? <'font-family'>#`
+    /// subset (system-font keyword・`font-stretch` 非 `normal`・CSS2 外の
+    /// `font-variant` は scope 外、[`FontShorthand`] doc の Scope carving 節
+    /// 参照)。[`crate::rule::expand_shorthand_into`] が
+    /// [`Self::FontStyle`] / [`Self::FontVariantCaps`] /
+    /// [`Self::FontWeight`] / [`Self::FontSize`]・[`Self::FontSizeRelative`] /
+    /// [`Self::LineHeight`] / [`Self::FontFamily`] の 6 longhand に展開する。
+    /// 末尾に追加 (shorthand は cascade 段に到達しない
+    /// ([`crate::rule::expand_shorthand_into`] doc) ので discriminant 順は
+    /// 意味を持たない — 既存 variant を shift させない配置を優先する、
+    /// [`PropertyKey`] doc の「宣言順は load-bearing」節参照)。
+    Font(FontShorthand),
+    /// `text-decoration-skip-ink` — **inherited**、initial:
+    /// [`TextDecorationSkipInk::Auto`] ([`TextDecorationSkipInk`] doc 参照)。
+    /// parsing-only: cascade は winner を staging field に載せず drop する
+    /// (E/F/G fa04ac3 の `TextCombineUpright` 等と同 pattern —
+    /// [`crate::cascade::apply_value`] の同名 no-op arm 参照)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    TextDecorationSkipInk(TextDecorationSkipInk),
+    /// `text-decoration-skip-spaces` — **inherited**、initial は `start end`
+    /// ([`TextDecorationSkipSpaces::StartEnd`])。parsing-only (同上)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    TextDecorationSkipSpaces(TextDecorationSkipSpaces),
+    /// `text-decoration-thickness` — **non-inherited**、initial:
+    /// [`TextDecorationThickness::Auto`] ([`TextDecorationThickness`] doc
+    /// 参照)。parsing-only (同上 — `<length-percentage>` を運ぶが phase 3
+    /// の絶対化対象にはしない。`@page` 経路の
+    /// [`crate::page`] の `absolutize_in_page_context` の同名 arm だけが
+    /// length 成分を absolutize する)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    TextDecorationThickness(TextDecorationThickness),
+    /// `text-decoration-inset` — **non-inherited**、initial: `0`
+    /// (ED)。parsing-only (同上 — 2 `<length>` を運ぶが element 経路では
+    /// 絶対化しない。`@page` 経路のみ同名 arm で absolutize)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    TextDecorationInset(TextDecorationInset),
+    /// `text-emphasis-position` — **inherited**、initial: `over right`
+    /// (ED)。parsing-only (同上)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    TextEmphasisPosition(TextEmphasisPosition),
+    /// `text-underline-position` — **inherited**、initial:
+    /// [`TextUnderlinePosition::AUTO`]。parsing-only (同上)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    TextUnderlinePosition(TextUnderlinePosition),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -7799,6 +8062,29 @@ pub enum PropertyKey {
     // carry no per-variant docs per crate convention). 末尾配置の理由は
     // background-repeat 等と同節参照 (1:1 disjoint な新 field)。
     BorderCollapse,
+    // font shorthand (CSS Fonts 4 §2.1、semantics on the matching
+    // PropertyValue::Font variant; sibling PropertyKey variants carry no
+    // per-variant docs per crate convention). 末尾配置の理由は
+    // background-repeat 等と同節参照 — shorthand は cascade 段に到達しない
+    // (`crate::rule::expand_shorthand_into` が展開する) ため discriminant
+    // 順は意味を持たない。
+    Font,
+    // text-decoration-skip-ink (ED §2.10.4、semantics on the matching
+    // PropertyValue::TextDecorationSkipInk variant; sibling PropertyKey
+    // variants carry no per-variant docs per crate convention). 末尾配置の
+    // 理由は background-repeat 等と同節参照 (1:1 disjoint な新 field…
+    // parsing-only のため field 自体は無いが discriminant 順は同様に自由)。
+    TextDecorationSkipInk,
+    // text-decoration-skip-spaces (ED §2.10.3、同上)。
+    TextDecorationSkipSpaces,
+    // text-decoration-thickness (ED §2.4.1、TR §2.4、同上)。
+    TextDecorationThickness,
+    // text-decoration-inset (ED §2.9.1、同上)。
+    TextDecorationInset,
+    // text-emphasis-position (ED §3.4、同上)。
+    TextEmphasisPosition,
+    // text-underline-position (ED §2.7、同上)。
+    TextUnderlinePosition,
 }
 
 impl PropertyValue {
@@ -7962,6 +8248,13 @@ impl PropertyValue {
             PropertyValue::Filter(_) => PropertyKey::Filter,
             PropertyValue::TableLayout(_) => PropertyKey::TableLayout,
             PropertyValue::BorderCollapse(_) => PropertyKey::BorderCollapse,
+            PropertyValue::Font(_) => PropertyKey::Font,
+            PropertyValue::TextDecorationSkipInk(_) => PropertyKey::TextDecorationSkipInk,
+            PropertyValue::TextDecorationSkipSpaces(_) => PropertyKey::TextDecorationSkipSpaces,
+            PropertyValue::TextDecorationThickness(_) => PropertyKey::TextDecorationThickness,
+            PropertyValue::TextDecorationInset(_) => PropertyKey::TextDecorationInset,
+            PropertyValue::TextEmphasisPosition(_) => PropertyKey::TextEmphasisPosition,
+            PropertyValue::TextUnderlinePosition(_) => PropertyKey::TextUnderlinePosition,
         }
     }
 }
@@ -8545,6 +8838,13 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "unicode-bidi" => PropertyKey::UnicodeBidi,
         "table-layout" => PropertyKey::TableLayout,
         "border-collapse" => PropertyKey::BorderCollapse,
+        "font" => PropertyKey::Font,
+        "text-decoration-skip-ink" => PropertyKey::TextDecorationSkipInk,
+        "text-decoration-skip-spaces" => PropertyKey::TextDecorationSkipSpaces,
+        "text-decoration-thickness" => PropertyKey::TextDecorationThickness,
+        "text-decoration-inset" => PropertyKey::TextDecorationInset,
+        "text-emphasis-position" => PropertyKey::TextEmphasisPosition,
+        "text-underline-position" => PropertyKey::TextUnderlinePosition,
         "font-variant-caps" => PropertyKey::FontVariantCaps,
         "quotes" => PropertyKey::Quotes,
         "text-shadow" => PropertyKey::TextShadow,
@@ -8884,8 +9184,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // parse_overflow_shorthand (mapped to physical x/y — `OverflowValue`
         // doc's Non-goal note).
         "overflow" => parse_overflow_shorthand(input).map(PropertyValue::Overflow),
-        // CSS Text Decoration Module Level 3 §2.1 text-decoration-line
-        // grammar: `none | [ underline || overline || line-through || blink ]`.
+        // CSS Text Decoration 4 §2.1 text-decoration-line grammar:
+        // `none | [ underline || overline || line-through || blink ] |
+        // spelling-error | grammar-error` (Level 3 の 4 keyword に Level 4
+        // の top-level 2 alternative が追加、`TextDecorationLine` doc 参照)。
         "text-decoration-line" => {
             parse_text_decoration_line(input).map(PropertyValue::TextDecorationLine)
         }
@@ -8899,9 +9201,46 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
             parse_text_decoration_color(input).map(PropertyValue::TextDecorationColor)
         }
         // §2.4 text-decoration shorthand: `<'text-decoration-line'> ||
-        // <'text-decoration-style'> || <'text-decoration-color'>`.
+        // <'text-decoration-style'> || <'text-decoration-color'> ||
+        // <'text-decoration-thickness'> (ED に thickness が追加、
+        // `TextDecorationShorthand` doc 参照)。
         "text-decoration" => {
             parse_text_decoration_shorthand(input).map(PropertyValue::TextDecoration)
+        }
+        // CSS Text Decoration 4 ED §2.10.4 text-decoration-skip-ink.
+        // grammar: `auto | none | all` (`TextDecorationSkipInk` doc 参照)。
+        "text-decoration-skip-ink" => {
+            parse_text_decoration_skip_ink(input).map(PropertyValue::TextDecorationSkipInk)
+        }
+        // ED §2.10.3 text-decoration-skip-spaces. grammar:
+        // `none | all | [ start || end ]` (`TextDecorationSkipSpaces`
+        // doc 参照)。
+        "text-decoration-skip-spaces" => {
+            parse_text_decoration_skip_spaces(input).map(PropertyValue::TextDecorationSkipSpaces)
+        }
+        // ED §2.4.1 text-decoration-thickness. grammar:
+        // `auto | from-font | <length-percentage>` (`<line-width>` は scope
+        // 外、`TextDecorationThickness` doc 参照)。
+        "text-decoration-thickness" => {
+            parse_text_decoration_thickness(input).map(PropertyValue::TextDecorationThickness)
+        }
+        // ED §2.9.1 text-decoration-inset. grammar: `<length>{1,2} | auto`
+        // (`<percentage>` は WPT が reject するため scope 外、
+        // `TextDecorationInset` doc 参照)。
+        "text-decoration-inset" => {
+            parse_text_decoration_inset(input).map(PropertyValue::TextDecorationInset)
+        }
+        // ED §3.4 text-emphasis-position. grammar:
+        // `auto | ([ over | under ] && [ right | left ]?)`
+        // (`TextEmphasisPosition` doc 参照)。
+        "text-emphasis-position" => {
+            parse_text_emphasis_position(input).map(PropertyValue::TextEmphasisPosition)
+        }
+        // ED §2.7 text-underline-position. grammar:
+        // `auto | [ from-font | under ] || [ left | right ]`
+        // (`TextUnderlinePosition` doc 参照)。
+        "text-underline-position" => {
+            parse_text_underline_position(input).map(PropertyValue::TextUnderlinePosition)
         }
         // CSS 2.1 §10.8.1 vertical-align, restricted to `baseline` / `sub` /
         // `super` / `middle` / `text-top` / `text-bottom` / `<length>`
@@ -9093,6 +9432,9 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // (initial `separate`, inherited). matching 規則は直上の
         // `table-layout` arm と同じ。
         "border-collapse" => parse_border_collapse(input).map(PropertyValue::BorderCollapse),
+        // CSS Fonts 4 §2.1 font shorthand — 6 longhand への展開は
+        // `crate::rule::expand_shorthand_into` が行う (同 doc 参照)。
+        "font" => parse_font_shorthand(input).map(PropertyValue::Font),
         // CSS Text Module Level 3 §4.2
         // <https://www.w3.org/TR/css-text-3/#tab-size-property>.
         "tab-size" => parse_tab_size(input).map(PropertyValue::TabSize),
@@ -14279,6 +14621,22 @@ fn parse_text_decoration_line(input: &mut Parser<'_, '_>) -> Option<TextDecorati
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(TextDecorationLine::NONE);
     }
+    // top-level alternative: `spelling-error` / `grammar-error`。互いに
+    // 排他、かつ `||` group とも併記不可 — 単独 ident の場合のみ受理し、
+    // 後続 token が残れば caller の `expect_exhausted` が落とす
+    // (spec grammar `none | [ ... ] | spelling-error | grammar-error`)。
+    if input
+        .try_parse(|i| i.expect_ident_matching("spelling-error"))
+        .is_ok()
+    {
+        return Some(TextDecorationLine::SPELLING_ERROR);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("grammar-error"))
+        .is_ok()
+    {
+        return Some(TextDecorationLine::GRAMMAR_ERROR);
+    }
 
     let mut line = TextDecorationLine::NONE;
     loop {
@@ -14384,9 +14742,10 @@ fn parse_text_decoration_shorthand(input: &mut Parser<'_, '_>) -> Option<TextDec
     let mut line: Option<TextDecorationLine> = None;
     let mut style: Option<TextDecorationStyle> = None;
     let mut color: Option<TextDecorationColor> = None;
+    let mut thickness: Option<TextDecorationThickness> = None;
 
     loop {
-        if line.is_some() && style.is_some() && color.is_some() {
+        if line.is_some() && style.is_some() && color.is_some() && thickness.is_some() {
             break;
         }
         if line.is_none()
@@ -14413,12 +14772,21 @@ fn parse_text_decoration_shorthand(input: &mut Parser<'_, '_>) -> Option<TextDec
             color = Some(v);
             continue;
         }
+        if thickness.is_none()
+            && let Ok(v) =
+                input.try_parse(|i| -> Result<TextDecorationThickness, ParseError<'_, ()>> {
+                    parse_text_decoration_thickness(i).ok_or_else(|| i.new_custom_error(()))
+                })
+        {
+            thickness = Some(v);
+            continue;
+        }
         break;
     }
 
     // spec `||` grammar: at least 1 component 必須。0 component は `None` =
     // declaration drop (`parse_border_shorthand` と同じ判断)。
-    if line.is_none() && style.is_none() && color.is_none() {
+    if line.is_none() && style.is_none() && color.is_none() && thickness.is_none() {
         return None;
     }
 
@@ -14426,7 +14794,200 @@ fn parse_text_decoration_shorthand(input: &mut Parser<'_, '_>) -> Option<TextDec
         line: line.unwrap_or(TextDecorationLine::NONE),
         style: style.unwrap_or(TextDecorationStyle::Solid),
         color: color.unwrap_or(TextDecorationColor::CurrentColor),
+        thickness: thickness.unwrap_or(TextDecorationThickness::Auto),
     })
+}
+
+/// `text-decoration-skip-ink: auto | none | all` を parse する
+/// (ED §2.10.4 <https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property>)。
+/// ASCII case-insensitive で ident を比較する (sibling [`parse_text_decoration_style`]
+/// と同 flavor)。
+fn parse_text_decoration_skip_ink(input: &mut Parser<'_, '_>) -> Option<TextDecorationSkipInk> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "auto" => Some(TextDecorationSkipInk::Auto),
+        "none" => Some(TextDecorationSkipInk::None),
+        "all" => Some(TextDecorationSkipInk::All),
+        _ => None,
+    }
+}
+
+/// `text-decoration-skip-spaces: none | all | [ start || end ]` を parse する
+/// (ED §2.10.3 <https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-spaces-property>)。
+/// `none` / `all` は単独 (top-level alternative)、`start` / `end` は `||`
+/// loop で各最大 1 回 ([`parse_text_decoration_line`] の 4-keyword loop と同形)。
+fn parse_text_decoration_skip_spaces(
+    input: &mut Parser<'_, '_>,
+) -> Option<TextDecorationSkipSpaces> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(TextDecorationSkipSpaces::None);
+    }
+    if input.try_parse(|i| i.expect_ident_matching("all")).is_ok() {
+        return Some(TextDecorationSkipSpaces::All);
+    }
+    let mut start = false;
+    let mut end = false;
+    loop {
+        if !start
+            && input
+                .try_parse(|i| i.expect_ident_matching("start"))
+                .is_ok()
+        {
+            start = true;
+            continue;
+        }
+        if !end && input.try_parse(|i| i.expect_ident_matching("end")).is_ok() {
+            end = true;
+            continue;
+        }
+        break;
+    }
+    match (start, end) {
+        (true, false) => Some(TextDecorationSkipSpaces::Start),
+        (false, true) => Some(TextDecorationSkipSpaces::End),
+        (true, true) => Some(TextDecorationSkipSpaces::StartEnd),
+        (false, false) => None,
+    }
+}
+
+/// `text-decoration-thickness: auto | from-font | <length-percentage>` を parse する
+/// (ED §2.4.1 <https://drafts.csswg.org/css-text-decor-4/#text-decoration-thickness-property>)。
+/// `<line-width>` (`thin`/`medium`/`thick`) は scope 外のため drop
+/// ([`TextDecorationThickness`] doc 参照)。`<length-percentage>` は
+/// [`parse_length_value`] (`allow_percentage=true`) に委譲し、sign check
+/// はしない (spec grammar に range 制限なし)。
+fn parse_text_decoration_thickness(input: &mut Parser<'_, '_>) -> Option<TextDecorationThickness> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(TextDecorationThickness::Auto);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("from-font"))
+        .is_ok()
+    {
+        return Some(TextDecorationThickness::FromFont);
+    }
+    parse_length_value(input, true).map(TextDecorationThickness::Length)
+}
+
+/// `text-decoration-inset: <length>{1,2} | auto` を parse する
+/// (ED §2.9.1 <https://drafts.csswg.org/css-text-decor-4/#text-decoration-inset-property>)。
+/// ED grammar は `<length-percentage>` だが WPT が `%` を reject するため
+/// `allow_percentage=false` ([`TextDecorationInset`] doc 参照)。負値・
+/// `calc()` は受理する (`calc` は [`parse_value`] の deferred 経路が
+/// 事前に `DeferredValue` 化し、`純粋 [`Length`] のみ
+/// ここに届く)。1 値目の場合は 2 値目を 1 値目に複製する
+/// (margin/padding の 2-value 規則と同型)。
+fn parse_text_decoration_inset(input: &mut Parser<'_, '_>) -> Option<TextDecorationInset> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(TextDecorationInset::Auto);
+    }
+    let start = parse_length_value(input, false)?;
+    let end = input
+        .try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
+            parse_length_value(i, false).ok_or_else(|| i.new_custom_error(()))
+        })
+        .unwrap_or(start);
+    Some(TextDecorationInset::Lengths { start, end })
+}
+
+/// `text-emphasis-position: auto | ([ over | under ] && [ right | left ]?)` を parse する
+/// (ED §3.4 <https://drafts.csswg.org/css-text-decor-4/#text-emphasis-position-property>)。
+/// `auto` 単独、それ以外は vertical 必須 (`over`/`under`) +
+/// horizontal 任意 (`right`/`left`)、順序自由・各最大 1 回。
+///
+/// `auto` 以外の位置に `auto` が来たら leftover として caller が drop する
+/// ([`parse_font_style`] の oblique-angle 取扱いと同 mechanism)。
+fn parse_text_emphasis_position(input: &mut Parser<'_, '_>) -> Option<TextEmphasisPosition> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(TextEmphasisPosition::Auto);
+    }
+    let mut vertical: Option<TextEmphasisVEdge> = None;
+    let mut horizontal: Option<TextEmphasisHEdge> = None;
+    loop {
+        if vertical.is_none() {
+            if input.try_parse(|i| i.expect_ident_matching("over")).is_ok() {
+                vertical = Some(TextEmphasisVEdge::Over);
+                continue;
+            }
+            if input
+                .try_parse(|i| i.expect_ident_matching("under"))
+                .is_ok()
+            {
+                vertical = Some(TextEmphasisVEdge::Under);
+                continue;
+            }
+        }
+        if horizontal.is_none() {
+            if input
+                .try_parse(|i| i.expect_ident_matching("right"))
+                .is_ok()
+            {
+                horizontal = Some(TextEmphasisHEdge::Right);
+                continue;
+            }
+            if input.try_parse(|i| i.expect_ident_matching("left")).is_ok() {
+                horizontal = Some(TextEmphasisHEdge::Left);
+                continue;
+            }
+        }
+        break;
+    }
+    Some(TextEmphasisPosition::Position {
+        vertical: vertical?,
+        horizontal,
+    })
+}
+
+/// `text-underline-position: auto | [ from-font | under ] || [ left | right ]` を parse する
+/// (ED §2.7 <https://drafts.csswg.org/css-text-decor-4/#text-underline-position-property>)。
+/// 3 slot (`from-font` / `under` / horizontal) の `||` loop +
+/// post-check: `from-font` と `under` の併記は reject
+/// (`under from-font` invalid)、`left`+`right` 併記も reject
+/// (`left right` invalid、horizontal slot が 1 個のため
+/// loop 段階で保証)、`auto` 単独 (leftover は caller が drop)。
+fn parse_text_underline_position(input: &mut Parser<'_, '_>) -> Option<TextUnderlinePosition> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(TextUnderlinePosition::AUTO);
+    }
+    let mut pos = TextUnderlinePosition::AUTO;
+    loop {
+        if !pos.from_font
+            && !pos.under
+            && input
+                .try_parse(|i| i.expect_ident_matching("from-font"))
+                .is_ok()
+        {
+            pos.from_font = true;
+            continue;
+        }
+        if !pos.under
+            && !pos.from_font
+            && input
+                .try_parse(|i| i.expect_ident_matching("under"))
+                .is_ok()
+        {
+            pos.under = true;
+            continue;
+        }
+        if !pos.left && !pos.right && input.try_parse(|i| i.expect_ident_matching("left")).is_ok() {
+            pos.left = true;
+            continue;
+        }
+        if !pos.right
+            && !pos.left
+            && input
+                .try_parse(|i| i.expect_ident_matching("right"))
+                .is_ok()
+        {
+            pos.right = true;
+            continue;
+        }
+        break;
+    }
+    if pos == TextUnderlinePosition::AUTO {
+        return None;
+    }
+    Some(pos)
 }
 
 /// `vertical-align: <ident> | <length>` を parse する (CSS 2.1 §10.8.1
@@ -17691,6 +18252,219 @@ fn parse_background_position_and_size(
         })
         .ok();
     Some((position, size))
+}
+
+/// `font` shorthand の `font-size` 成分 — [`parse_font_size`] の返す
+/// 2 通り ([`PropertyValue::FontSize`] / [`PropertyValue::FontSizeRelative`])
+/// をそのまま運ぶ small enum。[`FontShorthand`] の payload 専用で、
+/// [`ComputedValues`] / [`SpecifiedValues`] には入らず、umbrella crate からも
+/// re-export しない ([`BackgroundShorthand`] と同じ扱い)。
+///
+/// [`ComputedValues`]: crate::computed::ComputedValues
+/// [`SpecifiedValues`]: crate::specified::SpecifiedValues
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FontShorthandSize {
+    /// `<length-percentage>` / absolute-size keyword — [`parse_font_size`] の
+    /// [`PropertyValue::FontSize`] 側。展開先は同 variant。
+    Absolute(Length),
+    /// `larger` / `smaller` — [`parse_font_size`] の
+    /// [`PropertyValue::FontSizeRelative`] 側。展開先は同 variant
+    /// (key はどちらも [`PropertyKey::FontSize`])。
+    Relative(RelativeFontSize),
+}
+
+/// `font` shorthand の specified value carrier — CSS Fonts 4 §2.1 "Font
+/// shorthand: the font property"
+/// (<https://www.w3.org/TR/css-fonts-4/#font-prop>)。
+///
+/// Spec grammar (full): `[ [ <'font-style'> || <font-variant-css2> ||
+/// <'font-weight'> || <font-width-css3> ]? <'font-size'> [ / <'line-height'> ]?
+/// <'font-family'># ] | <system-font>`。本実装の subset:
+///
+/// # Scope carving
+///
+/// - **Preface** (`||` 3 slot): `font-style` は [`parse_font_style`] の範囲
+///   (`normal` / `italic` / bare `oblique`)、`font-weight` は
+///   [`parse_font_weight`] の全範囲 (`normal` / `bold` / `bolder` /
+///   `lighter` / `<number [1,1000]>`) を受理。`font-variant-css2`
+///   (`normal` / `small-caps`) は [`FontVariantCaps::Normal`] /
+///   [`FontVariantCaps::SmallCaps`] に畳む — CSS Fonts 3 §6.9 の `font-variant`
+///   shorthand 全体ではなく CSS2 subset のみ対応 (本 crate が持つのは
+///   `font-variant-caps` longhand だけで、他 sub-property が無いため)。
+///   `font-width-css3` (`font-stretch`) longhand は本 crate に存在しないため
+///   `normal` のみ consume して捨てる (initial と同じ値なので reset 効果は
+///   observable ではない)。`normal` 以外の stretch keyword
+///   (`condensed` 等)・`font-variant-css2` 外の variant 指定は preface の
+///   どの slot にも match せず、後続の `font-size` parse が失敗するため
+///   declaration 全体が drop される (spec-valid だが未対応 = silent drop、
+///   本 crate の一般 policy)。
+/// - **System fonts** (`caption` / `icon` / `menu` / `message-box` /
+///   `small-caption` / `status-bar`) は受理しない — longhand への分解が
+///   UA 依存で本 crate の font model に載らないため、declaration ごと drop。
+/// - **`font-size`** は [`parse_font_size`] をそのまま使う (absolute-size
+///   keyword / `larger` / `smaller` / `<length-percentage>` 全範囲)。
+/// - **`line-height`** (`/ ...` 付きの場合のみ) は [`parse_line_height`] を
+///   そのまま使う (`normal` / `<number>` / `<length-percentage>` 全範囲)。
+/// - **`font-family`** は [`parse_font_family`] をそのまま使う
+///   (`<family-name>#`、1 要素以上必須)。
+///
+/// # Initial value fill (omitted components)
+///
+/// CSS Fonts 4 §2.1 verbatim: "The 'font' property is a shorthand for
+/// [font-style, font-variant, font-weight, font-size, line-height,
+/// font-family]" — 省略成分は spec initial value で埋める
+/// ([`BackgroundShorthand`] doc の同名節と同じ規則)。
+/// [`parse_font_shorthand`] は省略された `style` → [`FontStyle::Normal`]、
+/// `variant` → [`FontVariantCaps::Normal`]、 `weight` → `400`、
+/// `line-height` → [`LineHeight::Normal`] で埋める (`size` と `family` は
+/// 必須のため省略不可)。埋め値は各 standalone longhand の initial と同一
+/// ([`crate::specified::SpecifiedValues::initial`] の対応 field が canonical)。
+///
+/// [`crate::rule::expand_shorthand_into`] が [`PropertyValue::Font`] を
+/// [`PropertyValue::FontStyle`] / [`PropertyValue::FontVariantCaps`] /
+/// [`PropertyValue::FontWeight`] / size ([`PropertyValue::FontSize`] /
+/// [`PropertyValue::FontSizeRelative`]) / [`PropertyValue::LineHeight`] /
+/// [`PropertyValue::FontFamily`] の 6 longhand に展開する —
+/// margin/padding/border/outline shorthand precedent と同じ
+/// "parse-time expansion, never reaches cascade" 設計 (詳細は同関数の doc)。
+///
+/// `#[non_exhaustive]` は付けない — sibling shorthand-only carrier
+/// ([`GridLineShorthand`] / [`TextDecorationShorthand`] /
+/// [`BackgroundShorthand`]) と同じ理由 (本型は [`PropertyValue::Font`] の
+/// payload 専用で、[`ComputedValues`] / [`SpecifiedValues`] には入らず、
+/// umbrella crate からも re-export しない)。
+///
+/// [`ComputedValues`]: crate::computed::ComputedValues
+/// [`SpecifiedValues`]: crate::specified::SpecifiedValues
+#[derive(Clone, Debug, PartialEq)]
+pub struct FontShorthand {
+    /// `font-style` 成分 — 省略時は [`FontStyle::Normal`] (spec initial)。
+    pub style: FontStyle,
+    /// `font-variant-css2` 成分 — 省略時は [`FontVariantCaps::Normal`]
+    /// (spec initial)。`small-caps` は [`FontVariantCaps::SmallCaps`]。
+    pub variant: FontVariantCaps,
+    /// `font-weight` 成分 — 省略時は `400` (`normal`、spec initial)。
+    pub weight: FontWeightValue,
+    /// `font-size` 成分 (必須) — [`FontShorthandSize`] 参照。
+    pub size: FontShorthandSize,
+    /// `line-height` 成分 — 省略時は [`LineHeight::Normal`] (spec initial)。
+    pub line_height: LineHeight,
+    /// `font-family` 成分 (必須) — [`parse_font_family`] の結果を共有する
+    /// `Arc` ([`PropertyValue::FontFamily`] と同じ DoS 対策 pattern)。
+    pub family: Arc<Vec<Atom>>,
+}
+
+/// `font` shorthand を parse する ([`FontShorthand`] doc の grammar 節参照)。
+///
+/// [`parse_background_shorthand`] と同じ loop 構造: preface の各 unfilled
+/// slot を `try_parse` で順に試し、成功したら slot を埋めて loop 先頭に戻る。
+/// preface が確定したら必須の `font-size`、任意の `/ line-height`、必須の
+/// `font-family` を順に parse する。`font-size` / `font-family` のいずれかが
+/// 無い場合は `None` (declaration 全体が drop される)。leftover は呼び出し元
+/// (`rule.rs` の declaration parser) の `expect_exhausted` が丸ごと drop する
+/// ([`parse_background_shorthand`] と同じ契約)。
+fn parse_font_shorthand(input: &mut Parser<'_, '_>) -> Option<FontShorthand> {
+    // System-font keyword は longhand に分解できないため先に reject
+    // (`font: menu` 等が preface の `normal` 扱いで誤って受理されるのを防ぐ)。
+    // `try_parse` で囲むため cursor は消費されない。
+    let is_system_font = [
+        "caption",
+        "icon",
+        "menu",
+        "message-box",
+        "small-caption",
+        "status-bar",
+    ]
+    .iter()
+    .any(|keyword| {
+        input
+            .try_parse(|i| i.expect_ident_matching(keyword))
+            .is_ok()
+    });
+    if is_system_font {
+        return None;
+    }
+
+    let mut style: Option<FontStyle> = None;
+    let mut variant: Option<FontVariantCaps> = None;
+    let mut weight: Option<FontWeightValue> = None;
+    // `font-stretch` longhand は本 crate に無いため `normal` のみ consume
+    // して捨てる (`FontShorthand` doc の Scope carving 節参照)。
+    let mut stretch_seen = false;
+
+    loop {
+        if style.is_none()
+            && let Ok(v) = input.try_parse(|i| -> Result<FontStyle, ParseError<'_, ()>> {
+                parse_font_style(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            style = Some(v);
+            continue;
+        }
+        if variant.is_none()
+            && let Ok(v) = input.try_parse(|i| -> Result<FontVariantCaps, ParseError<'_, ()>> {
+                if i.try_parse(|j| j.expect_ident_matching("normal")).is_ok() {
+                    Ok(FontVariantCaps::Normal)
+                } else if i
+                    .try_parse(|j| j.expect_ident_matching("small-caps"))
+                    .is_ok()
+                {
+                    Ok(FontVariantCaps::SmallCaps)
+                } else {
+                    Err(i.new_custom_error(()))
+                }
+            })
+        {
+            variant = Some(v);
+            continue;
+        }
+        if weight.is_none()
+            && let Ok(v) = input.try_parse(|i| -> Result<FontWeightValue, ParseError<'_, ()>> {
+                parse_font_weight(i).ok_or_else(|| i.new_custom_error(()))
+            })
+        {
+            weight = Some(v);
+            continue;
+        }
+        if !stretch_seen
+            && input
+                .try_parse(|i| i.expect_ident_matching("normal"))
+                .is_ok()
+        {
+            stretch_seen = true;
+            continue;
+        }
+        break;
+    }
+
+    // 必須の `font-size` (`parse_font_size` が `PropertyValue` を返すため
+    // `FontShorthandSize` に畳む — 同関数はこの 2 variant しか返さない)。
+    let size = match parse_font_size(input)? {
+        PropertyValue::FontSize(length) => FontShorthandSize::Absolute(length),
+        PropertyValue::FontSizeRelative(relative) => FontShorthandSize::Relative(relative),
+        // cov:ignore: `parse_font_size` は上記 2 variant しか返さない
+        // (同関数の 2 return path が canonical) — 到達不能。
+        _ => return None,
+    };
+
+    // 任意の `/ line-height`。
+    let line_height = if input.try_parse(|i| i.expect_delim('/')).is_ok() {
+        parse_line_height(input)?
+    } else {
+        LineHeight::Normal
+    };
+
+    // 必須の `font-family` (`<family-name>#`、1 要素以上)。
+    let family = parse_font_family(input)?;
+
+    Some(FontShorthand {
+        style: style.unwrap_or(FontStyle::Normal),
+        variant: variant.unwrap_or(FontVariantCaps::Normal),
+        weight: weight.unwrap_or(FontWeightValue::Absolute(400.0)),
+        size,
+        line_height,
+        family: Arc::new(family),
+    })
 }
 
 /// `background` shorthand を parse する ([`BackgroundShorthand`] doc の
@@ -23468,6 +24242,8 @@ mod tests {
                 overline: true,
                 line_through: false,
                 blink: false,
+                spelling_error: false,
+                grammar_error: false,
             }))
         );
         assert_eq!(
@@ -23477,7 +24253,45 @@ mod tests {
                 overline: true,
                 line_through: false,
                 blink: false,
+                spelling_error: false,
+                grammar_error: false,
             }))
+        );
+    }
+
+    #[test]
+    fn text_decoration_line_parses_spelling_and_grammar_error_alone() {
+        // CSS Text Decoration 4 §2.1: `spelling-error` / `grammar-error`
+        // are top-level alternatives, each accepted only on its own.
+        assert_eq!(
+            parse("spelling-error", "text-decoration-line"),
+            Some(PropertyValue::TextDecorationLine(
+                TextDecorationLine::SPELLING_ERROR
+            ))
+        );
+        assert_eq!(
+            parse("grammar-error", "text-decoration-line"),
+            Some(PropertyValue::TextDecorationLine(
+                TextDecorationLine::GRAMMAR_ERROR
+            ))
+        );
+    }
+
+    #[test]
+    fn text_decoration_line_rejects_spelling_error_combined() {
+        // Same grammar: neither combines with the `||` group nor with
+        // each other — leftover makes the caller drop the declaration.
+        assert_eq!(
+            parse_entire("underline spelling-error", "text-decoration-line"),
+            None
+        );
+        assert_eq!(
+            parse_entire("spelling-error underline", "text-decoration-line"),
+            None
+        );
+        assert_eq!(
+            parse_entire("spelling-error grammar-error", "text-decoration-line"),
+            None
         );
     }
 
@@ -23493,6 +24307,8 @@ mod tests {
                 overline: true,
                 line_through: true,
                 blink: true,
+                spelling_error: false,
+                grammar_error: false,
             }))
         );
     }
@@ -23671,19 +24487,20 @@ mod tests {
     // initial values.").
 
     #[test]
-    fn text_decoration_shorthand_line_only_fills_other_two_with_initial() {
+    fn text_decoration_shorthand_line_only_fills_the_rest_with_initial() {
         assert_eq!(
             parse("underline", "text-decoration"),
             Some(PropertyValue::TextDecoration(TextDecorationShorthand {
                 line: TextDecorationLine::UNDERLINE,
                 style: TextDecorationStyle::Solid,
                 color: TextDecorationColor::CurrentColor,
+                thickness: TextDecorationThickness::Auto,
             }))
         );
     }
 
     #[test]
-    fn text_decoration_shorthand_style_only_fills_other_two_with_initial() {
+    fn text_decoration_shorthand_style_only_fills_the_rest_with_initial() {
         // A bare style keyword is a spec-valid shorthand value under `||`
         // (`text-decoration: wavy;`) — this was previously unreachable
         // (pre-longhand-decomposition `text-decoration` only accepted
@@ -23694,12 +24511,13 @@ mod tests {
                 line: TextDecorationLine::NONE,
                 style: TextDecorationStyle::Wavy,
                 color: TextDecorationColor::CurrentColor,
+                thickness: TextDecorationThickness::Auto,
             }))
         );
     }
 
     #[test]
-    fn text_decoration_shorthand_color_only_fills_other_two_with_initial() {
+    fn text_decoration_shorthand_color_only_fills_the_rest_with_initial() {
         // Likewise a bare color (`text-decoration: red;`) was rejected
         // wholesale pre-decomposition; `||` makes it valid on its own.
         assert_eq!(
@@ -23713,12 +24531,13 @@ mod tests {
                     b: 0,
                     a: 255,
                 }),
+                thickness: TextDecorationThickness::Auto,
             }))
         );
     }
 
     #[test]
-    fn text_decoration_shorthand_parses_all_three_in_any_order() {
+    fn text_decoration_shorthand_parses_all_four_in_any_order() {
         let expected = Some(PropertyValue::TextDecoration(TextDecorationShorthand {
             line: TextDecorationLine::UNDERLINE,
             style: TextDecorationStyle::Wavy,
@@ -23728,6 +24547,7 @@ mod tests {
                 b: 0,
                 a: 255,
             }),
+            thickness: TextDecorationThickness::Auto,
         }));
         assert_eq!(parse("underline wavy red", "text-decoration"), expected);
         assert_eq!(parse("red wavy underline", "text-decoration"), expected);
@@ -23744,6 +24564,8 @@ mod tests {
                     overline: true,
                     line_through: false,
                     blink: false,
+                    spelling_error: false,
+                    grammar_error: false,
                 },
                 style: TextDecorationStyle::Wavy,
                 color: TextDecorationColor::Resolved(CssColor {
@@ -23752,8 +24574,334 @@ mod tests {
                     b: 0,
                     a: 255,
                 }),
+                thickness: TextDecorationThickness::Auto,
             }))
         );
+    }
+
+    #[test]
+    fn text_decoration_shorthand_thickness_only_fills_the_rest_with_initial() {
+        assert_eq!(
+            parse("from-font", "text-decoration"),
+            Some(PropertyValue::TextDecoration(TextDecorationShorthand {
+                line: TextDecorationLine::NONE,
+                style: TextDecorationStyle::Solid,
+                color: TextDecorationColor::CurrentColor,
+                thickness: TextDecorationThickness::FromFont,
+            }))
+        );
+    }
+
+    #[test]
+    fn text_decoration_shorthand_thickness_combines_with_other_components() {
+        // ED §2.6: thickness participates in the `||` loop like the other
+        // 3 components (WPT `text-decoration-shorthand.html` maps
+        // `overline from-font dotted green` to all 4 longhands).
+        let decls = parse("overline from-font dotted green", "text-decoration");
+        match decls {
+            Some(PropertyValue::TextDecoration(shorthand)) => {
+                assert_eq!(shorthand.line, TextDecorationLine::OVERLINE);
+                assert_eq!(shorthand.thickness, TextDecorationThickness::FromFont);
+                assert_eq!(shorthand.style, TextDecorationStyle::Dotted);
+                assert_eq!(
+                    shorthand.color,
+                    TextDecorationColor::Resolved(CssColor {
+                        r: 0,
+                        g: 128,
+                        b: 0,
+                        a: 255,
+                    })
+                );
+            }
+            // cov:ignore: `parse` above must produce the shorthand variant;
+            // any other outcome means the parser itself regressed, which the
+            // surrounding asserts already cover.
+            other => panic!("expected PropertyValue::TextDecoration, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn text_decoration_shorthand_length_thickness_combines() {
+        assert_eq!(
+            parse("line-through 20px", "text-decoration"),
+            Some(PropertyValue::TextDecoration(TextDecorationShorthand {
+                line: TextDecorationLine::LINE_THROUGH,
+                style: TextDecorationStyle::Solid,
+                color: TextDecorationColor::CurrentColor,
+                thickness: TextDecorationThickness::Length(Length::Px(20.0)),
+            }))
+        );
+    }
+
+    // ── text-decoration-skip-ink (ED §2.10.4) ──
+
+    #[test]
+    fn text_decoration_skip_ink_parses_all_three_keywords() {
+        assert_eq!(
+            parse("auto", "text-decoration-skip-ink"),
+            Some(PropertyValue::TextDecorationSkipInk(
+                TextDecorationSkipInk::Auto
+            ))
+        );
+        assert_eq!(
+            parse("none", "text-decoration-skip-ink"),
+            Some(PropertyValue::TextDecorationSkipInk(
+                TextDecorationSkipInk::None
+            ))
+        );
+        assert_eq!(
+            parse("all", "text-decoration-skip-ink"),
+            Some(PropertyValue::TextDecorationSkipInk(
+                TextDecorationSkipInk::All
+            ))
+        );
+        assert_eq!(parse_entire("auto none", "text-decoration-skip-ink"), None);
+        assert_eq!(parse_entire("bogus", "text-decoration-skip-ink"), None);
+    }
+
+    #[test]
+    fn text_decoration_skip_ink_key_maps_to_property_key() {
+        let v = PropertyValue::TextDecorationSkipInk(TextDecorationSkipInk::Auto);
+        assert_eq!(v.key(), PropertyKey::TextDecorationSkipInk);
+    }
+
+    // ── text-decoration-skip-spaces (ED §2.10.3) ──
+
+    #[test]
+    fn text_decoration_skip_spaces_parses_all_forms() {
+        assert_eq!(
+            parse("none", "text-decoration-skip-spaces"),
+            Some(PropertyValue::TextDecorationSkipSpaces(
+                TextDecorationSkipSpaces::None
+            ))
+        );
+        assert_eq!(
+            parse("all", "text-decoration-skip-spaces"),
+            Some(PropertyValue::TextDecorationSkipSpaces(
+                TextDecorationSkipSpaces::All
+            ))
+        );
+        assert_eq!(
+            parse("start", "text-decoration-skip-spaces"),
+            Some(PropertyValue::TextDecorationSkipSpaces(
+                TextDecorationSkipSpaces::Start
+            ))
+        );
+        assert_eq!(
+            parse("end", "text-decoration-skip-spaces"),
+            Some(PropertyValue::TextDecorationSkipSpaces(
+                TextDecorationSkipSpaces::End
+            ))
+        );
+        // `||` order-independence, both orders map to `StartEnd`.
+        assert_eq!(
+            parse("start end", "text-decoration-skip-spaces"),
+            Some(PropertyValue::TextDecorationSkipSpaces(
+                TextDecorationSkipSpaces::StartEnd
+            ))
+        );
+        assert_eq!(
+            parse("end start", "text-decoration-skip-spaces"),
+            Some(PropertyValue::TextDecorationSkipSpaces(
+                TextDecorationSkipSpaces::StartEnd
+            ))
+        );
+        assert_eq!(
+            parse_entire("none start", "text-decoration-skip-spaces"),
+            None
+        );
+        assert_eq!(
+            parse_entire("start start", "text-decoration-skip-spaces"),
+            None
+        );
+        assert_eq!(parse_entire("bogus", "text-decoration-skip-spaces"), None);
+    }
+
+    #[test]
+    fn text_decoration_skip_spaces_key_maps_to_property_key() {
+        let v = PropertyValue::TextDecorationSkipSpaces(TextDecorationSkipSpaces::StartEnd);
+        assert_eq!(v.key(), PropertyKey::TextDecorationSkipSpaces);
+    }
+
+    // ── text-decoration-thickness (ED §2.4.1) ──
+
+    #[test]
+    fn text_decoration_thickness_parses_all_forms() {
+        assert_eq!(
+            parse("auto", "text-decoration-thickness"),
+            Some(PropertyValue::TextDecorationThickness(
+                TextDecorationThickness::Auto
+            ))
+        );
+        assert_eq!(
+            parse("from-font", "text-decoration-thickness"),
+            Some(PropertyValue::TextDecorationThickness(
+                TextDecorationThickness::FromFont
+            ))
+        );
+        assert_eq!(
+            parse("3em", "text-decoration-thickness"),
+            Some(PropertyValue::TextDecorationThickness(
+                TextDecorationThickness::Length(Length::Em(3.0))
+            ))
+        );
+        assert_eq!(
+            parse("50%", "text-decoration-thickness"),
+            Some(PropertyValue::TextDecorationThickness(
+                TextDecorationThickness::Length(Length::Percent(50.0))
+            ))
+        );
+        // `<line-width>` keywords are out of scope (dropped).
+        assert_eq!(parse_entire("thin", "text-decoration-thickness"), None);
+        assert_eq!(parse_entire("medium", "text-decoration-thickness"), None);
+    }
+
+    #[test]
+    fn text_decoration_thickness_key_maps_to_property_key() {
+        let v = PropertyValue::TextDecorationThickness(TextDecorationThickness::Auto);
+        assert_eq!(v.key(), PropertyKey::TextDecorationThickness);
+    }
+
+    // ── text-decoration-inset (ED §2.9.1) ──
+
+    #[test]
+    fn text_decoration_inset_parses_auto_and_one_or_two_lengths() {
+        assert_eq!(
+            parse("auto", "text-decoration-inset"),
+            Some(PropertyValue::TextDecorationInset(
+                TextDecorationInset::Auto
+            ))
+        );
+        assert_eq!(
+            parse("-1em", "text-decoration-inset"),
+            Some(PropertyValue::TextDecorationInset(
+                TextDecorationInset::Lengths {
+                    start: Length::Em(-1.0),
+                    end: Length::Em(-1.0),
+                }
+            ))
+        );
+        assert_eq!(
+            parse("1px 2px", "text-decoration-inset"),
+            Some(PropertyValue::TextDecorationInset(
+                TextDecorationInset::Lengths {
+                    start: Length::Px(1.0),
+                    end: Length::Px(2.0),
+                }
+            ))
+        );
+        // `<percentage>` is rejected (WPT ground truth over ED grammar).
+        assert_eq!(parse_entire("10%", "text-decoration-inset"), None);
+        assert_eq!(parse_entire("none", "text-decoration-inset"), None);
+        assert_eq!(parse_entire("auto auto", "text-decoration-inset"), None);
+    }
+
+    #[test]
+    fn text_decoration_inset_key_maps_to_property_key() {
+        let v = PropertyValue::TextDecorationInset(TextDecorationInset::Auto);
+        assert_eq!(v.key(), PropertyKey::TextDecorationInset);
+    }
+
+    // ── text-emphasis-position (ED §3.4) ──
+
+    #[test]
+    fn text_emphasis_position_parses_auto_and_axis_combinations() {
+        assert_eq!(
+            parse("auto", "text-emphasis-position"),
+            Some(PropertyValue::TextEmphasisPosition(
+                TextEmphasisPosition::Auto
+            ))
+        );
+        assert_eq!(
+            parse("over", "text-emphasis-position"),
+            Some(PropertyValue::TextEmphasisPosition(
+                TextEmphasisPosition::Position {
+                    vertical: TextEmphasisVEdge::Over,
+                    horizontal: None,
+                }
+            ))
+        );
+        assert_eq!(
+            parse("right under", "text-emphasis-position"),
+            Some(PropertyValue::TextEmphasisPosition(
+                TextEmphasisPosition::Position {
+                    vertical: TextEmphasisVEdge::Under,
+                    horizontal: Some(TextEmphasisHEdge::Right),
+                }
+            ))
+        );
+        // vertical is required; doubled axes rejected.
+        assert_eq!(parse_entire("left", "text-emphasis-position"), None);
+        assert_eq!(
+            parse_entire("left over right", "text-emphasis-position"),
+            None
+        );
+        assert_eq!(
+            parse_entire("under right over", "text-emphasis-position"),
+            None
+        );
+    }
+
+    #[test]
+    fn text_emphasis_position_key_maps_to_property_key() {
+        let v = PropertyValue::TextEmphasisPosition(TextEmphasisPosition::Auto);
+        assert_eq!(v.key(), PropertyKey::TextEmphasisPosition);
+    }
+
+    // ── text-underline-position (ED §2.7) ──
+
+    #[test]
+    fn text_underline_position_parses_auto_and_combinations() {
+        assert_eq!(
+            parse("auto", "text-underline-position"),
+            Some(PropertyValue::TextUnderlinePosition(
+                TextUnderlinePosition::AUTO
+            ))
+        );
+        assert_eq!(
+            parse("under", "text-underline-position"),
+            Some(PropertyValue::TextUnderlinePosition(
+                TextUnderlinePosition {
+                    under: true,
+                    ..TextUnderlinePosition::AUTO
+                }
+            ))
+        );
+        assert_eq!(
+            parse("from-font left", "text-underline-position"),
+            Some(PropertyValue::TextUnderlinePosition(
+                TextUnderlinePosition {
+                    from_font: true,
+                    left: true,
+                    ..TextUnderlinePosition::AUTO
+                }
+            ))
+        );
+        assert_eq!(
+            parse("right under", "text-underline-position"),
+            Some(PropertyValue::TextUnderlinePosition(
+                TextUnderlinePosition {
+                    under: true,
+                    right: true,
+                    ..TextUnderlinePosition::AUTO
+                }
+            ))
+        );
+        // `auto` is exclusive; `from-font`+`under` and `left`+`right`
+        // never combine.
+        assert_eq!(parse_entire("auto under", "text-underline-position"), None);
+        assert_eq!(
+            parse_entire("under from-font", "text-underline-position"),
+            None
+        );
+        assert_eq!(parse_entire("left right", "text-underline-position"), None);
+        assert_eq!(parse_entire("bogus", "text-underline-position"), None);
+    }
+
+    #[test]
+    fn text_underline_position_key_maps_to_property_key() {
+        let v = PropertyValue::TextUnderlinePosition(TextUnderlinePosition::AUTO);
+        assert_eq!(v.key(), PropertyKey::TextUnderlinePosition);
     }
 
     #[test]
@@ -23779,6 +24927,7 @@ mod tests {
                 line: TextDecorationLine::NONE,
                 style: TextDecorationStyle::Solid,
                 color: TextDecorationColor::CurrentColor,
+                thickness: TextDecorationThickness::Auto,
             })
         );
         assert!(!parser.is_exhausted());
@@ -23803,6 +24952,7 @@ mod tests {
             line: TextDecorationLine::NONE,
             style: TextDecorationStyle::Solid,
             color: TextDecorationColor::CurrentColor,
+            thickness: TextDecorationThickness::Auto,
         });
         assert_eq!(shorthand.key(), PropertyKey::TextDecoration);
     }
@@ -32079,6 +33229,211 @@ mod tests {
             origin: VisualBox::PaddingBox,
         });
         assert_eq!(v.key(), PropertyKey::Background);
+    }
+
+    // ── font shorthand (CSS Fonts 4 §2.1) ──
+
+    fn expect_font(value: Option<PropertyValue>) -> FontShorthand {
+        match value {
+            Some(PropertyValue::Font(shorthand)) => shorthand,
+            // cov:ignore: this branch only executes when a caller's
+            // `parse(..., "font")` unexpectedly fails to parse or parses to
+            // the wrong variant; every call site in this test module passes
+            // valid `font` shorthand input, so the panic never fires while
+            // the tests pass.
+            other => panic!("expected PropertyValue::Font, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn font_shorthand_minimal_size_and_family_fill_the_rest_with_initial_values() {
+        assert_eq!(
+            expect_font(parse_entire("16px serif", "font")),
+            FontShorthand {
+                style: FontStyle::Normal,
+                variant: FontVariantCaps::Normal,
+                weight: FontWeightValue::Absolute(400.0),
+                size: FontShorthandSize::Absolute(Length::Px(16.0)),
+                line_height: LineHeight::Normal,
+                family: Arc::new(vec![Atom::from("serif")]),
+            }
+        );
+    }
+
+    #[test]
+    fn font_shorthand_full_preface_with_slash_line_height_and_family_list() {
+        assert_eq!(
+            expect_font(parse_entire(
+                "italic small-caps bold 16px/1.5 \"Times New Roman\", serif",
+                "font"
+            )),
+            FontShorthand {
+                style: FontStyle::Italic,
+                variant: FontVariantCaps::SmallCaps,
+                weight: FontWeightValue::Absolute(700.0),
+                size: FontShorthandSize::Absolute(Length::Px(16.0)),
+                line_height: LineHeight::Number(1.5),
+                family: Arc::new(vec![Atom::from("Times New Roman"), Atom::from("serif")]),
+            }
+        );
+    }
+
+    #[test]
+    fn font_shorthand_preface_accepts_any_order() {
+        let forward = expect_font(parse_entire("italic bold 16px serif", "font"));
+        let backward = expect_font(parse_entire("bold italic 16px serif", "font"));
+        assert_eq!(forward, backward);
+        assert_eq!(forward.style, FontStyle::Italic);
+        assert_eq!(forward.weight, FontWeightValue::Absolute(700.0));
+    }
+
+    #[test]
+    fn font_shorthand_numeric_weight_and_absolute_unit_size() {
+        let shorthand = expect_font(parse_entire("600 14pt Georgia", "font"));
+        assert_eq!(shorthand.weight, FontWeightValue::Absolute(600.0));
+        assert_eq!(
+            shorthand.size,
+            FontShorthandSize::Absolute(Length::Pt(14.0))
+        );
+    }
+
+    #[test]
+    fn font_shorthand_relative_size_keywords() {
+        assert_eq!(
+            expect_font(parse_entire("larger serif", "font")).size,
+            FontShorthandSize::Relative(RelativeFontSize::Larger)
+        );
+        assert_eq!(
+            expect_font(parse_entire("italic smaller serif", "font")).size,
+            FontShorthandSize::Relative(RelativeFontSize::Smaller)
+        );
+    }
+
+    #[test]
+    fn font_shorthand_absolute_size_keyword() {
+        assert_eq!(
+            expect_font(parse_entire("x-large serif", "font")).size,
+            FontShorthandSize::Absolute(Length::Px(24.0))
+        );
+    }
+
+    #[test]
+    fn font_shorthand_slash_line_height_length_and_percentage() {
+        assert_eq!(
+            expect_font(parse_entire("16px/24px serif", "font")).line_height,
+            LineHeight::Length(Length::Px(24.0))
+        );
+        assert_eq!(
+            expect_font(parse_entire("16px/150% serif", "font")).line_height,
+            LineHeight::Length(Length::Percent(150.0))
+        );
+    }
+
+    #[test]
+    fn font_shorthand_triple_normal_fills_three_preface_slots() {
+        let shorthand = expect_font(parse_entire("normal normal normal 16px serif", "font"));
+        assert_eq!(shorthand.style, FontStyle::Normal);
+        assert_eq!(shorthand.variant, FontVariantCaps::Normal);
+        assert_eq!(shorthand.weight, FontWeightValue::Absolute(400.0));
+    }
+
+    #[test]
+    fn font_shorthand_stretch_normal_consumed_after_full_preface() {
+        // `normal` after style + variant + weight can only be the
+        // `font-stretch` slot (`FontShorthand` doc's Scope carving section) —
+        // consumed and dropped, longhands keep their fills.
+        let shorthand = expect_font(parse_entire(
+            "italic small-caps bold normal 16px serif",
+            "font",
+        ));
+        assert_eq!(shorthand.style, FontStyle::Italic);
+        assert_eq!(shorthand.variant, FontVariantCaps::SmallCaps);
+        assert_eq!(shorthand.weight, FontWeightValue::Absolute(700.0));
+    }
+
+    #[test]
+    fn font_shorthand_oblique_style() {
+        assert_eq!(
+            expect_font(parse_entire("oblique 16px serif", "font")).style,
+            FontStyle::Oblique
+        );
+    }
+
+    #[test]
+    fn font_shorthand_rejects_system_font_keywords() {
+        for keyword in [
+            "caption",
+            "icon",
+            "menu",
+            "message-box",
+            "small-caption",
+            "status-bar",
+        ] {
+            assert_eq!(parse_entire(keyword, "font"), None, "{keyword}");
+        }
+    }
+
+    #[test]
+    fn font_shorthand_rejects_missing_size_or_family() {
+        // preface only, no size/family
+        assert_eq!(parse_entire("italic", "font"), None);
+        // size without family
+        assert_eq!(parse_entire("italic 16px", "font"), None);
+        assert_eq!(parse_entire("16px", "font"), None);
+        // family without size
+        assert_eq!(parse_entire("serif", "font"), None);
+        assert_eq!(parse_entire("italic serif", "font"), None);
+        // empty
+        assert_eq!(parse_entire("", "font"), None);
+    }
+
+    #[test]
+    fn font_shorthand_rejects_non_normal_font_stretch() {
+        // `condensed` matches no preface slot, so the `font-size` parse runs
+        // on it and fails — the whole declaration is dropped rather than
+        // silently ignoring the stretch (`FontShorthand` doc's Scope
+        // carving section).
+        assert_eq!(parse_entire("condensed 16px serif", "font"), None);
+    }
+
+    #[test]
+    fn font_shorthand_rejects_non_css2_font_variant() {
+        // `unicase` is a valid `font-variant-caps` keyword but not part of
+        // CSS2's `font-variant-css2` (`normal` / `small-caps`) subset the
+        // shorthand accepts — same drop shape as the stretch case above.
+        assert_eq!(parse_entire("italic unicase 16px serif", "font"), None);
+    }
+
+    #[test]
+    fn font_shorthand_rejects_repeated_preface_component() {
+        // `||` semantics: each preface component at most once. The 2nd
+        // `italic` matches no remaining slot, so the `font-size` parse runs
+        // on it and fails.
+        assert_eq!(parse_entire("italic italic 16px serif", "font"), None);
+    }
+
+    #[test]
+    fn font_shorthand_rejects_slash_with_missing_or_invalid_line_height() {
+        assert_eq!(parse_entire("16px/ serif", "font"), None);
+        assert_eq!(parse_entire("16px/bogus serif", "font"), None);
+    }
+
+    #[test]
+    fn font_shorthand_rejects_unknown_keyword() {
+        assert_eq!(parse_entire("bogus 16px serif", "font"), None);
+    }
+
+    #[test]
+    fn font_shorthand_key_maps_to_font_property_key() {
+        let v = PropertyValue::Font(FontShorthand {
+            style: FontStyle::Normal,
+            variant: FontVariantCaps::Normal,
+            weight: FontWeightValue::Absolute(400.0),
+            size: FontShorthandSize::Absolute(Length::Px(16.0)),
+            line_height: LineHeight::Normal,
+            family: Arc::new(vec![Atom::from("serif")]),
+        });
+        assert_eq!(v.key(), PropertyKey::Font);
     }
 
     // ── object-fit (CSS Images Module Level 3 §5.1) ──
