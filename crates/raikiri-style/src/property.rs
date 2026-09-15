@@ -6413,6 +6413,20 @@ pub enum FilterFunction {
 /// **透過的に継続動作** する (`&Arc<Vec<T>>` は autoderef で `&[T]` として使える)。
 /// 一方、`PropertyValue::Content(vec![...])` のように payload を **construct** する
 /// 場合は `PropertyValue::Content(Arc::new(vec![...]))` への書き換えが必要。
+/// `text-indent` の payload ([`TextIndentValue`])。
+///
+/// CSS Text 3 §8.1 grammar `<length-percentage> && hanging? && each-line?`
+/// の全成分を保持する。`Copy` (全 field が `Copy`) のため cascade の
+/// by-value 代入・inheritance copy が素朴に書ける。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextIndentValue {
+    /// `<length-percentage>` 成分。
+    pub length: Length,
+    /// `hanging` keyword の有無。
+    pub hanging: bool,
+    /// `each-line` keyword の有無。
+    pub each_line: bool,
+}
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropertyValue {
@@ -6644,23 +6658,11 @@ pub enum PropertyValue {
     /// same shape as [`Self::MarginTop`]'s `<length-percentage> | auto`
     /// (minus the `auto` alternative, which `text-indent` does not have).
     ///
-    /// # Scope carving ((b) 非対応)
-    ///
-    /// The `hanging` and `each-line` keywords are not implemented — this
-    /// variant's payload is a bare [`Length`], not a struct that could also
-    /// carry them. `hanging` reverses which lines an indent applies to
-    /// (normally the first line only; with `hanging`, every line *except*
-    /// the first) and `each-line` extends the indent to every line after a
-    /// forced break; both require multi-line layout state this crate's
-    /// cascade static side does not have. `parse_text_indent` itself only
-    /// consumes the leading `<length-percentage>` and does not check for
-    /// leftover tokens — `text-indent: 2em hanging` is still rejected as a
-    /// whole declaration (not silently truncated to `2em`), but that rejection
-    /// happens one layer up, at the `expect_exhausted` check [`crate::rule`]'s
-    /// `DeclParser` runs on every declaration's leftover tokens (same
-    /// mechanism the `rejects_extra_length_after_font_size` test in
-    /// `crate::rule` pins for an unrelated property).
-    TextIndent(Length),
+    /// payload は [`TextIndentValue`] (length + hanging/each-line flags)。
+    /// cascade 層は length を `text_indent` へ、flags を `text_indent_hanging` /
+    /// `text_indent_each_line` へ分配する。consumer (raikiri-dom realign) は
+    /// parley の `IndentOptions` へ写像する (bd raikiri-spike-5u1y)。
+    TextIndent(TextIndentValue),
     /// `padding-top: <length-percentage [0,∞]>` — non-inherited、initial: `0`。
     /// CSS Box 3 §4.1 <https://www.w3.org/TR/css-box-3/#padding-physical>。
     /// spec grammar `<length-percentage [0,∞]>` の non-negative constraint は
@@ -11907,19 +11909,18 @@ pub(crate) fn parse_length_allow_negative(input: &mut Parser<'_, '_>) -> Option<
     parse_length_value(input, false)
 }
 
-/// `text-indent`'s `<length-percentage>` component.
+/// `text-indent`'s full grammar.
 ///
 /// grammar reference: CSS Text 3 §8.1
 /// <https://www.w3.org/TR/css-text-3/#text-indent-property>, whose full
 /// grammar is `<length-percentage> && hanging? && each-line?` — this helper
-/// covers only the `<length-percentage>` part ([`PropertyValue::TextIndent`]
-/// doc's "Scope carving" section).
+/// covers all three components, returning [`TextIndentValue`].
 ///
 /// No non-negative filter, unlike [`parse_padding_side`] — the spec places no
 /// `[0,∞]` restriction on this grammar (negative indents are valid, sibling
 /// [`parse_margin_side`] applies the same "no filter" treatment for the same
 /// reason its own grammar allows negative values).
-fn parse_text_indent(input: &mut Parser<'_, '_>) -> Option<Length> {
+fn parse_text_indent(input: &mut Parser<'_, '_>) -> Option<TextIndentValue> {
     // CSS Text 3 §8.1 grammar: `<length-percentage> && hanging? && each-line?`
     // Order-independent, but at least the length component must be present.
     // We collect optional hanging/each-line idents and one length-percentage,
@@ -11957,7 +11958,11 @@ fn parse_text_indent(input: &mut Parser<'_, '_>) -> Option<Length> {
         }
         break;
     }
-    length
+    length.map(|length| TextIndentValue {
+        length,
+        hanging,
+        each_line,
+    })
 }
 
 /// `<length-percentage> | auto` の共通 parser — margin longhand 1 side 分。
@@ -23978,7 +23983,11 @@ mod tests {
     fn text_indent_parse_px() {
         assert_eq!(
             parse("20px", "text-indent"),
-            Some(PropertyValue::TextIndent(Length::Px(20.0)))
+            Some(PropertyValue::TextIndent(TextIndentValue {
+                length: Length::Px(20.0),
+                hanging: false,
+                each_line: false
+            }))
         );
     }
 
@@ -23986,7 +23995,11 @@ mod tests {
     fn text_indent_parse_percentage() {
         assert_eq!(
             parse("10%", "text-indent"),
-            Some(PropertyValue::TextIndent(Length::Percent(10.0)))
+            Some(PropertyValue::TextIndent(TextIndentValue {
+                length: Length::Percent(10.0),
+                hanging: false,
+                each_line: false
+            }))
         );
     }
 
@@ -23994,7 +24007,11 @@ mod tests {
     fn text_indent_parse_em() {
         assert_eq!(
             parse("2em", "text-indent"),
-            Some(PropertyValue::TextIndent(Length::Em(2.0)))
+            Some(PropertyValue::TextIndent(TextIndentValue {
+                length: Length::Em(2.0),
+                hanging: false,
+                each_line: false
+            }))
         );
     }
 
@@ -24004,7 +24021,11 @@ mod tests {
         // (unlike `padding-top` — `PropertyValue::TextIndent` doc).
         assert_eq!(
             parse("-2em", "text-indent"),
-            Some(PropertyValue::TextIndent(Length::Em(-2.0)))
+            Some(PropertyValue::TextIndent(TextIndentValue {
+                length: Length::Em(-2.0),
+                hanging: false,
+                each_line: false
+            }))
         );
     }
 
@@ -24013,7 +24034,49 @@ mod tests {
         // CSS Values 3 §5 unitless-zero clause — bare `0` is a valid `<length>`.
         assert_eq!(
             parse("0", "text-indent"),
-            Some(PropertyValue::TextIndent(Length::Px(0.0)))
+            Some(PropertyValue::TextIndent(TextIndentValue {
+                length: Length::Px(0.0),
+                hanging: false,
+                each_line: false
+            }))
+        );
+    }
+
+    #[test]
+    fn text_indent_parse_hanging() {
+        // CSS Text 3 §8.1 `hanging` keyword is kept, not dropped.
+        assert_eq!(
+            parse("2em hanging", "text-indent"),
+            Some(PropertyValue::TextIndent(TextIndentValue {
+                length: Length::Em(2.0),
+                hanging: true,
+                each_line: false,
+            }))
+        );
+    }
+
+    #[test]
+    fn text_indent_parse_each_line() {
+        assert_eq!(
+            parse("each-line 2em", "text-indent"),
+            Some(PropertyValue::TextIndent(TextIndentValue {
+                length: Length::Em(2.0),
+                hanging: false,
+                each_line: true,
+            }))
+        );
+    }
+
+    #[test]
+    fn text_indent_parse_hanging_each_line_combined() {
+        // Order-independent `&&`: flags may precede the length.
+        assert_eq!(
+            parse("hanging each-line 2em", "text-indent"),
+            Some(PropertyValue::TextIndent(TextIndentValue {
+                length: Length::Em(2.0),
+                hanging: true,
+                each_line: true,
+            }))
         );
     }
 
@@ -24029,19 +24092,21 @@ mod tests {
     fn text_indent_rejects_auto() {
         // Unlike `margin` / `width`, `text-indent`'s grammar has no `auto`
         // alternative — the `hanging`/`each-line` keywords are the only
-        // idents the full grammar accepts, and this crate does not parse
-        // them either ((b) 非対応, `PropertyValue::TextIndent` doc's "Scope
-        // carving" section). `parse_length_value` reads one token via
-        // `input.next()` and only has match arms for `Token::Dimension` /
-        // `Token::Percentage` / a zero `Token::Number` — an `Ident` token
-        // (`auto` included) matches none of them and falls through to the
-        // trailing `_ => None`.
+        // idents the full grammar accepts. `parse_length_value` reads one
+        // token via `input.next()` and only has match arms for
+        // `Token::Dimension` / `Token::Percentage` / a zero `Token::Number` —
+        // an `Ident` token (`auto` included) matches none of them and falls
+        // through to the trailing `_ => None`.
         assert_eq!(parse("auto", "text-indent"), None);
     }
 
     #[test]
     fn text_indent_key_maps_to_text_indent_property_key() {
-        let v = PropertyValue::TextIndent(Length::Px(20.0));
+        let v = PropertyValue::TextIndent(TextIndentValue {
+            length: Length::Px(20.0),
+            hanging: false,
+            each_line: false,
+        });
         assert_eq!(v.key(), PropertyKey::TextIndent);
     }
 
