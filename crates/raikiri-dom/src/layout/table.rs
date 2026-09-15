@@ -234,6 +234,11 @@ pub fn compute_table_layout(
     // zero, so this reduces to the plain sum).
     let content_width: f32 = column_widths.iter().sum::<f32>() - overlap_w;
     let content_height: f32 = row_heights.iter().sum::<f32>() - overlap_h;
+    // min grows the box; max NEVER shrinks a table below its intrinsic
+    // content size (csswg-drafts#5336 / Mozilla bug 1651530: WPT
+    // min-max-size-table-content-box and max-height-table pin that
+    // max-height/max-width leave sub-intrinsic tables at natural size —
+    // only min-* grow). min still wins over max on direct conflict.
     let clamp_min_max = |v: f32, mn: Option<f32>, mx: Option<f32>| -> f32 {
         let mut x = v;
         if let Some(mn) = mn {
@@ -241,6 +246,7 @@ pub fn compute_table_layout(
         }
         if let Some(mx) = mx
             && !(mn.is_some_and(|mn| mn > mx))
+            && mx >= v
         {
             x = x.min(mx);
         }

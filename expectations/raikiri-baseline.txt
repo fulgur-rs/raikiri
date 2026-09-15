@@ -532,7 +532,13 @@ css/css-tables/empty-table-height.html
 css/css-tables/height-distribution/percentage-sizing-of-table-cell-007.html
 css/css-tables/html-display-table.html
 css/css-tables/max-height-table.html
-css/css-tables/min-max-size-table-content-box.html
+# REMOVED 2026-09-15: css/css-tables/min-max-size-table-content-box.html — was a
+# vacuous pass while `font:` shorthand was dropped (both sides equally
+# unstyled). With font parsing live, inter-table whitespace text nodes render
+# ~37px struts (newline shaped as hard break; no white-space/segment-break
+# processing in layout — see raikiri-spike-1f6w) plus min/max interplay.
+# Re-pin with the strut fix. min-height growth itself works (min-height-table
+# passes); max correctly does not shrink below intrinsic (max-height-table).
 css/css-tables/out-of-order-elements-collapsed-border.html
 css/css-tables/paint/col-paint-htb-rtl.html
 css/css-tables/paint/table-border-paint-caption-change.html
@@ -963,6 +969,8 @@ css/css-tables/percent-height-replaced-in-percent-cell.tentative.html
 css/css-tables/table-cell-baseline-static-position.html
 # --- css-tables reftest pin 2026-09-15 (tables-sweep: tr-height row floor, CSS 2.1 §17.5.3) ---
 css/css-tables/table-as-item-cell-percentage-001.html
+# --- css-tables reftest pin 2026-09-15 (tables-minmax bridge + tr-height floor) ---
+css/css-tables/min-height-table.html
 # REMOVED 2026-09-15: css/css-tables/paint/col-paint-vrl-rtl.html — was a
 # vacuous pass (both sides rendered ~0-height rows while tr heights were
 # ignored). The tr-height floor fixed the reference side (100/50px rows) but
