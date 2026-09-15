@@ -190,7 +190,7 @@ dependencies = [
  "stylo_static_prefs",
  "stylo_taffy",
  "stylo_traits",
- "taffy",
+ "taffy 0.12.1",
  "thread_local",
  "url",
  "usvg",
@@ -227,7 +227,7 @@ dependencies = [
  "peniko",
  "smallvec",
  "stylo",
- "taffy",
+ "taffy 0.12.1",
  "usvg",
 ]
 
@@ -1765,7 +1765,7 @@ dependencies = [
  "rayon",
  "rustix",
  "smol_str",
- "taffy",
+ "taffy 0.14.0",
  "tempfile",
 ]
 
@@ -1782,7 +1782,7 @@ dependencies = [
  "raikiri-traits",
  "rustc-hash",
  "smol_str",
- "taffy",
+ "taffy 0.14.0",
  "url",
 ]
 
@@ -1808,7 +1808,7 @@ dependencies = [
  "raikiri-html",
  "raikiri-style",
  "raikiri-traits",
- "taffy",
+ "taffy 0.14.0",
 ]
 
 [[package]]
@@ -2383,7 +2383,7 @@ checksum = "ba6f8e06f0038eb2e01c558b3004cb07c1ee1ab27f23aecbfbf629f55b0307e1"
 dependencies = [
  "stylo",
  "stylo_atoms",
- "taffy",
+ "taffy 0.12.1",
 ]
 
 [[package]]
@@ -2450,6 +2450,18 @@ dependencies = [
  "grid",
  "serde",
  "slotmap",
+]
+
+[[package]]
+name = "taffy"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "639627c87f43b9181c811f40a6296409e093a17bc761214cba3c15df74f86b99"
+dependencies = [
+ "arrayvec",
+ "serde",
+ "slotmap",
+ "smallvec",
 ]
 
 [[package]]

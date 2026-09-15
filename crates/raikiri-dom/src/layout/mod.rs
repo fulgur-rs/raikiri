@@ -445,23 +445,16 @@ fn bridge_box_sizing(style: &mut taffy::Style, cv: &ComputedValues) {
 /// - `flex-basis` ([`ComputedFlexBasis`]) → `style.flex_basis`
 ///   (`taffy::Dimension`、§7.2.3)
 ///
-/// # `flex-basis` の bridge — `width`/`height` と同じ helper を再利用
+/// # `flex-basis` の bridge
 ///
-/// [`ComputedFlexBasis`] を [`ComputedLengthPercentageOrAuto`] に一度
-/// 変換してから [`computed_length_percentage_or_auto_to_taffy_dimension`]
-/// へ delegate する — [`bridge_size`] と全く同じ helper (percent の
-/// `/100.0` 変換 + [`sanitize_taffy`] 非有限 guard を含む) を再実装せず共有する。
+/// `Px` / `Percent` は [`bridge_size`] と同じ percent `/100.0` 変換 +
+/// [`sanitize_taffy`] 非有限 guard で [`taffy::Dimension`] に載せる。
+/// `MinContent` / `MaxContent` / `FitContent` は taffy 0.14 の同名
+/// `Dimension` variant にそのまま写像する (flex アルゴリズムが content
+/// 測定で解決する)。
 ///
-/// - `Auto` → [`ComputedLengthPercentageOrAuto::Auto`]
-/// - `Px` / `Percent` → 対応する [`ComputedLengthPercentageOrAuto`] variant
-/// - `Content` → **`Auto` と同じ扱い** — `taffy::Dimension` に `content`
-///   keyword を表現する variant が存在しないため (`FlexBasisValue` doc の
-///   "`content` と `auto` の意味差" 節参照)、taffy 側の flex-basis 解決
-///   アルゴリズムに委ねる。`content` と `auto` の意味差 (宣言要素の
-///   `width`/`height` を参照するかどうか) はこの bridge の scope 外 —
-///   computed 層では区別を保っている ([`ComputedFlexBasis`] doc 参照) ため、
-///   将来 taffy 側 API が `content` を表現できるようになった時点で本 bridge
-///   だけを直せばよい。
+/// - `Content` → [`taffy::Dimension::content`] (0.14 — flex-basis 専用
+///   keyword、そのままの意味で写像する)。
 fn bridge_flex(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     style.flex_direction = match cv.flex_direction {
         FlexDirectionValue::Row => TaffyFlexDirection::Row,
@@ -490,25 +483,22 @@ fn bridge_flex(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Lay
     // from `auto` in principle — it always uses the item's content size as
     // the flex basis, even when `width`/`height` are also set, whereas
     // `auto` defers to `width`/`height` first and only falls back to
-    // content size when those are also `auto`. This crate has no
-    // content-based intrinsic sizing pass to compute that distinction, so
-    // `content` is approximated as `auto` here; the two diverge only when
-    // an explicit `width`/`height` is present alongside `flex-basis:
-    // content`. `min-content` / `max-content` / bare `fit-content` join the
-    // same approximation (computed layer keeps them distinct —
-    // `ComputedFlexBasis` doc — but the bridge has no intrinsic-sizing
-    // input to honor them with).
-    let basis_lpa = match cv.flex_basis {
-        ComputedFlexBasis::Auto
-        | ComputedFlexBasis::Content
-        | ComputedFlexBasis::MinContent
-        | ComputedFlexBasis::MaxContent
-        | ComputedFlexBasis::FitContent => ComputedLengthPercentageOrAuto::Auto,
-        ComputedFlexBasis::Px(v) => ComputedLengthPercentageOrAuto::Px(v),
-        ComputedFlexBasis::Percent(p) => ComputedLengthPercentageOrAuto::Percent(p),
+    // `content` maps to taffy's own `Dimension::content` (0.14 — "only
+    // valid for flex-basis", exactly this property's keyword).
+    // `min-content` / `max-content` / bare `fit-content` map to taffy's own
+    // intrinsic `Dimension` variants (0.14), which the flex algorithm
+    // resolves through content measurement.
+    style.flex_basis = match cv.flex_basis {
+        ComputedFlexBasis::Auto => taffy::Dimension::auto(),
+        ComputedFlexBasis::Content => taffy::Dimension::content(),
+        ComputedFlexBasis::MinContent => taffy::Dimension::min_content(),
+        ComputedFlexBasis::MaxContent => taffy::Dimension::max_content(),
+        ComputedFlexBasis::FitContent => taffy::Dimension::fit_content(),
+        ComputedFlexBasis::Px(v) => taffy::Dimension::length(sanitize_taffy(v, "flex-basis", diag)),
+        ComputedFlexBasis::Percent(p) => {
+            taffy::Dimension::percent(sanitize_taffy(p / 100.0, "flex-basis", diag))
+        }
     };
-    style.flex_basis =
-        computed_length_percentage_or_auto_to_taffy_dimension(basis_lpa, "flex-basis", diag);
 }
 
 /// alignment property → [`taffy::Style`] bridge (CSS Box Alignment Module
@@ -696,22 +686,28 @@ fn bridge_grid(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Lay
     style.grid_template_row_names = row_names;
 
     style.grid_template_areas = match &cv.grid_template_areas {
-        GridTemplateAreasValue::None => Vec::new(),
-        GridTemplateAreasValue::Areas(areas) => areas
-            .areas
-            .iter()
-            .map(|a| TaffyGridTemplateArea {
-                name: a.name.to_string(),
-                row_start: saturate_u16(a.row_start),
-                row_end: saturate_u16(a.row_end),
-                column_start: saturate_u16(a.column_start),
-                column_end: saturate_u16(a.column_end),
-            })
-            .collect(),
+        GridTemplateAreasValue::None => None,
+        GridTemplateAreasValue::Areas(areas) => Some(taffy::style::GridTemplateAreas {
+            areas: areas
+                .areas
+                .iter()
+                .map(|a| TaffyGridTemplateArea {
+                    name: a.name.to_string(),
+                    row_start: saturate_u16(a.row_start),
+                    row_end: saturate_u16(a.row_end),
+                    column_start: saturate_u16(a.column_start),
+                    column_end: saturate_u16(a.column_end),
+                })
+                .collect(),
+            // taffy clamps grid dimensions to 10,000 tracks; saturate our
+            // u32 counts the same way as the area coordinates above.
+            row_count: areas.row_count.min(u16::MAX as u32) as u16,
+            column_count: areas.column_count.min(u16::MAX as u32) as u16,
+        }),
         // cov:ignore: unreachable while GridTemplateAreasValue is
         // None|Areas(_) only; required for its #[non_exhaustive] contract
         // (see `bridge_display` catch-all doc).
-        _ => Vec::new(),
+        _ => None,
     };
 
     style.grid_auto_columns = cv
@@ -1447,7 +1443,7 @@ fn saturate_u16(n: u32) -> u16 {
 /// | `width: 1000%` | 1e1 | 35.6 | 36 |
 ///
 /// (`padding-left` を同じ値にすると probe harness で 4 / 8 / — / 25 とより
-/// 浅い。padding は `location` / `content_size` の累積にも寄与するため。)
+/// 浅い。padding は `location` / `scrollable_overflow_rect` の累積にも寄与するため。)
 ///
 /// depth 1 の直接証拠: `width: 1e9%` → `size.width = 7937008000.0`
 /// (= A4 793.7008px × fraction 1e7) — 既に「長さ 1e7 px」の 3 桁上。対して
@@ -2188,13 +2184,13 @@ fn push_layout_warn(diag: &mut Vec<LayoutWarn>, event: LayoutWarn) {
 /// (CSS Box 3 の content ⊆ padding ⊆ border) は保存しない — field ごとに
 /// 独立に clamp するので、`size.width` と `padding.{left,right}` が同時に
 /// 飽和すると `size.width - padding.left - padding.right` は負になりうる。
-/// 現在 `padding` / `border` / `content_size` / `scrollbar_size` を読む
+/// 現在 `padding` / `border` / `scrollable_overflow_rect` / `scrollbar_size` を読む
 /// consumer は無い (grep 実測) が、将来 paint がこれらを使うときは
 /// 非負性を仮定しないこと。
 ///
 /// `diag` collects [`LayoutWarn::NonFiniteClamped`] events for whichever
 /// fields actually get clamped (site labels: `"layout.location"`,
-/// `"layout.size"`, `"layout.content_size"`, `"layout.scrollbar_size"`,
+/// `"layout.size"`, `"layout.scrollable_overflow_rect"`, `"layout.scrollbar_size"`,
 /// `"layout.border"`, `"layout.padding"`, `"layout.margin"`). The sole caller
 /// (`<Document as taffy::LayoutPartialTree>::set_unrounded_layout` in
 /// `taffy_impl.rs`) passes `&mut self.layout_warnings` — an owned buffer on
@@ -2226,7 +2222,11 @@ pub(crate) fn sanitize_taffy_layout(
             y: sanitize_taffy(layout.location.y, "layout.location", diag),
         },
         size: size(layout.size, "layout.size", diag),
-        content_size: size(layout.content_size, "layout.content_size", diag),
+        scrollable_overflow_rect: rect(
+            layout.scrollable_overflow_rect,
+            "layout.scrollable_overflow_rect",
+            diag,
+        ),
         scrollbar_size: size(layout.scrollbar_size, "layout.scrollbar_size", diag),
         border: rect(layout.border, "layout.border", diag),
         padding: rect(layout.padding, "layout.padding", diag),
@@ -5218,6 +5218,27 @@ mod tests {
     }
 
     #[test]
+    fn bridge_flex_maps_intrinsic_basis_keywords_to_taffy_dimensions() {
+        // taffy 0.14 migration: `min-content` / `max-content` /
+        // `fit-content` / `content` map to taffy's own intrinsic
+        // `Dimension` variants (no `auto` collapse anymore).
+        for (value, expected) in [
+            (ComputedFlexBasis::MinContent, Dimension::min_content()),
+            (ComputedFlexBasis::MaxContent, Dimension::max_content()),
+            (ComputedFlexBasis::FitContent, Dimension::fit_content()),
+            (ComputedFlexBasis::Content, Dimension::content()),
+        ] {
+            let mut cv = ComputedValues::initial();
+            cv.flex_basis = value;
+            let mut style = Style::default();
+            let mut diag = Vec::new();
+            bridge_flex(&mut style, &cv, &mut diag);
+            assert_eq!(style.flex_basis, expected);
+            assert!(diag.is_empty());
+        }
+    }
+
+    #[test]
     fn content_alignment_to_taffy_maps_every_keyword() {
         // `content_alignment_to_taffy` backs both `justify-content` and
         // `align-content` (`bridge_alignment`) — pin every keyword→taffy
@@ -7140,7 +7161,7 @@ mod tests {
             order: _,
             location,
             size,
-            content_size,
+            scrollable_overflow_rect,
             scrollbar_size,
             border,
             padding,
@@ -7149,7 +7170,7 @@ mod tests {
         location.x.is_finite()
             && location.y.is_finite()
             && size_ok(*size)
-            && size_ok(*content_size)
+            && rect_ok(*scrollable_overflow_rect)
             && size_ok(*scrollbar_size)
             && rect_ok(*border)
             && rect_ok(*padding)
@@ -7299,9 +7320,11 @@ mod tests {
                 width: f32::NAN,
                 height: 1e30,
             },
-            content_size: Size {
-                width: -1e30,
-                height: f32::NAN,
+            scrollable_overflow_rect: Rect {
+                left: 3.0,
+                top: 4.0,
+                right: -1e30,
+                bottom: f32::NAN,
             },
             scrollbar_size: Size {
                 width: f32::INFINITY,
@@ -7333,7 +7356,7 @@ mod tests {
         assert_eq!(s.order, 7, "order は clamp 対象ではない");
 
         // 16 field が非有限/範囲外 (下の個別 assert が数える対象と一致): location
-        // 2 + size 2 + content_size 2 + scrollbar_size 1 + border 3 + padding 3
+        // 2 + size 2 + scrollable_overflow_rect 2 + scrollbar_size 1 + border 3 + padding 3
         // + margin 3。範囲内の 4 field (scrollbar_size.height / border.bottom /
         // padding.bottom / margin.top) は積まれない (per-node spam を
         // 避ける設計)。
@@ -7356,8 +7379,8 @@ mod tests {
         // NaN は clamp では潰れないので `is_nan()` → 0.0 (sanitize_finite)。
         assert_eq!(s.size.width, 0.0);
         assert_eq!(s.size.height, MAX_TAFFY_MAGNITUDE);
-        assert_eq!(s.content_size.width, -MAX_TAFFY_MAGNITUDE);
-        assert_eq!(s.content_size.height, 0.0);
+        assert_eq!(s.scrollable_overflow_rect.right, -MAX_TAFFY_MAGNITUDE);
+        assert_eq!(s.scrollable_overflow_rect.bottom, 0.0);
         assert_eq!(s.scrollbar_size.width, MAX_TAFFY_MAGNITUDE);
         assert_eq!(s.scrollbar_size.height, 12.0, "範囲内の値は素通し");
         assert_eq!(s.border.left, 0.0);
@@ -7384,9 +7407,11 @@ mod tests {
                 width: 793.7008,
                 height: 1122.52,
             },
-            content_size: Size {
-                width: 100.0,
-                height: 200.0,
+            scrollable_overflow_rect: Rect {
+                left: 0.0,
+                top: 0.0,
+                right: 100.0,
+                bottom: 200.0,
             },
             scrollbar_size: Size {
                 width: 0.0,
@@ -7453,7 +7478,7 @@ mod tests {
                 width: 10.0,
                 height: 10.0,
             },
-            content_size: Size::zero(),
+            scrollable_overflow_rect: Rect::ZERO,
             scrollbar_size: Size::zero(),
             border: Rect::zero(),
             padding: Rect {
@@ -7473,7 +7498,7 @@ mod tests {
                 width: 2.0,
                 height: 2.0,
             },
-            content_size: Size::zero(),
+            scrollable_overflow_rect: Rect::ZERO,
             scrollbar_size: Size::zero(),
             border: Rect::zero(),
             padding: Rect::zero(),
@@ -7537,7 +7562,7 @@ mod tests {
                 width: 100.0,
                 height: 100.0,
             },
-            content_size: Size::zero(),
+            scrollable_overflow_rect: Rect::ZERO,
             scrollbar_size: Size::zero(),
             border: Rect::zero(),
             padding: Rect::zero(),
@@ -7556,7 +7581,7 @@ mod tests {
                 width: 10.0,
                 height: 10.0,
             },
-            content_size: Size::zero(),
+            scrollable_overflow_rect: Rect::ZERO,
             scrollbar_size: Size::zero(),
             border: Rect::zero(),
             padding: Rect::zero(),
@@ -7571,7 +7596,7 @@ mod tests {
                 width: 1.0,
                 height: 1.0,
             },
-            content_size: Size::zero(),
+            scrollable_overflow_rect: Rect::ZERO,
             scrollbar_size: Size::zero(),
             border: Rect::zero(),
             padding: Rect::zero(),
@@ -7716,7 +7741,7 @@ mod tests {
                 width: MAX_TAFFY_MAGNITUDE,
                 height: MAX_TAFFY_MAGNITUDE,
             },
-            content_size: Size::zero(),
+            scrollable_overflow_rect: Rect::ZERO,
             scrollbar_size: Size::zero(),
             border: Rect::zero(),
             padding: Rect::zero(),
@@ -7735,7 +7760,7 @@ mod tests {
                 width: 0.0,
                 height: 0.0,
             },
-            content_size: Size::zero(),
+            scrollable_overflow_rect: Rect::ZERO,
             scrollbar_size: Size::zero(),
             border: Rect::zero(),
             padding: Rect::zero(),
@@ -7801,7 +7826,7 @@ mod tests {
                 width: 100.0,
                 height: 100.0,
             },
-            content_size: Size::zero(),
+            scrollable_overflow_rect: Rect::ZERO,
             scrollbar_size: Size::zero(),
             border: Rect::zero(),
             padding: Rect::zero(),
@@ -7821,7 +7846,7 @@ mod tests {
                 width: 10.0,
                 height: 10.0,
             },
-            content_size: Size::zero(),
+            scrollable_overflow_rect: Rect::ZERO,
             scrollbar_size: Size::zero(),
             border: Rect::zero(),
             padding: Rect::zero(),
@@ -7897,7 +7922,7 @@ mod tests {
                 width: 100.0,
                 height: MAX_TAFFY_MAGNITUDE,
             },
-            content_size: Size::zero(),
+            scrollable_overflow_rect: Rect::ZERO,
             scrollbar_size: Size::zero(),
             border: Rect::zero(),
             padding: Rect::zero(),
@@ -7917,7 +7942,7 @@ mod tests {
                 width: 10.0,
                 height: 10.0,
             },
-            content_size: Size::zero(),
+            scrollable_overflow_rect: Rect::ZERO,
             scrollbar_size: Size::zero(),
             border: Rect::zero(),
             padding: Rect::zero(),
@@ -7968,7 +7993,7 @@ mod tests {
                 width: MAX_TAFFY_MAGNITUDE,
                 height: MAX_TAFFY_MAGNITUDE,
             },
-            content_size: Size::zero(),
+            scrollable_overflow_rect: Rect::ZERO,
             scrollbar_size: Size::zero(),
             border: Rect::zero(),
             padding: Rect::zero(),
@@ -7984,7 +8009,7 @@ mod tests {
                 width: 200.0,
                 height: 200.0,
             },
-            content_size: Size::zero(),
+            scrollable_overflow_rect: Rect::ZERO,
             scrollbar_size: Size::zero(),
             border: Rect::zero(),
             padding: Rect::zero(),
@@ -8090,7 +8115,7 @@ mod tests {
                 width: 100.0,
                 height: 100.0,
             },
-            content_size: Size::zero(),
+            scrollable_overflow_rect: Rect::ZERO,
             scrollbar_size: Size::zero(),
             border: Rect::zero(),
             padding: Rect::zero(),
@@ -8110,7 +8135,7 @@ mod tests {
                 width: 10.0,
                 height: 10.0,
             },
-            content_size: Size::zero(),
+            scrollable_overflow_rect: Rect::ZERO,
             scrollbar_size: Size::zero(),
             border: Rect::zero(),
             padding: Rect::zero(),
@@ -8507,13 +8532,17 @@ mod tests {
         bridge_grid(&mut style, &cv, &mut diag);
         assert_eq!(
             style.grid_template_areas,
-            vec![TaffyGridTemplateArea {
-                name: "header".to_string(),
-                row_start: 1,
-                row_end: 2,
-                column_start: 1,
-                column_end: 3,
-            }]
+            Some(taffy::style::GridTemplateAreas {
+                areas: vec![TaffyGridTemplateArea {
+                    name: "header".to_string(),
+                    row_start: 1,
+                    row_end: 2,
+                    column_start: 1,
+                    column_end: 3,
+                }],
+                row_count: 1,
+                column_count: 2,
+            })
         );
     }
 
