@@ -185,12 +185,12 @@ use smol_str::SmolStr;
 use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{
     Angle, AngularColorStop, BackgroundImage, BackgroundSize, Border, BorderColor, BorderRadius,
-    BorderStyle, BoxShadowItem, ConicGradient, CssPosition, CssPositionOffset, FlexBasisValue,
-    Gradient, GradientColorStop, GridInflexibleBreadth, GridRepeatCount, GridTemplateTracks,
-    GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize,
-    Length, LengthOrAuto, LengthOrNormal, LineHeight, LinearGradient, Outline, OutlineColor,
-    OutlineStyle, RadialGradient, RadialSize, TabSize, TextShadowColor, TextShadowItem,
-    TransformFunction, VerticalAlign,
+    BorderSpacingValue, BorderStyle, BoxShadowItem, ConicGradient, CssPosition, CssPositionOffset,
+    FlexBasisValue, Gradient, GradientColorStop, GridInflexibleBreadth, GridRepeatCount,
+    GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
+    GridTrackSize, Length, LengthOrAuto, LengthOrNormal, LineHeight, LinearGradient, Outline,
+    OutlineColor, OutlineStyle, RadialGradient, RadialSize, TabSize, TextShadowColor,
+    TextShadowItem, TransformFunction, VerticalAlign,
 };
 
 // ---------------------------------------------------------------------------
@@ -651,6 +651,69 @@ pub enum ComputedTabSize {
     Number(f32),
     /// 絶対化済みの `<length>`。
     Length(ComputedLength),
+}
+
+/// Computed `border-spacing` — two absolute lengths.
+///
+/// # Primary source (§ title + anchor)
+///
+/// CSS Tables 3 §6.1 "Separated borders: the border-spacing property"
+/// (<https://www.w3.org/TR/css-tables-3/#border-spacing-property>)
+/// propdef table:
+///
+/// > Value: `<length>{1,2}`
+/// > Initial: 0
+/// > Percentages: N/A
+/// > Computed value: two absolute lengths
+///
+/// 両軸とも [`ComputedLength`] (px 単位の絶対長)。specified 層の
+/// [`BorderSpacingValue`] と同じ horizontal / vertical 順。
+///
+/// `#[non_exhaustive]` を付けない判断とその trade は
+/// [module doc](crate::resolve) を参照。
+///
+/// ```
+/// use raikiri_style::{ComputedBorderSpacing, ComputedLength, ResolveContext, resolve_border_spacing};
+/// use raikiri_style::property::{BorderSpacingValue, Length};
+///
+/// let ctx = ResolveContext::initial();
+/// let font_size = ComputedLength(20.0);
+///
+/// // 各成分は自要素の computed font-size に対して絶対化される。
+/// let specified = BorderSpacingValue { horizontal: Length::Em(1.0), vertical: Length::Px(5.0) };
+/// let computed = resolve_border_spacing(specified, font_size, None, &ctx);
+/// assert_eq!(
+///     computed,
+///     ComputedBorderSpacing { horizontal: ComputedLength(20.0), vertical: ComputedLength(5.0) }
+/// );
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ComputedBorderSpacing {
+    /// Horizontal (inline-axis) spacing — 絶対化済み。
+    pub horizontal: ComputedLength,
+    /// Vertical (block-axis) spacing — 絶対化済み。
+    pub vertical: ComputedLength,
+}
+
+impl ComputedBorderSpacing {
+    /// Computed value の CSSOM serialization。
+    ///
+    /// CSSOM §2.1 "Serializing CSS Values"
+    /// (<https://drafts.csswg.org/cssom/#serializing-css-values>):
+    /// "If component values can be omitted or replaced with a shorter
+    /// representation without changing the meaning of the value,
+    /// omit/replace them." — 両軸が等しいときは第 2 成分を omit する
+    /// (WPT `border-spacing-computed.html` の `"0"` → `"0px"` case が
+    /// pin する shortest-serialization 原則 — `"0px 0px"` ではない)。
+    pub fn serialized(&self) -> String {
+        let h = self.horizontal.px();
+        let v = self.vertical.px();
+        if h == v {
+            format!("{}px", h)
+        } else {
+            format!("{}px {}px", h, v)
+        }
+    }
 }
 
 /// Computed `border-*` (1 side 分の width / style / color)。
@@ -1720,6 +1783,54 @@ pub fn resolve_tab_size(
         TabSize::Length(l) => {
             ComputedTabSize::Length(resolve_length(l, font_size, own_line_height, ctx))
         }
+    }
+}
+
+/// `border-spacing` の specified value を絶対化する (**phase 3** — 自 node 基準)。
+///
+/// CSS Tables 3 §6.1 propdef: "Computed value: two absolute lengths" —
+/// 両軸を [`resolve_length`] へ delegate する ([`BorderSpacingValue`] は
+/// percentage を持たないため、[`resolve_length_percentage`] ではなく
+/// percentage 非対応の [`resolve_length`] が正しい delegate 先 —
+/// [`resolve_tab_size`] の `Length` arm と同型)。
+///
+/// # Computed-time clamp
+///
+/// `calc()` 由来の負の computed 値は `0` に clamp する — CSS Values 4
+/// §10.7 の一般則 ("negative lengths are illegal" な property では
+/// computed value が負にならない) の適用であり、WPT
+/// `border-spacing-computed.html` の
+/// `"calc(10px - 0.5em)"` (font-size 40px → `-10px`) → `"0px"` case が
+/// pin する。parse 時の authored 負値 (`-20px` 等) は
+/// [`crate::property`] の `parse_border_spacing` が既に reject 済みのため、
+/// ここが clamp するのは calc 経由の derived value のみ。
+///
+/// ```
+/// use raikiri_style::{ComputedBorderSpacing, ComputedLength, ResolveContext, resolve_border_spacing};
+/// use raikiri_style::property::{BorderSpacingValue, Length};
+///
+/// let ctx = ResolveContext::initial();
+/// let font_size = ComputedLength(40.0);
+///
+/// // 負の derived value は 0 に clamp される (WPT computed case)。
+/// let specified = BorderSpacingValue { horizontal: Length::Em(-0.5), vertical: Length::Em(0.5) };
+/// // NOTE: `-0.5em` は parse 時に reject されるため pipeline 上は到達不能 —
+/// // 本 doctest は clamp 自体の unit pin であり、parse 済み値の再現ではない。
+/// let computed = resolve_border_spacing(specified, font_size, None, &ctx);
+/// assert_eq!(computed.horizontal, ComputedLength(0.0));
+/// assert_eq!(computed.vertical, ComputedLength(20.0));
+/// ```
+pub fn resolve_border_spacing(
+    specified: BorderSpacingValue,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedBorderSpacing {
+    let horizontal = resolve_length(specified.horizontal, font_size, own_line_height, ctx);
+    let vertical = resolve_length(specified.vertical, font_size, own_line_height, ctx);
+    ComputedBorderSpacing {
+        horizontal: ComputedLength(horizontal.px().max(0.0)),
+        vertical: ComputedLength(vertical.px().max(0.0)),
     }
 }
 
@@ -2796,6 +2907,35 @@ pub fn lift_tab_size(computed: ComputedTabSize) -> TabSize {
     match computed {
         ComputedTabSize::Number(n) => TabSize::Number(n),
         ComputedTabSize::Length(l) => TabSize::Length(Length::Px(l.px())),
+    }
+}
+
+/// 親の [`ComputedBorderSpacing`] を specified 表現 ([`BorderSpacingValue`])
+/// に **lift** する (inheritance seed 用) — [`lift_tab_size`] の `Length`
+/// arm と同じ lossless / 不動点性 ([`resolve_length`] の `Px` arm は
+/// identity、かつ lift 元は既に clamp 済みなので再 clamp も no-op)。
+///
+/// ```
+/// use raikiri_style::{
+///     ComputedBorderSpacing, ComputedLength, ResolveContext, lift_border_spacing,
+///     resolve_border_spacing,
+/// };
+///
+/// let ctx = ResolveContext::initial();
+/// let font_size = ComputedLength(16.0);
+///
+/// // lift → 絶対化 の round trip は恒等 (Px が不動点、clamp が no-op)。
+/// let inherited = ComputedBorderSpacing {
+///     horizontal: ComputedLength(10.0),
+///     vertical: ComputedLength(20.0),
+/// };
+/// let lifted = lift_border_spacing(inherited);
+/// assert_eq!(resolve_border_spacing(lifted, font_size, None, &ctx), inherited);
+/// ```
+pub fn lift_border_spacing(computed: ComputedBorderSpacing) -> BorderSpacingValue {
+    BorderSpacingValue {
+        horizontal: Length::Px(computed.horizontal.px()),
+        vertical: Length::Px(computed.vertical.px()),
     }
 }
 

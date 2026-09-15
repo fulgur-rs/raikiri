@@ -31,30 +31,32 @@ use crate::computed::{ComputedValues, RunningTemplate};
 use crate::property::{
     AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage,
     BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, Border, BorderCollapseValue,
-    BorderColor, BorderRadius, BorderStyle, BoxShadowItem, BoxSizing, BreakBetween, BreakInside,
-    ClearValue, ClipPath, ContentAlignmentValue, ContentComponent, CssColor, CssPosition,
-    CssPositionOffset, Direction, DisplayValue, FilterFunction, FlexBasisValue, FlexDirectionValue,
-    FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue,
-    GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, Hyphens, Isolation, Length,
-    LengthOrAuto, LengthOrNormal, LineHeight, MaskImage, MixBlendMode, ObjectFit, Outline,
-    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
-    SelfAlignmentValue, Sides, TabSize, TableLayoutValue, TextAlign, TextAlignLast,
-    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextJustify, TextShadowItem,
-    TextTransform, TextWrapMode, TransformFunction, VerticalAlign, Visibility, VisualBox,
-    WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_box_shadow_list, empty_content_list,
-    empty_counter_entries, empty_filter_list, empty_quotes_entries, empty_string_set_entries,
-    empty_text_shadow_list, empty_transform_list, initial_font_family,
-    initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
-    resolve_text_align_match_parent, resolve_writing_mode,
+    BorderColor, BorderRadius, BorderSpacingValue, BorderStyle, BoxShadowItem, BoxSizing,
+    BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ContentAlignmentValue,
+    ContentComponent, CssColor, CssPosition, CssPositionOffset, Direction, DisplayValue,
+    EmptyCellsValue, FilterFunction, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
+    FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
+    GridTemplateTracks, GridTrackSize, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal,
+    LineHeight, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle,
+    OverflowValue, OverflowWrap, OverflowXY, PositionValue, SelfAlignmentValue, Sides, TabSize,
+    TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine,
+    TextDecorationStyle, TextJustify, TextShadowItem, TextTransform, TextWrapMode,
+    TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode,
+    ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
+    empty_filter_list, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
+    empty_transform_list, initial_font_family, initial_grid_auto_track_list,
+    resolve_display_for_float, resolve_overflow, resolve_text_align_match_parent,
+    resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ResolveContext,
-    empty_computed_box_shadow_list, empty_computed_text_shadow_list, lift_font_size,
-    lift_length_or_normal, lift_length_percentage, lift_line_height, lift_tab_size,
+    empty_computed_box_shadow_list, empty_computed_text_shadow_list, lift_border_spacing,
+    lift_font_size, lift_length_or_normal, lift_length_percentage, lift_line_height, lift_tab_size,
     lift_text_shadow_item, resolve_background_image, resolve_background_size, resolve_border,
-    resolve_border_radius, resolve_box_shadow_item, resolve_css_position, resolve_flex_basis,
-    resolve_font_size, resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
-    resolve_length_or_normal, resolve_length_percentage, resolve_length_percentage_or_auto,
+    resolve_border_radius, resolve_border_spacing, resolve_box_shadow_item, resolve_css_position,
+    resolve_flex_basis, resolve_font_size, resolve_grid_auto_track_list,
+    resolve_grid_template_tracks, resolve_length, resolve_length_or_normal,
+    resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
     resolve_outline, resolve_tab_size, resolve_text_shadow_item, resolve_transform_function,
     resolve_vertical_align, used_line_height_length,
@@ -74,8 +76,8 @@ use crate::resolve::{
 ///
 /// | 層 | field |
 /// |---|---|
-/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `border_radius` / `box_shadow` / `outline` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` / `background_size` / `background_position` / `object_position` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* / `object_fit` / `table_layout` / `border_collapse` |
+/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `border_radius` / `box_shadow` / `outline` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` / `background_size` / `background_position` / `object_position` / `border_spacing` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* / `object_fit` / `table_layout` / `border_collapse` / `caption_side` / `empty_cells` |
 /// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
 ///
 /// **手動同期 — drift に注意**: 上の表の property 名列挙は手動で維持される
@@ -254,6 +256,10 @@ pub struct SpecifiedValues {
     pub max_width: LengthOrAuto,
     /// `max-height` の **specified** value。phase 3 で絶対化される。
     pub max_height: LengthOrAuto,
+    /// `min-width` の **specified** value。phase 3 で絶対化される。
+    pub min_width: LengthOrAuto,
+    /// `min-height` の **specified** value。phase 3 で絶対化される。
+    pub min_height: LengthOrAuto,
     /// `top` の **specified** value。phase 3 で絶対化される。
     pub top: LengthOrAuto,
     /// `right` の **specified** value。phase 3 で絶対化される。
@@ -521,6 +527,35 @@ pub struct SpecifiedValues {
     /// は親の computed 値を seed する ([`Self::text_indent`] と同じ扱いではなく
     /// 素朴なコピー — keyword のため lift 不要、[`Self::visibility`] と同じ)。
     pub border_collapse: BorderCollapseValue,
+    /// `border-spacing` の **specified** value — **inherited**、initial:
+    /// `0` (両軸 `0px`、CSS Tables 3 §6.1
+    /// <https://www.w3.org/TR/css-tables-3/#border-spacing-property>)。
+    /// computed value = two absolute lengths のため
+    /// [`crate::computed::ComputedValues::border_spacing`]
+    /// の staging として phase 3 で絶対化する ([`Self::tab_size`] の
+    /// `Length` arm と同じ length-bearing staging 形)。
+    /// **inherited** なので `Self::inherit_from` は親の computed 値を
+    /// [`lift_border_spacing`] で seed する ([`Self::tab_size`] の
+    /// `Length` arm と同じ lift 扱い)。
+    pub border_spacing: BorderSpacingValue,
+    /// `caption-side` の **specified** value — **inherited**、initial:
+    /// [`CaptionSideValue::Top`] (CSS Tables 3 §7
+    /// <https://www.w3.org/TR/css-tables-3/#caption-side-property>)。
+    /// computed value = specified keyword のため
+    /// [`crate::computed::ComputedValues::caption_side`]
+    /// の staging として素通しする。**inherited** なので `Self::inherit_from`
+    /// は親の computed 値を seed する (素朴なコピー — keyword のため
+    /// lift 不要、[`Self::visibility`] と同じ)。
+    pub caption_side: CaptionSideValue,
+    /// `empty-cells` の **specified** value — **inherited**、initial:
+    /// [`EmptyCellsValue::Show`] (CSS Tables 3 §8
+    /// <https://www.w3.org/TR/css-tables-3/#empty-cells-property>)。
+    /// computed value = specified keyword のため
+    /// [`crate::computed::ComputedValues::empty_cells`]
+    /// の staging として素通しする。**inherited** なので `Self::inherit_from`
+    /// は親の computed 値を seed する (素朴なコピー — keyword のため
+    /// lift 不要、[`Self::visibility`] と同じ)。
+    pub empty_cells: EmptyCellsValue,
 }
 
 impl SpecifiedValues {
@@ -595,6 +630,8 @@ impl SpecifiedValues {
             height: LengthOrAuto::Auto,
             max_width: LengthOrAuto::Auto,
             max_height: LengthOrAuto::Auto,
+            min_width: LengthOrAuto::Auto,
+            min_height: LengthOrAuto::Auto,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
             bottom: LengthOrAuto::Auto,
@@ -769,6 +806,21 @@ impl SpecifiedValues {
             // (inherited — 親を持つ node は `Self::inherit_from` が親値で
             // 上書きする)。
             border_collapse: BorderCollapseValue::Separate,
+            // CSS Tables 3 §6.1: border-spacing initial は `0`
+            // (inherited — 親を持つ node は `Self::inherit_from` が親値で
+            // 上書きする、両軸 0px)。
+            border_spacing: BorderSpacingValue {
+                horizontal: Length::Px(0.0),
+                vertical: Length::Px(0.0),
+            },
+            // CSS Tables 3 §7: caption-side initial は `top`
+            // (inherited — 親を持つ node は `Self::inherit_from` が親値で
+            // 上書きする)。
+            caption_side: CaptionSideValue::Top,
+            // CSS Tables 3 §8: empty-cells initial は `show`
+            // (inherited — 親を持つ node は `Self::inherit_from` が親値で
+            // 上書きする)。
+            empty_cells: EmptyCellsValue::Show,
         }
     }
 
@@ -870,6 +922,16 @@ impl SpecifiedValues {
             // CSS Tables 3 §6: border-collapse は inherited。keyword のため
             // lift 不要の素朴なコピー (`visibility` と同じ扱い)。
             border_collapse: parent.border_collapse,
+            // CSS Tables 3 §6.1: border-spacing は inherited。computed
+            // two-length → specified 表現の lift (`tab_size` の `Length`
+            // arm と同型)。
+            border_spacing: lift_border_spacing(parent.border_spacing),
+            // CSS Tables 3 §7: caption-side は inherited。keyword のため
+            // lift 不要の素朴なコピー (`visibility` と同じ扱い)。
+            caption_side: parent.caption_side,
+            // CSS Tables 3 §8: empty-cells は inherited。keyword のため
+            // lift 不要の素朴なコピー (`visibility` と同じ扱い)。
+            empty_cells: parent.empty_cells,
             // CSS Text 3 §5.3: hyphens は inherited。
             hyphens: parent.hyphens,
             // CSS Content 3 §2.4.1: quotes は inherited。Arc bump のみ
@@ -928,6 +990,8 @@ impl SpecifiedValues {
             height: LengthOrAuto::Auto,
             max_width: LengthOrAuto::Auto,
             max_height: LengthOrAuto::Auto,
+            min_width: LengthOrAuto::Auto,
+            min_height: LengthOrAuto::Auto,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
             bottom: LengthOrAuto::Auto,
@@ -1408,6 +1472,18 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
+            min_width: resolve_length_percentage_or_auto(
+                self.min_width,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
+            min_height: resolve_length_percentage_or_auto(
+                self.min_height,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
             top: resolve_length_percentage_or_auto(self.top, font_size, own_line_height, ctx),
             right: resolve_length_percentage_or_auto(self.right, font_size, own_line_height, ctx),
             bottom: resolve_length_percentage_or_auto(self.bottom, font_size, own_line_height, ctx),
@@ -1743,6 +1819,24 @@ impl SpecifiedValues {
             // 参照、同上) — 自 node の winner 適用結果 (または inherit_from
             // で継承した親値) をそのまま素通し。
             border_collapse: self.border_collapse,
+            // computed value = two absolute lengths (`BorderSpacingValue` doc
+            // 参照) — 自 node の winner 適用結果 (または inherit_from で
+            // lift した親値) を自 node の font 基準で絶対化
+            // (`tab_size` の `Length` arm と同型)。
+            border_spacing: resolve_border_spacing(
+                self.border_spacing,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
+            // computed value = specified keyword (`CaptionSideValue` doc
+            // 参照、length を運ばないため相対解決なし) — 自 node の winner
+            // 適用結果 (または inherit_from で継承した親値) をそのまま素通し。
+            caption_side: self.caption_side,
+            // computed value = specified keyword (`EmptyCellsValue` doc
+            // 参照、同上) — 自 node の winner 適用結果 (または inherit_from
+            // で継承した親値) をそのまま素通し。
+            empty_cells: self.empty_cells,
             custom_properties: crate::computed::empty_custom_properties(),
         }
     }
@@ -2006,6 +2100,8 @@ mod tests {
             height: ComputedLengthPercentageOrAuto::Px(200.0),
             max_width: ComputedLengthPercentageOrAuto::Auto,
             max_height: ComputedLengthPercentageOrAuto::Auto,
+            min_width: ComputedLengthPercentageOrAuto::Auto,
+            min_height: ComputedLengthPercentageOrAuto::Auto,
             top: ComputedLengthPercentageOrAuto::Px(10.0),
             right: ComputedLengthPercentageOrAuto::Px(20.0),
             bottom: ComputedLengthPercentageOrAuto::Px(30.0),
@@ -2158,6 +2254,18 @@ mod tests {
             // CSS Tables 3 §6: border-collapse は inherited なので initial
             // (`separate`) と異なる値にしておく。
             border_collapse: BorderCollapseValue::Collapse,
+            // CSS Tables 3 §6.1: border-spacing は inherited なので initial
+            // (両軸 `0px`) と異なる値にしておく。
+            border_spacing: crate::resolve::ComputedBorderSpacing {
+                horizontal: crate::resolve::ComputedLength(10.0),
+                vertical: crate::resolve::ComputedLength(20.0),
+            },
+            // CSS Tables 3 §7: caption-side は inherited なので initial
+            // (`top`) と異なる値にしておく。
+            caption_side: CaptionSideValue::Bottom,
+            // CSS Tables 3 §8: empty-cells は inherited なので initial
+            // (`show`) と異なる値にしておく。
+            empty_cells: EmptyCellsValue::Hide,
             custom_properties: crate::computed::empty_custom_properties(),
         }
     }
@@ -2242,6 +2350,20 @@ mod tests {
         // inherited。
         assert_eq!(child.orphans, 5);
         assert_eq!(child.widows, 7);
+        // CSS Tables 3 §6.1: border-spacing は inherited。computed
+        // two-length → specified `Px` の lift (`lift_border_spacing` 経由、
+        // `lift_tab_size` と同型)。
+        assert_eq!(
+            child.border_spacing,
+            BorderSpacingValue {
+                horizontal: Length::Px(10.0),
+                vertical: Length::Px(20.0),
+            }
+        );
+        // CSS Tables 3 §7: caption-side は inherited (素朴なコピー)。
+        assert_eq!(child.caption_side, CaptionSideValue::Bottom);
+        // CSS Tables 3 §8: empty-cells は inherited (素朴なコピー)。
+        assert_eq!(child.empty_cells, EmptyCellsValue::Hide);
     }
 
     #[test]
@@ -2366,6 +2488,39 @@ mod tests {
     // -----------------------------------------------------------------
     // finalize — phase 2 / phase 3 の基準
     // -----------------------------------------------------------------
+
+    /// CSS Tables 3 §6.1: `border-spacing` の各軸は自 node の font-size
+    /// 基準で絶対化される (phase 3、`tab_size` の `Length` arm と同型)。
+    /// WPT border-spacing-computed.html の `"10px 20px"` (two lengths の
+    /// まま) と `"0"` → `"0px"` (shortest serialization) の pin。
+    #[test]
+    fn finalize_resolves_border_spacing_against_own_font_size() {
+        let mut sv = SpecifiedValues::initial();
+        sv.font_size = Length::Px(40.0);
+        sv.border_spacing = BorderSpacingValue {
+            horizontal: Length::Em(0.5),
+            vertical: Length::Px(10.0),
+        };
+        let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
+        assert_eq!(cv.border_spacing.horizontal, ComputedLength(20.0));
+        assert_eq!(cv.border_spacing.vertical, ComputedLength(10.0));
+        assert_eq!(cv.border_spacing.serialized(), "20px 10px");
+        // initial (`0`) は shortest-serializable。
+        let initial_cv = SpecifiedValues::initial().finalize(&parent_with_font_size(16.0), &CTX);
+        assert_eq!(initial_cv.border_spacing.serialized(), "0px");
+    }
+
+    /// CSS Tables 3 §7 / §8: `caption-side` / `empty-cells` は keyword の
+    /// ため `finalize` を素通しする (`border_collapse` と同じ)。
+    #[test]
+    fn finalize_passes_caption_side_and_empty_cells_through_unchanged() {
+        let mut sv = SpecifiedValues::initial();
+        sv.caption_side = CaptionSideValue::Bottom;
+        sv.empty_cells = EmptyCellsValue::Hide;
+        let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
+        assert_eq!(cv.caption_side, CaptionSideValue::Bottom);
+        assert_eq!(cv.empty_cells, EmptyCellsValue::Hide);
+    }
 
     /// phase 2 の `em` は **親** の font-size 基準、phase 3 の `em` は
     /// **自 node の (phase 2 で確定した)** font-size 基準

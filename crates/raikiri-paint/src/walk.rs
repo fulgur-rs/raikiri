@@ -496,31 +496,87 @@ fn paint_element_border(
     let inner_x1 = (x1 - br).round();
     let inner_y1 = (y1 - bb).round();
     let inner_valid = inner_x1 > inner_x0 && inner_y1 > inner_y0;
+    // One side strip: `solid` (and unhandled styles) fill the whole
+    // strip; `double` draws outer + inner thirds per CSS Backgrounds 3
+    // §5.6 ("two parallel solid lines"), leaving the middle third
+    // transparent. Below 3px the thirds vanish, so small doubles fall
+    // back to solid (matches browser clamping behavior closely enough
+    // for reftest purposes).
+    let mut strip = |x_a: f64,
+                     y_a: f64,
+                     x_b: f64,
+                     y_b: f64,
+                     w: f64,
+                     horizontal: bool,
+                     col: Color,
+                     double: bool| {
+        if !double || w < 3.0 {
+            let r = Rect::new(x_a, y_a, x_b, y_b);
+            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
+            return;
+        }
+        let third = w / 3.0;
+        if horizontal {
+            let r1 = Rect::new(x_a, y_a, x_b, y_a + third);
+            let r2 = Rect::new(x_a, y_b - third, x_b, y_b);
+            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r1);
+            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r2);
+        } else {
+            let r1 = Rect::new(x_a, y_a, x_a + third, y_b);
+            let r2 = Rect::new(x_b - third, y_a, x_b, y_b);
+            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r1);
+            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r2);
+        }
+    };
+    let is_double = |b: &raikiri_style::resolve::ComputedBorder| b.style() == BorderStyle::Double;
     if bt > 0.0
         && let Some(col) = c_top
     {
-        let r = Rect::new(x0, y0, x1, y0 + bt);
-        scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
+        strip(x0, y0, x1, y0 + bt, bt, true, col, is_double(&border.top));
     }
     if bb > 0.0
         && let Some(col) = c_bottom
     {
-        let r = Rect::new(x0, y1 - bb, x1, y1);
-        scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
+        strip(
+            x0,
+            y1 - bb,
+            x1,
+            y1,
+            bb,
+            true,
+            col,
+            is_double(&border.bottom),
+        );
     }
     if bl > 0.0
         && inner_valid
         && let Some(col) = c_left
     {
-        let r = Rect::new(x0, inner_y0, x0 + bl, inner_y1);
-        scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
+        strip(
+            x0,
+            inner_y0,
+            x0 + bl,
+            inner_y1,
+            bl,
+            false,
+            col,
+            is_double(&border.left),
+        );
     }
     if br > 0.0
         && inner_valid
         && let Some(col) = c_right
     {
-        let r = Rect::new(x1 - br, inner_y0, x1, inner_y1);
-        scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, col, None, &r);
+        strip(
+            x1 - br,
+            inner_y0,
+            x1,
+            inner_y1,
+            br,
+            false,
+            col,
+            is_double(&border.right),
+        );
     }
 }
 

@@ -4946,6 +4946,86 @@ pub enum BorderCollapseValue {
     Collapse,
 }
 
+/// `caption-side` property の value.
+///
+/// CSS Tables 3 §7 "Caption Position: the caption-side property"
+/// <https://www.w3.org/TR/css-tables-3/#caption-side-property>
+/// (前身 CSS 2.1 §17.4 "Tables in the visual formatting model ...
+/// Caption position and alignment"
+/// <https://www.w3.org/TR/CSS2/tables.html#caption-position>).
+/// Value: `top | bottom`、Initial: `top`、Applies to: `table-caption`,
+/// Inherited: **yes**、Computed value: "as specified".
+///
+/// - `top` — caption box を table box の上 (block-start 側) に置く。
+/// - `bottom` — caption box を table box の下 (block-end 側) に置く。
+///
+/// Caption box の配置自体は raikiri-dom scope
+/// ([`crate::computed::ComputedValues::caption_side`] 参照) — 本 crate は
+/// cascaded keyword を運ぶのみ。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptionSideValue {
+    /// `top` — spec initial value。
+    Top,
+    /// `bottom` — caption below the table box。
+    Bottom,
+}
+
+/// `empty-cells` property の value.
+///
+/// CSS Tables 3 §8 "Empty Cells: the empty-cells property"
+/// <https://www.w3.org/TR/css-tables-3/#empty-cells-property>
+/// (前身 CSS 2.1 §17.5.1 "Table layers and transparency"
+/// <https://www.w3.org/TR/CSS2/tables.html#empty-cells>).
+/// Value: `show | hide`、Initial: `show`、Inherited: **yes**、
+/// Computed value: "as specified".
+///
+/// - `show` — 空 cell の border / background を描く (separated borders
+///   model でのみ効果を持つ)。
+/// - `hide` — 空 cell の border / background を描かない。
+///
+/// Cell background / border の paint 判定自体は raikiri-dom /
+/// raikiri-paint scope
+/// ([`crate::computed::ComputedValues::empty_cells`] 参照) — 本 crate は
+/// cascaded keyword を運ぶのみ。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EmptyCellsValue {
+    /// `show` — spec initial value。
+    Show,
+    /// `hide` — 空 cell の border / background を隠す。
+    Hide,
+}
+
+/// `border-spacing` の specified value。
+///
+/// CSS Tables 3 §6.1 "Separated borders: the border-spacing property"
+/// <https://www.w3.org/TR/css-tables-3/#border-spacing-property>
+/// (前身 CSS 2.1 §17.6.1 "The separated borders model"
+/// <https://www.w3.org/TR/CSS2/tables.html#separated-borders>).
+/// Value grammar: `<length>{1,2}`、Initial: `0`、Applies to: `table` /
+/// `inline-table`、Inherited: **yes**、Computed value:
+/// "two absolute lengths"、Percentages: N/A、"Negative lengths are illegal"
+/// (spec 本文 — parse 時に reject、calc 由来の computed-time 負値は
+/// [`crate::resolve::resolve_border_spacing`] が `0` に clamp する)。
+///
+/// 第 2 成分省略時は第 1 成分の値をそのまま copy する (spec 本文:
+/// "If only one value is specified, it applies to both the horizontal and
+/// vertical spacing") — [`GapShorthand`] と同じ single-doubles 形。
+/// 2 成分は horizontal / vertical の順。
+///
+/// Computed value が "two absolute lengths" のため、phase 3 で
+/// [`crate::resolve::resolve_border_spacing`] が各成分を絶対化する —
+/// keyword 素通しの sibling [`CaptionSideValue`] / [`EmptyCellsValue`]
+/// とはこの点で異なる。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BorderSpacingValue {
+    /// Horizontal (inline-axis) spacing — 第 1 成分。
+    pub horizontal: Length,
+    /// Vertical (block-axis) spacing — 第 2 成分、省略時は `horizontal`。
+    pub vertical: Length,
+}
+
 /// `text-shadow`/// `text-shadow` の 1 shadow entry が運ぶ `<color>` 成分 — [`BorderColor`] /
 /// [`TextDecorationColor`] と同型の `currentcolor` keyword / resolved
 /// `<color>` distinction。
@@ -6951,6 +7031,24 @@ pub enum PropertyValue {
     /// scope 外)。future 統合 task で border-image longhand と併せて
     /// 対応。
     Border(Sides<Border>),
+    /// `border-style: <line-style>{1,4}` — non-inherited (CSS Backgrounds 3
+    /// §3.2 `<line-style>` × §3.4 shorthands
+    /// <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>)。
+    /// 1-4 value expansion は margin precedent
+    /// (`parse_margin_shorthand` と同型): 1 → all、2 → vertical/horizontal、
+    /// 3 → top/horizontal/bottom、4 → clockwise。rule.rs で 4 longhand
+    /// (`BorderTopStyle` 等) へ展開される。
+    BorderStyle(Sides<BorderStyle>),
+    /// `border-width: <line-width>{1,4}` — non-inherited (CSS Backgrounds 3
+    /// §3.3 × §3.4)。各 side の grammar は `border-*-width` と同一
+    /// (`parse_border_width_side`: thin/medium/thick keyword + 非負
+    /// `<length>`)。1-4 value expansion は margin precedent と同型。
+    BorderWidth(Sides<Length>),
+    /// `border-color: <color>{1,4}` — non-inherited (CSS Backgrounds 3 §3.1
+    /// × §3.4)。各 side の grammar は `border-*-color` と同一
+    /// (`parse_border_color`: `currentcolor` / named / hash / function)。
+    /// 1-4 value expansion は margin precedent と同型。
+    BorderColor(Sides<BorderColor>),
     /// `width: auto | <length-percentage [0,∞]>` — non-inherited、initial: `auto`
     /// (CSS Sizing 3 §3.1.1 <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>)。
     ///
@@ -6989,6 +7087,16 @@ pub enum PropertyValue {
     /// `max-height: none | <length-percentage [0,∞]> | min-content | max-content | fit-content` — **non-inherited**、initial: `none`
     /// (CSS Sizing 3 §3.2 <https://www.w3.org/TR/css-sizing-3/#max-size-properties>).
     MaxHeight(LengthOrAuto),
+    /// `min-width: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content` — **non-inherited**、initial: `auto`
+    /// (CSS Sizing 3 §4 <https://www.w3.org/TR/css-sizing-3/#min-size-properties>).
+    /// `auto` maps to [`LengthOrAuto::Auto`] (no minimum). Intrinsic keywords map
+    /// similarly to Auto (WPT parsing valid, layout pending) — sibling
+    /// [`Self::Width`] arms use the same placeholder shape.
+    MinWidth(LengthOrAuto),
+    /// `min-height: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content` — **non-inherited**、initial: `auto`
+    /// (CSS Sizing 3 §4 <https://www.w3.org/TR/css-sizing-3/#min-size-properties>).
+    /// Same placeholder shape as sibling [`Self::MinWidth`].
+    MinHeight(LengthOrAuto),
     /// `box-sizing: content-box | border-box` — **non-inherited**、initial:
     /// `content-box` (CSS Sizing 3 §3.3 "Box Edges for Sizing: the box-sizing
     /// property" <https://www.w3.org/TR/css-sizing-3/#box-sizing>)。
@@ -7656,6 +7764,25 @@ pub enum PropertyValue {
     /// keyword (length を運ばないため相対解決なし)。
     /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
     BorderCollapse(BorderCollapseValue),
+    /// `border-spacing: <length>{1,2}` — **inherited**、initial: `0`
+    /// (両軸 `0px`、CSS Tables 3 §6.1 [`BorderSpacingValue`] doc 参照)。
+    /// computed value = two absolute lengths のため phase 3 で
+    /// [`crate::resolve::resolve_border_spacing`] が絶対化する
+    /// ([`Self::TabSize`] と同じ length-bearing staging 形)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    BorderSpacing(BorderSpacingValue),
+    /// `caption-side: top | bottom` — **inherited**、initial:
+    /// [`CaptionSideValue::Top`] (CSS Tables 3 §7 [`CaptionSideValue`] doc
+    /// 参照)。computed value = specified keyword (length を運ばないため
+    /// 相対解決なし)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    CaptionSide(CaptionSideValue),
+    /// `empty-cells: show | hide` — **inherited**、initial:
+    /// [`EmptyCellsValue::Show`] (CSS Tables 3 §8 [`EmptyCellsValue`] doc
+    /// 参照)。computed value = specified keyword (length を運ばないため
+    /// 相対解決なし)。
+    /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
+    EmptyCells(EmptyCellsValue),
     /// `font` shorthand — **inherited**。6 成分 (style/variant-caps/weight/
     /// size/line-height/family) を保持する ([`FontShorthand`] doc 参照)。
     /// CSS Fonts 4 §2.1
@@ -7839,6 +7966,11 @@ pub enum PropertyKey {
     BorderBottomColor,
     BorderLeftColor,
     Border,
+    // `border-style` / `border-width` / `border-color` shorthand keys
+    // (semantics on the matching PropertyValue variants above).
+    BorderStyle,
+    BorderWidth,
+    BorderColor,
     // width (CSS Sizing 3 §3.1.1)。
     Width,
     // height (CSS Sizing 3 §3.1.1、semantics on the
@@ -7847,6 +7979,8 @@ pub enum PropertyKey {
     Height,
     MaxWidth,
     MaxHeight,
+    MinWidth,
+    MinHeight,
     // box-sizing (CSS Sizing 3 §3.3、semantics on the
     // matching PropertyValue::BoxSizing variant; sibling PropertyKey variants
     // carry no per-variant docs per crate convention).
@@ -8126,6 +8260,21 @@ pub enum PropertyKey {
     // carry no per-variant docs per crate convention). 末尾配置の理由は
     // background-repeat 等と同節参照 (1:1 disjoint な新 field)。
     BorderCollapse,
+    // border-spacing (CSS Tables 3 §6.1、semantics on the matching
+    // PropertyValue::BorderSpacing variant; sibling PropertyKey variants
+    // carry no per-variant docs per crate convention). 末尾配置の理由は
+    // background-repeat 等と同節参照 (1:1 disjoint な新 field)。
+    BorderSpacing,
+    // caption-side (CSS Tables 3 §7、semantics on the matching
+    // PropertyValue::CaptionSide variant; sibling PropertyKey variants
+    // carry no per-variant docs per crate convention). 末尾配置の理由は
+    // background-repeat 等と同節参照 (1:1 disjoint な新 field)。
+    CaptionSide,
+    // empty-cells (CSS Tables 3 §8、semantics on the matching
+    // PropertyValue::EmptyCells variant; sibling PropertyKey variants
+    // carry no per-variant docs per crate convention). 末尾配置の理由は
+    // background-repeat 等と同節参照 (1:1 disjoint な新 field)。
+    EmptyCells,
     // font shorthand (CSS Fonts 4 §2.1、semantics on the matching
     // PropertyValue::Font variant; sibling PropertyKey variants carry no
     // per-variant docs per crate convention). 末尾配置の理由は
@@ -8217,10 +8366,15 @@ impl PropertyValue {
             PropertyValue::BorderBottomColor(_) => PropertyKey::BorderBottomColor,
             PropertyValue::BorderLeftColor(_) => PropertyKey::BorderLeftColor,
             PropertyValue::Border(_) => PropertyKey::Border,
+            PropertyValue::BorderStyle(_) => PropertyKey::BorderStyle,
+            PropertyValue::BorderWidth(_) => PropertyKey::BorderWidth,
+            PropertyValue::BorderColor(_) => PropertyKey::BorderColor,
             PropertyValue::Width(_) => PropertyKey::Width,
             PropertyValue::Height(_) => PropertyKey::Height,
             PropertyValue::MaxWidth(_) => PropertyKey::MaxWidth,
             PropertyValue::MaxHeight(_) => PropertyKey::MaxHeight,
+            PropertyValue::MinWidth(_) => PropertyKey::MinWidth,
+            PropertyValue::MinHeight(_) => PropertyKey::MinHeight,
             PropertyValue::BoxSizing(_) => PropertyKey::BoxSizing,
             PropertyValue::Direction(_) => PropertyKey::Direction,
             PropertyValue::OverflowX(_) => PropertyKey::OverflowX,
@@ -8319,6 +8473,9 @@ impl PropertyValue {
             PropertyValue::Filter(_) => PropertyKey::Filter,
             PropertyValue::TableLayout(_) => PropertyKey::TableLayout,
             PropertyValue::BorderCollapse(_) => PropertyKey::BorderCollapse,
+            PropertyValue::BorderSpacing(_) => PropertyKey::BorderSpacing,
+            PropertyValue::CaptionSide(_) => PropertyKey::CaptionSide,
+            PropertyValue::EmptyCells(_) => PropertyKey::EmptyCells,
             PropertyValue::Font(_) => PropertyKey::Font,
             PropertyValue::TextDecorationSkipInk(_) => PropertyKey::TextDecorationSkipInk,
             PropertyValue::TextDecorationSkipSpaces(_) => PropertyKey::TextDecorationSkipSpaces,
@@ -8928,10 +9085,15 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "border-bottom-color" => PropertyKey::BorderBottomColor,
         "border-left-color" => PropertyKey::BorderLeftColor,
         "border" => PropertyKey::Border,
+        "border-style" => PropertyKey::BorderStyle,
+        "border-width" => PropertyKey::BorderWidth,
+        "border-color" => PropertyKey::BorderColor,
         "width" => PropertyKey::Width,
         "height" => PropertyKey::Height,
         "max-width" => PropertyKey::MaxWidth,
         "max-height" => PropertyKey::MaxHeight,
+        "min-width" => PropertyKey::MinWidth,
+        "min-height" => PropertyKey::MinHeight,
         "box-sizing" => PropertyKey::BoxSizing,
         "direction" => PropertyKey::Direction,
         "overflow-x" => PropertyKey::OverflowX,
@@ -8984,6 +9146,9 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "unicode-bidi" => PropertyKey::UnicodeBidi,
         "table-layout" => PropertyKey::TableLayout,
         "border-collapse" => PropertyKey::BorderCollapse,
+        "border-spacing" => PropertyKey::BorderSpacing,
+        "caption-side" => PropertyKey::CaptionSide,
+        "empty-cells" => PropertyKey::EmptyCells,
         "font" => PropertyKey::Font,
         "text-decoration-skip-ink" => PropertyKey::TextDecorationSkipInk,
         "text-decoration-skip-spaces" => PropertyKey::TextDecorationSkipSpaces,
@@ -9089,7 +9254,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 // for the property (e.g. `margin-top: calc(...)` single value vs
                 // `margin-top: calc(...) auto` two values), treat as deferred.
                 // Tab-size never allows percentages, even inside calc (Percentages: N/A).
-                if normalized_name == "tab-size" && value.contains('%') {
+                // Border-spacing likewise (CSS Tables 3 §6.1 Percentages: N/A).
+                if (normalized_name == "tab-size" || normalized_name == "border-spacing")
+                    && value.contains('%')
+                {
                     return None;
                 }
                 if math_function_syntax_is_valid(value.as_ref())
@@ -9106,7 +9274,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
             }
             // If simplification itself fails (oversized), check if math syntax is valid and structurally valid before deferring.
             // Tab-size never allows percentages, even inside calc (Percentages: N/A).
-            if normalized_name == "tab-size" && value.contains('%') {
+            // Border-spacing likewise (CSS Tables 3 §6.1 Percentages: N/A).
+            if (normalized_name == "tab-size" || normalized_name == "border-spacing")
+                && value.contains('%')
+            {
                 return None;
             }
             if math_function_syntax_is_valid(value.as_ref())
@@ -9310,6 +9481,9 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // (4 side × 3 sub-property) に展開されるため通常観測しない (詳細は
         // `PropertyValue::Border` doc + `crate::rule::expand_shorthand_into`)。
         "border" => parse_border_shorthand(input).map(PropertyValue::Border),
+        "border-style" => parse_border_style_shorthand(input).map(PropertyValue::BorderStyle),
+        "border-width" => parse_border_width_shorthand(input).map(PropertyValue::BorderWidth),
+        "border-color" => parse_border_color_shorthand(input).map(PropertyValue::BorderColor),
         // CSS Sizing 3 §3.1.1 preferred size property。
         // grammar: `auto | <length-percentage [0,∞]> | min-content | max-content
         // | fit-content(<length-percentage>)` のうち `auto` + non-negative
@@ -9323,6 +9497,8 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // `none | <length-percentage [0,∞]> | min-content | max-content | fit-content`
         "max-width" => parse_max_size(input).map(PropertyValue::MaxWidth),
         "max-height" => parse_max_size(input).map(PropertyValue::MaxHeight),
+        "min-width" => parse_min_size(input).map(PropertyValue::MinWidth),
+        "min-height" => parse_min_size(input).map(PropertyValue::MinHeight),
         // CSS Sizing 3 §3.3 box-sizing。
         // value grammar `content-box | border-box`、initial `content-box`、
         // not inherited、computed value = specified keyword。
@@ -9597,6 +9773,22 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // (initial `separate`, inherited). matching 規則は直上の
         // `table-layout` arm と同じ。
         "border-collapse" => parse_border_collapse(input).map(PropertyValue::BorderCollapse),
+        // CSS Tables 3 §6.1 border-spacing. grammar: `<length>{1,2}`
+        // <https://www.w3.org/TR/css-tables-3/#border-spacing-property>
+        // (initial `0`, inherited, Percentages: N/A, negative illegal).
+        // `calc()` 混じりは上流の deferred path が `Deferred` に回す
+        // (`width` 等と同型) — ここは plain `<length>` のみ扱う。
+        "border-spacing" => parse_border_spacing(input).map(PropertyValue::BorderSpacing),
+        // CSS Tables 3 §7 caption-side. grammar: `top | bottom`
+        // <https://www.w3.org/TR/css-tables-3/#caption-side-property>
+        // (initial `top`, inherited). matching 規則は直上の
+        // `table-layout` arm と同じ。
+        "caption-side" => parse_caption_side(input).map(PropertyValue::CaptionSide),
+        // CSS Tables 3 §8 empty-cells. grammar: `show | hide`
+        // <https://www.w3.org/TR/css-tables-3/#empty-cells-property>
+        // (initial `show`, inherited). matching 規則は直上の
+        // `table-layout` arm と同じ。
+        "empty-cells" => parse_empty_cells(input).map(PropertyValue::EmptyCells),
         // CSS Fonts 4 §2.1 font shorthand — 6 longhand への展開は
         // `crate::rule::expand_shorthand_into` が行う (同 doc 参照)。
         "font" => parse_font_shorthand(input).map(PropertyValue::Font),
@@ -12569,6 +12761,117 @@ fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
     }
 }
 
+/// `parse_border_style_side` の `Result` 版 (`try_parse` 用)。
+fn parse_border_style_side_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<BorderStyle, ParseError<'i, ()>> {
+    parse_border_style_side(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `parse_border_color` の `Result` 版 (`try_parse` 用)。
+fn parse_border_color_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<BorderColor, ParseError<'i, ()>> {
+    parse_border_color(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `border-style: <line-style>{1,4}` shorthand (CSS Backgrounds 3 §3.4)。
+/// 1-4 value expansion は [`parse_padding_shorthand`] と同型 (1 → all、
+/// 2 → vertical/horizontal、3 → top/horizontal/bottom、4 → clockwise)。
+/// 5 value 以降は caller の `expect_exhausted` が drop (padding precedent)。
+fn parse_border_style_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<BorderStyle>> {
+    let v1 = parse_border_style_side(input)?;
+    let v2 = input.try_parse(parse_border_style_side_res).ok();
+    let v3 = input.try_parse(parse_border_style_side_res).ok();
+    let v4 = input.try_parse(parse_border_style_side_res).ok();
+    let sides = match (v2, v3, v4) {
+        (None, _, _) => Sides::all(v1),
+        (Some(h), None, _) => Sides {
+            top: v1,
+            right: h,
+            bottom: v1,
+            left: h,
+        },
+        (Some(h), Some(b), None) => Sides {
+            top: v1,
+            right: h,
+            bottom: b,
+            left: h,
+        },
+        (Some(r), Some(b), Some(l)) => Sides {
+            top: v1,
+            right: r,
+            bottom: b,
+            left: l,
+        },
+    };
+    Some(sides)
+}
+
+/// `border-width: <line-width>{1,4}` shorthand (CSS Backgrounds 3 §3.4)。
+/// 各 value の grammar は [`parse_border_width_side`] (thin/medium/thick +
+/// 非負 `<length>`)、1-4 expansion は [`parse_padding_shorthand`] と同型。
+fn parse_border_width_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Length>> {
+    let v1 = parse_border_width_side(input)?;
+    let v2 = input.try_parse(parse_border_width_side_res).ok();
+    let v3 = input.try_parse(parse_border_width_side_res).ok();
+    let v4 = input.try_parse(parse_border_width_side_res).ok();
+    let sides = match (v2, v3, v4) {
+        (None, _, _) => Sides::all(v1),
+        (Some(h), None, _) => Sides {
+            top: v1,
+            right: h,
+            bottom: v1,
+            left: h,
+        },
+        (Some(h), Some(b), None) => Sides {
+            top: v1,
+            right: h,
+            bottom: b,
+            left: h,
+        },
+        (Some(r), Some(b), Some(l)) => Sides {
+            top: v1,
+            right: r,
+            bottom: b,
+            left: l,
+        },
+    };
+    Some(sides)
+}
+
+/// `border-color: <color>{1,4}` shorthand (CSS Backgrounds 3 §3.4)。各
+/// value の grammar は [`parse_border_color`] (`currentcolor` / named /
+/// hash / function)、1-4 expansion は [`parse_padding_shorthand`] と同型。
+fn parse_border_color_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<BorderColor>> {
+    let v1 = parse_border_color(input)?;
+    let v2 = input.try_parse(parse_border_color_res).ok();
+    let v3 = input.try_parse(parse_border_color_res).ok();
+    let v4 = input.try_parse(parse_border_color_res).ok();
+    let sides = match (v2, v3, v4) {
+        (None, _, _) => Sides::all(v1),
+        (Some(h), None, _) => Sides {
+            top: v1,
+            right: h,
+            bottom: v1,
+            left: h,
+        },
+        (Some(h), Some(b), None) => Sides {
+            top: v1,
+            right: h,
+            bottom: b,
+            left: h,
+        },
+        (Some(r), Some(b), Some(l)) => Sides {
+            top: v1,
+            right: r,
+            bottom: b,
+            left: l,
+        },
+    };
+    Some(sides)
+}
+
 /// `border: <line-width> || <line-style> || <color>` shorthand を parse する。
 ///
 /// CSS Backgrounds 3 §3.4 <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>。
@@ -12794,8 +13097,74 @@ fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
+/// `min-width` / `min-height: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content` を parse する。
+///
+/// Grammar reference: CSS Sizing 3 §4 "Minimum Size Properties"
+/// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>。initial value
+/// `auto`、Inheritance `No`。sibling [`parse_max_size`] (CSS Sizing 3 §5) と
+/// 同 shape で、`none` keyword 分岐が `auto` に置き換わる点だけが異なる
+/// (min の initial は `auto`、`none` は max-only grammar)。
+/// 非負制約 (`[0,∞]` → [`length_payload`] post-filter) と intrinsic keyword の
+/// Auto placeholder mapping は sibling と同一。
 fn parse_max_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(LengthOrAuto::Auto);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("min-content"))
+        .is_ok()
+    {
+        return Some(LengthOrAuto::Auto);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("max-content"))
+        .is_ok()
+    {
+        return Some(LengthOrAuto::Auto);
+    }
+    if input
+        .try_parse(|i| i.expect_ident_matching("fit-content"))
+        .is_ok()
+    {
+        let _ = input.try_parse(|i| {
+            i.expect_parenthesis_block()?;
+            i.parse_nested_block(|nested| {
+                parse_length_value(nested, true)
+                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
+                Ok::<_, cssparser::ParseError<'_, ()>>(())
+            })
+        });
+        return Some(LengthOrAuto::Auto);
+    }
+    if input
+        .try_parse(|i| {
+            i.expect_function_matching("fit-content")?;
+            i.parse_nested_block(|nested| {
+                parse_length_value(nested, true)
+                    .ok_or_else(|| nested.new_custom_error::<_, ()>(()))?;
+                nested.expect_exhausted()?;
+                Ok::<_, cssparser::ParseError<'_, ()>>(())
+            })
+        })
+        .is_ok()
+    {
+        return Some(LengthOrAuto::Auto);
+    }
+    let length = parse_length_value(input, true)?;
+    (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
+}
+
+/// `min-width` / `min-height: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content` を parse する.
+///
+/// Grammar reference: CSS Sizing 3 §4 "Minimum Size Properties"
+/// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>。initial value
+/// `auto`、Inheritance `No`。sibling `parse_max_size` (CSS Sizing 3 §5) と
+/// 同 shape で、`none` keyword 分岐が `auto` に置き換わる点だけが異なる
+/// (min の initial は `auto`、`none` は max-only grammar)。
+/// 非負制約 (`[0,∞]` → `length_payload` post-filter) と intrinsic keyword の
+/// Auto placeholder mapping は sibling と同一。
+fn parse_min_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
     if input
@@ -14589,6 +14958,62 @@ fn parse_border_collapse(input: &mut Parser<'_, '_>) -> Option<BorderCollapseVal
     match ident.to_ascii_lowercase().as_str() {
         "collapse" => Some(BorderCollapseValue::Collapse),
         "separate" => Some(BorderCollapseValue::Separate),
+        _ => None,
+    }
+}
+
+/// `border-spacing: <length>{1,2}` を parse する (CSS Tables 3 §6.1
+/// <https://www.w3.org/TR/css-tables-3/#border-spacing-property>,
+/// [`BorderSpacingValue`] doc 参照)。
+///
+/// 各成分は [`parse_non_negative_length`] (`<length [0,∞]>`、
+/// `<percentage>` alternative なし — spec の Percentages: N/A と
+/// "Negative lengths are illegal" を共に enforce)。unitless `0` は
+/// [`parse_length_value`] の CSS Values 3 §5 unitless-zero clause で
+/// `Px(0.0)` として受理される (WPT computed の `"0"` → `"0px"` case)。
+/// 第 2 成分省略時は第 1 成分を copy する (spec 本文 +
+/// [`GapShorthand`] と同型)。3 成分以上・bare non-zero number・`%` は
+/// caller (`rule.rs::DeclParser`) の `expect_exhausted` / 各成分の `None`
+/// で drop する。
+fn parse_border_spacing(input: &mut Parser<'_, '_>) -> Option<BorderSpacingValue> {
+    let horizontal = parse_non_negative_length(input)?;
+    let vertical = input
+        .try_parse(|i| parse_non_negative_length(i).ok_or(()))
+        .unwrap_or(horizontal);
+    Some(BorderSpacingValue {
+        horizontal,
+        vertical,
+    })
+}
+
+/// `caption-side: <ident>` を parse する (CSS Tables 3 §7
+/// <https://www.w3.org/TR/css-tables-3/#caption-side-property>,
+/// [`CaptionSideValue`] doc 参照)。
+///
+/// Value grammar: `top | bottom`。ASCII case-insensitive matching は
+/// sibling [`parse_table_layout`] と同 flavor、余剰 token
+/// (`caption-side: top bottom` 等) は caller (`rule.rs::DeclParser`) の
+/// `expect_exhausted` が drop する。
+fn parse_caption_side(input: &mut Parser<'_, '_>) -> Option<CaptionSideValue> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "top" => Some(CaptionSideValue::Top),
+        "bottom" => Some(CaptionSideValue::Bottom),
+        _ => None,
+    }
+}
+
+/// `empty-cells: <ident>` を parse する (CSS Tables 3 §8
+/// <https://www.w3.org/TR/css-tables-3/#empty-cells-property>,
+/// [`EmptyCellsValue`] doc 参照)。
+///
+/// Value grammar: `show | hide`。matching 規則は sibling
+/// [`parse_caption_side`] と同じ。
+fn parse_empty_cells(input: &mut Parser<'_, '_>) -> Option<EmptyCellsValue> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "show" => Some(EmptyCellsValue::Show),
+        "hide" => Some(EmptyCellsValue::Hide),
         _ => None,
     }
 }
@@ -28069,6 +28494,73 @@ mod tests {
     }
 
     #[test]
+    fn border_style_shorthand_expansion_1_to_4_values() {
+        use PropertyValue::BorderStyle as BS;
+        // 1 value → all sides.
+        assert_eq!(
+            parse("double", "border-style"),
+            Some(BS(Sides::all(BorderStyle::Double)))
+        );
+        // 2 values → vertical / horizontal.
+        assert_eq!(
+            parse("solid dotted", "border-style"),
+            Some(BS(Sides {
+                top: BorderStyle::Solid,
+                right: BorderStyle::Dotted,
+                bottom: BorderStyle::Solid,
+                left: BorderStyle::Dotted,
+            }))
+        );
+        // 4 values → clockwise.
+        assert_eq!(
+            parse("solid dotted dashed double", "border-style"),
+            Some(BS(Sides {
+                top: BorderStyle::Solid,
+                right: BorderStyle::Dotted,
+                bottom: BorderStyle::Dashed,
+                left: BorderStyle::Double,
+            }))
+        );
+        // Invalid keyword drops the whole declaration (exhaustion
+        // enforced by the caller — `parse_entire` mirrors DeclParser).
+        assert_eq!(parse_entire("solid wavy", "border-style"), None);
+        assert_eq!(parse("", "border-style"), None);
+    }
+
+    #[test]
+    fn border_width_shorthand_keywords_and_lengths() {
+        use PropertyValue::BorderWidth as BW;
+        assert_eq!(
+            parse("medium", "border-width"),
+            Some(BW(Sides::all(Length::Px(BORDER_WIDTH_MEDIUM_PX))))
+        );
+        assert_eq!(
+            parse("1px 2px", "border-width"),
+            Some(BW(Sides {
+                top: Length::Px(1.0),
+                right: Length::Px(2.0),
+                bottom: Length::Px(1.0),
+                left: Length::Px(2.0),
+            }))
+        );
+        // Negative lengths are grammar violations.
+        assert_eq!(parse("-1px", "border-width"), None);
+    }
+
+    #[test]
+    fn border_color_shorthand_currentcolor_and_named() {
+        use PropertyValue::BorderColor as BC;
+        assert_eq!(
+            parse("black", "border-color"),
+            Some(BC(Sides::all(BorderColor::Resolved(CssColor::BLACK))))
+        );
+        assert_eq!(
+            parse("currentcolor", "border-color"),
+            Some(BC(Sides::all(BorderColor::CurrentColor)))
+        );
+    }
+
+    #[test]
     fn border_top_style_parse_solid() {
         // Verification #3: parse("solid", "border-top-style") =
         // Some(PropertyValue::BorderTopStyle(BorderStyle::Solid))。
@@ -35240,30 +35732,146 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::BorderCollapse);
     }
 
-    // ── 未実装 table property の silent-drop 維持 ─────────────────────────
+    // ── border-spacing (CSS Tables 3 §6.1) ─────────────────────────────────
     //
-    // `border-spacing` / `caption-side` / `empty-cells` は本 task の scope 外
-    // (未実装) のため未知 property として drop され続ける — WPT
-    // css/css-tables/parsing/{border-spacing,caption-side,empty-cells}-invalid.html
-    // (いずれも baseline 収録) の全 invalid case が `None` になることの pin。
-    // 新 property 追加時の dispatch 変更でこれらが受理側に倒れたらここで落ちる。
+    // WPT css/css-tables/parsing/border-spacing-{valid,invalid}.html の
+    // 全 case の pin。valid の `calc()` 混じり 2 件は上流 deferred path が
+    // `Deferred` に回す (`width: calc(..)` と同型) ため、ここでは受理
+    // (`Some`) のみ assert し payload の中身は assert しない。
 
     #[test]
-    fn unimplemented_table_properties_still_drop_invalid_values() {
-        let cases = [
-            ("border-spacing", "10%"),
-            ("border-spacing", "-20px"),
-            ("border-spacing", "30"),
-            ("border-spacing", "40px 50px 60px"),
-            ("caption-side", "auto"),
-            ("caption-side", "left"),
-            ("caption-side", "right"),
-            ("caption-side", "top bottom"),
-            ("empty-cells", "auto"),
-            ("empty-cells", "show hide"),
-        ];
-        for (name, value) in cases {
-            assert_eq!(parse_entire(value, name), None, "{name}: {value}");
-        }
+    fn border_spacing_accepts_valid_values() {
+        // 単一 standard length は両軸に double する (spec 本文 +
+        // `GapShorthand` と同型)。
+        assert_eq!(
+            parse("0px", "border-spacing"),
+            Some(PropertyValue::BorderSpacing(BorderSpacingValue {
+                horizontal: Length::Px(0.0),
+                vertical: Length::Px(0.0),
+            }))
+        );
+        // 2 成分。
+        assert_eq!(
+            parse("10px 20px", "border-spacing"),
+            Some(PropertyValue::BorderSpacing(BorderSpacingValue {
+                horizontal: Length::Px(10.0),
+                vertical: Length::Px(20.0),
+            }))
+        );
+        // unitless `0` は `<length>` として受理 (WPT computed の `"0"` case)。
+        assert_eq!(
+            parse("0", "border-spacing"),
+            Some(PropertyValue::BorderSpacing(BorderSpacingValue {
+                horizontal: Length::Px(0.0),
+                vertical: Length::Px(0.0),
+            }))
+        );
+        // font-relative も plain length として受理。
+        assert_eq!(
+            parse("0.5em 1px", "border-spacing"),
+            Some(PropertyValue::BorderSpacing(BorderSpacingValue {
+                horizontal: Length::Em(0.5),
+                vertical: Length::Px(1.0),
+            }))
+        );
+        // `calc()` 混じりは deferred path が受理する (payload は `Deferred`)。
+        let deferred = parse_entire("calc(10px + 0.5em) calc(10px - 0.5em)", "border-spacing");
+        assert!(
+            matches!(deferred, Some(PropertyValue::Deferred(_))),
+            "calc border-spacing should defer, got {deferred:?}"
+        );
+        // `calc()` 単一値も同様。
+        assert!(matches!(
+            parse_entire("calc(10px + 0.5em)", "border-spacing"),
+            Some(PropertyValue::Deferred(_))
+        ));
+        // key mapping。
+        let v = PropertyValue::BorderSpacing(BorderSpacingValue {
+            horizontal: Length::Px(1.0),
+            vertical: Length::Px(2.0),
+        });
+        assert_eq!(v.key(), PropertyKey::BorderSpacing);
+    }
+
+    #[test]
+    fn border_spacing_rejects_invalid_values() {
+        // `<percentage>` は Percentages: N/A のため reject。
+        assert_eq!(parse("10%", "border-spacing"), None);
+        // 負 length は illegal のため reject。
+        assert_eq!(parse("-20px", "border-spacing"), None);
+        assert_eq!(parse_entire("10px -20px", "border-spacing"), None);
+        // bare non-zero number は `<length>` ではないため reject。
+        assert_eq!(parse("30", "border-spacing"), None);
+        // 3 成分は `{1,2}` を満たさないため reject。
+        assert_eq!(parse_entire("40px 50px 60px", "border-spacing"), None);
+        // keyword は `<length>` ではないため reject。
+        assert_eq!(parse("auto", "border-spacing"), None);
+        // `%` 混じり calc は deferred path の guard が reject
+        // (`tab-size` の Percentages: N/A guard と同型)。
+        assert_eq!(parse_entire("calc(10% + 5px)", "border-spacing"), None);
+    }
+
+    // ── caption-side (CSS Tables 3 §7) ─────────────────────────────────────
+    //
+    // WPT css/css-tables/parsing/caption-side-{valid,invalid}.html の
+    // 全 case の pin。
+
+    #[test]
+    fn caption_side_accepts_valid_values() {
+        assert_eq!(
+            parse("top", "caption-side"),
+            Some(PropertyValue::CaptionSide(CaptionSideValue::Top))
+        );
+        assert_eq!(
+            parse("bottom", "caption-side"),
+            Some(PropertyValue::CaptionSide(CaptionSideValue::Bottom))
+        );
+        // ASCII case-insensitive (`table-layout` の `FIXED` case と同型)。
+        assert_eq!(
+            parse("TOP", "caption-side"),
+            Some(PropertyValue::CaptionSide(CaptionSideValue::Top))
+        );
+        let v = PropertyValue::CaptionSide(CaptionSideValue::Top);
+        assert_eq!(v.key(), PropertyKey::CaptionSide);
+    }
+
+    #[test]
+    fn caption_side_rejects_invalid_values() {
+        assert_eq!(parse("auto", "caption-side"), None);
+        assert_eq!(parse("left", "caption-side"), None);
+        assert_eq!(parse("right", "caption-side"), None);
+        assert_eq!(parse_entire("top bottom", "caption-side"), None);
+        assert_eq!(parse("10px", "caption-side"), None);
+    }
+
+    // ── empty-cells (CSS Tables 3 §8) ──────────────────────────────────────
+    //
+    // WPT css/css-tables/parsing/empty-cells-{valid,invalid}.html の
+    // 全 case の pin。
+
+    #[test]
+    fn empty_cells_accepts_valid_values() {
+        assert_eq!(
+            parse("show", "empty-cells"),
+            Some(PropertyValue::EmptyCells(EmptyCellsValue::Show))
+        );
+        assert_eq!(
+            parse("hide", "empty-cells"),
+            Some(PropertyValue::EmptyCells(EmptyCellsValue::Hide))
+        );
+        // ASCII case-insensitive (`table-layout` の `FIXED` case と同型)。
+        assert_eq!(
+            parse("HIDE", "empty-cells"),
+            Some(PropertyValue::EmptyCells(EmptyCellsValue::Hide))
+        );
+        let v = PropertyValue::EmptyCells(EmptyCellsValue::Show);
+        assert_eq!(v.key(), PropertyKey::EmptyCells);
+    }
+
+    #[test]
+    fn empty_cells_rejects_invalid_values() {
+        assert_eq!(parse("auto", "empty-cells"), None);
+        assert_eq!(parse_entire("show hide", "empty-cells"), None);
+        assert_eq!(parse("visible", "empty-cells"), None);
     }
 }

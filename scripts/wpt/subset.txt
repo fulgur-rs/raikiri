@@ -33,3 +33,11 @@ css/css-flexbox/parsing
 css/css-flexbox
 css/css-grid/parsing
 css/css-grid
+
+# css-tables reftest sweep (goal: tables PASS expansion, 2026-09-15).
+# css-tables holds the tests; css/reference holds the generic green-square
+# refs (ref-filled-green-100px-square*.html/xht) that ~half the tables
+# reftests link via ../reference/. Without css/reference those pairs are
+# undiscoverable (MissingReference) and silently skipped from sweeps.
+css/css-tables
+css/reference

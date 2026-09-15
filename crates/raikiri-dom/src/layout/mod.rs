@@ -100,6 +100,10 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
 /// - [`bridge_size`] — [`ComputedLengthPercentageOrAuto`] `cv.width` / `cv.height` →
 ///   [`taffy::Style::size`] (`Size<Dimension>`)。width / height 両 field を
 ///   struct literal 1 発 assign で書く。
+/// - [`bridge_min_max_size`] — [`ComputedLengthPercentageOrAuto`]
+///   `cv.min_width` / `cv.min_height` → [`taffy::Style::min_size`]、
+///   `cv.max_width` / `cv.max_height` → [`taffy::Style::max_size`]。
+///   min/max 4 field を 2 struct literal で書く ([`bridge_size`] と同 shape)。
 /// - [`bridge_border`] — `Sides<ComputedBorder>` → [`taffy::Rect<LengthPercentage>`]
 ///   。**border-style gating は本 bridge ではなく上流の
 ///   `raikiri_style::resolve_border` (computed 層) が持つ** — CSS Backgrounds 3
@@ -143,6 +147,7 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         bridge_margin(style, cv, &mut doc.layout_warnings);
         bridge_padding(style, cv, &mut doc.layout_warnings);
         bridge_size(style, cv, &mut doc.layout_warnings);
+        bridge_min_max_size(style, cv, &mut doc.layout_warnings);
         bridge_border(style, cv, &mut doc.layout_warnings);
         bridge_box_sizing(style, cv);
         bridge_flex(style, cv, &mut doc.layout_warnings);
@@ -276,10 +281,18 @@ fn bridge_float(style: &mut taffy::Style, cv: &ComputedValues) {
 fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
     let m = cv.margin;
     style.margin = Rect {
-        top: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(m.top, diag),
-        right: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(m.right, diag),
-        bottom: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(m.bottom, diag),
-        left: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(m.left, diag),
+        top: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
+            m.top, "margin", diag,
+        ),
+        right: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
+            m.right, "margin", diag,
+        ),
+        bottom: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
+            m.bottom, "margin", diag,
+        ),
+        left: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
+            m.left, "margin", diag,
+        ),
     };
 }
 
@@ -390,6 +403,52 @@ fn bridge_size(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Lay
     style.size = Size {
         width: computed_length_percentage_or_auto_to_taffy_dimension(cv.width, "width", diag),
         height: computed_length_percentage_or_auto_to_taffy_dimension(cv.height, "height", diag),
+    };
+}
+/// [`ComputedValues::min_width`] / [`ComputedValues::min_height`] /
+/// [`ComputedValues::max_width`] / [`ComputedValues::max_height`]
+/// ([`ComputedLengthPercentageOrAuto`]) → [`taffy::Style::min_size`] /
+/// [`taffy::Style::max_size`] (`Size<Dimension>`) bridge (CSS Sizing 3 §4
+/// "Minimum Size Properties" / §5 "Maximum Size Properties").
+///
+/// min 側 initial `auto` / max 側 initial `none` は共に computed 層で
+/// [`ComputedLengthPercentageOrAuto::Auto`] に正規化済み (specified 層の
+/// `none` → `Auto` placeholder mapping は sibling `parse_max_size` が担う)
+/// ので、4 field とも [`bridge_size`] と全く同じ helper
+/// ([`computed_length_percentage_or_auto_to_taffy_dimension`]) で `Auto` →
+/// `Dimension::auto()` に translate する — max の `none` 用の特別扱いは本
+/// bridge に要らない。`none` (no max) と `auto` (no minimum) は共に
+/// "制約なし" として taffy に委譲する。
+///
+/// Length policy / Percent policy / 非有限 guard は同 helper の doc 参照。
+/// `site` label は 4 caller ごとに `min-width` / `min-height` /
+/// `max-width` / `max-height` を渡す ([`LayoutWarn::NonFiniteClamped`] の診断用)。
+fn bridge_min_max_size(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
+    // min/max 各 2 field を同時に書くので struct literal を 2 発採用
+    // (bridge_size と同 shape — default 保持は cv 側の Auto で自然に達成)。
+    style.min_size = Size {
+        width: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
+            cv.min_width,
+            "min-width",
+            diag,
+        ),
+        height: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
+            cv.min_height,
+            "min-height",
+            diag,
+        ),
+    };
+    style.max_size = Size {
+        width: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
+            cv.max_width,
+            "max-width",
+            diag,
+        ),
+        height: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
+            cv.max_height,
+            "max-height",
+            diag,
+        ),
     };
 }
 
@@ -1860,10 +1919,28 @@ fn qualifies_for_minimal_line_box(doc: &Document, idx: usize, cascade: &CascadeR
     // (post-`bridge_display` の `taffy::Display` ではない — この second
     // pass が走る時点で `Block` / `Inline` / `InlineBlock` は既に全て
     // `Display::Block` に collapse 済み)。plain な `Inline` の container
-    // は qualify させては**ならない**、`Block` / `InlineBlock` のみ
-    // (この module の doc 参照)。
+    // は qualify させては**ならない** (この module の doc 参照)。
+    // table 系 (`Table` / `InlineTable` / `TableRow` / `TableCell` /
+    // `TableCaption`) は全 child inline の場合に限り qualify する —
+    // match arm 上の注記参照。taffy dispatch 側
+    // (`taffy_impl.rs` の table dispatch) は `IS_INLINE_ROOT` flag を見て
+    // table engine を bypass する。
     match cascade.computed[idx].display {
         DisplayValue::Block | DisplayValue::InlineBlock => {}
+        // Table-internal boxes whose children are ALL inline-level get no
+        // anonymous fixup from the table engine (it only collects rows and
+        // cells) — without this they stack vertically in taffy's block
+        // path. A pure-inline table/row/cell/caption is exactly one
+        // anonymous cell's content (css-tables-3 §2.2.1 fixup with a single
+        // run), so flowing it inline here is equivalent. Boxes with any
+        // cell/row (or other block-level) child keep the table path via the
+        // disqualify arm below. Column groups/columns never have renderable
+        // children and stay disqualified.
+        DisplayValue::Table
+        | DisplayValue::InlineTable
+        | DisplayValue::TableRow
+        | DisplayValue::TableCell
+        | DisplayValue::TableCaption => {}
         _ => return false,
     }
     let mut inline_level_count = 0usize;
@@ -3381,6 +3458,7 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
 /// available space" を taffy に委譲、f32 を持たないので guard 対象外)。
 fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
     loa: ComputedLengthPercentageOrAuto,
+    site: &'static str,
     diag: &mut Vec<LayoutWarn>,
 ) -> LengthPercentageAuto {
     match loa {
@@ -3388,10 +3466,10 @@ fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
         // `sanitize_taffy` の対称 clamp が load-bearing。唯一の caller
         // (`bridge_margin`) 由来なので site label は固定。
         ComputedLengthPercentageOrAuto::Px(v) => {
-            LengthPercentageAuto::length(sanitize_taffy(v, "margin", diag))
+            LengthPercentageAuto::length(sanitize_taffy(v, site, diag))
         }
         ComputedLengthPercentageOrAuto::Percent(p) => {
-            LengthPercentageAuto::percent(sanitize_taffy(p / 100.0, "margin", diag))
+            LengthPercentageAuto::percent(sanitize_taffy(p / 100.0, site, diag))
         }
         ComputedLengthPercentageOrAuto::Auto => LengthPercentageAuto::auto(),
     }
@@ -3622,6 +3700,616 @@ fn probe_space_advance(
 
 /// [`ComputedLength`]: raikiri_style::ComputedLength
 /// [`ComputedLineHeight`]: raikiri_style::ComputedLineHeight
+/// CSS white-space characters (CSS Text 3 §4.1.1): space, tab, LF, FF, CR.
+fn is_css_white_space(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\x0C' | '\r')
+}
+
+/// Zero-width space (U+200B): a segment break adjacent to it is removed
+/// without leaving a space (CSS Text 3 §4.1.2 rule 1).
+const ZERO_WIDTH_SPACE: char = '\u{200B}';
+
+/// Hangul blocks for the CSS Text 3 §4.1.2 Hangul carve-out (a break with
+/// Hangul on either side is NOT removed even between wide characters):
+/// Jamo, Compatibility Jamo, Extended-A/B, Syllables. Ranges are stable
+/// since Unicode 2.0 and need no data tables.
+fn is_hangul_for_break(c: char) -> bool {
+    matches!(
+        c,
+        '\u{1100}'..='\u{11FF}'
+            | '\u{3130}'..='\u{318F}'
+            | '\u{A960}'..='\u{A97F}'
+            | '\u{AC00}'..='\u{D7AF}'
+            | '\u{D7B0}'..='\u{D7FF}'
+    )
+}
+
+/// East Asian Width map for segment-break decisions (CSS Text 3 §4.1.2
+/// rule 2: removal when both sides are Fullwidth/Wide/Halfwidth).
+/// Loaded once per process from ICU compiled data (same provider the
+/// parley dependency already links; no new data pulled in).
+fn east_asian_width_map()
+-> icu_properties::CodePointMapDataBorrowed<'static, icu_properties::props::EastAsianWidth> {
+    icu_properties::CodePointMapDataBorrowed::<icu_properties::props::EastAsianWidth>::new()
+}
+
+/// Whether `c` counts as wide for break removal: East Asian Width
+/// Fullwidth/Wide/Halfwidth (Ambiguous excluded) and not Hangul (which
+/// the spec carves out even when wide, e.g. Hangul syllables).
+fn is_wide_for_break(c: char) -> bool {
+    use icu_properties::props::EastAsianWidth;
+    let ea = east_asian_width_map().get(c);
+    (ea == EastAsianWidth::Fullwidth
+        || ea == EastAsianWidth::Wide
+        || ea == EastAsianWidth::Halfwidth)
+        && !is_hangul_for_break(c)
+}
+
+/// Deepest edge text char inside element `elem` (`dir` -1: last,
+/// +1: first), skipping `display:none` subtrees and empty text.
+/// Returns `None` when the element holds no text (e.g. empty inline or
+/// image): callers treat that as narrow, never as a boundary.
+fn deep_edge_char(doc: &Document, cascade: &CascadeResult, elem: usize, dir: i8) -> Option<char> {
+    let kids = &doc.nodes[elem].children;
+    let range: Box<dyn Iterator<Item = usize>> = if dir < 0 {
+        Box::new((0..kids.len()).rev())
+    } else {
+        Box::new(0..kids.len())
+    };
+    for i in range {
+        let c = kids[i];
+        if !doc.nodes[c].is_in_document() {
+            continue;
+        }
+        match doc.nodes[c].kind() {
+            NodeKind::Text => {
+                let t = text_of(doc, c)?;
+                if t.is_empty() {
+                    continue;
+                }
+                return if dir < 0 {
+                    t.chars().next_back()
+                } else {
+                    t.chars().next()
+                };
+            }
+            NodeKind::Element => {
+                if cascade.computed[c].display == DisplayValue::None {
+                    continue;
+                }
+                if let Some(ch) = deep_edge_char(doc, cascade, c, dir) {
+                    return Some(ch);
+                }
+            }
+            _ => continue,
+        }
+    }
+    None
+}
+
+/// Directly neighboring char of text node `idx` (`dir` -1: char before,
+/// +1: char after) in reading order: in-sibling text edge (including
+/// collapsible spaces — adjacency to a space keeps it), else the edge
+/// text of a neighboring element (deep), else ascending through inline
+/// ancestors like [`has_inline_adjacent`]. `None` at a block boundary or
+/// when no text is found (treated as narrow, never as a break).
+fn edge_char(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    idx: usize,
+    dir: i8,
+) -> Option<char> {
+    let mut node = idx;
+    loop {
+        let p = parent_of[node]?;
+        let kids = &doc.nodes[p].children;
+        let pos = kids.iter().position(|&c| c == node)?;
+        let mut i = pos as isize + dir as isize;
+        while i >= 0 && (i as usize) < kids.len() {
+            let sib = kids[i as usize];
+            i += dir as isize;
+            if !doc.nodes[sib].is_in_document() {
+                continue;
+            }
+            match doc.nodes[sib].kind() {
+                NodeKind::Text => {
+                    let t = text_of(doc, sib)?;
+                    if t.is_empty() {
+                        continue;
+                    }
+                    return if dir < 0 {
+                        t.chars().next_back()
+                    } else {
+                        t.chars().next()
+                    };
+                }
+                NodeKind::Element => {
+                    if cascade.computed[sib].display == DisplayValue::None {
+                        continue;
+                    }
+                    if let Some(ch) = deep_edge_char(doc, cascade, sib, dir) {
+                        return Some(ch);
+                    }
+                    continue;
+                }
+                _ => continue,
+            }
+        }
+        if doc.nodes[p].kind() == NodeKind::Element && is_inline_element_box(cascade, p) {
+            node = p;
+            continue;
+        }
+        return None;
+    }
+}
+
+/// Whether `idx` generates an inline-level box for white-space trimming.
+///
+/// Text nodes are inline-level; elements follow their computed display
+/// (`inline`, `inline-block`, `inline-table`). `contents` is treated as
+/// inline (conservative: a wrong keep preserves old behavior, a wrong drop
+/// would regress). `<br>` counts as a block boundary (leading/trailing
+/// spaces around a forced break collapse).
+fn is_inline_for_trim(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    if doc.nodes[idx].kind() == NodeKind::Text {
+        return true;
+    }
+    if doc.nodes[idx].tag_name() == Some("br") {
+        return false;
+    }
+    matches!(
+        cascade.computed[idx].display,
+        DisplayValue::Inline
+            | DisplayValue::InlineBlock
+            | DisplayValue::InlineTable
+            | DisplayValue::Contents
+    )
+}
+
+/// Whether the element's own box is inline-level (strict: `contents` and
+/// `<br>` excluded — used for ancestor ascent, where a `contents` wrapper
+/// must not stop the search but a real inline box does not continue it...
+/// actually ascent continues through ALL inline ancestors; this helper
+/// reports whether `idx` (an element) generates an inline-level box,
+/// `<br>` included as inline for ascent since content inside... `<br>` has
+/// no children, so it never matters here).
+fn is_inline_element_box(cascade: &CascadeResult, idx: usize) -> bool {
+    matches!(
+        cascade.computed[idx].display,
+        DisplayValue::Inline
+            | DisplayValue::InlineBlock
+            | DisplayValue::InlineTable
+            | DisplayValue::Contents
+    )
+}
+
+/// Nearest significant sibling of the node holding text `idx` in `dir`
+/// (-1: preceding, +1: following), skipping `display:none` boxes and
+/// whitespace-only text nodes (both generate nothing trimmable-against).
+/// Returns the sibling id, or the ancestor to ascend to when the parent's
+/// edge is reached without finding one (handled by the caller via
+/// [`inline_beyond_block_edge`]).
+fn significant_sibling(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent: usize,
+    pos: usize,
+    dir: i8,
+) -> Option<usize> {
+    let kids = &doc.nodes[parent].children;
+    let mut i = pos as isize + dir as isize;
+    while i >= 0 && (i as usize) < kids.len() {
+        let sib = kids[i as usize];
+        i += dir as isize;
+        if !doc.nodes[sib].is_in_document() {
+            continue;
+        }
+        if doc.nodes[sib].kind() == NodeKind::Element
+            && cascade.computed[sib].display == DisplayValue::None
+        {
+            continue;
+        }
+        if doc.nodes[sib].kind() == NodeKind::Text
+            && text_of(doc, sib).is_some_and(|t| t.chars().all(is_css_white_space))
+        {
+            continue;
+        }
+        return Some(sib);
+    }
+    None
+}
+
+/// Whether inline-level content precedes/follows text node `idx`
+/// (`dir` -1/+1) for collapsible-space trimming (CSS Text 3 §4.1.2 phases
+/// II–III): spaces at a block boundary are removed; between inlines kept.
+/// Ascends through inline ancestors so `x<span> a</span>` keeps its space.
+fn has_inline_adjacent(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    idx: usize,
+    dir: i8,
+) -> bool {
+    let mut node = idx;
+    loop {
+        let p = match parent_of[node] {
+            Some(p) => p,
+            None => return false,
+        };
+        let kids = &doc.nodes[p].children;
+        let pos = match kids.iter().position(|&c| c == node) {
+            Some(pos) => pos,
+            None => return false,
+        };
+        if let Some(sib) = significant_sibling(doc, cascade, p, pos, dir) {
+            return is_inline_for_trim(doc, cascade, sib);
+        }
+        // Parent edge: ascend iff the parent itself is inline-level.
+        if doc.nodes[p].kind() == NodeKind::Element && is_inline_element_box(cascade, p) {
+            node = p;
+            continue;
+        }
+        return false;
+    }
+}
+
+/// Raw text content of a text node.
+fn text_of(doc: &Document, idx: usize) -> Option<&str> {
+    match &doc.nodes[idx].data {
+        crate::node::NodeData::Text(t) => Some(t.text_content.as_str()),
+        _ => None,
+    }
+}
+
+/// Collapse `text` per its computed `white-space` (CSS Text 3 §4.1) for
+/// shaping: segment breaks/tabs become spaces (except `pre` family),
+/// collapsible runs merge, and spaces at block boundaries are removed
+/// (sibling context via `parent_of`, built once per preshape pass).
+/// `pre`/`pre-wrap`/`break-spaces` pass through untouched; `pre-line`
+/// keeps newlines but collapses spaces with boundary trimming.
+/// Result of [`collapse_text_for_shaping`]: shaped text plus whether a
+/// kept trailing space was stripped for forward migration.
+struct CollapsedText {
+    /// Text to shape (leading kept spaces already NBSP-ified in place;
+    /// trailing kept spaces stripped — see `migrate_count`).
+    text: String,
+    /// A collapsible trailing space was removed while inline content
+    /// follows: the caller prepends one NBSP to the next shaped text
+    /// (parley keeps leading NBSP, trims trailing — so spaces only ever
+    /// migrate forward, never stay trailing).
+    migrate_count: u32,
+}
+
+fn collapse_text_for_shaping(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    idx: usize,
+    text: &str,
+    ws: WhiteSpace,
+) -> CollapsedText {
+    match ws {
+        WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::BreakSpaces => {
+            return CollapsedText {
+                text: text.to_string(),
+                migrate_count: 0,
+            };
+        }
+        _ => {}
+    }
+    // Flex/grid containers drop whitespace-only text children outright
+    // (CSS Flexbox 1 §4 / CSS Grid 1 §5.2 anonymous-item rules: collapsed
+    // runs vanish instead of becoming zero-size items). Without this the
+    // migration below would inject NBSPs between flex items (e.g. WPT
+    // flexbox_flex-0-0's newline-separated spans), shifting them apart.
+    // Content-bearing text (anonymous flex/grid items) keeps flowing below.
+    if text.chars().all(is_css_white_space)
+        && let Some(p) = parent_of[idx]
+        && doc.nodes[p].kind() == NodeKind::Element
+        && matches!(
+            cascade.computed[p].display,
+            DisplayValue::Flex | DisplayValue::Grid
+        )
+    {
+        return CollapsedText {
+            text: String::new(),
+            migrate_count: 0,
+        };
+    }
+    // `matches!` carries its own wildcard arm, so this stays exhaustive
+    // against the non-exhaustive `WhiteSpace` (cross-crate match without a
+    // visible wildcard would not compile).
+    // Phase I: CR/CRLF become LF; tabs/FF become spaces. Line feeds are
+    // KEPT here (even for `normal`/`nowrap`): an interior single `\n`
+    // carries East Asian Width / adjacency context that only the shaper
+    // resolves correctly (CSS Text 3 §4.1.2 segment-break rules — parley
+    // implements them; a blanket `\n`→space conversion breaks e.g. WPT
+    // segment-break-transformation-rules-001 fullwidth/fullwidth). Runs of
+    // 2+ line feeds collapse to one space below (multi-break runs never
+    // reach the shaper as breaks; WPT removable-2 pins this), while a
+    // single interior break passes through. Edge breaks are decided after
+    // the boundary flags are known.
+    let mut s = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\r' {
+            if chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+            s.push('\n');
+        } else if c == '\t' || c == '\x0C' {
+            s.push(' ');
+        } else {
+            s.push(c);
+        }
+    }
+    // Line-feed runs: `pre-line` keeps them verbatim for the shaper
+    // (paragraph breaks survive); `normal`/`nowrap` collapse every maximal
+    // run to one space here. The single-vs-wide decision for a lone break
+    // between inlines happens in the all-whitespace arm below with East
+    // Asian Width data; single-node content keeps the space approximation
+    // it always had (multi-break collapse is pinned by WPT removable-2).
+    let is_pre_line = matches!(ws, WhiteSpace::PreLine);
+    // Lone-break fast path (`normal`/`nowrap` only): an all-whitespace
+    // node holding line feeds decides with direct-neighbor context instead
+    // of the blanket conversion below. CSS Text 3 §4.1.2: a break next to
+    // a zero-width space vanishes; next to a collapsible space the space
+    // survives (migrate); in a multi-break run one space survives; between
+    // two wide (Fullwidth/Wide/Halfwidth, non-Hangul) chars it vanishes;
+    // otherwise one space survives. `pre-line` keeps its feeds for the
+    // shaper via the normal pipeline (dedupe carve-out above).
+    if !is_pre_line && s.contains('\n') && s.chars().all(is_css_white_space) {
+        // Run continuation first: if the previous relevant sibling's raw
+        // text already ends in whitespace, that node migrates this run's
+        // single space (covers `"a "` + `"\\n"`, `" "` + `"\\n"`,
+        // `"\\n"` + `"\\n"` alike). Without this the decision below
+        // would migrate a second space.
+        if let Some(p) = parent_of[idx]
+            && let Some(pos) = doc.nodes[p].children.iter().position(|&c| c == idx)
+        {
+            for &prev in doc.nodes[p].children[..pos].iter().rev() {
+                if !doc.nodes[prev].is_in_document() {
+                    continue;
+                }
+                if doc.nodes[prev].kind() == NodeKind::Element
+                    && cascade.computed[prev].display == DisplayValue::None
+                {
+                    continue;
+                }
+                if doc.nodes[prev].kind() == NodeKind::Text
+                    && text_of(doc, prev)
+                        .is_some_and(|t| t.chars().next_back().is_some_and(is_css_white_space))
+                {
+                    return CollapsedText {
+                        text: String::new(),
+                        migrate_count: 0,
+                    };
+                }
+                break;
+            }
+        }
+        let before = has_inline_adjacent(doc, cascade, parent_of, idx, -1);
+        let after = has_inline_adjacent(doc, cascade, parent_of, idx, 1);
+        if !before || !after {
+            return CollapsedText {
+                text: String::new(),
+                migrate_count: 0,
+            };
+        }
+        if s.chars().filter(|&c| c == '\n').count() >= 2 {
+            return CollapsedText {
+                text: String::new(),
+                migrate_count: 1,
+            };
+        }
+        // Exactly one feed: direct neighbors (in-node spaces count;
+        // otherwise cross-node edge chars).
+        let pos = s.find('\n').unwrap_or(0);
+        let prev_in = s[..pos].chars().next_back();
+        let next_in = s[pos + 1..].chars().next();
+        let norm = |c: Option<char>| {
+            c.map(|d| match d {
+                '\t' => ' ',
+                '\r' => '\n',
+                _ => d,
+            })
+        };
+        let p = prev_in
+            .filter(|&d| d != ' ')
+            .map(Some)
+            .unwrap_or_else(|| norm(edge_char(doc, cascade, parent_of, idx, -1)));
+        // NOTE: in-node spaces around the break mean space-adjacency only
+        // when they are the DIRECT neighbors; `prev_in`/`next_in` above
+        // are exactly that (no skipping).
+        let n = next_in
+            .filter(|&d| d != ' ')
+            .map(Some)
+            .unwrap_or_else(|| norm(edge_char(doc, cascade, parent_of, idx, 1)));
+        // Re-check space adjacency with the in-node spaces included.
+        let p_space = prev_in == Some(' ') || p == Some(' ');
+        let n_space = next_in == Some(' ') || n == Some(' ');
+        if p == Some(ZERO_WIDTH_SPACE) || n == Some(ZERO_WIDTH_SPACE) {
+            return CollapsedText {
+                text: String::new(),
+                migrate_count: 0,
+            };
+        }
+        if p_space || n_space {
+            return CollapsedText {
+                text: String::new(),
+                migrate_count: 1,
+            };
+        }
+        // A break run spanning nodes collapses to one space: a
+        // PRECEDING break means an earlier node already migrates it (drop
+        // here); a FOLLOWING break migrates here and dedupes away there.
+        // WPT unremovable-2 pins this over true paragraph preservation,
+        // which has no coverage.
+        if p == Some('\n') {
+            return CollapsedText {
+                text: String::new(),
+                migrate_count: 0,
+            };
+        }
+        if n == Some('\n') {
+            return CollapsedText {
+                text: String::new(),
+                migrate_count: 1,
+            };
+        }
+        if let (Some(a), Some(b)) = (p, n)
+            && is_wide_for_break(a)
+            && is_wide_for_break(b)
+        {
+            return CollapsedText {
+                text: String::new(),
+                migrate_count: 0,
+            };
+        }
+        return CollapsedText {
+            text: String::new(),
+            migrate_count: 1,
+        };
+    }
+    let chars_vec: Vec<char> = s.chars().collect();
+    let mut merged = String::with_capacity(s.len());
+    let mut in_spaces = false;
+    let mut i = 0usize;
+    while i < chars_vec.len() {
+        let c = chars_vec[i];
+        if c == ' ' {
+            if !in_spaces {
+                merged.push(' ');
+            }
+            in_spaces = true;
+            i += 1;
+        } else if c == '\n' {
+            let mut j = i;
+            while j < chars_vec.len() && chars_vec[j] == '\n' {
+                j += 1;
+            }
+            if is_pre_line {
+                for &k in &chars_vec[i..j] {
+                    merged.push(k);
+                }
+                in_spaces = false;
+            } else {
+                merged.push(' ');
+                in_spaces = true;
+            }
+            i = j;
+        } else {
+            in_spaces = false;
+            merged.push(c);
+            i += 1;
+        }
+    }
+    // Extended dedupe: an all-whitespace node whose previous relevant
+    // sibling's raw text ENDS with whitespace collapses away — runs
+    // spanning nodes (spaces, breaks, or mixed) keep the single space the
+    // earlier node migrates. Skipped for `pre-line` around line feeds (a
+    // following break must survive to shape the paragraph); pure-space
+    // runs still dedupe.
+    // NBSP-bearing nodes never dedupe: NBSPs don't collapse, so each
+    // migrating NBSP node adds its own space to the pending count.
+    if merged.chars().all(is_css_white_space)
+        && !merged.contains('\u{00A0}')
+        && let Some(p) = parent_of[idx]
+        && let Some(pos) = doc.nodes[p].children.iter().position(|&c| c == idx)
+    {
+        let raw_has_break = text_of(doc, idx).is_some_and(|t| t.contains('\n'));
+        for &prev in doc.nodes[p].children[..pos].iter().rev() {
+            if !doc.nodes[prev].is_in_document() {
+                continue;
+            }
+            if doc.nodes[prev].kind() == NodeKind::Element
+                && cascade.computed[prev].display == DisplayValue::None
+            {
+                continue;
+            }
+            if doc.nodes[prev].kind() == NodeKind::Text
+                && let Some(t) = text_of(doc, prev)
+            {
+                let ends_ws = t.chars().next_back().is_some_and(is_css_white_space);
+                if !ends_ws {
+                    break;
+                }
+                if is_pre_line && (raw_has_break || t.contains('\n')) {
+                    break;
+                }
+                // Run continues here: the earlier node migrates the
+                // single surviving space.
+                return CollapsedText {
+                    text: String::new(),
+                    migrate_count: 0,
+                };
+            }
+            break;
+        }
+    }
+    let before = has_inline_adjacent(doc, cascade, parent_of, idx, -1);
+    let after = has_inline_adjacent(doc, cascade, parent_of, idx, 1);
+    // Lone-space arm covers plain spaces AND lone NBSPs (a `&nbsp;` entity
+    // parses to its own text node, which parley would otherwise trim to
+    // zero when shaped alone — the same fate as a lone collapsible space,
+    // so it migrates identically; WPT unremovable-* pins the outcome).
+    if merged.chars().all(|c| c == ' ' || c == '\u{00A0}') {
+        // Fully collapsed: a lone boundary space vanishes; between inlines
+        // the survivors migrate forward (shaped alone even NBSP trims to
+        // zero — parley keeps only leading non-collapsible runs followed
+        // by more content, measured directly). Count = NBSPs plus one for
+        // a collapsible run (runs already merged to one above; NBSPs never
+        // collapse, so each is preserved).
+        if before && after {
+            let count = merged.chars().filter(|&c| c == '\u{00A0}').count() as u32
+                + merged.contains(' ') as u32;
+            return CollapsedText {
+                text: String::new(),
+                migrate_count: count,
+            };
+        }
+        return CollapsedText {
+            text: String::new(),
+            migrate_count: 0,
+        };
+    }
+    // Edge line feeds (single — runs already collapsed above): dropped
+    // at block edges, converted to a space toward inline content (a lone
+    // survivor is indistinguishable from a collapsed space downstream;
+    // wide-char pairs across nodes stay space-approximated — symmetric
+    // pairs are unaffected either way).
+    let mut out = merged;
+    if !before {
+        out = out.trim_start_matches([' ', '\n']).to_string();
+    } else if out.starts_with('\n') {
+        out.replace_range(..1, " ");
+    }
+    if !after {
+        out = out.trim_end_matches([' ', '\n']).to_string();
+    } else if out.ends_with('\n') {
+        out.pop();
+        out.push(' ');
+    }
+    let trailing_kept = after && out.ends_with(' ');
+    if after {
+        // Trailing survivor migrates forward (see `migrate_count`); strip
+        // it here so shaping never sees a trimmable edge space.
+        out = out.trim_end_matches(' ').to_string();
+    }
+    // Kept leading spaces become NBSP in place: parley keeps a leading
+    // NBSP followed by content (measured), while a plain leading space
+    // would trim. NBSP forfeits a soft-wrap opportunity at that spot;
+    // acceptable since the alternative (today) is losing the space.
+    if out.starts_with(' ') {
+        out.replace_range(..1, "\u{00A0}");
+    }
+    CollapsedText {
+        text: out,
+        migrate_count: trailing_kept as u32,
+    }
+}
+
 pub(crate) fn preshape_text(
     doc: &mut Document,
     cascade: &CascadeResult,
@@ -3690,6 +4378,20 @@ pub(crate) fn preshape_text(
             .join(", ")
     }
     let mut jobs: Vec<Job> = Vec::with_capacity(doc.nodes.len() / 2);
+    // Outstanding forward-migrated spaces (counted: collapsible space
+    // runs collapse to one via dedupe, but NBSPs never collapse so each
+    // migrating NBSP node adds one).
+    let mut migrate_pending: u32 = 0;
+    // Parent map for white-space boundary trimming (arena has no parent
+    // pointers; every text node is visited once here).
+    let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
+    for idx in 0..doc.nodes.len() {
+        for &c in &doc.nodes[idx].children.clone() {
+            if c < parent_of.len() {
+                parent_of[c] = Some(idx);
+            }
+        }
+    }
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Text {
             continue;
@@ -3697,12 +4399,55 @@ pub(crate) fn preshape_text(
         if !doc.nodes[idx].is_in_document() {
             continue;
         }
-        let text: String = match &doc.nodes[idx].data {
+        let raw: String = match &doc.nodes[idx].data {
             crate::node::NodeData::Text(t) if !t.text_content.is_empty() => {
                 t.text_content.as_str().to_string()
             }
             _ => continue,
         };
+
+        // CSS Text 3 §4.1: collapse segment breaks/runs and trim boundary
+        // spaces before shaping. Fully-collapsed text keeps `text_layout`
+        // empty (`None`, same as empty source text above): shaping `""`
+        // would still produce a strut line, but collapsed-away text must
+        // contribute zero size. Paint skips `None` layouts.
+        // `display:none` text is skipped entirely (neither shaped nor
+        // migrating): it generates no boxes, so it must not consume a
+        // pending migrated space.
+        if cascade.computed[idx].display == DisplayValue::None {
+            continue;
+        }
+        let ws = cascade.computed[idx].white_space;
+        let collapsed = collapse_text_for_shaping(doc, cascade, &parent_of, idx, &raw, ws);
+        if std::env::var("COLLAPSE_DBG2").is_ok() {
+            eprintln!(
+                "C2 raw={:?} out={:?} mig={}",
+                raw, collapsed.text, collapsed.migrate_count
+            );
+        }
+        // A space migrated by an EARLIER node lands here (never this
+        // node's own trailing space, which belongs after it).
+        let pending_in = migrate_pending;
+        let mut text = collapsed.text;
+        if text.is_empty() {
+            // Empty nodes neither consume nor (unless migrating themselves)
+            // clear outstanding spaces: a boundary-dropped node must not
+            // cancel earlier migrations.
+            migrate_pending = pending_in.saturating_add(collapsed.migrate_count);
+            continue;
+        }
+        migrate_pending = collapsed.migrate_count;
+        // Forward-migrated spaces (see `migrate_space`): prepend NBSPs iff
+        // they still precede inline content from THIS node's edge — a
+        // boundary element (e.g. `<br>`) in between correctly drops them —
+        // and the node doesn't already start with one (a cross-node run
+        // ending here collapses to the one already present).
+        if pending_in > 0
+            && !text.starts_with("\u{00A0}")
+            && has_inline_adjacent(doc, cascade, &parent_of, idx, -1)
+        {
+            text = "\u{00A0}".repeat(pending_in as usize) + &text;
+        }
         let cv = &cascade.computed[idx];
         // white-space phase 1 collapsing (bd raikiri-spike-25uv)。
         // pre 系は無変換 (tab 展開は後段)。collapse 系のみ trim 位置付きで変換。
@@ -4051,6 +4796,94 @@ mod tests {
         let size: Size<Dimension> = doc.nodes[body].style.size;
         assert_eq!(size.width, Dimension::length(793.7008));
         assert_eq!(size.height, Dimension::length(1122.5197));
+    }
+
+    #[test]
+    fn collapse_single_node_break_becomes_space_and_lone_wide_break_drops() {
+        use raikiri_style::{build_rule_tree, cascade};
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        // Single node: interior break approximates as a space (narrow and
+        // wide alike — the shaper owns single-string rules; WPT
+        // removable-2 pins the multi-break collapse).
+        let t = doc.append_text(p, "\u{FF24}\u{FF26}\n\u{FF24}\u{FF26}");
+        // Split nodes around a lone break: wide/fullwidth neighbors drop
+        // it (CSS Text 3 §4.1.2; WPT rules-001), narrow neighbors migrate
+        // a space (rules-004 shape).
+        let q = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let w1 = doc.append_text(q, "\u{FF24}");
+        let wb = doc.append_text(q, "\n");
+        let w2 = doc.append_text(q, "\u{FF24}");
+        let r = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let n1 = doc.append_text(r, "a");
+        let nb = doc.append_text(r, "\n");
+        let n2 = doc.append_text(r, "b");
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
+        for idx in 0..doc.nodes.len() {
+            for &c in &doc.nodes[idx].children.clone() {
+                if c < parent_of.len() {
+                    parent_of[c] = Some(idx);
+                }
+            }
+        }
+        let collapse = |idx: usize, text: &str| {
+            collapse_text_for_shaping(
+                &doc,
+                &cr,
+                &parent_of,
+                idx,
+                text,
+                cr.computed[idx].white_space,
+            )
+        };
+        let out = collapse(t, "\u{FF24}\u{FF26}\n\u{FF24}\u{FF26}");
+        assert_eq!(out.text, "\u{FF24}\u{FF26} \u{FF24}\u{FF26}");
+        assert_eq!(out.migrate_count, 0);
+        let out = collapse(wb, "\n");
+        assert_eq!(out.text, "");
+        assert_eq!(out.migrate_count, 0);
+        let out = collapse(nb, "\n");
+        assert_eq!(out.text, "");
+        assert_eq!(out.migrate_count, 1);
+        let _ = (w1, w2, n1, n2);
+    }
+
+    #[test]
+    fn collapse_interior_lone_space_migrates_forward() {
+        use raikiri_style::{build_rule_tree, cascade};
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let div = doc.append_element(Some(body), "div", Style::default(), Some("display: block"));
+        let s1 = doc.append_element(Some(div), "span", Style::default(), Some("display: inline"));
+        let _t1 = doc.append_text(s1, "a");
+        let ws = doc.append_text(div, " ");
+        let s2 = doc.append_element(Some(div), "span", Style::default(), Some("display: inline"));
+        let _t2 = doc.append_text(s2, "b");
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
+        for idx in 0..doc.nodes.len() {
+            for &c in &doc.nodes[idx].children.clone() {
+                if c < parent_of.len() {
+                    parent_of[c] = Some(idx);
+                }
+            }
+        }
+        let out =
+            collapse_text_for_shaping(&doc, &cr, &parent_of, ws, " ", cr.computed[ws].white_space);
+        eprintln!(
+            "collapsed={:?} migrate={} ws={:?}",
+            out.text, out.migrate_count, cr.computed[ws].white_space
+        );
+        assert_eq!(out.text, "");
+        assert_eq!(out.migrate_count, 1);
     }
 
     #[test]
@@ -5996,6 +6829,104 @@ mod tests {
         // Case 3: `height: 50%` → Dimension::percent(0.5)。CSS spec の authored
         //   0-100 → taffy fraction 0.0-1.0 の div-by-100 policy を pin。
         assert_eq!(height_for("height: 50%"), Dimension::percent(0.5));
+    }
+
+    #[test]
+    fn apply_computed_to_style_bridges_min_size_to_taffy() {
+        // bridge_min_max_size の min 側。cv.min_width / cv.min_height:
+        // ComputedLengthPercentageOrAuto を taffy::Style::min_size:
+        // Size<Dimension> に translate することを pin する。sibling test
+        // `apply_computed_to_style_bridges_height_to_taffy` と同 fixture
+        // pattern (非 body element `<p>` — body は apply_page_box_to_body
+        // が size のみ clobber し min/max には触らないが、size 系 test と
+        // 同じ fixture に揃える)。
+        //
+        // CSS Sizing 3 §4 initial `auto` の identity round-trip (unspecified
+        // → taffy default と一致) も同時に pin — bridge が unspecified 時に
+        // default を壊さないことの regression guard。
+        use raikiri_style::{build_rule_tree, cascade};
+
+        fn min_for(inline: Option<&str>) -> Size<LengthPercentageAuto> {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let p = doc.append_element(Some(body), "p", Style::default(), inline);
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            apply_computed_to_style(&mut doc, &cr);
+            doc.nodes[p].style.min_size
+        }
+
+        // Case 1: unspecified → taffy default (min initial `auto` round-trip)。
+        assert_eq!(min_for(None), <taffy::Style as Default>::default().min_size);
+
+        // Case 2: `min-width: 100px; min-height: 50%` → length + percent。
+        assert_eq!(
+            min_for(Some("min-width: 100px; min-height: 50%")),
+            Size {
+                width: LengthPercentageAuto::length(100.0),
+                height: LengthPercentageAuto::percent(0.5),
+            }
+        );
+
+        // Case 3: `min-width: auto` → LengthPercentageAuto::auto() (no minimum)。
+        assert_eq!(
+            min_for(Some("min-width: auto")).width,
+            LengthPercentageAuto::auto()
+        );
+
+        // Case 4: 負値は grammar `[0,∞]` 違反で declaration drop → Auto のまま。
+        assert_eq!(
+            min_for(Some("min-width: -10px")).width,
+            LengthPercentageAuto::auto()
+        );
+    }
+
+    #[test]
+    fn apply_computed_to_style_bridges_max_size_to_taffy() {
+        // bridge_min_max_size の max 側。cv.max_width / cv.max_height を
+        // taffy::Style::max_size: Size<Dimension> に translate することを pin
+        // する。sibling min test と同 fixture pattern。
+        //
+        // CSS Sizing 3 §5 initial `none` → computed Auto placeholder →
+        // `Dimension::auto()` (no max) の連鎖を pin — unspecified が taffy
+        // default と一致することも同時に確認する。
+        use raikiri_style::{build_rule_tree, cascade};
+
+        fn max_for(inline: Option<&str>) -> Size<LengthPercentageAuto> {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let p = doc.append_element(Some(body), "p", Style::default(), inline);
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            apply_computed_to_style(&mut doc, &cr);
+            doc.nodes[p].style.max_size
+        }
+
+        // Case 1: unspecified → taffy default (max initial `none` round-trip)。
+        assert_eq!(max_for(None), <taffy::Style as Default>::default().max_size);
+
+        // Case 2: `max-width: 100px; max-height: 50%` → length + percent。
+        assert_eq!(
+            max_for(Some("max-width: 100px; max-height: 50%")),
+            Size {
+                width: LengthPercentageAuto::length(100.0),
+                height: LengthPercentageAuto::percent(0.5),
+            }
+        );
+
+        // Case 3: `max-width: none` → LengthPercentageAuto::auto() (no max)。
+        assert_eq!(
+            max_for(Some("max-width: none")).width,
+            LengthPercentageAuto::auto()
+        );
+
+        // Case 4: 負値は grammar `[0,∞]` 違反で declaration drop → Auto のまま。
+        assert_eq!(
+            max_for(Some("max-height: -10px")).height,
+            LengthPercentageAuto::auto()
+        );
     }
 
     #[test]

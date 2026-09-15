@@ -10,10 +10,10 @@ use selectors::parser::SelectorList;
 
 use crate::RaikiriSelectorImpl;
 use crate::property::{
-    BackgroundShorthand, Border, DeferredValue, FlexFlow, FlexShorthand, FontShorthand,
-    FontShorthandSize, GapShorthand, GridLineShorthand, Length, LengthOrAuto, Outline, OverflowXY,
-    PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PropertyKey, PropertyValue,
-    Sides, StartEnd, TextDecorationShorthand, parse_value,
+    BackgroundShorthand, Border, BorderColor, BorderStyle, DeferredValue, FlexFlow, FlexShorthand,
+    FontShorthand, FontShorthandSize, GapShorthand, GridLineShorthand, Length, LengthOrAuto,
+    Outline, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand,
+    PropertyKey, PropertyValue, Sides, StartEnd, TextDecorationShorthand, parse_value,
 };
 
 /// 1 property declaration = value + `!important` flag。
@@ -461,6 +461,9 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         PropertyValue::PaddingInline(pair) => expand_padding_inline(pair, d.important, push),
         PropertyValue::PaddingBlock(pair) => expand_padding_block(pair, d.important, push),
         PropertyValue::Border(sides) => expand_border(sides, d.important, push),
+        PropertyValue::BorderStyle(sides) => expand_border_style(sides, d.important, push),
+        PropertyValue::BorderWidth(sides) => expand_border_width(sides, d.important, push),
+        PropertyValue::BorderColor(sides) => expand_border_color(sides, d.important, push),
         PropertyValue::Overflow(pair) => expand_overflow(pair, d.important, push),
         PropertyValue::TextDecoration(shorthand) => {
             expand_text_decoration(shorthand, d.important, push)
@@ -517,6 +520,8 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::Height(_)
         | PropertyValue::MaxWidth(_)
         | PropertyValue::MaxHeight(_)
+        | PropertyValue::MinWidth(_)
+        | PropertyValue::MinHeight(_)
         | PropertyValue::Top(_)
         | PropertyValue::Right(_)
         | PropertyValue::Bottom(_)
@@ -640,6 +645,9 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::Filter(_)
         | PropertyValue::TableLayout(_)
         | PropertyValue::BorderCollapse(_)
+        | PropertyValue::BorderSpacing(_)
+        | PropertyValue::CaptionSide(_)
+        | PropertyValue::EmptyCells(_)
         | PropertyValue::LineBreak(_)
         | PropertyValue::TextJustify(_)
         | PropertyValue::TextAlignAll(_)
@@ -717,6 +725,24 @@ fn expand_deferred(
             PropertyKey::BorderBottomColor,
             PropertyKey::BorderLeftWidth,
             PropertyKey::BorderLeftStyle,
+            PropertyKey::BorderLeftColor,
+        ],
+        PropertyKey::BorderStyle => &[
+            PropertyKey::BorderTopStyle,
+            PropertyKey::BorderRightStyle,
+            PropertyKey::BorderBottomStyle,
+            PropertyKey::BorderLeftStyle,
+        ],
+        PropertyKey::BorderWidth => &[
+            PropertyKey::BorderTopWidth,
+            PropertyKey::BorderRightWidth,
+            PropertyKey::BorderBottomWidth,
+            PropertyKey::BorderLeftWidth,
+        ],
+        PropertyKey::BorderColor => &[
+            PropertyKey::BorderTopColor,
+            PropertyKey::BorderRightColor,
+            PropertyKey::BorderBottomColor,
             PropertyKey::BorderLeftColor,
         ],
         PropertyKey::Overflow => &[PropertyKey::OverflowX, PropertyKey::OverflowY],
@@ -964,6 +990,80 @@ fn expand_border(sides: Sides<Border>, important: bool, mut push: impl FnMut(Dec
     });
     push(Declaration {
         value: PropertyValue::BorderLeftColor(sides.left.color),
+        important,
+    });
+}
+
+/// `border-style` shorthand を 4 longhand (`border-*-style`) に展開する
+/// cold helper。margin/padding/border shorthand precedent と同 pattern。
+#[inline(never)]
+fn expand_border_style(
+    sides: Sides<BorderStyle>,
+    important: bool,
+    mut push: impl FnMut(Declaration),
+) {
+    push(Declaration {
+        value: PropertyValue::BorderTopStyle(sides.top),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderRightStyle(sides.right),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderBottomStyle(sides.bottom),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderLeftStyle(sides.left),
+        important,
+    });
+}
+
+/// `border-width` shorthand を 4 longhand (`border-*-width`) に展開する
+/// cold helper。margin/padding/border shorthand precedent と同 pattern。
+#[inline(never)]
+fn expand_border_width(sides: Sides<Length>, important: bool, mut push: impl FnMut(Declaration)) {
+    push(Declaration {
+        value: PropertyValue::BorderTopWidth(sides.top),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderRightWidth(sides.right),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderBottomWidth(sides.bottom),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderLeftWidth(sides.left),
+        important,
+    });
+}
+
+/// `border-color` shorthand を 4 longhand (`border-*-color`) に展開する
+/// cold helper。margin/padding/border shorthand precedent と同 pattern。
+#[inline(never)]
+fn expand_border_color(
+    sides: Sides<BorderColor>,
+    important: bool,
+    mut push: impl FnMut(Declaration),
+) {
+    push(Declaration {
+        value: PropertyValue::BorderTopColor(sides.top),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderRightColor(sides.right),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderBottomColor(sides.bottom),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::BorderLeftColor(sides.left),
         important,
     });
 }
@@ -1382,6 +1482,9 @@ mod tests {
                     PropertyKey::Margin
                         | PropertyKey::Padding
                         | PropertyKey::Border
+                        | PropertyKey::BorderStyle
+                        | PropertyKey::BorderWidth
+                        | PropertyKey::BorderColor
                         | PropertyKey::Outline
                         | PropertyKey::Font
                         | PropertyKey::TextDecoration
@@ -1439,6 +1542,33 @@ mod tests {
             (
                 PropertyKey::Overflow,
                 &[PropertyKey::OverflowX, PropertyKey::OverflowY],
+            ),
+            (
+                PropertyKey::BorderStyle,
+                &[
+                    PropertyKey::BorderTopStyle,
+                    PropertyKey::BorderRightStyle,
+                    PropertyKey::BorderBottomStyle,
+                    PropertyKey::BorderLeftStyle,
+                ],
+            ),
+            (
+                PropertyKey::BorderWidth,
+                &[
+                    PropertyKey::BorderTopWidth,
+                    PropertyKey::BorderRightWidth,
+                    PropertyKey::BorderBottomWidth,
+                    PropertyKey::BorderLeftWidth,
+                ],
+            ),
+            (
+                PropertyKey::BorderColor,
+                &[
+                    PropertyKey::BorderTopColor,
+                    PropertyKey::BorderRightColor,
+                    PropertyKey::BorderBottomColor,
+                    PropertyKey::BorderLeftColor,
+                ],
             ),
             (
                 PropertyKey::TextDecoration,

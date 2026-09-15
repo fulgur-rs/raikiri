@@ -5275,6 +5275,55 @@ fn project_deferred_value(
             }
             _ => return None,
         },
+        // `border-style` / `border-width` / `border-color` shorthands fan
+        // out to their 4 side longhands by key (same shape as `Border`
+        // above; reached via `var()`/re-cascade paths that bypass rule.rs
+        // expansion).
+        PropertyValue::BorderStyle(sides) => match key {
+            crate::property::PropertyKey::BorderTopStyle => {
+                PropertyValue::BorderTopStyle(sides.top)
+            }
+            crate::property::PropertyKey::BorderRightStyle => {
+                PropertyValue::BorderRightStyle(sides.right)
+            }
+            crate::property::PropertyKey::BorderBottomStyle => {
+                PropertyValue::BorderBottomStyle(sides.bottom)
+            }
+            crate::property::PropertyKey::BorderLeftStyle => {
+                PropertyValue::BorderLeftStyle(sides.left)
+            }
+            _ => return None,
+        },
+        PropertyValue::BorderWidth(sides) => match key {
+            crate::property::PropertyKey::BorderTopWidth => {
+                PropertyValue::BorderTopWidth(sides.top)
+            }
+            crate::property::PropertyKey::BorderRightWidth => {
+                PropertyValue::BorderRightWidth(sides.right)
+            }
+            crate::property::PropertyKey::BorderBottomWidth => {
+                PropertyValue::BorderBottomWidth(sides.bottom)
+            }
+            crate::property::PropertyKey::BorderLeftWidth => {
+                PropertyValue::BorderLeftWidth(sides.left)
+            }
+            _ => return None,
+        },
+        PropertyValue::BorderColor(sides) => match key {
+            crate::property::PropertyKey::BorderTopColor => {
+                PropertyValue::BorderTopColor(sides.top)
+            }
+            crate::property::PropertyKey::BorderRightColor => {
+                PropertyValue::BorderRightColor(sides.right)
+            }
+            crate::property::PropertyKey::BorderBottomColor => {
+                PropertyValue::BorderBottomColor(sides.bottom)
+            }
+            crate::property::PropertyKey::BorderLeftColor => {
+                PropertyValue::BorderLeftColor(sides.left)
+            }
+            _ => return None,
+        },
         PropertyValue::Overflow(pair) => match key {
             crate::property::PropertyKey::OverflowX => PropertyValue::OverflowX(pair.x),
             crate::property::PropertyKey::OverflowY => PropertyValue::OverflowY(pair.y),
@@ -5625,6 +5674,19 @@ fn absolute_length_factor(unit: &str) -> Option<f32> {
 }
 
 fn normalize_math_pair(left: &mut MathValue, right: &mut MathValue) -> Option<()> {
+    // Additive zero vanishes regardless of unit (CSS Values 4 §10.7
+    // calculation simplification): `calc(50% + 0px)` is `50%`, `calc(0em
+    // + 10px)` is `10px`. Zero is zero in every unit, so the surviving
+    // side keeps its own unit for downstream (possibly percentage)
+    // resolution. Both-zero keeps the left side as-is.
+    if left.number == 0.0 {
+        left.unit = right.unit.clone();
+        return Some(());
+    }
+    if right.number == 0.0 {
+        right.unit = left.unit.clone();
+        return Some(());
+    }
     match (&left.unit, &right.unit) {
         (None, None) => Some(()),
         (Some(left_unit), Some(right_unit)) if left_unit == right_unit => Some(()),
@@ -6955,10 +7017,19 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::BorderBottomColor(_)
         | PropertyValue::BorderLeftColor(_)
         | PropertyValue::Border(_)
+        // `border-style` / `border-width` / `border-color` shorthands —
+        // same "nothing for phase 2 to resolve" shape as `Border` above
+        // (non-inherited keywords/lengths; structurally unreachable here
+        // since rule.rs expands them first).
+        | PropertyValue::BorderStyle(_)
+        | PropertyValue::BorderWidth(_)
+        | PropertyValue::BorderColor(_)
         | PropertyValue::Width(_)
         | PropertyValue::Height(_)
         | PropertyValue::MaxWidth(_)
         | PropertyValue::MaxHeight(_)
+        | PropertyValue::MinWidth(_)
+        | PropertyValue::MinHeight(_)
         | PropertyValue::Top(_)
         | PropertyValue::Right(_)
         | PropertyValue::Bottom(_)
@@ -7254,6 +7325,14 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Filter(_)
         | PropertyValue::TableLayout(_)
         | PropertyValue::BorderCollapse(_)
+        // `border-spacing` (CSS Tables 3 §6.1) — `<length>{1,2}` の絶対化は
+        // 宣言 node 自身の font-size を要するため phase 3 の仕事
+        // (`Padding`/`Margin` arm と同じ "nothing for phase 2" 形)。
+        // `caption-side` (§7) / `empty-cells` (§8) は bare keyword payload
+        // のため phase 2 依存なし (`BorderCollapse` と同じ)。
+        | PropertyValue::BorderSpacing(_)
+        | PropertyValue::CaptionSide(_)
+        | PropertyValue::EmptyCells(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)
         | PropertyValue::LineBreak(_)
@@ -7686,6 +7765,8 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::Height(v) => target.height = v,
         PropertyValue::MaxWidth(v) => target.max_width = v,
         PropertyValue::MaxHeight(v) => target.max_height = v,
+        PropertyValue::MinWidth(v) => target.min_width = v,
+        PropertyValue::MinHeight(v) => target.min_height = v,
         PropertyValue::Top(v) => target.top = v,
         PropertyValue::Right(v) => target.right = v,
         PropertyValue::Bottom(v) => target.bottom = v,
@@ -7994,6 +8075,27 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // `FontSizeRelative`'s `larger`/`smaller`) behave exactly as if
         // the shorthand had been expanded — `target` still holds the
         // parent seeds here since no longhand arm ran yet for this node.
+        // `border-style` / `border-width` / `border-color` shorthands
+        // decompose into their side longhands (same shape as `Font`
+        // below; reached when rule.rs expansion is bypassed).
+        PropertyValue::BorderStyle(sides) => {
+            apply_value(PropertyValue::BorderTopStyle(sides.top), target);
+            apply_value(PropertyValue::BorderRightStyle(sides.right), target);
+            apply_value(PropertyValue::BorderBottomStyle(sides.bottom), target);
+            apply_value(PropertyValue::BorderLeftStyle(sides.left), target);
+        }
+        PropertyValue::BorderWidth(sides) => {
+            apply_value(PropertyValue::BorderTopWidth(sides.top), target);
+            apply_value(PropertyValue::BorderRightWidth(sides.right), target);
+            apply_value(PropertyValue::BorderBottomWidth(sides.bottom), target);
+            apply_value(PropertyValue::BorderLeftWidth(sides.left), target);
+        }
+        PropertyValue::BorderColor(sides) => {
+            apply_value(PropertyValue::BorderTopColor(sides.top), target);
+            apply_value(PropertyValue::BorderRightColor(sides.right), target);
+            apply_value(PropertyValue::BorderBottomColor(sides.bottom), target);
+            apply_value(PropertyValue::BorderLeftColor(sides.left), target);
+        }
         PropertyValue::Font(shorthand) => {
             apply_value(PropertyValue::FontStyle(shorthand.style), target);
             apply_value(PropertyValue::FontVariantCaps(shorthand.variant), target);
@@ -8047,6 +8149,20 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // inherit 解決は `SpecifiedValues::inherit_from` の素朴なコピーが担い、
         // ここは winner の単純代入 (`Visibility` arm と同じ shape)。
         PropertyValue::BorderCollapse(v) => target.border_collapse = v,
+        // CSS Tables 3 §6.1 border-spacing。inherited だが `<length>` のため
+        // inherit 解決は `SpecifiedValues::inherit_from` の lift
+        // (`lift_border_spacing`、`tab_size` の `Length` arm と同じ) が担い、
+        // ここは winner の単純代入 (`BorderCollapse` arm と同じ shape —
+        // 絶対化は phase 3 `finalize` の仕事)。
+        PropertyValue::BorderSpacing(v) => target.border_spacing = v,
+        // CSS Tables 3 §7 caption-side。inherited だが keyword のため
+        // inherit 解決は `SpecifiedValues::inherit_from` の素朴なコピーが担い、
+        // ここは winner の単純代入 (`Visibility` arm と同じ shape)。
+        PropertyValue::CaptionSide(v) => target.caption_side = v,
+        // CSS Tables 3 §8 empty-cells。inherited だが keyword のため
+        // inherit 解決は `SpecifiedValues::inherit_from` の素朴なコピーが担い、
+        // ここは winner の単純代入 (`Visibility` arm と同じ shape)。
+        PropertyValue::EmptyCells(v) => target.empty_cells = v,
         // New Text 3 / Writing Modes 3 / Text Decoration 4 properties with no
         // staging field yet (parsing only). The keyword-only ones
         // (`LineBreak`...`UnicodeBidi`, `TextDecorationSkipInk`...
@@ -14732,6 +14848,127 @@ mod tests {
         );
     }
 
+    // ── border-spacing wire-through (CSS Tables 3 §6.1) ──
+    //
+    // WPT css/css-tables/parsing/border-spacing-computed.html の
+    // plain-length 3 case の pin (`"10px 20px"` / `"0"` → `"0px"` /
+    // single-doubles)。`calc()` + relative-unit 混じり 2 case は本 engine
+    // の math evaluator が mixed-unit calc を解決しない
+    // (`mixed_length_percentage_math_is_intentionally_not_supported` 参照)
+    // ため対象外 — baseline pin 側の注記参照。
+
+    #[test]
+    fn border_spacing_wired_through_cascade_from_inline_style() {
+        let cv = cascade_doc("", "table", Some("border-spacing: 10px 20px"));
+        assert_eq!(
+            cv.border_spacing.horizontal,
+            crate::resolve::ComputedLength(10.0)
+        );
+        assert_eq!(
+            cv.border_spacing.vertical,
+            crate::resolve::ComputedLength(20.0)
+        );
+        // WPT computed: `"10px 20px"` stays two lengths.
+        assert_eq!(cv.border_spacing.serialized(), "10px 20px");
+    }
+
+    #[test]
+    fn border_spacing_zero_serializes_shortest() {
+        // WPT computed: `"0"` → `"0px"` (not `"0px 0px"`, CSSOM §2.1
+        // shortest serialization).
+        let cv = cascade_doc("", "table", Some("border-spacing: 0"));
+        assert_eq!(cv.border_spacing.serialized(), "0px");
+    }
+
+    #[test]
+    fn border_spacing_single_value_doubles_to_both_axes() {
+        let cv = cascade_doc("", "table", Some("border-spacing: 10px"));
+        assert_eq!(cv.border_spacing.serialized(), "10px");
+    }
+
+    #[test]
+    fn border_spacing_resolves_em_against_own_font_size() {
+        // font-size 40px の node での `0.5em` → 20px (WPT computed file が
+        // `#target` に `font-size: 40px` を指定するのと同じ基準)。
+        let cv = cascade_doc(
+            "",
+            "table",
+            Some("font-size: 40px; border-spacing: 0.5em 10px"),
+        );
+        assert_eq!(cv.border_spacing.serialized(), "20px 10px");
+    }
+
+    #[test]
+    fn border_spacing_inherits_from_parent_element() {
+        // CSS Tables 3 §6.1: border-spacing は **inherited**.
+        let mut doc = TestDoc::new();
+        let table = doc.push_element(0, "table", Some("border-spacing: 10px 20px"));
+        let td = doc.push_element(table, "td", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[td].border_spacing.serialized(),
+            "10px 20px",
+            "child should inherit border-spacing from parent (CSS Tables 3 §6.1 Inherited: yes)"
+        );
+    }
+
+    // ── caption-side wire-through (CSS Tables 3 §7) ──
+
+    #[test]
+    fn caption_side_wired_through_cascade_from_inline_style() {
+        use crate::property::CaptionSideValue;
+        let cv = cascade_doc("", "table", Some("caption-side: bottom"));
+        assert_eq!(cv.caption_side, CaptionSideValue::Bottom);
+        // WPT caption-side-computed.html: single keyword serializes as-is.
+        let cv_top = cascade_doc("", "table", Some("caption-side: top"));
+        assert_eq!(cv_top.caption_side, CaptionSideValue::Top);
+    }
+
+    #[test]
+    fn caption_side_inherits_from_parent_element() {
+        // CSS Tables 3 §7: caption-side は **inherited**.
+        use crate::property::CaptionSideValue;
+        let mut doc = TestDoc::new();
+        let table = doc.push_element(0, "table", Some("caption-side: bottom"));
+        let td = doc.push_element(table, "td", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[td].caption_side,
+            CaptionSideValue::Bottom,
+            "child should inherit caption-side from parent (CSS Tables 3 §7 Inherited: yes)"
+        );
+    }
+
+    // ── empty-cells wire-through (CSS Tables 3 §8) ──
+
+    #[test]
+    fn empty_cells_wired_through_cascade_from_inline_style() {
+        use crate::property::EmptyCellsValue;
+        let cv = cascade_doc("", "table", Some("empty-cells: hide"));
+        assert_eq!(cv.empty_cells, EmptyCellsValue::Hide);
+        // WPT empty-cells-computed.html: single keyword serializes as-is.
+        let cv_show = cascade_doc("", "table", Some("empty-cells: show"));
+        assert_eq!(cv_show.empty_cells, EmptyCellsValue::Show);
+    }
+
+    #[test]
+    fn empty_cells_inherits_from_parent_element() {
+        // CSS Tables 3 §8: empty-cells は **inherited**.
+        use crate::property::EmptyCellsValue;
+        let mut doc = TestDoc::new();
+        let table = doc.push_element(0, "table", Some("empty-cells: hide"));
+        let td = doc.push_element(table, "td", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[td].empty_cells,
+            EmptyCellsValue::Hide,
+            "child should inherit empty-cells from parent (CSS Tables 3 §8 Inherited: yes)"
+        );
+    }
+
     // ── word-break wire-through (CSS Text 3 §5.1) ──
 
     #[test]
@@ -19154,6 +19391,72 @@ mod tests {
     }
 
     #[test]
+    fn min_width_length_end_to_end() {
+        // CSS Sizing 3 §4: `div { min-width: 100px }` が
+        // `ComputedValues.min_width` に Px(100) として届く。sibling
+        // `width_length_end_to_end` と同 pattern (parse_min_size →
+        // PropertyValue::MinWidth → apply_value → finalize の end-to-end
+        // smoke)。
+        let cv = cascade_doc("", "div", Some("min-width: 100px"));
+        assert_eq!(cv.min_width, ComputedLengthPercentageOrAuto::Px(100.0));
+    }
+
+    #[test]
+    fn min_height_auto_and_negative_reject() {
+        // CSS Sizing 3 §4 initial `auto` の identity round-trip + `[0,∞]`
+        // 違反の drop pin。負値は parse 段で declaration drop するため
+        // initial (Auto) のまま残る。
+        let cv = cascade_doc("", "div", Some("min-height: auto"));
+        assert_eq!(cv.min_height, ComputedLengthPercentageOrAuto::Auto);
+        let cv_neg = cascade_doc("", "div", Some("min-height: -10px"));
+        assert_eq!(cv_neg.min_height, ComputedLengthPercentageOrAuto::Auto);
+    }
+
+    #[test]
+    fn min_max_child_does_not_inherit_from_parent() {
+        // CSS Sizing 3 §4/§5: min/max は **non-inherited**。parent が
+        // min-width / max-width を持っていても child は initial を保持する
+        // (sibling `width_child_does_not_inherit_from_parent` と同 pattern)。
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, "div { min-width: 100px; max-width: 200px }");
+        let parent = doc.push_element(0, "div", None);
+        let child = doc.push_element(parent, "span", None);
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).unwrap();
+        assert_eq!(
+            result.computed[parent].min_width,
+            ComputedLengthPercentageOrAuto::Px(100.0)
+        );
+        assert_eq!(
+            result.computed[parent].max_width,
+            ComputedLengthPercentageOrAuto::Px(200.0)
+        );
+        assert_eq!(
+            result.computed[child].min_width,
+            ComputedLengthPercentageOrAuto::Auto
+        );
+        assert_eq!(
+            result.computed[child].max_width,
+            ComputedLengthPercentageOrAuto::Auto
+        );
+    }
+
+    #[test]
+    fn max_width_none_maps_to_auto() {
+        // CSS Sizing 3 §5 initial `none` → computed Auto placeholder の連鎖
+        // pin (specified `parse_max_size` の `none` 分岐 + bridge の
+        // `Dimension::auto()` 委譲の上流側)。
+        let cv = cascade_doc("", "div", Some("max-width: none"));
+        assert_eq!(cv.max_width, ComputedLengthPercentageOrAuto::Auto);
+        let cv_px = cascade_doc("", "div", Some("max-height: 50%"));
+        assert_eq!(
+            cv_px.max_height,
+            ComputedLengthPercentageOrAuto::Percent(50.0)
+        );
+    }
+
+    #[test]
     fn cascade_with_ua_deterministic_across_10_runs() {
         // determinism regression (acceptance criteria for this stage of work)
         let mut doc = TestDoc::new();
@@ -20160,6 +20463,19 @@ mod tests {
             Some("3".to_owned())
         );
         assert_eq!(evaluate_math_function("calc", "1 + 2px"), None);
+        // Additive zero vanishes across units (CSS Values 4 §10.7).
+        assert_eq!(
+            evaluate_math_function("calc", "50% + 0px"),
+            Some("50%".to_owned())
+        );
+        assert_eq!(
+            evaluate_math_function("calc", "0px + 50%"),
+            Some("50%".to_owned())
+        );
+        assert_eq!(
+            evaluate_math_function("calc", "10px + 0"),
+            Some("10px".to_owned())
+        );
 
         assert_eq!(evaluate_math_function("min", ""), None);
         assert_eq!(evaluate_math_function("min", "1px, 2em"), None);

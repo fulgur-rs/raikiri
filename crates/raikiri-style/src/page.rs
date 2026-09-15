@@ -124,27 +124,28 @@ use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_pr
 #[allow(unused_imports)]
 use crate::property::{
     BackgroundShorthand, BackgroundSize, Border, BorderCollapseValue, BorderColor, BorderRadius,
-    BorderStyle, BoxShadowItem, CssPosition, CssPositionOffset, CustomProperty, FlexBasisValue,
-    FlexFlow, FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand, GridInflexibleBreadth,
-    GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
-    GridTrackSize, Length, LengthOrAuto, LengthOrNormal, Outline, OutlineColor, OutlineStyle,
-    OverflowValue, OverflowXY, PageValue, PropertyKey, PropertyValue, Sides, TableLayoutValue,
-    TextCombineUpright, TextDecorationInset, TextDecorationShorthand, TextDecorationSkipInk,
-    TextDecorationSkipSpaces, TextDecorationThickness, TextEmphasisHEdge, TextEmphasisPosition,
-    TextEmphasisVEdge, TextIndentValue, TextOrientation, TextShadowItem, TextUnderlinePosition,
-    TextWrapMode, TransformFunction, UnicodeBidi, parse_length_allow_negative,
-    parse_non_negative_length, parse_value, resolve_overflow, resolve_writing_mode,
+    BorderSpacingValue, BorderStyle, BoxShadowItem, CaptionSideValue, CssPosition,
+    CssPositionOffset, CustomProperty, EmptyCellsValue, FlexBasisValue, FlexFlow, FlexShorthand,
+    FontShorthand, FontShorthandSize, GapShorthand, GridInflexibleBreadth, GridTemplateTracks,
+    GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize,
+    Length, LengthOrAuto, LengthOrNormal, Outline, OutlineColor, OutlineStyle, OverflowValue,
+    OverflowXY, PageValue, PropertyKey, PropertyValue, Sides, TableLayoutValue, TextCombineUpright,
+    TextDecorationInset, TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces,
+    TextDecorationThickness, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisVEdge,
+    TextIndentValue, TextOrientation, TextShadowItem, TextUnderlinePosition, TextWrapMode,
+    TransformFunction, UnicodeBidi, parse_length_allow_negative, parse_non_negative_length,
+    parse_value, resolve_overflow, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedCssPositionOffset, ComputedFlexBasis,
     ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
     ComputedGridTrackListComponent, ComputedGridTrackSize, ComputedLength,
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
-    ResolveContext, lift_length_or_normal, lift_line_height, lift_tab_size,
-    resolve_background_size, resolve_border, resolve_border_radius, resolve_box_shadow_item,
-    resolve_css_position, resolve_flex_basis, resolve_grid_auto_track_list,
-    resolve_grid_template_tracks, resolve_length, resolve_length_or_normal,
-    resolve_length_percentage, resolve_length_percentage_or_auto,
+    ResolveContext, lift_border_spacing, lift_length_or_normal, lift_line_height, lift_tab_size,
+    resolve_background_size, resolve_border, resolve_border_radius, resolve_border_spacing,
+    resolve_box_shadow_item, resolve_css_position, resolve_flex_basis,
+    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
+    resolve_length_or_normal, resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
     resolve_outline, resolve_tab_size, resolve_vertical_align, used_line_height_length,
 };
@@ -3237,14 +3238,18 @@ fn absolutize_in_page_context(
         // purpose).
         | PropertyValue::Filter(_)
         // `table-layout` (CSS Tables 3 §4) / `border-collapse` (CSS Tables
-        // 3 §6) carry no length and computed value = specified keyword
+        // 3 §6) / `caption-side` (§7) / `empty-cells` (§8) carry no length
+        // and computed value = specified keyword
         // (`TableLayoutValue`/`BorderCollapseValue` docs) — nothing for
         // phase 3 to absolutize. A page box is not a table wrapper box, so
-        // neither property has layout meaning in this path; both are opaque
-        // pass-through values here, the same treatment `ZIndex` gets (see
-        // that arm's doc).
+        // none of these properties has layout meaning in this path; all are
+        // opaque pass-through values here, the same treatment `ZIndex` gets
+        // (see that arm's doc). (`border-spacing` §6.1 *does* carry
+        // `<length>` and gets its own transform arm next to `TabSize`.)
         | PropertyValue::TableLayout(_)
-        | PropertyValue::BorderCollapse(_)) => v,
+        | PropertyValue::BorderCollapse(_)
+        | PropertyValue::CaptionSide(_)
+        | PropertyValue::EmptyCells(_)) => v,
         // ── background-image / mask-image ───────────────────────────────
         // `None`/`Url(String)` are computed-equivalent. `Gradient(..)`'s
         // `<length-percentage>` payloads (`GradientColorStop::position`,
@@ -3434,6 +3439,39 @@ fn absolutize_in_page_context(
         PropertyValue::Border(sides) => {
             PropertyValue::Border(sides.map(|b| border(b, font_size, own_line_height, ctx)))
         }
+        // `border-style` / `border-width` / `border-color` shorthand
+        // fall-throughs (same unreachability rationale — rule.rs expands
+        // them first). Styles and colors carry no lengths (passthrough);
+        // widths absolutize against the companion side styles, exactly
+        // like the `BorderTopWidth` longhand arms above.
+        PropertyValue::BorderStyle(sides) => PropertyValue::BorderStyle(sides),
+        PropertyValue::BorderWidth(sides) => {
+            PropertyValue::BorderWidth(Sides {
+                top: border_width(sides.top, border_styles.top, font_size, own_line_height, ctx),
+                right: border_width(
+                    sides.right,
+                    border_styles.right,
+                    font_size,
+                    own_line_height,
+                    ctx,
+                ),
+                bottom: border_width(
+                    sides.bottom,
+                    border_styles.bottom,
+                    font_size,
+                    own_line_height,
+                    ctx,
+                ),
+                left: border_width(
+                    sides.left,
+                    border_styles.left,
+                    font_size,
+                    own_line_height,
+                    ctx,
+                ),
+            })
+        }
+        PropertyValue::BorderColor(sides) => PropertyValue::BorderColor(sides),
         // ── border-radius / box-shadow / outline ─────────────────────────
         // CSS Backgrounds and Borders 3 §5/§6.1 and CSS UI 3 §4: all
         // length components are computed against this page context's own
@@ -3473,11 +3511,13 @@ fn absolutize_in_page_context(
                 resolve_length(v, font_size, own_line_height, ctx).px(),
             ))
         }
-        // ── width / height / max-* ────────────────────────────────────────
+        // ── width / height / max-* / min-* ──────────────────────────────
         PropertyValue::Width(v) => PropertyValue::Width(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Height(v) => PropertyValue::Height(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::MaxWidth(v) => PropertyValue::MaxWidth(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::MaxHeight(v) => PropertyValue::MaxHeight(lpa(v, font_size, own_line_height, ctx)),
+        PropertyValue::MinWidth(v) => PropertyValue::MinWidth(lpa(v, font_size, own_line_height, ctx)),
+        PropertyValue::MinHeight(v) => PropertyValue::MinHeight(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Top(v) => PropertyValue::Top(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Right(v) => PropertyValue::Right(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Bottom(v) => PropertyValue::Bottom(lpa(v, font_size, own_line_height, ctx)),
@@ -3669,6 +3709,23 @@ fn absolutize_in_page_context(
         // page-context-specific plumbing.
         PropertyValue::TabSize(v) => {
             PropertyValue::TabSize(lift_tab_size(resolve_tab_size(v, font_size, own_line_height, ctx)))
+        }
+        // ── border-spacing ─────────────────────────────────────────────────
+        // CSS Tables 3 §6.1: `<length>{1,2}`, absolutized the same way
+        // `crate::specified::SpecifiedValues::absolutize_with` does
+        // (`resolve_border_spacing`), then mapped back into the
+        // specified-layer `BorderSpacingValue` shape (`lift_border_spacing`)
+        // that `PropertyValue` carries — same round-trip as
+        // `LetterSpacing`/`WordSpacing`/`TabSize` above, reusing the shared
+        // element-path functions directly since neither needs
+        // page-context-specific plumbing.
+        PropertyValue::BorderSpacing(v) => {
+            PropertyValue::BorderSpacing(lift_border_spacing(resolve_border_spacing(
+                v,
+                font_size,
+                own_line_height,
+                ctx,
+            )))
         }
         // ── text-shadow ─────────────────────────────────────────────────────
         // CSS Text Decoration Module Level 3 §4: each item's 3 lengths
@@ -6810,12 +6867,16 @@ mod tests {
     ///
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
-    /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 100;
+    /// であり、明示的に別途判断している。`border-spacing` は phase 3 で
+    /// absolutize するため transform bucket に含めず、`caption-side` と
+    /// `empty-cells` は keyword-only の pass-through bucket に含める。
+    /// この値は `page_corpus` の現在の identity/pass-through arms と同期する。
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 104;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
-    /// border-width (longhand 4 + `border` shorthand 1) / width + height 2 /
+    /// border-width (longhand 4 + `border` shorthand 1 + `border-width`
+    /// shorthand 1) / width + height 2 /
     /// font-size: larger/smaller 1 (`FontSizeRelative` —
     /// `absolutize_in_page_context` の structurally-unreachable な safety-net
     /// arm。到達しないが「素通し」ではなく実際に変換する形の arm なので
@@ -6823,12 +6884,12 @@ mod tests {
     /// (各 item の length 3 本を絶対化する実 transform arm、`text_shadow_item`
     /// helper 参照) / transform 1 (`translate` 系の `<length-percentage>`
     /// を `lp` と同じ split で絶対化する `transform_function` helper
-    /// 参照) / text-decoration-thickness 1 / text-decoration-inset 1 /
-    /// `text-decoration` shorthand 1 (3 者とも `<length-percentage>` 成分
-    /// のみを absolutize する実 transform arm — shorthand は fall-through)。
+    /// 参照) / border-spacing 1 (2 軸の `<length>` を絶対化する実 transform
+    /// arm、`TabSize` と同じ round-trip 形) / text-decoration-thickness 1 /
+    /// text-decoration-inset 1 / `text-decoration` shorthand 1 (3 者とも
+    /// `<length-percentage>` 成分のみを absolutize する実 transform arm)。
     /// (keyword-only の skip-ink / skip-spaces / emphasis-position /
-    /// underline-position 4 者は素通し側に数える —
-    /// `PHASE_3_PASS_THROUGH_VARIANTS` の 95 → 99 項参照。)
+    /// underline-position 4 者は素通し側に数える。)
     ///
     /// 以前は `PROPERTY_VALUE_VARIANTS -
     /// PHASE_3_PASS_THROUGH_VARIANTS` という `const` 式だった。
@@ -7019,10 +7080,15 @@ mod tests {
             style: BorderStyle::Solid,
             color: BorderColor::CurrentColor,
         })),
+        BorderStyle => PropertyValue::BorderStyle(Sides::all(BorderStyle::Double)),
+        BorderWidth => PropertyValue::BorderWidth(Sides::all(Length::Em(2.0))),
+        BorderColor => PropertyValue::BorderColor(Sides::all(BorderColor::CurrentColor)),
         Width => PropertyValue::Width(LengthOrAuto::Length(Length::Em(3.0))),
         Height => PropertyValue::Height(LengthOrAuto::Length(Length::Em(4.0))),
         MaxWidth => PropertyValue::MaxWidth(LengthOrAuto::Length(Length::Em(5.0))),
         MaxHeight => PropertyValue::MaxHeight(LengthOrAuto::Length(Length::Em(6.0))),
+        MinWidth => PropertyValue::MinWidth(LengthOrAuto::Length(Length::Em(7.0))),
+        MinHeight => PropertyValue::MinHeight(LengthOrAuto::Length(Length::Em(8.0))),
         BoxSizing => PropertyValue::BoxSizing(BoxSizing::BorderBox),
         // No specified/computed distinction for `direction` (computed
         // value = specified value) — any value is "worst case".
@@ -7509,6 +7575,21 @@ mod tests {
         // CSS Tables 3 §6 border-collapse — non-initial (`collapse`, not
         // `separate`), same rationale as `TableLayout` above.
         BorderCollapse => PropertyValue::BorderCollapse(BorderCollapseValue::Collapse),
+        // CSS Tables 3 §6.1 border-spacing — `Em` (not `Px`), same "worst
+        // case" reasoning as `LetterSpacing`/`TabSize` above: a font-relative
+        // unit exercises phase-3 absolutization (`resolve_border_spacing`)
+        // instead of trivially round-tripping an already-absolute length.
+        // Two axes differ so the sample is not shortest-serializable either.
+        BorderSpacing => PropertyValue::BorderSpacing(BorderSpacingValue {
+            horizontal: Length::Em(0.5),
+            vertical: Length::Rem(0.75),
+        }),
+        // CSS Tables 3 §7 caption-side — non-initial (`bottom`, not `top`),
+        // same rationale as `TableLayout` above.
+        CaptionSide => PropertyValue::CaptionSide(CaptionSideValue::Bottom),
+        // CSS Tables 3 §8 empty-cells — non-initial (`hide`, not `show`),
+        // same rationale as `TableLayout` above.
+        EmptyCells => PropertyValue::EmptyCells(EmptyCellsValue::Hide),
         // CSS Fonts 4 §2.1 — shorthand fall-through (`Background` above
         // uses the same "sample a shorthand with a length-bearing
         // component" shape). `size`/`line-height` carry the lengths; the
@@ -7692,10 +7773,15 @@ mod tests {
         BorderBottomColor,
         BorderLeftColor,
         Border,
+        BorderStyle,
+        BorderWidth,
+        BorderColor,
         Width,
         Height,
         MaxWidth,
         MaxHeight,
+        MinWidth,
+        MinHeight,
         BoxSizing,
         Direction,
         OverflowX,
@@ -7794,6 +7880,9 @@ mod tests {
         Filter,
         TableLayout,
         BorderCollapse,
+        BorderSpacing,
+        CaptionSide,
+        EmptyCells,
         Top,
         Right,
         Bottom,
@@ -8156,7 +8245,9 @@ mod tests {
             | PropertyValue::Width(l)
             | PropertyValue::Height(l)
             | PropertyValue::MaxWidth(l)
-            | PropertyValue::MaxHeight(l) => length_or_auto(*l),
+            | PropertyValue::MaxHeight(l)
+            | PropertyValue::MinWidth(l)
+            | PropertyValue::MinHeight(l) => length_or_auto(*l),
             PropertyValue::Padding(s) => sides(*s, length),
             PropertyValue::Margin(s) => sides(*s, length_or_auto),
             PropertyValue::PaddingInline(p) | PropertyValue::PaddingBlock(p) => {
@@ -8166,6 +8257,10 @@ mod tests {
                 start_end(*p, length_or_auto)
             }
             PropertyValue::Border(s) => sides(*s, |b: Border| length(b.width)),
+            // Shorthand fall-throughs — styles/colors carry no length.
+            PropertyValue::BorderStyle(_)
+            | PropertyValue::BorderColor(_) => None,
+            PropertyValue::BorderWidth(s) => sides(*s, length),
             PropertyValue::LetterSpacing(l) | PropertyValue::WordSpacing(l) => {
                 length_or_normal(*l)
             }
@@ -8377,11 +8472,20 @@ mod tests {
             }),
             | PropertyValue::Filter(_) => None,
             // `table-layout` (CSS Tables 3 §4) / `border-collapse` (CSS
-            // Tables 3 §6) carry bare keyword payloads (no `Length` at all,
-            // unlike `Opacity`'s `f32`) — always `None` (`Isolation`/
-            // `MixBlendMode` sibling arms above use the same reasoning).
+            // Tables 3 §6) / `caption-side` (§7) / `empty-cells` (§8) carry
+            // bare keyword payloads (no `Length` at all, unlike `Opacity`'s
+            // `f32`) — always `None` (`Isolation`/`MixBlendMode` sibling arms
+            // above use the same reasoning).
             | PropertyValue::TableLayout(_)
-            | PropertyValue::BorderCollapse(_) => None,
+            | PropertyValue::BorderCollapse(_)
+            | PropertyValue::CaptionSide(_)
+            | PropertyValue::EmptyCells(_) => None,
+            // `border-spacing` (CSS Tables 3 §6.1) carries two `<length>`
+            // payloads — report the first specified-layer residue found
+            // (`Gap`'s row-then-column arm above uses the same shape, with
+            // plain `length` since `BorderSpacingValue` holds bare `Length`,
+            // not `LengthOrNormal`).
+            PropertyValue::BorderSpacing(v) => length(v.horizontal).or_else(|| length(v.vertical)),
             // Custom properties and deferred values are pre-computed cascade
             // representations, not page-context computed length payloads.
             | PropertyValue::CustomProperty(_)
