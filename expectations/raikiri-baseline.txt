@@ -592,7 +592,6 @@ css/css-text/boundary-shaping/boundary-shaping-007.html
 css/css-text/boundary-shaping/boundary-shaping-008.html
 css/css-text/hyphens/hyphens-auto-001.html
 css/css-text/hyphens/hyphens-manual-010.html
-css/css-text/hyphens/hyphens-punctuation-001.html
 css/css-text/hyphens/hyphens-shaping-001.html
 css/css-text/hyphens/hyphens-span-002.html
 css/css-text/letter-spacing/letter-spacing-animating-letter-spacing.html
