@@ -8,6 +8,11 @@ license.workspace = true
 
 [dependencies]
 bitflags       = "2"
+# East Asian Width for CSS Text 3 §4.1.2 segment-break decisions (lone
+# breaks between inlines). Mirrors parley's own dependency spec exactly
+# (same version range, no default features, compiled_data) so feature
+# unification with the existing parley consumer is a no-op.
+icu_properties = { version = "2", default-features = false, features = ["compiled_data"] }
 parley         = { workspace = true }
 raikiri-style  = { workspace = true }
 raikiri-traits = { workspace = true }

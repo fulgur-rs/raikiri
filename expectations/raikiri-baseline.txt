@@ -982,3 +982,26 @@ css/css-tables/min-height-table.html
 # the test side needs vertical-rl row stacking (block axis horizontal) plus
 # transform:rotate on the reference — full vertical-table support. Re-pin
 # when that lands. Net of this swap: +1-1 = 0 (count assert unchanged).
+# --- css-tables reftest pin 2026-09-16 (whitespace segment-break collapse, CSS Text 3 §4.1) ---
+css/css-tables/absolute-tables-012.html
+css/css-tables/caption-relative-positioning.html
+css/css-tables/height-distribution/percentage-sizing-of-table-cell-children-002.html
+css/css-tables/height-distribution/percentage-sizing-of-table-cell-replaced-children-001.html
+css/css-tables/min-height-table-2.html
+css/css-tables/paint/col-change-span-bg-invalidation-001.html
+css/css-tables/remove-colgroup-from-anon-table.html
+css/css-tables/subpixel-table-width-001.html
+css/css-tables/table-as-item-cell-percentage-002.html
+css/css-tables/table-as-item-cell-percentage-003.html
+css/css-tables/table-as-item-cell-percentage-004.html
+# --- css-tables reftest pin 2026-09-16 (space forward-migration for shaping) ---
+css/css-tables/anonymous-table-ws-001.html
+# --- css-tables reftest pin 2026-09-16 (pure-inline table flow + whitespace collapse) ---
+css/css-tables/whitespace-001.html
+# --- css-tables reftest pin 2026-09-16 (auto-width shrink-wrap: specified-width basis) ---
+css/css-tables/calc-percent-plus-0px-auto.html
+css/css-tables/col-definite-min-size-001.html
+css/css-tables/col-definite-size-001.html
+css/css-tables/subpixel-table-cell-height-001.html
+css/css-tables/anonymous-table-cell-margin-collapsing.html
+css/css-tables/table-has-box-sizing-border-box-001.html

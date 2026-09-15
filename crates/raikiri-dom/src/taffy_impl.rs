@@ -184,9 +184,15 @@ impl Document {
             // Taffy 0.12 has no table layout; we route to native table engine in parallel with
             // Block/Flex/Grid (spec requirement: Display::Block/Flex/Grid並列).
             {
+                use crate::node::NodeFlags;
                 use raikiri_style::property::DisplayValue;
                 let dv = tree.nodes[idx].display;
-                if dv == DisplayValue::Table || dv == DisplayValue::InlineTable {
+                // Pure-inline table boxes carry IS_INLINE_ROOT (set by
+                // establish_minimal_line_boxes for all-inline children) and
+                // flow as flex instead: they are exactly one anonymous
+                // cell's content, which the grid collector cannot represent.
+                let inline_flow = tree.nodes[idx].flags.contains(NodeFlags::IS_INLINE_ROOT);
+                if (dv == DisplayValue::Table || dv == DisplayValue::InlineTable) && !inline_flow {
                     return crate::layout::table::compute_table_layout(tree, node_id, inputs);
                 }
             }
