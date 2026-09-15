@@ -134,6 +134,22 @@ xmp       { display: block; }
 dialog       { display: none; }
 dialog[open] { display: block; }
 
+/* HTML Living Standard "Rendering" §15.3.5 "Bidirectional text" —
+ * directionality mapping (verbatim spec rules, narrowed):
+ *   [dir]:dir(ltr), bdi:dir(ltr), input[type=tel i]:dir(ltr) { direction: ltr; }
+ *   [dir]:dir(rtl), bdi:dir(rtl) { direction: rtl; }
+ * Only the `[dir]:dir(...)` pair is carried: `bdi` and the `input[type=tel]`
+ * special cases are out of scope (no test coverage needs them yet).
+ * `dir=auto` works through `:dir()`'s own first-strong resolution
+ * (raikiri-style resolves it, same as the `:dir()` selector tests pin) —
+ * no separate auto handling here.
+ * The accompanying `unicode-bidi: isolate` rules from the same spec section
+ * are NOT carried: raikiri-dom has no bidi-isolation layout stage, so the
+ * declarations would be cascade dead weight (same "no downstream consumer"
+ * rationale as other documented non-goals in this file). */
+[dir]:dir(ltr) { direction: ltr; }
+[dir]:dir(rtl) { direction: rtl; }
+
 /* HTML Living Standard "Rendering" §lists (15.3.7) — list-related elements
  * are block-level. The full spec selector also lists dir/dd/dl/dt/menu,
  * which have no rule yet (out of scope for this rule set). */
