@@ -494,11 +494,16 @@ fn bridge_flex(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Lay
     // content-based intrinsic sizing pass to compute that distinction, so
     // `content` is approximated as `auto` here; the two diverge only when
     // an explicit `width`/`height` is present alongside `flex-basis:
-    // content`.
+    // content`. `min-content` / `max-content` / bare `fit-content` join the
+    // same approximation (computed layer keeps them distinct —
+    // `ComputedFlexBasis` doc — but the bridge has no intrinsic-sizing
+    // input to honor them with).
     let basis_lpa = match cv.flex_basis {
-        ComputedFlexBasis::Auto | ComputedFlexBasis::Content => {
-            ComputedLengthPercentageOrAuto::Auto
-        }
+        ComputedFlexBasis::Auto
+        | ComputedFlexBasis::Content
+        | ComputedFlexBasis::MinContent
+        | ComputedFlexBasis::MaxContent
+        | ComputedFlexBasis::FitContent => ComputedLengthPercentageOrAuto::Auto,
         ComputedFlexBasis::Px(v) => ComputedLengthPercentageOrAuto::Px(v),
         ComputedFlexBasis::Percent(p) => ComputedLengthPercentageOrAuto::Percent(p),
     };
