@@ -21,9 +21,9 @@ use crate::property::{
     FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue,
     GridTemplateAreasValue, Hyphens, Isolation, MaskImage, MixBlendMode, ObjectFit, OutlineColor,
     OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue, SelfAlignmentValue,
-    Sides, TableLayoutValue, TextAlign, TextDecorationColor, TextDecorationLine,
-    TextDecorationStyle, TextTransform, VerticalAlign, Visibility, VisualBox, WhiteSpace,
-    WordBreak, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
+    Sides, TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine,
+    TextDecorationStyle, TextJustify, TextTransform, VerticalAlign, Visibility, VisualBox,
+    WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
     empty_filter_list, empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
@@ -455,6 +455,17 @@ pub struct ComputedValues {
     /// ([`crate::cascade::resolve_against_inherited`]) — から同じ関数へ
     /// funnel する。
     pub text_align: TextAlign,
+    /// `text-justify` (CSS Text 3 §6.2)。**inherited**、initial: `auto`。
+    /// keyword のため computed = specified (by-value copy、`Copy`)。
+    /// `distribute` は legacy 値として受理し parley 側では `Justify` と
+    /// 同扱い (parley に inter-word/inter-character/distribute の区別無し)。
+    pub text_justify: TextJustify,
+    /// `text-align-last` (CSS Text 3 §6.1)。**inherited**、initial: `auto`。
+    /// keyword のため computed = specified (by-value copy、`Copy`)。
+    /// `auto` の解決 (`justify`→`start`、他は `text-align` 値通り) は
+    /// consumer (raikiri-dom realign) 側で行う — cascade 層に
+    /// `text-align` との結合解決を持ち込まない。
+    pub text_align_last: TextAlignLast,
     /// `direction`。**inherited**、initial: [`Direction::Ltr`]
     /// (CSS Writing Modes 4 §2.1 "Specifying Directionality: the direction
     /// property" <https://www.w3.org/TR/css-writing-modes-4/#direction>)。
@@ -1508,6 +1519,10 @@ impl ComputedValues {
             position: PositionValue::Static,
             // CSS Text 3 §6.1: text-align initial is `start`
             text_align: TextAlign::Start,
+            // CSS Text 3 §6.2: text-justify initial is `auto`.
+            text_justify: TextJustify::Auto,
+            // CSS Text 3 §6.1: text-align-last initial is `auto`.
+            text_align_last: TextAlignLast::Auto,
             // CSS Writing Modes 4 §2.1: direction initial is `ltr`。
             direction: Direction::Ltr,
             // CSS Writing Modes 4 §3.2: writing-mode initial is
@@ -2032,6 +2047,9 @@ mod tests {
                 name: SmolStr::new("hdr"),
             }],
             text_align: TextAlign::Center,
+            // non-initial 値 (上記 fixture doc の全 field 非 initial 方針)。
+            text_justify: TextJustify::InterWord,
+            text_align_last: TextAlignLast::Justify,
             // CSS Writing Modes 4 §2.1: `Rtl` — initial (`Ltr`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             direction: Direction::Rtl,

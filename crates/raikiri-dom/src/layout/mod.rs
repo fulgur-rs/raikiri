@@ -13,19 +13,20 @@ use rayon::prelude::*;
 use crate::document::Document;
 use crate::node::NodeFlags;
 use parley::{
-    Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, Layout,
-    LayoutContext, LineHeight, StyleProperty,
+    Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, IndentOptions,
+    Layout, LayoutContext, LineHeight, StyleProperty,
 };
 use raikiri_style::property::{
-    AlignSelfValue, BoxSizing as StyleBoxSizing, ClearValue, ContentAlignmentValue, DisplayValue,
-    FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle as StyleFontStyle, GridAutoFlowValue,
-    GridLineValue, GridRepeatCount, GridTemplateAreasValue, SelfAlignmentValue,
+    AlignSelfValue, BoxSizing as StyleBoxSizing, ClearValue, ContentAlignmentValue, Direction,
+    DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle as StyleFontStyle,
+    GridAutoFlowValue, GridLineValue, GridRepeatCount, GridTemplateAreasValue, SelfAlignmentValue,
+    TextAlign, TextJustify, WhiteSpace,
 };
 use raikiri_style::{
     CascadeResult, ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth,
     ComputedGridTrackListComponent, ComputedGridTrackSize, ComputedLength,
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
-    ComputedLineHeight, ComputedValues,
+    ComputedLineHeight, ComputedTabSize, ComputedValues,
 };
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
@@ -1209,6 +1210,517 @@ fn grid_line_value_to_taffy_placement(v: &GridLineValue) -> GridPlacement {
 ///   その text node に line box 上の sibling と並べて与える横幅とは
 ///   無関係であり、text の shaping を実際の available な inline space
 ///   と整合させることは follow-up work であり、ここでは行わない。
+/// - `text-align: center` は本 pass と [`realign_text_after_layout`] の
+///   2 経路で扱う: qualify した container 自身は line box 全体を中央に寄せる
+///   ため `justify_content` を `Center` にする (他値は `None` のまま —
+///   `Right` / `Justify` 等の flex 対応は本 task の scope 外)。
+///   qualify しない block container 内の単独 Text は後段の
+///   `realign_text_after_layout` が parley 側で中央寄せする。
+///   詳細は同関数の doc 参照。
+fn text_align_to_parley(v: TextAlign) -> Alignment {
+    match v {
+        TextAlign::Start => Alignment::Start,
+        TextAlign::End => Alignment::End,
+        TextAlign::Left => Alignment::Left,
+        TextAlign::Right => Alignment::Right,
+        TextAlign::Center => Alignment::Center,
+        TextAlign::Justify => Alignment::Justify,
+        // CSS Text 3 §6.1: `justify-all` は全行 (最終行含む) を justify。
+        // parley に相当が無いため `Justify` に degrade する
+        // (最終行は start-aligned のまま — 既知の差分として doc に残す)。
+        TextAlign::JustifyAll => Alignment::Justify,
+        // `MatchParent` は computed 層到達前に解決済のはず
+        // (`raikiri_style::computed::ComputedValues::text_align` doc 参照)。
+        // defensive fallback として `Start` (initial value) に倒す。
+        TextAlign::MatchParent => Alignment::Start,
+        // `#[non_exhaustive]` 将来 variant への fail-closed fallback。
+        _ => Alignment::Start,
+    }
+}
+
+/// taffy の `compute_root_layout` 後に各 Text の parley `Layout` を
+/// containing block 幅基準で re-align する。
+///
+/// # なぜ preshape 時ではなくここか
+///
+/// [`preshape_text`] は taffy より前に走り、使える幅は `page_box.width`
+/// のみ。`Center` 等をそこで素朴に渡すと、狭い containing block 内の text が
+/// ページ幅基準で中央寄せされ、大きくズレる (bd raikiri-spike-4b6c)。
+/// taffy 後に親 box の確定幅 (`unrounded_layout.size.width`) を
+/// containing 幅として `break_all_lines(Some(w))` + `align(...)` し直すことで、
+/// 正しい幅基準の offset を glyph run に bake する。
+/// `Start` は幅に依存しないため skip する (preshape のまま正しい)。
+///
+/// # flex line box の child は対象外
+///
+/// 親が [`establish_minimal_line_boxes`] で flex 化された container
+/// (`IS_INLINE_ROOT`) の場合、その Text は line box 上の flex item であり、
+/// 中央寄せは container 側の `justify_content: Center` が担う。
+/// ここで親幅基準に parley re-align すると各 piece が親全幅基準で中央に
+/// 寄り、互いに重なってしまうため、明示的に skip する。
+/// 親幅ではなく自身の box 幅で寄せても offset 0 の no-op にしかならないが、
+/// 意図を明示するため skip 側に倒す。
+///
+/// # 既知の限界
+///
+/// - 親の `size.width` をそのまま containing 幅にする。padding / border の
+///   content-box 減算はしない (px length のみ減算すべきだが、現状は未対応 —
+///   padding 付き narrow container では中央がわずかにずれる)。
+/// - re-break で行数が変わる場合 (narrow container 内の長文)、text の高さが
+///   変わるが taffy box は更新しない (sibling の y が stale のまま)。
+///   中央寄せの主 target である短文・単一行では高さ不変のため無害。
+///   長文 wrap の完全な整合は inline formatting context 全体の再設計時に扱う。
+/// - `Start` / `End` の論理→物理解決は自要素の `cv.direction` で行う
+///   (bd raikiri-spike-5u1y)。parley public API に base direction を渡す口が
+///   無いため (bd raikiri-spike-4b6c)、parley 側の `Start` / `End` には頼らず
+///   `Left` / `Right` に解決してから渡す。`dir=rtl` 属性は対象外
+///   (`direction` CSS のみ — dir 属性→direction 反映は Epic 3 領域)。
+/// - `text-indent` の `%` は親の border-box 幅基準で解決する (content-box
+///   減算なし — 上記第 1 bullet と同じ近似)。flex line box の child の
+///   indent は未対応 (box 測定との乖離のため skip)。
+///
+/// tab-stop 基準の block-container 祖先を探す (CSS Text 3 §4.2)。
+///
+/// `Inline` / `Contents` は透過して登る。`Flex` / `Grid` 等の
+/// 非 block-container で止まった場合・root 到達の場合は None
+/// (caller は自 font に倒す fail-safe)。
+fn nearest_block_container(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    idx: usize,
+) -> Option<usize> {
+    let mut cur = parent_of.get(idx).copied().flatten();
+    while let Some(a) = cur {
+        if doc.nodes[a].kind() != NodeKind::Element {
+            cur = parent_of.get(a).copied().flatten();
+            continue;
+        }
+        match cascade.computed[a].display {
+            DisplayValue::Block | DisplayValue::InlineBlock | DisplayValue::ListItem => {
+                return Some(a);
+            }
+            DisplayValue::Inline | DisplayValue::Contents => {
+                cur = parent_of.get(a).copied().flatten();
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// CSS collapsing 対象の空白集合 (space / tab / LF / FF / CR)。
+///
+/// `char::is_whitespace` は NBSP 等も含むが、NBSP は collapse しないため
+/// ここでは使わない (CSS Text 3 §4.1 準拠の近似)。
+fn is_collapsible_ws(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\x0C' | '\r')
+}
+
+/// sibling が block 内の先行 content になるか (CSS Text 3 §8.1 先頭行判定用)。
+///
+/// - Text: collapse 系 white-space で空白のみ → 無視 (行を占めない)。
+///   preserve 系では空白も行を占めるため content。空 string は常に無視。
+/// - `br` → 常に content (forced break → 後続は 2 行目以降)。
+/// - `display: none` → 無視。replaced (`img` 等) → content。
+///   その他: 子無し → 無視、子持ち → content。
+///   (空 inline の過剰除外は受容する近似 — doc に明記。)
+fn is_block_content(doc: &Document, cascade: &CascadeResult, sib: usize) -> bool {
+    match &doc.nodes[sib].data {
+        crate::node::NodeData::Text(t) => {
+            if t.text_content.is_empty() {
+                return false;
+            }
+            match cascade.computed[sib].white_space {
+                WhiteSpace::Normal | WhiteSpace::Nowrap | WhiteSpace::PreLine => {
+                    !t.text_content.chars().all(is_collapsible_ws)
+                }
+                _ => true,
+            }
+        }
+        crate::node::NodeData::Element(_) => {
+            let tag = doc.nodes[sib].tag_name().unwrap_or("");
+            if tag.eq_ignore_ascii_case("br") {
+                return true;
+            }
+            if cascade.computed[sib].display == DisplayValue::None {
+                return false;
+            }
+            if doc.nodes[sib].children.is_empty() {
+                return matches!(
+                    tag.to_ascii_lowercase().as_str(),
+                    "img"
+                        | "input"
+                        | "video"
+                        | "canvas"
+                        | "iframe"
+                        | "embed"
+                        | "object"
+                        | "textarea"
+                        | "select"
+                        | "button"
+                        | "hr"
+                );
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// その Text node が属する block の先頭 formatted line を開始するか
+/// (CSS Text 3 §8.1 — `text-indent` は each-line 無しでは先頭行のみ)。
+///
+/// per-Text-node preshape では「node の先頭行」と「block の先頭行」が一致
+/// しない (`<br>` 後・inline 分割・nested block 混在 — length-002 が pin)。
+/// nearest block-container 祖先まで登りながら先行 sibling を scan し、
+/// content が 1 つでもあれば false。
+/// block 祖先が無い場合は true (fail-safe — 従来挙動を維持)。
+fn is_first_in_block(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    idx: usize,
+) -> bool {
+    let block = nearest_block_container(doc, cascade, parent_of, idx);
+    let mut cur = idx;
+    loop {
+        let Some(p) = parent_of.get(cur).copied().flatten() else {
+            return true;
+        };
+        if let Some(pos) = doc.nodes[p].children.iter().position(|&c| c == cur) {
+            for &sib in doc.nodes[p].children[..pos].iter().rev() {
+                if is_block_content(doc, cascade, sib) {
+                    return false;
+                }
+            }
+        }
+        if Some(p) == block {
+            return true;
+        }
+        cur = p;
+    }
+}
+
+/// 行頭位置の分類 (leading trim 用)。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LineStart {
+    /// block 先頭。
+    BlockStart,
+    /// `<br>` / preserved `\n` / 先行 block の直後。
+    AfterBreak,
+    /// 上記以外 (行中)。
+    MidLine,
+}
+
+/// Text node が preserved な強制 break (`\n`) を含むか。
+///
+/// preserve するのは Pre / PreWrap / BreakSpaces / PreLine。
+/// Normal / Nowrap 下の `\n` は space 化されるため break ではない。
+fn has_preserved_break(cascade: &CascadeResult, idx: usize, text: &str) -> bool {
+    if !text.contains('\n') {
+        return false;
+    }
+    !matches!(
+        cascade.computed[idx].white_space,
+        WhiteSpace::Normal | WhiteSpace::Nowrap
+    )
+}
+
+/// 行頭位置を後ろ向き scan で求める (leading trim 用)。
+///
+/// block 祖先まで登りながら先行 sibling を逆順 scan:
+/// - collapse 系の空白のみ text / 空 / `display: none` → 透過。
+/// - preserved `\n` を含む text / `br` / 先行 block 要素 → [`LineStart::AfterBreak`]。
+/// - その他 content → [`LineStart::MidLine`]。
+/// - block 先頭 (or root) 到達 → [`LineStart::BlockStart`]。
+fn line_start_pos(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    idx: usize,
+) -> LineStart {
+    let block = nearest_block_container(doc, cascade, parent_of, idx);
+    let mut cur = idx;
+    loop {
+        let Some(p) = parent_of.get(cur).copied().flatten() else {
+            return LineStart::BlockStart;
+        };
+        if let Some(pos) = doc.nodes[p].children.iter().position(|&c| c == cur) {
+            for &sib in doc.nodes[p].children[..pos].iter().rev() {
+                match &doc.nodes[sib].data {
+                    crate::node::NodeData::Text(t) => {
+                        if has_preserved_break(cascade, sib, &t.text_content) {
+                            return LineStart::AfterBreak;
+                        }
+                        if is_block_content(doc, cascade, sib) {
+                            return LineStart::MidLine;
+                        }
+                    }
+                    crate::node::NodeData::Element(_) => {
+                        let tag = doc.nodes[sib].tag_name().unwrap_or("");
+                        if tag.eq_ignore_ascii_case("br") {
+                            return LineStart::AfterBreak;
+                        }
+                        match cascade.computed[sib].display {
+                            DisplayValue::Block
+                            | DisplayValue::InlineBlock
+                            | DisplayValue::ListItem => {
+                                return LineStart::AfterBreak;
+                            }
+                            DisplayValue::None => {}
+                            _ => {
+                                if is_block_content(doc, cascade, sib) {
+                                    return LineStart::MidLine;
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if Some(p) == block {
+            return LineStart::BlockStart;
+        }
+        cur = p;
+    }
+}
+
+/// 後続が block 終端・`<br>`・preserved `\n`・後続 block のいずれか
+/// (trailing trim 用)。前向き scan、分類は [`line_start_pos`] と対称。
+fn trail_trim(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    idx: usize,
+) -> bool {
+    let block = nearest_block_container(doc, cascade, parent_of, idx);
+    let mut cur = idx;
+    loop {
+        let Some(p) = parent_of.get(cur).copied().flatten() else {
+            return true;
+        };
+        if let Some(pos) = doc.nodes[p].children.iter().position(|&c| c == cur) {
+            for &sib in doc.nodes[p].children[pos + 1..].iter() {
+                match &doc.nodes[sib].data {
+                    crate::node::NodeData::Text(t) => {
+                        if has_preserved_break(cascade, sib, &t.text_content) {
+                            return true;
+                        }
+                        if is_block_content(doc, cascade, sib) {
+                            return false;
+                        }
+                    }
+                    crate::node::NodeData::Element(_) => {
+                        let tag = doc.nodes[sib].tag_name().unwrap_or("");
+                        if tag.eq_ignore_ascii_case("br") {
+                            return true;
+                        }
+                        match cascade.computed[sib].display {
+                            DisplayValue::Block
+                            | DisplayValue::InlineBlock
+                            | DisplayValue::ListItem => {
+                                return true;
+                            }
+                            DisplayValue::None => {}
+                            _ => {
+                                if is_block_content(doc, cascade, sib) {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if Some(p) == block {
+            return true;
+        }
+        cur = p;
+    }
+}
+
+/// white-space phase 1 collapsing (CSS Text 3 §4.1)。
+///
+/// - Pre / PreWrap / BreakSpaces → 無変換 (tab 展開は別途 [`expand_tabs`])。
+/// - Normal / Nowrap: `\t \n \f \r` → space、run collapse、行頭/行末 trim。
+/// - PreLine: `\n` 保持 (forced break)、他は Normal と同じ。
+/// - leading trim は `start != MidLine`、trailing trim は `trim_end`。
+///
+/// 対象外 (doc 明記): segment-break 前後の CJK space 除去、PreLine の
+/// hanging trailing space、`overflow-wrap` との相互作用。
+fn collapse_ws(
+    text: &str,
+    ws: WhiteSpace,
+    start: LineStart,
+    trim_end: bool,
+) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+    match ws {
+        WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::BreakSpaces => {
+            return Cow::Borrowed(text);
+        }
+        _ => {}
+    }
+    let keep_nl = ws == WhiteSpace::PreLine;
+    // 速径: 変換対象が無ければ borrow のまま返す。
+    let needs = text.chars().any(|c| match c {
+        '\t' | '\x0C' | '\r' => true,
+        '\n' => !keep_nl,
+        ' ' => true,
+        _ => false,
+    });
+    if !needs {
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut pending_space = false;
+    let mut at_start = true;
+    // 先頭 run の扱い: BlockStart / AfterBreak では捨て、MidLine では 1 space。
+    let mut drop_leading = start != LineStart::MidLine;
+    for c in text.chars() {
+        if c == '\n' && keep_nl {
+            // PreLine の preserved break: pending を flush して改行を置き、
+            // 改行後は常に行頭扱い (start-of-line run 除去 — CSS Text 3 §4.1.2)。
+            // break 直前 trailing の hanging 再現は対象外 (1 space 置く)。
+            if pending_space && !at_start {
+                out.push(' ');
+            }
+            out.push('\n');
+            pending_space = false;
+            at_start = true;
+            drop_leading = true;
+            continue;
+        }
+        let is_ws = matches!(c, '\t' | '\x0C' | '\r' | '\n' | ' ');
+        if is_ws {
+            if !at_start || !drop_leading {
+                pending_space = true;
+            }
+            continue;
+        }
+        if pending_space && (!at_start || !drop_leading) {
+            out.push(' ');
+        }
+        pending_space = false;
+        at_start = false;
+        out.push(c);
+    }
+    // 末尾 run: `trim_end` (block 終端 / break 直前) のとき捨て、
+    // それ以外は 1 space。
+    if pending_space && !trim_end {
+        out.push(' ');
+    }
+    Cow::Owned(out)
+}
+
+fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
+    // parent map (arena に parent pointer が無いため children から逆引き)。
+    let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
+    for idx in 0..doc.nodes.len() {
+        for &c in &doc.nodes[idx].children.clone() {
+            if c < parent_of.len() {
+                parent_of[c] = Some(idx);
+            }
+        }
+    }
+    for (idx, parent) in parent_of.iter().enumerate() {
+        if doc.nodes[idx].kind() != NodeKind::Text {
+            continue;
+        }
+        if !doc.nodes[idx].is_in_document() {
+            continue;
+        }
+        // 論理値 (`start` / `end`) は自要素の `direction` で物理値に解決する
+        // (CSS Text 3 §6.1)。parley の `Start` / `End` は content-inferred
+        // bidi に委ねられるため、RTL では誤った側に寄る
+        // (bd raikiri-spike-5u1y: text-align-end-001 の regress で実測)。
+        // `Start` + LTR のみ skip (preshape のまま正しい — 再 break による
+        // wrap 変化の regress を避ける)。
+        let cv = &cascade.computed[idx];
+        let parley_align = match text_align_to_parley(cv.text_align) {
+            Alignment::Start if cv.direction == Direction::Rtl => Alignment::Right,
+            Alignment::End if cv.direction == Direction::Rtl => Alignment::Left,
+            a => a,
+        };
+        // `text-indent` (CSS Text 3 §8.1): basic `<length-percentage>` のみ。
+        // `hanging` / `each-line` は parse 層で drop されるため常に default
+        // (bd raikiri-spike-5u1y slice 2 で payload 化予定)。
+        // `%` は containing block inline size 基準 — preshape 時点では不明の
+        // ため本 pass で解決する (align と同じ幅基準問題)。
+        // 先頭行のみ (each-line 無し)。`<br>` 後・2 番目以降の node・
+        // nested block 後の bare text は除外 (length-002 が pin)。
+        let needs_indent = match cv.text_indent {
+            ComputedLengthPercentage::Px(px) => px != 0.0,
+            ComputedLengthPercentage::Percent(p) => p != 0.0,
+        } && is_first_in_block(doc, cascade, &parent_of, idx);
+        // preshape は page 幅で break するため、narrow container 内の text の
+        // 折り返しは container 幅に整合しない (bd raikiri-spike-5u1y slice 1b で
+        // 実測: length-001 の 3-line article が single-line のまま残る)。
+        // 全 node re-break の実験は nowrap-001 の pinned regress を起こしたため
+        // revert した (当該 experiment は別途 full-baseline 判定が必要 —
+        // bd raikiri-spike-5u1y コメント参照)。したがって re-break は
+        // indent 付き / 非 Start の node のみに限定する。
+        // Start + indent 無しは preshape のまま (wrap は page 幅の既知の限界)。
+        if parley_align == Alignment::Start && !needs_indent {
+            continue;
+        }
+        // `Justify` / `End` 等も同じ幅基準問題を持つため同じ経路で扱うが、
+        // 本 goal の主 target は `Center`。他値もここで正しい幅基準になる。
+        let Some(parent_idx) = *parent else {
+            continue;
+        };
+        // flex line box の child は container 側の justify に委ねる (上記 doc)。
+        // indent も同様に skip する — flex item の幅は taffy が indent 無し
+        // layout から測っており、ここで indent を付けると box と run が乖離
+        // する (bd raikiri-spike-5u1y の既知の限界として doc に残す)。
+        if doc.nodes[parent_idx]
+            .flags
+            .contains(NodeFlags::IS_INLINE_ROOT)
+        {
+            continue;
+        }
+        let containing_width = doc.nodes[parent_idx].unrounded_layout.size.width;
+        if !containing_width.is_finite() || containing_width <= 0.0 {
+            continue;
+        }
+        let Some(layout) = doc.nodes[idx]
+            .data
+            .as_text_mut()
+            .and_then(|t| t.text_layout.as_mut())
+        else {
+            continue;
+        };
+        if needs_indent {
+            let amount = match cv.text_indent {
+                ComputedLengthPercentage::Px(px) => px,
+                ComputedLengthPercentage::Percent(p) => containing_width * p / 100.0,
+            };
+            layout.set_text_indent(amount, IndentOptions::default());
+        }
+        layout.break_all_lines(Some(containing_width));
+        let mut align = parley_align;
+        // `text-justify: none` は justification を無効化する (CSS Text 3 §6.2):
+        // `text-align: justify` との組合せでも行頭側に倒す (direction 考慮)。
+        if cv.text_justify == TextJustify::None && align == Alignment::Justify {
+            align = match cv.direction {
+                Direction::Rtl => Alignment::Right,
+                _ => Alignment::Start,
+            };
+        }
+        // `text-align-last` (CSS Text 3 §6.1): 明示 last 値の適用は対象外。
+        // parley の `align(Justify)` は最終行 (`BreakReason::None`) を
+        // 意図的に除外するため (parley alignment.rs 実測)、single-line を含む
+        // あらゆる last-line-only の justify/align は public API では再現
+        // できない。`text_align_last` の cascade 配線 (parse/wire/inherit) は
+        // 将来の parley 対応に備えて維持する。`MatchParent` の cascade
+        // 未解決も同様に将来対応 (現状 `auto` 扱いの近似は reader 側で行わない —
+        // 何もしないのが正しい)。
+        layout.align(align, AlignmentOptions::default());
+    }
+}
 fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
@@ -1251,7 +1763,15 @@ fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
             };
             style.align_items = Some(TaffyAlignItems::FLEX_START);
             style.align_content = Some(TaffyAlignContent::FLEX_START);
-            style.justify_content = None;
+            // `text-align: center` の line box 全体の中央寄せは flex の
+            // main-axis 配置で実現する (parley 側ではなく container 側)。
+            // 他値は `None` のまま (本 task の scope 外 — `Right` 等の flex
+            // 対応は将来 work)。
+            style.justify_content = if cascade.computed[idx].text_align == TextAlign::Center {
+                Some(TaffyAlignContent::CENTER)
+            } else {
+                None
+            };
             style.gap = Size {
                 width: LengthPercentage::length(0.0),
                 height: LengthPercentage::length(0.0),
@@ -2905,22 +3425,22 @@ fn computed_length_to_taffy_length_percentage(
 ///   <https://www.unicode.org/reports/tr9/>)。つまり `cv.direction` を明示的
 ///   に渡す先の API 自体が現状無い — LTR がハードコードされた default なの
 ///   ではない。
-/// - `text_align` — 末尾の `layout.align(...)` 呼び出し自体は live だが
-///   `Alignment::Start` に固定されており `cv.text_align` を読まない
-///   (経路が無いのではなく、initial value に pin された stub)。単純な
-///   enum mapping への置き換えでは不十分な点に注意: 本関数は
-///   `layout_single_page` 内で taffy の `compute_root_layout` より **前**に
-///   走るため、`align()` に渡せる幅は `max_advance` (= 通常
-///   `page_box.width`) のみで、taffy が確定させる実際の containing block
-///   幅ではない。`Start` は align 先の幅に依存しないため無害だが、
-///   `Center` / `Right` / `End` / `Justify` を素朴に渡すと、ページ全体の
-///   幅を基準にズレて align された glyph run を生む。加えて
-///   `parley::Alignment::Start` / `End` は layout 内の bidi 解析結果から
+/// - `text_align` — 本関数の末尾の `layout.align(...)` は意図的に
+///   `Alignment::Start` に固定し、`cv.text_align` を読まない。
+///   正しい幅基準の align は taffy 後の [`realign_text_after_layout`] が担う
+///   (確定した containing block 幅で `break_all_lines` + `align` し直す)。
+///   本関数で素朴に enum mapping してしまうと、使える幅が `max_advance`
+///   (= 通常 `page_box.width`) のみのため、狭い containing block 内の
+///   `Center` / `Right` / `End` / `Justify` がページ幅基準にズレる
+///   (bd raikiri-spike-4b6c)。`Start` は幅に依存しないためここでも正しい。
+///   加えて `parley::Alignment::Start` / `End` は layout 内の bidi 解析結果から
 ///   physical 方向を解決するため、`direction` を配線せずに `text_align`
-///   だけ配線しても `Start`/`End` は正しく解決されない — この 2 つは
-///   独立した gap ではなく 1 セットとして扱う必要がある (line_height とは
-///   異なり、taffy が確定させる幅を実際に必要とする依存方向のため、本関数
-///   より後 — `compute_root_layout` 後 — の再設計を要する)。
+///   だけ配線しても `Start`/`End` は content-inferred direction での解決に
+///   留まる — この 2 つは独立した gap ではなく 1 セットであり、`direction`
+///   の配線口は parley public API に存在しない (上記 `direction` bullet 参照)。
+///   flex 化された line box (`IS_INLINE_ROOT`) の中央寄せは parley 側ではなく
+///   container 側の `justify_content` が担う
+///   ([`establish_minimal_line_boxes`] doc 参照)。
 ///
 /// # 失敗しない
 ///
@@ -2930,6 +3450,131 @@ fn computed_length_to_taffy_length_percentage(
 /// なって match 自体が消えたため到達不能になった。`pub(crate)` なので戻り値の
 /// narrowing は crate 内で完結する (外部影響 0)。
 ///
+/// U+0009 tab を `tab-size` に従い space に展開する (CSS Text 3 §4.2)。
+///
+/// parley 0.10 に tab-stop API が無いため、shape 前の text 置換で再現する。
+/// tab stop は行頭からの `space_advance` 単位の倍数位置に置く
+/// ("the tab is advanced to the next multiple" — spec §4.2  verbatim ではないが同義)。
+///
+/// # 引数
+///
+/// - `tab_size` — 当該 Text node 自身の computed 値。`tab-size` は inherited のため
+///   block 祖先の指定が自然に届く。inline-001 (`tab-size` が inline box に適用される
+///   ことを assert) に従い、inline 自身の指定もそのまま使う — block container への
+///   付け替えはしない。
+/// - `space_advance` — 当該 font の U+0020 advance (px)。`<length>` tab-size を
+///   space 単位に換算するためだけに使う。
+///
+/// # 近似の明示
+///
+/// column 追跡は `1 char = 1 space advance` とみなす。monospace / Ahem (tab-size
+/// WPT が使う font) では exact。proportional font では近似 — 各 char の実 advance
+/// を測るには shape が要り、本関数は shape 前に走るため原理的に届かない。
+/// `white-space` が tab を preserve しない mode (normal / nowrap / pre-line) では
+/// 呼ばないこと (caller 側で gate)。
+///
+/// # `white-space` との責務分担
+///
+/// 本関数は tab の展開だけを行い、space の collapsing は一切しない。parley 側の
+/// 既存挙動を変えない。
+///
+/// [`ComputedTabSize`]: raikiri_style::ComputedTabSize
+fn expand_tabs(
+    text: &str,
+    tab_size: ComputedTabSize,
+    space_advance: f32,
+) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+    if !text.contains('\t') {
+        return Cow::Borrowed(text);
+    }
+    // tab-stop 間隔 (space 単位)。`0` は zero-width tab (tab-size: 0 合法 —
+    // percent-001 は `tab-size: 100%` の invalid 宣言が drop され `0` が残る case)。
+    let stop: f32 = match tab_size {
+        ComputedTabSize::Number(n) if n > 0.0 && n.is_finite() => n,
+        ComputedTabSize::Length(l)
+            if l.px() >= 0.0 && l.px().is_finite() && space_advance > 0.0 =>
+        {
+            l.px() / space_advance
+        }
+        _ => 0.0,
+    };
+    if stop <= 0.0 {
+        // zero-width: tab を除去する (allocation は tab 有りの場合のみ)。
+        if !text.contains('\t') {
+            return Cow::Borrowed(text);
+        }
+        return Cow::Owned(text.chars().filter(|&c| c != '\t').collect());
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut col: f32 = 0.0;
+    for c in text.chars() {
+        match c {
+            '\n' => {
+                col = 0.0;
+                out.push(c);
+            }
+            '\t' => {
+                let next = ((col / stop).floor() + 1.0) * stop;
+                // 累積丸め: `round(next) - round(col)` で tab ごとの誤差を
+                // 吸収し、合計を exact に保つ (fractional tab-size —
+                // block-ancestor test4 の `2.5` × 4 tabs = 10 spaces)。
+                // naive な `(next - col).round()` は 2+3+3+2 → 2+2+2+2 の
+                // ように drift し得る。
+                let k = (next.round() - col.round()).max(0.0) as usize;
+                col = next;
+                out.extend(std::iter::repeat_n(' ', k));
+            }
+            _ => {
+                col += 1.0;
+                out.push(c);
+            }
+        }
+    }
+    Cow::Owned(out)
+}
+
+/// 当該 font の U+0020 advance (px) を parley probe で測る。
+///
+/// [`expand_tabs`] の `<length>` 換算専用。probe text `" "` 1 文字を shape し
+/// [`Layout::width`] を読む。非有限・0・異常に大きい値の場合は
+/// `font_size * 0.5` (monospace 慣行近似) に倒す — caller の sweep を壊さない
+/// ための fail-safe であり、正確性の主張ではない。
+///
+/// [`Layout::width`]: parley::Layout::width
+fn probe_space_advance(
+    fonts: &mut FontContext,
+    layout_cx: &mut LayoutContext<()>,
+    family_str: &str,
+    font_size_px: f32,
+    font_weight: f32,
+    font_style: StyleFontStyle,
+) -> f32 {
+    let mut warnings: Vec<LayoutWarn> = Vec::new();
+    let size = sanitize_finite(
+        font_size_px,
+        0.0,
+        MAX_FONT_SIZE_PX,
+        "font-size",
+        &mut warnings,
+    );
+    let weight = sanitize_font_weight(font_weight, &mut warnings);
+    let family = FontFamily::from(family_str);
+    let mut builder = layout_cx.ranged_builder(fonts, " ", 1.0, true);
+    builder.push_default(StyleProperty::FontFamily(family));
+    builder.push_default(StyleProperty::FontSize(size));
+    builder.push_default(StyleProperty::FontWeight(FontWeight::new(weight)));
+    builder.push_default(StyleProperty::FontStyle(font_style_to_parley(font_style)));
+    let mut layout: Layout<()> = builder.build(" ");
+    layout.break_all_lines(None);
+    let w = layout.width();
+    if w.is_finite() && w > 0.0 && w <= size * 4.0 {
+        w
+    } else {
+        size * 0.5
+    }
+}
+
 /// [`ComputedLength`]: raikiri_style::ComputedLength
 /// [`ComputedLineHeight`]: raikiri_style::ComputedLineHeight
 pub(crate) fn preshape_text(
@@ -2951,8 +3596,51 @@ pub(crate) fn preshape_text(
         font_weight_raw: f32,
         font_style: StyleFontStyle,
         line_height_raw: ComputedLineHeight,
+        tab_size: ComputedTabSize,
+        white_space: WhiteSpace,
+        // tab-stop metrics 用 font (block-container 祖先、無ければ自要素)。
+        metrics_family: String,
+        metrics_size: f32,
+        metrics_weight: f32,
+        metrics_style: StyleFontStyle,
     }
 
+    /// probe cache key: (family, size bits, weight bits, style discriminant)。
+    /// tab-stop の metrics は block-container 祖先の font で取る
+    /// (CSS Text 3 §4.2 — integer-004 / block-ancestor が pin)。
+    /// shape 自体の font (own) とは別物であることに注意。
+    fn font_key(job: &Job) -> (String, u32, u32, u8) {
+        let style = match job.metrics_style {
+            StyleFontStyle::Normal => 0,
+            StyleFontStyle::Italic => 1,
+            StyleFontStyle::Oblique => 2,
+            _ => 0,
+        };
+        (
+            job.metrics_family.clone(),
+            job.metrics_size.to_bits(),
+            job.metrics_weight.to_bits(),
+            style,
+        )
+    }
+
+    // parent map (arena に parent pointer が無いため children から逆引き —
+    // `realign_text_after_layout` と同型)。
+    let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
+    for idx in 0..doc.nodes.len() {
+        for &c in doc.nodes[idx].children.clone().iter() {
+            if c < parent_of.len() {
+                parent_of[c] = Some(idx);
+            }
+        }
+    }
+    fn family_str_of(cv: &ComputedValues) -> String {
+        cv.font_family
+            .iter()
+            .map(|a| a.0.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
     let mut jobs: Vec<Job> = Vec::with_capacity(doc.nodes.len() / 2);
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Text {
@@ -2968,12 +3656,17 @@ pub(crate) fn preshape_text(
             _ => continue,
         };
         let cv = &cascade.computed[idx];
-        let family_str: String = cv
-            .font_family
-            .iter()
-            .map(|a| a.0.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
+        // white-space phase 1 collapsing (bd raikiri-spike-25uv)。
+        // pre 系は無変換 (tab 展開は後段)。collapse 系のみ trim 位置付きで変換。
+        let start = line_start_pos(doc, cascade, &parent_of, idx);
+        let trim_end = trail_trim(doc, cascade, &parent_of, idx);
+        let text = collapse_ws(&text, cv.white_space, start, trim_end).into_owned();
+        let family_str: String = family_str_of(cv);
+        // tab-stop metrics は block-container 祖先の font (CSS Text 3 §4.2)。
+        // 見つからなければ自 font (fail-safe — 既存挙動と同等)。
+        let mcv = nearest_block_container(doc, cascade, &parent_of, idx)
+            .map(|b| &cascade.computed[b])
+            .unwrap_or(cv);
         jobs.push(Job {
             idx,
             text,
@@ -2982,11 +3675,47 @@ pub(crate) fn preshape_text(
             font_weight_raw: cv.font_weight,
             font_style: cv.font_style,
             line_height_raw: cv.line_height,
+            tab_size: cv.tab_size,
+            white_space: cv.white_space,
+            metrics_family: family_str_of(mcv),
+            metrics_size: mcv.font_size.px(),
+            metrics_weight: mcv.font_weight,
+            metrics_style: mcv.font_style,
         });
     }
 
     if jobs.is_empty() {
         return;
+    }
+
+    // tab-size: font key ごとに space advance を probe して cache し、
+    // tab を preserve する white-space の job だけ展開する (sequential —
+    // shape 前の 1 回きり。probe 自体は font key 重複排除で償却される)。
+    let mut probes: std::collections::HashMap<(String, u32, u32, u8), f32> =
+        std::collections::HashMap::new();
+    for job in &jobs {
+        let key = font_key(job);
+        if let std::collections::hash_map::Entry::Vacant(e) = probes.entry(key) {
+            e.insert(probe_space_advance(
+                fonts,
+                layout_cx,
+                &job.metrics_family,
+                job.metrics_size,
+                job.metrics_weight,
+                job.metrics_style,
+            ));
+        }
+    }
+    for job in &mut jobs {
+        if !matches!(
+            job.white_space,
+            WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::BreakSpaces
+        ) {
+            continue;
+        }
+        if let Some(&adv) = probes.get(&font_key(job)) {
+            job.text = expand_tabs(&job.text, job.tab_size, adv).into_owned();
+        }
     }
 
     // Copy original FontContext once; each rayon task clones from this base.
@@ -3171,6 +3900,11 @@ pub fn layout_single_page(
             height: AvailableSpace::Definite(page_box.height),
         },
     );
+
+    // Step 5a: taffy 確定幅基準の text 再配置 (`text-align: center` 等)。
+    // glyph offset のみを変え、box geometry は変えないため invariant 検査の前後
+    // どちらでもよいが、確定幅を読む側として compute 直後に置く。
+    realign_text_after_layout(document, cascade);
 
     // Step 5b: 親子 geometry の意味的 invariant を検査し、破れている subtree
     // を決定的 fallback (ゼロ) に倒す。Step 5 の内部
@@ -3687,6 +4421,497 @@ mod tests {
              still being independently stacked below the first child \
              rather than placed beside it"
         );
+    }
+
+    #[test]
+    fn text_align_center_offsets_glyphs_to_container_middle() {
+        // `text-align: center` の最小 regression pin (bd raikiri-spike-4b6c):
+        // 単独 Text の block container (`<p>` + 1 Text は minimal line box の
+        // 2-child threshold 未満のため plain block path) で、glyph run の
+        // 先頭 x が container 幅の中央付近に寄ること。
+        use parley::{FontContext, PositionedLayoutItem};
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("display: block; text-align: center"),
+        );
+        let t = doc.append_text(p, "Hello");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let p_width = doc.nodes[p].unrounded_layout.size.width;
+        let layout = doc.nodes[t].text_layout().expect("text shaped");
+        let first_x: f32 = layout
+            .lines()
+            .next()
+            .expect("one line")
+            .items()
+            .filter_map(|it| match it {
+                PositionedLayoutItem::GlyphRun(gr) => gr.positioned_glyphs().next().map(|g| g.x),
+                _ => None,
+            })
+            .next()
+            .expect("glyph");
+        let text_w = layout.width();
+        let expected = (p_width - text_w) * 0.5;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (first_x - expected).abs() < 2.0,
+            "centered glyph x={} must be near (container-text)/2={} (p_w={} text_w={})",
+            first_x,
+            expected,
+            p_width,
+            text_w
+        );
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            first_x > 10.0,
+            "centered text must not sit at the left edge, got x={}",
+            first_x
+        );
+    }
+
+    #[test]
+    fn text_indent_px_offsets_first_line() {
+        // `text-indent` 基本配線の regression pin (bd raikiri-spike-5u1y):
+        // 単独 Text の block container で first line の先頭 x が indent 分
+        // 右に寄ること。parley `set_text_indent` 経由 (basic のみ —
+        // hanging/each-line は parse 層 drop のため常に default)。
+        use parley::{FontContext, PositionedLayoutItem};
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("display: block; text-indent: 20px"),
+        );
+        let t = doc.append_text(p, "Hello");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let layout = doc.nodes[t].text_layout().expect("text shaped");
+        let first_x: f32 = layout
+            .lines()
+            .next()
+            .expect("one line")
+            .items()
+            .filter_map(|it| match it {
+                PositionedLayoutItem::GlyphRun(gr) => gr.positioned_glyphs().next().map(|g| g.x),
+                _ => None,
+            })
+            .next()
+            .expect("glyph");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (first_x - 20.0).abs() < 2.0,
+            "indented first glyph x={} must be near indent 20px",
+            first_x
+        );
+    }
+
+    #[test]
+    fn text_indent_negative_protrudes_before_box() {
+        // negative indent は box 始端より前に張り出す (CSS Text 3 §8.1)。
+        use parley::{FontContext, PositionedLayoutItem};
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("display: block; margin-left: 20px; text-indent: -20px"),
+        );
+        let t = doc.append_text(p, "Hello");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let layout = doc.nodes[t].text_layout().expect("text shaped");
+        let first_x: f32 = layout
+            .lines()
+            .next()
+            .expect("one line")
+            .items()
+            .filter_map(|it| match it {
+                PositionedLayoutItem::GlyphRun(gr) => gr.positioned_glyphs().next().map(|g| g.x),
+                _ => None,
+            })
+            .next()
+            .expect("glyph");
+        // glyph x は layout-local で -20 (paint が box origin x=20 に
+        // 足して最終 x=0 になる)。
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (first_x + 20.0).abs() < 2.0,
+            "negative-indented first glyph run-local x={} must be near -20",
+            first_x
+        );
+    }
+
+    /// `is_first_in_block` 用 fixture: `<article>` block 内の DOM を組み、
+    /// 対象 Text node の first-in-block 判定を返す helper。
+    /// `build` closure が `(doc, article)` から対象 node を作る。
+    fn first_in_block_of(build: impl FnOnce(&mut Document, usize) -> usize) -> bool {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let article = doc.append_element(
+            Some(body),
+            "article",
+            Style::default(),
+            Some("display: block"),
+        );
+        let target = build(&mut doc, article);
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
+        for idx in 0..doc.nodes.len() {
+            for &c in doc.nodes[idx].children.clone().iter() {
+                if c < parent_of.len() {
+                    parent_of[c] = Some(idx);
+                }
+            }
+        }
+        is_first_in_block(&doc, &cr, &parent_of, target)
+    }
+
+    #[test]
+    fn first_in_block_single_text_is_first() {
+        assert!(first_in_block_of(|doc, article| {
+            doc.append_text(article, "Hello")
+        }));
+    }
+
+    #[test]
+    fn first_in_block_second_text_is_not_first() {
+        assert!(!first_in_block_of(|doc, article| {
+            doc.append_text(article, "Hello");
+            doc.append_text(article, "World")
+        }));
+    }
+
+    #[test]
+    fn first_in_block_after_br_is_not_first() {
+        assert!(!first_in_block_of(|doc, article| {
+            doc.append_text(article, "Hello");
+            doc.append_element(Some(article), "br", Style::default(), None::<&str>);
+            doc.append_text(article, "World")
+        }));
+    }
+
+    #[test]
+    fn first_in_block_nested_div_first_text_is_first() {
+        assert!(first_in_block_of(|doc, article| {
+            let div = doc.append_element(
+                Some(article),
+                "div",
+                Style::default(),
+                Some("display: block"),
+            );
+            doc.append_text(div, "Hello")
+        }));
+    }
+
+    #[test]
+    fn first_in_block_bare_text_after_div_is_not_first() {
+        assert!(!first_in_block_of(|doc, article| {
+            let div = doc.append_element(
+                Some(article),
+                "div",
+                Style::default(),
+                Some("display: block"),
+            );
+            doc.append_text(div, "Hello");
+            doc.append_text(article, "World")
+        }));
+    }
+
+    #[test]
+    fn collapse_ws_runs_to_single_mid_line() {
+        let out = collapse_ws("a  b", WhiteSpace::Normal, LineStart::MidLine, false);
+        assert_eq!(out.as_ref(), "a b");
+    }
+
+    #[test]
+    fn collapse_ws_trims_leading_at_block_start() {
+        let out = collapse_ws("  a", WhiteSpace::Normal, LineStart::BlockStart, false);
+        assert_eq!(out.as_ref(), "a");
+    }
+
+    #[test]
+    fn collapse_ws_keeps_single_leading_mid_line() {
+        let out = collapse_ws("  a", WhiteSpace::Normal, LineStart::MidLine, false);
+        assert_eq!(out.as_ref(), " a");
+    }
+
+    #[test]
+    fn collapse_ws_newline_to_space_under_normal() {
+        let out = collapse_ws("a\nb", WhiteSpace::Normal, LineStart::MidLine, false);
+        assert_eq!(out.as_ref(), "a b");
+    }
+
+    #[test]
+    fn collapse_ws_preline_keeps_newline_and_trims_after() {
+        let out = collapse_ws("a\n  b", WhiteSpace::PreLine, LineStart::MidLine, false);
+        assert_eq!(out.as_ref(), "a\nb");
+    }
+
+    #[test]
+    fn collapse_ws_trims_trailing_at_block_end() {
+        let out = collapse_ws("a  ", WhiteSpace::Normal, LineStart::MidLine, true);
+        assert_eq!(out.as_ref(), "a");
+    }
+
+    #[test]
+    fn collapse_ws_keeps_trailing_mid_block() {
+        let out = collapse_ws("a  ", WhiteSpace::Normal, LineStart::MidLine, false);
+        assert_eq!(out.as_ref(), "a ");
+    }
+
+    #[test]
+    fn collapse_ws_pre_untouched() {
+        let out = collapse_ws("  a\n  b  ", WhiteSpace::Pre, LineStart::BlockStart, true);
+        assert_eq!(out.as_ref(), "  a\n  b  ");
+    }
+
+    #[test]
+    fn collapse_ws_tab_to_space() {
+        let out = collapse_ws("a\tb", WhiteSpace::Normal, LineStart::MidLine, false);
+        assert_eq!(out.as_ref(), "a b");
+    }
+
+    /// single-line block の glyph 両端を返す helper
+    /// (first glyph x, last glyph x+advance)。
+    fn single_line_ends(doc: &Document, t: usize) -> (f32, f32) {
+        use parley::PositionedLayoutItem;
+
+        let layout = doc.nodes[t].text_layout().expect("text shaped");
+        assert_eq!(layout.len(), 1, "fixture must stay single-line");
+        let mut first = None;
+        let mut last = (0.0, 0.0);
+        for line in layout.lines() {
+            for it in line.items() {
+                if let PositionedLayoutItem::GlyphRun(gr) = it {
+                    for g in gr.positioned_glyphs() {
+                        if first.is_none() {
+                            first = Some(g.x);
+                        }
+                        last = (g.x, g.advance);
+                    }
+                }
+            }
+        }
+        (first.expect("glyph"), last.0 + last.1)
+    }
+
+    #[test]
+    fn text_justify_none_disables_justification() {
+        // text-align:justify + text-justify:none → spread しない
+        // (CSS Text 3 §6.2)。
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let div = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display: block; width: 200px; text-align: justify; text-justify: none"),
+        );
+        let t = doc.append_text(div, "aa bb cc");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let (first_x, last_end) = single_line_ends(&doc, t);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            first_x.abs() < 2.0 && last_end < 150.0,
+            "unjustified single line must not spread: first={} last_end={}",
+            first_x,
+            last_end
+        );
+    }
+
+    #[test]
+    fn text_indent_zero_leaves_first_line_at_edge() {
+        // indent 無しは preshape のまま (realign の indent 経路を通らない)。
+        use parley::{FontContext, PositionedLayoutItem};
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display: block"));
+        let t = doc.append_text(p, "Hello");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let layout = doc.nodes[t].text_layout().expect("text shaped");
+        let first_x: f32 = layout
+            .lines()
+            .next()
+            .expect("one line")
+            .items()
+            .filter_map(|it| match it {
+                PositionedLayoutItem::GlyphRun(gr) => gr.positioned_glyphs().next().map(|g| g.x),
+                _ => None,
+            })
+            .next()
+            .expect("glyph");
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            first_x.abs() < 2.0,
+            "unindented first glyph x={} must be near the left edge",
+            first_x
+        );
+    }
+
+    #[test]
+    fn text_align_center_on_flex_line_box_uses_justify_content() {
+        // qualify する container (2+ inline-level children) の中央寄せは
+        // container 側の `justify_content: Center` で実現すること
+        // (parley 側ではなく flex 側 — `realign_text_after_layout` doc 参照)。
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("display: block; text-align: center"),
+        );
+        let _a = doc.append_text(p, "AAAA");
+        let _c = doc.append_text(p, "CCCC");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            doc.nodes[p].style.justify_content,
+            Some(TaffyAlignContent::CENTER),
+            "centered line-box container must center via flex justify_content"
+        );
+
+        // end-to-end: line box 全体が container 中央に寄ること。
+        use parley::FontContext;
+        use raikiri_traits::PageBox;
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+        let p_w = doc.nodes[p].unrounded_layout.size.width;
+        let a_loc = doc.nodes[_a].unrounded_layout;
+        let c_loc = doc.nodes[_c].unrounded_layout;
+        let total = (c_loc.location.x + c_loc.size.width) - a_loc.location.x;
+        let expected_left = (p_w - total) * 0.5;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (a_loc.location.x - expected_left).abs() < 2.0,
+            "centered line box must start near (p_w-total)/2, got a.x={} expected={} (p_w={} total={})",
+            a_loc.location.x,
+            expected_left,
+            p_w,
+            total
+        );
+    }
+
+    #[test]
+    fn expand_tabs_number_at_line_start() {
+        let out = expand_tabs("\t", ComputedTabSize::Number(4.0), 10.0);
+        assert_eq!(out.as_ref(), "    ");
+    }
+
+    #[test]
+    fn expand_tabs_number_mid_line_advances_to_next_stop() {
+        // col 1 + tab-size 2 → 次 stop は col 2 → space 1。
+        let out = expand_tabs("a\tb", ComputedTabSize::Number(2.0), 10.0);
+        assert_eq!(out.as_ref(), "a b");
+    }
+
+    #[test]
+    fn expand_tabs_at_exact_stop_advances_full_width() {
+        // col 2 は stop 上 → 次 stop col 4 へ space 2。
+        let out = expand_tabs("ab\tc", ComputedTabSize::Number(2.0), 10.0);
+        assert_eq!(out.as_ref(), "ab  c");
+    }
+
+    #[test]
+    fn expand_tabs_zero_removes_tabs() {
+        // `tab-size: 0` は zero-width (percent-001 の `100%` drop 後の `0`)。
+        let out = expand_tabs("a\tb", ComputedTabSize::Number(0.0), 10.0);
+        assert_eq!(out.as_ref(), "ab");
+    }
+
+    #[test]
+    fn expand_tabs_negative_number_removes_tabs() {
+        // 負数は parse で除外されるはずだが defensive に除去側へ倒す。
+        let out = expand_tabs("a\tb", ComputedTabSize::Number(-4.0), 10.0);
+        assert_eq!(out.as_ref(), "ab");
+    }
+
+    #[test]
+    fn expand_tabs_length_uses_space_advance() {
+        // 1em = 20px, space = 10px → stop 2 → `"\t"` は 2 spaces。
+        let out = expand_tabs("\t", ComputedTabSize::Length(ComputedLength(20.0)), 10.0);
+        assert_eq!(out.as_ref(), "  ");
+    }
+
+    #[test]
+    fn expand_tabs_newline_resets_column() {
+        let out = expand_tabs("ab\n\tc", ComputedTabSize::Number(4.0), 10.0);
+        assert_eq!(out.as_ref(), "ab\n    c");
+    }
+
+    #[test]
+    fn expand_tabs_fractional_tab_size_keeps_total_exact() {
+        // block-ancestor test4: `tab-size: 2.5` × 4 tabs = 10 spaces 合計。
+        let out = expand_tabs("\t\t\t\t", ComputedTabSize::Number(2.5), 10.0);
+        assert_eq!(out.as_ref(), "          ");
+    }
+
+    #[test]
+    fn expand_tabs_without_tabs_returns_borrowed() {
+        let out = expand_tabs("abc", ComputedTabSize::Number(4.0), 10.0);
+        assert_eq!(out.as_ref(), "abc");
     }
 
     #[test]

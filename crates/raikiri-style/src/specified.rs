@@ -38,13 +38,14 @@ use crate::property::{
     GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, Hyphens, Isolation, Length,
     LengthOrAuto, LengthOrNormal, LineHeight, MaskImage, MixBlendMode, ObjectFit, Outline,
     OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
-    SelfAlignmentValue, Sides, TabSize, TableLayoutValue, TextAlign, TextDecorationColor,
-    TextDecorationLine, TextDecorationStyle, TextShadowItem, TextTransform, TransformFunction,
-    VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue,
-    empty_box_shadow_list, empty_content_list, empty_counter_entries, empty_filter_list,
-    empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list, empty_transform_list,
-    initial_font_family, initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
-    resolve_text_align_match_parent, resolve_writing_mode,
+    SelfAlignmentValue, Sides, TabSize, TableLayoutValue, TextAlign, TextAlignLast,
+    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextJustify, TextShadowItem,
+    TextTransform, TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak,
+    WritingMode, ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
+    empty_filter_list, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
+    empty_transform_list, initial_font_family, initial_grid_auto_track_list,
+    resolve_display_for_float, resolve_overflow, resolve_text_align_match_parent,
+    resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ResolveContext,
@@ -195,6 +196,12 @@ pub struct SpecifiedValues {
     /// `match-parent` はここでは**解決されない** — [`Self`] doc の
     /// "`text_align: match-parent` は D5 と同型ではない" 節参照。
     pub text_align: TextAlign,
+    /// [`ComputedValues::text_justify`](crate::computed::ComputedValues::text_justify)
+    /// の staging。keyword のため computed-equivalent、inherited。
+    pub text_justify: TextJustify,
+    /// [`ComputedValues::text_align_last`](crate::computed::ComputedValues::text_align_last)
+    /// の staging。keyword のため computed-equivalent、inherited。
+    pub text_align_last: TextAlignLast,
     /// [`ComputedValues::direction`] の staging。層は computed-equivalent。
     pub direction: Direction,
     /// [`ComputedValues::writing_mode`] の staging。**層は computed-equivalent
@@ -541,6 +548,10 @@ impl SpecifiedValues {
             running_templates: Vec::new(),
             position: PositionValue::Static,
             text_align: TextAlign::Start,
+            // CSS Text 3 §6.2: text-justify initial is `auto`.
+            text_justify: TextJustify::Auto,
+            // CSS Text 3 §6.1: text-align-last initial is `auto`.
+            text_align_last: TextAlignLast::Auto,
             // CSS Writing Modes 4 §2.1: direction initial は `ltr`。
             direction: Direction::Ltr,
             // CSS Writing Modes 4 §3.2: writing-mode initial は
@@ -804,6 +815,9 @@ impl SpecifiedValues {
             // `ComputedValues` を明示的に受け取って行う (`Self` doc の
             // "D5 と同型ではない" 節)。
             text_align: parent.text_align,
+            // CSS Text 3 §6.2 / §6.1: いずれも inherited、keyword の素朴なコピー。
+            text_justify: parent.text_justify,
+            text_align_last: parent.text_align_last,
             direction: parent.direction,
             // CSS Writing Modes 4 §3.2: writing-mode は inherited。親の
             // `ComputedValues::writing_mode` は既に
@@ -1306,6 +1320,9 @@ impl SpecifiedValues {
             position: self.position,
             // 呼び手が既に match-parent を解決した後の値 (関数 doc 参照)。
             text_align,
+            // keyword の素通し (解決不要)。
+            text_justify: self.text_justify,
+            text_align_last: self.text_align_last,
             // computed value = specified value、相対解決なし (`Direction` doc
             // 参照) — 自 node の winner 適用結果をそのまま素通し。
             direction: self.direction,
@@ -1930,6 +1947,8 @@ mod tests {
                 name: SmolStr::new("hdr"),
             }],
             text_align: TextAlign::Center,
+            text_justify: TextJustify::InterWord,
+            text_align_last: TextAlignLast::Justify,
             direction: Direction::Rtl,
             // `VerticalRl` — non-initial, and safe to compare verbatim below
             // (unlike `computed::tests::non_initial_parent`'s fixture): this
