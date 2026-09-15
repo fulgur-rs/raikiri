@@ -40,12 +40,12 @@ use crate::property::{
     OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
     SelfAlignmentValue, Sides, TabSize, TableLayoutValue, TextAlign, TextAlignLast,
     TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextJustify, TextShadowItem,
-    TextTransform, TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak,
-    WritingMode, ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
-    empty_filter_list, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
-    empty_transform_list, initial_font_family, initial_grid_auto_track_list,
-    resolve_display_for_float, resolve_overflow, resolve_text_align_match_parent,
-    resolve_writing_mode,
+    TextTransform, TextWrapMode, TransformFunction, VerticalAlign, Visibility, VisualBox,
+    WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_box_shadow_list, empty_content_list,
+    empty_counter_entries, empty_filter_list, empty_quotes_entries, empty_string_set_entries,
+    empty_text_shadow_list, empty_transform_list, initial_font_family,
+    initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
+    resolve_text_align_match_parent, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ResolveContext,
@@ -343,6 +343,8 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::white_space`] の staging。層は computed-equivalent
     /// (`WhiteSpace` は length を運ばない)。
     pub white_space: WhiteSpace,
+    /// `text-wrap` wrapping component staging. Inherited, initial `wrap`.
+    pub text_wrap: TextWrapMode,
     /// [`ComputedValues::hyphens`] の staging。層は computed-equivalent
     /// (`Hyphens` は length を運ばない)。
     pub hyphens: Hyphens,
@@ -639,6 +641,7 @@ impl SpecifiedValues {
             clear: ClearValue::None,
             // CSS Text 3 §3: white-space initial は `normal`。
             white_space: WhiteSpace::Normal,
+            text_wrap: TextWrapMode::Wrap,
             // CSS Text 3 §5.3: hyphens initial は `manual`。
             hyphens: Hyphens::Manual,
             // CSS Flexible Box Layout Module Level 1 §5.1/§5.2:
@@ -863,6 +866,7 @@ impl SpecifiedValues {
             tab_size: lift_tab_size(parent.tab_size),
             // CSS Text 3 §3: white-space は inherited。
             white_space: parent.white_space,
+            text_wrap: parent.text_wrap,
             // CSS Tables 3 §6: border-collapse は inherited。keyword のため
             // lift 不要の素朴なコピー (`visibility` と同じ扱い)。
             border_collapse: parent.border_collapse,
@@ -1544,6 +1548,7 @@ impl SpecifiedValues {
             // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
             // そのまま素通し。
             white_space: self.white_space,
+            text_wrap: self.text_wrap,
             // computed value = specified keyword (`Hyphens` doc 参照、
             // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
             // そのまま素通し。
@@ -2031,6 +2036,7 @@ mod tests {
             float: FloatValue::Left,
             clear: ClearValue::Both,
             white_space: WhiteSpace::Pre,
+            text_wrap: TextWrapMode::Nowrap,
             hyphens: Hyphens::None,
             flex_direction: FlexDirectionValue::Column,
             flex_wrap: FlexWrapValue::Wrap,

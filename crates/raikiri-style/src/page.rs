@@ -132,8 +132,8 @@ use crate::property::{
     TextCombineUpright, TextDecorationInset, TextDecorationShorthand, TextDecorationSkipInk,
     TextDecorationSkipSpaces, TextDecorationThickness, TextEmphasisHEdge, TextEmphasisPosition,
     TextEmphasisVEdge, TextIndentValue, TextOrientation, TextShadowItem, TextUnderlinePosition,
-    TransformFunction, UnicodeBidi, parse_length_allow_negative, parse_non_negative_length,
-    parse_value, resolve_overflow, resolve_writing_mode,
+    TextWrapMode, TransformFunction, UnicodeBidi, parse_length_allow_negative,
+    parse_non_negative_length, parse_value, resolve_overflow, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedCssPositionOffset, ComputedFlexBasis,
@@ -3106,6 +3106,9 @@ fn absolutize_in_page_context(
         // computed value = specified keyword (see `WhiteSpace`'s doc) —
         // nothing for phase 3 to absolutize.
         | PropertyValue::WhiteSpace(_)
+        // `text-wrap` (CSS Text 4 §5 subset) carries no length either —
+        // same as `WhiteSpace` above.
+        | PropertyValue::TextWrap(_)
         // `hyphens` (CSS Text 3 §5.3) carries no length either and computed
         // value = specified keyword (see `Hyphens`'s doc) — same as
         // `WhiteSpace` above.
@@ -6808,7 +6811,7 @@ mod tests {
     /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
     /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
     /// であり、明示的に別途判断としている。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 99;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 100;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -7168,6 +7171,7 @@ mod tests {
         // keyword, the same "not the initial value" reasoning
         // `WordBreak`/`OverflowWrap` samples above use.
         WhiteSpace => PropertyValue::WhiteSpace(WhiteSpace::Pre),
+        TextWrap => PropertyValue::TextWrap(TextWrapMode::Nowrap),
         // No specified/computed distinction for `flex-direction`/`flex-wrap`
         // (computed value = specified keyword) — any value is "worst case"
         // (`Direction` sibling comment above uses the same reasoning).
@@ -7716,6 +7720,7 @@ mod tests {
         Float,
         Clear,
         WhiteSpace,
+        TextWrap,
         FlexDirection,
         FlexWrap,
         FlexGrow,
@@ -8266,6 +8271,8 @@ mod tests {
             | PropertyValue::Clear(_)
             // `WhiteSpace` (CSS Text 3 §3) carries no length either.
             | PropertyValue::WhiteSpace(_)
+            // `TextWrapMode` (CSS Text 4 §5 subset) carries no length either.
+            | PropertyValue::TextWrap(_)
             // `Hyphens` (CSS Text 3 §5.3) carries no length either.
             | PropertyValue::Hyphens(_)
             // `FlexDirectionValue`/`FlexWrapValue` carry no length either.
