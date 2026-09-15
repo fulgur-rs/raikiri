@@ -900,6 +900,20 @@ fn distribute_extra_height(row_heights: &mut [f32], target: f32) {
 
 fn resolve_row_heights(doc: &mut Document, grid: &TableGrid, column_widths: &[f32]) -> Vec<f32> {
     let mut row_heights = vec![0.0f32; grid.rows.len()];
+    // Authored `height` on rows floors the row (CSS 2.1 §17.5.3; lengths
+    // only — percentages need the table height, indefinite at this stage).
+    // Anonymous-row markers reuse the first cell's id; flooring by a cell's
+    // own height there is consistent with its content measure.
+    // Vertical writing modes are NOT adjusted here: in vertical-rl the row's
+    // block axis is horizontal, which this horizontal-centric engine does not
+    // model (css/css-tables/paint/col-paint-vrl-rtl.html covers it and needs
+    // full vertical-table support plus transform:rotate on its reference).
+    for (r, &row_id) in grid.rows.iter().enumerate() {
+        let h = doc.nodes[row_id].style.size.height;
+        if h.tag() == CompactLength::LENGTH_TAG {
+            row_heights[r] = f32_max_compat(row_heights[r], h.value());
+        }
+    }
     for cell in &grid.cells {
         let end = (cell.col_start as usize + cell.col_span as usize).min(column_widths.len());
         let cell_width: f32 = column_widths[cell.col_start as usize..end].iter().sum();
