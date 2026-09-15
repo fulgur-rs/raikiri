@@ -521,10 +521,14 @@ css/css-tables/baseline-empty-cell-001.html
 css/css-tables/border-collapse-empty-cell.html
 css/css-tables/border-collapse-rowspan-cell.html
 css/css-tables/border-conflict-resolution.html
-css/css-tables/collapsed-border-color-change-with-compositing.html
+# REMOVED 2026-09-16: collapsed-border-color-change-with-compositing.html and
+# collapsed-border-remove-cell.html — dynamic tests (reftest-wait + script
+# mutation) that only passed while `border-style` longhands were dropped
+# (ref's `border-style: none` rendered as solid, matching the pre-mutation
+# test). Now correctly divergent statically; re-pin with script execution.
 css/css-tables/collapsed-border-partial-invalidation-003.html
 css/css-tables/collapsed-border-positioned-tr-td.html
-css/css-tables/collapsed-border-remove-cell.html
+# (collapsed-border-remove-cell.html removed — see above)
 css/css-tables/collapsed-border-sideways-rl-rtl-overflow.html
 css/css-tables/collapsed-border-vertical-lr-rtl-overflow.html
 css/css-tables/collapsed-border-vertical-rtl-overflow.html
@@ -984,6 +988,8 @@ css/css-tables/col-definite-max-size-001.html
 css/css-tables/subpixel-table-cell-height-001.html
 css/css-tables/anonymous-table-cell-margin-collapsing.html
 css/css-tables/table-has-box-sizing-border-box-001.html
+# --- css-tables reftest pin 2026-09-16 (double border style paint + border-style shorthand) ---
+css/css-tables/border-collapse-double-border.html
 # REMOVED 2026-09-16 (23 files): pinned-but-failing after whitespace-collapse
 # + segment-break work exposed real engine gaps (previously vacuous passes
 # under phantom strut layout). Re-pin with the fixes:

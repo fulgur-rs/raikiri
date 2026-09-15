@@ -3417,6 +3417,39 @@ fn absolutize_in_page_context(
         PropertyValue::Border(sides) => {
             PropertyValue::Border(sides.map(|b| border(b, font_size, own_line_height, ctx)))
         }
+        // `border-style` / `border-width` / `border-color` shorthand
+        // fall-throughs (same unreachability rationale — rule.rs expands
+        // them first). Styles and colors carry no lengths (passthrough);
+        // widths absolutize against the companion side styles, exactly
+        // like the `BorderTopWidth` longhand arms above.
+        PropertyValue::BorderStyle(sides) => PropertyValue::BorderStyle(sides),
+        PropertyValue::BorderWidth(sides) => {
+            PropertyValue::BorderWidth(Sides {
+                top: border_width(sides.top, border_styles.top, font_size, own_line_height, ctx),
+                right: border_width(
+                    sides.right,
+                    border_styles.right,
+                    font_size,
+                    own_line_height,
+                    ctx,
+                ),
+                bottom: border_width(
+                    sides.bottom,
+                    border_styles.bottom,
+                    font_size,
+                    own_line_height,
+                    ctx,
+                ),
+                left: border_width(
+                    sides.left,
+                    border_styles.left,
+                    font_size,
+                    own_line_height,
+                    ctx,
+                ),
+            })
+        }
+        PropertyValue::BorderColor(sides) => PropertyValue::BorderColor(sides),
         // ── border-radius / box-shadow / outline ─────────────────────────
         // CSS Backgrounds and Borders 3 §5/§6.1 and CSS UI 3 §4: all
         // length components are computed against this page context's own
@@ -6657,11 +6690,16 @@ mod tests {
     /// keyword-only のため pass-through bucket。§6.1 `border-spacing` は
     /// length-bearing の実 transform arm を持つためこちら側ではなく
     /// `phase_3_transformed_variants()` 側に +1 される)。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 97;
+    /// 97 → 99 (`border-style` / `border-color` shorthands — keyword-only
+    /// のため pass-through bucket。`border-width` shorthand は
+    /// length-bearing の実 transform arm を持つためこちら側ではなく
+    /// `phase_3_transformed_variants()` 側に +1 される)。
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 99;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
-    /// border-width (longhand 4 + `border` shorthand 1) / width + height 2 /
+    /// border-width (longhand 4 + `border` shorthand 1 + `border-width`
+    /// shorthand 1) / width + height 2 /
     /// font-size: larger/smaller 1 (`FontSizeRelative` —
     /// `absolutize_in_page_context` の structurally-unreachable な safety-net
     /// arm。到達しないが「素通し」ではなく実際に変換する形の arm なので
@@ -6857,6 +6895,9 @@ mod tests {
             style: BorderStyle::Solid,
             color: BorderColor::CurrentColor,
         })),
+        BorderStyle => PropertyValue::BorderStyle(Sides::all(BorderStyle::Double)),
+        BorderWidth => PropertyValue::BorderWidth(Sides::all(Length::Em(2.0))),
+        BorderColor => PropertyValue::BorderColor(Sides::all(BorderColor::CurrentColor)),
         Width => PropertyValue::Width(LengthOrAuto::Length(Length::Em(3.0))),
         Height => PropertyValue::Height(LengthOrAuto::Length(Length::Em(4.0))),
         MaxWidth => PropertyValue::MaxWidth(LengthOrAuto::Length(Length::Em(5.0))),
@@ -7499,6 +7540,9 @@ mod tests {
         BorderBottomColor,
         BorderLeftColor,
         Border,
+        BorderStyle,
+        BorderWidth,
+        BorderColor,
         Width,
         Height,
         MaxWidth,
@@ -7942,6 +7986,10 @@ mod tests {
                 start_end(*p, length_or_auto)
             }
             PropertyValue::Border(s) => sides(*s, |b: Border| length(b.width)),
+            // Shorthand fall-throughs — styles/colors carry no length.
+            PropertyValue::BorderStyle(_)
+            | PropertyValue::BorderColor(_) => None,
+            PropertyValue::BorderWidth(s) => sides(*s, length),
             PropertyValue::LetterSpacing(l) | PropertyValue::WordSpacing(l) => {
                 length_or_normal(*l)
             }

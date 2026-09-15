@@ -5275,6 +5275,55 @@ fn project_deferred_value(
             }
             _ => return None,
         },
+        // `border-style` / `border-width` / `border-color` shorthands fan
+        // out to their 4 side longhands by key (same shape as `Border`
+        // above; reached via `var()`/re-cascade paths that bypass rule.rs
+        // expansion).
+        PropertyValue::BorderStyle(sides) => match key {
+            crate::property::PropertyKey::BorderTopStyle => {
+                PropertyValue::BorderTopStyle(sides.top)
+            }
+            crate::property::PropertyKey::BorderRightStyle => {
+                PropertyValue::BorderRightStyle(sides.right)
+            }
+            crate::property::PropertyKey::BorderBottomStyle => {
+                PropertyValue::BorderBottomStyle(sides.bottom)
+            }
+            crate::property::PropertyKey::BorderLeftStyle => {
+                PropertyValue::BorderLeftStyle(sides.left)
+            }
+            _ => return None,
+        },
+        PropertyValue::BorderWidth(sides) => match key {
+            crate::property::PropertyKey::BorderTopWidth => {
+                PropertyValue::BorderTopWidth(sides.top)
+            }
+            crate::property::PropertyKey::BorderRightWidth => {
+                PropertyValue::BorderRightWidth(sides.right)
+            }
+            crate::property::PropertyKey::BorderBottomWidth => {
+                PropertyValue::BorderBottomWidth(sides.bottom)
+            }
+            crate::property::PropertyKey::BorderLeftWidth => {
+                PropertyValue::BorderLeftWidth(sides.left)
+            }
+            _ => return None,
+        },
+        PropertyValue::BorderColor(sides) => match key {
+            crate::property::PropertyKey::BorderTopColor => {
+                PropertyValue::BorderTopColor(sides.top)
+            }
+            crate::property::PropertyKey::BorderRightColor => {
+                PropertyValue::BorderRightColor(sides.right)
+            }
+            crate::property::PropertyKey::BorderBottomColor => {
+                PropertyValue::BorderBottomColor(sides.bottom)
+            }
+            crate::property::PropertyKey::BorderLeftColor => {
+                PropertyValue::BorderLeftColor(sides.left)
+            }
+            _ => return None,
+        },
         PropertyValue::Overflow(pair) => match key {
             crate::property::PropertyKey::OverflowX => PropertyValue::OverflowX(pair.x),
             crate::property::PropertyKey::OverflowY => PropertyValue::OverflowY(pair.y),
@@ -6965,6 +7014,13 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::BorderBottomColor(_)
         | PropertyValue::BorderLeftColor(_)
         | PropertyValue::Border(_)
+        // `border-style` / `border-width` / `border-color` shorthands —
+        // same "nothing for phase 2 to resolve" shape as `Border` above
+        // (non-inherited keywords/lengths; structurally unreachable here
+        // since rule.rs expands them first).
+        | PropertyValue::BorderStyle(_)
+        | PropertyValue::BorderWidth(_)
+        | PropertyValue::BorderColor(_)
         | PropertyValue::Width(_)
         | PropertyValue::Height(_)
         | PropertyValue::MaxWidth(_)
@@ -7981,6 +8037,27 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // `FontSizeRelative`'s `larger`/`smaller`) behave exactly as if
         // the shorthand had been expanded — `target` still holds the
         // parent seeds here since no longhand arm ran yet for this node.
+        // `border-style` / `border-width` / `border-color` shorthands
+        // decompose into their side longhands (same shape as `Font`
+        // below; reached when rule.rs expansion is bypassed).
+        PropertyValue::BorderStyle(sides) => {
+            apply_value(PropertyValue::BorderTopStyle(sides.top), target);
+            apply_value(PropertyValue::BorderRightStyle(sides.right), target);
+            apply_value(PropertyValue::BorderBottomStyle(sides.bottom), target);
+            apply_value(PropertyValue::BorderLeftStyle(sides.left), target);
+        }
+        PropertyValue::BorderWidth(sides) => {
+            apply_value(PropertyValue::BorderTopWidth(sides.top), target);
+            apply_value(PropertyValue::BorderRightWidth(sides.right), target);
+            apply_value(PropertyValue::BorderBottomWidth(sides.bottom), target);
+            apply_value(PropertyValue::BorderLeftWidth(sides.left), target);
+        }
+        PropertyValue::BorderColor(sides) => {
+            apply_value(PropertyValue::BorderTopColor(sides.top), target);
+            apply_value(PropertyValue::BorderRightColor(sides.right), target);
+            apply_value(PropertyValue::BorderBottomColor(sides.bottom), target);
+            apply_value(PropertyValue::BorderLeftColor(sides.left), target);
+        }
         PropertyValue::Font(shorthand) => {
             apply_value(PropertyValue::FontStyle(shorthand.style), target);
             apply_value(PropertyValue::FontVariantCaps(shorthand.variant), target);

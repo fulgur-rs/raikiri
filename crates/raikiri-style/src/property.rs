@@ -6762,6 +6762,24 @@ pub enum PropertyValue {
     /// scope 外)。future 統合 task で border-image longhand と併せて
     /// 対応。
     Border(Sides<Border>),
+    /// `border-style: <line-style>{1,4}` — non-inherited (CSS Backgrounds 3
+    /// §3.2 `<line-style>` × §3.4 shorthands
+    /// <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>)。
+    /// 1-4 value expansion は margin precedent
+    /// (`parse_margin_shorthand` と同型): 1 → all、2 → vertical/horizontal、
+    /// 3 → top/horizontal/bottom、4 → clockwise。rule.rs で 4 longhand
+    /// (`BorderTopStyle` 等) へ展開される。
+    BorderStyle(Sides<BorderStyle>),
+    /// `border-width: <line-width>{1,4}` — non-inherited (CSS Backgrounds 3
+    /// §3.3 × §3.4)。各 side の grammar は `border-*-width` と同一
+    /// (`parse_border_width_side`: thin/medium/thick keyword + 非負
+    /// `<length>`)。1-4 value expansion は margin precedent と同型。
+    BorderWidth(Sides<Length>),
+    /// `border-color: <color>{1,4}` — non-inherited (CSS Backgrounds 3 §3.1
+    /// × §3.4)。各 side の grammar は `border-*-color` と同一
+    /// (`parse_border_color`: `currentcolor` / named / hash / function)。
+    /// 1-4 value expansion は margin precedent と同型。
+    BorderColor(Sides<BorderColor>),
     /// `width: auto | <length-percentage [0,∞]>` — non-inherited、initial: `auto`
     /// (CSS Sizing 3 §3.1.1 <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>)。
     ///
@@ -7639,6 +7657,11 @@ pub enum PropertyKey {
     BorderBottomColor,
     BorderLeftColor,
     Border,
+    // `border-style` / `border-width` / `border-color` shorthand keys
+    // (semantics on the matching PropertyValue variants above).
+    BorderStyle,
+    BorderWidth,
+    BorderColor,
     // width (CSS Sizing 3 §3.1.1)。
     Width,
     // height (CSS Sizing 3 §3.1.1、semantics on the
@@ -8010,6 +8033,9 @@ impl PropertyValue {
             PropertyValue::BorderBottomColor(_) => PropertyKey::BorderBottomColor,
             PropertyValue::BorderLeftColor(_) => PropertyKey::BorderLeftColor,
             PropertyValue::Border(_) => PropertyKey::Border,
+            PropertyValue::BorderStyle(_) => PropertyKey::BorderStyle,
+            PropertyValue::BorderWidth(_) => PropertyKey::BorderWidth,
+            PropertyValue::BorderColor(_) => PropertyKey::BorderColor,
             PropertyValue::Width(_) => PropertyKey::Width,
             PropertyValue::Height(_) => PropertyKey::Height,
             PropertyValue::MaxWidth(_) => PropertyKey::MaxWidth,
@@ -8645,6 +8671,9 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "border-bottom-color" => PropertyKey::BorderBottomColor,
         "border-left-color" => PropertyKey::BorderLeftColor,
         "border" => PropertyKey::Border,
+        "border-style" => PropertyKey::BorderStyle,
+        "border-width" => PropertyKey::BorderWidth,
+        "border-color" => PropertyKey::BorderColor,
         "width" => PropertyKey::Width,
         "height" => PropertyKey::Height,
         "max-width" => PropertyKey::MaxWidth,
@@ -9018,6 +9047,9 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // (4 side × 3 sub-property) に展開されるため通常観測しない (詳細は
         // `PropertyValue::Border` doc + `crate::rule::expand_shorthand_into`)。
         "border" => parse_border_shorthand(input).map(PropertyValue::Border),
+        "border-style" => parse_border_style_shorthand(input).map(PropertyValue::BorderStyle),
+        "border-width" => parse_border_width_shorthand(input).map(PropertyValue::BorderWidth),
+        "border-color" => parse_border_color_shorthand(input).map(PropertyValue::BorderColor),
         // CSS Sizing 3 §3.1.1 preferred size property。
         // grammar: `auto | <length-percentage [0,∞]> | min-content | max-content
         // | fit-content(<length-percentage>)` のうち `auto` + non-negative
@@ -12245,6 +12277,117 @@ fn parse_border_style_side(input: &mut Parser<'_, '_>) -> Option<BorderStyle> {
         "outset" => Some(BorderStyle::Outset),
         _ => None,
     }
+}
+
+/// `parse_border_style_side` の `Result` 版 (`try_parse` 用)。
+fn parse_border_style_side_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<BorderStyle, ParseError<'i, ()>> {
+    parse_border_style_side(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `parse_border_color` の `Result` 版 (`try_parse` 用)。
+fn parse_border_color_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<BorderColor, ParseError<'i, ()>> {
+    parse_border_color(input).ok_or_else(|| input.new_custom_error(()))
+}
+
+/// `border-style: <line-style>{1,4}` shorthand (CSS Backgrounds 3 §3.4)。
+/// 1-4 value expansion は [`parse_padding_shorthand`] と同型 (1 → all、
+/// 2 → vertical/horizontal、3 → top/horizontal/bottom、4 → clockwise)。
+/// 5 value 以降は caller の `expect_exhausted` が drop (padding precedent)。
+fn parse_border_style_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<BorderStyle>> {
+    let v1 = parse_border_style_side(input)?;
+    let v2 = input.try_parse(parse_border_style_side_res).ok();
+    let v3 = input.try_parse(parse_border_style_side_res).ok();
+    let v4 = input.try_parse(parse_border_style_side_res).ok();
+    let sides = match (v2, v3, v4) {
+        (None, _, _) => Sides::all(v1),
+        (Some(h), None, _) => Sides {
+            top: v1,
+            right: h,
+            bottom: v1,
+            left: h,
+        },
+        (Some(h), Some(b), None) => Sides {
+            top: v1,
+            right: h,
+            bottom: b,
+            left: h,
+        },
+        (Some(r), Some(b), Some(l)) => Sides {
+            top: v1,
+            right: r,
+            bottom: b,
+            left: l,
+        },
+    };
+    Some(sides)
+}
+
+/// `border-width: <line-width>{1,4}` shorthand (CSS Backgrounds 3 §3.4)。
+/// 各 value の grammar は [`parse_border_width_side`] (thin/medium/thick +
+/// 非負 `<length>`)、1-4 expansion は [`parse_padding_shorthand`] と同型。
+fn parse_border_width_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Length>> {
+    let v1 = parse_border_width_side(input)?;
+    let v2 = input.try_parse(parse_border_width_side_res).ok();
+    let v3 = input.try_parse(parse_border_width_side_res).ok();
+    let v4 = input.try_parse(parse_border_width_side_res).ok();
+    let sides = match (v2, v3, v4) {
+        (None, _, _) => Sides::all(v1),
+        (Some(h), None, _) => Sides {
+            top: v1,
+            right: h,
+            bottom: v1,
+            left: h,
+        },
+        (Some(h), Some(b), None) => Sides {
+            top: v1,
+            right: h,
+            bottom: b,
+            left: h,
+        },
+        (Some(r), Some(b), Some(l)) => Sides {
+            top: v1,
+            right: r,
+            bottom: b,
+            left: l,
+        },
+    };
+    Some(sides)
+}
+
+/// `border-color: <color>{1,4}` shorthand (CSS Backgrounds 3 §3.4)。各
+/// value の grammar は [`parse_border_color`] (`currentcolor` / named /
+/// hash / function)、1-4 expansion は [`parse_padding_shorthand`] と同型。
+fn parse_border_color_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<BorderColor>> {
+    let v1 = parse_border_color(input)?;
+    let v2 = input.try_parse(parse_border_color_res).ok();
+    let v3 = input.try_parse(parse_border_color_res).ok();
+    let v4 = input.try_parse(parse_border_color_res).ok();
+    let sides = match (v2, v3, v4) {
+        (None, _, _) => Sides::all(v1),
+        (Some(h), None, _) => Sides {
+            top: v1,
+            right: h,
+            bottom: v1,
+            left: h,
+        },
+        (Some(h), Some(b), None) => Sides {
+            top: v1,
+            right: h,
+            bottom: b,
+            left: h,
+        },
+        (Some(r), Some(b), Some(l)) => Sides {
+            top: v1,
+            right: r,
+            bottom: b,
+            left: l,
+        },
+    };
+    Some(sides)
 }
 
 /// `border: <line-width> || <line-style> || <color>` shorthand を parse する。
@@ -27109,6 +27252,73 @@ mod tests {
         assert_eq!(
             parse("1rlh", "border-top-width"),
             Some(PropertyValue::BorderTopWidth(Length::Rlh(1.0)))
+        );
+    }
+
+    #[test]
+    fn border_style_shorthand_expansion_1_to_4_values() {
+        use PropertyValue::BorderStyle as BS;
+        // 1 value → all sides.
+        assert_eq!(
+            parse("double", "border-style"),
+            Some(BS(Sides::all(BorderStyle::Double)))
+        );
+        // 2 values → vertical / horizontal.
+        assert_eq!(
+            parse("solid dotted", "border-style"),
+            Some(BS(Sides {
+                top: BorderStyle::Solid,
+                right: BorderStyle::Dotted,
+                bottom: BorderStyle::Solid,
+                left: BorderStyle::Dotted,
+            }))
+        );
+        // 4 values → clockwise.
+        assert_eq!(
+            parse("solid dotted dashed double", "border-style"),
+            Some(BS(Sides {
+                top: BorderStyle::Solid,
+                right: BorderStyle::Dotted,
+                bottom: BorderStyle::Dashed,
+                left: BorderStyle::Double,
+            }))
+        );
+        // Invalid keyword drops the whole declaration (exhaustion
+        // enforced by the caller — `parse_entire` mirrors DeclParser).
+        assert_eq!(parse_entire("solid wavy", "border-style"), None);
+        assert_eq!(parse("", "border-style"), None);
+    }
+
+    #[test]
+    fn border_width_shorthand_keywords_and_lengths() {
+        use PropertyValue::BorderWidth as BW;
+        assert_eq!(
+            parse("medium", "border-width"),
+            Some(BW(Sides::all(Length::Px(BORDER_WIDTH_MEDIUM_PX))))
+        );
+        assert_eq!(
+            parse("1px 2px", "border-width"),
+            Some(BW(Sides {
+                top: Length::Px(1.0),
+                right: Length::Px(2.0),
+                bottom: Length::Px(1.0),
+                left: Length::Px(2.0),
+            }))
+        );
+        // Negative lengths are grammar violations.
+        assert_eq!(parse("-1px", "border-width"), None);
+    }
+
+    #[test]
+    fn border_color_shorthand_currentcolor_and_named() {
+        use PropertyValue::BorderColor as BC;
+        assert_eq!(
+            parse("black", "border-color"),
+            Some(BC(Sides::all(BorderColor::Resolved(CssColor::BLACK))))
+        );
+        assert_eq!(
+            parse("currentcolor", "border-color"),
+            Some(BC(Sides::all(BorderColor::CurrentColor)))
         );
     }
 
