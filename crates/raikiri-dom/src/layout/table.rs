@@ -237,15 +237,12 @@ pub fn compute_table_layout(
         ..inputs
     };
     let column_widths = if table_layout == TableLayoutValue::Fixed {
-        // Fixed with an indefinite table width has no basis for the
-        // §17.5.2.1 distribution — fall back to auto (documented).
-        let avail = effective_known
-            .width
-            .or(match inputs.available_space.width {
-                AvailableSpace::Definite(w) => Some(w),
-                _ => None,
-            })
-            .map(|w| f32_max_compat(w - distrib_insets.width, 0.0));
+        // Fixed with an indefinite (auto/percent-of-indefinite) table width
+        // has no basis for the §17.5.2.1 distribution — fall back to auto.
+        // Crucially the container width is NOT a substitute basis: a
+        // fixed+auto table shrink-wraps like an auto table (WPT
+        // table_grid_size_col_colspan), it does not fill its container.
+        let avail = specified_width.map(|w| f32_max_compat(w - distrib_insets.width, 0.0));
         match avail {
             Some(avail) => resolve_fixed_column_widths(&grid, avail),
             None => resolve_column_widths(doc, &grid, inputs_for_columns, distrib_insets),
