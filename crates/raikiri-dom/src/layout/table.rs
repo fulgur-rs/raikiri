@@ -86,6 +86,10 @@ struct TableGrid {
     n_cols: u16,
     rows: Vec<usize>, // node ids
     cells: Vec<CellPlacement>,
+    /// Authored sizing of `<col>` elements in grid order (CSS 2.1 §17.5.2:
+    /// `col` widths constrain columns even with no cells in them).
+    /// `span` attributes are expanded (one entry per spanned column).
+    col_widths: Vec<ColSizing>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -211,17 +215,50 @@ pub fn compute_table_layout(
         distribute_extra_height(&mut row_heights, target);
     }
 
+    // min/max-size clamp (CSS Sizing 3 §4/§5, WPT min-height-table-*,
+    // min-max-size-table-content-box). Percentages resolve against the
+    // parent (containing block); unresolvable/Auto Freeman. min wins over
+    // max on conflict. Extra min-height grows rows (same path as a definite
+    // height); max-height only clamps the box (content overflows visibly).
+    let st = &doc.nodes[table_idx].style;
+    let min_w = resolve_dimension(st.min_size.width, inputs.parent_size.width);
+    let max_w = resolve_dimension(st.max_size.width, inputs.parent_size.width);
+    let min_h = resolve_dimension(st.min_size.height, inputs.parent_size.height);
+    let max_h = resolve_dimension(st.max_size.height, inputs.parent_size.height);
+    if let Some(mn) = min_h {
+        let target = f32_max_compat(mn - distrib_insets.height, 0.0);
+        distribute_extra_height(&mut row_heights, target);
+    }
+
     // Content extents net of collapsed-line overlaps (separate: overlaps are
     // zero, so this reduces to the plain sum).
     let content_width: f32 = column_widths.iter().sum::<f32>() - overlap_w;
     let content_height: f32 = row_heights.iter().sum::<f32>() - overlap_h;
+    let clamp_min_max = |v: f32, mn: Option<f32>, mx: Option<f32>| -> f32 {
+        let mut x = v;
+        if let Some(mn) = mn {
+            x = f32_max_compat(x, mn);
+        }
+        if let Some(mx) = mx
+            && !(mn.is_some_and(|mn| mn > mx))
+        {
+            x = x.min(mx);
+        }
+        x
+    };
     let final_size = Size {
         width: effective_known
             .width
-            .unwrap_or(content_width + padding_border_size.width),
+            .map(|w| clamp_min_max(w, min_w, max_w))
+            .unwrap_or_else(|| {
+                clamp_min_max(content_width + padding_border_size.width, min_w, max_w)
+            }),
         height: effective_known
             .height
-            .unwrap_or(content_height + padding_border_size.height),
+            .map(|h| clamp_min_max(h, min_h, max_h))
+            .unwrap_or_else(|| {
+                clamp_min_max(content_height + padding_border_size.height, min_h, max_h)
+            }),
     };
 
     if inputs.run_mode == RunMode::ComputeSize {
@@ -266,11 +303,111 @@ fn build_table_grid(doc: &Document, table_idx: usize) -> TableGrid {
     let mut cells: Vec<CellPlacement> = Vec::new();
     let mut n_cols: u16 = 0;
     collect_rows(doc, table_idx, &mut rows, &mut cells, &mut n_cols);
+    let col_widths = collect_col_widths(doc, table_idx);
+    n_cols = n_cols.max(col_widths.len().min(u16::MAX as usize) as u16);
     TableGrid {
         n_cols,
         rows,
         cells,
+        col_widths,
     }
+}
+
+/// Authored `<col>` sizing in grid order.
+///
+/// Walks the table's direct children (and `colgroup` children) for
+/// `display: table-column` elements. `span` (HTML §4.9.8, max 1000)
+/// expands to that many entries. Direct `<col>` children (anonymous
+/// colgroup) are included in DOM order.
+/// Authored sizing of one `<col>`: width + min/max-width (lengths only;
+/// percentages and calc-with-percentage are indefinite at column-measure
+/// time and handled by the caller).
+#[derive(Debug, Clone, Copy)]
+struct ColSizing {
+    width: Dimension,
+    min_width: Dimension,
+    max_width: Dimension,
+}
+
+fn collect_col_widths(doc: &Document, table_idx: usize) -> Vec<ColSizing> {
+    fn col_span(doc: &Document, node_id: usize) -> usize {
+        if let crate::node::NodeData::Element(data) = &doc.nodes[node_id].data {
+            for a in &data.attributes {
+                if a.local.as_str() == "span"
+                    && let Ok(v) = a.value.parse::<usize>()
+                {
+                    return v.clamp(1, 1000);
+                }
+            }
+        }
+        1
+    }
+    fn sizing_of(doc: &Document, col_id: usize) -> ColSizing {
+        let st = &doc.nodes[col_id].style;
+        ColSizing {
+            width: st.size.width,
+            min_width: st.min_size.width,
+            max_width: st.max_size.width,
+        }
+    }
+    let mut out = Vec::new();
+    for &child_id in &doc.nodes[table_idx].children.clone() {
+        if !doc.nodes[child_id].is_in_document() {
+            continue;
+        }
+        match doc.nodes[child_id].display {
+            DisplayValue::TableColumnGroup => {
+                for &col_id in &doc.nodes[child_id].children.clone() {
+                    if !doc.nodes[col_id].is_in_document() {
+                        continue;
+                    }
+                    if doc.nodes[col_id].display != DisplayValue::TableColumn {
+                        continue;
+                    }
+                    let sz = sizing_of(doc, col_id);
+                    for _ in 0..col_span(doc, col_id) {
+                        out.push(sz);
+                    }
+                }
+            }
+            DisplayValue::TableColumn => {
+                let sz = sizing_of(doc, child_id);
+                for _ in 0..col_span(doc, child_id) {
+                    out.push(sz);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Visual section ordering for a table's direct children.
+///
+/// CSS 2.1 §17.5 orders the (single) thead before tbody rows and the
+/// (single) tfoot after them. With repeated groups (author error, exercised
+/// by WPT css/css-tables/row-group-order) engines keep DOM order except the
+/// FIRST header group floats to the top and the FIRST footer group sinks to
+/// the bottom — matching `HTMLTableElement.tHead`/`tFoot` (first match) and
+/// reproducing row-group-order-ref exactly. Nested groups keep DOM order.
+fn section_order(order: &mut Vec<usize>, displays: &[DisplayValue]) {
+    let first_head = order
+        .iter()
+        .find(|&&i| displays[i] == DisplayValue::TableHeaderGroup)
+        .copied();
+    let first_foot = order
+        .iter()
+        .find(|&&i| displays[i] == DisplayValue::TableFooterGroup)
+        .copied();
+    order.sort_by_key(|&i| {
+        if Some(i) == first_head {
+            0u8
+        } else if Some(i) == first_foot {
+            2u8
+        } else {
+            1u8
+        }
+    });
 }
 
 fn collect_rows(
@@ -280,10 +417,35 @@ fn collect_rows(
     cells: &mut Vec<CellPlacement>,
     n_cols: &mut u16,
 ) {
+    collect_rows_inner(doc, container_idx, rows, cells, n_cols, true)
+}
+
+fn collect_rows_inner(
+    doc: &Document,
+    container_idx: usize,
+    rows: &mut Vec<usize>,
+    cells: &mut Vec<CellPlacement>,
+    n_cols: &mut u16,
+    reorder_sections: bool,
+) {
     let mut pending: Vec<usize> = Vec::new();
 
     let len = doc.nodes[container_idx].children.len();
-    for i in 0..len {
+    // At table level, float the first header group to the top and sink
+    // the first footer group to the bottom (stable otherwise). Nested
+    // groups keep DOM order.
+    let order: Vec<usize> = if reorder_sections {
+        let mut idxs: Vec<usize> = (0..len).collect();
+        let displays: Vec<DisplayValue> = idxs
+            .iter()
+            .map(|&i| doc.nodes[doc.nodes[container_idx].children[i]].display)
+            .collect();
+        section_order(&mut idxs, &displays);
+        idxs
+    } else {
+        (0..len).collect()
+    };
+    for i in order {
         let child_id = doc.nodes[container_idx].children[i];
         if !doc.nodes[child_id].is_in_document() {
             continue;
@@ -311,7 +473,7 @@ fn collect_rows(
         } else if is_row_group || is_contents {
             // Anonymous row-group: recurse. But flush pending first (cells cannot cross row-group boundary)
             flush_pending(doc, &mut pending, rows, cells, n_cols);
-            collect_rows(doc, child_id, rows, cells, n_cols);
+            collect_rows_inner(doc, child_id, rows, cells, n_cols, false);
         } else {
             // Non-table descendent (e.g., caption, div inside table). For MVP, skip but flush pending.
             flush_pending(doc, &mut pending, rows, cells, n_cols);
@@ -323,7 +485,7 @@ fn collect_rows(
                 // Only recurse if container might hold rows; avoid diving into block content inside cells.
                 // We treat any block container directly under table that contains row-like descendants as group.
                 // Simple: recurse
-                collect_rows(doc, child_id, rows, cells, n_cols);
+                collect_rows_inner(doc, child_id, rows, cells, n_cols, false);
             }
         }
     }
@@ -421,6 +583,13 @@ fn get_rowspan(doc: &Document, node_id: usize) -> u16 {
             if a.local.as_str() == "rowspan"
                 && let Ok(v) = a.value.parse::<u16>()
             {
+                // HTML §4.9.9: rowspan=0 spans to the end of the table
+                // section. The grid is section-flat, so approximate with a
+                // saturating span — every consumer clamps to the row count
+                // (table end == section end for single-section tables).
+                if v == 0 {
+                    return u16::MAX;
+                }
                 return v.clamp(1, 65534);
             }
         }
@@ -551,9 +720,80 @@ fn resolve_column_widths(
             col_max_full[c] = f32_max_compat(col_max_full[c], l);
         }
     }
+    // (C.3b) `<col>` authored sizing (css-tables-3 missing-cells-fixup /
+    // outer-max-content, WPT col-definite-*): definite lengths floor (and
+    // cap via max-width) even empty columns; percentages only constrain
+    // occupied columns (indefinite for missing cells); percent/calc
+    // min/max are indefinite and ignored. CSS Sizing 3 §4/§5: min > max
+    // resolves to min (max ignored).
+    let occupied = {
+        let mut occ = vec![false; n];
+        for cell in grid.cells.iter() {
+            let s = cell.col_start as usize;
+            let e = (s + cell.col_span as usize).min(n);
+            for c in s..e {
+                occ[c] = true;
+            }
+        }
+        occ
+    };
+    let mut col_cap: Vec<Option<f32>> = vec![None; n];
+    for (c, sz) in grid.col_widths.iter().enumerate() {
+        if c >= n {
+            break;
+        }
+        let is_len = |d: Dimension| d.tag() == CompactLength::LENGTH_TAG;
+        let min_w = is_len(sz.min_width).then(|| sz.min_width.value());
+        let max_w = is_len(sz.max_width).then(|| sz.max_width.value());
+        // Base width: definite length always; percent only when occupied.
+        let mut base: Option<f32> = None;
+        if is_len(sz.width) {
+            base = Some(sz.width.value());
+        } else if sz.width.tag() == CompactLength::PERCENT_TAG && occupied[c] {
+            col_pct[c] = f32_max_compat(col_pct[c], sz.width.value());
+        }
+        // Clamp base by min/max (min wins over max).
+        let mut floor = min_w;
+        if let (Some(mn), Some(mx)) = (min_w, max_w)
+            && mn > mx
+        {
+            floor = Some(mn);
+        }
+        if let Some(b) = base {
+            let mut v = b;
+            if let Some(mn) = min_w {
+                v = f32_max_compat(v, mn);
+            }
+            if let Some(mx) = max_w
+                && !(min_w.is_some_and(|mn| mn > mx))
+            {
+                v = v.min(mx);
+            }
+            floor = Some(floor.map_or(v, |f| f32_max_compat(f, v)));
+        }
+        if let Some(f) = floor {
+            col_min[c] = f32_max_compat(col_min[c], f);
+            col_max[c] = f32_max_compat(col_max[c], f);
+            col_min_full[c] = f32_max_compat(col_min_full[c], f);
+            col_max_full[c] = f32_max_compat(col_max_full[c], f);
+        }
+        // Max cap applies to content-driven growth as well (col-definite-max-*).
+        if let Some(mx) = max_w
+            && !(min_w.is_some_and(|mn| mn > mx))
+        {
+            col_cap[c] = Some(mx);
+        }
+    }
     for i in 0..n {
         col_max[i] = f32_max_compat(col_max[i], col_min[i]);
         col_max_full[i] = f32_max_compat(col_max_full[i], col_min_full[i]);
+    }
+    // `<col>` max-width caps (min-wins case already excluded above).
+    for (i, cap) in col_cap.iter().enumerate() {
+        if let Some(mx) = cap {
+            col_max[i] = col_max[i].min(*mx);
+            col_max_full[i] = col_max_full[i].min(*mx);
+        }
     }
 
     // (C.4) Distribute - auto only (fixed deferred to Wave4)
@@ -879,6 +1119,35 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
                 x if x == CompactLength::PERCENT_TAG => Some(cell.specified_width.value() * avail),
                 _ => None,
             };
+        }
+    }
+    // `<col>` widths fix columns with no first-row cell width (CSS 2.1 §17.5.2.1).
+    // Percentages resolve against the same avail basis as cell percentages.
+    // Length min/max clamp the fallback (same min-wins rule as auto path).
+    for (c, sz) in grid.col_widths.iter().enumerate() {
+        if c >= n || fixed[c].is_some() {
+            continue;
+        }
+        let is_len = |d: Dimension| d.tag() == CompactLength::LENGTH_TAG;
+        let mut v: Option<f32> = None;
+        if is_len(sz.width) {
+            v = Some(sz.width.value());
+        } else if sz.width.tag() == CompactLength::PERCENT_TAG {
+            v = Some(sz.width.value() * avail);
+        }
+        if v.is_none() && is_len(sz.min_width) {
+            v = Some(sz.min_width.value());
+        }
+        if let Some(mut x) = v {
+            if is_len(sz.min_width) {
+                x = f32_max_compat(x, sz.min_width.value());
+            }
+            if is_len(sz.max_width)
+                && !(is_len(sz.min_width) && sz.min_width.value() > sz.max_width.value())
+            {
+                x = x.min(sz.max_width.value());
+            }
+            fixed[c] = Some(x);
         }
     }
     let fixed_sum: f32 = fixed.iter().filter_map(|v| *v).sum();

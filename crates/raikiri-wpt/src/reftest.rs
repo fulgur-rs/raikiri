@@ -284,6 +284,17 @@ fn extract_attr<'a>(tag: &'a str, tag_lower: &'a str, name: &str) -> Option<Stri
 /// `ReftestError::MissingReference` (caller decides whether to treat as
 /// Skip).
 pub fn discover_pairs_for_file(test_path: &Path) -> Result<Vec<ReftestPair>, ReftestError> {
+    discover_pairs_for_file_with_wpt_root(test_path, None)
+}
+
+/// Discover reftest pairs like [`discover_pairs_for_file`], but resolve
+/// server-absolute hrefs (leading `/`, e.g. `/css/reference/...` — WPT
+/// serves the tree from docroot so these are valid reftest refs) against
+/// `wpt_root` when given. Relative hrefs behave exactly as before.
+pub fn discover_pairs_for_file_with_wpt_root(
+    test_path: &Path,
+    wpt_root: Option<&Path>,
+) -> Result<Vec<ReftestPair>, ReftestError> {
     let html = std::fs::read_to_string(test_path).map_err(|source| ReftestError::Io {
         path: test_path.to_path_buf(),
         source,
@@ -303,7 +314,14 @@ pub fn discover_pairs_for_file(test_path: &Path) -> Result<Vec<ReftestPair>, Ref
         if href_fs.contains("://") || href_fs.starts_with("data:") {
             continue;
         }
-        let reference = base.join(href_fs);
+        // Server-absolute hrefs resolve against the WPT docroot.
+        let reference = if let Some(root) = wpt_root
+            && href_fs.starts_with('/')
+        {
+            root.join(href_fs.trim_start_matches('/'))
+        } else {
+            base.join(href_fs)
+        };
         // Normalize (remove ./ components)
         let reference = normalize_path(&reference);
         if !reference.exists() {
@@ -347,8 +365,15 @@ fn normalize_path(p: &Path) -> PathBuf {
 /// or `.xhtml` and it contains at least one reftest link. Errors reading
 /// individual files are silently skipped (treated as non-reftest).
 pub fn discover_all_pairs(wpt_root: &Path) -> Vec<ReftestPair> {
+    discover_all_pairs_with_docroot(wpt_root, wpt_root)
+}
+
+/// Walk `walk_root` like [`discover_all_pairs`], resolving server-absolute
+/// hrefs against `docroot` (the WPT tree root). Needed when sweeping a
+/// subtree (e.g. `css/css-tables`) whose tests link `/css/reference/...`.
+pub fn discover_all_pairs_with_docroot(walk_root: &Path, docroot: &Path) -> Vec<ReftestPair> {
     let mut out = Vec::new();
-    let mut stack = vec![wpt_root.to_path_buf()];
+    let mut stack = vec![walk_root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
@@ -370,7 +395,8 @@ pub fn discover_all_pairs(wpt_root: &Path) -> Vec<ReftestPair> {
             {
                 let ext = ext.to_ascii_lowercase();
                 if (ext == "html" || ext == "htm" || ext == "xhtml")
-                    && let Ok(mut pairs) = discover_pairs_for_file(&path)
+                    && let Ok(mut pairs) =
+                        discover_pairs_for_file_with_wpt_root(&path, Some(docroot))
                 {
                     out.append(&mut pairs);
                 }
