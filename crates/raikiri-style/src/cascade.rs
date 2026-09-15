@@ -5284,6 +5284,9 @@ fn project_deferred_value(
             crate::property::PropertyKey::TextDecorationLine => {
                 PropertyValue::TextDecorationLine(shorthand.line)
             }
+            crate::property::PropertyKey::TextDecorationThickness => {
+                PropertyValue::TextDecorationThickness(shorthand.thickness)
+            }
             crate::property::PropertyKey::TextDecorationStyle => {
                 PropertyValue::TextDecorationStyle(shorthand.style)
             }
@@ -6988,7 +6991,19 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::TextDecorationLine(_)
         | PropertyValue::TextDecorationStyle(_)
         | PropertyValue::TextDecorationColor(_)
+        | PropertyValue::TextDecorationSkipInk(_)
+        | PropertyValue::TextDecorationSkipSpaces(_)
+        | PropertyValue::TextEmphasisPosition(_)
+        | PropertyValue::TextUnderlinePosition(_)
         | PropertyValue::TextDecoration(_)
+        // `text-decoration-thickness` / `text-decoration-inset` carry a
+        // `<length-percentage>` that needs the *declaring node's own*
+        // font-size (phase 3), not the inheritance parent's — same shape
+        // as `Padding`/`Margin`/`Width` above, nothing for phase 2 to
+        // resolve here. (`TextDecoration` shorthand itself joins the group
+        // above since expansion removes it before this function runs.)
+        | PropertyValue::TextDecorationThickness(_)
+        | PropertyValue::TextDecorationInset(_)
         // `vertical-align`'s 6 keywords (`baseline`/`sub`/`super`/`middle`/
         // `text-top`/`text-bottom`) describe a shift *relative to the
         // parent's font metrics*, but that relation is a used-value/layout
@@ -7698,6 +7713,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.text_decoration_line = shorthand.line;
             target.text_decoration_style = shorthand.style;
             target.text_decoration_color = shorthand.color;
+            // `thickness` has no staging field (parsing-only,
+            // `PropertyValue::TextDecorationThickness` doc) — nothing to
+            // write here. Same unreachability contract as the 3 staged
+            // longhands above.
         }
         // CSS 2.1 §10.8.1 vertical-align。non-inherited、cascade winner を
         // このまま staging (`SpecifiedValues`) へ書き込む — `<length>`
@@ -8009,14 +8028,27 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // inherit 解決は `SpecifiedValues::inherit_from` の素朴なコピーが担い、
         // ここは winner の単純代入 (`Visibility` arm と同じ shape)。
         PropertyValue::BorderCollapse(v) => target.border_collapse = v,
-        // New Text 3 / Writing Modes 3 properties are keyword-only with no staging field yet (parsing only).
+        // New Text 3 / Writing Modes 3 / Text Decoration 4 properties with no
+        // staging field yet (parsing only). The keyword-only ones
+        // (`LineBreak`...`UnicodeBidi`, `TextDecorationSkipInk`...
+        // `TextUnderlinePosition`) carry no length; `TextDecorationThickness`
+        // / `TextDecorationInset` carry `<length-percentage>` but are still
+        // staging-less — their absolutization lives only on the `@page`
+        // path (`crate::page::absolutize_in_page_context`'s arms), same
+        // split as the phase-2/phase-3 division above.
         PropertyValue::LineBreak(_)
         | PropertyValue::TextJustify(_)
         | PropertyValue::TextAlignAll(_)
         | PropertyValue::TextAlignLast(_)
         | PropertyValue::TextCombineUpright(_)
         | PropertyValue::TextOrientation(_)
-        | PropertyValue::UnicodeBidi(_) => {}
+        | PropertyValue::UnicodeBidi(_)
+        | PropertyValue::TextDecorationSkipInk(_)
+        | PropertyValue::TextDecorationSkipSpaces(_)
+        | PropertyValue::TextDecorationThickness(_)
+        | PropertyValue::TextDecorationInset(_)
+        | PropertyValue::TextEmphasisPosition(_)
+        | PropertyValue::TextUnderlinePosition(_) => {}
         // These values are resolved before ordinary winners reach this
         // function. Keeping an explicit no-op makes direct internal callers
         // panic-free without allowing raw deferred data into a computed field.
@@ -8033,7 +8065,7 @@ mod tests {
     use crate::property::{
         Border, BorderColor, BorderStyle, Length, LengthOrAuto, OutlineColor, OutlineStyle,
         OverflowValue, OverflowXY, PropertyKey, Sides, TextDecorationColor, TextDecorationLine,
-        TextDecorationShorthand, TextDecorationStyle, TextShadowColor,
+        TextDecorationShorthand, TextDecorationStyle, TextDecorationThickness, TextShadowColor,
     };
     use crate::resolve::{
         ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedLength,
@@ -18341,6 +18373,7 @@ mod tests {
             line: TextDecorationLine::UNDERLINE,
             style: TextDecorationStyle::Wavy,
             color: TextDecorationColor::Resolved(RED),
+            thickness: TextDecorationThickness::Auto,
         };
         apply_value(PropertyValue::TextDecoration(shorthand), &mut cv);
         assert_eq!(cv.text_decoration_line, shorthand.line);
@@ -18891,7 +18924,7 @@ mod tests {
         // wins" cascade order (CSS Cascading L4 §6.1 "Order of Appearance").
         // This is the test that actually discriminates a spec-correct
         // expansion from one that merely "leaves the others alone" — see
-        // `crate::rule::tests::text_decoration_shorthand_always_overwrites_all_three_longhand` // doc-pointer-lint:ignore: opt-out-3, #[test]-item body (test doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+        // `crate::rule::tests::text_decoration_shorthand_always_overwrites_all_four_longhand` // doc-pointer-lint:ignore: opt-out-3, #[test]-item body (test doc) — rustdoc-blind, confirmed via わざと壊して確かめる
         // for the declaration-list-shape version of the same fact.
         let cv = cascade_doc(
             "",
@@ -19856,6 +19889,7 @@ mod tests {
                 "underline wavy red",
                 vec![
                     PropertyKey::TextDecorationLine,
+                    PropertyKey::TextDecorationThickness,
                     PropertyKey::TextDecorationStyle,
                     PropertyKey::TextDecorationColor,
                 ],

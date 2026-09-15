@@ -528,6 +528,12 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::TextDecorationLine(_)
         | PropertyValue::TextDecorationStyle(_)
         | PropertyValue::TextDecorationColor(_)
+        | PropertyValue::TextDecorationThickness(_)
+        | PropertyValue::TextDecorationSkipInk(_)
+        | PropertyValue::TextDecorationSkipSpaces(_)
+        | PropertyValue::TextDecorationInset(_)
+        | PropertyValue::TextEmphasisPosition(_)
+        | PropertyValue::TextUnderlinePosition(_)
         | PropertyValue::VerticalAlign(_)
         | PropertyValue::FontStyle(_)
         | PropertyValue::TextTransform(_)
@@ -715,6 +721,7 @@ fn expand_deferred(
         PropertyKey::Overflow => &[PropertyKey::OverflowX, PropertyKey::OverflowY],
         PropertyKey::TextDecoration => &[
             PropertyKey::TextDecorationLine,
+            PropertyKey::TextDecorationThickness,
             PropertyKey::TextDecorationStyle,
             PropertyKey::TextDecorationColor,
         ],
@@ -1124,17 +1131,18 @@ fn expand_place_self(p: PlaceSelfShorthand, important: bool, mut push: impl FnMu
     });
 }
 
-/// `text-decoration` shorthand (CSS Text Decoration Module Level 3 §2.4
-/// <https://www.w3.org/TR/css-text-decor-3/#text-decoration-property>) を
-/// `text-decoration-line` / `-style` / `-color` の 3 longhand に展開する cold
-/// helper。margin / padding / border / overflow shorthand precedent と同
-/// pattern — 3 longhand は互いに 1:1 disjoint field (`TextDecorationShorthand`
-/// doc の「cross-axis coupling が無い」節参照) なので push は 3 回のみ。
+/// `text-decoration` shorthand (CSS Text Decoration 4 ED §2.6
+/// <https://drafts.csswg.org/css-text-decor-4/#text-decoration-property>) を
+/// `text-decoration-line` / `-thickness` / `-style` / `-color` の 4 longhand
+/// に展開する cold helper。margin / padding / border / overflow shorthand
+/// precedent と同 pattern — 4 longhand は互いに 1:1 disjoint field
+/// (`TextDecorationShorthand` doc の「cross-axis coupling が無い」節参照)
+/// なので push は 4 回のみ。
 ///
 /// shorthand parser (`property.rs` の `parse_text_decoration_shorthand`、
 /// private fn のため直接 link 不可) が既に省略成分を spec initial value で
 /// 埋めているため ([`TextDecorationShorthand`] doc の "Initial value fill"
-/// 節)、本関数は 3 field をそのまま 3 declaration に分配するだけでよい —
+/// 節)、本関数は 4 field をそのまま 4 declaration に分配するだけでよい —
 /// margin/padding/border の各 side にも既に initial fill 済みの値が入って
 /// いるのと同じ形。
 #[inline(never)]
@@ -1145,6 +1153,10 @@ fn expand_text_decoration(
 ) {
     push(Declaration {
         value: PropertyValue::TextDecorationLine(shorthand.line),
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::TextDecorationThickness(shorthand.thickness),
         important,
     });
     push(Declaration {
@@ -1431,6 +1443,7 @@ mod tests {
                 PropertyKey::TextDecoration,
                 &[
                     PropertyKey::TextDecorationLine,
+                    PropertyKey::TextDecorationThickness,
                     PropertyKey::TextDecorationStyle,
                     PropertyKey::TextDecorationColor,
                 ],
@@ -2188,24 +2201,30 @@ mod tests {
     // parse-time expansion model。
 
     #[test]
-    fn text_decoration_shorthand_expands_into_three_longhand_declarations() {
-        use crate::property::{TextDecorationColor, TextDecorationLine, TextDecorationStyle};
+    fn text_decoration_shorthand_expands_into_four_longhand_declarations() {
+        use crate::property::{
+            TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextDecorationThickness,
+        };
 
-        // `text-decoration: underline` → 3 longhand、省略成分
-        // (style/color) は spec initial で埋まる (property.rs
+        // `text-decoration: underline` → 4 longhand、省略成分
+        // (thickness/style/color) は spec initial で埋まる (property.rs
         // `parse_text_decoration_shorthand` の "Initial value fill" 節)。
         let decls = parse_block("text-decoration: underline;");
-        assert_eq!(decls.len(), 3, "shorthand must expand to 3 longhand decls");
+        assert_eq!(decls.len(), 4, "shorthand must expand to 4 longhand decls");
         assert_eq!(
             decls[0].value,
             PropertyValue::TextDecorationLine(TextDecorationLine::UNDERLINE)
         );
         assert_eq!(
             decls[1].value,
-            PropertyValue::TextDecorationStyle(TextDecorationStyle::Solid)
+            PropertyValue::TextDecorationThickness(TextDecorationThickness::Auto)
         );
         assert_eq!(
             decls[2].value,
+            PropertyValue::TextDecorationStyle(TextDecorationStyle::Solid)
+        );
+        assert_eq!(
+            decls[3].value,
             PropertyValue::TextDecorationColor(TextDecorationColor::CurrentColor)
         );
     }
@@ -2216,7 +2235,7 @@ mod tests {
         // される (margin / padding / border / overflow important 拡張と同
         // pattern)。
         let decls = parse_block("text-decoration: underline !important;");
-        assert_eq!(decls.len(), 3);
+        assert_eq!(decls.len(), 4);
         for d in &decls {
             assert!(d.important, "important must propagate to every longhand");
         }
@@ -2270,7 +2289,7 @@ mod tests {
     }
 
     #[test]
-    fn text_decoration_shorthand_always_overwrites_all_three_longhand() {
+    fn text_decoration_shorthand_always_overwrites_all_four_longhand() {
         // Shorthand-resets-omitted-longhands: per CSS Cascading L4 §3's
         // "exactly as if expanded in place", `text-decoration: underline`
         // (style/color omitted) still emits a `TextDecorationStyle::Solid` /
@@ -2284,20 +2303,20 @@ mod tests {
         use crate::property::{TextDecorationColor, TextDecorationStyle};
 
         let decls = parse_block("text-decoration-style: wavy; text-decoration: underline;");
-        assert_eq!(decls.len(), 4, "1 longhand + 3 expanded, in source order");
+        assert_eq!(decls.len(), 5, "1 longhand + 4 expanded, in source order");
         assert_eq!(
             decls[0].value,
             PropertyValue::TextDecorationStyle(TextDecorationStyle::Wavy)
         );
-        // The 2nd declaration is the shorthand's TextDecorationLine — the
-        // 3rd is the discriminating one: the shorthand's own Solid,
-        // appearing *after* the earlier explicit Wavy.
+        // The 2nd declaration is the shorthand's TextDecorationLine, the 3rd
+        // its thickness — the 4th is the discriminating one: the shorthand's
+        // own Solid, appearing *after* the earlier explicit Wavy.
         assert_eq!(
-            decls[2].value,
+            decls[3].value,
             PropertyValue::TextDecorationStyle(TextDecorationStyle::Solid)
         );
         assert_eq!(
-            decls[3].value,
+            decls[4].value,
             PropertyValue::TextDecorationColor(TextDecorationColor::CurrentColor)
         );
     }

@@ -499,6 +499,17 @@ css/selectors/parsing/parse-id.html
 css/selectors/parsing/parse-sibling.html
 css/selectors/parsing/parse-universal.html
 
+# --- css-text-decor parsing pin 2026-09-15 (jqg8, 10 more files PASS, specified 200/201 vectors) ---
+css/css-text-decor/parsing/text-decoration-color-invalid.html
+css/css-text-decor/parsing/text-decoration-inset-valid.html
+css/css-text-decor/parsing/text-decoration-invalid.html
+css/css-text-decor/parsing/text-decoration-line-invalid.html
+css/css-text-decor/parsing/text-decoration-line-valid.html
+css/css-text-decor/parsing/text-decoration-skip-ink-valid.html
+css/css-text-decor/parsing/text-decoration-skip-spaces-valid.html
+css/css-text-decor/parsing/text-decoration-valid.html
+css/css-text-decor/parsing/text-emphasis-position-valid.html
+css/css-text-decor/parsing/text-underline-position-valid.html
 # --- css-text-decor parsing pin 2026-09-14 (retry E1, 8 files PASS, 152/201 vectors) ---
 css/css-text-decor/parsing/text-decoration-color-valid.html
 css/css-text-decor/parsing/text-decoration-inset-invalid.html
