@@ -17,6 +17,7 @@ use taffy::{
 };
 
 use crate::document::Document;
+use crate::node::NodeData;
 
 /// Taffy child iterator。raw arena children から `is_in_document() == false`
 /// (`<template>` descendants など) を filter する。
@@ -28,15 +29,43 @@ use crate::document::Document;
 /// 契約なので、そちらは変更せず、taffy 経路でのみ filter する。
 pub struct TaffyChildIter<'a> {
     doc: &'a Document,
+    parent: NodeId,
     inner: core::slice::Iter<'a, usize>,
+}
+
+impl TaffyChildIter<'_> {
+    fn includes(doc: &Document, parent: NodeId, child: usize) -> bool {
+        if !doc.nodes[child].is_in_document() {
+            return false;
+        }
+        // CSS Flexbox §4: anonymous flex items are not generated for
+        // whitespace-only text nodes. The same filtering is needed for Grid,
+        // whose item collection also excludes inter-element source whitespace.
+        if !matches!(
+            doc.nodes[usize::from(parent)].style.display,
+            Display::Flex | Display::Grid
+        ) {
+            return true;
+        }
+        !matches!(
+            &doc.nodes[child].data,
+            NodeData::Text(text)
+                if text
+                    .text_content
+                    .chars()
+                    .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
+        )
+    }
 }
 
 impl Iterator for TaffyChildIter<'_> {
     type Item = NodeId;
     fn next(&mut self) -> Option<Self::Item> {
-        for &c in self.inner.by_ref() {
-            if self.doc.nodes[c].is_in_document() {
-                return Some(NodeId::from(c));
+        let doc = self.doc;
+        let parent = self.parent;
+        for &child in self.inner.by_ref() {
+            if Self::includes(doc, parent, child) {
+                return Some(NodeId::from(child));
             }
         }
         None
@@ -49,6 +78,7 @@ impl TraversePartialTree for Document {
     fn child_ids(&self, node_id: NodeId) -> Self::ChildIter<'_> {
         TaffyChildIter {
             doc: self,
+            parent: node_id,
             inner: self.nodes[usize::from(node_id)].children.iter(),
         }
     }
@@ -58,7 +88,7 @@ impl TraversePartialTree for Document {
         self.nodes[usize::from(node_id)]
             .children
             .iter()
-            .filter(|&&c| self.nodes[c].is_in_document())
+            .filter(|&&c| TaffyChildIter::includes(self, node_id, c))
             .count()
     }
 
@@ -68,7 +98,7 @@ impl TraversePartialTree for Document {
             .children
             .iter()
             .copied()
-            .filter(|&c| self.nodes[c].is_in_document())
+            .filter(|&c| TaffyChildIter::includes(self, node_id, c))
             .nth(index)
             .expect("get_child_id: index out of range");
         NodeId::from(idx)

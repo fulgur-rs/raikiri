@@ -1247,7 +1247,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // quarantine and deprecated stay empty until a developer PR adds a flake or crasher.
         // + flexbox_fbfc (+1, y0zo initial slice: exact 800x600 pass).
         // + flexbox-overflow-vert-003 (+1, y0zo overflow clip: exact 800x600 pass).
-        assert_eq!(set.baseline.entries.len(), 867);
+        // + flexbox gap/wrapping slice (+8, exact 800x600 pass).
+        assert_eq!(set.baseline.entries.len(), 875);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }

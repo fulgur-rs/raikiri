@@ -8384,18 +8384,23 @@ mod tests {
             Style::default(),
             Some("display:flex;gap:10px 30px"),
         );
+        // Source formatting whitespace is not an anonymous flex item. Keep
+        // it in the DOM to exercise the same filtering used by HTML parsing.
+        let _whitespace_before = doc.append_text(flex_container, "\n  ");
         let child_a = doc.append_element(
             Some(flex_container),
             "div",
             Style::default(),
             Some("width:100px;height:20px"),
         );
+        let _whitespace_between = doc.append_text(flex_container, "\n  ");
         let child_b = doc.append_element(
             Some(flex_container),
             "div",
             Style::default(),
             Some("width:100px;height:20px"),
         );
+        let _whitespace_after = doc.append_text(flex_container, "\n");
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
 
