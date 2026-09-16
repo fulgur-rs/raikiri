@@ -569,15 +569,12 @@ css/css-tables/visibility-collapse-rowspan-005.html
 css/css-tables/zero-rowspan-002.html
 # --- css-grid reftest pin 2026-09-14 (210/891 PASS, grid-gap alias + 20 reftest pin) ---
 css/css-grid/abspos/grid-abspos-staticpos-align-self-self-end-large-border-padding.html
-css/css-grid/abspos/grid-abspos-staticpos-align-self-vertWM-last-baseline-003.html
-css/css-grid/abspos/grid-abspos-staticpos-align-self-vertWM-last-baseline-004.html
 css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-001.html
 css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-002.html
 css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-last-baseline-001.html
 css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-last-baseline-002.html
-css/css-grid/abspos/grid-abspos-staticpos-justify-self-rtl-last-baseline-003.html
-css/css-grid/abspos/grid-abspos-staticpos-justify-self-rtl-last-baseline-004.html
 css/css-grid/grid-items/percentage-size-subitems-002.html
+css/css-grid/grid-items/percentage-size-subitems-001.html
 css/css-grid/min-size-auto-overflow-clip.html
 css/css-grid/abspos/grid-abspos-staticpos-align-items-center.html
 css/css-grid/abspos/grid-abspos-staticpos-align-items-center-large-border-padding.html
@@ -970,16 +967,14 @@ css/css-flexbox/layout-algorithm_algo-cross-line-001.html
 css/css-flexbox/min-size-auto-overflow-clip.html
 css/css-flexbox/overflow-area-003.html
 css/css-flexbox/overflow-auto-005.html
-# REMOVED 2026-09-16: css/css-flexbox/percentage-heights-004.html — inline-flex is now
-# parsed as a flex formatting context; the remaining definite-percentage sizing gap is exposed.
+css/css-flexbox/percentage-heights-004.html
 # REMOVED 2026-09-15: css/css-flexbox/percentage-heights-015.html — regressed by
 # the min/max-size bridge (container max-height:200px + item min-height:0 now
 # apply; flexbox definite-size propagation per flexbox-1 §9.8 needed for the
 # child 50% to resolve correctly). Passed while min/max were dropped. Re-pin
 # with the flex definite-size fix. (Sibling content-height-with-scrollbars.html
 # fails identically with and without the bridge — pre-existing, untouched.)
-# REMOVED 2026-09-16: css/css-flexbox/percentage-size-subitems-001.html — inline-flex is now
-# parsed as a flex formatting context; the flex-item percentage-size bridge still differs from the inline-block reference.
+css/css-flexbox/percentage-size-subitems-001.html
 css/css-flexbox/scrollbars-auto.html
 css/css-flexbox/scrollbars-no-margin.html
 css/css-flexbox/scrollbars.html
@@ -1062,3 +1057,14 @@ css/css-tables/subpixel-table-cell-width-002.html
 # - boundary-shaping + hyphens + letter-spacing-trim + line-breaking-023/025
 #   + text-align-last + pre-001 + word-break x4 -> raikiri-spike-p5up
 # - percentage-heights-015 (already unpinned 2026-09-15) -> raikiri-spike-mzio
+
+css/css-flexbox/abspos/flex-abspos-staticpos-fallback-justify-content-001.html
+css/css-flexbox/abspos/flex-abspos-staticpos-justify-self-001.html
+css/css-flexbox/abspos/flex-abspos-staticpos-margin-001.html
+css/css-flexbox/abspos/flex-abspos-staticpos-margin-002.html
+css/css-flexbox/abspos/flex-abspos-staticpos-margin-003.html
+css/css-grid/abspos/grid-abspos-staticpos-align-self-001.html
+css/css-grid/abspos/grid-abspos-staticpos-align-self-self-end.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-001.html
+css/css-flexbox/abspos/flex-abspos-staticpos-align-self-safe-003.html
+# REMOVED 2026-09-16: grid abspos last-baseline vertical/rtl cases remain unsupported by the horizontal Taffy bridge.

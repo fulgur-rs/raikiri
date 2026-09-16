@@ -549,6 +549,18 @@ pub enum Length {
 ///   [`width`](https://www.w3.org/TR/css-sizing-3/#preferred-size-properties)
 ///   — "Value: `auto | <length-percentage [0,∞]> | …`"。`auto` は automatic
 ///   size calculation (下流 layout 責務、margin の余白分配とは別意味)。
+///
+/// A simple `calc()` expression containing a percentage term and an absolute
+/// length term. The percentage is kept in authored percent units; Taffy
+/// resolves it against the used containing-block basis.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CalcLengthPercentage {
+    /// Percentage coefficient (`100%` is `100.0`).
+    pub percent: f32,
+    /// Absolute-length offset in CSS px.
+    pub px: f32,
+}
+
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LengthOrAuto {
@@ -559,6 +571,8 @@ pub enum LengthOrAuto {
     /// "automatic size calculation" (CSS Sizing 3 §3.1.1)。variant 自体は
     /// property-agnostic に保ち、下流 layout が property-specific に解決する。
     Auto,
+    /// A deferred mixed-unit `calc()` expression.
+    Calc(CalcLengthPercentage),
 }
 
 /// `normal | <length>` を取る property の specified value —
@@ -1872,6 +1886,9 @@ pub enum DisplayValue {
     /// <https://www.w3.org/TR/css-display-3/#typedef-display-inside>
     /// <https://www.w3.org/TR/css-display-3/#the-display-properties>
     Flex,
+    /// `inline-flex` — inline-level outer box establishing a flex formatting
+    /// context. The DOM bridge uses this distinction for shrink-to-fit sizing.
+    InlineFlex,
     /// `grid` — CSS Display 3 §2.2 "Inner Display Layout Models" の
     /// `<display-inside>` short form for a grid formatting context。
     /// `<display-outside>` を省略した場合 outer display type は block に
@@ -1882,6 +1899,9 @@ pub enum DisplayValue {
     /// <https://www.w3.org/TR/css-display-3/#typedef-display-inside>
     /// <https://www.w3.org/TR/css-display-3/#the-display-properties>
     Grid,
+    /// `inline-grid` — inline-level outer box establishing a grid formatting
+    /// context. The DOM bridge uses this distinction for shrink-to-fit sizing.
+    InlineGrid,
     /// `list-item` — CSS Display 3 §2 `<display-listitem>`
     /// <https://www.w3.org/TR/css-display-3/#typedef-display-listitem>,
     /// HTML Living Standard's default UA stylesheet rule for `li`
@@ -2563,6 +2583,22 @@ pub enum GridTemplateTracks {
     None,
     /// `<track-list>` / `<auto-track-list>`。
     List(Arc<GridTrackList>),
+}
+
+/// The `grid` shorthand's explicit row/column track lists.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GridShorthand {
+    pub rows: GridTemplateTracks,
+    pub columns: GridTemplateTracks,
+}
+
+/// The four-line `grid-area` placement shorthand.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GridAreaShorthand {
+    pub row_start: GridLineValue,
+    pub column_start: GridLineValue,
+    pub row_end: GridLineValue,
+    pub column_end: GridLineValue,
 }
 
 /// `grid-template-areas` の 1 named area — 1-based, exclusive-end な grid
@@ -4574,6 +4610,8 @@ pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue
         // `table-row`, `table-cell`, `table-caption`, `inline-block` → `block`
         DisplayValue::Inline
         | DisplayValue::InlineBlock
+        | DisplayValue::InlineFlex
+        | DisplayValue::InlineGrid
         | DisplayValue::TableRowGroup
         | DisplayValue::TableColumn
         | DisplayValue::TableColumnGroup
@@ -4605,19 +4643,19 @@ pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue
 ///
 /// # 5 keyword の意味 (spec 確認済み verbatim)
 ///
-/// - [`Normal`](Self::Normal) — "This value directs user agents to collapse
+/// - [`Normal`](WhiteSpace::Normal) — "This value directs user agents to collapse
 ///   sequences of white space into a single character (or in some cases, no
 ///   character). Lines may wrap at allowed soft wrap opportunities." spec
 ///   initial value。
-/// - [`Pre`](Self::Pre) — "This value prevents user agents from collapsing
+/// - [`Pre`](WhiteSpace::Pre) — "This value prevents user agents from collapsing
 ///   sequences of white space. Segment breaks such as line feeds are
 ///   preserved as forced line breaks. Lines only break at forced line
 ///   breaks."
-/// - [`Nowrap`](Self::Nowrap) — "Like normal, this value collapses white
+/// - [`Nowrap`](WhiteSpace::Nowrap) — "Like normal, this value collapses white
 ///   space; but like pre, it does not allow wrapping."
-/// - [`PreWrap`](Self::PreWrap) — "Like pre, this value preserves white
+/// - [`PreWrap`](WhiteSpace::PreWrap) — "Like pre, this value preserves white
 ///   space; but like normal, it allows wrapping."
-/// - [`PreLine`](Self::PreLine) — "Like normal, this value collapses
+/// - [`PreLine`](WhiteSpace::PreLine) — "Like normal, this value collapses
 ///   consecutive white space characters and allows wrapping, but it
 ///   preserves segment breaks in the source as forced line breaks."
 ///
@@ -6494,20 +6532,20 @@ pub enum FilterFunction {
 /// cascade memory DoS 対策の一環でまさにこの break が発生し、以下を
 /// fulgur consumer 向け migration 対象として表明する:
 ///
-/// - [`Content`](Self::Content): `Content(Vec<ContentComponent>)` →
+/// - [`Content`](PropertyValue::Content): `Content(Vec<ContentComponent>)` →
 ///   `Content(Arc<Vec<ContentComponent>>)`
-/// - [`StringSet`](Self::StringSet): payload の outer `Vec<..>` を `Arc<Vec<..>>` に
+/// - [`StringSet`](PropertyValue::StringSet): payload の outer `Vec<..>` を `Arc<Vec<..>>` に
 ///
 /// 同じ cascade memory DoS 対策の counter-* への拡張は、当時 consumer への
 /// live impact 0 だったが同 pattern:
 ///
-/// - [`CounterReset`](Self::CounterReset) / [`CounterIncrement`](Self::CounterIncrement) /
-///   [`CounterSet`](Self::CounterSet): `Vec<(SmolStr, i32)>` → `Arc<Vec<(SmolStr, i32)>>`
+/// - [`CounterReset`](PropertyValue::CounterReset) / [`CounterIncrement`](PropertyValue::CounterIncrement) /
+///   [`CounterSet`](PropertyValue::CounterSet): `Vec<(SmolStr, i32)>` → `Arc<Vec<(SmolStr, i32)>>`
 ///
 /// 同種の Arc-wrap パターンの踏襲 (目的は perf 改善であり、security 対策では
 /// ない) は同 pattern を最後の non-Arc `Vec` payload に適用する:
 ///
-/// - [`FontFamily`](Self::FontFamily): `FontFamily(Vec<Atom>)` →
+/// - [`FontFamily`](PropertyValue::FontFamily): `FontFamily(Vec<Atom>)` →
 ///   `FontFamily(Arc<Vec<Atom>>)`
 ///
 /// Pattern-match で payload を **読む** consumer は `Arc<Vec<T>>` の
@@ -6538,6 +6576,13 @@ pub enum PropertyValue {
     CustomProperty(CustomProperty),
     /// A known property value containing `var()` or a math function.
     Deferred(DeferredValue),
+    /// A resolved simple mixed-unit `calc()` for a length-percentage property.
+    CalcLengthPercentage {
+        /// The property key this value belongs to.
+        key: PropertyKey,
+        /// Percentage and absolute-length terms.
+        value: CalcLengthPercentage,
+    },
     /// `color: <color>` — inherited、initial: black。
     Color(CssColor),
     /// `background-color: <color>` — **non-inherited**、initial: `transparent`。
@@ -7538,6 +7583,10 @@ pub enum PropertyValue {
     /// <https://www.w3.org/TR/css-ui-3/#outline-offset>)。負値も受理し、border edge
     /// からの offset を絶対化する。`<percentage>` は grammar 外。
     OutlineOffset(Length),
+    /// `grid-area` shorthand — placement for one grid item.
+    GridArea(GridAreaShorthand),
+    /// `grid` shorthand — the supported explicit `rows / columns` form.
+    Grid(GridShorthand),
     /// `grid-template-columns` — non-inherited、initial:
     /// [`GridTemplateTracks::None`] ([`GridTemplateTracks`] doc 参照)。
     GridTemplateColumns(GridTemplateTracks),
@@ -7903,6 +7952,10 @@ pub enum PropertyKey {
     FontWeight,
     LineHeight,
     Display,
+    /// `grid` shorthand, which resets and sets the grid template/auto values.
+    Grid,
+    /// `grid-area` placement shorthand.
+    GridArea,
     CounterReset,
     CounterIncrement,
     CounterSet,
@@ -8321,6 +8374,9 @@ impl PropertyValue {
         match self {
             PropertyValue::CustomProperty(_) => PropertyKey::Custom,
             PropertyValue::Deferred(value) => value.key,
+            PropertyValue::CalcLengthPercentage { key, .. } => *key,
+            PropertyValue::Grid(_) => PropertyKey::Grid,
+            PropertyValue::GridArea(_) => PropertyKey::GridArea,
             PropertyValue::Color(_) => PropertyKey::Color,
             PropertyValue::BackgroundColor(_) => PropertyKey::BackgroundColor,
             PropertyValue::FontFamily(_) => PropertyKey::FontFamily,
@@ -9858,6 +9914,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // CSS UI 3 §4.5 outline-offset — <length>, initial 0, non-inherited.
         // 負値も受理し、border edge からの offset を示す。`<percentage>` は grammar 外。
         "outline-offset" => parse_length_allow_negative(input).map(PropertyValue::OutlineOffset),
+        // CSS Grid Layout Module Level 1 §7.2. The common WPT shorthand
+        // form is `<grid-template-rows> / <grid-template-columns>`.
+        "grid" => parse_grid_shorthand(input).map(PropertyValue::Grid),
+        "grid-area" => parse_grid_area_shorthand(input).map(PropertyValue::GridArea),
         // CSS Grid Layout Module Level 1 §7.2
         // <https://www.w3.org/TR/css-grid-1/#track-sizing>.
         "grid-template-columns" => {
@@ -9895,7 +9955,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "justify-items" => parse_self_alignment(input).map(PropertyValue::JustifyItems),
         // CSS Box Alignment Module Level 3 §6.1
         // <https://www.w3.org/TR/css-align-3/#propdef-justify-self>.
-        "justify-self" => parse_align_self(input).map(PropertyValue::JustifySelf),
+        "justify-self" => parse_justify_self(input).map(PropertyValue::JustifySelf),
         // CSS Box Alignment Module Level 3 §7.3
         // <https://www.w3.org/TR/css-align-3/#propdef-place-items>.
         "place-items" => parse_place_items_shorthand(input).map(PropertyValue::PlaceItems),
@@ -13702,18 +13762,41 @@ fn parse_content_alignment_res<'i>(
 /// 参照)。`align-self` (`auto` を追加で受理する) は [`parse_align_self`] が
 /// 本関数を再利用する。
 fn parse_self_alignment(input: &mut Parser<'_, '_>) -> Option<SelfAlignmentValue> {
+    let safe = input.try_parse(|i| i.expect_ident_matching("safe")).is_ok();
+    let _unsafe = !safe
+        && input
+            .try_parse(|i| i.expect_ident_matching("unsafe"))
+            .is_ok();
     let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "normal" => Some(SelfAlignmentValue::Normal),
-        "stretch" => Some(SelfAlignmentValue::Stretch),
-        "center" => Some(SelfAlignmentValue::Center),
-        "start" => Some(SelfAlignmentValue::Start),
-        "end" => Some(SelfAlignmentValue::End),
-        "flex-start" => Some(SelfAlignmentValue::FlexStart),
-        "flex-end" => Some(SelfAlignmentValue::FlexEnd),
-        "baseline" => Some(SelfAlignmentValue::Baseline),
-        _ => None,
+    if ident.eq_ignore_ascii_case("last") {
+        input.expect_ident_matching("baseline").ok()?;
+        return Some(SelfAlignmentValue::Baseline);
     }
+    let value = match ident.to_ascii_lowercase().as_str() {
+        "normal" => SelfAlignmentValue::Normal,
+        "stretch" => SelfAlignmentValue::Stretch,
+        "center" => SelfAlignmentValue::Center,
+        "start" | "self-start" => SelfAlignmentValue::Start,
+        "end" | "self-end" => SelfAlignmentValue::End,
+        "left" => SelfAlignmentValue::Start,
+        "right" => SelfAlignmentValue::End,
+        "flex-start" => SelfAlignmentValue::FlexStart,
+        "flex-end" => SelfAlignmentValue::FlexEnd,
+        "baseline" => SelfAlignmentValue::Baseline,
+        _ => return None,
+    };
+    Some(
+        if safe
+            && matches!(
+                value,
+                SelfAlignmentValue::Center | SelfAlignmentValue::End | SelfAlignmentValue::FlexEnd
+            )
+        {
+            SelfAlignmentValue::Start
+        } else {
+            value
+        },
+    )
 }
 
 /// [`parse_self_alignment`] の `Result` 版 ([`parse_padding_side_res`] と
@@ -13732,7 +13815,45 @@ fn parse_align_self(input: &mut Parser<'_, '_>) -> Option<AlignSelfValue> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(AlignSelfValue::Auto);
     }
-    parse_self_alignment(input).map(AlignSelfValue::Value)
+    let safe = input.try_parse(|i| i.expect_ident_matching("safe")).is_ok();
+    let _unsafe = !safe
+        && input
+            .try_parse(|i| i.expect_ident_matching("unsafe"))
+            .is_ok();
+    parse_self_alignment(input).map(|value| {
+        AlignSelfValue::Value(if safe && matches!(value, SelfAlignmentValue::Center) {
+            SelfAlignmentValue::Start
+        } else {
+            value
+        })
+    })
+}
+
+fn parse_justify_self(input: &mut Parser<'_, '_>) -> Option<AlignSelfValue> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(AlignSelfValue::Auto);
+    }
+    let safe = input.try_parse(|i| i.expect_ident_matching("safe")).is_ok();
+    let _unsafe = !safe
+        && input
+            .try_parse(|i| i.expect_ident_matching("unsafe"))
+            .is_ok();
+    parse_self_alignment(input).map(|value| {
+        AlignSelfValue::Value(
+            if safe
+                && matches!(
+                    value,
+                    SelfAlignmentValue::Center
+                        | SelfAlignmentValue::End
+                        | SelfAlignmentValue::FlexEnd
+                )
+            {
+                SelfAlignmentValue::Start
+            } else {
+                value
+            },
+        )
+    })
 }
 
 /// [`parse_align_self`] の `Result` 版 ([`parse_padding_side_res`] と同じ
@@ -13927,7 +14048,9 @@ fn parse_track_breadth(input: &mut Parser<'_, '_>) -> Option<GridTrackBreadth> {
     if let Ok(flex) = input.try_parse(parse_grid_flex_res) {
         return Some(GridTrackBreadth::Flex(flex));
     }
-    let length = parse_length_value(input, true)?;
+    let length = input
+        .try_parse(|i| parse_length_value(i, true).ok_or_else(|| i.new_custom_error::<(), ()>(())))
+        .ok()?;
     (length_payload(length) >= 0.0).then_some(GridTrackBreadth::Length(length))
 }
 
@@ -13951,7 +14074,9 @@ fn parse_inflexible_breadth(input: &mut Parser<'_, '_>) -> Option<GridInflexible
     {
         return Some(GridInflexibleBreadth::MaxContent);
     }
-    let length = parse_length_value(input, true)?;
+    let length = input
+        .try_parse(|i| parse_length_value(i, true).ok_or_else(|| i.new_custom_error::<(), ()>(())))
+        .ok()?;
     (length_payload(length) >= 0.0).then_some(GridInflexibleBreadth::Length(length))
 }
 
@@ -14158,6 +14283,31 @@ fn grid_track_list_obeys_auto_repeat_constraint(list: &GridTrackList) -> bool {
 /// <auto-track-list>` を parse する (CSS Grid Layout Module Level 1 §7.2
 /// <https://www.w3.org/TR/css-grid-1/#track-sizing>、[`GridTemplateTracks`]
 /// doc 参照)。
+fn parse_grid_area_shorthand(input: &mut Parser<'_, '_>) -> Option<GridAreaShorthand> {
+    let row_start = parse_grid_line(input)?;
+    input.try_parse(|i| i.expect_delim('/')).ok()?;
+    let column_start = parse_grid_line(input)?;
+    input.try_parse(|i| i.expect_delim('/')).ok()?;
+    let row_end = parse_grid_line(input)?;
+    input.try_parse(|i| i.expect_delim('/')).ok()?;
+    let column_end = parse_grid_line(input)?;
+    Some(GridAreaShorthand {
+        row_start,
+        column_start,
+        row_end,
+        column_end,
+    })
+}
+
+fn parse_grid_shorthand(input: &mut Parser<'_, '_>) -> Option<GridShorthand> {
+    let rows = parse_grid_template_tracks(input)?;
+    if input.try_parse(|i| i.expect_delim('/')).is_err() {
+        return None;
+    }
+    let columns = parse_grid_template_tracks(input)?;
+    Some(GridShorthand { rows, columns })
+}
+
 fn parse_grid_template_tracks(input: &mut Parser<'_, '_>) -> Option<GridTemplateTracks> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(GridTemplateTracks::None);
@@ -15039,8 +15189,10 @@ fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
         // The current layout bridge models the outer display type as block,
         // so inline-flex/inline-grid share the corresponding formatting
         // context until inline-level shrink-to-fit support is added.
-        "flex" | "inline-flex" => Some(DisplayValue::Flex),
-        "grid" | "inline-grid" => Some(DisplayValue::Grid),
+        "flex" => Some(DisplayValue::Flex),
+        "inline-flex" => Some(DisplayValue::InlineFlex),
+        "grid" => Some(DisplayValue::Grid),
+        "inline-grid" => Some(DisplayValue::InlineGrid),
         "list-item" => Some(DisplayValue::ListItem),
         "contents" => Some(DisplayValue::Contents),
         "table" => Some(DisplayValue::Table),
@@ -21980,11 +22132,11 @@ mod tests {
         // flow-root remains outside the current bridge.
         assert_eq!(
             parse("inline-flex", "display"),
-            Some(PropertyValue::Display(DisplayValue::Flex))
+            Some(PropertyValue::Display(DisplayValue::InlineFlex))
         );
         assert_eq!(
             parse("inline-grid", "display"),
-            Some(PropertyValue::Display(DisplayValue::Grid))
+            Some(PropertyValue::Display(DisplayValue::InlineGrid))
         );
         assert_eq!(parse("flow-root", "display"), None);
     }
@@ -29804,8 +29956,14 @@ mod tests {
     fn align_items_rejects_self_start_self_end() {
         // scope carving: writing-mode 相対 keyword は未実装
         // (`SelfAlignmentValue` doc 参照)。
-        assert_eq!(parse("self-start", "align-items"), None);
-        assert_eq!(parse("self-end", "align-items"), None);
+        assert_eq!(
+            parse("self-start", "align-items"),
+            Some(PropertyValue::AlignItems(SelfAlignmentValue::Start))
+        );
+        assert_eq!(
+            parse("self-end", "align-items"),
+            Some(PropertyValue::AlignItems(SelfAlignmentValue::End))
+        );
     }
 
     // ── align-self (CSS Box Alignment Module Level 3 §6.2) ──────────────

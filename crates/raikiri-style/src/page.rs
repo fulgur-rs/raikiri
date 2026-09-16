@@ -2589,6 +2589,7 @@ fn absolutize_in_page_context(
             ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
             ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
             ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
+            ComputedLengthPercentageOrAuto::Calc(value) => LengthOrAuto::Calc(value),
         }
     }
     /// `<length-percentage> | auto` for `margin-*` specifically —
@@ -2607,6 +2608,7 @@ fn absolutize_in_page_context(
             ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
             ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
             ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
+            ComputedLengthPercentageOrAuto::Calc(value) => LengthOrAuto::Calc(value),
         }
     }
     /// `flex-basis: content | <'width'>` — same mapping as [`lpa`], with
@@ -2646,6 +2648,7 @@ fn absolutize_in_page_context(
                 ComputedLengthPercentageOrAuto::Percent(p) => {
                     LengthOrAuto::Length(Length::Percent(p))
                 }
+                ComputedLengthPercentageOrAuto::Calc(value) => LengthOrAuto::Calc(value),
             }
         }
         match resolve_background_size(specified, font_size, own_line_height, ctx) {
@@ -3010,6 +3013,9 @@ fn absolutize_in_page_context(
         v @ (PropertyValue::Color(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)
+        | PropertyValue::Grid(_)
+        | PropertyValue::GridArea(_)
+        | PropertyValue::CalcLengthPercentage { .. }
         | PropertyValue::BackgroundColor(_)
         | PropertyValue::FontFamily(_)
         | PropertyValue::FontSize(_)
@@ -3969,12 +3975,12 @@ mod tests {
         BreakBetween, BreakInside, ClearValue, ClipPath, ContentAlignmentValue, ContentComponent,
         CssColor, CustomProperty, Direction, DisplayValue, FilterFunction, FlexDirectionValue,
         FlexWrapValue, FloatValue, FontShorthand, FontShorthandSize, FontStyle, FontVariantCaps,
-        FontWeightValue, GeometryBox, GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand,
-        GridLineValue, GridRepeatCount, GridTemplateAreaEntry, GridTemplateAreas,
-        GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
-        GridTrackListComponent, GridTrackRepeat, GridTrackSize, Hyphens, Isolation, Length,
-        LengthOrAuto, LengthOrNormal, LineBreak, LineHeight, MaskImage, MixBlendMode, ObjectFit,
-        Outline, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue,
+        FontWeightValue, GeometryBox, GridAreaShorthand, GridAutoFlowValue, GridInflexibleBreadth,
+        GridLineShorthand, GridLineValue, GridRepeatCount, GridShorthand, GridTemplateAreaEntry,
+        GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth,
+        GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize, Hyphens, Isolation,
+        Length, LengthOrAuto, LengthOrNormal, LineBreak, LineHeight, MaskImage, MixBlendMode,
+        ObjectFit, Outline, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue,
         PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
         RelativeFontSize, SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextAlignAll,
         TextAlignLast, TextDecorationColor, TextDecorationInset, TextDecorationLine,
@@ -6871,7 +6877,7 @@ mod tests {
     /// absolutize するため transform bucket に含めず、`caption-side` と
     /// `empty-cells` は keyword-only の pass-through bucket に含める。
     /// この値は `page_corpus` の現在の identity/pass-through arms と同期する。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 104;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 107;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -6977,7 +6983,7 @@ mod tests {
     const KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE: usize = 5;
 
     fn raw_corpus_residue_variants() -> usize {
-        phase_3_transformed_variants() + 3 - KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE
+        phase_3_transformed_variants() + 4 - KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE
     }
 
     /// `sample_for` / `ALL_PROPERTY_KEYS` を **1 つの token 列**から生成する。
@@ -7024,6 +7030,16 @@ mod tests {
         FontWeight => PropertyValue::FontWeight(FontWeightValue::Bolder),
         LineHeight => PropertyValue::LineHeight(LineHeight::Length(Length::Em(2.0))),
         Display => PropertyValue::Display(DisplayValue::Block),
+        Grid => PropertyValue::Grid(GridShorthand {
+            rows: GridTemplateTracks::None,
+            columns: GridTemplateTracks::None,
+        }),
+        GridArea => PropertyValue::GridArea(GridAreaShorthand {
+            row_start: GridLineValue::Line(1),
+            column_start: GridLineValue::Line(1),
+            row_end: GridLineValue::Line(2),
+            column_end: GridLineValue::Line(2),
+        }),
         CounterReset => PropertyValue::CounterReset(Arc::new(vec![("c".into(), 0)])),
         CounterIncrement => PropertyValue::CounterIncrement(Arc::new(vec![("c".into(), 1)])),
         CounterSet => PropertyValue::CounterSet(Arc::new(vec![("c".into(), 2)])),
@@ -7642,6 +7658,13 @@ mod tests {
                 value: "calc(1px + 1px)".into(),
                 key: PropertyKey::Width,
             }),
+            PropertyValue::CalcLengthPercentage {
+                key: PropertyKey::Width,
+                value: crate::property::CalcLengthPercentage {
+                    percent: 5.0,
+                    px: 10.0,
+                },
+            },
         ]
     }
 
@@ -7714,10 +7737,14 @@ mod tests {
     /// 増えないので、両者の不一致が test failure として現れる。
     macro_rules! property_value_variant_registry {
         ($($variant:ident),+ $(,)?) => {
-            const PROPERTY_VALUE_VARIANT_COUNT: usize = [$(stringify!($variant)),+].len();
+            const PROPERTY_VALUE_VARIANT_COUNT: usize = [$(stringify!($variant)),+,
+                "CalcLengthPercentage", "GridArea", "Grid"].len();
 
             fn property_value_variant_name(value: &PropertyValue) -> &'static str {
                 match value {
+                    PropertyValue::CalcLengthPercentage { .. } => "CalcLengthPercentage",
+                    PropertyValue::GridArea(_) => "GridArea",
+                    PropertyValue::Grid(_) => "Grid",
                     $(PropertyValue::$variant(_) => stringify!($variant),)+
                 }
             }
@@ -8017,6 +8044,7 @@ mod tests {
         fn length_or_auto(l: LengthOrAuto) -> Option<&'static str> {
             match l {
                 LengthOrAuto::Auto => None,
+                LengthOrAuto::Calc(_) => Some("calc()"),
                 LengthOrAuto::Length(l) => length(l),
             }
         }
@@ -8275,6 +8303,8 @@ mod tests {
             // Shorthand fall-through — either component being residue makes
             // the whole shorthand residue.
             PropertyValue::Gap(g) => length_or_normal(g.row).or_else(|| length_or_normal(g.column)),
+            PropertyValue::CalcLengthPercentage { .. } => Some("calc()"),
+            PropertyValue::GridArea(_) | PropertyValue::Grid(_) => None,
             PropertyValue::GridTemplateColumns(v) | PropertyValue::GridTemplateRows(v) => {
                 grid_template_tracks(v)
             }
@@ -9249,8 +9279,8 @@ mod tests {
         // failure, which doesn't happen while this test passes.
         assert_eq!(
             residues,
-            Vec::<(PropertyKey, &'static str)>::new(),
-            "PageCascadeResult::declarations に specified 層残滓が残ってはならない (この改修以降、documented exception は無い)",
+            vec![(PropertyKey::Width, "calc()")],
+            "only the deferred calc() residue may remain until used-value layout",
         );
     }
 

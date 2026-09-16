@@ -18,6 +18,7 @@ use taffy::{
 
 use crate::document::Document;
 use crate::node::NodeData;
+use raikiri_style::property::DisplayValue;
 
 /// Taffy child iterator。raw arena children から `is_in_document() == false`
 /// (`<template>` descendants など) を filter する。
@@ -161,10 +162,13 @@ impl LayoutPartialTree for Document {
         self.nodes[usize::from(node_id)].unrounded_layout = sanitized;
     }
 
-    fn resolve_calc_value(&self, _val: *const (), _basis: f32) -> f32 {
-        // calc pointer は現状 populate されないため 0.0 を返す (spike と同じ)。
-        // 将来 CSS calc() を実装する際に resolver をここに wire する予定。
-        0.0
+    #[allow(unsafe_code)]
+    fn resolve_calc_value(&self, val: *const (), basis: f32) -> f32 {
+        // `layout::apply_computed_to_style` owns the boxed payload for the
+        // duration of this layout pass, so the Taffy handle is valid here.
+        let value = unsafe { &*(val as *const raikiri_style::property::CalcLengthPercentage) };
+        let resolved = basis * value.percent / 100.0 + value.px;
+        if resolved.is_finite() { resolved } else { 0.0 }
     }
 
     fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
@@ -190,10 +194,8 @@ impl Document {
     /// be visible to (and would not cause wraparound in) that child's own
     /// nested block descendants, only its direct siblings.
     ///
-    /// `overflow` is not yet bridged to `taffy::Style::overflow`
-    /// ([`crate::layout`]'s bridge dispatch has no `overflow` arm), so
-    /// `is_scroll_container()` is always false and the CSS2 §9.4.1
-    /// overflow-triggered BFC establishment does not yet apply to any element.
+    /// Overflow is bridged to `taffy::Style::overflow`; the remaining
+    /// overflow-area details are handled by the paint and block-layout paths.
     fn compute_child_layout_with_block_ctx(
         &mut self,
         node_id: NodeId,
@@ -237,9 +239,11 @@ impl Document {
             // block path below; only width:auto sizes to fit-content here.
             {
                 use raikiri_style::property::DisplayValue;
-                if tree.nodes[idx].display == DisplayValue::InlineBlock
-                    && tree.nodes[idx].style.size.width.is_auto()
-                {
+                let inline_shrink_wrap = matches!(
+                    tree.nodes[idx].display,
+                    DisplayValue::InlineBlock | DisplayValue::InlineFlex | DisplayValue::InlineGrid
+                );
+                if inline_shrink_wrap && tree.nodes[idx].style.size.width.is_auto() {
                     return compute_inline_block_shrink_wrap(tree, node_id, inputs, block_ctx);
                 }
             }
@@ -315,6 +319,7 @@ fn compute_inline_block_shrink_wrap(
     block_ctx: Option<&mut BlockContext<'_>>,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
+    let display = tree.nodes[idx].display;
     let is_leaf = tree.nodes[idx].children.is_empty();
     // Clone what the leaf path needs before any exclusive tree use below.
     let leaf_style = tree.nodes[idx].style.clone();
@@ -352,27 +357,37 @@ fn compute_inline_block_shrink_wrap(
             .size
             .width
         } else {
-            compute_block_layout(
-                tree,
-                node_id,
-                LayoutInput {
-                    run_mode: RunMode::ComputeSize,
-                    sizing_mode,
-                    axis: RequestedAxis::Horizontal,
-                    known_dimensions: Size {
-                        width: None,
-                        height: known_height,
-                    },
-                    available_space: Size {
-                        width,
-                        height: avail_height,
-                    },
-                    ..inputs
+            let intrinsic_inputs = LayoutInput {
+                run_mode: RunMode::ComputeSize,
+                sizing_mode,
+                axis: RequestedAxis::Horizontal,
+                known_dimensions: Size {
+                    width: None,
+                    height: known_height,
                 },
-                None,
-            )
-            .size
-            .width
+                available_space: Size {
+                    width,
+                    height: avail_height,
+                },
+                ..inputs
+            };
+            match display {
+                DisplayValue::InlineFlex => {
+                    compute_flexbox_layout(tree, node_id, intrinsic_inputs)
+                        .size
+                        .width
+                }
+                DisplayValue::InlineGrid => {
+                    compute_grid_layout(tree, node_id, intrinsic_inputs)
+                        .size
+                        .width
+                }
+                _ => {
+                    compute_block_layout(tree, node_id, intrinsic_inputs, None)
+                        .size
+                        .width
+                }
+            }
         }
     };
 
@@ -412,7 +427,11 @@ fn compute_inline_block_shrink_wrap(
             },
         )
     } else {
-        compute_block_layout(tree, node_id, final_inputs, block_ctx)
+        match display {
+            DisplayValue::InlineFlex => compute_flexbox_layout(tree, node_id, final_inputs),
+            DisplayValue::InlineGrid => compute_grid_layout(tree, node_id, final_inputs),
+            _ => compute_block_layout(tree, node_id, final_inputs, block_ctx),
+        }
     }
 }
 

@@ -19,8 +19,8 @@ use parley::{
 use raikiri_style::property::{
     AlignSelfValue, BoxSizing as StyleBoxSizing, ClearValue, ContentAlignmentValue, Direction,
     DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle as StyleFontStyle,
-    GridAutoFlowValue, GridLineValue, GridRepeatCount, GridTemplateAreasValue, SelfAlignmentValue,
-    TextAlign, TextJustify, TextWrapMode, WhiteSpace,
+    GridAutoFlowValue, GridLineValue, GridRepeatCount, GridTemplateAreasValue, OverflowValue,
+    PositionValue, SelfAlignmentValue, TextAlign, TextJustify, TextWrapMode, WhiteSpace,
 };
 use raikiri_style::{
     CascadeResult, ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth,
@@ -36,8 +36,9 @@ use taffy::{
     GridAutoFlow as TaffyGridAutoFlow, GridPlacement, GridTemplateArea as TaffyGridTemplateArea,
     GridTemplateComponent, GridTemplateRepetition, Layout as TaffyLayout, LengthPercentage,
     LengthPercentageAuto, Line as TaffyLine, MaxTrackSizingFunction, MinTrackSizingFunction,
-    NodeId as TaffyNodeId, Point, Rect, RepetitionCount as TaffyRepetitionCount, Size,
-    TrackSizingFunction, compute_root_layout, style_helpers as taffy_style_helpers,
+    NodeId as TaffyNodeId, Overflow as TaffyOverflow, Point, Position as TaffyPosition, Rect,
+    RepetitionCount as TaffyRepetitionCount, Size, TrackSizingFunction, compute_root_layout,
+    style_helpers as taffy_style_helpers,
 };
 
 pub(crate) mod table;
@@ -130,6 +131,9 @@ pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_bo
 /// 条件を満たす block container に minimal な inline formatting context を
 /// 確立する — qualifying condition と scope は同関数の doc 参照。
 pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResult) {
+    // Styles retain raw pointers to these payloads for Taffy's calc callback;
+    // rebuild the arena for every cascade/layout pass.
+    doc.calc_values.clear();
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
             continue;
@@ -141,12 +145,14 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         // has no table layout), carried Node-side like `display` above.
         doc.nodes[idx].table_layout = cv.table_layout;
         doc.nodes[idx].border_collapse = cv.border_collapse;
+        bridge_size(doc, idx, cv);
         let style = &mut doc.nodes[idx].style;
         bridge_display(style, cv);
+        bridge_position(style, cv, &mut doc.layout_warnings);
+        bridge_overflow(style, cv);
         bridge_float(style, cv);
         bridge_margin(style, cv, &mut doc.layout_warnings);
         bridge_padding(style, cv, &mut doc.layout_warnings);
-        bridge_size(style, cv, &mut doc.layout_warnings);
         bridge_min_max_size(style, cv, &mut doc.layout_warnings);
         bridge_border(style, cv, &mut doc.layout_warnings);
         bridge_box_sizing(style, cv);
@@ -206,8 +212,8 @@ fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
         DisplayValue::Inline => Display::Block,
         DisplayValue::InlineBlock => Display::Block,
         DisplayValue::None => Display::None,
-        DisplayValue::Flex => Display::Flex,
-        DisplayValue::Grid => Display::Grid,
+        DisplayValue::Flex | DisplayValue::InlineFlex => Display::Flex,
+        DisplayValue::Grid | DisplayValue::InlineGrid => Display::Grid,
         // Table model — CSS Display 3 §2 / CSS 2.1 §17.2. Taffy 0.12 has no
         // table layout, so map to Block as temporary approximation.
         // Real table routing uses `Node::display` (preserved in
@@ -396,14 +402,56 @@ fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<L
 /// PageBox output pin は test `apply_page_box_to_body_sets_body_style_size_to_page_dimensions`
 /// が担う (author→PageBox の bridge→clobber 連鎖 test は width 側で十分、
 /// 冗長化を避け height 側は structural 保証に留める)。
-fn bridge_size(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
-    // width + height 両方を同時に書くので struct literal を採用。
-    // (以前の field-assign scaffold は一時形態で、
-    //  もはや保つ必要がない — default 保持は cv 側で `Auto` を返せば自然に達成。)
-    style.size = Size {
-        width: computed_length_percentage_or_auto_to_taffy_dimension(cv.width, "width", diag),
-        height: computed_length_percentage_or_auto_to_taffy_dimension(cv.height, "height", diag),
+fn bridge_overflow(style: &mut taffy::Style, cv: &ComputedValues) {
+    fn map(value: OverflowValue) -> TaffyOverflow {
+        match value {
+            OverflowValue::Visible => TaffyOverflow::Visible,
+            OverflowValue::Hidden => TaffyOverflow::Hidden,
+            OverflowValue::Clip => TaffyOverflow::Clip,
+            OverflowValue::Scroll | OverflowValue::Auto => TaffyOverflow::Scroll,
+            _ => TaffyOverflow::Visible,
+        }
+    }
+    style.overflow = Point {
+        x: map(cv.overflow.x),
+        y: map(cv.overflow.y),
     };
+}
+
+fn bridge_position(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
+    style.position = match cv.position {
+        PositionValue::Absolute | PositionValue::Fixed => TaffyPosition::Absolute,
+        PositionValue::Static | PositionValue::Relative | PositionValue::Sticky => {
+            TaffyPosition::Relative
+        }
+        _ => TaffyPosition::Relative,
+    };
+    let mut inset = |value: ComputedLengthPercentageOrAuto, site: &'static str| {
+        computed_length_percentage_or_auto_to_taffy_length_percentage_auto(value, site, diag)
+    };
+    style.inset = Rect {
+        top: inset(cv.top, "top"),
+        right: inset(cv.right, "right"),
+        bottom: inset(cv.bottom, "bottom"),
+        left: inset(cv.left, "left"),
+    };
+}
+
+fn bridge_size(doc: &mut Document, node_id: usize, cv: &ComputedValues) {
+    // width + height 両方を同時に書くので struct literal を採用。
+    let width = computed_length_percentage_or_auto_to_taffy_dimension(
+        &mut doc.calc_values,
+        cv.width,
+        "width",
+        &mut doc.layout_warnings,
+    );
+    let height = computed_length_percentage_or_auto_to_taffy_dimension(
+        &mut doc.calc_values,
+        cv.height,
+        "height",
+        &mut doc.layout_warnings,
+    );
+    doc.nodes[node_id].style.size = Size { width, height };
 }
 /// [`ComputedValues::min_width`] / [`ComputedValues::min_height`] /
 /// [`ComputedValues::max_width`] / [`ComputedValues::max_height`]
@@ -3435,6 +3483,7 @@ fn computed_length_percentage_to_taffy_length_percentage(
 /// `site` distinguishes the two [`bridge_size`] callers (`"width"` /
 /// `"height"`) in [`LayoutWarn::NonFiniteClamped`] events.
 fn computed_length_percentage_or_auto_to_taffy_dimension(
+    calc_values: &mut Vec<std::sync::Arc<raikiri_style::property::CalcLengthPercentage>>,
     loa: ComputedLengthPercentageOrAuto,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
@@ -3446,6 +3495,14 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
             Dimension::percent(sanitize_taffy(p / 100.0, site, diag))
         }
         ComputedLengthPercentageOrAuto::Auto => Dimension::auto(),
+        ComputedLengthPercentageOrAuto::Calc(value) => {
+            calc_values.push(std::sync::Arc::new(value));
+            let pointer = calc_values
+                .last()
+                .map(|value| (&**value) as *const _ as *const ())
+                .expect("calc value was just pushed");
+            Dimension::calc(pointer)
+        }
     }
 }
 
@@ -3472,6 +3529,9 @@ fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
             LengthPercentageAuto::percent(sanitize_taffy(p / 100.0, site, diag))
         }
         ComputedLengthPercentageOrAuto::Auto => LengthPercentageAuto::auto(),
+        // Calc payloads are currently produced only for preferred sizes;
+        // margin calc resolution will share the same arena in a later pass.
+        ComputedLengthPercentageOrAuto::Calc(_) => LengthPercentageAuto::length(0.0),
     }
 }
 
@@ -4170,7 +4230,7 @@ fn is_inline_element_box(cascade: &CascadeResult, idx: usize) -> bool {
 /// whitespace-only text nodes (both generate nothing trimmable-against).
 /// Returns the sibling id, or the ancestor to ascend to when the parent's
 /// edge is reached without finding one (handled by the caller via
-/// [`inline_beyond_block_edge`]).
+/// `inline_beyond_block_edge`).
 fn significant_sibling(
     doc: &Document,
     cascade: &CascadeResult,
@@ -4825,6 +4885,89 @@ pub(crate) fn preshape_text(
     }
 }
 
+/// Correct the static position of grid abspos items whose placement is `auto`.
+/// Taffy handles explicit grid-area placement, but its static-position fallback
+/// uses the border edge instead of the grid content box.
+fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &CascadeResult) {
+    fn length(v: ComputedLengthPercentage, basis: f32) -> f32 {
+        match v {
+            ComputedLengthPercentage::Px(px) => px,
+            ComputedLengthPercentage::Percent(percent) => basis * percent / 100.0,
+        }
+    }
+    fn align_offset(value: AlignSelfValue, parent: SelfAlignmentValue, free: f32) -> f32 {
+        let value = match value {
+            AlignSelfValue::Auto => parent,
+            AlignSelfValue::Value(value) => value,
+            _ => SelfAlignmentValue::Start,
+        };
+        match value {
+            SelfAlignmentValue::Center => free / 2.0,
+            SelfAlignmentValue::End | SelfAlignmentValue::FlexEnd => free,
+            _ => 0.0,
+        }
+    }
+    for child_id in 0..document.nodes.len() {
+        let child = &cascade.computed[child_id];
+        if !matches!(
+            child.position,
+            PositionValue::Absolute | PositionValue::Fixed
+        ) || !matches!(child.top, ComputedLengthPercentageOrAuto::Auto)
+            || !matches!(child.right, ComputedLengthPercentageOrAuto::Auto)
+            || !matches!(child.bottom, ComputedLengthPercentageOrAuto::Auto)
+            || !matches!(child.left, ComputedLengthPercentageOrAuto::Auto)
+        {
+            continue;
+        }
+        let Some(parent_id) = document
+            .nodes
+            .iter()
+            .position(|node| node.children.contains(&child_id))
+        else {
+            continue;
+        };
+        let parent = &cascade.computed[parent_id];
+        if !matches!(
+            parent.display,
+            DisplayValue::Grid | DisplayValue::InlineGrid
+        ) || !matches!(child.grid_row_start, GridLineValue::Auto)
+            || !matches!(child.grid_row_end, GridLineValue::Auto)
+            || !matches!(child.grid_column_start, GridLineValue::Auto)
+            || !matches!(child.grid_column_end, GridLineValue::Auto)
+        {
+            continue;
+        }
+        let parent_size = document.nodes[parent_id].unrounded_layout.size;
+        let border_left = parent.border.left.width().px();
+        let border_right = parent.border.right.width().px();
+        let border_top = parent.border.top.width().px();
+        let border_bottom = parent.border.bottom.width().px();
+        let padding_left = length(parent.padding.left, parent_size.width);
+        let padding_right = length(parent.padding.right, parent_size.width);
+        let padding_top = length(parent.padding.top, parent_size.height);
+        let padding_bottom = length(parent.padding.bottom, parent_size.height);
+        let content_width =
+            (parent_size.width - border_left - border_right - padding_left - padding_right)
+                .max(0.0);
+        let content_height =
+            (parent_size.height - border_top - border_bottom - padding_top - padding_bottom)
+                .max(0.0);
+        let child_size = document.nodes[child_id].unrounded_layout.size;
+        let x = border_left + padding_left;
+        let y = border_top
+            + padding_top
+            + align_offset(
+                child.align_self,
+                parent.align_items,
+                content_height - child_size.height,
+            );
+        let child_layout = &mut document.nodes[child_id].unrounded_layout;
+        child_layout.location.x = x;
+        child_layout.location.y = y;
+        let _ = content_width; // horizontal normal alignment is start in this fallback.
+    }
+}
+
 /// 単一 A4 (or 指定 PageBox) ページに Document を layout する。
 ///
 /// # 変更 (in-place)
@@ -4922,6 +5065,7 @@ pub fn layout_single_page(
     // Step 5a: taffy 確定幅基準の text 再配置 (`text-align: center` 等)。
     // glyph offset のみを変え、box geometry は変えないため invariant 検査の前後
     // どちらでもよいが、確定幅を読む側として compute 直後に置く。
+    realign_grid_abspos_static_positions(document, cascade);
     realign_text_after_layout(document, cascade);
 
     // Step 5b: 親子 geometry の意味的 invariant を検査し、破れている subtree

@@ -43,9 +43,11 @@ use crate::computed::{
 };
 use crate::error::CascadeError;
 use crate::property::{
-    CustomProperty, DeferredValue, FontWeightValue, Length, LengthOrAuto,
-    MAX_DEFERRED_VALUE_NESTING_DEPTH, MAX_SUBSTITUTED_VALUE_BYTES, PositionValue, PropertyValue,
-    RelativeFontSize, is_custom_property_name, parse_value, resolve_text_align_match_parent,
+    CalcLengthPercentage, CustomProperty, DeferredValue, FontWeightValue, GridAutoFlowValue,
+    GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto, MAX_DEFERRED_VALUE_NESTING_DEPTH,
+    MAX_SUBSTITUTED_VALUE_BYTES, PositionValue, PropertyValue, RelativeFontSize,
+    initial_grid_auto_track_list, is_custom_property_name, parse_value,
+    resolve_text_align_match_parent,
 };
 use crate::resolve::{ComputedLength, ResolveContext, used_line_height_length};
 use crate::rule::{expand_shorthand_into, parse_declaration_block};
@@ -5174,12 +5176,71 @@ pub(crate) fn resolve_deferred_value(
     custom_properties: &CustomPropertyEnvironment,
 ) -> Option<PropertyValue> {
     let substituted = substitute_vars(&deferred.value, &mut |name| custom_properties.get(name), 0)?;
-    let simplified = simplify_math_functions(&substituted)?;
+    let simplified = match simplify_math_functions(&substituted) {
+        Some(value) => value,
+        None => {
+            let value = parse_simple_calc_length_percentage(&substituted)?;
+            return Some(PropertyValue::CalcLengthPercentage {
+                key: deferred.key,
+                value,
+            });
+        }
+    };
     let mut input = ParserInput::new(simplified.as_ref());
     let mut parser = Parser::new(&mut input);
     let value = parse_value(&deferred.property, &mut parser)?;
     parser.expect_exhausted().ok()?;
     project_deferred_value(value, deferred.key)
+}
+
+/// Parse mixed-unit calc forms that need a used containing-block basis.
+fn parse_simple_calc_length_percentage(input: &str) -> Option<CalcLengthPercentage> {
+    let trimmed = input.trim();
+    let open = trimmed.find('(')?;
+    if !trimmed[..open].eq_ignore_ascii_case("calc") || !trimmed.ends_with(')') {
+        return None;
+    }
+    let inner = &trimmed[open + 1..trimmed.len() - 1];
+    let mut depth = 0usize;
+    let mut operator = None;
+    for (index, byte) in inner.as_bytes().iter().copied().enumerate() {
+        match byte {
+            b'(' => depth = depth.checked_add(1)?,
+            b')' => depth = depth.checked_sub(1)?,
+            b'+' | b'-' if depth == 0 && index > 0 => {
+                operator = Some((index, byte));
+                break;
+            }
+            _ => {}
+        }
+    }
+    let (left, right, sign) = match operator {
+        Some((index, op)) => (&inner[..index], &inner[index + 1..], op),
+        None => (inner, "", b'+'),
+    };
+    let parse_term = |term: &str| -> Option<(f32, f32)> {
+        let value = MathParser::new(term.trim()).parse()?;
+        if !value.number.is_finite() {
+            return None;
+        }
+        match value.unit.as_deref()? {
+            "%" => Some((value.number, 0.0)),
+            "px" => Some((0.0, value.number)),
+            _ => None,
+        }
+    };
+    let (left_percent, left_px) = parse_term(left)?;
+    let (right_percent, right_px) = if right.trim().is_empty() {
+        (0.0, 0.0)
+    } else {
+        parse_term(right)?
+    };
+    let sign = if sign == b'-' { -1.0 } else { 1.0 };
+    let result = CalcLengthPercentage {
+        percent: left_percent + sign * right_percent,
+        px: left_px + sign * right_px,
+    };
+    (result.percent.is_finite() && result.px.is_finite()).then_some(result)
 }
 
 fn project_deferred_value(
@@ -7343,6 +7404,9 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::EmptyCells(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)
+        | PropertyValue::Grid(_)
+        | PropertyValue::GridArea(_)
+        | PropertyValue::CalcLengthPercentage { .. }
         | PropertyValue::LineBreak(_)
         | PropertyValue::TextJustify(_)
         | PropertyValue::TextAlignAll(_)
@@ -7765,6 +7829,23 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // `PropertyValue::TextAlign` と対称的な単純代入 (non-inherited、cascade
         // winner を直接反映)。`auto` は下流 layout の automatic size calculation
         // (CSS Sizing 3 §5) で解決される — margin `auto` の余白分配とは別意味。
+        PropertyValue::CalcLengthPercentage { key, value } => match key {
+            crate::property::PropertyKey::Width => target.width = LengthOrAuto::Calc(value),
+            crate::property::PropertyKey::Height => target.height = LengthOrAuto::Calc(value),
+            crate::property::PropertyKey::MaxWidth => target.max_width = LengthOrAuto::Calc(value),
+            crate::property::PropertyKey::MaxHeight => {
+                target.max_height = LengthOrAuto::Calc(value)
+            }
+            crate::property::PropertyKey::MinWidth => target.min_width = LengthOrAuto::Calc(value),
+            crate::property::PropertyKey::MinHeight => {
+                target.min_height = LengthOrAuto::Calc(value)
+            }
+            crate::property::PropertyKey::Top => target.top = LengthOrAuto::Calc(value),
+            crate::property::PropertyKey::Right => target.right = LengthOrAuto::Calc(value),
+            crate::property::PropertyKey::Bottom => target.bottom = LengthOrAuto::Calc(value),
+            crate::property::PropertyKey::Left => target.left = LengthOrAuto::Calc(value),
+            _ => {}
+        },
         PropertyValue::Width(v) => target.width = v,
         // CSS Sizing 3 §3.1.1 height。sibling `Width` /
         // `Padding*` / `Margin*` と同じ per-node winner 直接代入 (non-inherited、
@@ -7986,6 +8067,27 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::OutlineStyle(v) => target.outline.style = v,
         PropertyValue::OutlineColor(v) => target.outline.color = v,
         PropertyValue::OutlineOffset(v) => target.outline_offset = v,
+        // CSS Grid Layout Module Level 1 §8.4 `grid-area` shorthand.
+        PropertyValue::GridArea(area) => {
+            target.grid_row_start = area.row_start;
+            target.grid_column_start = area.column_start;
+            target.grid_row_end = area.row_end;
+            target.grid_column_end = area.column_end;
+        }
+        // CSS Grid Layout Module Level 1 `grid` shorthand. Its supported
+        // explicit-track form also resets the other grid sub-properties.
+        PropertyValue::Grid(shorthand) => {
+            target.grid_template_rows = shorthand.rows;
+            target.grid_template_columns = shorthand.columns;
+            target.grid_template_areas = GridTemplateAreasValue::None;
+            target.grid_auto_columns = initial_grid_auto_track_list();
+            target.grid_auto_rows = initial_grid_auto_track_list();
+            target.grid_auto_flow = GridAutoFlowValue::Row;
+            target.grid_row_start = GridLineValue::Auto;
+            target.grid_row_end = GridLineValue::Auto;
+            target.grid_column_start = GridLineValue::Auto;
+            target.grid_column_end = GridLineValue::Auto;
+        }
         // CSS Grid Layout Module Level 1 §7.2/§7.3/§7.6/§7.7/§8.3。
         // non-inherited、specified 表現のまま格納 — 絶対化は phase 3 に
         // 委ねる (`LetterSpacing`/`FlexBasis` arm と同じ handling)。
@@ -21115,13 +21217,17 @@ mod tests {
     }
 
     #[test]
-    fn mixed_length_percentage_math_is_intentionally_not_supported() {
-        // The current public computed representation keeps `Length::Percent`
-        // separate from absolute lengths and has no containing-block basis at
-        // computed-value substitution time. Keep this bounded design explicit
-        // until the representation/API grows a typed length-percentage sum.
+    fn mixed_length_percentage_math_is_preserved_until_used_value_resolution() {
+        // The computed layer preserves the percentage and px terms; the
+        // containing-block basis is only available in the layout bridge.
         let cv = cascade_doc("", "div", Some("width: calc(10px + 5%)"));
-        assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto);
+        assert_eq!(
+            cv.width,
+            ComputedLengthPercentageOrAuto::Calc(crate::property::CalcLengthPercentage {
+                percent: 5.0,
+                px: 10.0,
+            })
+        );
     }
 
     #[test]

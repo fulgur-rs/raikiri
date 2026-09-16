@@ -480,7 +480,10 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         // 展開先の longhand variant を持たない — そのまま 1 個 push。
         // `_` に潰さないこと (上の「wildcard arm を置かない理由 (契約)」節)。
         // ここへ variant を足すことは「展開先が無い」という主張である。
-        PropertyValue::Color(_)
+        PropertyValue::Grid(_)
+        | PropertyValue::GridArea(_)
+        | PropertyValue::CalcLengthPercentage { .. }
+        | PropertyValue::Color(_)
         | PropertyValue::BackgroundColor(_)
         | PropertyValue::FontFamily(_)
         | PropertyValue::FontSize(_)
