@@ -818,6 +818,7 @@ css/css-flexbox/flexbox-definite-cross-size-constrained-percentage.html
 css/css-flexbox/flexbox-flex-wrap-default.htm
 css/css-flexbox/flexbox-flex-wrap-nowrap.htm
 css/css-flexbox/flexbox-margin-auto-horiz-002.xhtml
+css/css-flexbox/table-item-flex-percentage-width.html
 css/css-flexbox/flexbox-overflow-horiz-002.html
 css/css-flexbox/flexbox-overflow-horiz-003.html
 css/css-flexbox/flexbox-overflow-horiz-004.html
