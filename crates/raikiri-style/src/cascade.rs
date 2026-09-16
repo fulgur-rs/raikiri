@@ -623,7 +623,10 @@ pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
 /// [`pick_winners`]/[`apply_winners`] にとって**その node 自身の**
 /// `candidates` 内 index であり続ける前提そのもの (global index space を
 /// そのまま渡すと壊れる、という点に注意)。
-#[cfg(test)]
+// Keep the default-context helper as the stable internal entry point named by
+// the surrounding cascade documentation; production dispatch uses the
+// context-aware implementation below.
+#[allow(dead_code)]
 fn collect_cascaded<D: StyleDom>(
     dom: &D,
     id: StyleNodeId,
