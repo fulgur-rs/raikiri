@@ -1238,8 +1238,10 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // - bidi-tab-001 (-1: dir rules made direction real, exposing
         //   direction-naive tab-stop expansion in RTL spans; needs bidi-aware
         //   tab stops, follow-up).
+        // + subpixel-table-cell-width-001/002 (+2, glk7 grid text-skip:
+        //   non-element children carry no grid structure).
         // quarantine and deprecated stay empty until a developer PR adds a flake or crasher.
-        assert_eq!(set.baseline.entries.len(), 856);
+        assert_eq!(set.baseline.entries.len(), 858);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
