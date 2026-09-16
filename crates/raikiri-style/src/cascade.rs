@@ -34,7 +34,8 @@ use std::sync::Arc;
 use cssparser::{Parser, ParserInput, Token};
 use selectors::attr::{CaseSensitivity, ParsedCaseSensitivity};
 use selectors::parser::{
-    Combinator, NthOfSelectorData, NthSelectorData, Selector, SelectorIter, SelectorList,
+    Combinator, NthOfSelectorData, NthSelectorData, RelativeSelector, Selector, SelectorIter,
+    SelectorList,
 };
 use smol_str::SmolStr;
 
@@ -994,6 +995,14 @@ fn collect_cascaded_with_media_context<D: StyleDom>(
 ///   L4 §13.2 <https://www.w3.org/TR/selectors-4/#the-empty-pseudo>) — see
 ///   [`matches_empty`] doc for the verbatim spec text and its L4-vs-L3
 ///   whitespace-handling correction history.
+/// - `Component::Is` / `Component::Where` (`:is()` / `:where()`) — recursively
+///   match their selector lists against the same element. Invalid branches
+///   produced by forgiving parsing fail closed in the ordinary matcher, while
+///   the rule-tree gate keeps the valid branches available.
+/// - `Component::Has` (`:has()`) — evaluate each relative selector by binding
+///   its `RelativeSelectorAnchor` to the subject and searching the appropriate
+///   descendant or sibling region. Nested `:has()` is rejected by the parser
+///   and remains a fail-closed matcher case.
 /// - `Component::Nth(data)` (`:first-child`/`:last-child`/`:only-child`/
 ///   `:nth-child()`/`:nth-last-child()` and their `-of-type` counterparts,
 ///   CSS Selectors L4 §13.3/§13.4) — see
@@ -1013,7 +1022,9 @@ fn collect_cascaded_with_media_context<D: StyleDom>(
 ///   `S` using the same complex-selector matcher as a stylesheet selector;
 ///   only matching children contribute to the 1-based position.
 ///
-/// 他 component (namespace 付き属性 selector = 常に `Component::AttributeOther`、
+/// `Component::RelativeSelectorAnchor` is only true when the enclosing
+/// `:has()` matcher supplies the corresponding subject id; an anchor cannot
+/// match in an ordinary stylesheet selector. 他の component (namespace 付き属性 selector = 常に `Component::AttributeOther`、
 /// または非小文字 local name **かつ値付き**の属性 selector = 同じく
 /// `Component::AttributeOther` — 非小文字でも値なしの存在チェック形態は
 /// namespace 無指定なら `AttributeInNoNamespaceExists` のまま、詳細は
@@ -1027,6 +1038,7 @@ fn compound_matches<D: StyleDom, E: StyleElement>(
     elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
+    relative_anchor: Option<StyleNodeId>,
 ) -> bool {
     use selectors::parser::Component;
 
@@ -1137,10 +1149,30 @@ fn compound_matches<D: StyleDom, E: StyleElement>(
             },
             Component::Root => ancestors.is_empty(),
             Component::Empty => matches_empty(dom, elem_id),
-            Component::Negation(selectors) => !selector_slice_matches(
+            Component::Negation(selectors) => !selector_slice_matches_with_anchor(
                 selectors.slice(),
                 dom,
                 elem,
+                elem_id,
+                ancestors,
+                quirks_mode,
+                relative_anchor,
+            ),
+            Component::Is(selectors) | Component::Where(selectors) => {
+                selector_slice_matches_with_anchor(
+                    selectors.slice(),
+                    dom,
+                    elem,
+                    elem_id,
+                    ancestors,
+                    quirks_mode,
+                    relative_anchor,
+                )
+            }
+            Component::Has(_) if relative_anchor.is_some() => false,
+            Component::Has(relative_selectors) => has_relative_selector_matches(
+                dom,
+                relative_selectors,
                 elem_id,
                 ancestors,
                 quirks_mode,
@@ -1183,6 +1215,7 @@ fn compound_matches<D: StyleDom, E: StyleElement>(
                     quirks_mode,
                 )
             }
+            Component::RelativeSelectorAnchor => relative_anchor == Some(elem_id),
             _ => {
                 // 他 component (AttributeOther) は ruletree build 段で
                 // drop 済のはずだが safety net で match fail
@@ -1616,9 +1649,29 @@ fn selector_slice_matches<D: StyleDom, E: StyleElement>(
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
 ) -> bool {
-    selectors
-        .iter()
-        .any(|selector| selector_matches(dom, selector, elem, elem_id, ancestors, quirks_mode))
+    selector_slice_matches_with_anchor(selectors, dom, elem, elem_id, ancestors, quirks_mode, None)
+}
+
+fn selector_slice_matches_with_anchor<D: StyleDom, E: StyleElement>(
+    selectors: &[Selector<RaikiriSelectorImpl>],
+    dom: &D,
+    elem: &E,
+    elem_id: StyleNodeId,
+    ancestors: &[StyleNodeId],
+    quirks_mode: StyleQuirksMode,
+    relative_anchor: Option<StyleNodeId>,
+) -> bool {
+    selectors.iter().any(|selector| {
+        selector_matches_with_anchor(
+            dom,
+            selector,
+            elem,
+            elem_id,
+            ancestors,
+            quirks_mode,
+            relative_anchor,
+        )
+    })
 }
 
 fn selector_matches<D: StyleDom, E: StyleElement>(
@@ -1629,14 +1682,198 @@ fn selector_matches<D: StyleDom, E: StyleElement>(
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
 ) -> bool {
+    selector_matches_with_anchor(dom, selector, elem, elem_id, ancestors, quirks_mode, None)
+}
+
+/// Matches a selector while optionally binding the internal
+/// `RelativeSelectorAnchor` component generated for a `:has()` argument to a
+/// particular element. Ordinary stylesheet selectors use [`selector_matches`]
+/// and therefore cannot match that internal component.
+fn selector_matches_with_anchor<D: StyleDom, E: StyleElement>(
+    dom: &D,
+    selector: &Selector<RaikiriSelectorImpl>,
+    elem: &E,
+    elem_id: StyleNodeId,
+    ancestors: &[StyleNodeId],
+    quirks_mode: StyleQuirksMode,
+    relative_anchor: Option<StyleNodeId>,
+) -> bool {
     let mut iter = selector.iter();
-    compound_matches(dom, &mut iter, elem, elem_id, ancestors, quirks_mode)
-        && match iter.next_sequence() {
-            None => true,
-            Some(combinator) => {
-                match_combinator_chain(dom, combinator, elem_id, ancestors, iter, quirks_mode)
+    compound_matches(
+        dom,
+        &mut iter,
+        elem,
+        elem_id,
+        ancestors,
+        quirks_mode,
+        relative_anchor,
+    ) && match iter.next_sequence() {
+        None => true,
+        Some(combinator) => match_combinator_chain(
+            dom,
+            combinator,
+            elem_id,
+            ancestors,
+            iter,
+            quirks_mode,
+            relative_anchor,
+        ),
+    }
+}
+
+/// Matches the relative selector list stored by `:has()` against an anchor
+/// element. `selectors` stores each relative selector with an internal
+/// `RelativeSelectorAnchor` at its left edge, so the normal right-to-left
+/// matcher can be reused once that marker is bound to `anchor_id`.
+fn has_relative_selector_matches<D: StyleDom>(
+    dom: &D,
+    relative_selectors: &[RelativeSelector<RaikiriSelectorImpl>],
+    anchor_id: StyleNodeId,
+    anchor_ancestors: &[StyleNodeId],
+    quirks_mode: StyleQuirksMode,
+) -> bool {
+    for relative_selector in relative_selectors {
+        let leading_combinator = relative_selector.selector.combinator_at_parse_order(1);
+        let include_descendants = relative_selector.match_hint.is_subtree();
+
+        let (roots, candidate_ancestors) = match leading_combinator {
+            Combinator::Child | Combinator::Descendant => {
+                let roots = in_document_element_children(dom, anchor_id);
+                let mut candidate_ancestors = anchor_ancestors.to_vec();
+                candidate_ancestors.push(anchor_id);
+                (roots, candidate_ancestors)
+            }
+            Combinator::NextSibling | Combinator::LaterSibling => {
+                let parent_id = anchor_ancestors
+                    .last()
+                    .copied()
+                    .unwrap_or_else(|| dom.root_id());
+                let roots = following_sibling_elements(
+                    dom,
+                    parent_id,
+                    anchor_id,
+                    relative_selector.match_hint.is_next_sibling(),
+                );
+                (roots, anchor_ancestors.to_vec())
+            }
+            // The parser rejects pseudo-element/slot/part combinators inside
+            // `:has()`. Keep the matcher fail-closed if a future parser path
+            // constructs one anyway.
+            // cov:ignore: `selectors` does not construct these combinators in a :has() relative selector
+            Combinator::PseudoElement | Combinator::Part | Combinator::SlotAssignment => {
+                continue;
+            }
+        };
+
+        if relative_selector_matches_in_regions(
+            dom,
+            &relative_selector.selector,
+            &roots,
+            &candidate_ancestors,
+            include_descendants,
+            anchor_id,
+            quirks_mode,
+        ) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Searches the candidate roots and, when the relative selector can reach
+/// deeper nodes, their element subtrees. The explicit stack avoids consuming
+/// the native call stack on deeply nested untrusted markup.
+fn relative_selector_matches_in_regions<D: StyleDom>(
+    dom: &D,
+    selector: &Selector<RaikiriSelectorImpl>,
+    roots: &[StyleNodeId],
+    base_ancestors: &[StyleNodeId],
+    include_descendants: bool,
+    anchor_id: StyleNodeId,
+    quirks_mode: StyleQuirksMode,
+) -> bool {
+    // Keep one mutable ancestor path and record only its length in each stack
+    // entry. Cloning the full path into every pending child makes a deep,
+    // branched `:has()` miss retain O(depth²) ancestor ids at a choice point;
+    // truncating on pop gives the same DFS paths with O(depth + pending nodes)
+    // storage instead.
+    let base_depth = base_ancestors.len();
+    let mut ancestor_path = base_ancestors.to_vec();
+    let mut stack: Vec<(StyleNodeId, usize)> = Vec::with_capacity(roots.len());
+    for &root_id in roots.iter().rev() {
+        stack.push((root_id, base_depth));
+    }
+
+    while let Some((candidate_id, depth)) = stack.pop() {
+        ancestor_path.truncate(depth);
+        if !is_in_document_element(dom, candidate_id) {
+            continue; // cov:ignore: roots are pre-filtered; only a malformed custom DOM can reach this branch
+        }
+        let Some(node) = dom.node(candidate_id) else {
+            continue; // cov:ignore: is_in_document_element already required a node for this id
+        };
+        let Some(elem) = node.as_element() else {
+            continue; // cov:ignore: is_in_document_element already required an element node
+        };
+        if selector_matches_with_anchor(
+            dom,
+            selector,
+            &elem,
+            candidate_id,
+            &ancestor_path,
+            quirks_mode,
+            Some(anchor_id),
+        ) {
+            return true;
+        }
+        if !include_descendants {
+            continue;
+        }
+
+        ancestor_path.push(candidate_id);
+        let child_depth = ancestor_path.len();
+        let start = stack.len();
+        stack.extend(
+            dom.child_ids(candidate_id)
+                .map(|child_id| (child_id, child_depth)),
+        );
+        // The stack is LIFO, but child_ids is in document order. Reverse only
+        // the newly appended entries so traversal remains pre-order.
+        stack[start..].reverse();
+    }
+    false
+}
+
+/// Returns direct in-document element children in document order.
+fn in_document_element_children<D: StyleDom>(dom: &D, parent_id: StyleNodeId) -> Vec<StyleNodeId> {
+    dom.child_ids(parent_id)
+        .filter(|&id| is_in_document_element(dom, id))
+        .collect()
+}
+
+/// Returns the following element siblings of `anchor_id`, optionally limited
+/// to the first one for the adjacent-sibling relative combinator.
+fn following_sibling_elements<D: StyleDom>(
+    dom: &D,
+    parent_id: StyleNodeId,
+    anchor_id: StyleNodeId,
+    only_first: bool,
+) -> Vec<StyleNodeId> {
+    let mut following = false;
+    let mut result = Vec::new();
+    for child_id in dom.child_ids(parent_id) {
+        if child_id == anchor_id {
+            following = true;
+            continue;
+        }
+        if following && is_in_document_element(dom, child_id) {
+            result.push(child_id);
+            if only_first {
+                break;
             }
         }
+    }
+    result
 }
 
 /// `::before`/`::after` counterpart of [`selector_matches`]: if `selector`
@@ -1708,12 +1945,18 @@ fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
          doc for why that's the only shape a successfully-parsed selector \
          can take here"
     );
-    let matches = compound_matches(dom, &mut iter, elem, elem_id, ancestors, quirks_mode)
+    let matches = compound_matches(dom, &mut iter, elem, elem_id, ancestors, quirks_mode, None)
         && match iter.next_sequence() {
             None => true,
-            Some(next_combinator) => {
-                match_combinator_chain(dom, next_combinator, elem_id, ancestors, iter, quirks_mode)
-            }
+            Some(next_combinator) => match_combinator_chain(
+                dom,
+                next_combinator,
+                elem_id,
+                ancestors,
+                iter,
+                quirks_mode,
+                None,
+            ),
         };
     matches.then_some(pseudo)
 }
@@ -2050,6 +2293,7 @@ fn match_combinator_chain<D: StyleDom>(
     ancestors: &[StyleNodeId],
     iter: SelectorIter<'_, RaikiriSelectorImpl>,
     quirks_mode: StyleQuirksMode,
+    relative_anchor: Option<StyleNodeId>,
 ) -> bool {
     struct Frame<'a, 's, D: StyleDom> {
         candidates: PendingCandidates<'a, D>,
@@ -2136,6 +2380,7 @@ fn match_combinator_chain<D: StyleDom>(
             candidate_ancestors,
             candidate_iter,
             quirks_mode,
+            relative_anchor,
         ) else {
             // Candidate's compound didn't match — try this frame's next
             // candidate (loop back without push/pop). Immediate failure,
@@ -2423,6 +2668,7 @@ fn match_from_element<'s, D: StyleDom>(
     ancestors: &[StyleNodeId],
     mut iter: SelectorIter<'s, RaikiriSelectorImpl>,
     quirks_mode: StyleQuirksMode,
+    relative_anchor: Option<StyleNodeId>,
 ) -> Option<SelectorIter<'s, RaikiriSelectorImpl>> {
     // Both guards below are defensive and not reachable via the real
     // `collect_cascaded` → `match_complex_selector_list` call path: every
@@ -2458,7 +2704,15 @@ fn match_from_element<'s, D: StyleDom>(
     // not `elem`'s (the search's original caller's) parent. Sibling jumps
     // pass `ancestors` through unchanged (siblings
     // share a parent), so this holds for those candidates too.
-    if !compound_matches(dom, &mut iter, &elem, elem_id, ancestors, quirks_mode) {
+    if !compound_matches(
+        dom,
+        &mut iter,
+        &elem,
+        elem_id,
+        ancestors,
+        quirks_mode,
+        relative_anchor,
+    ) {
         return None;
     }
     Some(iter)
@@ -8959,6 +9213,56 @@ mod tests {
         assert_eq!(r.computed[div].color, ComputedValues::initial().color);
     }
 
+    fn assert_attribute_operator_match(selector: &str, value: &str, expected_match: bool) {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, selector);
+        let div = doc.push_element(0, "div", None);
+        doc.set_attr(div, "data-foo", value);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[div].color == RED, expected_match);
+    }
+
+    #[test]
+    fn attribute_prefix_match_selector_applies_declaration() {
+        assert_attribute_operator_match(r#"[data-foo^="pre"] { color: red }"#, "prefix", true);
+        assert_attribute_operator_match(r#"[data-foo^="pre"] { color: red }"#, "xprefix", false);
+    }
+
+    #[test]
+    fn attribute_suffix_match_selector_applies_declaration() {
+        assert_attribute_operator_match(r#"[data-foo$="fix"] { color: red }"#, "prefix", true);
+        assert_attribute_operator_match(r#"[data-foo$="fix"] { color: red }"#, "fixed", false);
+    }
+
+    #[test]
+    fn attribute_substring_match_selector_applies_declaration() {
+        assert_attribute_operator_match(r#"[data-foo*="ref"] { color: red }"#, "prefix", true);
+        assert_attribute_operator_match(r#"[data-foo*="ref"] { color: red }"#, "pfix", false);
+    }
+
+    #[test]
+    fn attribute_whitespace_token_match_selector_applies_declaration() {
+        assert_attribute_operator_match(
+            r#"[data-foo~="beta"] { color: red }"#,
+            "alpha beta gamma",
+            true,
+        );
+        assert_attribute_operator_match(
+            r#"[data-foo~="beta"] { color: red }"#,
+            "alphabetagamma",
+            false,
+        );
+    }
+
+    #[test]
+    fn attribute_hyphen_prefix_match_selector_applies_declaration() {
+        assert_attribute_operator_match(r#"[data-foo|="en"] { color: red }"#, "en-US", true);
+        assert_attribute_operator_match(r#"[data-foo|="en"] { color: red }"#, "english", false);
+    }
+
     #[test]
     fn attribute_value_exact_match_is_case_sensitive_for_data_attr() {
         // CSS Selectors L4 attribute-selectors: default case-sensitivity
@@ -11941,6 +12245,301 @@ mod tests {
             r.computed[second_p].font_weight,
             ComputedValues::initial().font_weight,
             ".section > p:first-child must not match the second <p>"
+        );
+    }
+
+    #[test]
+    fn is_pseudo_class_matches_any_inner_selector() {
+        let mut doc = TestDoc::new();
+        let style = doc.push_element(0, "style", None);
+        doc.push_text(
+            style,
+            "div:is(.featured, [data-kind=selected]) { font-weight: bold }",
+        );
+
+        let by_class = doc.push_element(0, "div", None);
+        doc.set_attr(by_class, "class", "featured");
+        let by_attribute = doc.push_element(0, "div", None);
+        doc.set_attr(by_attribute, "data-kind", "selected");
+        let no_match = doc.push_element(0, "div", None);
+
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(result.computed[by_class].font_weight, 700.0);
+        assert_eq!(result.computed[by_attribute].font_weight, 700.0);
+        assert_eq!(result.computed[no_match].font_weight, 400.0);
+    }
+
+    #[test]
+    fn is_and_where_use_selectors_specificity_rules() {
+        let mut is_doc = TestDoc::new();
+        let is_style = is_doc.push_element(0, "style", None);
+        is_doc.push_text(
+            is_style,
+            ".featured { font-weight: bold } \
+             div:is(#unused, .featured) { font-weight: 300 }",
+        );
+        let is_element = is_doc.push_element(0, "div", None);
+        is_doc.set_attr(is_element, "class", "featured");
+        let is_tree = build_rule_tree(&is_doc);
+        let is_result = cascade(&is_doc, &is_tree).expect("cascade Ok");
+        assert_eq!(is_result.computed[is_element].font_weight, 300.0);
+
+        let mut where_doc = TestDoc::new();
+        let where_style = where_doc.push_element(0, "style", None);
+        where_doc.push_text(
+            where_style,
+            ".featured { font-weight: bold } \
+             div:where(#unused, .featured) { font-weight: 300 }",
+        );
+        let where_element = where_doc.push_element(0, "div", None);
+        where_doc.set_attr(where_element, "class", "featured");
+        let where_tree = build_rule_tree(&where_doc);
+        let where_result = cascade(&where_doc, &where_tree).expect("cascade Ok");
+        assert_eq!(where_result.computed[where_element].font_weight, 700.0);
+    }
+
+    #[test]
+    fn forgiving_logical_selector_ignores_invalid_branches() {
+        let mut doc = TestDoc::new();
+        let style = doc.push_element(0, "style", None);
+        doc.push_text(
+            style,
+            "div:is(.featured, :unknown-pseudo) { font-weight: 300 } \
+             div:where(.selected, 123) { font-weight: 500 }",
+        );
+        let is_element = doc.push_element(0, "div", None);
+        doc.set_attr(is_element, "class", "featured");
+        let where_element = doc.push_element(0, "div", None);
+        doc.set_attr(where_element, "class", "selected");
+
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(result.computed[is_element].font_weight, 300.0);
+        assert_eq!(result.computed[where_element].font_weight, 500.0);
+    }
+
+    #[test]
+    fn has_matches_descendants_and_relative_siblings() {
+        let mut doc = TestDoc::new();
+        let style = doc.push_element(0, "style", None);
+        doc.push_text(
+            style,
+            "section:has(> .direct:is(.featured, 123)) { font-weight: 700 } \
+             article:has(.deep) { font-weight: 600 } \
+             div:has(+ p.adjacent) { font-weight: 500 } \
+             div:has(~ p.later) { font-weight: 300 }",
+        );
+
+        let direct_section = doc.push_element(0, "section", None);
+        let direct_child = doc.push_element(direct_section, "div", None);
+        doc.set_attr(direct_child, "class", "direct featured");
+        let indirect_section = doc.push_element(0, "section", None);
+        let wrapper = doc.push_element(indirect_section, "div", None);
+        let indirect_child = doc.push_element(wrapper, "div", None);
+        doc.set_attr(indirect_child, "class", "direct featured");
+
+        let deep_article = doc.push_element(0, "article", None);
+        let deep_wrapper = doc.push_element(deep_article, "div", None);
+        doc.push_element(deep_wrapper, "span", None);
+        let deep_target = doc.push_element(deep_wrapper, "span", None);
+        doc.set_attr(deep_target, "class", "deep");
+        let empty_article = doc.push_element(0, "article", None);
+
+        let adjacent_parent = doc.push_element(0, "main", None);
+        let adjacent_anchor = doc.push_element(adjacent_parent, "div", None);
+        let adjacent = doc.push_element(adjacent_parent, "p", None);
+        doc.set_attr(adjacent, "class", "adjacent");
+        let no_adjacent_parent = doc.push_element(0, "main", None);
+        let no_adjacent = doc.push_element(no_adjacent_parent, "div", None);
+        doc.push_element(no_adjacent_parent, "span", None);
+
+        let later_parent = doc.push_element(0, "main", None);
+        let later_anchor = doc.push_element(later_parent, "div", None);
+        doc.push_element(later_parent, "span", None);
+        let later = doc.push_element(later_parent, "p", None);
+        doc.set_attr(later, "class", "later");
+        let no_later_parent = doc.push_element(0, "main", None);
+        let no_later = doc.push_element(no_later_parent, "div", None);
+        doc.push_element(no_later_parent, "span", None);
+
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(result.computed[direct_section].font_weight, 700.0);
+        assert_eq!(result.computed[indirect_section].font_weight, 400.0);
+        assert_eq!(result.computed[deep_article].font_weight, 600.0);
+        assert_eq!(result.computed[empty_article].font_weight, 400.0);
+        assert_eq!(result.computed[adjacent_anchor].font_weight, 500.0);
+        assert_eq!(result.computed[no_adjacent].font_weight, 400.0);
+        assert_eq!(result.computed[later_anchor].font_weight, 300.0);
+        assert_eq!(result.computed[no_later].font_weight, 400.0);
+    }
+
+    #[test]
+    fn has_matches_mixed_relative_combinator_chains() {
+        let mut doc = TestDoc::new();
+        let style = doc.push_element(0, "style", None);
+        doc.push_text(
+            style,
+            "#child-desc:has(> .first .target) { font-weight: 701 } \
+             #adj-desc:has(+ .first .target) { font-weight: 702 } \
+             #child-sib:has(> .first + .target) { font-weight: 703 } \
+             #adj-sib:has(+ .first + .target) { font-weight: 704 } \
+             #general-child:has(~ .first > .target) { font-weight: 705 } \
+             #general-sib:has(~ .first + .target) { font-weight: 706 }",
+        );
+
+        let child_desc = doc.push_element(0, "section", None);
+        doc.set_attr(child_desc, "id", "child-desc");
+        let first = doc.push_element(child_desc, "div", None);
+        doc.set_attr(first, "class", "first");
+        let target = doc.push_element(first, "span", None);
+        doc.set_attr(target, "class", "target");
+
+        let adj_desc_parent = doc.push_element(0, "main", None);
+        let adj_desc = doc.push_element(adj_desc_parent, "section", None);
+        doc.set_attr(adj_desc, "id", "adj-desc");
+        doc.push_text(adj_desc_parent, "ignored text");
+        let first = doc.push_element(adj_desc_parent, "div", None);
+        doc.set_attr(first, "class", "first");
+        let target = doc.push_element(first, "span", None);
+        doc.set_attr(target, "class", "target");
+
+        let child_sib = doc.push_element(0, "section", None);
+        doc.set_attr(child_sib, "id", "child-sib");
+        let first = doc.push_element(child_sib, "div", None);
+        doc.set_attr(first, "class", "first");
+        doc.push_comment(child_sib, "ignored comment");
+        let target = doc.push_element(child_sib, "span", None);
+        doc.set_attr(target, "class", "target");
+
+        let adj_sib_parent = doc.push_element(0, "main", None);
+        let adj_sib = doc.push_element(adj_sib_parent, "section", None);
+        doc.set_attr(adj_sib, "id", "adj-sib");
+        let first = doc.push_element(adj_sib_parent, "div", None);
+        doc.set_attr(first, "class", "first");
+        let target = doc.push_element(adj_sib_parent, "span", None);
+        doc.set_attr(target, "class", "target");
+
+        let general_child_parent = doc.push_element(0, "main", None);
+        let general_child = doc.push_element(general_child_parent, "section", None);
+        doc.set_attr(general_child, "id", "general-child");
+        doc.push_element(general_child_parent, "i", None);
+        let first = doc.push_element(general_child_parent, "div", None);
+        doc.set_attr(first, "class", "first");
+        let target = doc.push_element(first, "span", None);
+        doc.set_attr(target, "class", "target");
+
+        let general_sib_parent = doc.push_element(0, "main", None);
+        let general_sib = doc.push_element(general_sib_parent, "section", None);
+        doc.set_attr(general_sib, "id", "general-sib");
+        doc.push_element(general_sib_parent, "i", None);
+        let first = doc.push_element(general_sib_parent, "div", None);
+        doc.set_attr(first, "class", "first");
+        let target = doc.push_element(general_sib_parent, "span", None);
+        doc.set_attr(target, "class", "target");
+
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        for (id, expected) in [
+            (child_desc, 701.0),
+            (adj_desc, 702.0),
+            (child_sib, 703.0),
+            (adj_sib, 704.0),
+            (general_child, 705.0),
+            (general_sib, 706.0),
+        ] {
+            assert_eq!(result.computed[id].font_weight, expected);
+        }
+    }
+
+    /// A failed descendant search over a deep, branched subtree must not copy
+    /// the full ancestor path into every pending sibling. This shape keeps one
+    /// sibling pending at each depth, which is the peak retained-path case for
+    /// the explicit search stack.
+    #[test]
+    fn has_deep_branched_miss_uses_bounded_ancestor_storage() {
+        const DEPTH: usize = 2_048;
+        let mut doc = TestDoc::new();
+        let style = doc.push_element(0, "style", None);
+        doc.push_text(
+            style,
+            "section:has(.missing) { font-weight: 700 } section { color: red }",
+        );
+
+        let anchor = doc.push_element(0, "section", None);
+        let mut current = anchor;
+        for _ in 0..DEPTH {
+            // The deep child keeps the walk going while the sibling remains
+            // pending on the explicit stack at every level.
+            let next = doc.push_element(current, "div", None);
+            doc.push_element(current, "span", None);
+            current = next;
+        }
+
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(result.computed[anchor].color, RED);
+        assert_eq!(
+            result.computed[anchor].font_weight,
+            ComputedValues::initial().font_weight,
+        );
+    }
+
+    #[test]
+    fn nested_has_in_forgiving_branches_is_ignored() {
+        let mut doc = TestDoc::new();
+        let style = doc.push_element(0, "style", None);
+        doc.push_text(
+            style,
+            "#nested:has(:is(:has(*), .valid)) { font-weight: 701 } \
+             #fallback:is(:has(:has(*)), .fallback) { font-weight: 702 }",
+        );
+
+        let nested = doc.push_element(0, "div", None);
+        doc.set_attr(nested, "id", "nested");
+        let valid = doc.push_element(nested, "span", None);
+        doc.set_attr(valid, "class", "valid");
+
+        let fallback = doc.push_element(0, "div", None);
+        doc.set_attr(fallback, "id", "fallback");
+        doc.set_attr(fallback, "class", "fallback");
+
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(result.computed[nested].font_weight, 701.0);
+        assert_eq!(result.computed[fallback].font_weight, 702.0);
+    }
+
+    #[test]
+    fn logical_selectors_compose_with_has_and_not() {
+        let mut doc = TestDoc::new();
+        let style = doc.push_element(0, "style", None);
+        doc.push_text(
+            style,
+            "section:is(:has(> .item), .fallback) { font-weight: 700 } \
+             section:not(:has(> .missing)) { color: red }",
+        );
+
+        let has_section = doc.push_element(0, "section", None);
+        let item = doc.push_element(has_section, "div", None);
+        doc.set_attr(item, "class", "item");
+        let fallback_section = doc.push_element(0, "section", None);
+        doc.set_attr(fallback_section, "class", "fallback");
+        let missing_section = doc.push_element(0, "section", None);
+        let missing = doc.push_element(missing_section, "div", None);
+        doc.set_attr(missing, "class", "missing");
+
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(result.computed[has_section].font_weight, 700.0);
+        assert_eq!(result.computed[fallback_section].font_weight, 700.0);
+        assert_eq!(result.computed[missing_section].font_weight, 400.0);
+        assert_eq!(result.computed[has_section].color, RED);
+        assert_eq!(result.computed[fallback_section].color, RED);
+        assert_eq!(
+            result.computed[missing_section].color,
+            ComputedValues::initial().color
         );
     }
 
