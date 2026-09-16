@@ -7420,6 +7420,71 @@ mod tests {
     }
 
     #[test]
+    fn inline_block_width_auto_shrink_wraps_to_content() {
+        // width:auto の inline-block は containing block いっぱいに広がらず
+        // content に shrink-wrap する (shrink-to-fit)。block の子として
+        // fill される plain block との差を geometry で pin する:
+        // 100px の child を持つ inline-block は幅 100 に、明示 width:300px の
+        // inline-block は 300 のままになる (どちらも body 幅 fill ではない)。
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        // Block sibling first so body keeps mixed children (no minimal
+        // line-box rerouting) and lays the inline-blocks out as block
+        // children with a definite available width.
+        let _p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let ib = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:inline-block"),
+        );
+        let _child = doc.append_element(
+            Some(ib),
+            "div",
+            Style::default(),
+            Some("width:100px;height:20px"),
+        );
+        let ib_fixed = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:inline-block;width:300px"),
+        );
+        let _fixed_child = doc.append_element(
+            Some(ib_fixed),
+            "div",
+            Style::default(),
+            Some("width:100px;height:20px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let auto_size = doc.nodes[ib].unrounded_layout.size;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (auto_size.width - 100.0).abs() < 0.5,
+            "width:auto inline-block must shrink-wrap its 100px child, got width={}",
+            auto_size.width
+        );
+        let fixed_size = doc.nodes[ib_fixed].unrounded_layout.size;
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert!(
+            (fixed_size.width - 300.0).abs() < 0.5,
+            "explicit-width inline-block must keep its specified width, got width={}",
+            fixed_size.width
+        );
+    }
+
+    #[test]
     fn bridge_flex_maps_every_flex_direction_and_flex_wrap_keyword() {
         // `bridge_flex`'s `flex_direction`/`flex_wrap` match arms — the
         // sibling `flex_direction_column_stacks_children_vertically` /

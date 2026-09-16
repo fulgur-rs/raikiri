@@ -8,11 +8,12 @@
 //! - `LayoutBlockContainer / LayoutFlexboxContainer / LayoutGridContainer`:
 //!   style getter marker impls
 
+use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{
-    BlockContext, CacheTree, Display, Layout, LayoutBlockContainer, LayoutFlexboxContainer,
-    LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree, NodeId, Size, Style,
-    TraversePartialTree, TraverseTree, compute_block_layout, compute_cached_layout,
-    compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
+    AvailableSpace, BlockContext, CacheTree, Display, Layout, LayoutBlockContainer,
+    LayoutFlexboxContainer, LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree,
+    NodeId, Size, Style, TraversePartialTree, TraverseTree, compute_block_layout,
+    compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
 };
 
 use crate::document::Document;
@@ -200,6 +201,18 @@ impl Document {
             if display == Display::None {
                 return LayoutOutput::HIDDEN;
             }
+            // Inline-block shrink-wrap: bridge_display collapses InlineBlock to
+            // taffy Block, so without this a width:auto inline-block would
+            // stretch-fill like a plain block. Explicit widths keep the normal
+            // block path below; only width:auto sizes to fit-content here.
+            {
+                use raikiri_style::property::DisplayValue;
+                if tree.nodes[idx].display == DisplayValue::InlineBlock
+                    && tree.nodes[idx].style.size.width.is_auto()
+                {
+                    return compute_inline_block_shrink_wrap(tree, node_id, inputs, block_ctx);
+                }
+            }
             let is_leaf = tree.nodes[idx].children.is_empty();
             if is_leaf {
                 let style = tree.nodes[idx].style.clone();
@@ -239,6 +252,137 @@ impl Document {
                 }
             }
         })
+    }
+}
+
+/// Shrink-to-fit layout for a width:auto inline-block.
+///
+/// A width:auto inline-block sizes to its fit-content size: the preferred
+/// max-content size clamped by the available width with the min-content size
+/// as the floor (CSS 2.1 section 10.3.7 shrink-to-fit, CSS Sizing 3
+/// fit-content). This compensates for the bridge mapping inline-block to the
+/// taffy Block display, which would otherwise stretch-fill the containing
+/// block like a plain block-level box.
+///
+/// The intrinsic min/max-content widths are measured by running the block (or
+/// leaf, for childless boxes) algorithm directly in size-computation mode, not
+/// through the cached entry point, so this same width:auto branch is not
+/// re-entered for the node being measured. Measurement uses a fresh formatting
+/// context, which is the correct shape here because an inline-block
+/// establishes an independent context for its contents. The final pass fixes
+/// the fitted width as a known dimension and runs the normal algorithm, so
+/// style min/max clamps and child positioning behave exactly as they do for
+/// an explicitly sized block of the same width.
+///
+/// Nodes with an explicit width never reach this function (the caller only
+/// routes width:auto boxes here), and intrinsic-constraint callers
+/// (min/max-content available space) short-circuit to their own bound, which
+/// is what the fit-content formula reduces to under such a constraint.
+fn compute_inline_block_shrink_wrap(
+    tree: &mut Document,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    block_ctx: Option<&mut BlockContext<'_>>,
+) -> LayoutOutput {
+    let idx = usize::from(node_id);
+    let is_leaf = tree.nodes[idx].children.is_empty();
+    // Clone what the leaf path needs before any exclusive tree use below.
+    let leaf_style = tree.nodes[idx].style.clone();
+    let leaf_text: Option<Size<f32>> = tree.nodes[idx].text_layout().map(|l| Size {
+        width: l.width(),
+        height: l.height(),
+    });
+    // Scalar copies so the measure closure below captures no large state.
+    let sizing_mode = inputs.sizing_mode;
+    let known_height = inputs.known_dimensions.height;
+    let avail_height = inputs.available_space.height;
+
+    // Intrinsic outer width under the given width constraint.
+    let intrinsic_width = |tree: &mut Document, width: AvailableSpace| -> f32 {
+        if is_leaf {
+            compute_leaf_layout(
+                LayoutInput {
+                    run_mode: RunMode::ComputeSize,
+                    sizing_mode,
+                    axis: RequestedAxis::Horizontal,
+                    known_dimensions: Size::NONE,
+                    available_space: Size {
+                        width,
+                        height: avail_height,
+                    },
+                    ..inputs
+                },
+                &leaf_style,
+                |_val, _basis| 0.0,
+                |known, _avail| Size {
+                    width: known.width.or(leaf_text.map(|s| s.width)).unwrap_or(0.0),
+                    height: known.height.or(leaf_text.map(|s| s.height)).unwrap_or(0.0),
+                },
+            )
+            .size
+            .width
+        } else {
+            compute_block_layout(
+                tree,
+                node_id,
+                LayoutInput {
+                    run_mode: RunMode::ComputeSize,
+                    sizing_mode,
+                    axis: RequestedAxis::Horizontal,
+                    known_dimensions: Size {
+                        width: None,
+                        height: known_height,
+                    },
+                    available_space: Size {
+                        width,
+                        height: avail_height,
+                    },
+                    ..inputs
+                },
+                None,
+            )
+            .size
+            .width
+        }
+    };
+
+    let min_w = intrinsic_width(tree, AvailableSpace::MinContent);
+    let max_w = intrinsic_width(tree, AvailableSpace::MaxContent);
+    let (lo, hi) = if min_w <= max_w {
+        (min_w, max_w)
+    } else {
+        (max_w, min_w)
+    };
+    let fit = match inputs.available_space.width {
+        AvailableSpace::Definite(avail) => avail.clamp(lo, hi),
+        AvailableSpace::MinContent => lo,
+        AvailableSpace::MaxContent => hi,
+    }
+    .max(0.0);
+
+    let final_inputs = LayoutInput {
+        known_dimensions: Size {
+            width: Some(fit),
+            height: inputs.known_dimensions.height,
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(fit),
+            height: inputs.available_space.height,
+        },
+        ..inputs
+    };
+    if is_leaf {
+        compute_leaf_layout(
+            final_inputs,
+            &leaf_style,
+            |_val, _basis| 0.0,
+            |known, _avail| Size {
+                width: known.width.or(leaf_text.map(|s| s.width)).unwrap_or(0.0),
+                height: known.height.or(leaf_text.map(|s| s.height)).unwrap_or(0.0),
+            },
+        )
+    } else {
+        compute_block_layout(tree, node_id, final_inputs, block_ctx)
     }
 }
 
