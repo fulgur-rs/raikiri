@@ -109,12 +109,16 @@ mod tests {
     }
 
     fn decorated_text_scene(style: &str) -> Scene {
+        decorated_text_scene_with_text(style, "Decoration")
+    }
+
+    fn decorated_text_scene_with_text(style: &str, text: &str) -> Scene {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
         let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
         let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
         let p = doc.append_element(Some(body), "p", Style::default(), Some(style));
-        let _text = doc.append_text(p, "Decoration");
+        let _text = doc.append_text(p, text);
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
@@ -508,19 +512,31 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(
-            fills.len(),
-            3,
-            "canvas plus two nested decorations expected"
-        );
+        assert_eq!(fills.len(), 3);
         // Underline is the bottommost decoration; overline is above it.
-        match &fills[1].brush {
-            Paint::Solid(color) => assert_eq!(*color, Color::from_rgba8(0, 0, 255, 255)),
-            other => panic!("expected a solid underline brush, got {other:?}"),
-        }
-        match &fills[2].brush {
-            Paint::Solid(color) => assert_eq!(*color, Color::from_rgba8(255, 0, 0, 255)),
-            other => panic!("expected a solid overline brush, got {other:?}"),
+        assert!(matches!(
+            &fills[1].brush,
+            Paint::Solid(color) if *color == Color::from_rgba8(0, 0, 255, 255)
+        ));
+        assert!(matches!(
+            &fills[2].brush,
+            Paint::Solid(color) if *color == Color::from_rgba8(255, 0, 0, 255)
+        ));
+    }
+
+    #[test]
+    fn paint_single_page_decoration_trims_ltr_and_rtl_line_edge_whitespace() {
+        for style in [
+            "white-space:pre; text-decoration-line:underline",
+            "direction:rtl; white-space:pre; text-decoration-line:underline",
+        ] {
+            let scene = decorated_text_scene_with_text(style, "  Decoration  ");
+            let fills = scene
+                .commands
+                .iter()
+                .filter(|command| matches!(command, RenderCommand::Fill(_)))
+                .count();
+            assert_eq!(fills, 2, "canvas plus one trimmed decoration expected");
         }
     }
 
