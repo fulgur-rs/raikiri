@@ -526,11 +526,17 @@ mod tests {
 
     #[test]
     fn paint_single_page_decoration_trims_ltr_and_rtl_line_edge_whitespace() {
-        for style in [
-            "white-space:pre; text-decoration-line:underline",
-            "direction:rtl; white-space:pre; text-decoration-line:underline",
+        for (style, text) in [
+            (
+                "white-space:pre; text-decoration-line:underline",
+                "  Decoration  ",
+            ),
+            (
+                "direction:rtl; white-space:pre; text-decoration-line:underline",
+                "  שלום  ",
+            ),
         ] {
-            let scene = decorated_text_scene_with_text(style, "  Decoration  ");
+            let scene = decorated_text_scene_with_text(style, text);
             let fills = scene
                 .commands
                 .iter()
