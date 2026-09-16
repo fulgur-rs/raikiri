@@ -1245,7 +1245,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + segment-break-transformation-ignorable/removable x5 + text-transform-capitalize-034
         //   (+6, css-text-whitespace #10: multi-node runs, ignorable neighbors, abspos inline).
         // quarantine and deprecated stay empty until a developer PR adds a flake or crasher.
-        assert_eq!(set.baseline.entries.len(), 865);
+        // + flexbox_fbfc (+1, y0zo initial slice: exact 800x600 pass).
+        assert_eq!(set.baseline.entries.len(), 866);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
