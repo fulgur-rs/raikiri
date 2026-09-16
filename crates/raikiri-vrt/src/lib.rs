@@ -161,39 +161,55 @@ mod tests {
     ///
     /// `anyrender_vello_cpu::VelloCpuImageRenderer` internally constructs
     /// `vello_cpu::RenderContext::new(w, h)` which uses `RenderSettings::default()`
-    /// (num_threads = `min(available_parallelism - 1, 8)`). To pin the worker count
-    /// we bypass `VelloCpuImageRenderer::new` and construct `RenderContext::new_with`
-    /// directly, then wrap it in `VelloCpuScenePainter` (whose fields are `pub`) to
-    /// stay on the exact same production render path (`draw_fn → flush →
-    /// render_to_buffer(OptimizeSpeed)`) that `VelloCpuImageRenderer::render` uses.
+    /// (num_threads = `min(available_parallelism - 1, 8)`), and exposes no way to
+    /// override it. `VelloCpuScenePainter`'s `render_ctx` / `resources` fields are
+    /// `pub(crate)` upstream, so the painter cannot be built around a
+    /// `RenderContext::new_with(.., RenderSettings { num_threads, .. })` either.
+    /// The worker count is therefore pinned by driving `vello_cpu::RenderContext`
+    /// directly.
+    ///
+    /// The draw below is a hand-inlined `VelloCpuScenePainter::fill` for the same
+    /// scene `draw_red_rect` emits — `set_transform` → `set_fill_rule` →
+    /// `set_paint` → `set_paint_transform` → `fill_path(into_path(0.1))`, where
+    /// `0.1` is the painter's `DEFAULT_TOLERANCE` — followed by the
+    /// `VelloCpuImageRenderer::render` sequence (`flush` → `render(PixmapMut, &mut
+    /// Resources)`). Keeping those two call sequences in step with upstream is
+    /// what makes this a statement about the production raster path rather than
+    /// about an ad-hoc one; re-check them when `anyrender_vello_cpu` is bumped.
     ///
     /// Both `num_threads: 1` and `num_threads: 4` route through
     /// `MultiThreadedDispatcher` (only `num_threads == 0` selects
     /// `SingleThreadedDispatcher`), so this test verifies rayon work-stealing
     /// determinism, not scalar-vs-rayon parity.
     fn render_with_threads(num_threads: u16) -> Vec<u8> {
-        use anyrender_vello_cpu::VelloCpuScenePainter;
-        use vello_cpu::{RenderContext, RenderMode, RenderSettings, Resources};
+        use kurbo::Shape;
+        use vello_cpu::{PaintType, PixmapMut, RenderContext, RenderSettings, Resources};
+
+        /// `VelloCpuScenePainter`'s flattening tolerance, mirrored here because
+        /// it is a private constant upstream.
+        const DEFAULT_TOLERANCE: f64 = 0.1;
 
         let settings = RenderSettings {
             num_threads,
             ..Default::default()
         };
-        let render_ctx = RenderContext::new_with(W as u16, H as u16, settings);
-        let mut scene = VelloCpuScenePainter {
-            render_ctx,
-            resources: Resources::new(),
-        };
-        draw_red_rect(&mut scene);
-        scene.render_ctx.flush();
+        let mut render_ctx = RenderContext::new_with(W as u16, H as u16, settings);
+        let mut resources = Resources::new();
+
+        let color: Color = css::RED;
+        let rect = Rect::new(10.0, 10.0, 90.0, 90.0);
+        render_ctx.set_transform(Affine::IDENTITY);
+        render_ctx.set_fill_rule(Fill::NonZero);
+        render_ctx.set_paint(PaintType::Solid(color));
+        render_ctx.set_paint_transform(Affine::IDENTITY);
+        render_ctx.fill_path(&rect.into_path(DEFAULT_TOLERANCE));
+
+        render_ctx.flush();
         let mut buf = vec![0u8; (W as usize) * (H as usize) * 4];
-        let (w, h) = (scene.render_ctx.width(), scene.render_ctx.height());
-        scene.render_ctx.render_to_buffer(
-            &mut scene.resources,
-            &mut buf,
-            w,
-            h,
-            RenderMode::OptimizeSpeed,
+        let (w, h) = (render_ctx.width(), render_ctx.height());
+        render_ctx.render(
+            PixmapMut::new(w, h, &mut buf).expect("PixmapMut::new rejected a W*H*4 buffer"),
+            &mut resources,
         );
         buf
     }

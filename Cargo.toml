@@ -55,7 +55,7 @@ taffy = { version = "0.14", default-features = false, features = [
 parley = { version = "0.11", default-features = false, features = ["std", "system"] }
 
 # ── Rendering (anyrender + peniko + kurbo) ─────────────────────────────
-anyrender = "0.11"
+anyrender = "0.13"
 peniko    = "0.6"
 kurbo     = "0.13"
 
@@ -69,14 +69,41 @@ url        = "2.5"
 time = { version = "0.3", default-features = false, features = ["std", "parsing", "macros"] }
 
 # ── Dev-only: VRT rasterizer / snapshot / oracle ───────────────────────
-anyrender_vello_cpu = { version = "0.14", features = ["multithreading"] }
-vello_cpu           = "0.0.9"                    # m1.18 thread-pin test; RenderContext::new_with(RenderSettings::num_threads)
+#
+# **This block moves as one unit.** `blitz-paint` depends on `anyrender_svg`,
+# which depends on `usvg`; `blitz-paint` and `anyrender_vello_cpu` both depend
+# on `anyrender`, and blitz pins its own siblings with `=`. Bumping any one of
+# them alone either fails to resolve or silently duplicates `anyrender` in the
+# graph, so the four `blitz-*` pins, `anyrender`, `anyrender_vello_cpu` and
+# `vello_cpu` are chosen together.
+#
+# The floor is set by `ttf-parser`, which upstream declared maintenance-mode
+# ("Bug fixes only — no new features", recommending fontations / read-fonts +
+# skrifa instead). raikiri never used it directly — it arrived transitively as
+# `blitz-* → anyrender_svg → usvg 0.46 → fontdb 0.23 + rustybuzz 0.20`, both of
+# which parse fonts with it. `usvg 0.48` replaced that pair with `fontdb 0.24`
+# (which no longer parses fonts itself) + `harfrust` + `skrifa`, and the first
+# blitz release reaching it is `0.3.0-beta.2` via `anyrender_svg 0.14`. Hence
+# the versions below; do not lower them back without re-checking whether
+# `ttf-parser` returns to the graph (`cargo tree -i ttf-parser --workspace
+# -e normal,build,dev` must report nothing).
+#
+# The same bump also deduplicates parley / fontique / harfrust / skrifa /
+# read-fonts / font-types / taffy, which blitz previously pulled at a second,
+# older version each (blitz-dom beta.1 wanted parley 0.10 + taffy 0.12 against
+# this workspace's parley 0.11 + taffy 0.14; beta.2 wants 0.11 + 0.14).
+# It does newly duplicate `selectors` (0.39 here vs 0.40 in blitz-dom beta.2).
+# That is deliberate: blitz is a dev-only oracle whose value depends on being
+# an *independent* implementation, so raikiri-style's Servo-family pins move on
+# raikiri's schedule, not blitz's.
+anyrender_vello_cpu = { version = "0.17", features = ["multithreading"] }
+vello_cpu           = "0.1"                    # m1.18 thread-pin test; RenderContext::new_with(RenderSettings::num_threads)
 tiny-skia           = "0.11"
 insta               = "1"
-blitz-traits        = "=0.3.0-beta.1"
-blitz-html          = "=0.3.0-beta.1"
-blitz-dom           = "=0.3.0-beta.1"
-blitz-paint         = "=0.3.0-beta.1"
+blitz-traits        = "=0.3.0-beta.2"
+blitz-html          = "=0.3.0-beta.2"
+blitz-dom           = "=0.3.0-beta.2"
+blitz-paint         = "=0.3.0-beta.2"
 
 # ── Dev-only: lint fixtures + bin tests (raikiri-spike-yps) ────────────
 tempfile   = "3"

@@ -529,7 +529,7 @@ impl LayoutGridContainer for Document {
 // しているが、raikiri は stylo 非依存で該当 path なし。
 //
 // **Precedent**: blitz-dom `Node` にも同種の `unsafe impl Send` があり
-// (`blitz-dom-0.3.0-beta.1/src/node/node.rs:136`、無注釈)、taffy + calc
+// (`blitz-dom-0.3.0-beta.2/src/node/node.rs:127`、無注釈)、taffy + calc
 // feature 上で確立された pattern。ただし blitz は stylo `Arc<ComputedValues>`
 // chain が calc data を own する外部 arena モデル、raikiri は self-contained
 // arena モデルで invariant の依存対象が異なる。

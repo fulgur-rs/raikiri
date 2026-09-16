@@ -1,4 +1,4 @@
-//! blitz_traits::net compatible shape (blitz-traits =0.3.0-beta.1).
+//! blitz_traits::net compatible shape (blitz-traits =0.3.0-beta.2).
 //! Re-implements `blitz_traits::net` verbatim without depending on the crate,
 //! then bridges to `raikiri_traits::NetworkProvider`.
 
@@ -15,6 +15,16 @@ pub use url::Url;
 /// Fetch provider — blitz shape: async via handler callback.
 pub trait NetProvider: Send + Sync + 'static {
     fn fetch(&self, doc_id: usize, request: Request, handler: Box<dyn NetHandler>);
+
+    /// Whether this provider never delivers resources, so callers must not
+    /// register anything it is asked for as "pending critical" — the
+    /// completion callback would never fire and painting would block forever.
+    ///
+    /// Defaulted to `false` so existing implementors keep compiling, matching
+    /// the upstream trait.
+    fn is_noop(&self) -> bool {
+        false
+    }
 }
 
 /// Parses raw bytes and calls handler.
@@ -123,6 +133,9 @@ impl From<PathBuf> for EntryValue {
 pub struct DummyNetProvider;
 impl NetProvider for DummyNetProvider {
     fn fetch(&self, _doc_id: usize, _request: Request, _handler: Box<dyn NetHandler>) {}
+    fn is_noop(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Default)]
@@ -239,6 +252,12 @@ pub fn from_raikiri_request(req: raikiri_traits::Request) -> Request {
 ///
 /// Calls `raikiri_provider.fetch()` synchronously and forwards bytes to the blitz handler.
 /// `doc_id` is ignored (raikiri request carries `ResourceKind::Other`).
+///
+/// `is_noop` keeps its `false` default regardless of the wrapped provider:
+/// `fetch` below always reaches `handler.bytes(..)`, delivering empty bytes on
+/// error, so the completion callback fires unconditionally — which is exactly
+/// the property `is_noop` exists to let callers test. There is no
+/// `raikiri_traits::NetworkProvider` counterpart to forward anyway.
 pub struct RaikiriNetProviderAdapter<P>(pub P);
 
 impl<P> RaikiriNetProviderAdapter<P> {
