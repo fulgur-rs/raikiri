@@ -236,7 +236,7 @@ pub fn compute_table_layout(
         },
         ..inputs
     };
-    let column_widths = if table_layout == TableLayoutValue::Fixed {
+    let mut column_widths = if table_layout == TableLayoutValue::Fixed {
         // Fixed with an indefinite (auto/percent-of-indefinite) table width
         // has no basis for the §17.5.2.1 distribution — fall back to auto.
         // Crucially the container width is NOT a substitute basis: a
@@ -251,6 +251,47 @@ pub fn compute_table_layout(
         resolve_column_widths(doc, &grid, inputs_for_columns, distrib_insets)
     };
 
+    // min/max authored values + box-sizing (CSS Sizing 3 §3.3/§4/§5, WPT
+    // min-height-table-*, min-max-size-table-content-box). Percentages
+    // resolve against the parent (containing block); unresolvable/Auto
+    // Freeman. With `box-sizing: content-box` (the initial value, and the
+    // content-box test's authored value) min/max apply to the content box;
+    // with `border-box` they apply to the outer box. The engine clamps and
+    // distributes in outer sizes below, so content-box values are lifted by
+    // the padding+border extents. Lifting both the natural size and the max
+    // by the same insets keeps the max-never-shrinks gate (`mx >= v`,
+    // csswg-drafts#5336 / Mozilla bug 1651530) in the same domain, so
+    // max-height/max-width keep leaving sub-intrinsic tables at natural
+    // size. min still wins over max on direct conflict.
+    let st = &doc.nodes[table_idx].style;
+    let min_w = resolve_dimension(st.min_size.width.into(), inputs.parent_size.width);
+    let max_w = resolve_dimension(st.max_size.width.into(), inputs.parent_size.width);
+    let min_h = resolve_dimension(st.min_size.height.into(), inputs.parent_size.height);
+    let max_h = resolve_dimension(st.max_size.height.into(), inputs.parent_size.height);
+    let is_content_box = st.box_sizing == taffy::BoxSizing::ContentBox;
+    let lift_w = if is_content_box {
+        padding_border_size.width
+    } else {
+        0.0
+    };
+    let lift_h = if is_content_box {
+        padding_border_size.height
+    } else {
+        0.0
+    };
+    let min_w_outer = min_w.map(|m| m + lift_w);
+    let max_w_outer = max_w.map(|m| m + lift_w);
+    let min_h_outer = min_h.map(|m| m + lift_h);
+    let max_h_outer = max_h.map(|m| m + lift_h);
+
+    // Extra min-width grows columns (mirrors the min-height→rows path
+    // below, and the definite-width distribution above). Must run before
+    // row heights are measured so cells lay out at final column widths.
+    if let Some(mn) = min_w_outer {
+        let target = f32_max_compat(mn - distrib_insets.width, 0.0);
+        distribute_extra_width(&mut column_widths, target);
+    }
+
     // Row heights
     let mut row_heights = resolve_row_heights(doc, &grid, &column_widths);
     if let Some(known_h) = effective_known.height {
@@ -258,17 +299,11 @@ pub fn compute_table_layout(
         distribute_extra_height(&mut row_heights, target);
     }
 
-    // min/max-size clamp (CSS Sizing 3 §4/§5, WPT min-height-table-*,
-    // min-max-size-table-content-box). Percentages resolve against the
-    // parent (containing block); unresolvable/Auto Freeman. min wins over
-    // max on conflict. Extra min-height grows rows (same path as a definite
-    // height); max-height only clamps the box (content overflows visibly).
-    let st = &doc.nodes[table_idx].style;
-    let min_w = resolve_dimension(st.min_size.width.into(), inputs.parent_size.width);
-    let max_w = resolve_dimension(st.max_size.width.into(), inputs.parent_size.width);
-    let min_h = resolve_dimension(st.min_size.height.into(), inputs.parent_size.height);
-    let max_h = resolve_dimension(st.max_size.height.into(), inputs.parent_size.height);
-    if let Some(mn) = min_h {
+    // Extra min-height grows rows (same path as a definite height);
+    // max-height only clamps the box (content overflows visibly). The outer
+    // domain keeps content-box correct: `min_outer - distrib_insets` =
+    // `min_content + overlap`, the track sum that yields `min_content`.
+    if let Some(mn) = min_h_outer {
         let target = f32_max_compat(mn - distrib_insets.height, 0.0);
         distribute_extra_height(&mut row_heights, target);
     }
@@ -307,15 +342,23 @@ pub fn compute_table_layout(
     };
     let final_size = Size {
         width: table_width_basis
-            .map(|w| clamp_min_max(w, min_w, max_w))
+            .map(|w| clamp_min_max(w, min_w_outer, max_w_outer))
             .unwrap_or_else(|| {
-                clamp_min_max(content_width + padding_border_size.width, min_w, max_w)
+                clamp_min_max(
+                    content_width + padding_border_size.width,
+                    min_w_outer,
+                    max_w_outer,
+                )
             }),
         height: effective_known
             .height
-            .map(|h| clamp_min_max(h, min_h, max_h))
+            .map(|h| clamp_min_max(h, min_h_outer, max_h_outer))
             .unwrap_or_else(|| {
-                clamp_min_max(content_height + padding_border_size.height, min_h, max_h)
+                clamp_min_max(
+                    content_height + padding_border_size.height,
+                    min_h_outer,
+                    max_h_outer,
+                )
             }),
     };
 
@@ -947,6 +990,32 @@ fn distribute_extra_height(row_heights: &mut [f32], target: f32) {
         let share = extra / n as f32;
         for h in row_heights.iter_mut() {
             *h += share;
+        }
+    }
+}
+
+/// Extra min-width grows columns (mirrors [`distribute_extra_height`] for
+/// rows; same proportional-share rule). Tracks are sized in pre-overlap
+/// space, so the caller passes the outer-domain target
+/// (`min_outer - distrib_insets.width` = `min_content + overlap`).
+fn distribute_extra_width(column_widths: &mut [f32], target: f32) {
+    let n = column_widths.len();
+    if n == 0 {
+        return;
+    }
+    let current: f32 = column_widths.iter().sum();
+    if current >= target {
+        return;
+    }
+    let extra = target - current;
+    if current > 0.0 {
+        for w in column_widths.iter_mut() {
+            *w += extra * (*w) / current;
+        }
+    } else {
+        let share = extra / n as f32;
+        for w in column_widths.iter_mut() {
+            *w += share;
         }
     }
 }
@@ -2000,5 +2069,71 @@ mod tests {
             overlap.abs() < 1.0,
             "separate cells should abut exactly, got overlap {overlap}"
         );
+    }
+
+    #[test]
+    fn table_min_size_respects_box_sizing() {
+        // WPT css/css-tables/min-max-size-table-content-box (CSS Sizing 3
+        // §3.3, csswg-drafts#5336 / Mozilla bug 1651530): with
+        // `box-sizing: content-box`, min-width/min-height apply to the
+        // content box — a 50px min with 3px border + 5px padding (16 total
+        // insets) grows the content to 50 (outer 66). `border-box` keeps
+        // the outer clamp (outer 50, content 34).
+        for (box_sizing, expect_outer, expect_cell) in
+            [("content-box", 66.0, 50.0), ("border-box", 50.0, 34.0)]
+        {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let table_style = format!(
+                "display: table; box-sizing: {box_sizing}; border: 3px solid black; \
+                 padding: 5px; min-width: 50px; min-height: 50px"
+            );
+            let table = doc.append_element(
+                Some(body),
+                "table",
+                Style::default(),
+                Some(table_style.as_str()),
+            );
+            let tr = doc.append_element(
+                Some(table),
+                "tr",
+                Style::default(),
+                Some("display: table-row"),
+            );
+            let td = doc.append_element(
+                Some(tr),
+                "td",
+                Style::default(),
+                Some("display: table-cell"),
+            );
+            doc.mark_in_document_flags();
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).unwrap();
+            crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new())
+                .unwrap();
+            let tl = doc.nodes[table].unrounded_layout;
+            let cl = doc.nodes[td].unrounded_layout;
+            assert!(
+                (tl.size.width - expect_outer).abs() < 1.5,
+                "{box_sizing}: table outer width should be {expect_outer}, got {}",
+                tl.size.width
+            );
+            assert!(
+                (tl.size.height - expect_outer).abs() < 1.5,
+                "{box_sizing}: table outer height should be {expect_outer}, got {}",
+                tl.size.height
+            );
+            assert!(
+                (cl.size.width - expect_cell).abs() < 1.5,
+                "{box_sizing}: cell width should be {expect_cell}, got {}",
+                cl.size.width
+            );
+            assert!(
+                (cl.size.height - expect_cell).abs() < 1.5,
+                "{box_sizing}: cell height should be {expect_cell}, got {}",
+                cl.size.height
+            );
+        }
     }
 }
