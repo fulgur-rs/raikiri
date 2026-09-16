@@ -20,7 +20,7 @@ use peniko::{Color, Fill};
 use raikiri_dom::Node;
 use raikiri_style::property::{
     CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextAlign, TextAlignLast,
-    TextDecorationColor, TextDecorationLine, TextDecorationStyle, WhiteSpace,
+    TextDecorationColor, TextDecorationLine, TextDecorationStyle,
 };
 use raikiri_style::{CascadeResult, ComputedValues};
 
@@ -40,6 +40,10 @@ pub(crate) struct DecorationSpec {
     origin_thickness: f64,
     origin_ascent: f64,
     origin_descent: f64,
+    /// Cumulative vertical-align shift at the decorating box.
+    ///
+    /// Descendant shifts must not change the decoration's initial position.
+    origin_shift_y: f32,
 }
 
 /// Return whether an element is a boundary for decoration propagation.
@@ -114,7 +118,7 @@ impl<'a> Iterator for DecorationContextIter<'a> {
     }
 }
 
-fn element_decoration(cv: &ComputedValues) -> Option<DecorationSpec> {
+fn element_decoration(cv: &ComputedValues, origin_shift_y: f32) -> Option<DecorationSpec> {
     if !has_paintable_line(cv.text_decoration_line) {
         return None;
     }
@@ -144,6 +148,7 @@ fn element_decoration(cv: &ComputedValues) -> Option<DecorationSpec> {
         // element even when a descendant uses a different font size.
         origin_ascent: origin_font_size * 0.8,
         origin_descent: origin_font_size * 0.2,
+        origin_shift_y,
     })
 }
 
@@ -156,13 +161,19 @@ fn element_decoration(cv: &ComputedValues) -> Option<DecorationSpec> {
 pub(crate) fn decorations_for_element(
     decorations: &DecorationContext,
     cv: &ComputedValues,
+    origin_shift_y: f32,
 ) -> DecorationContext {
+    // `display: contents` generates no box, so its own decoration has no
+    // effect. It also must not block a decoration propagated through it.
+    if matches!(cv.display, DisplayValue::Contents) {
+        return decorations.clone();
+    }
     let base = if is_decoration_propagation_boundary(cv) {
         DecorationContext::default()
     } else {
         decorations.clone()
     };
-    match element_decoration(cv) {
+    match element_decoration(cv, origin_shift_y) {
         Some(spec) => base.push(spec),
         None => base,
     }
@@ -172,15 +183,26 @@ fn has_paintable_line(line: TextDecorationLine) -> bool {
     line.underline || line.overline || line.line_through
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TextPosition {
+    pub(crate) abs_x: f32,
+    pub(crate) abs_y: f32,
+    pub(crate) shift_y: f32,
+}
+
 pub(crate) fn draw_text_node(
     scene: &mut impl PaintScene,
     node: &Node,
     cascade: &CascadeResult,
     node_id: usize,
-    abs_x: f32,
-    abs_y: f32,
+    position: TextPosition,
     decorations: &DecorationContext,
 ) {
+    let TextPosition {
+        abs_x,
+        abs_y,
+        shift_y,
+    } = position;
     // Text node の pre-shape 結果を取得。preshape_text が empty text で None を返す
     // ので、None = "empty text" の signal、silent return。
     let Some(text_layout) = node.text_layout() else {
@@ -194,7 +216,7 @@ pub(crate) fn draw_text_node(
 
     // parley positioned_glyphs() は line 内 offset + baseline を baked-in するので
     // scene transform は text node の絶対座標への平行移動のみ。
-    let base_transform = Affine::translate((abs_x as f64, abs_y as f64));
+    let base_transform = Affine::translate((abs_x as f64, (abs_y + shift_y) as f64));
     // Parley applies one alignment to every line. CSS `text-align-last` can
     // override the final line, so compute the physical delta here while
     // keeping the shaped layout (and its line breaks) unchanged.
@@ -207,22 +229,33 @@ pub(crate) fn draw_text_node(
         } else {
             0.0
         };
+        let rtl = text_layout.is_rtl();
+        let leading_whitespace = leading_whitespace_advance(line, rtl);
         let geometry = decoration_geometry(
             decorations,
             metrics,
             abs_x,
             abs_y,
             last_line_delta,
-            cv.white_space,
+            leading_whitespace,
+            rtl,
         );
 
         // CSS paints underline/overline before the glyphs and line-through
-        // after them. Keeping the phases separate also makes the order stable
-        // when a declaration contains several line keywords.
+        // after them. Flatten the persistent context once for both phases so
+        // nested origins keep their global line order without two allocations.
+        let decoration_specs: Vec<_> = if geometry.is_some() {
+            decorations.iter().collect()
+        } else {
+            Vec::new()
+        };
         if let Some(geometry) = geometry {
-            for decoration in decorations.iter() {
-                draw_decoration_phase(scene, decoration, geometry, DecorationPhase::BeforeGlyphs);
-            }
+            draw_decoration_phase(
+                scene,
+                &decoration_specs,
+                geometry,
+                DecorationPhase::BeforeGlyphs,
+            );
         }
 
         for item in line.items() {
@@ -257,23 +290,47 @@ pub(crate) fn draw_text_node(
         }
 
         if let Some(geometry) = geometry {
-            for decoration in decorations.iter() {
-                draw_decoration_phase(scene, decoration, geometry, DecorationPhase::AfterGlyphs);
-            }
+            draw_decoration_phase(
+                scene,
+                &decoration_specs,
+                geometry,
+                DecorationPhase::AfterGlyphs,
+            );
         }
     }
 }
 
-fn decoration_line_width(metrics: &parley::LineMetrics, white_space: WhiteSpace) -> f32 {
-    let preserves_trailing_spaces = matches!(
-        white_space,
-        WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::BreakSpaces
-    );
-    if preserves_trailing_spaces {
-        metrics.advance.max(0.0)
-    } else {
-        (metrics.advance - metrics.trailing_whitespace).max(0.0)
+fn leading_whitespace_advance(line: parley::Line<'_, ()>, rtl: bool) -> f32 {
+    // Parley exposes trailing whitespace in LineMetrics but not leading
+    // whitespace. Cluster source characters let the paint layer recover the
+    // logical line edge without changing shaping or layout.
+    let mut clusters = Vec::new();
+    for run in line.runs() {
+        for cluster in run.clusters() {
+            clusters.push((cluster.source_char(), cluster.advance()));
+        }
     }
+    let mut leading = 0.0;
+    if rtl {
+        for (character, advance) in clusters.iter().rev() {
+            if !character.is_whitespace() {
+                break;
+            }
+            leading += *advance;
+        }
+    } else {
+        for (character, advance) in &clusters {
+            if !character.is_whitespace() {
+                break;
+            }
+            leading += *advance;
+        }
+    }
+    leading.max(0.0)
+}
+
+fn decoration_line_width(metrics: &parley::LineMetrics, leading_whitespace: f32) -> f32 {
+    (metrics.advance - metrics.trailing_whitespace - leading_whitespace).max(0.0)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -281,7 +338,7 @@ struct DecorationGeometry {
     x0: f64,
     x1: f64,
     abs_y: f64,
-    baseline: f32,
+    line_top: f32,
 }
 
 fn decoration_geometry(
@@ -290,21 +347,29 @@ fn decoration_geometry(
     abs_x: f32,
     abs_y: f32,
     last_line_delta: f32,
-    white_space: WhiteSpace,
+    leading_whitespace: f32,
+    rtl: bool,
 ) -> Option<DecorationGeometry> {
     if decorations.is_empty() {
         return None;
     }
-    let line_width = decoration_line_width(metrics, white_space);
+    let line_width = decoration_line_width(metrics, leading_whitespace);
     if !line_width.is_finite() || line_width <= 0.0 {
         // cov:ignore: shaped text lines in the current layout always have a
         // finite positive advance; retain the guard for empty/future metrics.
         return None;
     }
     let line_start = metrics.inline_min_coord + metrics.offset + last_line_delta;
-    let x0 = abs_x as f64 + line_start as f64;
-    let x1 = abs_x as f64 + (line_start + line_width) as f64;
-    if !x0.is_finite() || !x1.is_finite() || !(abs_y as f64).is_finite() {
+    let leading = leading_whitespace.max(0.0);
+    let trailing = metrics.trailing_whitespace.max(0.0);
+    let (left_trim, right_trim) = if rtl {
+        (trailing, leading)
+    } else {
+        (leading, trailing)
+    };
+    let x0 = abs_x as f64 + (line_start + left_trim) as f64;
+    let x1 = abs_x as f64 + (line_start + metrics.advance - right_trim) as f64;
+    if !x0.is_finite() || !x1.is_finite() || !(abs_y as f64).is_finite() || x1 <= x0 {
         // cov:ignore: finite layout sanitization handles production values;
         // this keeps malformed/future metrics from reaching a draw loop.
         return None;
@@ -313,7 +378,9 @@ fn decoration_geometry(
         x0,
         x1,
         abs_y: abs_y as f64,
-        baseline: metrics.baseline,
+        // Keep the line's block origin from the current layout, but derive
+        // the baseline within it from the originating decoration metrics.
+        line_top: metrics.block_min_coord,
     })
 }
 
@@ -323,61 +390,67 @@ enum DecorationPhase {
     AfterGlyphs,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum DecorationLineKind {
+    Underline,
+    Overline,
+    LineThrough,
+}
+
 fn draw_decoration_phase(
     scene: &mut impl PaintScene,
-    decoration: &DecorationSpec,
+    decorations: &[&DecorationSpec],
     geometry: DecorationGeometry,
     phase: DecorationPhase,
+) {
+    // CSS Text Decoration 3 orders all underline lines below all overlines,
+    // then glyphs, then all line-through lines. The caller flattens the
+    // persistent chain once for both phases.
+    match phase {
+        DecorationPhase::BeforeGlyphs => {
+            paint_decoration_line(scene, decorations, geometry, DecorationLineKind::Underline);
+            paint_decoration_line(scene, decorations, geometry, DecorationLineKind::Overline);
+        }
+        DecorationPhase::AfterGlyphs => {
+            paint_decoration_line(
+                scene,
+                decorations,
+                geometry,
+                DecorationLineKind::LineThrough,
+            );
+        }
+    }
+}
+
+fn paint_decoration_line(
+    scene: &mut impl PaintScene,
+    decorations: &[&DecorationSpec],
+    geometry: DecorationGeometry,
+    kind: DecorationLineKind,
 ) {
     let DecorationGeometry {
         x0,
         x1,
         abs_y,
-        baseline: baseline_offset,
+        line_top,
     } = geometry;
-    let color = css_color_to_peniko(decoration.color);
-    let baseline = abs_y + baseline_offset as f64;
-    let thickness = decoration.origin_thickness;
-    let center_for = |line: TextDecorationLine| -> Option<f64> {
-        if line.underline {
-            Some(baseline + decoration.origin_descent * 0.5)
-        } else if line.overline {
-            Some(baseline - decoration.origin_ascent + thickness * 0.5)
-        } else if line.line_through {
-            Some(baseline - decoration.origin_ascent * 0.35)
-        } else {
-            // cov:ignore: every caller passes a single enabled line keyword;
-            // this fallback is only a defensive totality guard.
-            None
-        }
-    };
-
-    // Underline and overline are painted below/above the glyphs, while
-    // line-through is painted over the glyphs. The metrics in DecorationSpec
-    // come from the originating element, not this descendant text node.
-    let positions = match phase {
-        DecorationPhase::BeforeGlyphs => [
-            (decoration.line.underline, TextDecorationLine::UNDERLINE),
-            (decoration.line.overline, TextDecorationLine::OVERLINE),
-            (false, TextDecorationLine::LINE_THROUGH),
-        ],
-        DecorationPhase::AfterGlyphs => [
-            (false, TextDecorationLine::UNDERLINE),
-            (false, TextDecorationLine::OVERLINE),
-            (
-                decoration.line.line_through,
-                TextDecorationLine::LINE_THROUGH,
-            ),
-        ],
-    };
-    for (enabled, line) in positions {
+    for decoration in decorations {
+        let enabled = match kind {
+            DecorationLineKind::Underline => decoration.line.underline,
+            DecorationLineKind::Overline => decoration.line.overline,
+            DecorationLineKind::LineThrough => decoration.line.line_through,
+        };
         if !enabled {
             continue;
         }
-        let Some(center) = center_for(line) else {
-            // cov:ignore: `line` comes from the matching enabled flag above,
-            // so the center is structurally present.
-            continue;
+        let color = css_color_to_peniko(decoration.color);
+        let baseline =
+            abs_y + line_top as f64 + decoration.origin_ascent + decoration.origin_shift_y as f64;
+        let thickness = decoration.origin_thickness;
+        let center = match kind {
+            DecorationLineKind::Underline => baseline + decoration.origin_descent * 0.5,
+            DecorationLineKind::Overline => baseline - decoration.origin_ascent + thickness * 0.5,
+            DecorationLineKind::LineThrough => baseline - decoration.origin_ascent * 0.35,
         };
         paint_decoration_style(scene, decoration.style, color, x0, x1, center, thickness);
     }
@@ -574,7 +647,7 @@ mod tests {
     use raikiri_style::ComputedValues;
     use raikiri_style::property::{
         Direction, DisplayValue, FloatValue, PositionValue, TextAlign, TextAlignLast,
-        TextDecorationLine, TextDecorationStyle, WhiteSpace,
+        TextDecorationLine, TextDecorationStyle,
     };
 
     fn metrics(offset: f32) -> LineMetrics {
@@ -697,24 +770,20 @@ mod tests {
     fn ancestor_context() -> DecorationContext {
         let mut cv = ComputedValues::initial();
         cv.text_decoration_line = TextDecorationLine::UNDERLINE;
-        decorations_for_element(&DecorationContext::default(), &cv)
+        decorations_for_element(&DecorationContext::default(), &cv, 0.0)
     }
 
     #[test]
-    fn decoration_width_excludes_collapsed_trailing_whitespace_but_preserves_pre_spaces() {
+    fn decoration_width_skips_line_edge_whitespace_at_every_white_space_mode() {
         let metrics = LineMetrics {
             advance: 40.0,
             trailing_whitespace: 10.0,
             ..LineMetrics::default()
         };
-        assert_eq!(decoration_line_width(&metrics, WhiteSpace::Normal), 30.0);
-        assert_eq!(decoration_line_width(&metrics, WhiteSpace::Nowrap), 30.0);
-        assert_eq!(decoration_line_width(&metrics, WhiteSpace::Pre), 40.0);
-        assert_eq!(decoration_line_width(&metrics, WhiteSpace::PreWrap), 40.0);
-        assert_eq!(
-            decoration_line_width(&metrics, WhiteSpace::BreakSpaces),
-            40.0
-        );
+        // Level 3 skips spacing at both line edges. The white-space property
+        // controls shaping/collapsing, not this decoration edge rule.
+        assert_eq!(decoration_line_width(&metrics, 0.0), 30.0);
+        assert_eq!(decoration_line_width(&metrics, 5.0), 25.0);
     }
 
     #[test]
@@ -747,11 +816,41 @@ mod tests {
     }
 
     #[test]
+    fn display_contents_does_not_originate_or_block_decoration() {
+        let mut ancestor = ComputedValues::initial();
+        ancestor.text_decoration_line = TextDecorationLine::UNDERLINE;
+        let context = decorations_for_element(&DecorationContext::default(), &ancestor, 0.0);
+
+        let mut contents = ComputedValues::initial();
+        contents.display = DisplayValue::Contents;
+        contents.text_decoration_line = TextDecorationLine::OVERLINE;
+        let propagated = decorations_for_element(&context, &contents, 0.0);
+        let specs: Vec<_> = propagated.iter().collect();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].line, TextDecorationLine::UNDERLINE);
+    }
+
+    #[test]
+    fn decoration_retains_origin_vertical_align_shift() {
+        let mut cv = ComputedValues::initial();
+        cv.text_decoration_line = TextDecorationLine::UNDERLINE;
+        let decorations = decorations_for_element(&DecorationContext::default(), &cv, 7.5);
+        assert_eq!(
+            decorations
+                .iter()
+                .next()
+                .expect("origin decoration")
+                .origin_shift_y,
+            7.5
+        );
+    }
+
+    #[test]
     fn decoration_metrics_are_taken_from_the_originating_element() {
         let mut cv = ComputedValues::initial();
         cv.font_size = raikiri_style::resolve::ComputedLength(32.0);
         cv.text_decoration_line = TextDecorationLine::UNDERLINE;
-        let decorations = decorations_for_element(&DecorationContext::default(), &cv);
+        let decorations = decorations_for_element(&DecorationContext::default(), &cv, 0.0);
         let decoration = decorations.iter().next().expect("origin decoration");
         assert_eq!(decoration.origin_thickness, 2.0);
         assert_eq!(decoration.origin_ascent, 25.6);
@@ -813,7 +912,7 @@ mod tests {
             // cov:ignore: the assertion message is evaluated only when this
             // boundary regression assertion fails.
             assert!(
-                decorations_for_element(&ancestor, &cv)
+                decorations_for_element(&ancestor, &cv, 0.0)
                     .iter()
                     .next()
                     .is_none(),
@@ -824,14 +923,16 @@ mod tests {
         let mut in_flow = ComputedValues::initial();
         in_flow.display = DisplayValue::Block;
         assert_eq!(
-            decorations_for_element(&ancestor, &in_flow).iter().count(),
+            decorations_for_element(&ancestor, &in_flow, 0.0)
+                .iter()
+                .count(),
             1
         );
 
         let mut boundary_origin = ComputedValues::initial();
         boundary_origin.display = DisplayValue::InlineBlock;
         boundary_origin.text_decoration_line = TextDecorationLine::OVERLINE;
-        let boundary_decorations = decorations_for_element(&ancestor, &boundary_origin);
+        let boundary_decorations = decorations_for_element(&ancestor, &boundary_origin, 0.0);
         assert_eq!(boundary_decorations.iter().count(), 1);
         assert_eq!(
             boundary_decorations

@@ -26,12 +26,13 @@ mod walk;
 /// 単一 A4 (or 指定 PageBox) ページに Document + CascadeResult を paint する。
 ///
 /// # 呼び出し順序
-/// 1. `walk::paint_canvas_background` — canvas 背景 fill site (現状 no-op、将来発火予定)
-/// 2. `walk::paint_document` — body から始まる DFS walk、Text node で glyph draw
+/// 1. `walk::paint_canvas_background` — canvas 背景 fill
+/// 2. `walk::paint_document` — body から始まる DFS walk、element background/border と
+///    text node の glyph/decoration を描画
 ///
 /// # Non-goals (current scope)
 /// - Multi-page pagination
-/// - Element background-color / border / box-shadow
+/// - Element box-shadow (background-color and border have minimal support)
 /// - CSS Text Decoration Level 4 features (skip-ink / skip-spaces, thickness,
 ///   emphasis, text-shadow, and vertical writing)
 /// - Scrollbar painting for `overflow: scroll` / `auto` — descendants are
@@ -469,6 +470,58 @@ mod tests {
         // painted after the glyph run.
         assert_eq!(before_glyph_fills, 3);
         assert_eq!(after_glyph_fills, 1);
+    }
+
+    #[test]
+    fn paint_single_page_nested_decorations_follow_line_order() {
+        use anyrender::types::Paint;
+        use peniko::Color;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let parent = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("text-decoration-line:overline; text-decoration-color:red"),
+        );
+        let child = doc.append_element(
+            Some(parent),
+            "span",
+            Style::default(),
+            Some("text-decoration-line:underline; text-decoration-color:blue"),
+        );
+        let _text = doc.append_text(child, "nested");
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+        let fills: Vec<_> = scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::Fill(fill) => Some(fill),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            fills.len(),
+            3,
+            "canvas plus two nested decorations expected"
+        );
+        // Underline is the bottommost decoration; overline is above it.
+        match &fills[1].brush {
+            Paint::Solid(color) => assert_eq!(*color, Color::from_rgba8(0, 0, 255, 255)),
+            other => panic!("expected a solid underline brush, got {other:?}"),
+        }
+        match &fills[2].brush {
+            Paint::Solid(color) => assert_eq!(*color, Color::from_rgba8(255, 0, 0, 255)),
+            other => panic!("expected a solid overline brush, got {other:?}"),
+        }
     }
 
     #[test]

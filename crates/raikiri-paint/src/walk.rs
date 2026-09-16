@@ -138,7 +138,7 @@ pub(crate) fn paint_document(
     let empty_decorations = text::DecorationContext::default();
     let root_decorations = find_html(document)
         .map(|html_id| {
-            text::decorations_for_element(&empty_decorations, &cascade.computed[html_id])
+            text::decorations_for_element(&empty_decorations, &cascade.computed[html_id], 0.0)
         })
         .unwrap_or_else(|| empty_decorations.clone());
     enum PaintFrame {
@@ -269,7 +269,8 @@ pub(crate) fn paint_document(
                 // layer, but its originating line is propagated to descendants
                 // by CSS Text Decoration. Keep that paint-only context separate
                 // from `CascadeResult`'s inheritance result.
-                let child_decorations = text::decorations_for_element(&decorations, cv);
+                let child_decorations =
+                    text::decorations_for_element(&decorations, cv, child_shift_y);
                 // children を reverse push すると pop 時に document order で処理される。
                 // For position:relative, children are laid out at normal flow position but paint at offset position.
                 let child_parent_x = abs_x + pos_dx;
@@ -294,8 +295,11 @@ pub(crate) fn paint_document(
                     node,
                     cascade,
                     node_id,
-                    abs_x,
-                    abs_y + shift_y,
+                    text::TextPosition {
+                        abs_x,
+                        abs_y,
+                        shift_y,
+                    },
                     &decorations,
                 );
             }
