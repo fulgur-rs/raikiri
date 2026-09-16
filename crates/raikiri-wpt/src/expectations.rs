@@ -1250,7 +1250,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + flexbox gap/wrapping slice (+8, exact 800x600 pass).
         // + grid item-sizing slice (+2, exact 800x600 pass).
         // + table flex percentage width (+1, exact 800x600 pass).
-        assert_eq!(set.baseline.entries.len(), 878);
+        // + abspos static-position slice (+9, exact 800x600 pass).
+        assert_eq!(set.baseline.entries.len(), 887);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
