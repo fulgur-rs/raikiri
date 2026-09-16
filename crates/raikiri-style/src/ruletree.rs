@@ -2,14 +2,17 @@
 //! style_rules を populate。@page at-rule も (silently skip せず)
 //! [`RuleTree::page_rules`] に格納する (cascade 適用は未実装)。
 //! at-rule の generic parse view は、専用の意味論が未実装のもの
-//! (@media / @supports / @import 等) を [`RuleTree::opaque_at_rules`] に raw data
-//! として保持する。専用 view を持つ `@counter-style` も raw/source order の
-//! 確認用にこの viewへ記録し、`@page` は既存の page view に保持する。
+//! (@supports / @import 等) を [`RuleTree::opaque_at_rules`] に raw data として
+//! 保持する。`@media` もこの raw view に保持しつつ、対応する media type の
+//! qualified rule は cascade 用の専用 view に展開する。専用 view を持つ
+//! `@counter-style` も raw/source order の確認用にこの viewへ記録し、`@page`
+//! は既存の page view に保持する。
 
 use cssparser::{Parser, ParserInput, StyleSheetParser, Token};
 use selectors::parser::{ParseRelative, Selector, SelectorList};
 
 use crate::counter_style::{CounterStyleRegistry, parse_counter_style_rules};
+use crate::media::{MediaCondition, MediaRule, parse_media_condition};
 use crate::page::{
     PageBlockBody, PageRule, PageSelector, parse_page_declaration_block, parse_page_prelude,
 };
@@ -190,8 +193,10 @@ impl AtRuleRecord {
 /// みで、`generate a counter` 算出
 /// ([`crate::counter_style::resolve_custom_counter`]) の呼び出しは consumer
 /// 側 (raikiri-traits) の責務のまま。`opaque_at_rules` は generic parse
-/// view として at-rule の raw data を保持する。将来 field (font_face_rules /
-/// media_rules / supports_rules / import_rules) は今後追加予定 —
+/// view として at-rule の raw data を保持する。`@media` の `all` / `print` /
+/// `screen` 条件に対応する qualified rules は、互換用 `style_rules` とは
+/// 別の内部 view にも展開され、cascade 前に評価される。将来 field
+/// (font_face_rules / supports_rules / import_rules) は今後追加予定 —
 /// `#[non_exhaustive]` の恩恵で非破壊的に拡張可能。
 #[non_exhaustive]
 pub struct RuleTree {
@@ -239,6 +244,11 @@ pub struct RuleTree {
     /// intentionally separate from `style_rules` and `page_rules`: retaining
     /// an at-rule must not make its declarations execute accidentally.
     pub(crate) opaque_at_rules: Vec<AtRuleRecord>,
+    /// Executable qualified rules parsed from `@media`, kept apart from the
+    /// historical direct-rule compatibility view.
+    pub(crate) media_rules: Vec<MediaRule>,
+    /// Next source order shared by direct and media-qualified style rules.
+    next_style_order: u32,
     /// Cross-kind source-order index. The individual compatibility views keep
     /// their historical counters; this vector records their retained order.
     pub(crate) rules: Vec<CssRule>,
@@ -303,7 +313,8 @@ impl RuleTree {
     ///
     /// The returned records retain their cross-kind source order in the
     /// corresponding [`CssRule`] entries. The raw records are observational;
-    /// their declarations are not inserted into the element or page cascade.
+    /// supported `@media` descendants are separately evaluated by the cascade
+    /// and are not inserted into this compatibility view.
     pub fn opaque_at_rules(&self) -> &[AtRuleRecord] {
         &self.opaque_at_rules
     }
@@ -331,6 +342,8 @@ impl RuleTree {
             page_rules: Vec::new(),
             counter_styles: CounterStyleRegistry::new(),
             opaque_at_rules: Vec::new(),
+            media_rules: Vec::new(),
+            next_style_order: 0,
             rules: Vec::new(),
         }
     }
@@ -348,8 +361,9 @@ impl RuleTree {
     /// - Invalid selector / 未サポート property は既存の silent-drop 挙動を
     ///   継承する
     /// - Syntactically valid at-rules other than `@page` are retained in
-    ///   [`RuleTree::opaque_at_rules`]. Their declarations are not applied by
-    ///   the cascade until a semantic consumer handles them.
+    ///   [`RuleTree::opaque_at_rules`]. Declarations in unsupported at-rules
+    ///   are not applied by the cascade. Supported `@media` descendants are
+    ///   additionally parsed into the cascade's media-qualified view.
     /// - `@counter-style` at-rule は `origin` を問わず、
     ///   [`crate::counter_style::parse_counter_style_rules`] が同じ `source` に対して
     ///   独立にもう一度 parse し、得られた各 rule を呼び出し時の `origin` と共に
@@ -368,7 +382,7 @@ impl RuleTree {
         let mut input = ParserInput::new(source);
         let mut parser = Parser::new(&mut input);
         let mut rule_parser = StyleRuleParser { source };
-        let mut style_order = self.style_rules.len() as u32;
+        let mut style_order = self.next_style_order;
         let mut page_order = self.page_rules.len() as u32;
         let mut rule_order = self.rules.len() as u32;
         if let Some(prelude) = leading_charset_prelude(source) {
@@ -444,6 +458,14 @@ impl RuleTree {
                 ParsedRule::OpaqueAtRule(mut record) => {
                     record.source_order = rule_order;
                     set_at_rule_origin(&mut record, origin);
+                    if record.name.eq_ignore_ascii_case("media") {
+                        collect_media_style_rules(
+                            &record,
+                            None,
+                            &mut self.media_rules,
+                            &mut style_order,
+                        );
+                    }
                     let index = self.opaque_at_rules.len();
                     self.opaque_at_rules.push(record);
                     self.rules.push(CssRule {
@@ -458,6 +480,7 @@ impl RuleTree {
         for rule in parse_counter_style_rules(source) {
             self.counter_styles.insert_with_origin(rule, origin);
         }
+        self.next_style_order = style_order;
     }
 }
 
@@ -963,6 +986,63 @@ fn set_at_rule_origin(record: &mut AtRuleRecord, origin: Origin) {
         match node {
             RuleNode::Qualified(qualified) => qualified.origin = origin,
             RuleNode::AtRule(nested) => set_at_rule_origin(nested, origin),
+        }
+    }
+}
+
+fn parse_media_style_rule(record: &QualifiedRuleRecord) -> Option<StyleRule> {
+    let mut input = ParserInput::new(&record.prelude);
+    let mut parser = Parser::new(&mut input);
+    let selectors = parser
+        .parse_entirely(|input| {
+            SelectorList::parse(&RaikiriSelectorParser, input, ParseRelative::No)
+        })
+        .ok()?;
+    if !is_supported_selector_list(&selectors) {
+        return None;
+    }
+
+    let mut input = ParserInput::new(&record.body);
+    let mut parser = Parser::new(&mut input);
+    Some(StyleRule {
+        selectors,
+        declarations: parse_declaration_block(&mut parser),
+        source_order: 0,
+        origin: record.origin,
+    })
+}
+
+fn collect_media_style_rules(
+    record: &AtRuleRecord,
+    parent_condition: Option<MediaCondition>,
+    out: &mut Vec<MediaRule>,
+    style_order: &mut u32,
+) {
+    let Some(local_condition) = parse_media_condition(&record.prelude) else {
+        return;
+    };
+    let condition =
+        parent_condition.map_or(local_condition, |parent| parent.intersect(local_condition));
+    if condition.is_empty() {
+        return;
+    }
+
+    for child in &record.children {
+        match child {
+            RuleNode::Qualified(qualified) => {
+                let Some(mut rule) = parse_media_style_rule(qualified) else {
+                    continue;
+                };
+                rule.source_order = *style_order;
+                *style_order = style_order.wrapping_add(1);
+                out.push(MediaRule { rule, condition });
+            }
+            RuleNode::AtRule(nested) if nested.name.eq_ignore_ascii_case("media") => {
+                collect_media_style_rules(nested, Some(condition), out, style_order);
+            }
+            // An unknown wrapper may have a completely different grammar. Do
+            // not accidentally execute its descendants as ordinary CSS rules.
+            RuleNode::AtRule(_) => {}
         }
     }
 }
@@ -3033,7 +3113,7 @@ mod tests {
     }
 
     #[test]
-    fn valid_at_rules_are_retained_without_cascading() {
+    fn valid_at_rules_are_retained_and_media_rules_are_indexed() {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(
             "@media print { p { color: red } @nested feature; } \
@@ -3044,7 +3124,9 @@ mod tests {
 
         assert_eq!(tree.page_rules.len(), 0);
         assert_eq!(tree.style_rules.len(), 1);
-        assert_eq!(tree.style_rules[0].source_order, 0);
+        assert_eq!(tree.media_rules.len(), 1);
+        assert_eq!(tree.media_rules[0].rule.source_order, 0);
+        assert_eq!(tree.style_rules[0].source_order, 1);
         assert_eq!(tree.opaque_at_rules().len(), 2);
         assert_eq!(tree.opaque_at_rules()[0].name, "media");
         assert_eq!(tree.opaque_at_rules()[1].name, "supports");
@@ -3064,6 +3146,18 @@ mod tests {
         assert_eq!(nested.name, "nested");
         assert_eq!(nested.body, AtRuleBody::Statement);
         assert_eq!(nested.source_order, 1);
+    }
+
+    #[test]
+    fn media_style_order_continues_across_stylesheets() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@media print { p { color: red } }", Origin::Author);
+        tree.add_stylesheet("p { color: blue }", Origin::Author);
+
+        assert_eq!(tree.media_rules.len(), 1);
+        assert_eq!(tree.media_rules[0].rule.source_order, 0);
+        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.style_rules[0].source_order, 1);
     }
 
     #[test]
