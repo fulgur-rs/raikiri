@@ -1770,33 +1770,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_extra_keyword_after_text_transform() {
-        // CSS Text Module Level 3 §2.1's `||` combinator makes `uppercase
-        // full-width` spec-valid grammar (case keyword co-occurring with
-        // `full-width`), but this crate only implements the case-keyword
-        // group (`TextTransform` doc's "Scope carving" section). The
-        // unimplemented trailing `full-width` ident is exhaust-check
-        // garbage the same as any other unconsumed token, so the whole
-        // declaration is dropped rather than silently applying just
-        // `uppercase`. `parse_text_transform` succeeds on the leading
-        // `uppercase` ident here, so this exercises the
-        // `DeclParser::expect_exhausted` path specifically.
+    fn accepts_text_transform_keyword_combinations_in_either_order() {
         let decls = parse_block("text-transform: uppercase full-width;");
-        assert!(decls.is_empty());
-    }
-
-    #[test]
-    fn rejects_text_transform_with_unimplemented_keyword_first() {
-        // Same `||` grammar as `rejects_extra_keyword_after_text_transform`,
-        // but with the unimplemented `full-width` ident first (`||` allows
-        // either order). This takes a *different* code path —
-        // `parse_text_transform` itself fails on the unrecognized leading
-        // ident, so `parse_value` returns `None` and the declaration is
-        // dropped before `DeclParser::expect_exhausted` is ever reached —
-        // but reaches the same outcome: whole declaration dropped, not a
-        // partial `uppercase` application.
+        assert_eq!(decls.len(), 1);
         let decls = parse_block("text-transform: full-width uppercase;");
-        assert!(decls.is_empty());
+        assert_eq!(decls.len(), 1);
     }
 
     #[test]

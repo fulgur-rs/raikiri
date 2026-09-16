@@ -20,8 +20,8 @@ use raikiri_style::property::{
     AlignSelfValue, BoxSizing as StyleBoxSizing, ClearValue, ContentAlignmentValue, Direction,
     DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle as StyleFontStyle,
     GridAutoFlowValue, GridLineValue, GridRepeatCount, GridTemplateAreasValue, Hyphens,
-    OverflowValue, PositionValue, SelfAlignmentValue, TextAlign, TextJustify, TextWrapMode,
-    WhiteSpace,
+    OverflowValue, PositionValue, SelfAlignmentValue, TextAlign, TextJustify, TextTransform,
+    TextWrapMode, WhiteSpace,
 };
 use raikiri_style::{
     CascadeResult, ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth,
@@ -4595,6 +4595,331 @@ fn collapse_text_for_shaping(
     }
 }
 
+fn effective_language_for_text(
+    doc: &Document,
+    parent_of: &[Option<usize>],
+    text_idx: usize,
+) -> String {
+    let mut current = parent_of[text_idx];
+    while let Some(idx) = current {
+        if let crate::node::NodeData::Element(element) = &doc.nodes[idx].data
+            && let Some(attr) = element
+                .attributes
+                .iter()
+                .find(|attr| attr.local.eq_ignore_ascii_case("lang") || attr.local == "xml:lang")
+        {
+            return attr.value.trim().to_ascii_lowercase();
+        }
+        current = parent_of[idx];
+    }
+    String::new()
+}
+
+fn language_matches(language: &str, primary: &str) -> bool {
+    language == primary
+        || language
+            .strip_prefix(primary)
+            .is_some_and(|rest| rest.starts_with('-'))
+}
+
+fn text_transform_has_full_width(transform: TextTransform) -> bool {
+    matches!(
+        transform,
+        TextTransform::FullWidth
+            | TextTransform::CapitalizeFullWidth
+            | TextTransform::UppercaseFullWidth
+            | TextTransform::LowercaseFullWidth
+            | TextTransform::FullWidthFullSizeKana
+            | TextTransform::CapitalizeFullWidthFullSizeKana
+            | TextTransform::UppercaseFullWidthFullSizeKana
+            | TextTransform::LowercaseFullWidthFullSizeKana
+    )
+}
+
+/// Apply the supported CSS `text-transform` values after whitespace collapsing
+/// and before shaping. The operation is performed on each text node, preserving
+/// the existing layout and paint ownership model.
+fn apply_text_transform(text: &str, transform: TextTransform, language: &str) -> String {
+    let (case, full_width, full_size_kana) = match transform {
+        TextTransform::None => (None, false, false),
+        TextTransform::Capitalize => (Some(TextTransform::Capitalize), false, false),
+        TextTransform::Uppercase => (Some(TextTransform::Uppercase), false, false),
+        TextTransform::Lowercase => (Some(TextTransform::Lowercase), false, false),
+        TextTransform::FullWidth => (None, true, false),
+        TextTransform::FullSizeKana => (None, false, true),
+        TextTransform::CapitalizeFullWidth => (Some(TextTransform::Capitalize), true, false),
+        TextTransform::UppercaseFullWidth => (Some(TextTransform::Uppercase), true, false),
+        TextTransform::LowercaseFullWidth => (Some(TextTransform::Lowercase), true, false),
+        TextTransform::CapitalizeFullSizeKana => (Some(TextTransform::Capitalize), false, true),
+        TextTransform::UppercaseFullSizeKana => (Some(TextTransform::Uppercase), false, true),
+        TextTransform::LowercaseFullSizeKana => (Some(TextTransform::Lowercase), false, true),
+        TextTransform::FullWidthFullSizeKana => (None, true, true),
+        TextTransform::CapitalizeFullWidthFullSizeKana => {
+            (Some(TextTransform::Capitalize), true, true)
+        }
+        TextTransform::UppercaseFullWidthFullSizeKana => {
+            (Some(TextTransform::Uppercase), true, true)
+        }
+        TextTransform::LowercaseFullWidthFullSizeKana => {
+            (Some(TextTransform::Lowercase), true, true)
+        }
+        _ => (None, false, false),
+    };
+    let mut cased = String::with_capacity(text.len());
+    let mut in_word = false;
+    for c in text.chars() {
+        match case {
+            Some(TextTransform::Uppercase) => {
+                if language_matches(language, "tr") || language_matches(language, "az") {
+                    match c {
+                        'i' => cased.push('İ'),
+                        'ı' => cased.push('I'),
+                        _ => cased.extend(c.to_uppercase()),
+                    }
+                } else {
+                    cased.extend(c.to_uppercase());
+                }
+            }
+            Some(TextTransform::Lowercase) => {
+                if language_matches(language, "tr") || language_matches(language, "az") {
+                    match c {
+                        'I' => cased.push('ı'),
+                        'İ' => cased.push('i'),
+                        _ => cased.extend(c.to_lowercase()),
+                    }
+                } else {
+                    cased.extend(c.to_lowercase());
+                }
+            }
+            Some(TextTransform::Capitalize) => {
+                if c.is_alphanumeric() {
+                    let can_titlecase = !(0x24D0..=0x24E9).contains(&(c as u32));
+                    if !in_word && can_titlecase {
+                        cased.extend(c.to_uppercase());
+                    } else {
+                        cased.push(c);
+                    }
+                    in_word = true;
+                } else {
+                    cased.push(c);
+                    in_word = false;
+                }
+            }
+            _ => cased.push(c),
+        }
+    }
+    if matches!(case, Some(TextTransform::Lowercase))
+        && (language_matches(language, "tr") || language_matches(language, "az"))
+    {
+        tailor_turkic_combining_dot(&mut cased);
+    }
+    if matches!(case, Some(TextTransform::Capitalize)) && language_matches(language, "nl") {
+        tailor_dutch_ij(&mut cased);
+    }
+    if matches!(case, Some(TextTransform::Uppercase)) && language_matches(language, "el") {
+        strip_greek_tonos(&mut cased);
+    }
+    cased
+        .chars()
+        .map(|c| {
+            let c = if full_size_kana {
+                full_size_kana_char(c)
+            } else {
+                c
+            };
+            if full_width { full_width_char(c) } else { c }
+        })
+        .collect()
+}
+
+fn tailor_turkic_combining_dot(text: &mut String) {
+    let chars: Vec<char> = text.chars().collect();
+    let combining_dot = char::from_u32(0x0307).unwrap();
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] == 'ı' && chars.get(index + 1) == Some(&combining_dot) {
+            out.push('i');
+            index += 2;
+        } else {
+            out.push(chars[index]);
+            index += 1;
+        }
+    }
+    *text = out;
+}
+
+fn tailor_dutch_ij(text: &mut String) {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut at_word_start = true;
+    let mut index = 0;
+    while index < chars.len() {
+        let c = chars[index];
+        if at_word_start && c == 'I' && chars.get(index + 1) == Some(&'j') {
+            out.push('I');
+            out.push('J');
+            at_word_start = false;
+            index += 2;
+            continue;
+        }
+        out.push(c);
+        at_word_start = !c.is_alphanumeric();
+        index += 1;
+    }
+    *text = out;
+}
+
+fn strip_greek_tonos(text: &mut String) {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < chars.len() {
+        if !chars[index].is_alphabetic() {
+            out.push(chars[index]);
+            index += 1;
+            continue;
+        }
+        let mut end = index;
+        while end < chars.len()
+            && (chars[end].is_alphabetic() || ('\u{0300}'..='\u{036f}').contains(&chars[end]))
+        {
+            end += 1;
+        }
+        let letter_count = chars[index..end]
+            .iter()
+            .filter(|c| c.is_alphabetic())
+            .count();
+        let keep_tonos = letter_count == 1;
+        let mut word_index = index;
+        while word_index < end {
+            let c = chars[word_index];
+            if !keep_tonos
+                && let Some(&next) = chars.get(word_index + 1)
+                && matches!(c, 'Ά' | 'Έ' | 'Ή' | 'Ί' | 'Ό' | 'Ύ' | 'Ώ')
+                && matches!(next, 'Ι' | 'Υ')
+            {
+                out.push(greek_tonos_removed(c));
+                out.push(greek_diaeresis(next));
+                word_index += 2;
+            } else if !keep_tonos
+                && let (Some(&diaeresis), Some(&acute)) =
+                    (chars.get(word_index + 1), chars.get(word_index + 2))
+                && matches!(c, 'Ι' | 'Υ')
+                && diaeresis == '\u{0308}'
+                && acute == '\u{0301}'
+            {
+                out.push(greek_diaeresis(c));
+                word_index += 3;
+            } else if !keep_tonos && c == '\u{0301}' {
+                word_index += 1;
+            } else {
+                out.push(if keep_tonos {
+                    c
+                } else {
+                    greek_tonos_removed(c)
+                });
+                word_index += 1;
+            }
+        }
+        index = end;
+    }
+    *text = out;
+}
+
+fn greek_tonos_removed(c: char) -> char {
+    match c {
+        'Ά' => 'Α',
+        'Έ' => 'Ε',
+        'Ή' => 'Η',
+        'Ί' => 'Ι',
+        'Ό' => 'Ο',
+        'Ύ' => 'Υ',
+        'Ώ' => 'Ω',
+        _ => c,
+    }
+}
+
+fn greek_diaeresis(c: char) -> char {
+    match c {
+        'Ι' => 'Ϊ',
+        'Υ' => 'Ϋ',
+        _ => c,
+    }
+}
+
+fn full_size_kana_char(c: char) -> char {
+    match c {
+        'ぁ' => 'あ',
+        'ぃ' => 'い',
+        'ぅ' => 'う',
+        'ぇ' => 'え',
+        'ぉ' => 'お',
+        'ゕ' => 'か',
+        'ゖ' => 'け',
+        'っ' => 'つ',
+        'ゃ' => 'や',
+        'ゅ' => 'ゆ',
+        'ょ' => 'よ',
+        'ゎ' => 'わ',
+        'ァ' => 'ア',
+        'ィ' => 'イ',
+        'ゥ' => 'ウ',
+        'ェ' => 'エ',
+        'ォ' => 'オ',
+        'ヵ' => 'カ',
+        'ㇰ' => 'ク',
+        'ヶ' => 'ケ',
+        'ㇱ' => 'シ',
+        'ㇲ' => 'ス',
+        'ッ' => 'ツ',
+        'ㇳ' => 'ト',
+        'ㇴ' => 'ヌ',
+        'ㇵ' => 'ハ',
+        'ㇶ' => 'ヒ',
+        'ㇷ' => 'フ',
+        'ㇸ' => 'ヘ',
+        'ㇹ' => 'ホ',
+        'ㇺ' => 'ム',
+        'ャ' => 'ヤ',
+        'ュ' => 'ユ',
+        'ョ' => 'ヨ',
+        'ㇻ' => 'ラ',
+        'ㇼ' => 'リ',
+        'ㇽ' => 'ル',
+        'ㇾ' => 'レ',
+        'ㇿ' => 'ロ',
+        'ヮ' => 'ワ',
+        'ｧ' => 'ｱ',
+        'ｨ' => 'ｲ',
+        'ｩ' => 'ｳ',
+        'ｪ' => 'ｴ',
+        'ｫ' => 'ｵ',
+        'ｯ' => 'ﾂ',
+        'ｬ' => 'ﾔ',
+        'ｭ' => 'ﾕ',
+        'ｮ' => 'ﾖ',
+        '\u{1B132}' => '\u{3053}',
+        '\u{1B150}' => '\u{3090}',
+        '\u{1B151}' => '\u{3091}',
+        '\u{1B152}' => '\u{3092}',
+        '\u{1B155}' => '\u{30B3}',
+        '\u{1B164}' => '\u{30F0}',
+        '\u{1B165}' => '\u{30F1}',
+        '\u{1B166}' => '\u{30F2}',
+        '\u{1B167}' => '\u{30F3}',
+        _ => c,
+    }
+}
+
+fn full_width_char(c: char) -> char {
+    match c {
+        ' ' => char::from_u32(0x3000).unwrap(),
+        '!'..='~' => char::from_u32(c as u32 + 0xFEE0).unwrap_or(c),
+        _ => c,
+    }
+}
+
 pub(crate) fn preshape_text(
     doc: &mut Document,
     cascade: &CascadeResult,
@@ -4668,6 +4993,7 @@ pub(crate) fn preshape_text(
     // runs collapse to one via dedupe, but NBSPs never collapse so each
     // migrating NBSP node adds one).
     let mut migrate_pending: u32 = 0;
+    let mut migrate_pending_full_width = false;
     // Parent map for white-space boundary trimming (arena has no parent
     // pointers; every text node is visited once here).
     let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
@@ -4703,7 +5029,9 @@ pub(crate) fn preshape_text(
         if cascade.computed[idx].display == DisplayValue::None {
             continue;
         }
-        let ws = cascade.computed[idx].white_space;
+        let cv = &cascade.computed[idx];
+        let language = effective_language_for_text(doc, &parent_of, idx);
+        let ws = cv.white_space;
         let collapsed = collapse_text_for_shaping(doc, cascade, &parent_of, idx, &raw, ws);
         if std::env::var("COLLAPSE_DBG2").is_ok() {
             eprintln!(
@@ -4716,30 +5044,86 @@ pub(crate) fn preshape_text(
         let pending_in = migrate_pending;
         let mut text = collapsed.text;
         if text.is_empty() {
+            // A collapsed space styled with `full-width` must remain owned by
+            // that inline run: attaching its transformed U+3000 to the
+            // preceding job avoids changing the line metrics of the following
+            // text node while retaining the source style's transform.
+            if collapsed.migrate_count > 0
+                && pending_in == 0
+                && text_transform_has_full_width(cv.text_transform)
+                && has_inline_adjacent(doc, cascade, &parent_of, idx, -1)
+                && has_inline_adjacent(doc, cascade, &parent_of, idx, 1)
+                && let Some(previous) = jobs.last_mut()
+            {
+                previous.text.push('\u{3000}');
+                continue;
+            }
             // Empty nodes neither consume nor (unless migrating themselves)
             // clear outstanding spaces: a boundary-dropped node must not
             // cancel earlier migrations.
             migrate_pending = pending_in.saturating_add(collapsed.migrate_count);
+            if collapsed.migrate_count > 0 {
+                migrate_pending_full_width = text_transform_has_full_width(cv.text_transform);
+            }
             continue;
         }
+        let pending_full_width = migrate_pending_full_width;
         migrate_pending = collapsed.migrate_count;
+        migrate_pending_full_width =
+            collapsed.migrate_count > 0 && text_transform_has_full_width(cv.text_transform);
         // Forward-migrated spaces (see `migrate_space`): prepend NBSPs iff
         // they still precede inline content from THIS node's edge — a
         // boundary element (e.g. `<br>`) in between correctly drops them —
         // and the node doesn't already start with one (a cross-node run
         // ending here collapses to the one already present).
+        let mut migrated_prefix_count = 0;
         if pending_in > 0
             && !text.starts_with("\u{00A0}")
             && has_inline_adjacent(doc, cascade, &parent_of, idx, -1)
         {
+            migrated_prefix_count = pending_in;
             text = "\u{00A0}".repeat(pending_in as usize) + &text;
         }
-        let cv = &cascade.computed[idx];
         // white-space phase 1 collapsing (bd raikiri-spike-25uv)。
         // pre 系は無変換 (tab 展開は後段)。collapse 系のみ trim 位置付きで変換。
         let start = line_start_pos(doc, cascade, &parent_of, idx);
         let trim_end = trail_trim(doc, cascade, &parent_of, idx);
         let mut text = collapse_ws(&text, cv.white_space, start, trim_end).into_owned();
+        // CSS text transforms run on the post-collapse text. In particular,
+        // `full-width` must see only the surviving U+0020 space; applying it
+        // before whitespace collapsing would turn every source space into
+        // U+3000 and incorrectly prevent the collapse.
+        let mut transformed = apply_text_transform(&text, cv.text_transform, &language);
+        if migrated_prefix_count > 0 && pending_full_width {
+            let mut migrated = 0;
+            let mut with_full_width_spaces = String::with_capacity(transformed.len());
+            for c in transformed.chars() {
+                if migrated < migrated_prefix_count && c == '\u{00A0}' {
+                    with_full_width_spaces.push('\u{3000}');
+                    migrated += 1;
+                } else {
+                    with_full_width_spaces.push(c);
+                }
+            }
+            transformed = with_full_width_spaces;
+        }
+        // HTML tokenization may place U+0307 in its own text node. In
+        // Turkic lowercase, an `I` followed by that combining dot maps to
+        // `i`; fold the split pair back into the preceding shaping job.
+        if transformed
+            .chars()
+            .eq(std::iter::once(char::from_u32(0x0307).unwrap()))
+            && matches!(cv.text_transform, TextTransform::Lowercase)
+            && (language_matches(&language, "tr") || language_matches(&language, "az"))
+            && let Some(previous) = jobs.last_mut()
+            && parent_of[previous.idx] == parent_of[idx]
+            && previous.text.ends_with('ı')
+        {
+            previous.text.pop();
+            previous.text.push('i');
+            continue;
+        }
+        text = transformed;
         // A soft hyphen is only an opportunity when hyphenation is enabled.
         // Removing it for `hyphens: none` also prevents the shaping and line
         // breaker from treating it as a discretionary break.
@@ -11646,6 +12030,55 @@ mod tests {
         assert!(
             spaced > normal + 12.0,
             "letter spacing should increase the shaped advance: normal={normal}, spaced={spaced}"
+        );
+    }
+
+    #[test]
+    fn text_transform_maps_case_width_kana_and_language_tailoring() {
+        assert_eq!(
+            apply_text_transform("hello world", TextTransform::Capitalize, ""),
+            "Hello World"
+        );
+        assert_eq!(
+            apply_text_transform("a b", TextTransform::UppercaseFullWidth, ""),
+            "Ａ　Ｂ"
+        );
+        assert_eq!(
+            apply_text_transform("ぁァㇰｧ", TextTransform::FullSizeKana, ""),
+            "あアクｱ"
+        );
+        assert_eq!(
+            apply_text_transform(
+                "\u{1b132}\u{1b150}\u{1b151}\u{1b152}\u{1b155}\u{1b164}\u{1b165}\u{1b166}\u{1b167}",
+                TextTransform::FullSizeKana,
+                ""
+            ),
+            "こゐゑをコヰヱヲン"
+        );
+        assert_eq!(
+            apply_text_transform("iIİı", TextTransform::Uppercase, "tr"),
+            "İIİI"
+        );
+        assert_eq!(
+            apply_text_transform("İI", TextTransform::Lowercase, "tr"),
+            "iı"
+        );
+        assert_eq!(
+            apply_text_transform("ijsland", TextTransform::Capitalize, "nl"),
+            "IJsland"
+        );
+        assert_eq!(
+            apply_text_transform("καλημέρα αύριο", TextTransform::Uppercase, "el"),
+            "ΚΑΛΗΜΕΡΑ ΑΥΡΙΟ"
+        );
+        assert_eq!(
+            apply_text_transform("ευφυΐα Νεράιδα", TextTransform::Uppercase, "el"),
+            "ΕΥΦΥΪΑ ΝΕΡΑΪΔΑ"
+        );
+        // Enclosed alphanumerics are not titlecased by CSS capitalize.
+        assert_eq!(
+            apply_text_transform("ⓐ ⓑ", TextTransform::Capitalize, ""),
+            "ⓐ ⓑ"
         );
     }
 

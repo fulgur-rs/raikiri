@@ -15356,23 +15356,16 @@ mod tests {
     }
 
     #[test]
-    fn text_transform_scope_cut_full_width_is_dropped_and_prior_wins() {
-        // CSS Text 3 §2.1 `text-transform: full-width` is spec-valid but
-        // unimplemented (`TextTransform` doc's Scope carving: `||` combinator).
-        // Lone `full-width` is dropped; with a prior valid, prior stays.
+    fn text_transform_width_keywords_cascade_as_computed_values() {
         use crate::property::TextTransform;
         let cv = cascade_doc(
             "",
             "p",
             Some("text-transform: uppercase; text-transform: full-width"),
         );
-        assert_eq!(
-            cv.text_transform,
-            TextTransform::Uppercase,
-            "scope-cut `text-transform: full-width` is dropped, prior `uppercase` must remain winner"
-        );
-        let cv = cascade_doc("", "p", Some("text-transform: full-width"));
-        assert_eq!(cv.text_transform, TextTransform::None);
+        assert_eq!(cv.text_transform, TextTransform::FullWidth);
+        let cv = cascade_doc("", "p", Some("text-transform: uppercase full-width"));
+        assert_eq!(cv.text_transform, TextTransform::UppercaseFullWidth);
     }
 
     // ── letter-spacing / word-spacing wire-through (CSS Text 3 §7.2 / §7.1) ──

@@ -873,12 +873,9 @@ pub struct ComputedValues {
     /// "Initial: none" / "Inherited: yes"). Computed value = specified
     /// keyword.
     ///
-    /// # Scope carving (minimal scope)
-    ///
-    /// This field holds only the `none | capitalize | uppercase |
-    /// lowercase` subset of the property's full `none | [capitalize |
-    /// uppercase | lowercase] || full-width || full-size-kana` grammar —
-    /// see [`TextTransform`] doc.
+    /// The optional case, `full-width`, and `full-size-kana` keywords are
+    /// preserved in the computed value; see [`TextTransform`] for the value
+    /// grammar and layout handoff.
     pub text_transform: TextTransform,
     /// `visibility`. **inherited**, initial: [`Visibility::Visible`] (CSS
     /// Display Module Level 3 §4 "Invisibility: the visibility property"
