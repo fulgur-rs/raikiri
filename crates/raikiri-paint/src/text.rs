@@ -1,6 +1,6 @@
 //! Text glyph and decoration draw — parley Layout の GlyphRun を
 //! anyrender::draw_glyphs に pipeし、CSS Text Decoration Level 3 の
-//! line/style/color を text run の後ろに描画する。
+//! line/style/color を CSS の描画順に描画する。
 //!
 //! Pre-shape 済 `parley::Layout<()>` を `Node::text_layout()` accessor
 //! (`NodeData::Text(TextData)` 経由) から取得する design に依拠。paint は
@@ -16,31 +16,52 @@ use kurbo::{Affine, BezPath, Cap, Circle, Point, Rect, Stroke, Vec2};
 use parley::{Alignment, Glyph as ParleyGlyph, PositionedLayoutItem};
 use peniko::{Color, Fill};
 use raikiri_dom::Node;
-use raikiri_style::CascadeResult;
 use raikiri_style::property::{
-    CssColor, Direction, TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine,
-    TextDecorationStyle,
+    CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextAlign, TextAlignLast,
+    TextDecorationColor, TextDecorationLine, TextDecorationStyle,
 };
+use raikiri_style::{CascadeResult, ComputedValues};
 
 /// A decoration line carried from the element that originated it.
 ///
 /// `text-decoration-line` is not an inherited property, but CSS Text
 /// Decoration propagates a line from an element to its in-flow descendants.
 /// The paint walker therefore carries these values separately from the
-/// computed-value inheritance walk.
+/// computed-value inheritance walk. The origin metrics are retained so a
+/// descendant with a different font size cannot change the line's thickness
+/// or vertical offsets.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct DecorationSpec {
     line: TextDecorationLine,
     style: TextDecorationStyle,
     color: CssColor,
+    origin_thickness: f64,
+    origin_ascent: f64,
+    origin_descent: f64,
+}
+
+/// Return whether an element is a boundary for decoration propagation.
+///
+/// CSS Text Decoration propagates through in-flow descendants, but not into
+/// out-of-flow boxes, floats, or atomic inline-level boxes. The boundary box
+/// may still originate its own decoration, which is added after the ancestor
+/// context has been cleared.
+fn is_decoration_propagation_boundary(cv: &ComputedValues) -> bool {
+    let out_of_flow = matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
+        || !matches!(cv.float, FloatValue::None);
+    let atomic_inline = matches!(
+        cv.display,
+        DisplayValue::InlineBlock
+            | DisplayValue::InlineFlex
+            | DisplayValue::InlineGrid
+            | DisplayValue::InlineTable
+    );
+    out_of_flow || atomic_inline
 }
 
 /// Add the decoration originated by one element to the descendant paint
 /// context. `none` does not cancel a line propagated by an ancestor.
-pub(crate) fn push_element_decoration(
-    decorations: &mut Vec<DecorationSpec>,
-    cv: &raikiri_style::ComputedValues,
-) {
+pub(crate) fn push_element_decoration(decorations: &mut Vec<DecorationSpec>, cv: &ComputedValues) {
     if !has_paintable_line(cv.text_decoration_line) {
         return;
     }
@@ -53,11 +74,34 @@ pub(crate) fn push_element_decoration(
         // pinned implementation; this arm is a non-exhaustive forward guard.
         _ => cv.color,
     };
+    let origin_font_size = cv.font_size.px().max(1.0) as f64;
     decorations.push(DecorationSpec {
         line: cv.text_decoration_line,
         style: cv.text_decoration_style,
         color,
+        origin_thickness: (origin_font_size / 16.0).max(1.0),
+        // These normalized metrics keep the position tied to the decorating
+        // element even when a descendant uses a different font size.
+        origin_ascent: origin_font_size * 0.8,
+        origin_descent: origin_font_size * 0.2,
     });
+}
+
+/// Build the decoration context for an element's children.
+///
+/// A boundary drops ancestor lines first, then retains a line originated by
+/// the boundary element itself. This models the CSS rule that a child cannot
+/// cancel an ancestor decoration while atomic/out-of-flow boxes do not receive
+/// that ancestor decoration.
+pub(crate) fn decorations_for_element(
+    mut decorations: Vec<DecorationSpec>,
+    cv: &ComputedValues,
+) -> Vec<DecorationSpec> {
+    if is_decoration_propagation_boundary(cv) {
+        decorations.clear();
+    }
+    push_element_decoration(&mut decorations, cv);
+    decorations
 }
 
 fn has_paintable_line(line: TextDecorationLine) -> bool {
@@ -99,6 +143,17 @@ pub(crate) fn draw_text_node(
         } else {
             0.0
         };
+        let geometry = decoration_geometry(decorations, metrics, abs_x, abs_y, last_line_delta);
+
+        // CSS paints underline/overline before the glyphs and line-through
+        // after them. Keeping the phases separate also makes the order stable
+        // when a declaration contains several line keywords.
+        if let Some(geometry) = geometry {
+            for decoration in decorations {
+                draw_decoration_phase(scene, decoration, geometry, DecorationPhase::BeforeGlyphs);
+            }
+        }
+
         for item in line.items() {
             let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
                 // InlineBox は現状生成されない (preshape_text は inline box を
@@ -130,48 +185,12 @@ pub(crate) fn draw_text_node(
             );
         }
 
-        // Decoration lines are emitted after this text node's glyphs. This
-        // makes a propagated ancestor line cover descendant text when that
-        // descendant is painted, while still preserving the walk's normal
-        // document order for unrelated text nodes.
-        if !decorations.is_empty() {
-            let line_start = metrics.inline_min_coord + metrics.offset + last_line_delta;
-            // `advance` includes trailing whitespace. CSS Text Decoration 4
-            // has an explicit skip-spaces property; until that property is
-            // consumed, keeping the full shaped advance is the least
-            // surprising Level 3 behavior and preserves spaces in a run.
-            let line_width = metrics.advance.max(0.0);
-            if line_width > 0.0 {
-                let font_size = cv.font_size.px().max(1.0);
-                let thickness = decoration_thickness(font_size);
-                let baseline = metrics.baseline;
-                let ascent = metrics.ascent.max(0.0);
-                let descent = metrics.descent.max(0.0);
-                for decoration in decorations {
-                    draw_decoration(
-                        scene,
-                        decoration,
-                        DecorationGeometry {
-                            x0: abs_x as f64 + line_start as f64,
-                            x1: abs_x as f64 + (line_start + line_width) as f64,
-                            abs_y: abs_y as f64,
-                            baseline,
-                            ascent,
-                            descent,
-                            thickness,
-                        },
-                    );
-                }
-            } // cov:ignore: block terminator; all decoration styles are covered above.
+        if let Some(geometry) = geometry {
+            for decoration in decorations {
+                draw_decoration_phase(scene, decoration, geometry, DecorationPhase::AfterGlyphs);
+            }
         }
     }
-}
-
-fn decoration_thickness(font_size: f32) -> f64 {
-    // CSS `auto` thickness is font dependent. A one-pixel default at 16px,
-    // scaling with the used font size, is stable for the current rasterizer
-    // and gives larger text a visibly proportional decoration.
-    (font_size as f64 / 16.0).max(1.0)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -180,34 +199,64 @@ struct DecorationGeometry {
     x1: f64,
     abs_y: f64,
     baseline: f32,
-    ascent: f32,
-    descent: f32,
-    thickness: f64,
 }
 
-fn draw_decoration(
+fn decoration_geometry(
+    decorations: &[DecorationSpec],
+    metrics: &parley::LineMetrics,
+    abs_x: f32,
+    abs_y: f32,
+    last_line_delta: f32,
+) -> Option<DecorationGeometry> {
+    if decorations.is_empty() {
+        return None;
+    }
+    // `advance` includes trailing whitespace. CSS Text Decoration 4 has an
+    // explicit skip-spaces property; until that property is consumed, keeping
+    // the full shaped advance is the least surprising Level 3 behavior.
+    let line_width = metrics.advance.max(0.0);
+    if line_width <= 0.0 {
+        // cov:ignore: shaped text lines in the current layout always have a
+        // positive advance; retain the guard for empty/future line metrics.
+        return None;
+    }
+    let line_start = metrics.inline_min_coord + metrics.offset + last_line_delta;
+    Some(DecorationGeometry {
+        x0: abs_x as f64 + line_start as f64,
+        x1: abs_x as f64 + (line_start + line_width) as f64,
+        abs_y: abs_y as f64,
+        baseline: metrics.baseline,
+    })
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DecorationPhase {
+    BeforeGlyphs,
+    AfterGlyphs,
+}
+
+fn draw_decoration_phase(
     scene: &mut impl PaintScene,
     decoration: &DecorationSpec,
     geometry: DecorationGeometry,
+    phase: DecorationPhase,
 ) {
     let DecorationGeometry {
         x0,
         x1,
         abs_y,
         baseline: baseline_offset,
-        ascent,
-        descent,
-        thickness,
     } = geometry;
     let color = css_color_to_peniko(decoration.color);
     let baseline = abs_y + baseline_offset as f64;
+    let thickness = decoration.origin_thickness;
     let center_for = |line: TextDecorationLine| -> Option<f64> {
         if line.underline {
-            Some(baseline + descent as f64 * 0.5)
+            Some(baseline + decoration.origin_descent * 0.5)
         } else if line.overline {
-            Some(baseline - ascent as f64 + thickness * 0.5)
+            Some(baseline - decoration.origin_ascent + thickness * 0.5)
         } else if line.line_through {
-            Some(baseline - ascent as f64 * 0.35)
+            Some(baseline - decoration.origin_ascent * 0.35)
         } else {
             // cov:ignore: every caller passes a single enabled line keyword;
             // this fallback is only a defensive totality guard.
@@ -215,17 +264,24 @@ fn draw_decoration(
         }
     };
 
-    // A declaration can contain several line keywords. Paint each one at its
-    // own CSS position, preserving keyword order only for deterministic scene
-    // recording (the positions do not overlap for the normal font metrics).
-    let positions = [
-        (decoration.line.underline, TextDecorationLine::UNDERLINE),
-        (decoration.line.overline, TextDecorationLine::OVERLINE),
-        (
-            decoration.line.line_through,
-            TextDecorationLine::LINE_THROUGH,
-        ),
-    ];
+    // Underline and overline are painted below/above the glyphs, while
+    // line-through is painted over the glyphs. The metrics in DecorationSpec
+    // come from the originating element, not this descendant text node.
+    let positions = match phase {
+        DecorationPhase::BeforeGlyphs => [
+            (decoration.line.underline, TextDecorationLine::UNDERLINE),
+            (decoration.line.overline, TextDecorationLine::OVERLINE),
+            (false, TextDecorationLine::LINE_THROUGH),
+        ],
+        DecorationPhase::AfterGlyphs => [
+            (false, TextDecorationLine::UNDERLINE),
+            (false, TextDecorationLine::OVERLINE),
+            (
+                decoration.line.line_through,
+                TextDecorationLine::LINE_THROUGH,
+            ),
+        ],
+    };
     for (enabled, line) in positions {
         if !enabled {
             continue;
@@ -393,9 +449,13 @@ fn css_color_to_peniko(c: CssColor) -> Color {
 
 #[cfg(test)]
 mod tests {
-    use super::text_align_last_delta;
+    use super::{DecorationSpec, decorations_for_element, text_align_last_delta};
     use parley::LineMetrics;
-    use raikiri_style::property::{Direction, TextAlign, TextAlignLast};
+    use raikiri_style::ComputedValues;
+    use raikiri_style::property::{
+        CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextAlign, TextAlignLast,
+        TextDecorationLine, TextDecorationStyle,
+    };
 
     fn metrics(offset: f32) -> LineMetrics {
         LineMetrics {
@@ -511,6 +571,103 @@ mod tests {
                 Direction::Ltr,
             ),
             0.0
+        );
+    }
+
+    fn ancestor_decoration() -> DecorationSpec {
+        DecorationSpec {
+            line: TextDecorationLine::UNDERLINE,
+            style: TextDecorationStyle::Solid,
+            color: CssColor::BLACK,
+            origin_thickness: 1.0,
+            origin_ascent: 12.8,
+            origin_descent: 3.2,
+        }
+    }
+
+    #[test]
+    fn decoration_metrics_are_taken_from_the_originating_element() {
+        let mut cv = ComputedValues::initial();
+        cv.font_size = raikiri_style::resolve::ComputedLength(32.0);
+        cv.text_decoration_line = TextDecorationLine::UNDERLINE;
+        let decorations = decorations_for_element(Vec::new(), &cv);
+        assert_eq!(decorations.len(), 1);
+        assert_eq!(decorations[0].origin_thickness, 2.0);
+        assert_eq!(decorations[0].origin_ascent, 25.6);
+        assert_eq!(decorations[0].origin_descent, 6.4);
+    }
+
+    #[test]
+    fn ancestor_decoration_stops_at_out_of_flow_float_and_atomic_boundaries() {
+        let ancestor = vec![ancestor_decoration()];
+        let cases = [
+            (
+                "absolute",
+                DisplayValue::Block,
+                PositionValue::Absolute,
+                FloatValue::None,
+            ),
+            (
+                "fixed",
+                DisplayValue::Block,
+                PositionValue::Fixed,
+                FloatValue::None,
+            ),
+            (
+                "float",
+                DisplayValue::Block,
+                PositionValue::Static,
+                FloatValue::Left,
+            ),
+            (
+                "inline-block",
+                DisplayValue::InlineBlock,
+                PositionValue::Static,
+                FloatValue::None,
+            ),
+            (
+                "inline-flex",
+                DisplayValue::InlineFlex,
+                PositionValue::Static,
+                FloatValue::None,
+            ),
+            (
+                "inline-grid",
+                DisplayValue::InlineGrid,
+                PositionValue::Static,
+                FloatValue::None,
+            ),
+            (
+                "inline-table",
+                DisplayValue::InlineTable,
+                PositionValue::Static,
+                FloatValue::None,
+            ),
+        ];
+        for (name, display, position, float) in cases {
+            let mut cv = ComputedValues::initial();
+            cv.display = display;
+            cv.position = position;
+            cv.float = float;
+            // cov:ignore: the assertion message is evaluated only when this
+            // boundary regression assertion fails.
+            assert!(
+                decorations_for_element(ancestor.clone(), &cv).is_empty(),
+                "ancestor decoration crossed {name} boundary"
+            );
+        }
+
+        let mut in_flow = ComputedValues::initial();
+        in_flow.display = DisplayValue::Block;
+        assert_eq!(decorations_for_element(ancestor.clone(), &in_flow).len(), 1);
+
+        let mut boundary_origin = ComputedValues::initial();
+        boundary_origin.display = DisplayValue::InlineBlock;
+        boundary_origin.text_decoration_line = TextDecorationLine::OVERLINE;
+        assert_eq!(decorations_for_element(ancestor, &boundary_origin).len(), 1);
+        assert_eq!(
+            decorations_for_element(vec![ancestor_decoration()], &boundary_origin)[0].line,
+            TextDecorationLine::OVERLINE
         );
     }
 }

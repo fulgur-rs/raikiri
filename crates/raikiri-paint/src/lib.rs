@@ -448,6 +448,30 @@ mod tests {
     }
 
     #[test]
+    fn paint_single_page_text_decoration_paints_around_glyphs_in_css_order() {
+        let scene = decorated_text_scene(
+            "text-decoration-line: underline overline line-through; text-decoration-style:solid",
+        );
+        let glyph_index = scene
+            .commands
+            .iter()
+            .position(|command| matches!(command, RenderCommand::GlyphRun(_)))
+            .expect("decorated text must emit a GlyphRun");
+        let before_glyph_fills = scene.commands[..glyph_index]
+            .iter()
+            .filter(|command| matches!(command, RenderCommand::Fill(_)))
+            .count();
+        let after_glyph_fills = scene.commands[glyph_index + 1..]
+            .iter()
+            .filter(|command| matches!(command, RenderCommand::Fill(_)))
+            .count();
+        // The canvas plus underline/overline precede text; line-through is
+        // painted after the glyph run.
+        assert_eq!(before_glyph_fills, 3);
+        assert_eq!(after_glyph_fills, 1);
+    }
+
+    #[test]
     fn paint_single_page_text_decoration_styles_reach_scene() {
         let cases = [
             ("solid", Some(2), 0),

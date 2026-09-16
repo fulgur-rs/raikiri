@@ -260,8 +260,7 @@ pub(crate) fn paint_document(
                 // layer, but its originating line is propagated to descendants
                 // by CSS Text Decoration. Keep that paint-only context separate
                 // from `CascadeResult`'s inheritance result.
-                let mut child_decorations = decorations;
-                text::push_element_decoration(&mut child_decorations, cv);
+                let child_decorations = text::decorations_for_element(decorations, cv);
                 // children を reverse push すると pop 時に document order で処理される。
                 // For position:relative, children are laid out at normal flow position but paint at offset position.
                 let child_parent_x = abs_x + pos_dx;
