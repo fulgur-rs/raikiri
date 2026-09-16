@@ -1244,6 +1244,9 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         //   non-element children carry no grid structure).
         // + segment-break-transformation-ignorable/removable x5 + text-transform-capitalize-034
         //   (+6, css-text-whitespace #10: multi-node runs, ignorable neighbors, abspos inline).
+        // + CSS Text PASS-only WPT sweeps (+25: white-space/text-wrap,
+        //   word-break/overflow-wrap, text-indent, tab-size).
+        // + text-align-last paint-time final-line alignment (+16).
         // quarantine and deprecated stay empty until a developer PR adds a flake or crasher.
         // + flexbox_fbfc (+1, y0zo initial slice: exact 800x600 pass).
         // + flexbox-overflow-vert-003 (+1, y0zo overflow clip: exact 800x600 pass).
@@ -1253,7 +1256,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + abspos static-position slice (+9, exact 800x600 pass).
         // - inline-flex percentage sizing: one flex-item pin restored after
         //   the Taffy calc resolver was connected; one remains deferred.
-        assert_eq!(set.baseline.entries.len(), 893);
+        assert_eq!(set.baseline.entries.len(), 934);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }

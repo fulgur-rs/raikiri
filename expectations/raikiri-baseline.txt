@@ -1068,3 +1068,50 @@ css/css-grid/abspos/grid-abspos-staticpos-align-self-self-end.html
 css/css-grid/abspos/grid-abspos-staticpos-justify-self-001.html
 css/css-flexbox/abspos/flex-abspos-staticpos-align-self-safe-003.html
 # REMOVED 2026-09-16: grid abspos last-baseline vertical/rtl cases remain unsupported by the horizontal Taffy bridge.
+
+# --- css-text WPT PASS-only pins 2026-09-16 ---
+# white-space/text-wrap, word-break/overflow-wrap, text-indent, and tab-size sweeps
+css/css-text/overflow-wrap/overflow-wrap-anywhere-002.html
+css/css-text/overflow-wrap/overflow-wrap-anywhere-011.html
+css/css-text/overflow-wrap/overflow-wrap-break-word-002.html
+css/css-text/overflow-wrap/overflow-wrap-min-content-size-001.html
+css/css-text/overflow-wrap/overflow-wrap-min-content-size-004.html
+css/css-text/tab-size/tab-size-integer-001.html
+css/css-text/tab-size/tab-size-integer-002.html
+css/css-text/tab-size/tab-size-integer-003.html
+css/css-text/tab-size/tab-size-length-001.html
+css/css-text/tab-size/tab-size-length-002.html
+css/css-text/tab-size/tab-size-percent-001.html
+css/css-text/tab-size/tab-size-spacing-001.html
+css/css-text/text-indent/anonymous-flex-item-001.html
+css/css-text/text-indent/anonymous-grid-item-001.html
+css/css-text/text-indent/text-indent-text-align-end.html
+css/css-text/white-space/full-width-leading-spaces-001.html
+css/css-text/white-space/text-wrap-balance-004.html
+css/css-text/white-space/text-wrap-nowrap-001.html
+css/css-text/white-space/trailing-ideographic-space-break-spaces-008.html
+css/css-text/white-space/white-space-pre-wrap-trailing-spaces-013.html
+css/css-text/white-space/white-space-zero-fontsize-002.html
+css/css-text/white-space/ws-break-spaces-applies-to-012.html
+css/css-text/white-space/ws-break-spaces-applies-to-013.html
+css/css-text/word-break/word-break-manual-001.html
+css/css-text/word-break/word-break-min-content-001.html
+
+# --- text-align-last WPT PASS-only pins 2026-09-16 ---
+# final-line alignment implemented in raikiri-paint
+css/css-text/text-align/text-align-center-last-center.html
+css/css-text/text-align/text-align-center-last-end.html
+css/css-text/text-align/text-align-center-last-justify.html
+css/css-text/text-align/text-align-center-last-start.html
+css/css-text/text-align/text-align-end-last-center.html
+css/css-text/text-align/text-align-end-last-end.html
+css/css-text/text-align/text-align-end-last-justify.html
+css/css-text/text-align/text-align-end-last-start.html
+css/css-text/text-align/text-align-justify-last-center.html
+css/css-text/text-align/text-align-justify-last-end.html
+css/css-text/text-align/text-align-justify-last-justify.html
+css/css-text/text-align/text-align-justify-last-start.html
+css/css-text/text-align/text-align-start-last-center.html
+css/css-text/text-align/text-align-start-last-end.html
+css/css-text/text-align/text-align-start-last-justify.html
+css/css-text/text-align/text-align-start-last-start.html
