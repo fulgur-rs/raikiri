@@ -1059,14 +1059,14 @@ pub struct ComputedValues {
     ///
     /// # Scope carving
     ///
-    /// This field holds only the `normal | pre | nowrap | pre-wrap |
-    /// pre-line` subset of the property's full `normal | pre | nowrap |
-    /// pre-wrap | break-spaces | pre-line` grammar — see [`WhiteSpace`]
-    /// doc. It also carries the cascaded value only — no consumer reads it
-    /// yet, same as [`Self::z_index`] doc's "Scope carving" section: the
-    /// white-space collapsing / line-wrapping algorithm the spec's keyword
-    /// table describes belongs to a text layout / line-breaking consumer
-    /// (raikiri-dom / raikiri-paint) this crate does not implement yet.
+    /// This field carries the full `normal | pre | nowrap | pre-wrap |
+    /// break-spaces | pre-line` keyword set — see [`WhiteSpace`] doc. The
+    /// text-layout consumer in `raikiri-dom` applies the phase-1 behavior:
+    /// collapsible whitespace is merged for `normal`/`nowrap`/`pre-line`,
+    /// segment breaks are preserved as forced breaks only for `pre-line`, and
+    /// the `pre` family preserves source whitespace. The additional
+    /// end-of-line occupancy rules for `break-spaces` remain a downstream
+    /// line-breaking detail.
     pub white_space: WhiteSpace,
     /// `text-wrap` wrapping component. Inherited, initial `wrap`.
     pub text_wrap: TextWrapMode,
