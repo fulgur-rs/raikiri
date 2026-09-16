@@ -1,12 +1,18 @@
 //! Unified rule tree — cascade 側と将来の GCPM 解決側が共有する index。
 //! style_rules を populate。@page at-rule も (silently skip せず)
 //! [`RuleTree::page_rules`] に格納する (cascade 適用は未実装)。
-//! それ以外の at-rule (@media / @supports / @import 等) は引き続き silently skip。
+//! at-rule の generic parse view は、専用の意味論が未実装のもの
+//! (@supports / @import 等) を [`RuleTree::opaque_at_rules`] に raw data として
+//! 保持する。`@media` もこの raw view に保持しつつ、対応する media type の
+//! qualified rule は cascade 用の専用 view に展開する。専用 view を持つ
+//! `@counter-style` も raw/source order の確認用にこの viewへ記録し、`@page`
+//! は既存の page view に保持する。
 
-use cssparser::{Parser, ParserInput, StyleSheetParser};
+use cssparser::{Parser, ParserInput, StyleSheetParser, Token};
 use selectors::parser::{ParseRelative, Selector, SelectorList};
 
 use crate::counter_style::{CounterStyleRegistry, parse_counter_style_rules};
+use crate::media::{MediaCondition, MediaRule, parse_media_condition};
 use crate::page::{
     PageBlockBody, PageRule, PageSelector, parse_page_declaration_block, parse_page_prelude,
 };
@@ -51,6 +57,134 @@ pub enum Origin {
     Author,
 }
 
+/// A syntactically valid at-rule body retained for a consumer that does not
+/// yet implement the at-rule's semantics.
+///
+/// The contents exclude the outer braces. `Statement` represents an at-rule
+/// terminated by `;` (or by the end of the stylesheet, which CSS syntax also
+/// permits). `Block` retains the raw component-value text inside `{ ... }`.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AtRuleBody {
+    /// The at-rule had no block body.
+    Statement,
+    /// The raw contents of the at-rule's curly-bracket block.
+    Block(String),
+}
+
+impl AtRuleBody {
+    /// Return the block contents, or `None` for a statement at-rule.
+    pub fn as_block(&self) -> Option<&str> {
+        match self {
+            Self::Statement => None,
+            Self::Block(body) => Some(body),
+        }
+    }
+}
+
+/// A raw qualified rule found inside an opaque at-rule block.
+///
+/// The prelude and body are intentionally not interpreted. A later semantic
+/// pass can parse them according to that at-rule's grammar, while an
+/// inspector can still walk the nested rule list without reparsing bytes.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QualifiedRuleRecord {
+    /// Raw component-value text before the nested rule's `{`.
+    pub prelude: String,
+    /// Raw component-value text inside the nested rule's braces.
+    pub body: String,
+    /// Zero-based order among sibling nested rules.
+    pub source_order: u32,
+    /// The stylesheet origin inherited from the containing at-rule.
+    pub origin: Origin,
+}
+
+/// A rule node retained inside an opaque at-rule block.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RuleNode {
+    /// A qualified rule retained without selector/property interpretation.
+    Qualified(QualifiedRuleRecord),
+    /// A nested at-rule retained recursively.
+    AtRule(Box<AtRuleRecord>),
+}
+
+/// A valid at-rule that is retained as opaque data.
+///
+/// This is deliberately an owned representation. The parser input belongs to
+/// the caller of [`RuleTree::add_stylesheet`], so retaining `&str` slices here
+/// would make the rule tree borrow the stylesheet source. `prelude` includes
+/// the source text between the at-rule name and its terminator; comments and
+/// whitespace are retained in that text. For a block at-rule, `children` is a
+/// best-effort recursive view of nested rules; `body` remains authoritative
+/// for declaration lists and arbitrary component-value content.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AtRuleRecord {
+    /// The at-rule name without the leading `@`.
+    pub name: String,
+    /// The raw prelude, including source whitespace/comments after `name`.
+    pub prelude: String,
+    /// The statement or raw block body.
+    pub body: AtRuleBody,
+    /// Nested rule nodes in source order, if this is a block at-rule.
+    pub children: Vec<RuleNode>,
+    /// Zero-based cross-kind source order for this top-level at-rule.
+    /// Nested records use sibling-local order instead.
+    pub source_order: u32,
+    /// The stylesheet origin supplied to [`RuleTree::add_stylesheet`].
+    pub origin: Origin,
+}
+
+/// The kind of a retained top-level rule in [`RuleTree::rules`].
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CssRuleKind {
+    /// Index into [`RuleTree::style_rules`].
+    Style { index: usize },
+    /// Index into [`RuleTree::page_rules`].
+    Page { index: usize },
+    /// Index into [`RuleTree::opaque_at_rules`].
+    AtRule { index: usize },
+}
+
+/// A source-order entry for a retained top-level stylesheet rule.
+///
+/// The compatibility views keep their historical independent source-order
+/// counters. This ordered view supplies the cross-kind order needed when a
+/// later semantic pass expands an at-rule into ordinary style rules.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CssRule {
+    /// Zero-based order across all retained top-level style, page, and opaque
+    /// at-rules in the tree.
+    pub source_order: u32,
+    /// Cascade origin for this rule.
+    pub origin: Origin,
+    /// Which compatibility view contains the rule's parsed payload.
+    pub kind: CssRuleKind,
+}
+
+impl AtRuleRecord {
+    /// Return a best-effort CSS serialization of this retained at-rule.
+    ///
+    /// The name and component-value text are retained, while the outer syntax
+    /// is reconstructed. This is intended for inspection and forwarding, not
+    /// as a byte-for-byte source-map representation.
+    pub fn to_css(&self) -> String {
+        match &self.body {
+            AtRuleBody::Statement => format!("@{}{};", self.name, self.prelude),
+            AtRuleBody::Block(body) => format!("@{}{}{{{body}}}", self.name, self.prelude),
+        }
+    }
+
+    /// Return nested rules in source order.
+    pub fn children(&self) -> &[RuleNode] {
+        &self.children
+    }
+}
+
 /// Unified rule tree。cascade + 将来の GCPM 解決側が消費する index。
 ///
 /// `style_rules` を populate。`page_rules` は @page at-rule を追加 (parse
@@ -58,8 +192,11 @@ pub enum Origin {
 /// ([`CounterStyleRegistry`]) は `@counter-style` at-rule の registry 化の
 /// みで、`generate a counter` 算出
 /// ([`crate::counter_style::resolve_custom_counter`]) の呼び出しは consumer
-/// 側 (raikiri-traits) の責務のまま。将来 field (font_face_rules /
-/// media_rules / supports_rules / import_rules) は今後追加予定 —
+/// 側 (raikiri-traits) の責務のまま。`opaque_at_rules` は generic parse
+/// view として at-rule の raw data を保持する。`@media` の `all` / `print` /
+/// `screen` 条件に対応する qualified rules は、互換用 `style_rules` とは
+/// 別の内部 view にも展開され、cascade 前に評価される。将来 field
+/// (font_face_rules / supports_rules / import_rules) は今後追加予定 —
 /// `#[non_exhaustive]` の恩恵で非破壊的に拡張可能。
 #[non_exhaustive]
 pub struct RuleTree {
@@ -99,6 +236,22 @@ pub struct RuleTree {
     /// 「同じ source 文字列を追加でもう一度 `counter_style` 側の entry point に
     /// 渡す」配線のみを担い、2 つの parser を 1 pass に融合する話ではない。
     pub(crate) counter_styles: CounterStyleRegistry,
+    /// Generic records for at-rules that do not use the `@page` compatibility
+    /// view.
+    ///
+    /// This includes valid statement and block at-rules such as `@media`,
+    /// `@supports`, `@import`, and `@counter-style`. The records are
+    /// intentionally separate from `style_rules` and `page_rules`: retaining
+    /// an at-rule must not make its declarations execute accidentally.
+    pub(crate) opaque_at_rules: Vec<AtRuleRecord>,
+    /// Executable qualified rules parsed from `@media`, kept apart from the
+    /// historical direct-rule compatibility view.
+    pub(crate) media_rules: Vec<MediaRule>,
+    /// Next source order shared by direct and media-qualified style rules.
+    next_style_order: u32,
+    /// Cross-kind source-order index. The individual compatibility views keep
+    /// their historical counters; this vector records their retained order.
+    pub(crate) rules: Vec<CssRule>,
 }
 
 impl RuleTree {
@@ -155,12 +308,43 @@ impl RuleTree {
         &self.counter_styles
     }
 
+    /// Generic retained records for at-rules outside the `@page`
+    /// compatibility view.
+    ///
+    /// The returned records retain their cross-kind source order in the
+    /// corresponding [`CssRule`] entries. The raw records are observational;
+    /// supported `@media` descendants are separately evaluated by the cascade
+    /// and are not inserted into this compatibility view.
+    pub fn opaque_at_rules(&self) -> &[AtRuleRecord] {
+        &self.opaque_at_rules
+    }
+
+    /// Alias for [`RuleTree::opaque_at_rules`] for callers that use the CSSOM
+    /// term "at-rules" for the retained opaque records.
+    pub fn at_rules(&self) -> &[AtRuleRecord] {
+        self.opaque_at_rules()
+    }
+
+    /// Retained top-level rules in one cross-kind source-order sequence.
+    ///
+    /// Use the `index` in [`CssRuleKind`] to access the parsed payload through
+    /// [`RuleTree::style_rules`], [`RuleTree::page_rules`], or
+    /// [`RuleTree::opaque_at_rules`]. Unsupported selectors are absent from
+    /// this sequence because they do not produce a retained rule.
+    pub fn rules(&self) -> &[CssRule] {
+        &self.rules
+    }
+
     /// 空の RuleTree (0 rule)。
     pub fn empty() -> Self {
         Self {
             style_rules: Vec::new(),
             page_rules: Vec::new(),
             counter_styles: CounterStyleRegistry::new(),
+            opaque_at_rules: Vec::new(),
+            media_rules: Vec::new(),
+            next_style_order: 0,
+            rules: Vec::new(),
         }
     }
 
@@ -176,6 +360,10 @@ impl RuleTree {
     ///   (<https://www.w3.org/TR/css-cascade-4/#cascade-origin>)
     /// - Invalid selector / 未サポート property は既存の silent-drop 挙動を
     ///   継承する
+    /// - Syntactically valid at-rules other than `@page` are retained in
+    ///   [`RuleTree::opaque_at_rules`]. Declarations in unsupported at-rules
+    ///   are not applied by the cascade. Supported `@media` descendants are
+    ///   additionally parsed into the cascade's media-qualified view.
     /// - `@counter-style` at-rule は `origin` を問わず、
     ///   [`crate::counter_style::parse_counter_style_rules`] が同じ `source` に対して
     ///   独立にもう一度 parse し、得られた各 rule を呼び出し時の `origin` と共に
@@ -193,9 +381,27 @@ impl RuleTree {
     pub fn add_stylesheet(&mut self, source: &str, origin: Origin) {
         let mut input = ParserInput::new(source);
         let mut parser = Parser::new(&mut input);
-        let mut rule_parser = StyleRuleParser;
-        let mut style_order = self.style_rules.len() as u32;
+        let mut rule_parser = StyleRuleParser { source };
+        let mut style_order = self.next_style_order;
         let mut page_order = self.page_rules.len() as u32;
+        let mut rule_order = self.rules.len() as u32;
+        if let Some(prelude) = leading_charset_prelude(source) {
+            let index = self.opaque_at_rules.len();
+            self.opaque_at_rules.push(AtRuleRecord {
+                name: "charset".to_owned(),
+                prelude,
+                body: AtRuleBody::Statement,
+                children: Vec::new(),
+                source_order: rule_order,
+                origin,
+            });
+            self.rules.push(CssRule {
+                source_order: rule_order,
+                origin,
+                kind: CssRuleKind::AtRule { index },
+            });
+            rule_order = rule_order.wrapping_add(1);
+        }
         for rule in StyleSheetParser::new(&mut parser, &mut rule_parser).flatten() {
             match rule {
                 ParsedRule::Style(selectors, declarations) => {
@@ -207,13 +413,20 @@ impl RuleTree {
                     if !is_supported_selector_list(&selectors) {
                         continue;
                     }
+                    let index = self.style_rules.len();
                     self.style_rules.push(StyleRule {
                         selectors,
                         declarations,
                         source_order: style_order,
                         origin,
                     });
+                    self.rules.push(CssRule {
+                        source_order: rule_order,
+                        origin,
+                        kind: CssRuleKind::Style { index },
+                    });
                     style_order = style_order.wrapping_add(1);
+                    rule_order = rule_order.wrapping_add(1);
                 }
                 ParsedRule::Page(selector, body) => {
                     let PageBlockBody {
@@ -223,6 +436,7 @@ impl RuleTree {
                         bleed_declarations,
                         margin_box_rules,
                     } = body;
+                    let index = self.page_rules.len();
                     self.page_rules.push(PageRule {
                         selector,
                         declarations,
@@ -233,13 +447,40 @@ impl RuleTree {
                         source_order: page_order,
                         origin,
                     });
+                    self.rules.push(CssRule {
+                        source_order: rule_order,
+                        origin,
+                        kind: CssRuleKind::Page { index },
+                    });
                     page_order = page_order.wrapping_add(1);
+                    rule_order = rule_order.wrapping_add(1);
+                }
+                ParsedRule::OpaqueAtRule(mut record) => {
+                    record.source_order = rule_order;
+                    set_at_rule_origin(&mut record, origin);
+                    if record.name.eq_ignore_ascii_case("media") {
+                        collect_media_style_rules(
+                            &record,
+                            None,
+                            &mut self.media_rules,
+                            &mut style_order,
+                        );
+                    }
+                    let index = self.opaque_at_rules.len();
+                    self.opaque_at_rules.push(record);
+                    self.rules.push(CssRule {
+                        source_order: rule_order,
+                        origin,
+                        kind: CssRuleKind::AtRule { index },
+                    });
+                    rule_order = rule_order.wrapping_add(1);
                 }
             }
         }
         for rule in parse_counter_style_rules(source) {
             self.counter_styles.insert_with_origin(rule, origin);
         }
+        self.next_style_order = style_order;
     }
 }
 
@@ -346,24 +587,495 @@ fn walk_and_collect<D: StyleDom, F: FnMut(&str)>(dom: &D, id: StyleNodeId, on_st
     }
 }
 
+fn parse_css_ident(bytes: &[u8], source: &str, position: usize) -> Option<(usize, String)> {
+    let mut i = position;
+    let mut name = String::new();
+    while i < bytes.len() {
+        if is_css_ident_byte(bytes[i]) {
+            name.push(bytes[i] as char);
+            i += 1;
+            continue;
+        }
+        if bytes[i] != b'\\' {
+            break;
+        }
+        i += 1;
+        let first = *bytes.get(i)?;
+        if first.is_ascii_hexdigit() {
+            let mut value = 0u32;
+            let mut digits = 0;
+            while digits < 6 {
+                let Some(byte) = bytes.get(i) else { break };
+                let Some(digit) = (*byte as char).to_digit(16) else {
+                    break;
+                };
+                value = value * 16 + digit;
+                digits += 1;
+                i += 1;
+            }
+            if bytes.get(i).is_some_and(|byte| byte.is_ascii_whitespace()) {
+                if bytes[i] == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            if let Some(ch) = char::from_u32(value) {
+                name.push(ch);
+            }
+        } else if let Some(ch) = source[i..].chars().next() {
+            name.push(ch);
+            i += ch.len_utf8();
+        } else {
+            return None;
+        }
+    }
+    (!name.is_empty()).then_some((i, name))
+}
+
+fn is_css_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
+}
+
+fn leading_charset_prelude(source: &str) -> Option<String> {
+    let bytes = source.as_bytes();
+    let mut start = 0;
+    loop {
+        while start < bytes.len() && bytes[start].is_ascii_whitespace() {
+            start += 1;
+        }
+        if source.get(start..)?.starts_with("/*") {
+            let end = source.get(start + 2..)?.find("*/")?;
+            start += end + 4;
+            continue;
+        }
+        if source.get(start..)?.starts_with("<!--") {
+            start += 4;
+            continue;
+        }
+        if source.get(start..)?.starts_with("-->") {
+            start += 3;
+            continue;
+        }
+        break;
+    }
+
+    let name_start = start.checked_add(1)?;
+    if bytes.get(start) != Some(&b'@') {
+        return None;
+    }
+    let (after_name, name) = parse_css_ident(bytes, source, name_start)?;
+    if !name.eq_ignore_ascii_case("charset") {
+        return None;
+    }
+    let next = source.get(after_name..)?.chars().next();
+    if next.is_some_and(|ch| {
+        !ch.is_ascii() || ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '\\')
+    }) {
+        return None;
+    }
+
+    let mut i = after_name;
+    let mut stack = Vec::new();
+    while i < bytes.len() {
+        match bytes[i] {
+            b'/' if bytes.get(i + 1) == Some(&b'*') => {
+                let end = source.get(i + 2..)?.find("*/")?;
+                i += end + 4;
+            }
+            b'\\' => {
+                i += 1;
+                i += source.get(i..)?.chars().next()?.len_utf8();
+            }
+            b'\'' | b'"' => {
+                let quote = bytes[i];
+                i += 1;
+                while i < bytes.len() {
+                    match bytes[i] {
+                        b'\\' => {
+                            i += 1;
+                            i += source.get(i..)?.chars().next()?.len_utf8();
+                        }
+                        byte if byte == quote => {
+                            i += 1;
+                            break;
+                        }
+                        _ => i += 1,
+                    }
+                }
+            }
+            b'(' | b'[' => {
+                stack.push(bytes[i]);
+                i += 1;
+            }
+            b')' | b']' => {
+                let expected = if bytes[i] == b')' { b'(' } else { b'[' };
+                if stack.pop() != Some(expected) {
+                    return None;
+                }
+                i += 1;
+            }
+            b'{' | b'}' if stack.is_empty() => return None,
+            b'{' | b'}' => i += 1,
+            b';' if stack.is_empty() => {
+                let prelude = source.get(after_name..i)?.to_owned();
+                if css_component_values_are_balanced(&prelude) {
+                    return Some(prelude);
+                }
+                return None;
+            }
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+fn consume_raw_component_values<'i, 't>(
+    input: &mut Parser<'i, 't>,
+) -> Result<String, cssparser::ParseError<'i, ()>> {
+    let start = input.position();
+    loop {
+        let token_is_error = match input.next_including_whitespace_and_comments() {
+            Ok(token) => token.is_parse_error(),
+            Err(_) => break,
+        };
+        if token_is_error {
+            return Err(input.new_custom_error(()));
+        }
+    }
+    let raw = input.slice(start..input.position()).to_owned();
+    if css_component_values_are_balanced(&raw) {
+        Ok(raw)
+    } else {
+        Err(input.new_custom_error(()))
+    }
+}
+
+/// Validate one component-value list with cssparser's own tokenization.
+///
+/// The recursive walk is deliberately bounded. Once the bound is reached,
+/// cssparser still consumes the remaining nested block iteratively, while the
+/// caller only relies on this pass to keep malformed input out of the
+/// executable views. The raw data itself remains available for inspection.
+fn css_component_values_are_balanced(source: &str) -> bool {
+    let mut input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut input);
+    parse_component_values(&mut parser, source, None, 0)
+}
+
+fn parse_component_values<'i, 't>(
+    parser: &mut Parser<'i, 't>,
+    source: &str,
+    expected_close: Option<u8>,
+    depth: usize,
+) -> bool {
+    loop {
+        let token = match parser.next_including_whitespace_and_comments() {
+            Ok(token) => token,
+            Err(_) => {
+                return expected_close.is_none()
+                    || source
+                        .get(parser.position().byte_index()..)
+                        .and_then(|suffix| suffix.as_bytes().first())
+                        == expected_close.as_ref();
+            }
+        };
+
+        let closing_delimiter = match token {
+            Token::Function(_) | Token::ParenthesisBlock => Some(b')'),
+            Token::SquareBracketBlock => Some(b']'),
+            Token::CurlyBracketBlock => Some(b'}'),
+            _ => None,
+        };
+        if token.is_parse_error() {
+            return false;
+        }
+        let Some(closing_delimiter) = closing_delimiter else {
+            continue;
+        };
+
+        if depth >= MAX_OPAQUE_RULE_NESTING_DEPTH {
+            let mut ended_at_delimiter = false;
+            let result =
+                parser.parse_nested_block(|nested| -> Result<(), cssparser::ParseError<'i, ()>> {
+                    loop {
+                        match nested.next_including_whitespace_and_comments() {
+                            Ok(token) => {
+                                if token.is_parse_error() {
+                                    return Err(nested.new_custom_error(()));
+                                }
+                            }
+                            Err(_) => {
+                                ended_at_delimiter = source
+                                    .get(nested.position().byte_index()..)
+                                    .and_then(|suffix| suffix.as_bytes().first())
+                                    == Some(&closing_delimiter);
+                                return Ok(());
+                            }
+                        }
+                    }
+                });
+            if result.is_err() || !ended_at_delimiter {
+                return false;
+            }
+            continue;
+        }
+
+        let result =
+            parser.parse_nested_block(|nested| -> Result<(), cssparser::ParseError<'i, ()>> {
+                if parse_component_values(nested, source, Some(closing_delimiter), depth + 1) {
+                    Ok(())
+                } else {
+                    Err(nested.new_custom_error(()))
+                }
+            });
+        if result.is_err() {
+            return false;
+        }
+    }
+}
+
+/// A raw rule list used to expose nested structure without assigning semantics
+/// to an unknown at-rule body.
+enum NestedParsedRule {
+    AtRule(AtRuleRecord),
+    Qualified(QualifiedRuleRecord),
+}
+
+const MAX_OPAQUE_RULE_NESTING_DEPTH: usize = 128;
+
+fn nested_block_has_closing_brace(source: &str, input: &Parser<'_, '_>) -> bool {
+    let position = input.position().byte_index();
+    let Some(mut suffix) = source.get(position..) else {
+        return false;
+    };
+    loop {
+        suffix = suffix.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
+        if let Some(rest) = suffix.strip_prefix("/*") {
+            let Some(end) = rest.find("*/") else {
+                return false;
+            };
+            suffix = &rest[end + 2..];
+        } else {
+            return suffix.starts_with('}');
+        }
+    }
+}
+
+struct RawRuleParser<'s> {
+    depth: usize,
+    source: &'s str,
+}
+
+impl<'i, 's> cssparser::AtRuleParser<'i> for RawRuleParser<'s> {
+    type Prelude = (String, String);
+    type AtRule = NestedParsedRule;
+    type Error = ();
+
+    fn parse_prelude<'t>(
+        &mut self,
+        name: cssparser::CowRcStr<'i>,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
+        Ok((name.to_string(), consume_raw_component_values(input)?))
+    }
+
+    fn rule_without_block(
+        &mut self,
+        (name, prelude): Self::Prelude,
+        _start: &cssparser::ParserState,
+    ) -> Result<Self::AtRule, ()> {
+        Ok(NestedParsedRule::AtRule(AtRuleRecord {
+            name,
+            prelude,
+            body: AtRuleBody::Statement,
+            children: Vec::new(),
+            source_order: 0,
+            origin: Origin::Author,
+        }))
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        (name, prelude): Self::Prelude,
+        _start: &cssparser::ParserState,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self::AtRule, cssparser::ParseError<'i, Self::Error>> {
+        let body = consume_raw_component_values(input)?;
+        if !nested_block_has_closing_brace(self.source, input) {
+            return Err(input.new_custom_error(()));
+        }
+        let children = if self.depth < MAX_OPAQUE_RULE_NESTING_DEPTH {
+            parse_nested_rule_nodes_at_depth(&body, self.depth + 1)
+        } else {
+            Vec::new()
+        };
+        Ok(NestedParsedRule::AtRule(AtRuleRecord {
+            name,
+            prelude,
+            body: AtRuleBody::Block(body),
+            children,
+            source_order: 0,
+            origin: Origin::Author,
+        }))
+    }
+}
+
+impl<'i, 's> cssparser::QualifiedRuleParser<'i> for RawRuleParser<'s> {
+    type Prelude = String;
+    type QualifiedRule = NestedParsedRule;
+    type Error = ();
+
+    fn parse_prelude<'t>(
+        &mut self,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
+        consume_raw_component_values(input)
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        prelude: Self::Prelude,
+        _start: &cssparser::ParserState,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, Self::Error>> {
+        let body = consume_raw_component_values(input)?;
+        if !nested_block_has_closing_brace(self.source, input) {
+            return Err(input.new_custom_error(()));
+        }
+        Ok(NestedParsedRule::Qualified(QualifiedRuleRecord {
+            prelude,
+            body,
+            source_order: 0,
+            origin: Origin::Author,
+        }))
+    }
+}
+
+fn parse_nested_rule_nodes(source: &str) -> Vec<RuleNode> {
+    parse_nested_rule_nodes_at_depth(source, 0)
+}
+
+fn parse_nested_rule_nodes_at_depth(source: &str, depth: usize) -> Vec<RuleNode> {
+    let mut input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut input);
+    let mut rule_parser = RawRuleParser { depth, source };
+    let mut nodes = Vec::new();
+    for (source_order, rule) in StyleSheetParser::new(&mut parser, &mut rule_parser)
+        .flatten()
+        .enumerate()
+    {
+        let node = match rule {
+            NestedParsedRule::AtRule(mut record) => {
+                record.source_order = source_order as u32;
+                RuleNode::AtRule(Box::new(record))
+            }
+            NestedParsedRule::Qualified(mut record) => {
+                record.source_order = source_order as u32;
+                RuleNode::Qualified(record)
+            }
+        };
+        nodes.push(node);
+    }
+    nodes
+}
+
+fn set_at_rule_origin(record: &mut AtRuleRecord, origin: Origin) {
+    record.origin = origin;
+    for node in &mut record.children {
+        match node {
+            RuleNode::Qualified(qualified) => qualified.origin = origin,
+            RuleNode::AtRule(nested) => set_at_rule_origin(nested, origin),
+        }
+    }
+}
+
+fn parse_media_style_rule(record: &QualifiedRuleRecord) -> Option<StyleRule> {
+    let mut input = ParserInput::new(&record.prelude);
+    let mut parser = Parser::new(&mut input);
+    let selectors = parser
+        .parse_entirely(|input| {
+            SelectorList::parse(&RaikiriSelectorParser, input, ParseRelative::No)
+        })
+        .ok()?;
+    if !is_supported_selector_list(&selectors) {
+        return None;
+    }
+
+    let mut input = ParserInput::new(&record.body);
+    let mut parser = Parser::new(&mut input);
+    Some(StyleRule {
+        selectors,
+        declarations: parse_declaration_block(&mut parser),
+        source_order: 0,
+        origin: record.origin,
+    })
+}
+
+fn collect_media_style_rules(
+    record: &AtRuleRecord,
+    parent_condition: Option<MediaCondition>,
+    out: &mut Vec<MediaRule>,
+    style_order: &mut u32,
+) {
+    let Some(local_condition) = parse_media_condition(&record.prelude) else {
+        return;
+    };
+    let condition =
+        parent_condition.map_or(local_condition, |parent| parent.intersect(local_condition));
+    if condition.is_empty() {
+        return;
+    }
+
+    for child in &record.children {
+        match child {
+            RuleNode::Qualified(qualified) => {
+                let Some(mut rule) = parse_media_style_rule(qualified) else {
+                    continue;
+                };
+                rule.source_order = *style_order;
+                *style_order = style_order.wrapping_add(1);
+                out.push(MediaRule { rule, condition });
+            }
+            RuleNode::AtRule(nested) if nested.name.eq_ignore_ascii_case("media") => {
+                collect_media_style_rules(nested, Some(condition), out, style_order);
+            }
+            // An unknown wrapper may have a completely different grammar. Do
+            // not accidentally execute its descendants as ordinary CSS rules.
+            RuleNode::AtRule(_) => {}
+        }
+    }
+}
+
+/// Intermediate at-rule prelude emitted by [`StyleRuleParser`].
+///
+/// `@page` keeps its structured selector for the existing page compatibility
+/// view. Every other syntactically valid at-rule is retained with its raw
+/// component-value prelude so a later semantic pass can reinterpret it.
+enum ParsedAtRulePrelude {
+    Page(PageSelector),
+    Opaque { name: String, prelude: String },
+}
+
 /// Top-level parsed rule shape emitted by [`StyleRuleParser`].
 ///
 /// cssparser requires `AtRuleParser::AtRule` と `QualifiedRuleParser::QualifiedRule`
 /// を同一型にする必要があるため、両方をこの enum に流し込む
-/// (`StyleSheetParser::next` の `Item = R` 制約)。@media / @supports / @import
-/// は default `parse_prelude` の `Err` に落ちて cssparser 側で silent drop。
+/// (`StyleSheetParser::next` の `Item = R` 制約)。
 enum ParsedRule {
     Style(SelectorList<RaikiriSelectorImpl>, Vec<Declaration>),
     Page(PageSelector, PageBlockBody),
+    OpaqueAtRule(AtRuleRecord),
 }
 
-/// StyleSheetParser 実装。qualified rule + `@page` を受理、他 at-rule は drop。
-struct StyleRuleParser;
+/// StyleSheetParser 実装。qualified rule + `@page` を受理し、その他の at-rule
+/// は意味論を実行せず opaque record として保持する。
+struct StyleRuleParser<'s> {
+    source: &'s str,
+}
 
-/// `@page` prelude を parse する。他 at-rule (@media / @supports / @import 等) は
-/// default `Err` に落として cssparser に silent drop させる。
-impl<'i> cssparser::AtRuleParser<'i> for StyleRuleParser {
-    type Prelude = PageSelector;
+impl<'i, 's> cssparser::AtRuleParser<'i> for StyleRuleParser<'s> {
+    type Prelude = ParsedAtRulePrelude;
     type AtRule = ParsedRule;
     type Error = ();
 
@@ -373,11 +1085,36 @@ impl<'i> cssparser::AtRuleParser<'i> for StyleRuleParser {
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
         if name.eq_ignore_ascii_case("page") {
-            parse_page_prelude(input)
-        } else {
-            // @media / @supports / @import 等は今 slot 未サポート — cssparser 側で
-            // block をまるごと skip させるため Err を返す。
-            Err(input.new_custom_error(()))
+            return parse_page_prelude(input).map(ParsedAtRulePrelude::Page);
+        }
+
+        // cssparser gives this closure a parser delimited at `;`, `{`, or the
+        // end of the current rule list. Consume component values rather than
+        // rejecting the at-rule, retaining comments and whitespace from the
+        // original source through `slice`.
+        Ok(ParsedAtRulePrelude::Opaque {
+            name: name.to_string(),
+            prelude: consume_raw_component_values(input)?,
+        })
+    }
+
+    fn rule_without_block(
+        &mut self,
+        prelude: Self::Prelude,
+        _start: &cssparser::ParserState,
+    ) -> Result<Self::AtRule, ()> {
+        match prelude {
+            ParsedAtRulePrelude::Page(_) => Err(()),
+            ParsedAtRulePrelude::Opaque { name, prelude } => {
+                Ok(ParsedRule::OpaqueAtRule(AtRuleRecord {
+                    name,
+                    prelude,
+                    body: AtRuleBody::Statement,
+                    children: Vec::new(),
+                    source_order: 0,
+                    origin: Origin::Author,
+                }))
+            }
         }
     }
 
@@ -387,18 +1124,40 @@ impl<'i> cssparser::AtRuleParser<'i> for StyleRuleParser {
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::AtRule, cssparser::ParseError<'i, Self::Error>> {
-        // @page body = declaration list + `size` / `marks` / `bleed`
-        // descriptor lists + nested margin-box at-rules — parsed by a
-        // dedicated `crate::page::parse_page_declaration_block` (not the
-        // generic `parse_declaration_block` qualified rules use below, see
-        // that function's doc for why). 未サポート property / descriptor は
-        // 既存の silent-drop で 0 declaration 化する。
-        let body = parse_page_declaration_block(input);
-        Ok(ParsedRule::Page(prelude, body))
+        match prelude {
+            ParsedAtRulePrelude::Page(selector) => {
+                // `@page` body = declaration list + `size` / `marks` / `bleed`
+                // descriptors + nested margin-box at-rules — parsed by a
+                // dedicated `crate::page::parse_page_declaration_block` (not
+                // the generic `parse_declaration_block` qualified rules use).
+                // Unsupported properties/descriptors retain the existing
+                // silent-drop behavior.
+                let body = parse_page_declaration_block(input);
+                if !nested_block_has_closing_brace(self.source, input) {
+                    return Err(input.new_custom_error(()));
+                }
+                Ok(ParsedRule::Page(selector, body))
+            }
+            ParsedAtRulePrelude::Opaque { name, prelude } => {
+                let body = consume_raw_component_values(input)?;
+                if !nested_block_has_closing_brace(self.source, input) {
+                    return Err(input.new_custom_error(()));
+                }
+                let children = parse_nested_rule_nodes(&body);
+                Ok(ParsedRule::OpaqueAtRule(AtRuleRecord {
+                    name,
+                    prelude,
+                    body: AtRuleBody::Block(body),
+                    children,
+                    source_order: 0,
+                    origin: Origin::Author,
+                }))
+            }
+        }
     }
 }
 
-impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
+impl<'i, 's> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s> {
     type Prelude = SelectorList<RaikiriSelectorImpl>;
     type QualifiedRule = ParsedRule;
     type Error = ();
@@ -418,6 +1177,9 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, Self::Error>> {
         let declarations = parse_declaration_block(input);
+        if !nested_block_has_closing_brace(self.source, input) {
+            return Err(input.new_custom_error(()));
+        }
         Ok(ParsedRule::Style(prelude, declarations))
     }
 }
@@ -987,7 +1749,8 @@ mod tests {
 
     #[test]
     fn invalid_rule_silently_dropped() {
-        // @nope; は at-rule として parse され drop、bogus_selector.. rule は selector parse fail で drop
+        // @nope; is retained as opaque data; malformed selector syntax is
+        // still dropped from the compatibility style view.
         let doc = dom_with_style("@nope; p { color: red } ;;garbage;;");
         let tree = build_rule_tree(&doc);
         assert_eq!(tree.style_rules.len(), 1);
@@ -1750,6 +2513,58 @@ mod tests {
         assert_eq!(tree.page_rules[0].origin, Origin::Author);
         assert_eq!(tree.page_rules[1].source_order, 1);
         assert_eq!(tree.page_rules[1].origin, Origin::Author);
+        assert_eq!(tree.rules().len(), 4);
+        assert_eq!(tree.rules()[0].source_order, 0);
+        assert_eq!(tree.rules()[0].kind, CssRuleKind::Style { index: 0 });
+        assert_eq!(tree.rules()[1].source_order, 1);
+        assert_eq!(tree.rules()[1].kind, CssRuleKind::Page { index: 0 });
+        assert_eq!(tree.rules()[2].source_order, 2);
+        assert_eq!(tree.rules()[2].kind, CssRuleKind::Style { index: 1 });
+        assert_eq!(tree.rules()[3].source_order, 3);
+        assert_eq!(tree.rules()[3].kind, CssRuleKind::Page { index: 1 });
+    }
+
+    #[test]
+    fn cross_kind_rule_order_preserves_stylesheet_order() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "p { color: red } @media print { p { color: blue } } \
+             @page :first { color: green } div { color: black }",
+            Origin::Author,
+        );
+        assert_eq!(
+            tree.rules()
+                .iter()
+                .map(|rule| rule.kind.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                CssRuleKind::Style { index: 0 },
+                CssRuleKind::AtRule { index: 0 },
+                CssRuleKind::Page { index: 0 },
+                CssRuleKind::Style { index: 1 },
+            ]
+        );
+        assert_eq!(tree.opaque_at_rules()[0].source_order, 1);
+    }
+
+    #[test]
+    fn cross_kind_rule_order_continues_across_stylesheets() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("p { color: red } @future { x: y }", Origin::Author);
+        tree.add_stylesheet(
+            "@page :first { color: blue } div { color: green }",
+            Origin::User,
+        );
+
+        assert_eq!(
+            tree.rules()
+                .iter()
+                .map(|rule| rule.source_order)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 3]
+        );
+        assert_eq!(tree.rules()[2].origin, Origin::User);
+        assert_eq!(tree.opaque_at_rules()[0].source_order, 1);
     }
 
     #[test]
@@ -2372,32 +3187,199 @@ mod tests {
     }
 
     #[test]
-    fn other_at_rules_still_silently_dropped() {
-        // @media / @supports / @import は default `Err` に落ちて silent drop。
-        // (@page のみ非-skip 化 — 他の at-rule は scope 外)
+    fn leading_charset_is_retained_despite_cssparser_special_case() {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(
-            "@media print { p { color: red } } \
-             @supports (display: block) { p { color: red } } \
-             p { color: red }",
+            " /* comment */ @ChArSeT \"utf-8\"; p { color: red }",
             Origin::Author,
         );
+
+        assert_eq!(tree.opaque_at_rules().len(), 1);
+        assert_eq!(tree.opaque_at_rules()[0].name, "charset");
+        assert_eq!(tree.opaque_at_rules()[0].prelude, " \"utf-8\"");
+        assert_eq!(tree.rules()[0].kind, CssRuleKind::AtRule { index: 0 });
+        assert_eq!(tree.rules()[1].kind, CssRuleKind::Style { index: 0 });
+    }
+
+    #[test]
+    fn escaped_leading_charset_name_is_retained() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(r#"@ch\61 rset "utf-8"; p { color: red }"#, Origin::Author);
+
+        assert_eq!(tree.opaque_at_rules().len(), 1);
+        assert_eq!(tree.opaque_at_rules()[0].name, "charset");
+        assert_eq!(tree.rules()[1].kind, CssRuleKind::Style { index: 0 });
+    }
+
+    #[test]
+    fn valid_at_rules_are_retained_and_media_rules_are_indexed() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@media print { p { color: red } @nested feature; } \
+             @supports (display: block) { p { color: green } } \
+             p { color: blue }",
+            Origin::Author,
+        );
+
         assert_eq!(tree.page_rules.len(), 0);
-        // @media / @supports 内の p { color: red } は body parse されず drop、
-        // 末尾の p { color: red } のみ残る。
+        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.media_rules.len(), 1);
+        assert_eq!(tree.media_rules[0].rule.source_order, 0);
+        assert_eq!(tree.style_rules[0].source_order, 1);
+        assert_eq!(tree.opaque_at_rules().len(), 2);
+        assert_eq!(tree.opaque_at_rules()[0].name, "media");
+        assert_eq!(tree.opaque_at_rules()[1].name, "supports");
+        assert_eq!(tree.opaque_at_rules()[0].source_order, 0);
+        assert_eq!(tree.opaque_at_rules()[1].source_order, 1);
+
+        let media = &tree.opaque_at_rules()[0];
+        assert_eq!(
+            media.body.as_block(),
+            Some(" p { color: red } @nested feature; ")
+        );
+        assert_eq!(media.children().len(), 2);
+        assert!(matches!(media.children()[0], RuleNode::Qualified(_)));
+        let RuleNode::AtRule(nested) = &media.children()[1] else {
+            panic!("nested at-rule was not retained");
+        };
+        assert_eq!(nested.name, "nested");
+        assert_eq!(nested.body, AtRuleBody::Statement);
+        assert_eq!(nested.source_order, 1);
+    }
+
+    #[test]
+    fn media_style_order_continues_across_stylesheets() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@media print { p { color: red } }", Origin::Author);
+        tree.add_stylesheet("p { color: blue }", Origin::Author);
+
+        assert_eq!(tree.media_rules.len(), 1);
+        assert_eq!(tree.media_rules[0].rule.source_order, 0);
+        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.style_rules[0].source_order, 1);
+    }
+
+    #[test]
+    fn opaque_at_rule_preserves_statement_prelude_and_source_text() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@future /* keep */ feature;", Origin::User);
+        let record = &tree.opaque_at_rules()[0];
+        assert_eq!(record.name, "future");
+        assert_eq!(record.prelude, " /* keep */ feature");
+        assert_eq!(record.body, AtRuleBody::Statement);
+        assert_eq!(record.origin, Origin::User);
+        assert_eq!(record.to_css(), "@future /* keep */ feature;");
+    }
+
+    #[test]
+    fn malformed_opaque_at_rule_is_not_retained() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@future { x: url(\"bad\n) } p { color: blue }",
+            Origin::Author,
+        );
+        assert!(tree.opaque_at_rules().is_empty());
         assert_eq!(tree.style_rules.len(), 1);
     }
 
     #[test]
-    fn top_level_margin_box_at_rule_still_silently_dropped() {
-        // The sixteen margin-box idents are recognized only by
-        // `crate::page::PageDeclParser`, the parser for tokens *inside* an
-        // `@page` block body. `StyleRuleParser` (top-level stylesheet
-        // parser, this module) does not gain that recognition — a
-        // stylesheet-level `@top-left { … }` (spec-invalid outside an
-        // `@page` block) still falls through `StyleRuleParser`'s
-        // `AtRuleParser::parse_prelude` default rejection and is dropped,
-        // same as any other unsupported top-level at-rule.
+    fn unterminated_rule_blocks_are_not_retained() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@future { p { color: red }", Origin::Author);
+        assert!(tree.opaque_at_rules().is_empty());
+        assert!(tree.rules().is_empty());
+
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page { color: red", Origin::Author);
+        assert!(tree.page_rules.is_empty());
+        assert!(tree.rules().is_empty());
+
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("p { color: red", Origin::Author);
+        assert!(tree.style_rules.is_empty());
+        assert!(tree.rules().is_empty());
+    }
+
+    #[test]
+    fn opaque_at_rule_accepts_braces_in_unquoted_url() {
+        for prelude in ["url(foo{bar)", r"u\72l(foo{bar)"] {
+            let mut tree = RuleTree::empty();
+            tree.add_stylesheet(
+                &format!("@future {prelude}; p {{ color: blue }}"),
+                Origin::Author,
+            );
+            assert_eq!(tree.opaque_at_rules().len(), 1, "prelude: {prelude:?}");
+            assert_eq!(tree.style_rules.len(), 1);
+        }
+    }
+
+    #[test]
+    fn url_like_text_in_identifiers_does_not_hide_delimiters() {
+        for prelude in [
+            "@url(foo{bar)",
+            "#url(foo{bar)",
+            "éurl(foo{bar)",
+            r"\.\url(foo{bar)",
+            r"\2e \url(foo{bar)",
+        ] {
+            let mut tree = RuleTree::empty();
+            tree.add_stylesheet(
+                &format!("@future {prelude}; p {{ color: blue }}"),
+                Origin::Author,
+            );
+            assert!(
+                tree.opaque_at_rules().is_empty(),
+                "malformed delimiter sequence was retained for prelude {prelude:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn tokenizer_valid_eof_strings_and_comments_are_retained() {
+        for source in [
+            "@future \"unterminated",
+            "@future /* unterminated",
+            "@future url(foo\\",
+        ] {
+            let mut tree = RuleTree::empty();
+            tree.add_stylesheet(source, Origin::Author);
+            assert_eq!(tree.opaque_at_rules().len(), 1, "source: {source:?}");
+        }
+    }
+
+    #[test]
+    fn deeply_nested_opaque_at_rules_are_bounded_but_retained() {
+        let mut css = String::new();
+        for _ in 0..256 {
+            css.push_str("@future {");
+        }
+        css.push_str("p { color: red }");
+        for _ in 0..256 {
+            css.push('}');
+        }
+
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(&css, Origin::Author);
+        let record = &tree.opaque_at_rules()[0];
+        assert_eq!(record.name, "future");
+        assert!(record.body.as_block().is_some());
+
+        let mut depth = 1;
+        let mut node = record;
+        while let Some(RuleNode::AtRule(nested)) = node.children().first() {
+            depth += 1;
+            node = nested;
+        }
+        // The top-level record is followed by raw-parser levels 0 through
+        // `MAX_OPAQUE_RULE_NESTING_DEPTH`, so the retained chain has two
+        // records beyond the configured recursion count.
+        assert_eq!(depth, MAX_OPAQUE_RULE_NESTING_DEPTH + 2);
+    }
+
+    #[test]
+    fn valid_unknown_top_level_margin_box_at_rule_is_retained() {
+        // A top-level margin-box at-rule has no semantics in this parser, but
+        // it is still valid component-value syntax and must remain inspectable.
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(
             "@top-left { content: 'x' } p { color: red }",
@@ -2405,6 +3387,8 @@ mod tests {
         );
         assert_eq!(tree.page_rules.len(), 0);
         assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.opaque_at_rules().len(), 1);
+        assert_eq!(tree.opaque_at_rules()[0].name, "top-left");
     }
 
     // ── Comment / whitespace transparency within compound ──
@@ -2610,6 +3594,19 @@ mod tests {
         assert_eq!(tree.counter_styles().len(), 1);
         assert_eq!(tree.page_rules.len(), 1);
         assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.opaque_at_rules().len(), 1);
+        assert_eq!(tree.opaque_at_rules()[0].name, "counter-style");
+        assert_eq!(
+            tree.rules()
+                .iter()
+                .map(|rule| rule.kind.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                CssRuleKind::AtRule { index: 0 },
+                CssRuleKind::Page { index: 0 },
+                CssRuleKind::Style { index: 0 },
+            ]
+        );
     }
 
     #[test]

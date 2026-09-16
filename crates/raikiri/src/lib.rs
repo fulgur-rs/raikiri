@@ -16,8 +16,6 @@
 //! assert!(!result.computed.is_empty(), "cascade populates per-node ComputedValues");
 //! ```
 
-use raikiri_style::cascade;
-
 mod html_document;
 pub use html_document::HtmlDocument;
 
@@ -226,9 +224,11 @@ pub use raikiri_dom::Document;
 // gap — 「型は名指しできるが値を一切構築できない」という construction-path
 // gap であり、shorthand 展開の挙動そのものは変えていない。
 pub use raikiri_style::{
-    Atom, CascadeResult, ComputedBorder, ComputedLength, ComputedLengthPercentage,
-    ComputedLengthPercentageOrAuto, ComputedLineHeight, ComputedValues, CssColor, DisplayValue,
-    Length, LengthOrAuto, Origin, PropertyValue, RuleTree, Sides,
+    AtRuleBody, AtRuleRecord, Atom, CascadeResult, ComputedBorder, ComputedLength,
+    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLineHeight, ComputedValues,
+    CssColor, CssRule, CssRuleKind, DisplayValue, Length, LengthOrAuto, MediaContext, MediaType,
+    Origin, PropertyValue, QualifiedRuleRecord, RuleNode, RuleTree, Sides,
+    cascade_with_media_context,
 };
 // `Border` / `BorderColor` / `BorderStyle` / `LineHeight` は raikiri-style
 // crate root では re-export されておらず
@@ -297,6 +297,17 @@ pub use bytes::Bytes;
 /// umbrella (本 crate) 内で明示的に書く。これにより下位 crate 間の逆依存を発生
 /// させない。
 pub fn build_cascaded(doc: &UncascadedDocument) -> CascadeResult {
+    build_cascaded_with_media_context(doc, &MediaContext::default())
+}
+
+/// Build the rule tree and run the cascade for an explicit media context.
+///
+/// [`build_cascaded`] remains the compatibility entry point and uses the
+/// default paged (`print`) context.
+pub fn build_cascaded_with_media_context(
+    doc: &UncascadedDocument,
+    media_context: &MediaContext,
+) -> CascadeResult {
     let mut tree = RuleTree::empty();
 
     // Document に associate されている全 stylesheet を kind に応じて Origin
@@ -312,7 +323,7 @@ pub fn build_cascaded(doc: &UncascadedDocument) -> CascadeResult {
         tree.add_stylesheet(source, Origin::Author);
     }
 
-    cascade(&doc.dom, &tree).expect("cascade は常に Ok のはず")
+    cascade_with_media_context(&doc.dom, &tree, media_context).expect("cascade は常に Ok のはず")
 }
 
 /// dom-level の [`StylesheetKind`] (raikiri-traits) を cascade-level の

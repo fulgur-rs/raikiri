@@ -8,9 +8,10 @@
 //!   cascade minimum (type + universal selector、color / font-family / font-size /
 //!   font-weight、specificity + !important + source order + inheritance)
 //!
-//! GCPM static side、@page / @media / @supports、残りの L4 selectors は将来追加予定。
-//! class/id/attribute selector、基本的な combinator matching、L4 の `:not()` /
-//! `:is()` / `:where()` / `:has()` は実装済み。
+//! GCPM static side、@supports、class/id/attribute selector、基本的な
+//! combinator matching、L4 の `:not()` / `:is()` / `:where()` / `:has()` は
+//! 実装済み。`@media` は `MediaContext` による `all` / `print` / `screen` の
+//! 条件評価に対応する。
 //!
 //! `precomputed-hash` is encapsulated as a direct dep of this crate only. It
 //! is intentionally NOT promoted to `[workspace.dependencies]` — see the
@@ -54,6 +55,9 @@ pub use counter_style::{
     resolve_custom_counter,
 };
 
+pub mod media;
+pub use media::{MediaContext, MediaType};
+
 pub mod page;
 pub use page::{
     PageBleed, PageBleedDeclaration, PageCascadeResult, PageContextQuery, PageInheritance,
@@ -63,7 +67,10 @@ pub use page::{
 };
 
 pub mod ruletree;
-pub use ruletree::{Origin, RuleTree, build_rule_tree, walk_style_elements};
+pub use ruletree::{
+    AtRuleBody, AtRuleRecord, CssRule, CssRuleKind, Origin, QualifiedRuleRecord, RuleNode,
+    RuleTree, build_rule_tree, walk_style_elements,
+};
 
 pub mod computed;
 pub use computed::ComputedValues;
@@ -92,7 +99,7 @@ pub mod specified;
 pub use specified::SpecifiedValues;
 
 pub mod cascade;
-pub use cascade::{CascadeResult, cascade};
+pub use cascade::{CascadeResult, cascade, cascade_with_media_context};
 
 #[cfg(test)]
 pub(crate) mod test_dom;

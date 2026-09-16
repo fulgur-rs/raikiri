@@ -43,6 +43,7 @@ use crate::computed::{
     ComputedValues, CustomPropertyEnvironment, RunningTemplate, empty_custom_properties,
 };
 use crate::error::CascadeError;
+use crate::media::MediaContext;
 use crate::property::{
     CalcLengthPercentage, CustomProperty, DeferredValue, FontWeightValue, GridAutoFlowValue,
     GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto, MAX_DEFERRED_VALUE_NESTING_DEPTH,
@@ -154,10 +155,28 @@ pub struct CascadeResult {
 /// # }
 /// ```
 pub fn cascade<D: StyleDom>(dom: &D, rule_tree: &RuleTree) -> Result<CascadeResult, CascadeError> {
+    cascade_with_media_context(dom, rule_tree, &MediaContext::default())
+}
+
+/// Run the cascade for an explicit media context.
+///
+/// [`cascade`] remains the compatibility entry point and uses the default
+/// paged (`print`) context.
+pub fn cascade_with_media_context<D: StyleDom>(
+    dom: &D,
+    rule_tree: &RuleTree,
+    media_context: &MediaContext,
+) -> Result<CascadeResult, CascadeError> {
     let mut cascaded = CascadedArena::new();
 
     // Phase 1: per-node cascaded values を収集
-    collect_cascaded(dom, dom.root_id(), rule_tree, &mut cascaded);
+    collect_cascaded_with_media_context(
+        dom,
+        dom.root_id(),
+        rule_tree,
+        &mut cascaded,
+        media_context,
+    );
 
     // Phase 2: inheritance walk。
     //
@@ -605,15 +624,42 @@ pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
 /// [`pick_winners`]/[`apply_winners`] にとって**その node 自身の**
 /// `candidates` 内 index であり続ける前提そのもの (global index space を
 /// そのまま渡すと壊れる、という点に注意)。
+// Keep the default-context helper as the stable internal entry point named by
+// the surrounding cascade documentation; production dispatch uses the
+// context-aware implementation below.
+#[allow(dead_code)]
 fn collect_cascaded<D: StyleDom>(
     dom: &D,
     id: StyleNodeId,
     rule_tree: &RuleTree,
     out: &mut CascadedArena,
 ) {
+    collect_cascaded_with_media_context(dom, id, rule_tree, out, &MediaContext::default());
+}
+
+fn collect_cascaded_with_media_context<D: StyleDom>(
+    dom: &D,
+    id: StyleNodeId,
+    rule_tree: &RuleTree,
+    out: &mut CascadedArena,
+    media_context: &MediaContext,
+) {
     // Document-wide constant — read once rather than
     // per (node, rule) pair inside the loop below.
     let quirks_mode = dom.quirks_mode();
+    let mut style_rules = rule_tree
+        .style_rules
+        .iter()
+        .map(|rule| (rule, None))
+        .collect::<Vec<_>>();
+    style_rules.extend(
+        rule_tree
+            .media_rules
+            .iter()
+            .map(|media| (&media.rule, Some(media.condition))),
+    );
+    style_rules.sort_unstable_by_key(|(rule, _)| rule.source_order);
+
     // Stack entries pair a node id with the `ancestor_path` length it should
     // be truncated to *before* that node is processed.
     // `stack` itself interleaves the pending work of
@@ -704,7 +750,13 @@ fn collect_cascaded<D: StyleDom>(
                     &mut out.decls,
                 );
                 // stylesheet rule matching
-                for rule in &rule_tree.style_rules {
+                for (rule, media_condition) in &style_rules {
+                    if media_condition
+                        .as_ref()
+                        .is_some_and(|condition| !condition.matches(media_context))
+                    {
+                        continue;
+                    }
                     if let Some(spec) = match_complex_selector_list(
                         &rule.selectors,
                         dom,
@@ -8611,6 +8663,96 @@ mod tests {
     fn type_selector_applies_color() {
         let cv = cascade_doc("p { color: red }", "p", None);
         assert_eq!(cv.color, RED);
+    }
+
+    fn context_cascade_doc(css: &str, context: MediaContext) -> (TestDoc, usize, CascadeResult) {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, css);
+        let element = doc.push_element(0, "p", None);
+        let tree = build_rule_tree(&doc);
+        let result = cascade_with_media_context(&doc, &tree, &context).expect("cascade Ok");
+        (doc, element, result)
+    }
+
+    #[test]
+    fn media_context_selects_print_and_screen_rules() {
+        let css = "@media print { p { color: red } } @media screen { p { color: blue } }";
+        let (_, element, print_result) = context_cascade_doc(css, MediaContext::print());
+        assert_eq!(print_result.computed[element].color, RED);
+        let (_, element, screen_result) = context_cascade_doc(css, MediaContext::screen());
+        assert_eq!(screen_result.computed[element].color, BLUE);
+    }
+
+    #[test]
+    fn media_all_matches_both_contexts_and_default_is_print() {
+        let css = "@media all { p { color: red } }";
+        let (_, element, default_result) = context_cascade_doc(css, MediaContext::default());
+        assert_eq!(default_result.computed[element].color, RED);
+        let (_, element, screen_result) = context_cascade_doc(css, MediaContext::screen());
+        assert_eq!(screen_result.computed[element].color, RED);
+    }
+
+    #[test]
+    fn media_rules_keep_source_order_against_direct_rules() {
+        let css = "p { color: red } @media print { p { color: blue } } p { color: red }";
+        let (_, element, result) = context_cascade_doc(css, MediaContext::print());
+        assert_eq!(result.computed[element].color, RED);
+
+        let css = "p { color: red } @media print { p { color: blue } }";
+        let (_, element, result) = context_cascade_doc(css, MediaContext::print());
+        assert_eq!(result.computed[element].color, BLUE);
+    }
+
+    #[test]
+    fn nested_media_conditions_are_conjoined_and_unknown_wrappers_do_not_leak() {
+        let css =
+            "@media print { @media all { p { color: red } } @media screen { p { color: blue } } }";
+        let (_, element, print_result) = context_cascade_doc(css, MediaContext::print());
+        assert_eq!(print_result.computed[element].color, RED);
+        let (_, element, screen_result) = context_cascade_doc(css, MediaContext::screen());
+        assert_ne!(screen_result.computed[element].color, RED);
+
+        let css = "@supports (display: block) { @media print { p { color: red } } }";
+        let (_, element, result) = context_cascade_doc(css, MediaContext::print());
+        assert_ne!(result.computed[element].color, RED);
+    }
+
+    #[test]
+    fn media_comma_list_and_invalid_features_are_safe() {
+        let css = "@media print, projection { p { color: red } }";
+        let (_, element, print_result) = context_cascade_doc(css, MediaContext::print());
+        assert_eq!(print_result.computed[element].color, RED);
+        let (_, element, screen_result) = context_cascade_doc(css, MediaContext::screen());
+        assert_ne!(screen_result.computed[element].color, RED);
+
+        let css = "@media print and (color) { p { color: red } }";
+        let (_, element, result) = context_cascade_doc(css, MediaContext::print());
+        assert_ne!(result.computed[element].color, RED);
+
+        let css = "@media print, { p { color: red } }";
+        let (_, element, result) = context_cascade_doc(css, MediaContext::print());
+        assert_ne!(result.computed[element].color, RED);
+    }
+
+    #[test]
+    fn media_condition_is_applied_to_pseudo_elements() {
+        let css = "@media screen { p::before { content: \"x\"; color: red } }";
+        let (doc, element, print_result) = context_cascade_doc(css, MediaContext::print());
+        let element_id = StyleNodeId::new(element as u64);
+        assert!(
+            !print_result
+                .pseudo
+                .contains_key(&(element_id, PseudoElem::Before))
+        );
+        let (_, element, screen_result) = context_cascade_doc(css, MediaContext::screen());
+        let element_id = StyleNodeId::new(element as u64);
+        assert!(
+            screen_result
+                .pseudo
+                .contains_key(&(element_id, PseudoElem::Before))
+        );
+        assert_eq!(doc.node_count(), 4);
     }
 
     #[test]
