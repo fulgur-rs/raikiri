@@ -61,11 +61,62 @@ fn is_decoration_propagation_boundary(cv: &ComputedValues) -> bool {
     out_of_flow || atomic_inline
 }
 
-/// Add the decoration originated by one element to the descendant paint
-/// context. `none` does not cancel a line propagated by an ancestor.
-pub(crate) fn push_element_decoration(decorations: &mut Vec<DecorationSpec>, cv: &ComputedValues) {
+/// Persistent paint-only context for propagated decorations.
+///
+/// Each originating element adds one linked node. Cloning the context for a
+/// child frame only clones the outer `Arc`; ancestor specifications are never
+/// copied into a new vector, even for deeply nested decorated elements.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DecorationContext(Option<Arc<DecorationLink>>);
+
+#[derive(Debug)]
+struct DecorationLink {
+    spec: DecorationSpec,
+    parent: DecorationContext,
+}
+
+impl DecorationContext {
+    fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+
+    fn push(&self, spec: DecorationSpec) -> Self {
+        Self(Some(Arc::new(DecorationLink {
+            spec,
+            parent: self.clone(),
+        })))
+    }
+
+    fn iter(&self) -> DecorationContextIter<'_> {
+        // The linked context is newest-first, while CSS paint order follows
+        // the originating elements from ancestor to descendant. This small
+        // per-text-node stack reverses traversal without copying contexts or
+        // their specifications during the tree walk.
+        let mut stack = Vec::new();
+        let mut next = self.0.as_deref();
+        while let Some(link) = next {
+            stack.push(link);
+            next = link.parent.0.as_deref();
+        }
+        DecorationContextIter { stack }
+    }
+}
+
+struct DecorationContextIter<'a> {
+    stack: Vec<&'a DecorationLink>,
+}
+
+impl<'a> Iterator for DecorationContextIter<'a> {
+    type Item = &'a DecorationSpec;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.stack.pop().map(|link| &link.spec)
+    }
+}
+
+fn element_decoration(cv: &ComputedValues) -> Option<DecorationSpec> {
     if !has_paintable_line(cv.text_decoration_line) {
-        return;
+        return None;
     }
     let color = match cv.text_decoration_color {
         TextDecorationColor::CurrentColor => cv.color,
@@ -76,8 +127,15 @@ pub(crate) fn push_element_decoration(decorations: &mut Vec<DecorationSpec>, cv:
         // pinned implementation; this arm is a non-exhaustive forward guard.
         _ => cv.color,
     };
-    let origin_font_size = cv.font_size.px().max(1.0) as f64;
-    decorations.push(DecorationSpec {
+    let raw_font_size = cv.font_size.px() as f64;
+    let origin_font_size = if raw_font_size.is_finite() {
+        raw_font_size.max(1.0)
+    } else {
+        // cov:ignore: computed font sizes are sanitized before paint; retain a
+        // finite fallback at this sink boundary for hostile/future inputs.
+        1.0
+    };
+    Some(DecorationSpec {
         line: cv.text_decoration_line,
         style: cv.text_decoration_style,
         color,
@@ -86,7 +144,7 @@ pub(crate) fn push_element_decoration(decorations: &mut Vec<DecorationSpec>, cv:
         // element even when a descendant uses a different font size.
         origin_ascent: origin_font_size * 0.8,
         origin_descent: origin_font_size * 0.2,
-    });
+    })
 }
 
 /// Build the decoration context for an element's children.
@@ -96,24 +154,18 @@ pub(crate) fn push_element_decoration(decorations: &mut Vec<DecorationSpec>, cv:
 /// cancel an ancestor decoration while atomic/out-of-flow boxes do not receive
 /// that ancestor decoration.
 pub(crate) fn decorations_for_element(
-    decorations: &Arc<[DecorationSpec]>,
+    decorations: &DecorationContext,
     cv: &ComputedValues,
-) -> Arc<[DecorationSpec]> {
-    let boundary = is_decoration_propagation_boundary(cv);
-    let has_own_decoration = has_paintable_line(cv.text_decoration_line);
-    if !boundary && !has_own_decoration {
-        // Most elements do not originate a decoration. Share the immutable
-        // context rather than cloning it once for every child frame.
-        return Arc::clone(decorations);
-    }
-
-    let mut next = if boundary {
-        Vec::new()
+) -> DecorationContext {
+    let base = if is_decoration_propagation_boundary(cv) {
+        DecorationContext::default()
     } else {
-        decorations.to_vec()
+        decorations.clone()
     };
-    push_element_decoration(&mut next, cv);
-    next.into()
+    match element_decoration(cv) {
+        Some(spec) => base.push(spec),
+        None => base,
+    }
 }
 
 fn has_paintable_line(line: TextDecorationLine) -> bool {
@@ -127,7 +179,7 @@ pub(crate) fn draw_text_node(
     node_id: usize,
     abs_x: f32,
     abs_y: f32,
-    decorations: &[DecorationSpec],
+    decorations: &DecorationContext,
 ) {
     // Text node の pre-shape 結果を取得。preshape_text が empty text で None を返す
     // ので、None = "empty text" の signal、silent return。
@@ -168,7 +220,7 @@ pub(crate) fn draw_text_node(
         // after them. Keeping the phases separate also makes the order stable
         // when a declaration contains several line keywords.
         if let Some(geometry) = geometry {
-            for decoration in decorations {
+            for decoration in decorations.iter() {
                 draw_decoration_phase(scene, decoration, geometry, DecorationPhase::BeforeGlyphs);
             }
         }
@@ -205,7 +257,7 @@ pub(crate) fn draw_text_node(
         }
 
         if let Some(geometry) = geometry {
-            for decoration in decorations {
+            for decoration in decorations.iter() {
                 draw_decoration_phase(scene, decoration, geometry, DecorationPhase::AfterGlyphs);
             }
         }
@@ -233,7 +285,7 @@ struct DecorationGeometry {
 }
 
 fn decoration_geometry(
-    decorations: &[DecorationSpec],
+    decorations: &DecorationContext,
     metrics: &parley::LineMetrics,
     abs_x: f32,
     abs_y: f32,
@@ -333,6 +385,14 @@ fn draw_decoration_phase(
 
 const MAX_DECORATION_SEGMENTS: usize = 4096;
 
+fn dashed_lengths(span: f64, thickness: f64) -> (f64, f64) {
+    let natural_dash = (thickness * 3.0).max(2.0);
+    let natural_gap = (thickness * 2.0).max(2.0);
+    let natural_period = natural_dash + natural_gap;
+    let scale = (span / (MAX_DECORATION_SEGMENTS as f64 * natural_period)).max(1.0);
+    (natural_dash * scale, natural_gap * scale)
+}
+
 fn paint_decoration_style(
     scene: &mut impl PaintScene,
     style: TextDecorationStyle,
@@ -385,8 +445,7 @@ fn paint_decoration_style(
             }
         }
         TextDecorationStyle::Dashed => {
-            let dash = (thickness * 3.0).max(2.0);
-            let gap = (thickness * 2.0).max(2.0);
+            let (dash, gap) = dashed_lengths(x1 - x0, thickness);
             let mut path = BezPath::new();
             path.move_to((x0, center));
             path.line_to((x1, center));
@@ -507,17 +566,16 @@ fn css_color_to_peniko(c: CssColor) -> Color {
 #[cfg(test)]
 mod tests {
     use super::{
-        DecorationSpec, MAX_DECORATION_SEGMENTS, decoration_line_width, decorations_for_element,
-        paint_decoration_style, text_align_last_delta,
+        DecorationContext, MAX_DECORATION_SEGMENTS, dashed_lengths, decoration_line_width,
+        decorations_for_element, paint_decoration_style, text_align_last_delta,
     };
     use anyrender::{Scene, recording::RenderCommand};
     use parley::LineMetrics;
     use raikiri_style::ComputedValues;
     use raikiri_style::property::{
-        CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextAlign, TextAlignLast,
+        Direction, DisplayValue, FloatValue, PositionValue, TextAlign, TextAlignLast,
         TextDecorationLine, TextDecorationStyle, WhiteSpace,
     };
-    use std::sync::Arc;
 
     fn metrics(offset: f32) -> LineMetrics {
         LineMetrics {
@@ -636,15 +694,10 @@ mod tests {
         );
     }
 
-    fn ancestor_decoration() -> DecorationSpec {
-        DecorationSpec {
-            line: TextDecorationLine::UNDERLINE,
-            style: TextDecorationStyle::Solid,
-            color: CssColor::BLACK,
-            origin_thickness: 1.0,
-            origin_ascent: 12.8,
-            origin_descent: 3.2,
-        }
+    fn ancestor_context() -> DecorationContext {
+        let mut cv = ComputedValues::initial();
+        cv.text_decoration_line = TextDecorationLine::UNDERLINE;
+        decorations_for_element(&DecorationContext::default(), &cv)
     }
 
     #[test]
@@ -686,20 +739,28 @@ mod tests {
     }
 
     #[test]
+    fn dashed_decoration_scales_period_for_huge_spans() {
+        let (dash, gap) = dashed_lengths(1_000_000_000_000.0, 1.0);
+        assert!(dash > 3.0);
+        assert!(gap > 2.0);
+        assert!((dash + gap) * MAX_DECORATION_SEGMENTS as f64 >= 1_000_000_000_000.0);
+    }
+
+    #[test]
     fn decoration_metrics_are_taken_from_the_originating_element() {
         let mut cv = ComputedValues::initial();
         cv.font_size = raikiri_style::resolve::ComputedLength(32.0);
         cv.text_decoration_line = TextDecorationLine::UNDERLINE;
-        let decorations = decorations_for_element(&Arc::from(Vec::<DecorationSpec>::new()), &cv);
-        assert_eq!(decorations.len(), 1);
-        assert_eq!(decorations[0].origin_thickness, 2.0);
-        assert_eq!(decorations[0].origin_ascent, 25.6);
-        assert_eq!(decorations[0].origin_descent, 6.4);
+        let decorations = decorations_for_element(&DecorationContext::default(), &cv);
+        let decoration = decorations.iter().next().expect("origin decoration");
+        assert_eq!(decoration.origin_thickness, 2.0);
+        assert_eq!(decoration.origin_ascent, 25.6);
+        assert_eq!(decoration.origin_descent, 6.4);
     }
 
     #[test]
     fn ancestor_decoration_stops_at_out_of_flow_float_and_atomic_boundaries() {
-        let ancestor: Arc<[DecorationSpec]> = Arc::from(vec![ancestor_decoration()]);
+        let ancestor = ancestor_context();
         let cases = [
             (
                 "absolute",
@@ -752,24 +813,31 @@ mod tests {
             // cov:ignore: the assertion message is evaluated only when this
             // boundary regression assertion fails.
             assert!(
-                decorations_for_element(&ancestor, &cv).is_empty(),
+                decorations_for_element(&ancestor, &cv)
+                    .iter()
+                    .next()
+                    .is_none(),
                 "ancestor decoration crossed {name} boundary"
             );
         }
 
         let mut in_flow = ComputedValues::initial();
         in_flow.display = DisplayValue::Block;
-        assert_eq!(decorations_for_element(&ancestor, &in_flow).len(), 1);
+        assert_eq!(
+            decorations_for_element(&ancestor, &in_flow).iter().count(),
+            1
+        );
 
         let mut boundary_origin = ComputedValues::initial();
         boundary_origin.display = DisplayValue::InlineBlock;
         boundary_origin.text_decoration_line = TextDecorationLine::OVERLINE;
+        let boundary_decorations = decorations_for_element(&ancestor, &boundary_origin);
+        assert_eq!(boundary_decorations.iter().count(), 1);
         assert_eq!(
-            decorations_for_element(&ancestor, &boundary_origin).len(),
-            1
-        );
-        assert_eq!(
-            decorations_for_element(&Arc::from(vec![ancestor_decoration()]), &boundary_origin,)[0]
+            boundary_decorations
+                .iter()
+                .next()
+                .expect("own decoration")
                 .line,
             TextDecorationLine::OVERLINE
         );

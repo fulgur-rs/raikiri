@@ -27,8 +27,6 @@
 //! find_body は raikiri-dom::layout::find_body と重複するが、5 行の helper
 //! を crate 境界越境で pub 化するよりも paint 側で持つ方が clean。
 
-use std::sync::Arc;
-
 use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
 use peniko::{Color, Fill};
@@ -137,12 +135,12 @@ pub(crate) fn paint_document(
     // The paint walk starts at `<body>` because the html box itself is not a
     // paint item here. Seed the context with html's originating decoration so
     // root-element lines still propagate through the body subtree.
-    let empty_decorations: Arc<[text::DecorationSpec]> = Arc::from([]);
+    let empty_decorations = text::DecorationContext::default();
     let root_decorations = find_html(document)
         .map(|html_id| {
             text::decorations_for_element(&empty_decorations, &cascade.computed[html_id])
         })
-        .unwrap_or_else(|| Arc::clone(&empty_decorations));
+        .unwrap_or_else(|| empty_decorations.clone());
     enum PaintFrame {
         Visit {
             node_id: usize,
@@ -150,7 +148,7 @@ pub(crate) fn paint_document(
             parent_abs_y: f32,
             parent_font_size: f32,
             shift_y: f32,
-            decorations: Arc<[text::DecorationSpec]>,
+            decorations: text::DecorationContext,
         },
         PopClip,
     }
