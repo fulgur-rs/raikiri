@@ -1740,12 +1740,20 @@ fn relative_selector_matches_in_regions<D: StyleDom>(
     anchor_id: StyleNodeId,
     quirks_mode: StyleQuirksMode,
 ) -> bool {
-    let mut stack: Vec<(StyleNodeId, Vec<StyleNodeId>)> = Vec::with_capacity(roots.len());
+    // Keep one mutable ancestor path and record only its length in each stack
+    // entry. Cloning the full path into every pending child makes a deep,
+    // branched `:has()` miss retain O(depth²) ancestor ids at a choice point;
+    // truncating on pop gives the same DFS paths with O(depth + pending nodes)
+    // storage instead.
+    let base_depth = base_ancestors.len();
+    let mut ancestor_path = base_ancestors.to_vec();
+    let mut stack: Vec<(StyleNodeId, usize)> = Vec::with_capacity(roots.len());
     for &root_id in roots.iter().rev() {
-        stack.push((root_id, base_ancestors.to_vec()));
+        stack.push((root_id, base_depth));
     }
 
-    while let Some((candidate_id, candidate_ancestors)) = stack.pop() {
+    while let Some((candidate_id, depth)) = stack.pop() {
+        ancestor_path.truncate(depth);
         if !is_in_document_element(dom, candidate_id) {
             continue; // cov:ignore: roots are pre-filtered; only a malformed custom DOM can reach this branch
         }
@@ -1760,7 +1768,7 @@ fn relative_selector_matches_in_regions<D: StyleDom>(
             selector,
             &elem,
             candidate_id,
-            &candidate_ancestors,
+            &ancestor_path,
             quirks_mode,
             Some(anchor_id),
         ) {
@@ -1770,12 +1778,16 @@ fn relative_selector_matches_in_regions<D: StyleDom>(
             continue;
         }
 
-        let mut child_ancestors = candidate_ancestors;
-        child_ancestors.push(candidate_id);
-        let children: Vec<_> = dom.child_ids(candidate_id).collect();
-        for child_id in children.into_iter().rev() {
-            stack.push((child_id, child_ancestors.clone()));
-        }
+        ancestor_path.push(candidate_id);
+        let child_depth = ancestor_path.len();
+        let start = stack.len();
+        stack.extend(
+            dom.child_ids(candidate_id)
+                .map(|child_id| (child_id, child_depth)),
+        );
+        // The stack is LIFO, but child_ids is in document order. Reverse only
+        // the newly appended entries so traversal remains pre-order.
+        stack[start..].reverse();
     }
     false
 }
@@ -12297,6 +12309,40 @@ mod tests {
         ] {
             assert_eq!(result.computed[id].font_weight, expected);
         }
+    }
+
+    /// A failed descendant search over a deep, branched subtree must not copy
+    /// the full ancestor path into every pending sibling. This shape keeps one
+    /// sibling pending at each depth, which is the peak retained-path case for
+    /// the explicit search stack.
+    #[test]
+    fn has_deep_branched_miss_uses_bounded_ancestor_storage() {
+        const DEPTH: usize = 2_048;
+        let mut doc = TestDoc::new();
+        let style = doc.push_element(0, "style", None);
+        doc.push_text(
+            style,
+            "section:has(.missing) { font-weight: 700 } section { color: red }",
+        );
+
+        let anchor = doc.push_element(0, "section", None);
+        let mut current = anchor;
+        for _ in 0..DEPTH {
+            // The deep child keeps the walk going while the sibling remains
+            // pending on the explicit stack at every level.
+            let next = doc.push_element(current, "div", None);
+            doc.push_element(current, "span", None);
+            current = next;
+        }
+
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(result.computed[anchor].color, RED);
+        assert_eq!(
+            result.computed[anchor].font_weight,
+            ComputedValues::initial().font_weight,
+            "a full deep search with no `.missing` descendant must not match"
+        );
     }
 
     #[test]
