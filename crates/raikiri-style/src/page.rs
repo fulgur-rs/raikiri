@@ -2953,6 +2953,7 @@ fn absolutize_in_page_context(
             blur_radius: Length::Px(computed.blur_radius.px()),
             spread_radius: Length::Px(computed.spread_radius.px()),
             color: computed.color,
+            inset: computed.inset,
         }
     }
 
@@ -6552,6 +6553,7 @@ mod tests {
                     blur_radius: Length::Px(5.0),
                     spread_radius: Length::Px(2.5),
                     color: TextShadowColor::Resolved(RED),
+                    inset: false,
                 },
                 BoxShadowItem {
                     offset_x: Length::Px(2.0),
@@ -6559,6 +6561,7 @@ mod tests {
                     blur_radius: Length::Px(0.0),
                     spread_radius: Length::Px(0.0),
                     color: TextShadowColor::CurrentColor,
+                    inset: false,
                 },
             ])))
         );
@@ -7440,6 +7443,7 @@ mod tests {
             blur_radius: Length::Pt(3.0),
             spread_radius: Length::Px(1.0),
             color: TextShadowColor::Resolved(GREEN),
+            inset: false,
         }])),
         Outline => PropertyValue::Outline(Outline {
             width: Length::Em(0.25),

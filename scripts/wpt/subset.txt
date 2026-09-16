@@ -10,6 +10,7 @@ css/css-values
 # remaining 19 parsing categories (goal G 2026-09-14)
 css/compositing/parsing
 css/css-color/parsing
+css/css-backgrounds
 css/css-gaps/parsing
 css/css-images/parsing
 css/css-lists/parsing

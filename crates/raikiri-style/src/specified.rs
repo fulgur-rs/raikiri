@@ -2089,6 +2089,7 @@ mod tests {
                 blur_radius: ComputedLength(3.0),
                 spread_radius: ComputedLength(4.0),
                 color: TextShadowColor::Resolved(CssColor::BLACK),
+                inset: false,
             }]),
             outline: ComputedOutline {
                 width: ComputedLength(4.0),

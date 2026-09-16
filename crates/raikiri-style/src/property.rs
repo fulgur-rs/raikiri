@@ -5171,9 +5171,8 @@ pub struct BorderRadius {
 ///
 /// CSS Backgrounds and Borders Level 3 §6.1
 /// <https://www.w3.org/TR/css-backgrounds-3/#box-shadow> の offset、optional
-/// blur、optional spread、optional color を保持する。`inset` はこの task では
-/// 受理しない (下流実装との scope 合わせ)。offset と spread は負値を許し、blur
-/// は non-negative に制限する。
+/// blur、optional spread、optional color、optional `inset` を保持する。offset
+/// と spread は負値を許し、blur は non-negative に制限する。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoxShadowItem {
@@ -5187,6 +5186,8 @@ pub struct BoxShadowItem {
     pub spread_radius: Length,
     /// color。省略時は `currentcolor`。
     pub color: TextShadowColor,
+    /// Whether the shadow is painted inside the border box (`inset`).
+    pub inset: bool,
 }
 
 /// `outline-color` の keyword/color payload。
@@ -7542,7 +7543,7 @@ pub enum PropertyValue {
     /// [`BorderRadius`] に展開する。percentage / elliptical slash form は未対応。
     BorderRadius(BorderRadius),
     /// `box-shadow: none | <shadow>#` — non-inherited。複数 entry を保持する。
-    /// `inset` は未対応、各 entry の color 省略は `currentcolor` で表現する。
+    /// `inset` and omitted colors are retained on each entry.
     BoxShadow(Arc<Vec<BoxShadowItem>>),
     /// `outline` shorthand — non-inherited。width/style/color を保持するが、
     /// outline の layout 非干渉性そのものは下流 layout の責務である。
@@ -9142,6 +9143,44 @@ fn math_source_has_dimension_or_percentage(input: &str) -> bool {
     scan(&mut parser, false)
 }
 
+fn math_source_has_percentage(input: &str) -> bool {
+    fn scan(parser: &mut Parser<'_, '_>, in_math: bool) -> bool {
+        let mut found = false;
+        loop {
+            let token = match parser.next() {
+                Ok(token) => token.clone(),
+                Err(_) => break,
+            };
+            match token {
+                Token::Percentage { .. } if in_math => found = true,
+                Token::Function(name) => {
+                    let is_math = MATH_FUNCTIONS.iter().any(|m| name.eq_ignore_ascii_case(m));
+                    let inner = parser
+                        .parse_nested_block(|nested| {
+                            Ok::<_, ParseError<'_, ()>>(scan(nested, in_math || is_math))
+                        })
+                        .unwrap_or(false);
+                    found = found || inner;
+                }
+                Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
+                    let inner = parser
+                        .parse_nested_block(|nested| {
+                            Ok::<_, ParseError<'_, ()>>(scan(nested, in_math))
+                        })
+                        .unwrap_or(false);
+                    found = found || inner;
+                }
+                _ => {}
+            }
+        }
+        found
+    }
+
+    let mut parser_input = ParserInput::new(input);
+    let mut parser = Parser::new(&mut parser_input);
+    scan(&mut parser, false)
+}
+
 fn deferred_dummy_is_valid_for_property(value: &str, prop: &str) -> bool {
     // Replace math functions with a dummy and check if the resulting value parses for the property.
     // This validates overall structure (e.g. `margin-top: calc(...) auto` has 2 tokens, invalid for longhand).
@@ -9589,6 +9628,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "font-variant-caps" => PropertyKey::FontVariantCaps,
         "quotes" => PropertyKey::Quotes,
         "text-shadow" => PropertyKey::TextShadow,
+        "box-shadow" => PropertyKey::BoxShadow,
         "outline" => PropertyKey::Outline,
         "outline-width" => PropertyKey::OutlineWidth,
         "outline-style" => PropertyKey::OutlineStyle,
@@ -9693,6 +9733,12 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
             // unitless-zero rule (`flex: 1 2 calc(0)` must stay invalid
             // while `flex: calc(-1) calc(-1) 0` stays valid). Such values go
             // straight to the type-aware dummy check below.
+            // `box-shadow` accepts `<length>`, not `<length-percentage>`,
+            // for its four length slots. A mixed percentage expression cannot
+            // be validated by replacing the whole math function with `1px`.
+            if normalized_name == "box-shadow" && math_source_has_percentage(value.as_ref()) {
+                return None;
+            }
             let has_dimension = math_source_has_dimension_or_percentage(value.as_ref());
             if has_dimension
                 && let Some(simplified) = crate::cascade::simplify_math_functions(value.as_ref())
@@ -20725,16 +20771,17 @@ fn parse_box_shadow_lengths<'i>(
 fn parse_box_shadow_item(input: &mut Parser<'_, '_>) -> Option<BoxShadowItem> {
     let mut lengths: Option<(Length, Length, Length, Length)> = None;
     let mut color: Option<TextShadowColor> = None;
+    let mut inset = false;
 
+    // The optional color and `inset` keyword may occur before or after the
+    // required length run.
     loop {
-        if lengths.is_some() && color.is_some() {
-            break;
-        }
+        let mut progressed = false;
         if lengths.is_none()
             && let Ok(value) = input.try_parse(parse_box_shadow_lengths)
         {
             lengths = Some(value);
-            continue;
+            progressed = true;
         }
         if color.is_none()
             && let Ok(value) = input.try_parse(|i| -> Result<TextShadowColor, ParseError<'_, ()>> {
@@ -20742,9 +20789,19 @@ fn parse_box_shadow_item(input: &mut Parser<'_, '_>) -> Option<BoxShadowItem> {
             })
         {
             color = Some(value);
-            continue;
+            progressed = true;
         }
-        break;
+        if !inset
+            && input
+                .try_parse(|i| i.expect_ident_matching("inset"))
+                .is_ok()
+        {
+            inset = true;
+            progressed = true;
+        }
+        if !progressed {
+            break;
+        }
     }
 
     let (offset_x, offset_y, blur_radius, spread_radius) = lengths?;
@@ -20754,6 +20811,7 @@ fn parse_box_shadow_item(input: &mut Parser<'_, '_>) -> Option<BoxShadowItem> {
         blur_radius,
         spread_radius,
         color: color.unwrap_or(TextShadowColor::CurrentColor),
+        inset,
     })
 }
 
@@ -32875,6 +32933,22 @@ mod tests {
         assert!(math_source_has_dimension_or_percentage("calc(10% + 1)"));
         assert!(!math_source_has_dimension_or_percentage("calc(0)"));
         assert!(!math_source_has_dimension_or_percentage("calc(3 - 3)"));
+
+        // Percentage-bearing math is invalid in box-shadow length slots, even
+        // when the percentage is nested in a math function or block token.
+        assert!(math_source_has_percentage("calc(10%)"));
+        assert!(math_source_has_percentage("min(10px, 20%)"));
+        assert!(!math_source_has_percentage("foo(10%)"));
+        assert!(math_source_has_percentage("calc((10%))"));
+        assert!(math_source_has_percentage("calc([10%])"));
+        assert!(math_source_has_percentage("calc({10%})"));
+        assert!(math_source_has_percentage("calc(10% + 1px)"));
+        assert_eq!(parse_entire("calc(10% + 1px) 2px", "box-shadow"), None);
+        assert!(matches!(
+            parse_entire("calc(1px + 2px) 2px", "box-shadow"),
+            Some(PropertyValue::BoxShadow(_))
+        ));
+
         // `deferred_dummy_is_valid_for_property`: pure-number math validates
         // only `<number>` positions (WPT `flex: 1 2 calc(0)` invalid), while
         // dimension-carrying math keeps the `1px` behavior.
@@ -32980,6 +33054,7 @@ mod tests {
                     blur_radius: Length::Px(3.0),
                     spread_radius: Length::Px(4.0),
                     color: TextShadowColor::Resolved(red()),
+                    inset: false,
                 },
                 BoxShadowItem {
                     offset_x: Length::Px(2.0),
@@ -32987,14 +33062,24 @@ mod tests {
                     blur_radius: Length::Px(0.0),
                     spread_radius: Length::Px(0.0),
                     color: TextShadowColor::CurrentColor,
+                    inset: false,
                 },
             ]
         );
     }
 
     #[test]
-    fn box_shadow_rejects_inset_percentages_and_negative_blur_but_allows_spread() {
-        assert_eq!(parse("inset 1px 2px", "box-shadow"), None);
+    fn box_shadow_parses_inset_any_order_and_rejects_invalid_components() {
+        assert!(matches!(
+            parse("inset 1px 2px", "box-shadow"),
+            Some(PropertyValue::BoxShadow(shadows)) if shadows[0].inset
+        ));
+        assert!(matches!(
+            parse("red 1px 2px 3px -4px inset", "box-shadow"),
+            Some(PropertyValue::BoxShadow(shadows))
+                if shadows[0].inset && shadows[0].color == TextShadowColor::Resolved(red())
+        ));
+
         assert_eq!(parse_entire("1px 2px 3px 4px 5px", "box-shadow"), None);
         assert_eq!(parse("1px 2px -3px", "box-shadow"), None);
         assert_eq!(
@@ -33005,9 +33090,11 @@ mod tests {
                 blur_radius: Length::Px(3.0),
                 spread_radius: Length::Px(-4.0),
                 color: TextShadowColor::CurrentColor,
+                inset: false,
             }])))
         );
         assert_eq!(parse("1px 2px 10%", "box-shadow"), None);
+        assert_eq!(parse_entire("inset 1px 2px inset", "box-shadow"), None);
     }
 
     #[test]
@@ -33030,6 +33117,7 @@ mod tests {
                 blur_radius: Length::Px(0.0),
                 spread_radius: Length::Px(0.0),
                 color: TextShadowColor::CurrentColor,
+                inset: false,
             }])))
         );
         assert_eq!(
@@ -33040,6 +33128,7 @@ mod tests {
                 blur_radius: Length::Px(0.0),
                 spread_radius: Length::Px(0.0),
                 color: TextShadowColor::CurrentColor,
+                inset: false,
             }])))
         );
         assert_eq!(
@@ -33050,6 +33139,7 @@ mod tests {
                 blur_radius: Length::Px(1.0),
                 spread_radius: Length::Px(0.0),
                 color: TextShadowColor::CurrentColor,
+                inset: false,
             }])))
         );
 
@@ -33068,6 +33158,7 @@ mod tests {
                 blur_radius: Length::Px(0.0),
                 spread_radius: Length::Px(0.0),
                 color: TextShadowColor::CurrentColor,
+                inset: false,
             }])))
         );
         assert_eq!(
@@ -33078,6 +33169,7 @@ mod tests {
                 blur_radius: Length::Px(0.0),
                 spread_radius: Length::Px(0.0),
                 color: TextShadowColor::CurrentColor,
+                inset: false,
             }])))
         );
         assert_eq!(
@@ -33088,6 +33180,7 @@ mod tests {
                 blur_radius: Length::Px(1.0),
                 spread_radius: Length::Px(f32::INFINITY),
                 color: TextShadowColor::CurrentColor,
+                inset: false,
             }])))
         );
         assert_eq!(
@@ -33098,6 +33191,7 @@ mod tests {
                 blur_radius: Length::Px(1.0),
                 spread_radius: Length::Px(f32::NEG_INFINITY),
                 color: TextShadowColor::CurrentColor,
+                inset: false,
             }])))
         );
     }
@@ -33118,6 +33212,7 @@ mod tests {
                 blur_radius: Length::Px(0.0),
                 spread_radius: Length::Px(0.0),
                 color: TextShadowColor::CurrentColor,
+                inset: false,
             }])))
         );
     }

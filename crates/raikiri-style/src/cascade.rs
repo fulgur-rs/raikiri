@@ -15676,6 +15676,7 @@ mod tests {
                         b: 0,
                         a: 255,
                     }),
+                    inset: false,
                 },
                 ComputedBoxShadowItem {
                     offset_x: ComputedLength(2.0),
@@ -15683,6 +15684,7 @@ mod tests {
                     blur_radius: ComputedLength::ZERO,
                     spread_radius: ComputedLength::ZERO,
                     color: TextShadowColor::CurrentColor,
+                    inset: false,
                 },
             ]
         );
@@ -15720,6 +15722,7 @@ mod tests {
                     b: 0,
                     a: 255,
                 }),
+                inset: false,
             }]
         );
     }
@@ -15744,6 +15747,7 @@ mod tests {
                     b: 0,
                     a: 255,
                 }),
+                inset: false,
             }]
         );
 

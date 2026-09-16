@@ -1251,6 +1251,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + text-transform combinations, full-size-kana, and language tailoring
         //   PASS-only sweep (+54).
         // + css-color invalid parsing probe (9 files, WPT 97ea26e).
+        // + css-backgrounds reftest sweep (30 new current passes, 8 stale inherited
+        //   pins removed; 400x300 EXACT, WPT 97ea26e, net +22).
         // quarantine and deprecated stay empty until a developer PR adds a flake or crasher.
 
         // + flexbox_fbfc (+1, y0zo initial slice: exact 800x600 pass).
@@ -1261,7 +1263,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + abspos static-position slice (+9, exact 800x600 pass).
         // - inline-flex percentage sizing: one flex-item pin restored after
         //   the Taffy calc resolver was connected; one remains deferred.
-        assert_eq!(set.baseline.entries.len(), 1003);
+        assert_eq!(set.baseline.entries.len(), 1025);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
