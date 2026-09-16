@@ -1247,6 +1247,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Text PASS-only WPT sweeps (+25: white-space/text-wrap,
         //   word-break/overflow-wrap, text-indent, tab-size).
         // + text-align-last paint-time final-line alignment (+16).
+        // + letter-spacing bridge and hyphens PASS-only sweep (+6).
         // quarantine and deprecated stay empty until a developer PR adds a flake or crasher.
         // + flexbox_fbfc (+1, y0zo initial slice: exact 800x600 pass).
         // + flexbox-overflow-vert-003 (+1, y0zo overflow clip: exact 800x600 pass).
@@ -1256,7 +1257,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + abspos static-position slice (+9, exact 800x600 pass).
         // - inline-flex percentage sizing: one flex-item pin restored after
         //   the Taffy calc resolver was connected; one remains deferred.
-        assert_eq!(set.baseline.entries.len(), 934);
+        assert_eq!(set.baseline.entries.len(), 940);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }

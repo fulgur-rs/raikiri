@@ -19,8 +19,9 @@ use parley::{
 use raikiri_style::property::{
     AlignSelfValue, BoxSizing as StyleBoxSizing, ClearValue, ContentAlignmentValue, Direction,
     DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle as StyleFontStyle,
-    GridAutoFlowValue, GridLineValue, GridRepeatCount, GridTemplateAreasValue, OverflowValue,
-    PositionValue, SelfAlignmentValue, TextAlign, TextJustify, TextWrapMode, WhiteSpace,
+    GridAutoFlowValue, GridLineValue, GridRepeatCount, GridTemplateAreasValue, Hyphens,
+    OverflowValue, PositionValue, SelfAlignmentValue, TextAlign, TextJustify, TextWrapMode,
+    WhiteSpace,
 };
 use raikiri_style::{
     CascadeResult, ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth,
@@ -4613,6 +4614,7 @@ pub(crate) fn preshape_text(
         font_weight_raw: f32,
         font_style: StyleFontStyle,
         line_height_raw: ComputedLineHeight,
+        letter_spacing_raw: f32,
         tab_size: ComputedTabSize,
         white_space: WhiteSpace,
         // Soft wrapping suppressed (`white-space: nowrap` or
@@ -4737,7 +4739,13 @@ pub(crate) fn preshape_text(
         // pre 系は無変換 (tab 展開は後段)。collapse 系のみ trim 位置付きで変換。
         let start = line_start_pos(doc, cascade, &parent_of, idx);
         let trim_end = trail_trim(doc, cascade, &parent_of, idx);
-        let text = collapse_ws(&text, cv.white_space, start, trim_end).into_owned();
+        let mut text = collapse_ws(&text, cv.white_space, start, trim_end).into_owned();
+        // A soft hyphen is only an opportunity when hyphenation is enabled.
+        // Removing it for `hyphens: none` also prevents the shaping and line
+        // breaker from treating it as a discretionary break.
+        if cv.hyphens == Hyphens::None {
+            text.retain(|c| c != '\u{00AD}');
+        }
         let family_str: String = family_str_of(cv);
         // tab-stop metrics は block-container 祖先の font (CSS Text 3 §4.2)。
         // 見つからなければ自 font (fail-safe — 既存挙動と同等)。
@@ -4752,6 +4760,7 @@ pub(crate) fn preshape_text(
             font_weight_raw: cv.font_weight,
             font_style: cv.font_style,
             line_height_raw: cv.line_height,
+            letter_spacing_raw: cv.letter_spacing.px(),
             tab_size: cv.tab_size,
             white_space: cv.white_space,
             nowrap: cv.white_space == WhiteSpace::Nowrap || cv.text_wrap == TextWrapMode::Nowrap,
@@ -4812,6 +4821,13 @@ pub(crate) fn preshape_text(
             );
             let font_weight = sanitize_font_weight(job.font_weight_raw, &mut warnings);
             let line_height = sanitize_line_height(job.line_height_raw, &mut warnings);
+            let letter_spacing = sanitize_finite(
+                job.letter_spacing_raw,
+                -MAX_TAFFY_MAGNITUDE,
+                MAX_TAFFY_MAGNITUDE,
+                "letter-spacing",
+                &mut warnings,
+            );
             let font_family = FontFamily::from(job.family_str.as_str());
             let mut builder = layout_cx.ranged_builder(fonts, &job.text, 1.0, true);
             builder.push_default(StyleProperty::FontFamily(font_family));
@@ -4823,6 +4839,7 @@ pub(crate) fn preshape_text(
             builder.push_default(StyleProperty::LineHeight(line_height_to_parley(
                 line_height,
             )));
+            builder.push_default(StyleProperty::LetterSpacing(letter_spacing));
             let mut layout: Layout<()> = builder.build(&job.text);
             layout.break_all_lines(if job.nowrap { None } else { Some(max_advance) });
             layout.align(Alignment::Start, AlignmentOptions::default());
@@ -4857,6 +4874,13 @@ pub(crate) fn preshape_text(
                 );
                 let font_weight = sanitize_font_weight(job.font_weight_raw, &mut warnings);
                 let line_height = sanitize_line_height(job.line_height_raw, &mut warnings);
+                let letter_spacing = sanitize_finite(
+                    job.letter_spacing_raw,
+                    -MAX_TAFFY_MAGNITUDE,
+                    MAX_TAFFY_MAGNITUDE,
+                    "letter-spacing",
+                    &mut warnings,
+                );
                 let font_family = FontFamily::from(job.family_str.as_str());
                 let mut builder = lcx.ranged_builder(&mut fonts_thread, &job.text, 1.0, true);
                 builder.push_default(StyleProperty::FontFamily(font_family));
@@ -4868,6 +4892,7 @@ pub(crate) fn preshape_text(
                 builder.push_default(StyleProperty::LineHeight(line_height_to_parley(
                     line_height,
                 )));
+                builder.push_default(StyleProperty::LetterSpacing(letter_spacing));
                 let mut layout: Layout<()> = builder.build(&job.text);
                 layout.break_all_lines(if job.nowrap { None } else { Some(max_advance) });
                 layout.align(Alignment::Start, AlignmentOptions::default());
@@ -11561,6 +11586,66 @@ mod tests {
              got a.y={}, b.y={}",
             a_loc.y,
             b_loc.y
+        );
+    }
+
+    #[test]
+    fn preshape_text_removes_soft_hyphens_when_hyphenation_is_disabled() {
+        use parley::{FontContext, LayoutContext};
+        use raikiri_style::{build_rule_tree, cascade};
+
+        fn shaped_text_end(inline_style: &str) -> usize {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let p = doc.append_element(Some(body), "p", Style::default(), Some(inline_style));
+            let text = doc.append_text(p, "a\u{00AD}b");
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            let mut fonts = FontContext::new();
+            let mut layout_cx = LayoutContext::<()>::new();
+            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
+            doc.nodes[text]
+                .text_layout()
+                .expect("text should be shaped")
+                .lines()
+                .next()
+                .expect("shaped text should have a line")
+                .text_range()
+                .end
+        }
+
+        assert_eq!(shaped_text_end("hyphens: none"), 2);
+        assert_eq!(shaped_text_end("hyphens: manual"), 4);
+    }
+
+    #[test]
+    fn preshape_text_applies_computed_letter_spacing_to_advance() {
+        use parley::{FontContext, LayoutContext};
+        use raikiri_style::{build_rule_tree, cascade};
+
+        fn shaped_width(inline_style: &str) -> f32 {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let p = doc.append_element(Some(body), "p", Style::default(), Some(inline_style));
+            let text = doc.append_text(p, "Hello");
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            let mut fonts = FontContext::new();
+            let mut layout_cx = LayoutContext::<()>::new();
+            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
+            doc.nodes[text]
+                .text_layout()
+                .expect("text should be shaped")
+                .full_width()
+        }
+
+        let normal = shaped_width("letter-spacing: 0px");
+        let spaced = shaped_width("letter-spacing: 4px");
+        assert!(
+            spaced > normal + 12.0,
+            "letter spacing should increase the shaped advance: normal={normal}, spaced={spaced}"
         );
     }
 
