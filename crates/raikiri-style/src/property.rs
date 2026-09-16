@@ -1270,65 +1270,45 @@ pub enum FontVariantCaps {
 /// lowercase] || full-width || full-size-kana`、Initial: `none`、Applies to:
 /// text、Inherited: **yes**、Computed value: "specified keyword"。
 ///
-/// # Scope carving
+/// # Scope
 ///
-/// - **Non-goal**: `full-width` / `full-size-kana` — the propdef's `||`
-///   double-bar combinator lets either keyword co-occur alongside a case
-///   keyword (`capitalize | uppercase | lowercase`) **in either order**;
-///   this crate implements only the case-keyword group (below) and does
-///   not recognize `full-width` / `full-size-kana` as idents. A single
-///   ident such as `full-width` on its own is rejected the same as any
-///   other unknown ident (below). A two-ident combination is rejected
-///   regardless of which order the case keyword and the unimplemented
-///   keyword appear in, but by two different mechanisms depending on
-///   which ident comes first ([`parse_text_transform`]'s doc has the
-///   per-arm detail):
-///   - unimplemented-first (e.g. `full-width uppercase`) —
-///     [`parse_text_transform`] itself fails on the first (unrecognized)
-///     ident, so `parse_value` already returns `None` before `DeclParser`'s
-///     exhaustive-consumption check is even reached.
-///   - case-keyword-first (e.g. `uppercase full-width`) —
-///     [`parse_text_transform`] succeeds on `uppercase` and leaves
-///     `full-width` unconsumed; the whole declaration is then dropped by
-///     `DeclParser` (in [`mod@crate::rule`])'s exhaustive-consumption
-///     check (the same general mechanism that rejects `font-size: 16px
-///     20px`) — no property-specific lookahead is needed here.
+/// The parser and layout pipeline preserve the optional width transforms and
+/// the case transform as one computed keyword value. `full-width` maps ASCII
+/// characters to their full-width forms; `full-size-kana` uses the CSS small
+/// kana mapping table. Language-specific tailoring is applied by the layout
+/// consumer where the document language is available.
 ///
-///   Either path lands on the same outcome (whole declaration dropped),
-///   so this crate does not need to special-case `||` order.
-/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
-///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical。sibling [`FontStyle`] と同 convention)。
-/// - **(a) spec-invalid**: 上記 4 keyword (`none`/`capitalize`/`uppercase`/
-///   `lowercase`、`full-width`/`full-size-kana` は未実装) 以外の ident は
-///   silent drop = `None`。
-///
-/// # Downstream handoff
-///
-/// Actually applying the case transform (the Unicode default-case
-/// algorithm, and word segmentation for `capitalize`'s titlecase rule) is
-/// out of this crate's scope — it belongs to the text-shaping/paint layer
-/// that consumes the computed value. This property carries only the
-/// cascade static-side keyword, mirroring
-/// [`crate::computed::ComputedValues::vertical_align`]'s "Downstream
-/// handoff" doc note.
-///
-/// [`FontStyle`] / [`Direction`] と同じ convention で `Default` を derive
-/// しない — 初期化側 ([`crate::specified::SpecifiedValues::initial`] /
-/// [`crate::computed::ComputedValues::initial`]) が [`TextTransform::None`]
-/// を直接指定する。
+/// `Default` is intentionally not derived; initialization sites explicitly
+/// choose [`TextTransform::None`] as the initial value.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextTransform {
-    /// `none` — spec initial value。"No effects."
+    /// `none` — spec initial value。
     None,
-    /// `capitalize` — "Puts the first typographic letter unit of each word,
-    /// if lowercase, in titlecase; other characters are unaffected."
+    /// `capitalize` — first typographic letter of each word is titlecased.
     Capitalize,
-    /// `uppercase` — "Puts all letters in uppercase."
+    /// `uppercase` — all letters are uppercased.
     Uppercase,
-    /// `lowercase` — "Puts all letters in lowercase."
+    /// `lowercase` — all letters are lowercased.
     Lowercase,
+    /// `full-width`.
+    FullWidth,
+    /// `full-size-kana`.
+    FullSizeKana,
+    /// Case transform combined with `full-width`.
+    CapitalizeFullWidth,
+    UppercaseFullWidth,
+    LowercaseFullWidth,
+    /// Case transform combined with `full-size-kana`.
+    CapitalizeFullSizeKana,
+    UppercaseFullSizeKana,
+    LowercaseFullSizeKana,
+    /// Both width transforms without a case transform.
+    FullWidthFullSizeKana,
+    /// A case transform combined with both width transforms.
+    CapitalizeFullWidthFullSizeKana,
+    UppercaseFullWidthFullSizeKana,
+    LowercaseFullWidthFullSizeKana,
 }
 
 /// `visibility` property の value。
@@ -16038,39 +16018,56 @@ fn parse_font_variant_caps(input: &mut Parser<'_, '_>) -> Option<FontVariantCaps
     }
 }
 
-/// `text-transform: <ident>` を parse する (CSS Text Module Level 3 §2.1
-/// <https://www.w3.org/TR/css-text-3/#text-transform-property>)。
+/// Parse the CSS Text `text-transform` grammar.
 ///
-/// Value grammar (§2.1, full property grammar): `none | [capitalize |
-/// uppercase | lowercase] || full-width || full-size-kana`。本 parser は
-/// `none` / `capitalize` / `uppercase` / `lowercase` の 4 keyword のみ受理
-/// する ([`TextTransform`] doc の Scope carving 節参照) — `full-width` /
-/// `full-size-kana` は spec-valid だが未実装のため、他の未知 ident と同じく
-/// silent drop = `None` とする。1 ident しか consume しないため、
-/// `full-width` / `full-size-kana` を伴う `||` 併記は **どちらの ident が
-/// 先に来ても** declaration 全体が drop されるが、drop される場所は ident の
-/// 順序で変わる ([`TextTransform`] doc の Scope carving 節が両 case の
-/// canonical な記述):
-///
-/// - 未実装 ident が先 (例: `full-width uppercase`) — 本関数自体が最初の
-///   ident で `None` を返す。caller の `parse_value` はこの時点で declaration
-///   を drop するので、`DeclParser` の exhaustive-consumption check にすら
-///   到達しない。
-/// - case keyword が先 (例: `uppercase full-width`) — 本関数は `uppercase`
-///   を consume して成功で返るが、`full-width` が未消費のまま残る。
-///   declaration 全体は caller ([`mod@crate::rule`] の `DeclParser`) の
-///   exhaustive-consumption check で drop される (`font-size: 16px 20px` を
-///   拒否するのと同じ一般 mechanism)。
-///
-/// ASCII case-insensitive で ident を比較する (sibling [`parse_font_style`]
-/// と同 flavor)。
+/// The optional case keyword and width keywords may appear in any order. At
+/// most one case keyword and each width keyword are accepted.
 fn parse_text_transform(input: &mut Parser<'_, '_>) -> Option<TextTransform> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "none" => Some(TextTransform::None),
-        "capitalize" => Some(TextTransform::Capitalize),
-        "uppercase" => Some(TextTransform::Uppercase),
-        "lowercase" => Some(TextTransform::Lowercase),
+    let mut case = None;
+    let mut full_width = false;
+    let mut full_size_kana = false;
+    let mut count = 0;
+    while count < 3 {
+        let ident = match input.try_parse(|i| i.expect_ident().map(ToOwned::to_owned)) {
+            Ok(ident) => ident,
+            Err(_) => break,
+        };
+        count += 1;
+        match ident.to_ascii_lowercase().as_str() {
+            "none" if count == 1 => return Some(TextTransform::None),
+            "capitalize" if case.is_none() => case = Some(TextTransform::Capitalize),
+            "uppercase" if case.is_none() => case = Some(TextTransform::Uppercase),
+            "lowercase" if case.is_none() => case = Some(TextTransform::Lowercase),
+            "full-width" if !full_width => full_width = true,
+            "full-size-kana" if !full_size_kana => full_size_kana = true,
+            _ => return None,
+        }
+    }
+    match (case, full_width, full_size_kana) {
+        (None, false, false) => None,
+        (None, true, false) => Some(TextTransform::FullWidth),
+        (None, false, true) => Some(TextTransform::FullSizeKana),
+        (None, true, true) => Some(TextTransform::FullWidthFullSizeKana),
+        (Some(TextTransform::Capitalize), false, false) => Some(TextTransform::Capitalize),
+        (Some(TextTransform::Uppercase), false, false) => Some(TextTransform::Uppercase),
+        (Some(TextTransform::Lowercase), false, false) => Some(TextTransform::Lowercase),
+        (Some(TextTransform::Capitalize), true, false) => Some(TextTransform::CapitalizeFullWidth),
+        (Some(TextTransform::Uppercase), true, false) => Some(TextTransform::UppercaseFullWidth),
+        (Some(TextTransform::Lowercase), true, false) => Some(TextTransform::LowercaseFullWidth),
+        (Some(TextTransform::Capitalize), false, true) => {
+            Some(TextTransform::CapitalizeFullSizeKana)
+        }
+        (Some(TextTransform::Uppercase), false, true) => Some(TextTransform::UppercaseFullSizeKana),
+        (Some(TextTransform::Lowercase), false, true) => Some(TextTransform::LowercaseFullSizeKana),
+        (Some(TextTransform::Capitalize), true, true) => {
+            Some(TextTransform::CapitalizeFullWidthFullSizeKana)
+        }
+        (Some(TextTransform::Uppercase), true, true) => {
+            Some(TextTransform::UppercaseFullWidthFullSizeKana)
+        }
+        (Some(TextTransform::Lowercase), true, true) => {
+            Some(TextTransform::LowercaseFullWidthFullSizeKana)
+        }
         _ => None,
     }
 }
@@ -27577,13 +27574,35 @@ mod tests {
     }
 
     #[test]
-    fn text_transform_rejects_unimplemented_keywords() {
-        // (b) not supported — `full-width` / `full-size-kana` are
-        // spec-valid `||`-combinable keywords but unimplemented
-        // (`TextTransform` doc's "Scope carving" section), not (a)
-        // spec-invalid.
-        assert_eq!(parse("full-width", "text-transform"), None);
-        assert_eq!(parse("full-size-kana", "text-transform"), None);
+    fn text_transform_accepts_width_keywords_and_combinations() {
+        assert_eq!(
+            parse("full-width", "text-transform"),
+            Some(PropertyValue::TextTransform(TextTransform::FullWidth))
+        );
+        assert_eq!(
+            parse("full-size-kana", "text-transform"),
+            Some(PropertyValue::TextTransform(TextTransform::FullSizeKana))
+        );
+        assert_eq!(
+            parse("full-width full-size-kana lowercase", "text-transform"),
+            Some(PropertyValue::TextTransform(
+                TextTransform::LowercaseFullWidthFullSizeKana
+            ))
+        );
+        assert_eq!(
+            parse("full-size-kana capitalize", "text-transform"),
+            Some(PropertyValue::TextTransform(
+                TextTransform::CapitalizeFullSizeKana
+            ))
+        );
+        assert_eq!(
+            parse("full-width uppercase", "text-transform"),
+            Some(PropertyValue::TextTransform(
+                TextTransform::UppercaseFullWidth
+            ))
+        );
+        assert_eq!(parse("uppercase uppercase", "text-transform"), None);
+        assert_eq!(parse("full-width full-width", "text-transform"), None);
     }
 
     #[test]
