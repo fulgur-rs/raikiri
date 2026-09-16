@@ -169,6 +169,15 @@ pub fn compute_table_layout(
     };
 
     if grid.n_cols == 0 || grid.rows.is_empty() {
+        // A table with ordinary flow content generates anonymous row/cell
+        // boxes (CSS 2.1 §17.2.1). This is especially important when a table
+        // is used as a flex item: its direct text must still contribute an
+        // intrinsic block size even though it is not an explicit table row.
+        let direct_content_height = doc.nodes[table_idx]
+            .children
+            .iter()
+            .filter_map(|&child| doc.nodes[child].text_layout().map(|layout| layout.height()))
+            .sum::<f32>();
         // Empty tables shrink-wrap like the main path below: a specified
         // width wins; otherwise the container width is only a cap over the
         // padding/border extents (never stretch-to-fill).
@@ -176,20 +185,43 @@ pub fn compute_table_layout(
             doc.nodes[table_idx].style.size.width,
             inputs.parent_size.width,
         );
-        let width = specified_w.unwrap_or_else(|| {
-            let natural = padding_border_size.width;
-            match effective_known.width {
-                Some(container) => f32_max_compat(natural.min(container), 0.0),
-                None => natural,
-            }
+        // A flex/grid parent supplies the table item's used main size after
+        // flexing/tracking. It must override the table's percentage width
+        // (which is only the item's hypothetical basis); otherwise a
+        // shrinking table item snaps back to its pre-flex percentage width.
+        let parent_is_flex_or_grid = doc.parent_of(table_idx).is_some_and(|parent| {
+            matches!(
+                doc.nodes[parent].style.display,
+                taffy::Display::Flex | taffy::Display::Grid
+            )
         });
+        let width = if parent_is_flex_or_grid {
+            effective_known.width.or(specified_w).unwrap_or_else(|| {
+                let natural = padding_border_size.width;
+                match effective_known.width {
+                    Some(container) => f32_max_compat(natural.min(container), 0.0),
+                    None => natural,
+                }
+            })
+        } else {
+            specified_w.unwrap_or_else(|| {
+                let natural = padding_border_size.width;
+                match effective_known.width {
+                    Some(container) => f32_max_compat(natural.min(container), 0.0),
+                    None => natural,
+                }
+            })
+        };
         let specified_h = resolve_dimension(
             doc.nodes[table_idx].style.size.height,
             inputs.parent_size.height,
         );
-        let height = specified_h
-            .or(effective_known.height)
-            .unwrap_or(padding_border_size.height);
+        let height = specified_h.unwrap_or_else(|| {
+            effective_known
+                .height
+                .unwrap_or(0.0)
+                .max(direct_content_height + padding_border_size.height)
+        });
         return LayoutOutput::from_outer_size(Size { width, height });
     }
 
