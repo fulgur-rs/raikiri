@@ -817,9 +817,15 @@ css/css-flexbox/flexbox-flex-wrap-default.htm
 css/css-flexbox/flexbox-flex-wrap-nowrap.htm
 css/css-flexbox/flexbox-margin-auto-horiz-002.xhtml
 css/css-flexbox/flexbox-overflow-horiz-002.html
+css/css-flexbox/flexbox-overflow-horiz-003.html
+css/css-flexbox/flexbox-overflow-horiz-004.html
+css/css-flexbox/flexbox-overflow-horiz-005.html
 css/css-flexbox/flexbox-overflow-vert-002.html
 # --- y0zo overflow clip 2026-09-16 (exact 800x600) ---
+css/css-flexbox/flexbox-overflow-vert-001.html
 css/css-flexbox/flexbox-overflow-vert-003.html
+css/css-flexbox/flexbox-overflow-vert-004.html
+css/css-flexbox/flexbox-overflow-vert-005.html
 css/css-flexbox/flexbox-paint-ordering-003.html
 css/css-flexbox/flexbox-with-multi-column-property.html
 css/css-flexbox/flexbox_box-clear.html
@@ -935,7 +941,9 @@ css/css-flexbox/gap-002-ltr.html
 css/css-flexbox/gap-002-rl.html
 css/css-flexbox/gap-002-rtl.html
 css/css-flexbox/gap-003-lr.html
+css/css-flexbox/gap-003-ltr.html
 css/css-flexbox/gap-003-rl.html
+css/css-flexbox/gap-003-rtl.html
 css/css-flexbox/gap-004-lr.html
 css/css-flexbox/gap-004-ltr.html
 css/css-flexbox/gap-004-rl.html

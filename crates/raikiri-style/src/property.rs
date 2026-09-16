@@ -9094,8 +9094,8 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "border-style" => PropertyKey::BorderStyle,
         "border-width" => PropertyKey::BorderWidth,
         "border-color" => PropertyKey::BorderColor,
-        "width" => PropertyKey::Width,
-        "height" => PropertyKey::Height,
+        "width" | "inline-size" => PropertyKey::Width,
+        "height" | "block-size" => PropertyKey::Height,
         "max-width" => PropertyKey::MaxWidth,
         "max-height" => PropertyKey::MaxHeight,
         "min-width" => PropertyKey::MinWidth,
@@ -9496,9 +9496,9 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // `<length-percentage>` のみ受理、min-content / max-content / fit-content()
         // は未実装 (将来対応) として silent drop、負値は spec `[0,∞]`
         // violation として drop (parse_width が enforce)。
-        "width" => parse_width(input).map(PropertyValue::Width),
+        "width" | "inline-size" => parse_width(input).map(PropertyValue::Width),
         // CSS Sizing 3 §3.1.1 preferred size — height。
-        "height" => parse_height(input).map(PropertyValue::Height),
+        "height" | "block-size" => parse_height(input).map(PropertyValue::Height),
         // CSS Sizing 3 §3.2 max-size properties.
         // `none | <length-percentage [0,∞]> | min-content | max-content | fit-content`
         "max-width" => parse_max_size(input).map(PropertyValue::MaxWidth),
@@ -29125,6 +29125,32 @@ mod tests {
         assert_eq!(
             PropertyValue::Width(LengthOrAuto::Length(Length::Px(100.0))).key(),
             PropertyKey::Width
+        );
+    }
+
+    #[test]
+    fn logical_size_aliases_use_physical_horizontal_writing_mode_axes() {
+        // CSS Sizing 3 logical preferred-size properties map to width/height
+        // while this engine's supported writing mode is horizontal-tb.
+        assert_eq!(
+            property_key_for_name("inline-size"),
+            Some(PropertyKey::Width)
+        );
+        assert_eq!(
+            property_key_for_name("block-size"),
+            Some(PropertyKey::Height)
+        );
+        assert_eq!(
+            parse("120px", "inline-size"),
+            Some(PropertyValue::Width(LengthOrAuto::Length(Length::Px(
+                120.0
+            ))))
+        );
+        assert_eq!(
+            parse("80px", "block-size"),
+            Some(PropertyValue::Height(LengthOrAuto::Length(Length::Px(
+                80.0
+            ))))
         );
     }
 
