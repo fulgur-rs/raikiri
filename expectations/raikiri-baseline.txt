@@ -568,6 +568,15 @@ css/css-tables/th-text-align.html
 css/css-tables/visibility-collapse-rowspan-005.html
 css/css-tables/zero-rowspan-002.html
 # --- css-grid reftest pin 2026-09-14 (210/891 PASS, grid-gap alias + 20 reftest pin) ---
+css/css-grid/abspos/grid-abspos-staticpos-align-self-self-end-large-border-padding.html
+css/css-grid/abspos/grid-abspos-staticpos-align-self-vertWM-last-baseline-003.html
+css/css-grid/abspos/grid-abspos-staticpos-align-self-vertWM-last-baseline-004.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-001.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-002.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-last-baseline-001.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-last-baseline-002.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-rtl-last-baseline-003.html
+css/css-grid/abspos/grid-abspos-staticpos-justify-self-rtl-last-baseline-004.html
 css/css-grid/grid-items/percentage-size-subitems-002.html
 css/css-grid/min-size-auto-overflow-clip.html
 css/css-grid/abspos/grid-abspos-staticpos-align-items-center.html
