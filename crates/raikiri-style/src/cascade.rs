@@ -12341,7 +12341,6 @@ mod tests {
         assert_eq!(
             result.computed[anchor].font_weight,
             ComputedValues::initial().font_weight,
-            "a full deep search with no `.missing` descendant must not match"
         );
     }
 
