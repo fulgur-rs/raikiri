@@ -39,3 +39,25 @@ Steps:
 `target/wpt/`. This subset is dedicated to raikiri VRT font pin
 (raikiri-spike-e93). When `raikiri-wpt` starts consuming WPT test
 resources, extend `subset.txt` and update this README.
+
+## Updating the CSS dashboard
+
+`docs/wpt-dashboard.html` is generated from the pinned WPT tree and
+`expectations/raikiri-baseline.txt`; do not edit its counters by hand. From a
+working tree, run:
+
+    scripts/wpt/update-dashboard.sh
+
+The wrapper fetches the pinned WPT checkout, runs the `raikiri-wpt` smoke
+reftests, records their passed count, and invokes `generate-dashboard`. The
+page reports that smoke count alongside the T2 baseline coverage. The
+generator reads the WPT Git tree rather than only the sparse working files, so
+the CSS denominator remains complete. To regenerate without rerunning the
+smoke tests, invoke the binary directly (the optional smoke count can be
+supplied when it is available):
+
+    cargo run --locked -p raikiri-wpt --bin generate-dashboard -- \
+        --wpt-root target/wpt \
+        --baseline expectations/raikiri-baseline.txt \
+        --basic-reftest-count 12 \
+        --output docs/wpt-dashboard.html

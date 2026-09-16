@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Raikiri - WPT CSS Dashboard (comprehensive, subdirs)</title>
+<title>Raikiri - WPT CSS Dashboard (generated, subdirs, baseline)</title>
 <style>
 body { font-family: sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
 #header { background: #2c3e50; color: white; padding: 16px; margin: -20px -20px 20px -20px; }
@@ -19,247 +19,393 @@ h1 { margin: 0; }
 </style>
 </head>
 <body>
-<div id="header"><h1>Raikiri - WPT CSS Dashboard</h1><p style="color:#ccc;">Comprehensive — all WPT css/ areas + subdirectories from pinned WPT (wpt@97ea26e)</p></div>
+<div id="header"><h1>Raikiri - WPT CSS Dashboard</h1><p style="color:#ccc;">Generated from the pinned WPT tree and Raikiri's T2 baseline</p></div>
 <div class="intro">
-<p>Generated: 2026-09-11 20:30 JST | WPT pin: <code>97ea26e26a2aac3eec7e770650b25e7049ed4a4e</code> | Total css/ files: <code>52675</code> | Raikiri basic reftest: <code>12</code> passed</p>
-<p>Per-area denominator is file count in that WPT css/ subdirectory at pinned SHA. Subdirectories shown are top-5 per area by file count.</p>
+<p>Generated: 2026-09-16 23:30 JST | WPT pin: <code>97ea26e26a2aac3eec7e770650b25e7049ed4a4e</code> | Total css/ files: <code>52675</code> | T2 baseline: <code>1025</code> entries | Basic reftest smoke: <code>12</code> passed</p>
+<p>The denominator is the file count in each WPT <code>css/</code> scope at the pinned SHA. The baseline column counts WPT entries currently protected against regression; subdirectories shown are the top five per area by file count.</p>
+<p>Entries under a <code>parsing/</code> subdirectory are parser cases. Other baseline entries are visual or reftest cases. Run <code>scripts/wpt/update-dashboard.sh</code> to fetch the pin, run the smoke reftests, and regenerate this page.</p>
 </div>
 <table>
-<tr><th>Area</th><th style="text-align:center;">Raikiri</th></tr>
-<tr><td style="background:white;font-weight:bold;">Total (css/)</td><td class="partial">0.02%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">12/52675</span></td></tr>
+<tr><th>Area</th><th style="text-align:center;">T2 baseline</th></tr>
+<tr><td style="background:white;font-weight:bold;">Total (css/)</td><td class="partial">1.95%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1025/52675</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/CSS2</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/12956</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/CSS2/tables</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1281</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/CSS2/selectors</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1108</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/CSS2/normal-flow</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1099</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/CSS2/borders</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/928</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/CSS2/margin-padding-clear</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/878</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-text</td><td class="partial">0.03%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/2921</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-text/white-space</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/587</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-text</td><td class="partial">10.51%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">307/2921</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-text/white-space</td><td class="partial">3.75%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">22/587</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-text/i18n</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/539</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-text/line-breaking</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/213</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-text/text-transform</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/210</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-text/word-break</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/181</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-grid</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/2650</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-text/line-breaking</td><td class="partial">29.11%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">62/213</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-text/text-transform</td><td class="partial">30.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">63/210</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-text/word-break</td><td class="partial">11.05%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">20/181</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-grid</td><td class="partial">1.62%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">43/2650</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-grid/grid-lanes</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1027</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-grid/alignment</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/480</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-grid/abspos</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/306</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-grid/grid-items</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/214</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-grid/abspos</td><td class="partial">8.82%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">27/306</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-grid/grid-items</td><td class="partial">0.93%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">2/214</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-grid/subgrid</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/177</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-fonts</td><td class="partial">0.04%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/2463</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-fonts</td><td class="partial">0.93%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">23/2463</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-fonts/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1524</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-fonts/variations</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/95</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-fonts/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/84</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-writing-modes</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/2006</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-fonts/parsing</td><td class="partial">27.38%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">23/84</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-fonts/math-script-level-and-math-style</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/23</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-fonts/resources</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/23</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-writing-modes</td><td class="partial">0.70%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">14/2006</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-writing-modes/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/164</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-writing-modes/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/149</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-writing-modes/forms</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/104</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-flexbox</td><td class="partial">0.05%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/1898</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-flexbox/abspos</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/81</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-writing-modes/parsing</td><td class="partial">87.50%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">14/16</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-writing-modes/test-plan</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/16</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-flexbox</td><td class="partial">11.33%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">215/1898</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-flexbox/abspos</td><td class="partial">11.11%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">9/81</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-flexbox/getcomputedstyle</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/76</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-flexbox/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/70</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-flexbox/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/51</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-flexbox/intrinsic-size</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/34</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-ui</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1699</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-flexbox/alignment</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/34</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-ui</td><td class="partial">0.65%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">11/1699</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-ui/compute-kind-widget-generated</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/802</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-ui/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/232</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-ui/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/54</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-ui/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/43</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-backgrounds</td><td class="partial">0.20%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">3/1491</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-backgrounds/background-size</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/294</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-ui/parsing</td><td class="partial">25.58%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">11/43</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-ui/animation</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/12</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-backgrounds</td><td class="partial">8.65%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">129/1491</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-backgrounds/background-size</td><td class="partial">1.36%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">4/294</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-backgrounds/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/144</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-backgrounds/animations</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/114</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-backgrounds/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/107</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-backgrounds/background-clip</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/97</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-break</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1343</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-backgrounds/background-clip</td><td class="partial">21.65%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">21/97</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-break</td><td class="partial">0.22%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">3/1343</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-break/flexbox</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/371</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-break/table</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/201</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-break/grid</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/103</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-break/parsing</td><td class="partial">15.79%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">3/19</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-break/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/13</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-transforms</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1304</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-transforms/transform-origin</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/88</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-transforms/animation</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/85</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-transforms/matrix</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/72</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-transforms/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/48</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-transforms/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/47</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-overflow</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1049</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-overflow</td><td class="partial">0.95%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">10/1049</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-overflow/line-clamp</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/401</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-overflow/scroll-markers</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/236</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-overflow/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/32</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/selectors</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/976</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-overflow/parsing</td><td class="partial">31.25%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">10/32</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-overflow/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/19</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/selectors</td><td class="partial">1.02%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">10/976</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/selectors/old-tests</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/310</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/selectors/invalidation</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/177</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/selectors/i18n</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/49</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/selectors/selectors-4</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/35</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-multicol</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/969</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/selectors/parsing</td><td class="partial">43.48%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">10/23</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-multicol</td><td class="partial">0.93%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">9/969</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-multicol/crashtests</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/125</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-multicol/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/39</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-multicol/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/32</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-multicol/parsing</td><td class="partial">28.12%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">9/32</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-multicol/table</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/20</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-multicol/animation</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/8</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/WOFF2</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/909</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/WOFF2/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/309</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-sizing</td><td class="partial">0.12%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/868</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-sizing</td><td class="partial">1.38%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">12/868</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-sizing/aspect-ratio</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/304</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-sizing/contain-intrinsic-size</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/86</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-sizing/stretch</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/70</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-sizing/responsive-iframe</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/39</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-images</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/825</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-sizing/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/22</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-images</td><td class="partial">0.85%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">7/825</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-images/gradient</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/149</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-images/image-orientation</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/84</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-images/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/58</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-images/image-set</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/48</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-contain</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/822</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-images/parsing</td><td class="partial">33.33%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">7/21</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-contain</td><td class="partial">0.12%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/822</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-contain/content-visibility</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/311</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-contain/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/90</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-masking</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/786</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-contain/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/11</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-contain/crashtests</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/8</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-contain/parsing</td><td class="partial">25.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/4</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-masking</td><td class="partial">1.02%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">8/786</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-masking/clip-path</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/337</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-masking/mask-image</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/190</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-masking/clip-path-svg-content</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/131</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-masking/clip</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/44</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-masking/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/29</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-view-transitions</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/724</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-masking/parsing</td><td class="partial">27.59%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">8/29</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-view-transitions</td><td class="partial">0.41%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">3/724</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-view-transitions/scoped</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/90</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-view-transitions/navigation</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/75</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-view-transitions/nested</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/45</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-text-decor</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/649</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-view-transitions/parsing</td><td class="partial">23.08%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">3/13</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-view-transitions/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/8</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-text-decor</td><td class="partial">2.77%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">18/649</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-text-decor/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/127</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-text-decor/text-shadow</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/55</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-text-decor/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/32</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-gaps</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/609</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-text-decor/parsing</td><td class="partial">56.25%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">18/32</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-text-decor/invalidation</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/15</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-text-decor/crashtests</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/8</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-gaps</td><td class="partial">0.16%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/609</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-gaps/grid</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/275</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-gaps/flex</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/170</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-gaps/multicol</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/74</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-gaps/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/50</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-gaps/parsing</td><td class="partial">2.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/50</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-gaps/animation</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/26</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-values</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/608</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-values</td><td class="partial">2.30%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">14/608</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-values/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/55</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-values/calc-size</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/54</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-values/urls</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/46</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-values/urls</td><td class="partial">2.17%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/46</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-values/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/27</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/filter-effects</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/603</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-values/tree-counting</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/22</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/filter-effects</td><td class="partial">0.83%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">5/603</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/filter-effects/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/74</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/filter-effects/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/46</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/filter-effects/filter-function</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/25</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/filter-effects/parsing</td><td class="partial">26.32%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">5/19</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/filter-effects/animation</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/13</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-anchor-position</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/594</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-anchor-position/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/32</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-shapes</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/572</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-anchor-position/container-queries</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/19</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-anchor-position/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/11</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-anchor-position/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/2</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-shapes</td><td class="partial">0.87%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">5/572</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-shapes/shape-outside</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/443</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-shapes/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/32</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-shapes/spec-examples</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/28</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-shapes/shape-functions</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/27</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-shapes/parsing</td><td class="partial">35.71%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">5/14</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-pseudo</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/560</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-pseudo/highlight-cascade</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/58</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-pseudo/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/26</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-color</td><td class="partial">0.19%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/519</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-color/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/44</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-page</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/518</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-pseudo/slider</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/14</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-pseudo/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/6</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-pseudo/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/4</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-color</td><td class="partial">2.89%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">15/519</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-color/parsing</td><td class="partial">34.09%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">15/44</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-color/animation</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/8</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-color/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/4</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-color/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/2</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-page</td><td class="partial">0.77%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">4/518</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-page/margin-boxes</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/73</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-page/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/35</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-page/parsing</td><td class="partial">33.33%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">4/12</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-page/crashtests</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/10</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-page/cssom</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/8</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-counter-styles</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/488</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-counter-styles/counter-style-at-rule</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/97</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-counter-styles/cssom</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/29</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-counter-styles/japanese-formal</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/15</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-counter-styles/japanese-informal</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/15</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-counter-styles/korean-hangul-formal</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/15</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-conditional</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/476</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-conditional/container-queries</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/333</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-position</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/443</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-conditional/js</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/12</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-conditional/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-conditional/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-position</td><td class="partial">1.35%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">6/443</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-position/sticky</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/164</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-position/static-position</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/29</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-tables</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/412</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-position/parsing</td><td class="partial">26.09%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">6/23</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-position/overlay</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/21</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-position/multicol</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/20</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-tables</td><td class="partial">16.99%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">70/412</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-tables/tentative</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/58</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-tables/crashtests</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/29</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-tables/height-distribution</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/24</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-display</td><td class="partial">0.25%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/403</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-tables/height-distribution</td><td class="partial">12.50%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">3/24</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-tables/parsing</td><td class="partial">87.50%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">14/16</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-tables/width-distribution</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/16</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-display</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/403</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-display/run-in</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/241</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-display/reading-flow</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/7</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-display/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/6</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-display/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/4</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-display/animations</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-typed-om</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/376</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-typed-om/the-stylepropertymap</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/285</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-typed-om/stylevalue-subclasses</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/47</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-lists</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/353</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-lists/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/24</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-typed-om/stylevalue-serialization</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/11</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-typed-om/stylevalue-normalization</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/5</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-typed-om/stylevalue-objects</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/4</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-lists</td><td class="partial">1.98%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">7/353</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-lists/content-property</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/24</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-inline</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/351</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-lists/parsing</td><td class="partial">29.17%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">7/24</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-lists/crashtests</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/6</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-lists/resources</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/4</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-lists/animations</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-inline</td><td class="partial">0.85%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">3/351</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-inline/text-box-trim</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/139</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-inline/initial-letter</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/120</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-align</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/339</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-inline/baseline-source</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/20</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-inline/parsing</td><td class="partial">18.75%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">3/16</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-inline/baseline-shift</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/15</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-align</td><td class="partial">0.88%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">3/339</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-align/abspos</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/98</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-align/blocks</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/68</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-align/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/50</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-align/parsing</td><td class="partial">6.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">3/50</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-align/self-alignment</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/34</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/cssom-view</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/279</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-align/gaps</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/21</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/cssom-view</td><td class="partial">0.36%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/279</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/cssom-view/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/43</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/cssom-view/resources</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/6</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/cssom-view/parsing</td><td class="partial">25.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/4</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/cssom</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/271</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/cssom/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/47</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/cssom/resources</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-variables</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/270</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-animations</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/260</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-animations/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/43</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-transitions</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/248</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-variables/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/5</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-variables/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-variables/resources</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/2</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-animations</td><td class="partial">4.62%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">12/260</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-animations/parsing</td><td class="partial">27.91%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">12/43</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-animations/crashtests</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/9</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-animations/responsive</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/5</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-animations/stability</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/2</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-animations/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/2</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-transitions</td><td class="partial">2.02%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">5/248</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-transitions/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/49</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-ruby</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/228</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-transitions/parsing</td><td class="partial">26.32%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">5/19</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-transitions/animations</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/12</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-transitions/crashtests</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/6</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-transitions/render-blocking</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-ruby</td><td class="partial">1.75%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">4/228</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-ruby/parsing</td><td class="partial">44.44%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">4/9</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-ruby/break-within-bases</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/7</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-ruby/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/6</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-ruby/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-shadow</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/226</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-shadow/part</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/58</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-shadow/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/2</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-shadow/resources</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-scroll-snap</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/210</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-scroll-snap/snap-after-relayout</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/36</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-scroll-snap/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/25</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/motion</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/207</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-scroll-snap/scroll-initial-target</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/23</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-scroll-snap/snap-events</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/22</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-scroll-snap/snap-after-initial-layout</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/10</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/motion</td><td class="partial">2.90%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">6/207</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/motion/animation</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/28</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/motion/parsing</td><td class="partial">30.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">6/20</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-borders</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/193</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-borders/border-shape</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/77</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-borders/tentative</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/49</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-borders/corner-shape</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/46</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-borders/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/6</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-layout-api</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/185</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-layout-api/constraints</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/45</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-layout-api/child-constraints</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/22</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-layout-api/intrinsic-sizes</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/20</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-layout-api/edges</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/17</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-layout-api/auto-block-size</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/10</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-highlight-api</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/183</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-highlight-api/painting</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/143</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-highlight-api/crashtests</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-paint-api</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/180</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-box</td><td class="partial">1.12%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">2/179</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-paint-api/hidpi</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/6</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-paint-api/resources</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-paint-api/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-box</td><td class="partial">3.35%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">6/179</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-box/margin-trim</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/136</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-box/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/30</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/compositing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/170</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-box/parsing</td><td class="partial">20.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">6/30</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-box/animation</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/10</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/compositing</td><td class="partial">2.94%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">5/170</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/compositing/mix-blend-mode</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/100</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-cascade</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/164</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/compositing/parsing</td><td class="partial">45.45%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">5/11</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/compositing/background-blending</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/7</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/compositing/svg</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/6</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/compositing/isolation</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/4</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-cascade</td><td class="partial">0.61%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/164</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-cascade/parsing</td><td class="partial">16.67%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/6</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-cascade/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-cascade/resources</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-cascade/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/2</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-viewport</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/151</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-viewport/zoom</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/149</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-properties-values-api</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/133</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-properties-values-api/animation</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/69</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-content</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/127</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-properties-values-api/crashtests</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/6</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-properties-values-api/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/5</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-properties-values-api/resources</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-content</td><td class="partial">1.57%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">2/127</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-content/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/39</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-content/parsing</td><td class="partial">40.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">2/5</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-content/resources</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/mediaqueries</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/112</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/mediaqueries/resources</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/6</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/mediaqueries/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/2</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/mediaqueries/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-scrollbars</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/111</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-logical</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/103</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-logical/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/54</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-scroll-anchoring</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/88</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-scrollbars/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/2</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-logical</td><td class="partial">15.53%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">16/103</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-logical/parsing</td><td class="partial">29.63%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">16/54</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-logical/animations</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/7</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-logical/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/5</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-logical/resources</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-scroll-anchoring</td><td class="partial">1.14%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/88</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-scroll-anchoring/parsing</td><td class="partial">25.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/4</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-scroll-anchoring/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-syntax</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/72</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-syntax/charset</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/43</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-will-change</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/71</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-syntax/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-will-change</td><td class="partial">1.41%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/71</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-will-change/parsing</td><td class="partial">33.33%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/3</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/61</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-color-adjust</td><td class="partial">1.72%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/58</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-color-adjust/rendering</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/48</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-color-adjust/parsing</td><td class="partial">20.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/5</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-color-adjust/animation</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-style-attr</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/58</span></td></tr>
 <tr><td style="padding-left:24px;color:#555;">↳ css/css-style-attr/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/36</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-color-adjust</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/58</span></td></tr>
-<tr><td style="padding-left:24px;color:#555;">↳ css/css-color-adjust/rendering</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/48</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-style-attr/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/4</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-nesting</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/56</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-mixins</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/52</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-mixins/resources</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-font-loading</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/42</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-font-loading/resources</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-font-loading/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-namespaces</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/40</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-rhythm</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/37</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-namespaces/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/8</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-namespaces/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/5</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-rhythm</td><td class="partial">13.51%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">5/37</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-rhythm/parsing</td><td class="partial">33.33%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">5/15</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-rhythm/replaced-elements</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/7</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-rhythm/computedstyle</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/2</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/printing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/36</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-forms</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/34</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-forms/parsing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/geometry</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/32</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/geometry/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-image-animation</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/29</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/25</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-gcpm</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/21</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-exclusions</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/18</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-round-display</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/16</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-exclusions/css3-exclusions</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/8</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-exclusions/resources</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-easing</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/16</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-round-display</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/16</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/fill-stroke</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/14</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/fill-stroke/text-decoration-fill</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/fill-stroke/text-decoration-stroke</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/fill-stroke/animation</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/2</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/fill-stroke/reference</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-overscroll-behavior</td><td class="partial">7.69%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/13</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-overscroll-behavior/parsing</td><td class="partial">33.33%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/3</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-overscroll-behavior/resources</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-speech</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/13</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-overscroll-behavior</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/13</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-speech/speak-as</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/5</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-env</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/12</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-device-adapt</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/8</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-size-adjust</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/7</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-forced-color-adjust</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/6</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/css-color-hdr</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/5</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-size-adjust</td><td class="partial">14.29%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/7</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-size-adjust/parsing</td><td class="partial">33.33%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/3</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-size-adjust/animations</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-forced-color-adjust</td><td class="partial">16.67%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/6</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/css-forced-color-adjust/parsing</td><td class="partial">25.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">1/4</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/CSS1</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/5</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/CSS1/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/2</span></td></tr>
+<tr><td style="font-weight:bold;background:#eef;">css/css-color-hdr</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/5</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/fetching</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/4</span></td></tr>
+<tr><td style="padding-left:24px;color:#555;">↳ css/fetching/support</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/3</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/css-parser-api</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/2</span></td></tr>
-<tr><td style="font-weight:bold;background:#eef;">css/README.md</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
 <tr><td style="font-weight:bold;background:#eef;">css/.htaccess</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
-
+<tr><td style="font-weight:bold;background:#eef;">css/README.md</td><td class="fail">0.00%<span style="display:block;font-size:12px;color:rgba(0,0,0,0.6);">0/1</span></td></tr>
 </table>
-<p style="font-size:12px;color:#666;margin-top:12px;">Run <code>cargo test -p raikiri-wpt --test basic_reftests</code> to reproduce. Expand by adding reftests to <code>crates/raikiri-wpt/tests/basic_reftests.rs</code>.</p>
+<p style="font-size:12px;color:#666;margin-top:12px;">The dashboard is generated; do not edit its counters by hand. For a direct invocation, run <code>cargo run --locked -p raikiri-wpt --bin generate-dashboard -- --wpt-root target/wpt --baseline expectations/raikiri-baseline.txt --output docs/wpt-dashboard.html</code>.</p>
 </body>
 </html>
