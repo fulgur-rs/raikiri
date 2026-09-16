@@ -8,9 +8,9 @@
 //!   cascade minimum (type + universal selector、color / font-family / font-size /
 //!   font-weight、specificity + !important + source order + inheritance)
 //!
-//! GCPM static side、@media / @supports、L4 selectors、class/id/attribute
-//! selector、combinator は将来追加予定。at-rule は専用意味論が未実装でも
-//! `RuleTree` の opaque view に保持する。
+//! GCPM static side、@supports、L4 selectors、class/id/attribute selector、
+//! combinator は将来追加予定。`@media` は `MediaContext` による
+//! `all` / `print` / `screen` の条件評価に対応する。
 //!
 //! `precomputed-hash` is encapsulated as a direct dep of this crate only. It
 //! is intentionally NOT promoted to `[workspace.dependencies]` — see the
@@ -54,6 +54,9 @@ pub use counter_style::{
     resolve_custom_counter,
 };
 
+pub mod media;
+pub use media::{MediaContext, MediaType};
+
 pub mod page;
 pub use page::{
     PageBleed, PageBleedDeclaration, PageCascadeResult, PageContextQuery, PageInheritance,
@@ -95,7 +98,7 @@ pub mod specified;
 pub use specified::SpecifiedValues;
 
 pub mod cascade;
-pub use cascade::{CascadeResult, cascade};
+pub use cascade::{CascadeResult, cascade, cascade_with_media_context};
 
 #[cfg(test)]
 pub(crate) mod test_dom;

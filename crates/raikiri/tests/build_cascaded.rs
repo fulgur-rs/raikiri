@@ -4,7 +4,8 @@
 //! 完結できることを verify する。
 
 use raikiri::{
-    DisplayValue, Dom, Element, Node, NodeId, NodeKind, ParseOptions, build_cascaded, parse,
+    DisplayValue, Dom, Element, MediaContext, Node, NodeId, NodeKind, ParseOptions, build_cascaded,
+    build_cascaded_with_media_context, parse,
 };
 
 fn parse_html(source: &str) -> raikiri::UncascadedDocument {
@@ -53,6 +54,26 @@ fn p_without_author_style_is_display_block_via_ua_css() {
         display,
         DisplayValue::Block,
         "<p> should inherit display: block from bundled UA CSS via build_cascaded",
+    );
+}
+
+#[test]
+fn explicit_media_context_reaches_umbrella_cascade() {
+    let html = "<html><head><style>@media screen { p { display: inline } }</style></head>\
+                <body><p>Hi</p></body></html>";
+    let doc = parse_html(html);
+    let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
+
+    let print_result = build_cascaded(&doc);
+    assert_eq!(
+        print_result.computed[p_id.0 as usize].display,
+        DisplayValue::Block
+    );
+
+    let screen_result = build_cascaded_with_media_context(&doc, &MediaContext::screen());
+    assert_eq!(
+        screen_result.computed[p_id.0 as usize].display,
+        DisplayValue::Inline
     );
 }
 
