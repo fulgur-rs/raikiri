@@ -1248,7 +1248,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + flexbox_fbfc (+1, y0zo initial slice: exact 800x600 pass).
         // + flexbox-overflow-vert-003 (+1, y0zo overflow clip: exact 800x600 pass).
         // + flexbox gap/wrapping slice (+8, exact 800x600 pass).
-        assert_eq!(set.baseline.entries.len(), 875);
+        // + grid item-sizing slice (+2, exact 800x600 pass).
+        assert_eq!(set.baseline.entries.len(), 877);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }

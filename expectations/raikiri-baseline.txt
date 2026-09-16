@@ -568,6 +568,8 @@ css/css-tables/th-text-align.html
 css/css-tables/visibility-collapse-rowspan-005.html
 css/css-tables/zero-rowspan-002.html
 # --- css-grid reftest pin 2026-09-14 (210/891 PASS, grid-gap alias + 20 reftest pin) ---
+css/css-grid/grid-items/percentage-size-subitems-002.html
+css/css-grid/min-size-auto-overflow-clip.html
 css/css-grid/abspos/grid-abspos-staticpos-align-items-center.html
 css/css-grid/abspos/grid-abspos-staticpos-align-items-center-large-border-padding.html
 css/css-grid/abspos/grid-abspos-staticpos-align-items-end.html
