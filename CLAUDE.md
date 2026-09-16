@@ -64,11 +64,13 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 - If a required sync or push is blocked, stop and report the exact command and error.
 <!-- END BEADS INTEGRATION -->
 
-## 使い捨て worktree は `$HOME` 配下に作る (`/tmp` に作らない)
+## 使い捨て worktree は `.worktrees/` 配下に作る (`/tmp` に作らない)
 
 一時的な目的 (baseline 比較、使い捨て実験など) で切る throwaway/scratch な
 `git worktree` で `cargo build` / `cargo test` / `cargo bench` を走らせる場合、
-その worktree は **`$HOME` 配下に作る。`/tmp` の下に作らない**。
+その worktree は **repo 直下の `.worktrees/<name>/` に作る。
+`/tmp` の下にも `$HOME` 直下にも作らない**。
+規則の正典と経緯は **AGENTS.md の同名節**を参照。
 
 本 repo の `/tmp` は小さな tmpfs で、**動作中の全 session が同時に共有する**
 (worktree-per-task 運用のため、session 数は並行 task 数に比例して増える)。

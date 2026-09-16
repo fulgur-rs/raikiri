@@ -338,11 +338,23 @@ bd raikiri-spike-8yj6 が持つ。
   bare code span 化) へ書き換えた。この aux-only dangling class は raikiri-dom 側
   だけの現象ではない。
 
-## 使い捨て worktree は `$HOME` 配下に作る (`/tmp` に作らない)
+## 使い捨て worktree は `.worktrees/` 配下に作る (`/tmp` に作らない)
 
 一時的な目的 (baseline 比較、使い捨て実験など) で切る throwaway/scratch な
 `git worktree` で `cargo build` / `cargo test` / `cargo bench` を走らせる場合、
-その worktree は **`$HOME` 配下に作る。`/tmp` の下に作らない**。
+その worktree は **repo 直下の `.worktrees/<name>/` に作る。
+`/tmp` の下にも `$HOME` 直下にも作らない**。
+
+```bash
+git worktree add .worktrees/<name> -b <branch>
+```
+
+`.worktrees/` は `.gitignore` 済み (OpenCode worktrees 枠) で、`git worktree list`
+で一覧できる。`scripts/wpt/fetch.sh` は worktree から呼ばれた場合も
+`target/wpt` を main worktree の共有 checkout へ symlink するので、
+WPT 前提の test も追加手順なしで走る。既存の `$HOME` 直下 worktree
+(`~/wt-*`) は着手済み task が close するまで grandfathered —
+稼働中の task を中断して移設せず、新規は本節に従う。
 
 本 repo の `/tmp` は小さな tmpfs で、**動作中の全 session が同時に共有する**
 (worktree-per-task 運用のため、session 数は並行 task 数に比例して増える)。
