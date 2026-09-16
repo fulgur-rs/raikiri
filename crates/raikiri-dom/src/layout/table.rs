@@ -508,6 +508,15 @@ fn collect_rows_inner(
         if !doc.nodes[child_id].is_in_document() {
             continue;
         }
+        // Character data carries no grid structure: inter-cell whitespace
+        // must not flush a pending anonymous row (each whitespace run would
+        // otherwise split sibling cells into separate single-cell rows), and
+        // text has no children to recurse into. Non-whitespace text directly
+        // under table wrappers is dropped either way today (anonymous-cell
+        // wrapping is out of scope), so skipping changes nothing for it.
+        if !matches!(doc.nodes[child_id].data, crate::node::NodeData::Element(_)) {
+            continue;
+        }
         let disp = doc.nodes[child_id].display;
         let is_row = disp == DisplayValue::TableRow;
         let is_cell = disp == DisplayValue::TableCell;

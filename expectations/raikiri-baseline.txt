@@ -1019,6 +1019,9 @@ css/css-tables/anonymous-table-cell-margin-collapsing.html
 css/css-tables/table-has-box-sizing-border-box-001.html
 # --- css-tables reftest pin 2026-09-16 (double border style paint + border-style shorthand) ---
 css/css-tables/border-collapse-double-border.html
+# --- css-tables reftest pin 2026-09-16 (grid text-skip: non-element children carry no grid structure, glk7) ---
+css/css-tables/subpixel-table-cell-width-001.html
+css/css-tables/subpixel-table-cell-width-002.html
 # REMOVED 2026-09-16 (23 files): pinned-but-failing after whitespace-collapse
 # + segment-break work exposed real engine gaps (previously vacuous passes
 # under phantom strut layout). Re-pin with the fixes:
