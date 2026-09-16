@@ -34,10 +34,8 @@ mod walk;
 /// - Element background-color / border / box-shadow
 /// - Text decoration (underline / line-through) — `text_decoration_line` /
 ///   `_style` / `_color`、raikiri-dom / raikiri-paint 双方とも未消費
-/// - `overflow: hidden` clip-rect application (paint 側で描画内容を
-///   node の box に clip する処理) — `overflow` は taffy layout 側
-///   (scroll container 化) でも raikiri-paint 側でも未消費。前者は
-///   layout 側の別軸の gap で、ここに挙げるのは後者のみ
+/// - Scrollbar painting for `overflow: scroll` / `auto` — descendants are
+///   clipped, but scrollbar geometry and painting remain out of scope.
 /// - z-index / stacking context
 /// - CSS transform (rotate/scale/skew)
 /// - DPI scaling (`paint_single_page_scaled` 別関数で将来拡張予定)
@@ -221,6 +219,43 @@ mod tests {
             "text inside display:none subtree should not be painted, got {}",
             glyph_commands.len()
         );
+    }
+
+    #[test]
+    fn paint_single_page_clips_overflow_hidden_descendants() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("width:70px;height:70px;overflow:hidden"),
+        );
+        let _child = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("width:200px;height:20px;background:blue"),
+        );
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cr = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+        let clips = scene
+            .commands
+            .iter()
+            .filter(|command| matches!(command, RenderCommand::PushClipLayer(_)))
+            .count();
+        let pops = scene
+            .commands
+            .iter()
+            .filter(|command| matches!(command, RenderCommand::PopLayer))
+            .count();
+        assert_eq!(clips, 1, "overflow:hidden should push one descendant clip");
+        assert_eq!(pops, clips, "every overflow clip must be popped");
     }
 
     #[test]

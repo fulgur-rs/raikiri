@@ -1,12 +1,11 @@
 //! DOM walker — Document arena を DFS で walk し PaintScene に emit する。
 //!
-//! `paint_document` は iterative
-//! `Vec<(node_id, parent_abs_x, parent_abs_y, parent_font_size, shift_y)>`
-//! stack で walk する (cascade / find_body の pattern と一貫、深 DOM で
-//! stack overflow 回避)。kind 分岐は loop 内で inline に行い、Element は
-//! children を push、Text は draw_text_node を call、display:none は
-//! subtree ごと skip する。`parent_font_size` / `shift_y` は
-//! `vertical_align_shift_px` doc 参照。
+//! `paint_document` は iterative `PaintFrame` stack で walk する
+//! (cascade / find_body の pattern と一貫、深 DOM で stack overflow 回避)。
+//! kind 分岐は loop 内で inline に行い、Element は children を push、Text は
+//! draw_text_node を call、display:none は subtree ごと skip する。overflow
+//! clip は subtree の後で対応する `PopClip` frame により閉じる。
+//! `parent_font_size` / `shift_y` は `vertical_align_shift_px` doc 参照。
 //!
 //! 将来 inline formatting context を実装する時は、Element 分岐内の children
 //! push を "self の inline layout を walk する" に置き換え、Text 分岐は
@@ -29,13 +28,13 @@
 //! を crate 境界越境で pub 化するよりも paint 側で持つ方が clean。
 
 use anyrender::PaintScene;
-use kurbo::Rect;
+use kurbo::{Affine, Rect};
 use peniko::{Color, Fill};
 use raikiri_dom::Document;
 use raikiri_style::CascadeResult;
 use raikiri_style::property::{
     BackgroundImage, BorderStyle, CssColor, DisplayValue, Gradient, GradientStopColor,
-    VerticalAlign,
+    OverflowValue, VerticalAlign,
 };
 use raikiri_traits::{NodeKind, PageBox};
 
@@ -104,11 +103,11 @@ fn find_html(doc: &Document) -> Option<usize> {
 /// case は silent return (layout_single_page が Err を返すので paint
 /// 呼び出し前に検出済のはず、defensive)。
 ///
-/// Stack frame = `(node_id, parent_abs_x, parent_abs_y, parent_font_size,
-/// shift_y)`。children は `.rev()` で push し、pop 時に document order で
-/// 処理する。Element の場合は `is_display_none` を先に判定し true なら
-/// subtree ごと skip (旧来の size == 0 判定は overflow: visible な
-/// legitimate zero-size 要素も silent drop するため誤りだったための対応)。
+/// Stack frames carry either a node visit or a matching clip-layer pop.
+/// Node children は `.rev()` で push し、pop 時に document order で処理する。
+/// Element の場合は `is_display_none` を先に判定し true なら subtree ごと
+/// skip (旧来の size == 0 判定は overflow: visible な legitimate zero-size
+/// 要素も silent drop するため誤りだったための対応)。
 ///
 /// `parent_font_size` はこの stack frame の node の**親**の used font-size
 /// (px)。`shift_y` はこの node に至るまでの祖先全体が積んだ
@@ -133,9 +132,44 @@ pub(crate) fn paint_document(
     // — body に `display: inline` を override するような病的な入力でない
     // 限り、この fallback の精度は実質無関係。
     let body_font_size = cascade.computed[body_id].font_size.px();
-    let mut stack: Vec<(usize, f32, f32, f32, f32)> =
-        vec![(body_id, 0.0, 0.0, body_font_size, 0.0)];
-    while let Some((node_id, parent_abs_x, parent_abs_y, parent_font_size, shift_y)) = stack.pop() {
+    enum PaintFrame {
+        Visit {
+            node_id: usize,
+            parent_abs_x: f32,
+            parent_abs_y: f32,
+            parent_font_size: f32,
+            shift_y: f32,
+        },
+        PopClip,
+    }
+
+    let mut stack = vec![PaintFrame::Visit {
+        node_id: body_id,
+        parent_abs_x: 0.0,
+        parent_abs_y: 0.0,
+        parent_font_size: body_font_size,
+        shift_y: 0.0,
+    }];
+    while let Some(frame) = stack.pop() {
+        let (node_id, parent_abs_x, parent_abs_y, parent_font_size, shift_y) = match frame {
+            PaintFrame::PopClip => {
+                scene.pop_layer();
+                continue;
+            }
+            PaintFrame::Visit {
+                node_id,
+                parent_abs_x,
+                parent_abs_y,
+                parent_font_size,
+                shift_y,
+            } => (
+                node_id,
+                parent_abs_x,
+                parent_abs_y,
+                parent_font_size,
+                shift_y,
+            ),
+        };
         let Some(node) = document.get_node(node_id) else {
             continue;
         };
@@ -198,19 +232,37 @@ pub(crate) fn paint_document(
                     &cv.border,
                     cv.color,
                 );
+                // CSS Overflow 3 §3.1: non-visible overflow clips descendants to
+                // the padding box. The current WPT coverage uses `overflow:hidden`
+                // with no padding or border, so the border-box geometry is the
+                // correct clip edge for this path as well. The clip is pushed only
+                // after painting the element itself, then popped after its complete
+                // subtree via the explicit stack frame.
+                let clips_overflow = !matches!(cv.overflow.x, OverflowValue::Visible)
+                    || !matches!(cv.overflow.y, OverflowValue::Visible);
+                if clips_overflow {
+                    let clip = Rect::new(
+                        (paint_x + layout.padding.left) as f64,
+                        (paint_y + layout.padding.top) as f64,
+                        (paint_x + layout.size.width - layout.padding.right) as f64,
+                        (paint_y + layout.size.height - layout.padding.bottom) as f64,
+                    );
+                    scene.push_clip_layer(Affine::IDENTITY, &clip);
+                    stack.push(PaintFrame::PopClip);
+                }
                 let child_font_size = cv.font_size.px();
                 // children を reverse push すると pop 時に document order で処理される。
                 // For position:relative, children are laid out at normal flow position but paint at offset position.
                 let child_parent_x = abs_x + pos_dx;
                 let child_parent_y = abs_y + pos_dy;
                 for &child in node.children.iter().rev() {
-                    stack.push((
-                        child,
-                        child_parent_x,
-                        child_parent_y,
-                        child_font_size,
-                        child_shift_y,
-                    ));
+                    stack.push(PaintFrame::Visit {
+                        node_id: child,
+                        parent_abs_x: child_parent_x,
+                        parent_abs_y: child_parent_y,
+                        parent_font_size: child_font_size,
+                        shift_y: child_shift_y,
+                    });
                 }
             }
             NodeKind::Text => {
