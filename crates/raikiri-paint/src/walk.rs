@@ -132,6 +132,12 @@ pub(crate) fn paint_document(
     // — body に `display: inline` を override するような病的な入力でない
     // 限り、この fallback の精度は実質無関係。
     let body_font_size = cascade.computed[body_id].font_size.px();
+    // The paint walk starts at `<body>` because the html box itself is not a
+    // paint item here. Seed the context with html's originating decoration so
+    // root-element lines still propagate through the body subtree.
+    let root_decorations = find_html(document)
+        .map(|html_id| text::decorations_for_element(Vec::new(), &cascade.computed[html_id]))
+        .unwrap_or_default();
     enum PaintFrame {
         Visit {
             node_id: usize,
@@ -150,7 +156,7 @@ pub(crate) fn paint_document(
         parent_abs_y: 0.0,
         parent_font_size: body_font_size,
         shift_y: 0.0,
-        decorations: Vec::new(),
+        decorations: root_decorations,
     }];
     while let Some(frame) = stack.pop() {
         let (node_id, parent_abs_x, parent_abs_y, parent_font_size, shift_y, decorations) =

@@ -519,6 +519,53 @@ mod tests {
     }
 
     #[test]
+    fn paint_single_page_html_decoration_propagates_into_body() {
+        use anyrender::types::Paint;
+        use peniko::Color;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(
+            Some(0),
+            "html",
+            Style::default(),
+            Some("text-decoration-line:underline; text-decoration-color:red"),
+        );
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("color:blue; text-decoration-line:none"),
+        );
+        let _text = doc.append_text(p, "root");
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+        let fills: Vec<_> = scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::Fill(fill) => Some(fill),
+                _ => None,
+            })
+            .collect();
+        // The canvas and html-originated underline are both fills.
+        // cov:ignore: the assertion message is evaluated only when this
+        // root-decoration regression assertion fails.
+        assert_eq!(fills.len(), 2, "html decoration must reach body text");
+        match &fills[1].brush {
+            Paint::Solid(color) => assert_eq!(*color, Color::from_rgba8(255, 0, 0, 255)),
+            // cov:ignore: the recording scene stores this brush as a solid
+            // color for every supported decoration style.
+            other => panic!("expected a solid root decoration brush, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn paint_single_page_ancestor_decoration_propagates_and_keeps_origin_color() {
         use anyrender::types::Paint;
         use peniko::Color;
