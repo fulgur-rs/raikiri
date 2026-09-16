@@ -991,6 +991,8 @@ pub struct ComputedBoxShadowItem {
     pub spread_radius: ComputedLength,
     /// color。`currentcolor` は used-value 層まで保持する。
     pub color: TextShadowColor,
+    /// Whether the shadow is painted inside the border box (`inset`).
+    pub inset: bool,
 }
 
 /// Computed `outline` (CSS Basic User Interface Module Level 3 §4)。
@@ -1130,6 +1132,7 @@ pub fn resolve_box_shadow_item(
         blur_radius: resolve_length(specified.blur_radius, font_size, own_line_height, ctx),
         spread_radius: resolve_length(specified.spread_radius, font_size, own_line_height, ctx),
         color: specified.color,
+        inset: specified.inset,
     }
 }
 
@@ -3899,6 +3902,7 @@ mod tests {
             blur_radius: Length::Pt(3.0),
             spread_radius: Length::Lh(0.5),
             color: TextShadowColor::Resolved(CssColor::BLACK),
+            inset: true,
         };
         assert_eq!(
             resolve_box_shadow_item(
@@ -3913,6 +3917,7 @@ mod tests {
                 blur_radius: ComputedLength(4.0),
                 spread_radius: ComputedLength(5.0),
                 color: TextShadowColor::Resolved(CssColor::BLACK),
+                inset: true,
             }
         );
     }
