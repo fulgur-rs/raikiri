@@ -550,14 +550,9 @@ css/css-tables/empty-table-height.html
 css/css-tables/height-distribution/percentage-sizing-of-table-cell-007.html
 css/css-tables/html-display-table.html
 css/css-tables/max-height-table.html
-# REMOVED 2026-09-15: css/css-tables/min-max-size-table-content-box.html — the
-# inter-table whitespace is now collapsed at block boundaries (and removing
-# the source whitespace produces byte-identical output). The remaining diff is
-# unsupported inline-block shrink-wrap in the reference facsimile: its
-# `.table { display: inline-block }` boxes are bridged as full-width blocks.
-# Re-pin after inline-block/table shrink-wrap support lands. min-height growth
-# itself works (min-height-table passes); max correctly does not shrink below
-# intrinsic (max-height-table).
+# Re-pinned 2026-09-16 after inline-block/table shrink-wrap support (hrgn)
+# and table content-box min-size conversion (qeld); exact 800x600.
+css/css-tables/min-max-size-table-content-box.html
 css/css-tables/out-of-order-elements-collapsed-border.html
 css/css-tables/paint/col-paint-htb-rtl.html
 css/css-tables/paint/table-border-paint-caption-change.html
