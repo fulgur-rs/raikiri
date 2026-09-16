@@ -139,6 +139,7 @@ pub(crate) fn paint_document(
             parent_abs_y: f32,
             parent_font_size: f32,
             shift_y: f32,
+            decorations: Vec<text::DecorationSpec>,
         },
         PopClip,
     }
@@ -149,27 +150,31 @@ pub(crate) fn paint_document(
         parent_abs_y: 0.0,
         parent_font_size: body_font_size,
         shift_y: 0.0,
+        decorations: Vec::new(),
     }];
     while let Some(frame) = stack.pop() {
-        let (node_id, parent_abs_x, parent_abs_y, parent_font_size, shift_y) = match frame {
-            PaintFrame::PopClip => {
-                scene.pop_layer();
-                continue;
-            }
-            PaintFrame::Visit {
-                node_id,
-                parent_abs_x,
-                parent_abs_y,
-                parent_font_size,
-                shift_y,
-            } => (
-                node_id,
-                parent_abs_x,
-                parent_abs_y,
-                parent_font_size,
-                shift_y,
-            ),
-        };
+        let (node_id, parent_abs_x, parent_abs_y, parent_font_size, shift_y, decorations) =
+            match frame {
+                PaintFrame::PopClip => {
+                    scene.pop_layer();
+                    continue;
+                }
+                PaintFrame::Visit {
+                    node_id,
+                    parent_abs_x,
+                    parent_abs_y,
+                    parent_font_size,
+                    shift_y,
+                    decorations,
+                } => (
+                    node_id,
+                    parent_abs_x,
+                    parent_abs_y,
+                    parent_font_size,
+                    shift_y,
+                    decorations,
+                ),
+            };
         let Some(node) = document.get_node(node_id) else {
             continue;
         };
@@ -251,6 +256,12 @@ pub(crate) fn paint_document(
                     stack.push(PaintFrame::PopClip);
                 }
                 let child_font_size = cv.font_size.px();
+                // `text-decoration-line` is non-inherited at the computed-value
+                // layer, but its originating line is propagated to descendants
+                // by CSS Text Decoration. Keep that paint-only context separate
+                // from `CascadeResult`'s inheritance result.
+                let mut child_decorations = decorations;
+                text::push_element_decoration(&mut child_decorations, cv);
                 // children を reverse push すると pop 時に document order で処理される。
                 // For position:relative, children are laid out at normal flow position but paint at offset position.
                 let child_parent_x = abs_x + pos_dx;
@@ -262,6 +273,7 @@ pub(crate) fn paint_document(
                         parent_abs_y: child_parent_y,
                         parent_font_size: child_font_size,
                         shift_y: child_shift_y,
+                        decorations: child_decorations.clone(),
                     });
                 }
             }
@@ -269,7 +281,15 @@ pub(crate) fn paint_document(
                 let layout = node.unrounded_layout;
                 let abs_x = parent_abs_x + layout.location.x;
                 let abs_y = parent_abs_y + layout.location.y;
-                text::draw_text_node(scene, node, cascade, node_id, abs_x, abs_y + shift_y);
+                text::draw_text_node(
+                    scene,
+                    node,
+                    cascade,
+                    node_id,
+                    abs_x,
+                    abs_y + shift_y,
+                    &decorations,
+                );
             }
             NodeKind::Document => {
                 // paint_document が body から start するので通常来ない。

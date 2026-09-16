@@ -2,8 +2,8 @@
 //!
 //! この crate の設計は docs/feasibility-report.md §3.4 の refute 結果に従い、
 //! bridge trait を挟まず `impl anyrender::PaintScene` を直接消費する。現状は
-//! 単一 A4 ページ + text glyphs のみ、element background / border /
-//! decoration は将来 defer。
+//! 単一 A4 ページ + text glyphs + CSS Text Decoration Level 3
+//! (line/style/color) と、element background / border の最小描画を扱う。
 //!
 //! ## Contract
 //!
@@ -32,8 +32,8 @@ mod walk;
 /// # Non-goals (current scope)
 /// - Multi-page pagination
 /// - Element background-color / border / box-shadow
-/// - Text decoration (underline / line-through) — `text_decoration_line` /
-///   `_style` / `_color`、raikiri-dom / raikiri-paint 双方とも未消費
+/// - CSS Text Decoration Level 4 features (skip-ink / skip-spaces, thickness,
+///   emphasis, text-shadow, and vertical writing)
 /// - Scrollbar painting for `overflow: scroll` / `auto` — descendants are
 ///   clipped, but scrollbar geometry and painting remain out of scope.
 /// - z-index / stacking context
@@ -105,6 +105,21 @@ mod tests {
         let cr = cascade(&doc, &rules).expect("cascade Ok");
         layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
         (doc, cr)
+    }
+
+    fn decorated_text_scene(style: &str) -> Scene {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some(style));
+        let _text = doc.append_text(p, "Decoration");
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+        scene
     }
 
     #[test]
@@ -386,6 +401,157 @@ mod tests {
                 "expected Paint::Solid, got {:?}",
                 std::mem::discriminant(other)
             ),
+        }
+    }
+
+    #[test]
+    fn paint_single_page_underline_uses_decoration_color() {
+        use anyrender::types::Paint;
+        use peniko::Color;
+
+        let scene = decorated_text_scene(
+            "color:red; text-decoration-line:underline; text-decoration-color:blue",
+        );
+        let fills: Vec<_> = scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::Fill(fill) => Some(fill),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fills.len(), 2, "canvas + one underline fill expected");
+        match &fills[1].brush {
+            Paint::Solid(color) => assert_eq!(*color, Color::from_rgba8(0, 0, 255, 255)),
+            // cov:ignore: the recording scene stores this brush as a solid
+            // color for every supported decoration style.
+            other => panic!("expected a solid decoration brush, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn paint_single_page_text_decoration_line_keywords_paint_all_three_lines() {
+        let scene = decorated_text_scene(
+            "text-decoration-line: underline overline line-through; text-decoration-color:green",
+        );
+        let fills = scene
+            .commands
+            .iter()
+            .filter(|command| matches!(command, RenderCommand::Fill(_)))
+            .count();
+        // cov:ignore: the assertion message is evaluated only when this
+        // regression assertion fails.
+        assert_eq!(
+            fills, 4,
+            "canvas plus underline, overline, and line-through fills expected"
+        );
+    }
+
+    #[test]
+    fn paint_single_page_text_decoration_styles_reach_scene() {
+        let cases = [
+            ("solid", Some(2), 0),
+            ("double", Some(3), 0),
+            ("dotted", None, 0),
+            ("dashed", Some(1), 1),
+            ("wavy", Some(1), 1),
+        ];
+        for (style, expected_fills, expected_strokes) in cases {
+            let scene = decorated_text_scene(&format!(
+                "text-decoration-line:underline; text-decoration-style:{style}"
+            ));
+            let fills = scene
+                .commands
+                .iter()
+                .filter(|command| matches!(command, RenderCommand::Fill(_)))
+                .count();
+            let strokes = scene
+                .commands
+                .iter()
+                .filter(|command| matches!(command, RenderCommand::Stroke(_)))
+                .count();
+            if let Some(expected_fills) = expected_fills {
+                // cov:ignore: the assertion message is evaluated only when
+                // this per-style regression assertion fails.
+                assert_eq!(
+                    fills, expected_fills,
+                    "unexpected Fill count for text-decoration-style:{style}"
+                );
+            } else {
+                // cov:ignore: the assertion message is evaluated only when
+                // this dotted-style regression assertion fails.
+                assert!(
+                    fills > 1,
+                    "dotted decoration must emit at least one dot in addition to the canvas fill"
+                );
+            }
+            // cov:ignore: the assertion message is evaluated only when this
+            // per-style regression assertion fails.
+            assert_eq!(
+                strokes, expected_strokes,
+                "unexpected Stroke count for text-decoration-style:{style}"
+            );
+        }
+    }
+
+    #[test]
+    fn paint_single_page_ancestor_decoration_propagates_and_keeps_origin_color() {
+        use anyrender::types::Paint;
+        use peniko::Color;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let parent = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("color:red; text-decoration-line:underline"),
+        );
+        let child = doc.append_element(
+            Some(parent),
+            "span",
+            Style::default(),
+            Some("color:blue; text-decoration-line:none"),
+        );
+        let _text = doc.append_text(child, "child");
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+        let glyph = scene
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                RenderCommand::GlyphRun(glyph) => Some(glyph),
+                _ => None,
+            })
+            .expect("child text must paint");
+        match &glyph.brush {
+            Paint::Solid(color) => assert_eq!(*color, Color::from_rgba8(0, 0, 255, 255)),
+            // cov:ignore: the recording scene stores the text brush as a
+            // solid color on this path.
+            other => panic!("expected a solid text brush, got {other:?}"),
+        }
+        let decoration = scene
+            .commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                RenderCommand::Fill(fill) => Some(fill),
+                // cov:ignore: this search intentionally skips glyph/stroke
+                // commands until it reaches the final decoration Fill.
+                _ => None,
+            })
+            .expect("propagated underline must paint");
+        match &decoration.brush {
+            Paint::Solid(color) => assert_eq!(*color, Color::from_rgba8(255, 0, 0, 255)),
+            // cov:ignore: the recording scene stores this brush as a solid
+            // color for every supported decoration style.
+            other => panic!("expected a solid decoration brush, got {other:?}"),
         }
     }
 

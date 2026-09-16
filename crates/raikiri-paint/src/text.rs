@@ -1,4 +1,6 @@
-//! Text glyph draw — parley Layout の GlyphRun を anyrender::draw_glyphs に pipe。
+//! Text glyph and decoration draw — parley Layout の GlyphRun を
+//! anyrender::draw_glyphs に pipeし、CSS Text Decoration Level 3 の
+//! line/style/color を text run の後ろに描画する。
 //!
 //! Pre-shape 済 `parley::Layout<()>` を `Node::text_layout()` accessor
 //! (`NodeData::Text(TextData)` 経由) から取得する design に依拠。paint は
@@ -10,12 +12,57 @@
 //! への平行移動のみで済む (baseline / offset 加算不要)。
 
 use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
-use kurbo::{Affine, Vec2};
+use kurbo::{Affine, BezPath, Cap, Circle, Point, Rect, Stroke, Vec2};
 use parley::{Alignment, Glyph as ParleyGlyph, PositionedLayoutItem};
 use peniko::{Color, Fill};
 use raikiri_dom::Node;
 use raikiri_style::CascadeResult;
-use raikiri_style::property::{CssColor, Direction, TextAlign, TextAlignLast};
+use raikiri_style::property::{
+    CssColor, Direction, TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine,
+    TextDecorationStyle,
+};
+
+/// A decoration line carried from the element that originated it.
+///
+/// `text-decoration-line` is not an inherited property, but CSS Text
+/// Decoration propagates a line from an element to its in-flow descendants.
+/// The paint walker therefore carries these values separately from the
+/// computed-value inheritance walk.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DecorationSpec {
+    line: TextDecorationLine,
+    style: TextDecorationStyle,
+    color: CssColor,
+}
+
+/// Add the decoration originated by one element to the descendant paint
+/// context. `none` does not cancel a line propagated by an ancestor.
+pub(crate) fn push_element_decoration(
+    decorations: &mut Vec<DecorationSpec>,
+    cv: &raikiri_style::ComputedValues,
+) {
+    if !has_paintable_line(cv.text_decoration_line) {
+        return;
+    }
+    let color = match cv.text_decoration_color {
+        TextDecorationColor::CurrentColor => cv.color,
+        TextDecorationColor::Resolved(color) => color,
+        // `TextDecorationColor` is non-exhaustive so a future value must not
+        // make the paint path silently lose an otherwise valid decoration.
+        // cov:ignore: `TextDecorationColor` has no future variant in this
+        // pinned implementation; this arm is a non-exhaustive forward guard.
+        _ => cv.color,
+    };
+    decorations.push(DecorationSpec {
+        line: cv.text_decoration_line,
+        style: cv.text_decoration_style,
+        color,
+    });
+}
+
+fn has_paintable_line(line: TextDecorationLine) -> bool {
+    line.underline || line.overline || line.line_through
+}
 
 pub(crate) fn draw_text_node(
     scene: &mut impl PaintScene,
@@ -24,6 +71,7 @@ pub(crate) fn draw_text_node(
     node_id: usize,
     abs_x: f32,
     abs_y: f32,
+    decorations: &[DecorationSpec],
 ) {
     // Text node の pre-shape 結果を取得。preshape_text が empty text で None を返す
     // ので、None = "empty text" の signal、silent return。
@@ -45,13 +93,9 @@ pub(crate) fn draw_text_node(
     let last_line_index = text_layout.len().saturating_sub(1);
 
     for (line_index, line) in text_layout.lines().enumerate() {
+        let metrics = line.metrics();
         let last_line_delta = if line_index == last_line_index {
-            text_align_last_delta(
-                line.metrics(),
-                cv.text_align,
-                cv.text_align_last,
-                cv.direction,
-            )
+            text_align_last_delta(metrics, cv.text_align, cv.text_align_last, cv.direction)
         } else {
             0.0
         };
@@ -85,7 +129,198 @@ pub(crate) fn draw_text_node(
                 }),
             );
         }
+
+        // Decoration lines are emitted after this text node's glyphs. This
+        // makes a propagated ancestor line cover descendant text when that
+        // descendant is painted, while still preserving the walk's normal
+        // document order for unrelated text nodes.
+        if !decorations.is_empty() {
+            let line_start = metrics.inline_min_coord + metrics.offset + last_line_delta;
+            // `advance` includes trailing whitespace. CSS Text Decoration 4
+            // has an explicit skip-spaces property; until that property is
+            // consumed, keeping the full shaped advance is the least
+            // surprising Level 3 behavior and preserves spaces in a run.
+            let line_width = metrics.advance.max(0.0);
+            if line_width > 0.0 {
+                let font_size = cv.font_size.px().max(1.0);
+                let thickness = decoration_thickness(font_size);
+                let baseline = metrics.baseline;
+                let ascent = metrics.ascent.max(0.0);
+                let descent = metrics.descent.max(0.0);
+                for decoration in decorations {
+                    draw_decoration(
+                        scene,
+                        decoration,
+                        DecorationGeometry {
+                            x0: abs_x as f64 + line_start as f64,
+                            x1: abs_x as f64 + (line_start + line_width) as f64,
+                            abs_y: abs_y as f64,
+                            baseline,
+                            ascent,
+                            descent,
+                            thickness,
+                        },
+                    );
+                }
+            } // cov:ignore: block terminator; all decoration styles are covered above.
+        }
     }
+}
+
+fn decoration_thickness(font_size: f32) -> f64 {
+    // CSS `auto` thickness is font dependent. A one-pixel default at 16px,
+    // scaling with the used font size, is stable for the current rasterizer
+    // and gives larger text a visibly proportional decoration.
+    (font_size as f64 / 16.0).max(1.0)
+}
+
+#[derive(Clone, Copy, Debug)]
+struct DecorationGeometry {
+    x0: f64,
+    x1: f64,
+    abs_y: f64,
+    baseline: f32,
+    ascent: f32,
+    descent: f32,
+    thickness: f64,
+}
+
+fn draw_decoration(
+    scene: &mut impl PaintScene,
+    decoration: &DecorationSpec,
+    geometry: DecorationGeometry,
+) {
+    let DecorationGeometry {
+        x0,
+        x1,
+        abs_y,
+        baseline: baseline_offset,
+        ascent,
+        descent,
+        thickness,
+    } = geometry;
+    let color = css_color_to_peniko(decoration.color);
+    let baseline = abs_y + baseline_offset as f64;
+    let center_for = |line: TextDecorationLine| -> Option<f64> {
+        if line.underline {
+            Some(baseline + descent as f64 * 0.5)
+        } else if line.overline {
+            Some(baseline - ascent as f64 + thickness * 0.5)
+        } else if line.line_through {
+            Some(baseline - ascent as f64 * 0.35)
+        } else {
+            // cov:ignore: every caller passes a single enabled line keyword;
+            // this fallback is only a defensive totality guard.
+            None
+        }
+    };
+
+    // A declaration can contain several line keywords. Paint each one at its
+    // own CSS position, preserving keyword order only for deterministic scene
+    // recording (the positions do not overlap for the normal font metrics).
+    let positions = [
+        (decoration.line.underline, TextDecorationLine::UNDERLINE),
+        (decoration.line.overline, TextDecorationLine::OVERLINE),
+        (
+            decoration.line.line_through,
+            TextDecorationLine::LINE_THROUGH,
+        ),
+    ];
+    for (enabled, line) in positions {
+        if !enabled {
+            continue;
+        }
+        let Some(center) = center_for(line) else {
+            // cov:ignore: `line` comes from the matching enabled flag above,
+            // so the center is structurally present.
+            continue;
+        };
+        paint_decoration_style(scene, decoration.style, color, x0, x1, center, thickness);
+    }
+}
+
+fn paint_decoration_style(
+    scene: &mut impl PaintScene,
+    style: TextDecorationStyle,
+    color: Color,
+    x0: f64,
+    x1: f64,
+    center: f64,
+    thickness: f64,
+) {
+    if x1 <= x0 {
+        return; // cov:ignore: caller guards positive shaped line width.
+    }
+    match style {
+        TextDecorationStyle::Solid => fill_decoration_rect(scene, color, x0, x1, center, thickness),
+        TextDecorationStyle::Double => {
+            // CSS Text Decoration 3 defines double as two lines with a gap.
+            // Divide the total auto thickness into three equal bands.
+            let band = (thickness / 3.0).max(0.5);
+            let offset = band;
+            fill_decoration_rect(scene, color, x0, x1, center - offset, band);
+            fill_decoration_rect(scene, color, x0, x1, center + offset, band);
+        }
+        TextDecorationStyle::Dotted => {
+            let radius = (thickness / 2.0).max(0.5);
+            let step = (radius * 4.0).max(2.0);
+            let mut x = x0 + radius;
+            while x < x1 {
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    color,
+                    None,
+                    &Circle::new(Point::new(x, center), radius),
+                );
+                x += step;
+            }
+        }
+        TextDecorationStyle::Dashed => {
+            let dash = (thickness * 3.0).max(2.0);
+            let gap = (thickness * 2.0).max(2.0);
+            let mut path = BezPath::new();
+            path.move_to((x0, center));
+            path.line_to((x1, center));
+            let stroke = Stroke::new(thickness)
+                .with_caps(Cap::Butt)
+                .with_dashes(0.0, [dash, gap]);
+            scene.stroke(&stroke, Affine::IDENTITY, color, None, &path);
+        }
+        TextDecorationStyle::Wavy => {
+            let wavelength = (thickness * 4.0).max(4.0);
+            let amplitude = (thickness * 1.5).max(0.75);
+            let half_wave = wavelength * 0.5;
+            let mut path = BezPath::new();
+            path.move_to((x0, center));
+            let mut x = x0;
+            let mut sign = -1.0;
+            while x < x1 {
+                let end = (x + half_wave).min(x1);
+                let control_x = (x + end) * 0.5;
+                path.quad_to((control_x, center + sign * amplitude), (end, center));
+                x = end;
+                sign = -sign;
+            }
+            let stroke = Stroke::new(thickness).with_caps(Cap::Round);
+            scene.stroke(&stroke, Affine::IDENTITY, color, None, &path);
+        }
+        // `TextDecorationStyle` is non-exhaustive. Treat a future style as a
+        // solid line until a dedicated paint algorithm is added.
+        _ => fill_decoration_rect(scene, color, x0, x1, center, thickness), // cov:ignore: forward guard for a future style variant.
+    }
+}
+
+fn fill_decoration_rect(
+    scene: &mut impl PaintScene,
+    color: Color,
+    x0: f64,
+    x1: f64,
+    center: f64,
+    thickness: f64,
+) {
+    let rect = Rect::new(x0, center - thickness * 0.5, x1, center + thickness * 0.5);
+    scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
 }
 
 /// Return the horizontal adjustment required by `text-align-last`.
