@@ -8,8 +8,9 @@
 //!   cascade minimum (type + universal selector、color / font-family / font-size /
 //!   font-weight、specificity + !important + source order + inheritance)
 //!
-//! GCPM static side、@page / @media / @supports、L4 selectors、class/id/attribute
-//! selector、combinator は将来追加予定。
+//! GCPM static side、@page / @media / @supports、残りの L4 selectors は将来追加予定。
+//! class/id/attribute selector、基本的な combinator matching、L4 の `:not()` /
+//! `:is()` / `:where()` / `:has()` は実装済み。
 //!
 //! `precomputed-hash` is encapsulated as a direct dep of this crate only. It
 //! is intentionally NOT promoted to `[workspace.dependencies]` — see the
@@ -369,6 +370,20 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
         true
     }
 
+    /// Enable the Selectors Level 4 logical pseudo-classes `:is()` and
+    /// `:where()`. The selector matcher handles their selector-list
+    /// arguments recursively.
+    fn parse_is_and_where(&self) -> bool {
+        true
+    }
+
+    /// Enable the Selectors Level 4 relational pseudo-class `:has()`. The
+    /// cascade matcher evaluates its relative selector arguments against the
+    /// current element's flat-tree descendants and siblings.
+    fn parse_has(&self) -> bool {
+        true
+    }
+
     fn parse_non_ts_pseudo_class(
         &self,
         location: SourceLocation,
@@ -526,6 +541,114 @@ mod tests {
         assert!(out.contains(":hover"));
         assert!(out.contains(":active"));
         assert!(out.contains(','));
+    }
+
+    #[test]
+    fn parse_logical_and_relational_pseudo_classes() {
+        use selectors::parser::Component;
+
+        for (source, expected) in [
+            ("div:is(.featured, .selected)", "is"),
+            ("div:where(.featured, .selected)", "where"),
+            ("div:has(> .featured)", "has"),
+        ] {
+            let list = parse_selector_list(source)
+                .unwrap_or_else(|error| panic!("parse {source:?}: {error}"));
+            let mut components = list.slice()[0].iter_raw_match_order();
+            let found = components.any(|component| {
+                matches!(
+                    (expected, component),
+                    ("is", Component::Is(_))
+                        | ("where", Component::Where(_))
+                        | ("has", Component::Has(_))
+                )
+            });
+            assert!(found, "{source:?} must contain the {expected} component");
+        }
+
+        for source in [
+            ":has(a)",
+            ":has(#a)",
+            ":has(.a)",
+            ":has([a])",
+            ":has([a=\"b\"])",
+            ":has([a|=\"b\"])",
+            ":has(:hover)",
+            "*:has(.a)",
+            ".a:has(.b)",
+            ".a:has(> .b)",
+            ".a:has(~ .b)",
+            ".a:has(+ .b)",
+            ".a:has(.b) .c",
+            ".a .b:has(.c)",
+            ".a .b:has(.c .d)",
+            ".a .b:has(.c .d) .e",
+            ".a:has(.b:is(.c .d))",
+            ".a:is(.b:has(.c) .d)",
+            ".a:not(:has(.b))",
+            ".a:has(:not(.b))",
+            ".a:has(.b):has(.c)",
+            "*|*:has(*)",
+            ":has(*|*)",
+        ] {
+            assert!(parse_selector_list(source).is_ok());
+        }
+
+        for source in [
+            ":has",
+            ".a:has",
+            ".a:has b",
+            ":has()",
+            ":has(123)",
+            ":has(.a, 123)",
+            ".a:has(.b:has(.c))",
+        ] {
+            assert!(parse_selector_list(source).is_err());
+        }
+
+        for source in [
+            ":has(:is(:has(*)))",
+            ":has(:where(:has(*)))",
+            ":has(:is(.a, 123))",
+        ] {
+            assert!(parse_selector_list(source).is_ok());
+        }
+    }
+
+    #[test]
+    fn parse_wpt_logical_selector_forms_roundtrip() {
+        for pseudo in ["is", "where"] {
+            for (source, expected) in [
+                (
+                    format!(":{pseudo}(ul,ol,.list) > [hidden]"),
+                    format!(":{pseudo}(ul, ol, .list) > [hidden]"),
+                ),
+                (
+                    format!(":{pseudo}(:hover,:focus)"),
+                    format!(":{pseudo}(:hover, :focus)"),
+                ),
+                (
+                    format!("a:{pseudo}(:not(:hover))"),
+                    format!("a:{pseudo}(:not(:hover))"),
+                ),
+                (format!(":{pseudo}(#a)"), format!(":{pseudo}(#a)")),
+                (
+                    format!(".a.b ~ :{pseudo}(.c.d ~ .e.f)"),
+                    format!(".a.b ~ :{pseudo}(.c.d ~ .e.f)"),
+                ),
+                (
+                    format!(".a.b ~ .c.d:{pseudo}(span.e + .f, .g.h > .i.j .k)"),
+                    format!(".a.b ~ .c.d:{pseudo}(span.e + .f, .g.h > .i.j .k)"),
+                ),
+            ] {
+                let list = parse_selector_list(&source)
+                    .unwrap_or_else(|error| panic!("parse {source:?}: {error}"));
+                let mut serialized = String::new();
+                list.to_css(&mut serialized)
+                    .expect("serialize selector list");
+                assert_eq!(serialized, expected);
+            }
+        }
     }
 
     #[test]

@@ -321,19 +321,15 @@ css/css-flexbox/parsing/order-computed.html | order not implemented (FAIL 3/3)
 css/css-flexbox/parsing/order-valid.html | order not implemented (FAIL 3/3)
 css/css-flexbox/parsing/webkit-aliases.html | webkit legacy aliases not implemented (FAIL 12/12, non-goal)
 
-# --- css/selectors parsing Level4 quarantine (2026-09-14 retry E3, 12 FAIL, not in MVP) ---
+# --- css/selectors parsing Level4 quarantine (2026-09-16, 8 remaining FAIL, partial support) ---
 css/selectors/parsing/parse-focus-visible.html | :focus-visible Level4 not implemented (not in MVP)
-css/selectors/parsing/parse-has.html | :has() Level4 not implemented (CSS Selectors 4, not in MVP)
 css/selectors/parsing/parse-has-slotted.tentative.html | :has-slotted tentative Level4 not implemented (CSSWG #10586, not in MVP)
-css/selectors/parsing/parse-has-forgiving-selector.html | :has() forgiving Level4 not implemented (CSSWG #8356, not in MVP)
 css/selectors/parsing/parse-heading.html | :heading Level5 not implemented (CSS Selectors 5, not in MVP)
-css/selectors/parsing/parse-is.html | :is() Level4 not implemented (CSS Selectors 4, not in MVP)
 css/selectors/parsing/parse-is-where.html | :is()/:where() Level4 forgiving not implemented (not in MVP)
 css/selectors/parsing/parse-not.html | :not() with :link/:visited/:host(L1 state pseudos) not implemented (unsupported inner pseudos)
 css/selectors/parsing/parse-part.html | ::part() Level4 not implemented (CSS Shadow Parts, not in MVP)
 css/selectors/parsing/parse-slotted.html | ::slotted() Level4 not implemented (CSS Scoping, not in MVP)
 css/selectors/parsing/parse-state.html | :state() Level4 not implemented (CSS Custom States #8213, not in MVP)
-css/selectors/parsing/parse-where.html | :where() Level4 not implemented (CSS Selectors 4, not in MVP)
 
 # --- css-writing-modes parsing computed quarantine (2026-09-14, vertical collapse intentional) ---
 css/css-writing-modes/parsing/writing-mode-computed.html | writing-mode vertical values collapse to horizontal-tb per WritingMode doc Non-goal (raikiri-spike-zhmp), WPT expects vertical to remain (CSS Writing Modes 4 §3.2)

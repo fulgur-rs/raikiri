@@ -522,17 +522,21 @@ css/css-grid/parsing/grid-row-invalid.html
 css/css-grid/parsing/grid-template-areas-invalid.html
 
 
-# --- css/selectors parsing pin 2026-09-14 (retry E3, 10 files PASS, 12 Level4 quarantined) ---
+# --- css/selectors parsing pin 2026-09-16 (14 files PASS, 8 Level4 quarantined) ---
 css/selectors/parsing/invalid-pseudos.html
 css/selectors/parsing/parse-anplusb.html
 css/selectors/parsing/parse-attribute.html
 css/selectors/parsing/parse-child.html
 css/selectors/parsing/parse-class.html
 css/selectors/parsing/parse-descendant.html
+css/selectors/parsing/parse-has-forgiving-selector.html
+css/selectors/parsing/parse-has.html
 css/selectors/parsing/parse-has-disallow-nesting-has-inside-has.html
 css/selectors/parsing/parse-id.html
+css/selectors/parsing/parse-is.html
 css/selectors/parsing/parse-sibling.html
 css/selectors/parsing/parse-universal.html
+css/selectors/parsing/parse-where.html
 
 # --- css-text-decor parsing pin 2026-09-15 (jqg8, 10 more files PASS, specified 200/201 vectors) ---
 css/css-text-decor/parsing/text-decoration-color-invalid.html

@@ -431,6 +431,11 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleRuleParser {
 /// (`:lang()` / `:dir()`) も受理する — ただし同じ `Component`
 /// variant を持つ `PseudoClass::Hover` / `PseudoClass::Active` (`:hover` /
 /// `:active`) は引き続き対象外。
+/// `Component::Negation` (`:not()`)、`Component::Is` (`:is()`)、
+/// `Component::Where` (`:where()`)、`Component::Has` (`:has()`) は、それぞれの
+/// selector-list / relative-selector-list を同じ gate で再帰的に検査する。
+/// `:is()`/`:where()` の forgiving な無効 branch は
+/// `Component::Invalid` として受理するが、matcher がその branch を無視する。
 /// それ以外の pseudo-class / 属性 selector 形態を 1 つでも含めば false →
 /// rule ごと drop。
 /// 「それ以外の属性 selector 形態」= `Component::AttributeOther` に束ねられる
@@ -583,6 +588,23 @@ fn is_supported_selector_list(list: &SelectorList<RaikiriSelectorImpl>) -> bool 
 /// defense-in-depth を維持する (他の受理 component と同じ「upstream が防いで
 /// いるはずでも safety net を重ねる」姿勢)。
 fn is_supported_selector(selector: &Selector<RaikiriSelectorImpl>, allow_nth: bool) -> bool {
+    is_supported_selector_with_relative_anchor(selector, allow_nth, false, false)
+}
+
+/// Same support check as [`is_supported_selector`], with an explicit allowance
+/// for the anchor component that `selectors` inserts into a `:has()` relative
+/// selector. The anchor is not a selector that can appear in ordinary CSS
+/// input; it is an internal marker and must stay rejected outside that one
+/// parser-produced context. `allow_invalid` is restricted to the selector
+/// arguments of forgiving `:is()`/`:where()` lists, where `selectors` stores a
+/// syntactically invalid branch as `Component::Invalid` for the matcher to
+/// ignore.
+fn is_supported_selector_with_relative_anchor(
+    selector: &Selector<RaikiriSelectorImpl>,
+    allow_nth: bool,
+    allow_relative_anchor: bool,
+    allow_invalid: bool,
+) -> bool {
     use selectors::parser::{Combinator, Component};
 
     selector
@@ -605,21 +627,43 @@ fn is_supported_selector(selector: &Selector<RaikiriSelectorImpl>, allow_nth: bo
             )
             | Component::Root
             | Component::Empty => true,
-            Component::Negation(selectors) => selectors
-                .slice()
-                .iter()
-                .all(|selector| is_supported_selector(selector, allow_nth)),
+            Component::Negation(selectors) => selectors.slice().iter().all(|selector| {
+                // `:not()` is non-forgiving. A nested `:is()`/`:where()` still
+                // applies its own forgiving handling when this recursion sees
+                // that component.
+                is_supported_selector_with_relative_anchor(selector, allow_nth, false, false)
+            }),
+            Component::Is(selectors) | Component::Where(selectors) => {
+                selectors.slice().iter().all(|selector| {
+                    // A nested logical selector matches an ordinary element;
+                    // only the outer relative selector owns the `:has()`
+                    // anchor marker. Invalid branches are legal here and are
+                    // ignored by `selector_slice_matches_with_anchor`.
+                    is_supported_selector_with_relative_anchor(selector, allow_nth, false, true)
+                })
+            }
+            // cov:ignore: nested :has() is rejected by `selectors`; this is a future-parser safety net
+            Component::Has(_) if allow_relative_anchor => false,
+            Component::Has(relative_selectors) => relative_selectors.iter().all(|relative| {
+                is_supported_selector_with_relative_anchor(
+                    &relative.selector,
+                    allow_nth,
+                    true,
+                    false,
+                )
+            }),
             Component::Nth(_) => allow_nth,
             Component::NthOf(data) => {
                 allow_nth
-                    && data
-                        .selectors()
-                        .iter()
-                        .all(|selector| is_supported_selector(selector, false))
+                    && data.selectors().iter().all(|selector| {
+                        is_supported_selector_with_relative_anchor(selector, false, false, false)
+                    })
             }
             Component::NonTSPseudoClass(PseudoClass::Lang(_) | PseudoClass::Dir(_)) => true,
             Component::Combinator(Combinator::PseudoElement) => allow_nth,
             Component::PseudoElement(PseudoElem::Before | PseudoElem::After) => allow_nth,
+            Component::RelativeSelectorAnchor => allow_relative_anchor,
+            Component::Invalid(_) => allow_invalid,
             _ => false,
         })
 }
@@ -754,6 +798,61 @@ mod tests {
             12,
             "all 12 structural pseudo-class rules must be kept"
         );
+    }
+
+    #[test]
+    fn logical_and_relational_pseudo_class_selectors_are_captured() {
+        let doc = dom_with_style(
+            "div:is(.featured, .selected) { color: red } \
+             div:where(.featured, .selected) { color: blue } \
+             div:has(> .featured) { color: green }",
+        );
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 3);
+    }
+
+    #[test]
+    fn unsupported_pseudo_class_inside_logical_selector_is_dropped() {
+        // `:hover` is syntactically parseable but not a supported matching
+        // state. The support gate must not let `:is()`/`:has()` turn its
+        // fail-closed matcher result into a false positive.
+        let doc = dom_with_style(
+            "div:is(:hover, .featured) { color: red } \
+             div:has(:hover) { color: blue } \
+             div { color: green }",
+        );
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.style_rules[0].source_order, 0);
+    }
+
+    #[test]
+    fn non_forgiving_has_rejects_invalid_and_nested_branches() {
+        // Unlike :is()/:where(), :has() uses a non-forgiving relative
+        // selector list. A malformed list or a directly nested :has() drops
+        // the complete style rule.
+        let doc = dom_with_style(
+            "div:has(.featured, 123) { color: red } \
+             div:has(.featured:has(.nested)) { color: blue } \
+             div { color: green }",
+        );
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.style_rules[0].source_order, 0);
+    }
+
+    #[test]
+    fn forgiving_logical_selector_keeps_valid_branches() {
+        // `selectors` represents a syntactically invalid branch in a
+        // forgiving `:is()`/`:where()` list as `Component::Invalid`. That
+        // branch must not make the whole stylesheet rule disappear; the
+        // cascade matcher will ignore it and still try the valid branch.
+        let doc = dom_with_style(
+            "div:is(.featured, :unknown-pseudo) { color: red } \
+             div:where(.selected, 123) { color: blue }",
+        );
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 2);
     }
 
     #[test]
