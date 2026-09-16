@@ -818,6 +818,8 @@ css/css-flexbox/flexbox-flex-wrap-nowrap.htm
 css/css-flexbox/flexbox-margin-auto-horiz-002.xhtml
 css/css-flexbox/flexbox-overflow-horiz-002.html
 css/css-flexbox/flexbox-overflow-vert-002.html
+# --- y0zo overflow clip 2026-09-16 (exact 800x600) ---
+css/css-flexbox/flexbox-overflow-vert-003.html
 css/css-flexbox/flexbox-paint-ordering-003.html
 css/css-flexbox/flexbox-with-multi-column-property.html
 css/css-flexbox/flexbox_box-clear.html
