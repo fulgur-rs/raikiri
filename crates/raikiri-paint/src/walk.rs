@@ -27,6 +27,8 @@
 //! find_body は raikiri-dom::layout::find_body と重複するが、5 行の helper
 //! を crate 境界越境で pub 化するよりも paint 側で持つ方が clean。
 
+use std::sync::Arc;
+
 use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
 use peniko::{Color, Fill};
@@ -135,9 +137,12 @@ pub(crate) fn paint_document(
     // The paint walk starts at `<body>` because the html box itself is not a
     // paint item here. Seed the context with html's originating decoration so
     // root-element lines still propagate through the body subtree.
+    let empty_decorations: Arc<[text::DecorationSpec]> = Arc::from([]);
     let root_decorations = find_html(document)
-        .map(|html_id| text::decorations_for_element(Vec::new(), &cascade.computed[html_id]))
-        .unwrap_or_default();
+        .map(|html_id| {
+            text::decorations_for_element(&empty_decorations, &cascade.computed[html_id])
+        })
+        .unwrap_or_else(|| Arc::clone(&empty_decorations));
     enum PaintFrame {
         Visit {
             node_id: usize,
@@ -145,7 +150,7 @@ pub(crate) fn paint_document(
             parent_abs_y: f32,
             parent_font_size: f32,
             shift_y: f32,
-            decorations: Vec<text::DecorationSpec>,
+            decorations: Arc<[text::DecorationSpec]>,
         },
         PopClip,
     }
@@ -266,7 +271,7 @@ pub(crate) fn paint_document(
                 // layer, but its originating line is propagated to descendants
                 // by CSS Text Decoration. Keep that paint-only context separate
                 // from `CascadeResult`'s inheritance result.
-                let child_decorations = text::decorations_for_element(decorations, cv);
+                let child_decorations = text::decorations_for_element(&decorations, cv);
                 // children を reverse push すると pop 時に document order で処理される。
                 // For position:relative, children are laid out at normal flow position but paint at offset position.
                 let child_parent_x = abs_x + pos_dx;

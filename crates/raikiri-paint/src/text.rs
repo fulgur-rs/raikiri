@@ -11,6 +11,8 @@
 //! offset + baseline を baked-in。anyrender transform は text node の絶対座標
 //! への平行移動のみで済む (baseline / offset 加算不要)。
 
+use std::sync::Arc;
+
 use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
 use kurbo::{Affine, BezPath, Cap, Circle, Point, Rect, Stroke, Vec2};
 use parley::{Alignment, Glyph as ParleyGlyph, PositionedLayoutItem};
@@ -18,7 +20,7 @@ use peniko::{Color, Fill};
 use raikiri_dom::Node;
 use raikiri_style::property::{
     CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextAlign, TextAlignLast,
-    TextDecorationColor, TextDecorationLine, TextDecorationStyle,
+    TextDecorationColor, TextDecorationLine, TextDecorationStyle, WhiteSpace,
 };
 use raikiri_style::{CascadeResult, ComputedValues};
 
@@ -94,14 +96,24 @@ pub(crate) fn push_element_decoration(decorations: &mut Vec<DecorationSpec>, cv:
 /// cancel an ancestor decoration while atomic/out-of-flow boxes do not receive
 /// that ancestor decoration.
 pub(crate) fn decorations_for_element(
-    mut decorations: Vec<DecorationSpec>,
+    decorations: &Arc<[DecorationSpec]>,
     cv: &ComputedValues,
-) -> Vec<DecorationSpec> {
-    if is_decoration_propagation_boundary(cv) {
-        decorations.clear();
+) -> Arc<[DecorationSpec]> {
+    let boundary = is_decoration_propagation_boundary(cv);
+    let has_own_decoration = has_paintable_line(cv.text_decoration_line);
+    if !boundary && !has_own_decoration {
+        // Most elements do not originate a decoration. Share the immutable
+        // context rather than cloning it once for every child frame.
+        return Arc::clone(decorations);
     }
-    push_element_decoration(&mut decorations, cv);
-    decorations
+
+    let mut next = if boundary {
+        Vec::new()
+    } else {
+        decorations.to_vec()
+    };
+    push_element_decoration(&mut next, cv);
+    next.into()
 }
 
 fn has_paintable_line(line: TextDecorationLine) -> bool {
@@ -143,7 +155,14 @@ pub(crate) fn draw_text_node(
         } else {
             0.0
         };
-        let geometry = decoration_geometry(decorations, metrics, abs_x, abs_y, last_line_delta);
+        let geometry = decoration_geometry(
+            decorations,
+            metrics,
+            abs_x,
+            abs_y,
+            last_line_delta,
+            cv.white_space,
+        );
 
         // CSS paints underline/overline before the glyphs and line-through
         // after them. Keeping the phases separate also makes the order stable
@@ -193,6 +212,18 @@ pub(crate) fn draw_text_node(
     }
 }
 
+fn decoration_line_width(metrics: &parley::LineMetrics, white_space: WhiteSpace) -> f32 {
+    let preserves_trailing_spaces = matches!(
+        white_space,
+        WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::BreakSpaces
+    );
+    if preserves_trailing_spaces {
+        metrics.advance.max(0.0)
+    } else {
+        (metrics.advance - metrics.trailing_whitespace).max(0.0)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct DecorationGeometry {
     x0: f64,
@@ -207,23 +238,28 @@ fn decoration_geometry(
     abs_x: f32,
     abs_y: f32,
     last_line_delta: f32,
+    white_space: WhiteSpace,
 ) -> Option<DecorationGeometry> {
     if decorations.is_empty() {
         return None;
     }
-    // `advance` includes trailing whitespace. CSS Text Decoration 4 has an
-    // explicit skip-spaces property; until that property is consumed, keeping
-    // the full shaped advance is the least surprising Level 3 behavior.
-    let line_width = metrics.advance.max(0.0);
-    if line_width <= 0.0 {
+    let line_width = decoration_line_width(metrics, white_space);
+    if !line_width.is_finite() || line_width <= 0.0 {
         // cov:ignore: shaped text lines in the current layout always have a
-        // positive advance; retain the guard for empty/future line metrics.
+        // finite positive advance; retain the guard for empty/future metrics.
         return None;
     }
     let line_start = metrics.inline_min_coord + metrics.offset + last_line_delta;
+    let x0 = abs_x as f64 + line_start as f64;
+    let x1 = abs_x as f64 + (line_start + line_width) as f64;
+    if !x0.is_finite() || !x1.is_finite() || !(abs_y as f64).is_finite() {
+        // cov:ignore: finite layout sanitization handles production values;
+        // this keeps malformed/future metrics from reaching a draw loop.
+        return None;
+    }
     Some(DecorationGeometry {
-        x0: abs_x as f64 + line_start as f64,
-        x1: abs_x as f64 + (line_start + line_width) as f64,
+        x0,
+        x1,
         abs_y: abs_y as f64,
         baseline: metrics.baseline,
     })
@@ -295,6 +331,8 @@ fn draw_decoration_phase(
     }
 }
 
+const MAX_DECORATION_SEGMENTS: usize = 4096;
+
 fn paint_decoration_style(
     scene: &mut impl PaintScene,
     style: TextDecorationStyle,
@@ -304,8 +342,16 @@ fn paint_decoration_style(
     center: f64,
     thickness: f64,
 ) {
-    if x1 <= x0 {
-        return; // cov:ignore: caller guards positive shaped line width.
+    if !x0.is_finite()
+        || !x1.is_finite()
+        || !center.is_finite()
+        || !thickness.is_finite()
+        || thickness <= 0.0
+        || x1 <= x0
+    {
+        // cov:ignore: decoration_geometry filters production values; this is
+        // a defensive sink guard for future/non-finite metrics.
+        return;
     }
     match style {
         TextDecorationStyle::Solid => fill_decoration_rect(scene, color, x0, x1, center, thickness),
@@ -319,9 +365,14 @@ fn paint_decoration_style(
         }
         TextDecorationStyle::Dotted => {
             let radius = (thickness / 2.0).max(0.5);
-            let step = (radius * 4.0).max(2.0);
+            let span = x1 - x0;
+            let natural_step = (radius * 4.0).max(2.0);
+            // A hostile but finite letter-spacing/advance must not turn into
+            // an unbounded number of scene commands.
+            let step = natural_step.max(span / MAX_DECORATION_SEGMENTS as f64);
             let mut x = x0 + radius;
-            while x < x1 {
+            let mut segments = 0;
+            while x < x1 && segments < MAX_DECORATION_SEGMENTS {
                 scene.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
@@ -330,6 +381,7 @@ fn paint_decoration_style(
                     &Circle::new(Point::new(x, center), radius),
                 );
                 x += step;
+                segments += 1;
             }
         }
         TextDecorationStyle::Dashed => {
@@ -344,19 +396,24 @@ fn paint_decoration_style(
             scene.stroke(&stroke, Affine::IDENTITY, color, None, &path);
         }
         TextDecorationStyle::Wavy => {
+            let span = x1 - x0;
             let wavelength = (thickness * 4.0).max(4.0);
             let amplitude = (thickness * 1.5).max(0.75);
-            let half_wave = wavelength * 0.5;
+            // Limit path complexity while retaining more detail for normal
+            // spans. The cap is important for huge finite advances.
+            let half_wave = (wavelength * 0.5).max(span / MAX_DECORATION_SEGMENTS as f64);
             let mut path = BezPath::new();
             path.move_to((x0, center));
             let mut x = x0;
             let mut sign = -1.0;
-            while x < x1 {
+            let mut segments = 0;
+            while x < x1 && segments < MAX_DECORATION_SEGMENTS {
                 let end = (x + half_wave).min(x1);
                 let control_x = (x + end) * 0.5;
                 path.quad_to((control_x, center + sign * amplitude), (end, center));
                 x = end;
                 sign = -sign;
+                segments += 1;
             }
             let stroke = Stroke::new(thickness).with_caps(Cap::Round);
             scene.stroke(&stroke, Affine::IDENTITY, color, None, &path);
@@ -449,13 +506,18 @@ fn css_color_to_peniko(c: CssColor) -> Color {
 
 #[cfg(test)]
 mod tests {
-    use super::{DecorationSpec, decorations_for_element, text_align_last_delta};
+    use super::{
+        DecorationSpec, MAX_DECORATION_SEGMENTS, decoration_line_width, decorations_for_element,
+        paint_decoration_style, text_align_last_delta,
+    };
+    use anyrender::{Scene, recording::RenderCommand};
     use parley::LineMetrics;
     use raikiri_style::ComputedValues;
     use raikiri_style::property::{
         CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextAlign, TextAlignLast,
-        TextDecorationLine, TextDecorationStyle,
+        TextDecorationLine, TextDecorationStyle, WhiteSpace,
     };
+    use std::sync::Arc;
 
     fn metrics(offset: f32) -> LineMetrics {
         LineMetrics {
@@ -586,11 +648,49 @@ mod tests {
     }
 
     #[test]
+    fn decoration_width_excludes_collapsed_trailing_whitespace_but_preserves_pre_spaces() {
+        let metrics = LineMetrics {
+            advance: 40.0,
+            trailing_whitespace: 10.0,
+            ..LineMetrics::default()
+        };
+        assert_eq!(decoration_line_width(&metrics, WhiteSpace::Normal), 30.0);
+        assert_eq!(decoration_line_width(&metrics, WhiteSpace::Nowrap), 30.0);
+        assert_eq!(decoration_line_width(&metrics, WhiteSpace::Pre), 40.0);
+        assert_eq!(decoration_line_width(&metrics, WhiteSpace::PreWrap), 40.0);
+        assert_eq!(
+            decoration_line_width(&metrics, WhiteSpace::BreakSpaces),
+            40.0
+        );
+    }
+
+    #[test]
+    fn dotted_decoration_caps_scene_commands_for_huge_spans() {
+        let mut scene = Scene::new();
+        paint_decoration_style(
+            &mut scene,
+            TextDecorationStyle::Dotted,
+            peniko::Color::BLACK,
+            0.0,
+            1_000_000_000_000.0,
+            0.0,
+            1.0,
+        );
+        let fills = scene
+            .commands
+            .iter()
+            .filter(|command| matches!(command, RenderCommand::Fill(_)))
+            .count();
+        assert!(fills > 0);
+        assert!(fills <= MAX_DECORATION_SEGMENTS);
+    }
+
+    #[test]
     fn decoration_metrics_are_taken_from_the_originating_element() {
         let mut cv = ComputedValues::initial();
         cv.font_size = raikiri_style::resolve::ComputedLength(32.0);
         cv.text_decoration_line = TextDecorationLine::UNDERLINE;
-        let decorations = decorations_for_element(Vec::new(), &cv);
+        let decorations = decorations_for_element(&Arc::from(Vec::<DecorationSpec>::new()), &cv);
         assert_eq!(decorations.len(), 1);
         assert_eq!(decorations[0].origin_thickness, 2.0);
         assert_eq!(decorations[0].origin_ascent, 25.6);
@@ -599,7 +699,7 @@ mod tests {
 
     #[test]
     fn ancestor_decoration_stops_at_out_of_flow_float_and_atomic_boundaries() {
-        let ancestor = vec![ancestor_decoration()];
+        let ancestor: Arc<[DecorationSpec]> = Arc::from(vec![ancestor_decoration()]);
         let cases = [
             (
                 "absolute",
@@ -652,21 +752,25 @@ mod tests {
             // cov:ignore: the assertion message is evaluated only when this
             // boundary regression assertion fails.
             assert!(
-                decorations_for_element(ancestor.clone(), &cv).is_empty(),
+                decorations_for_element(&ancestor, &cv).is_empty(),
                 "ancestor decoration crossed {name} boundary"
             );
         }
 
         let mut in_flow = ComputedValues::initial();
         in_flow.display = DisplayValue::Block;
-        assert_eq!(decorations_for_element(ancestor.clone(), &in_flow).len(), 1);
+        assert_eq!(decorations_for_element(&ancestor, &in_flow).len(), 1);
 
         let mut boundary_origin = ComputedValues::initial();
         boundary_origin.display = DisplayValue::InlineBlock;
         boundary_origin.text_decoration_line = TextDecorationLine::OVERLINE;
-        assert_eq!(decorations_for_element(ancestor, &boundary_origin).len(), 1);
         assert_eq!(
-            decorations_for_element(vec![ancestor_decoration()], &boundary_origin)[0].line,
+            decorations_for_element(&ancestor, &boundary_origin).len(),
+            1
+        );
+        assert_eq!(
+            decorations_for_element(&Arc::from(vec![ancestor_decoration()]), &boundary_origin,)[0]
+                .line,
             TextDecorationLine::OVERLINE
         );
     }
