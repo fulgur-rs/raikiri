@@ -14900,8 +14900,10 @@ fn parse_text_align_last(input: &mut Parser<'_, '_>) -> Option<TextAlignLast> {
 /// - `table-cell` — `<display-internal>` (`<td>`, `<th>`)
 /// - `table-caption` — `<display-internal>` (`<caption>`)
 ///
-/// 他 keyword (`inline-flex` / `inline-grid` / `flow-root` 等) は spec-valid だが未実装のため silent drop
-/// (`None`)。ASCII case-insensitive で ident を比較する (CSS Values 3
+/// `inline-flex` / `inline-grid` は現在の layout bridge ではそれぞれ
+/// `flex` / `grid` と同じ formatting context として受理する (inline-level
+/// shrink-to-fit の区別は未実装)。`flow-root` 等の他 keyword は未実装のため
+/// silent drop (`None`)。ASCII case-insensitive で ident を比較する (CSS Values 3
 /// §3.1 "Pre-defined Keywords" <https://www.w3.org/TR/css-values-3/#keywords>:
 /// keyword は ASCII case-insensitive)。
 fn parse_text_combine_upright(input: &mut Parser<'_, '_>) -> Option<TextCombineUpright> {
@@ -15034,8 +15036,11 @@ fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
         "inline" => Some(DisplayValue::Inline),
         "inline-block" => Some(DisplayValue::InlineBlock),
         "none" => Some(DisplayValue::None),
-        "flex" => Some(DisplayValue::Flex),
-        "grid" => Some(DisplayValue::Grid),
+        // The current layout bridge models the outer display type as block,
+        // so inline-flex/inline-grid share the corresponding formatting
+        // context until inline-level shrink-to-fit support is added.
+        "flex" | "inline-flex" => Some(DisplayValue::Flex),
+        "grid" | "inline-grid" => Some(DisplayValue::Grid),
         "list-item" => Some(DisplayValue::ListItem),
         "contents" => Some(DisplayValue::Contents),
         "table" => Some(DisplayValue::Table),
@@ -21971,12 +21976,16 @@ mod tests {
 
     #[test]
     fn display_rejects_unknown_ident() {
-        // block / inline / inline-block / none / flex / grid / list-item /
-        // contents / table* 以外は spec-valid でも未実装のため silent drop。
-        // inline-flex / inline-grid / flow-root は
-        // 将来の layout 対応で扱う予定。
-        assert_eq!(parse("inline-flex", "display"), None);
-        assert_eq!(parse("inline-grid", "display"), None);
+        // inline-flex / inline-grid are accepted as their formatting contexts;
+        // flow-root remains outside the current bridge.
+        assert_eq!(
+            parse("inline-flex", "display"),
+            Some(PropertyValue::Display(DisplayValue::Flex))
+        );
+        assert_eq!(
+            parse("inline-grid", "display"),
+            Some(PropertyValue::Display(DisplayValue::Grid))
+        );
         assert_eq!(parse("flow-root", "display"), None);
     }
 

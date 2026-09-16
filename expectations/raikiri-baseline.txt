@@ -970,14 +970,16 @@ css/css-flexbox/layout-algorithm_algo-cross-line-001.html
 css/css-flexbox/min-size-auto-overflow-clip.html
 css/css-flexbox/overflow-area-003.html
 css/css-flexbox/overflow-auto-005.html
-css/css-flexbox/percentage-heights-004.html
+# REMOVED 2026-09-16: css/css-flexbox/percentage-heights-004.html — inline-flex is now
+# parsed as a flex formatting context; the remaining definite-percentage sizing gap is exposed.
 # REMOVED 2026-09-15: css/css-flexbox/percentage-heights-015.html — regressed by
 # the min/max-size bridge (container max-height:200px + item min-height:0 now
 # apply; flexbox definite-size propagation per flexbox-1 §9.8 needed for the
 # child 50% to resolve correctly). Passed while min/max were dropped. Re-pin
 # with the flex definite-size fix. (Sibling content-height-with-scrollbars.html
 # fails identically with and without the bridge — pre-existing, untouched.)
-css/css-flexbox/percentage-size-subitems-001.html
+# REMOVED 2026-09-16: css/css-flexbox/percentage-size-subitems-001.html — inline-flex is now
+# parsed as a flex formatting context; the flex-item percentage-size bridge still differs from the inline-block reference.
 css/css-flexbox/scrollbars-auto.html
 css/css-flexbox/scrollbars-no-margin.html
 css/css-flexbox/scrollbars.html

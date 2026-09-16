@@ -1083,6 +1083,14 @@ fn compound_matches<D: StyleDom, E: StyleElement>(
             },
             Component::Root => ancestors.is_empty(),
             Component::Empty => matches_empty(dom, elem_id),
+            Component::Negation(selectors) => !selector_slice_matches(
+                selectors.slice(),
+                dom,
+                elem,
+                elem_id,
+                ancestors,
+                quirks_mode,
+            ),
             Component::Nth(data) => {
                 // Root element (`ancestors.is_empty()`) still has a sibling
                 // list — the empty set of *element* siblings under
@@ -11690,6 +11698,27 @@ mod tests {
             ComputedValues::initial().font_weight,
             ".section > p:first-child must not match the second <p>"
         );
+    }
+
+    #[test]
+    fn negation_matches_when_inner_selector_does_not_match() {
+        let mut doc = TestDoc::new();
+        let style = doc.push_element(0, "style", None);
+        doc.push_text(
+            style,
+            "section > div:not(:first-child) { font-weight: bold }",
+        );
+        let section = doc.push_element(0, "section", None);
+        let first = doc.push_element(section, "div", None);
+        let second = doc.push_element(section, "div", None);
+
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            result.computed[first].font_weight,
+            ComputedValues::initial().font_weight
+        );
+        assert_eq!(result.computed[second].font_weight, 700.0);
     }
 
     #[test]

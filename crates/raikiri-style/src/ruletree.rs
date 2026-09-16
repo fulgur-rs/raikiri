@@ -605,6 +605,10 @@ fn is_supported_selector(selector: &Selector<RaikiriSelectorImpl>, allow_nth: bo
             )
             | Component::Root
             | Component::Empty => true,
+            Component::Negation(selectors) => selectors
+                .slice()
+                .iter()
+                .all(|selector| is_supported_selector(selector, allow_nth)),
             Component::Nth(_) => allow_nth,
             Component::NthOf(data) => {
                 allow_nth
