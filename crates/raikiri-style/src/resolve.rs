@@ -351,6 +351,8 @@ pub enum ComputedLengthPercentageOrAuto {
     Px(f32),
     /// Percentage — authored 数値をそのまま保持 (`50%` → `Percent(50.0)`)。
     Percent(f32),
+    /// A mixed-unit `calc()` retained for used-value resolution.
+    Calc(crate::property::CalcLengthPercentage),
     /// `auto` keyword。
     Auto,
 }
@@ -2001,6 +2003,7 @@ pub fn resolve_length_percentage_or_auto(
 ) -> ComputedLengthPercentageOrAuto {
     match specified {
         LengthOrAuto::Auto => ComputedLengthPercentageOrAuto::Auto,
+        LengthOrAuto::Calc(value) => ComputedLengthPercentageOrAuto::Calc(value),
         LengthOrAuto::Length(Length::Lh(v)) => match resolve_lh_multiplier(v, own_line_height) {
             Some(c) => ComputedLengthPercentageOrAuto::Px(c.px()),
             None => ComputedLengthPercentageOrAuto::Auto,
@@ -2319,6 +2322,7 @@ pub fn resolve_flex_basis(
                 ComputedLengthPercentageOrAuto::Auto => ComputedFlexBasis::Auto,
                 ComputedLengthPercentageOrAuto::Px(v) => ComputedFlexBasis::Px(v),
                 ComputedLengthPercentageOrAuto::Percent(p) => ComputedFlexBasis::Percent(p),
+                ComputedLengthPercentageOrAuto::Calc(_) => ComputedFlexBasis::Auto,
             }
         }
     }
@@ -2518,6 +2522,9 @@ pub fn resolve_margin_length_or_auto(
 ) -> ComputedLengthPercentageOrAuto {
     match specified {
         LengthOrAuto::Auto => ComputedLengthPercentageOrAuto::Auto,
+        // Margin calc support is not yet wired into the taffy margin bridge;
+        // retain the safe initial-equivalent until that bridge is added.
+        LengthOrAuto::Calc(_) => ComputedLengthPercentageOrAuto::Px(0.0),
         LengthOrAuto::Length(len) => {
             match resolve_length_percentage(len, font_size, own_line_height, ctx) {
                 ComputedLengthPercentage::Px(v) => ComputedLengthPercentageOrAuto::Px(v),

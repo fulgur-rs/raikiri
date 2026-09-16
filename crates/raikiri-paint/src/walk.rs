@@ -796,6 +796,7 @@ fn position_offset_px(cv: &raikiri_style::ComputedValues) -> (f32, f32) {
             raikiri_style::resolve::ComputedLengthPercentageOrAuto::Auto => None,
             raikiri_style::resolve::ComputedLengthPercentageOrAuto::Px(px) => Some(px),
             raikiri_style::resolve::ComputedLengthPercentageOrAuto::Percent(_) => None,
+            raikiri_style::resolve::ComputedLengthPercentageOrAuto::Calc(_) => None,
         }
     };
     let left = to_px(cv.left);

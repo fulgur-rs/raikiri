@@ -1251,9 +1251,9 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + grid item-sizing slice (+2, exact 800x600 pass).
         // + table flex percentage width (+1, exact 800x600 pass).
         // + abspos static-position slice (+9, exact 800x600 pass).
-        // - inline-flex percentage sizing pins removed after enabling the
-        //   formatting context exposed their remaining implementation gaps.
-        assert_eq!(set.baseline.entries.len(), 885);
+        // - inline-flex percentage sizing: one flex-item pin restored after
+        //   the Taffy calc resolver was connected; one remains deferred.
+        assert_eq!(set.baseline.entries.len(), 893);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }

@@ -24,12 +24,14 @@
 
 use smol_str::SmolStr;
 use std::borrow::Cow;
+use std::sync::Arc;
 use taffy::Style;
 
 use raikiri_traits::{QuirksMode, StylesheetKind};
 
 use crate::layout::LayoutWarn;
 use crate::node::{Attr, Node, NodeData};
+use raikiri_style::property::CalcLengthPercentage;
 
 /// DOM Document (root + Vec-backed node arena)。
 ///
@@ -103,6 +105,9 @@ pub struct Document {
     ///
     /// [`LAYOUT_WARN_CAP`]: crate::layout::LAYOUT_WARN_CAP
     pub(crate) layout_warnings: Vec<LayoutWarn>,
+    /// Stable storage for Taffy calc resolver payloads used by the current
+    /// layout pass. The heap allocations keep pointees stable while styles hold raw handles.
+    pub(crate) calc_values: Vec<Arc<CalcLengthPercentage>>,
     /// HTML5 quirks mode for this whole document. Default
     /// [`QuirksMode::NoQuirks`] (matching the type's own `#[default]`) for
     /// `Document`s built by hand (raikiri-dom unit tests, raikiri-paint
@@ -132,6 +137,7 @@ impl Document {
             flags_dirty: false,
             stylesheets: Vec::new(),
             layout_warnings: Vec::new(),
+            calc_values: Vec::new(),
             quirks_mode: QuirksMode::default(),
         }
     }
