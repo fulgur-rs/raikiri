@@ -132,6 +132,15 @@ pub(crate) fn paint_document(
     // — body に `display: inline` を override するような病的な入力でない
     // 限り、この fallback の精度は実質無関係。
     let body_font_size = cascade.computed[body_id].font_size.px();
+    // The paint walk starts at `<body>` because the html box itself is not a
+    // paint item here. Seed the context with html's originating decoration so
+    // root-element lines still propagate through the body subtree.
+    let empty_decorations = text::DecorationContext::default();
+    let root_decorations = find_html(document)
+        .map(|html_id| {
+            text::decorations_for_element(&empty_decorations, &cascade.computed[html_id], 0.0)
+        })
+        .unwrap_or_else(|| empty_decorations.clone());
     enum PaintFrame {
         Visit {
             node_id: usize,
@@ -139,6 +148,7 @@ pub(crate) fn paint_document(
             parent_abs_y: f32,
             parent_font_size: f32,
             shift_y: f32,
+            decorations: text::DecorationContext,
         },
         PopClip,
     }
@@ -149,27 +159,31 @@ pub(crate) fn paint_document(
         parent_abs_y: 0.0,
         parent_font_size: body_font_size,
         shift_y: 0.0,
+        decorations: root_decorations,
     }];
     while let Some(frame) = stack.pop() {
-        let (node_id, parent_abs_x, parent_abs_y, parent_font_size, shift_y) = match frame {
-            PaintFrame::PopClip => {
-                scene.pop_layer();
-                continue;
-            }
-            PaintFrame::Visit {
-                node_id,
-                parent_abs_x,
-                parent_abs_y,
-                parent_font_size,
-                shift_y,
-            } => (
-                node_id,
-                parent_abs_x,
-                parent_abs_y,
-                parent_font_size,
-                shift_y,
-            ),
-        };
+        let (node_id, parent_abs_x, parent_abs_y, parent_font_size, shift_y, decorations) =
+            match frame {
+                PaintFrame::PopClip => {
+                    scene.pop_layer();
+                    continue;
+                }
+                PaintFrame::Visit {
+                    node_id,
+                    parent_abs_x,
+                    parent_abs_y,
+                    parent_font_size,
+                    shift_y,
+                    decorations,
+                } => (
+                    node_id,
+                    parent_abs_x,
+                    parent_abs_y,
+                    parent_font_size,
+                    shift_y,
+                    decorations,
+                ),
+            };
         let Some(node) = document.get_node(node_id) else {
             continue;
         };
@@ -251,6 +265,12 @@ pub(crate) fn paint_document(
                     stack.push(PaintFrame::PopClip);
                 }
                 let child_font_size = cv.font_size.px();
+                // `text-decoration-line` is non-inherited at the computed-value
+                // layer, but its originating line is propagated to descendants
+                // by CSS Text Decoration. Keep that paint-only context separate
+                // from `CascadeResult`'s inheritance result.
+                let child_decorations =
+                    text::decorations_for_element(&decorations, cv, child_shift_y);
                 // children を reverse push すると pop 時に document order で処理される。
                 // For position:relative, children are laid out at normal flow position but paint at offset position.
                 let child_parent_x = abs_x + pos_dx;
@@ -262,6 +282,7 @@ pub(crate) fn paint_document(
                         parent_abs_y: child_parent_y,
                         parent_font_size: child_font_size,
                         shift_y: child_shift_y,
+                        decorations: child_decorations.clone(),
                     });
                 }
             }
@@ -269,7 +290,18 @@ pub(crate) fn paint_document(
                 let layout = node.unrounded_layout;
                 let abs_x = parent_abs_x + layout.location.x;
                 let abs_y = parent_abs_y + layout.location.y;
-                text::draw_text_node(scene, node, cascade, node_id, abs_x, abs_y + shift_y);
+                text::draw_text_node(
+                    scene,
+                    node,
+                    cascade,
+                    node_id,
+                    text::TextPosition {
+                        abs_x,
+                        abs_y,
+                        shift_y,
+                    },
+                    &decorations,
+                );
             }
             NodeKind::Document => {
                 // paint_document が body から start するので通常来ない。

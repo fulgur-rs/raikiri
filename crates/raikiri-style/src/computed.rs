@@ -760,13 +760,8 @@ pub struct ComputedValues {
     /// keyword(s) ([`TextDecorationLine`] doc — no length payload, so no
     /// relative resolution is needed).
     ///
-    /// # Downstream handoff (future scope, style-scope confined)
-    ///
-    /// This field carries the cascade static side seed only, mirroring
-    /// [`Self::box_sizing`] / [`Self::overflow`] — actually painting the
-    /// decoration line is raikiri-paint scope and not yet wired
-    /// (`crates/raikiri-paint/src/lib.rs`'s module doc lists "Text
-    /// decoration (underline / line-through)" as a future milestone).
+    /// The paint walker consumes this field as the originating line and
+    /// propagates it to descendant text runs per CSS Text Decoration 3.
     pub text_decoration_line: TextDecorationLine,
     /// `text-decoration-style`. **non-inherited**, initial:
     /// [`TextDecorationStyle::Solid`] (CSS Text Decoration Module Level 3
@@ -775,8 +770,8 @@ pub struct ComputedValues {
     /// "Initial: solid" / "Inherited: no"). Computed value = specified
     /// keyword ([`TextDecorationStyle`] doc).
     ///
-    /// Downstream handoff mirrors [`Self::text_decoration_line`] — the
-    /// paint-side rendering of a non-`solid` style is not yet wired.
+    /// The paint walker consumes this field when it draws the originating
+    /// line, including `double`, `dotted`, `dashed`, and `wavy` styles.
     pub text_decoration_style: TextDecorationStyle,
     /// `text-decoration-color`. **non-inherited**, initial:
     /// [`TextDecorationColor::CurrentColor`] (CSS Text Decoration Module
@@ -788,7 +783,8 @@ pub struct ComputedValues {
     /// of `currentcolor` is paint scope responsibility, mirroring
     /// [`BorderColor`]).
     ///
-    /// Downstream handoff mirrors [`Self::text_decoration_line`].
+    /// The paint walker resolves `currentcolor` against the originating
+    /// element's computed [`Self::color`] before drawing the line.
     pub text_decoration_color: TextDecorationColor,
     /// `vertical-align`. **non-inherited**, initial:
     /// [`VerticalAlign::Baseline`] (CSS 2.1 §10.8.1 "Vertical alignment: the
