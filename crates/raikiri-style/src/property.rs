@@ -8580,10 +8580,387 @@ fn is_deferred_function(name: &str) -> bool {
 /// length/percentage/dimension, so it should be rejected as invalid parsing
 /// rather than deferred. Valid examples like `calc(2em + 3ex)` or
 /// `min(20px, 10px)` contain only Dimension/Percentage/Number and operators.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ColorMathType {
+    Number,
+    Percentage,
+    Angle,
+    Length,
+    LengthPercentage,
+    OtherDimension,
+    Unknown,
+    Invalid,
+}
+
+#[derive(Clone, Copy)]
+enum MathTerm {
+    Value(ColorMathType),
+    Operator(char),
+    Comma,
+}
+
+fn color_math_dimension_type(unit: &str) -> ColorMathType {
+    if is_angle_unit(unit) {
+        return ColorMathType::Angle;
+    }
+    if matches!(
+        unit.to_ascii_lowercase().as_str(),
+        "px" | "em"
+            | "rem"
+            | "ex"
+            | "ch"
+            | "cm"
+            | "mm"
+            | "q"
+            | "in"
+            | "pt"
+            | "pc"
+            | "vw"
+            | "vh"
+            | "vi"
+            | "vb"
+            | "vmin"
+            | "vmax"
+            | "lvw"
+            | "lvh"
+            | "lvi"
+            | "lvb"
+            | "lvmin"
+            | "lvmax"
+            | "svw"
+            | "svh"
+            | "svi"
+            | "svb"
+            | "svmin"
+            | "svmax"
+            | "dvw"
+            | "dvh"
+            | "dvi"
+            | "dvb"
+            | "dvmin"
+            | "dvmax"
+            | "lh"
+            | "rlh"
+            | "cap"
+            | "ic"
+            | "cqw"
+            | "cqh"
+            | "cqi"
+            | "cqb"
+            | "cqmin"
+            | "cqmax"
+    ) {
+        ColorMathType::Length
+    } else {
+        ColorMathType::OtherDimension
+    }
+}
+
+fn color_math_add(left: ColorMathType, right: ColorMathType) -> ColorMathType {
+    if matches!(left, ColorMathType::Invalid) || matches!(right, ColorMathType::Invalid) {
+        return ColorMathType::Invalid;
+    }
+    if matches!(left, ColorMathType::Unknown) {
+        return right;
+    }
+    if matches!(right, ColorMathType::Unknown) {
+        return left;
+    }
+    if left == right {
+        return left;
+    }
+    match (left, right) {
+        (ColorMathType::Length, ColorMathType::Percentage)
+        | (ColorMathType::Percentage, ColorMathType::Length)
+        | (ColorMathType::LengthPercentage, ColorMathType::Length)
+        | (ColorMathType::Length, ColorMathType::LengthPercentage)
+        | (ColorMathType::LengthPercentage, ColorMathType::Percentage)
+        | (ColorMathType::Percentage, ColorMathType::LengthPercentage) => {
+            ColorMathType::LengthPercentage
+        }
+        _ => ColorMathType::Invalid,
+    }
+}
+
+fn color_math_multiply(left: ColorMathType, right: ColorMathType) -> ColorMathType {
+    if matches!(left, ColorMathType::Invalid) || matches!(right, ColorMathType::Invalid) {
+        return ColorMathType::Invalid;
+    }
+    if matches!(left, ColorMathType::Unknown) {
+        return right;
+    }
+    if matches!(right, ColorMathType::Unknown) {
+        return left;
+    }
+    if left == ColorMathType::Number {
+        return right;
+    }
+    if right == ColorMathType::Number {
+        return left;
+    }
+    ColorMathType::Invalid
+}
+
+fn color_math_divide(left: ColorMathType, right: ColorMathType) -> ColorMathType {
+    if matches!(left, ColorMathType::Invalid) || matches!(right, ColorMathType::Invalid) {
+        return ColorMathType::Invalid;
+    }
+    if matches!(left, ColorMathType::Unknown) || matches!(right, ColorMathType::Unknown) {
+        return ColorMathType::Unknown;
+    }
+    if right == ColorMathType::Number {
+        return left;
+    }
+    ColorMathType::Invalid
+}
+
+struct MathTermsParser {
+    terms: Vec<MathTerm>,
+    index: usize,
+}
+
+impl MathTermsParser {
+    fn new(terms: Vec<MathTerm>) -> Self {
+        Self { terms, index: 0 }
+    }
+
+    fn peek(&self) -> Option<MathTerm> {
+        self.terms.get(self.index).copied()
+    }
+
+    fn take(&mut self) -> Option<MathTerm> {
+        let term = self.peek()?;
+        self.index += 1;
+        Some(term)
+    }
+
+    fn parse_primary(&mut self) -> ColorMathType {
+        if matches!(self.peek(), Some(MathTerm::Operator('+' | '-'))) {
+            self.take();
+        }
+        match self.take() {
+            Some(MathTerm::Value(value)) => value,
+            _ => ColorMathType::Invalid,
+        }
+    }
+
+    fn parse_product(&mut self) -> ColorMathType {
+        let mut value = self.parse_primary();
+        while let Some(MathTerm::Operator(operator)) = self.peek() {
+            if !matches!(operator, '*' | '/') {
+                break;
+            }
+            self.take();
+            let right = self.parse_primary();
+            value = if operator == '*' {
+                color_math_multiply(value, right)
+            } else {
+                color_math_divide(value, right)
+            };
+        }
+        value
+    }
+
+    fn parse_sum(&mut self) -> ColorMathType {
+        let mut value = self.parse_product();
+        while let Some(MathTerm::Operator(operator)) = self.peek() {
+            if !matches!(operator, '+' | '-') {
+                break;
+            }
+            self.take();
+            let right = self.parse_product();
+            value = color_math_add(value, right);
+        }
+        value
+    }
+
+    fn parse_all(&mut self, allow_comma: bool) -> ColorMathType {
+        if self.terms.is_empty() {
+            return ColorMathType::Invalid;
+        }
+        let mut value = self.parse_sum();
+        if matches!(self.peek(), Some(MathTerm::Comma)) {
+            if !allow_comma {
+                return ColorMathType::Invalid;
+            }
+            while matches!(self.peek(), Some(MathTerm::Comma)) {
+                self.take();
+                let right = self.parse_sum();
+                value = color_math_add(value, right);
+            }
+        }
+        if self.index != self.terms.len() {
+            ColorMathType::Invalid
+        } else {
+            value
+        }
+    }
+}
+
+fn consume_math_component_values<'i>(input: &mut Parser<'i, '_>) -> Result<(), ParseError<'i, ()>> {
+    loop {
+        let token = match input.next() {
+            Ok(token) => token.clone(),
+            Err(_) => break,
+        };
+        match token {
+            Token::Function(_)
+            | Token::ParenthesisBlock
+            | Token::SquareBracketBlock
+            | Token::CurlyBracketBlock => {
+                input.parse_nested_block(|nested| consume_math_component_values(nested))?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn color_math_expression_type<'i>(
+    input: &mut Parser<'i, '_>,
+    allow_comma: bool,
+) -> Result<ColorMathType, ParseError<'i, ()>> {
+    let mut terms = Vec::new();
+    loop {
+        let token = match input.next() {
+            Ok(token) => token.clone(),
+            Err(_) => break,
+        };
+        match token {
+            Token::Number { .. } => terms.push(MathTerm::Value(ColorMathType::Number)),
+            Token::Percentage { .. } => terms.push(MathTerm::Value(ColorMathType::Percentage)),
+            Token::Dimension { ref unit, .. } => {
+                terms.push(MathTerm::Value(color_math_dimension_type(unit.as_ref())))
+            }
+            Token::Ident(ref name) if is_math_constant(name.as_ref()) => {
+                terms.push(MathTerm::Value(ColorMathType::Number));
+            }
+            Token::Ident(_) => terms.push(MathTerm::Value(ColorMathType::Invalid)),
+            Token::Function(ref name) => {
+                let name_lower = name.as_ref().to_ascii_lowercase();
+                let function_type = if name_lower == "var" || name_lower == "env" {
+                    input.parse_nested_block(|nested| {
+                        consume_math_component_values(nested)?;
+                        Ok::<_, ParseError<'_, ()>>(ColorMathType::Unknown)
+                    })?
+                } else {
+                    let nested_allows_comma = matches!(
+                        name_lower.as_str(),
+                        "min" | "max" | "clamp" | "round" | "mod" | "rem" | "atan2"
+                    );
+                    let nested = input
+                        .parse_nested_block(|nested| {
+                            color_math_expression_type(nested, nested_allows_comma)
+                        })
+                        .unwrap_or(ColorMathType::Invalid);
+                    if !relative_math_function(name_lower.as_ref()) {
+                        ColorMathType::Invalid
+                    } else {
+                        match name_lower.as_str() {
+                            "calc" | "min" | "max" | "clamp" | "abs" | "round" | "mod" | "rem" => {
+                                nested
+                            }
+                            "sign" | "pow" | "sqrt" | "hypot" | "log" | "exp" | "sin" | "cos"
+                            | "tan" | "asin" | "acos" | "atan" | "atan2" => {
+                                if nested == ColorMathType::Invalid {
+                                    ColorMathType::Invalid
+                                } else {
+                                    ColorMathType::Number
+                                }
+                            }
+                            _ => ColorMathType::Invalid,
+                        }
+                    }
+                };
+                terms.push(MathTerm::Value(function_type));
+            }
+            Token::ParenthesisBlock => {
+                let nested = input
+                    .parse_nested_block(|nested| color_math_expression_type(nested, false))
+                    .unwrap_or(ColorMathType::Invalid);
+                terms.push(MathTerm::Value(nested));
+            }
+            Token::Delim('+' | '-' | '*' | '/') => {
+                if let Token::Delim(operator) = token {
+                    terms.push(MathTerm::Operator(operator));
+                }
+            }
+            Token::Comma if allow_comma => terms.push(MathTerm::Comma),
+            Token::WhiteSpace(_) | Token::Comment(_) => {}
+            _ => terms.push(MathTerm::Value(ColorMathType::Invalid)),
+        }
+    }
+    Ok(MathTermsParser::new(terms).parse_all(allow_comma))
+}
+
+#[derive(Clone, Copy)]
+enum ColorMathContext {
+    Number,
+    Percentage,
+    NumberOrPercentage,
+    NumberOrAngle,
+}
+
+fn color_math_type_allowed(value: ColorMathType, context: ColorMathContext) -> bool {
+    matches!(value, ColorMathType::Unknown)
+        || match context {
+            ColorMathContext::Number => value == ColorMathType::Number,
+            ColorMathContext::Percentage => value == ColorMathType::Percentage,
+            ColorMathContext::NumberOrPercentage => {
+                matches!(value, ColorMathType::Number | ColorMathType::Percentage)
+            }
+            ColorMathContext::NumberOrAngle => {
+                matches!(value, ColorMathType::Number | ColorMathType::Angle)
+            }
+        }
+}
+
+fn parse_color_math_value<'i>(
+    input: &mut Parser<'i, '_>,
+    context: ColorMathContext,
+) -> Result<(ColorMathType, f32), ParseError<'i, ()>> {
+    input.skip_whitespace();
+    let token = input.next()?.clone();
+    let Token::Function(ref name) = token else {
+        return Err(input.new_custom_error(()));
+    };
+    if !name.eq_ignore_ascii_case("calc") {
+        return Err(input.new_custom_error(()));
+    }
+    let value = input.parse_nested_block(|nested| color_math_expression_type(nested, false))?;
+    if color_math_type_allowed(value, context) {
+        Ok((value, 0.0))
+    } else {
+        Err(input.new_custom_error(()))
+    }
+}
+
+fn color_value_with_math_is_valid(value: &str) -> bool {
+    let mut parser_input = ParserInput::new(value);
+    let mut parser = Parser::new(&mut parser_input);
+    parser
+        .parse_entirely(|input| {
+            parse_color(input).ok_or_else(|| input.new_custom_error::<(), ()>(()))
+        })
+        .is_ok()
+}
+
 fn math_function_syntax_is_valid(input: &str) -> bool {
     let mut parser_input = ParserInput::new(input);
     let mut parser = Parser::new(&mut parser_input);
     math_syntax_valid_in_parser(&mut parser, 0)
+}
+
+/// CSS Values 4 mathematical constants are identifiers inside a math
+/// function, rather than ordinary `<number>` tokens. They still form valid
+/// numeric expressions (`calc(infinity)`, `calc(-infinity)`, and
+/// `calc(NaN)` are used by the CSS Color WPT), so the deferred syntax scanner
+/// must distinguish them from an arbitrary invalid identifier such as `foo`.
+fn is_math_constant(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "e" | "pi" | "infinity" | "-infinity" | "nan"
+    )
 }
 
 fn math_syntax_valid_in_parser(parser: &mut Parser<'_, '_>, depth: usize) -> bool {
@@ -8671,13 +9048,18 @@ fn math_calc_inner_is_valid(parser: &mut Parser<'_, '_>, depth: usize) -> bool {
                 let is_math = MATH_FUNCTIONS.iter().any(|m| name.eq_ignore_ascii_case(m));
                 let valid = parser
                     .parse_nested_block(|nested| {
-                        if is_math {
+                        if is_math || !name.eq_ignore_ascii_case("var") {
+                            // CSS math functions such as sign() have a
+                            // numeric expression as their argument. `var()`
+                            // is the exception: its custom-property syntax is
+                            // not a math expression, but it is still valid in
+                            // a deferred calc and must be consumed in full.
                             Ok::<_, ParseError<'_, ()>>(math_calc_inner_is_valid(
                                 nested,
                                 depth.saturating_add(1),
                             ))
                         } else {
-                            // Non-math inner like var() is okay inside math
+                            while nested.next().is_ok() {}
                             Ok::<_, ParseError<'_, ()>>(true)
                         }
                     })
@@ -8690,6 +9072,7 @@ fn math_calc_inner_is_valid(parser: &mut Parser<'_, '_>, depth: usize) -> bool {
                     return false;
                 }
             }
+            Token::Ident(ref name) if is_math_constant(name) => {}
             Token::Ident(_)
             | Token::IDHash(_)
             | Token::Hash(_)
@@ -8782,37 +9165,41 @@ fn math_source_has_dimension_or_percentage(input: &str) -> bool {
 fn deferred_dummy_is_valid_for_property(value: &str, prop: &str) -> bool {
     // Replace math functions with a dummy and check if the resulting value parses for the property.
     // This validates overall structure (e.g. `margin-top: calc(...) auto` has 2 tokens, invalid for longhand).
-    // The dummy is type-aware (`math_source_has_dimension_or_percentage`):
-    // pure-number math substitutes `1` so only `<number>` positions validate.
-    let dummy = if math_source_has_dimension_or_percentage(value) {
-        replace_math_with_dummy(value)
+    //
+    // Color components intentionally use more than one dummy type. A color
+    // math expression can be a number, percentage, or angle depending on its
+    // position. Looking only for dimensions anywhere in the expression is
+    // incorrect for expressions such as `sign(1em - 10px) * 10%`: the nested
+    // comparison has dimensions, but the result is a percentage. The ordinary
+    // property path keeps the stricter type-aware check used by the rest of the
+    // declaration parser; the color path tries representatives for the three
+    // scalar forms accepted by the color grammars.
+    let color_property = matches!(
+        prop.to_ascii_lowercase().as_str(),
+        "color" | "background-color"
+    );
+    let dummies: &[&str] = if color_property {
+        &["1", "50%", "1deg"]
+    } else if math_source_has_dimension_or_percentage(value) {
+        &["1px"]
     } else {
-        replace_math_with_number_dummy(value)
+        &["1"]
     };
-    let mut input = ParserInput::new(&dummy);
-    let mut parser = Parser::new(&mut input);
-    // Avoid recursion into deferred path: dummy contains no deferred function, so parse_value will go to normal dispatch.
-    if parse_value(prop, &mut parser).is_some() {
-        parser.expect_exhausted().is_ok()
-    } else {
-        false
+
+    for dummy_value in dummies {
+        let dummy = replace_math_with_dummy_and_number(value, dummy_value);
+        let mut input = ParserInput::new(&dummy);
+        let mut parser = Parser::new(&mut input);
+        // Avoid recursion into deferred path: dummy contains no deferred
+        // function, so parse_value goes to normal dispatch.
+        if parse_value(prop, &mut parser).is_some() && parser.expect_exhausted().is_ok() {
+            return true;
+        }
     }
+    false
 }
 
-fn replace_math_with_dummy(input: &str) -> String {
-    replace_math_with_dummy_and_number(input, "1px")
-}
-
-/// [`replace_math_with_dummy`] with a pure-number dummy (`1` instead of
-/// `1px`) — for math sources that carry no dimension or percentage
-/// ([`math_source_has_dimension_or_percentage`]), so the structural check
-/// in [`deferred_dummy_is_valid_for_property`] only validates `<number>`
-/// positions (CSS calc type rule).
-fn replace_math_with_number_dummy(input: &str) -> String {
-    replace_math_with_dummy_and_number(input, "1")
-}
-
-/// [`replace_math_with_dummy`] generalized over the dummy payload.
+/// [`replace_math_with_dummy_and_number`] generalized over the dummy payload.
 fn replace_math_with_dummy_and_number(input: &str, dummy: &str) -> String {
     let mut result = String::new();
     let mut i = 0;
@@ -9284,7 +9671,34 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
     if key.is_some() && contains_deferred_function(input) {
         input.reset(&start);
         let value = consume_deferred_value(input)?;
+        let is_color_property = matches!(normalized_name.as_str(), "color" | "background-color");
+        if is_color_property && value.to_ascii_lowercase().contains("(from") {
+            // Relative colors may use var() as their origin. Validate their
+            // complete grammar before deferring; the generic property math
+            // path cannot distinguish an invalid channel from a variable.
+            if color_value_with_math_is_valid(value.as_ref()) {
+                return Some(PropertyValue::Deferred(DeferredValue {
+                    property: name.to_ascii_lowercase().into(),
+                    value,
+                    key: key?,
+                }));
+            }
+            return None;
+        }
         if !contains_function_in_source(&value, "var") {
+            if is_color_property {
+                // Parse the original color grammar so each calc() keeps its
+                // position-specific numeric type. This covers ordinary color
+                // math without the false positives caused by an untyped dummy.
+                if color_value_with_math_is_valid(value.as_ref()) {
+                    return Some(PropertyValue::Deferred(DeferredValue {
+                        property: name.to_ascii_lowercase().into(),
+                        value,
+                        key: key?,
+                    }));
+                }
+                return None;
+            }
             // A math function without substitution can be simplified and
             // reparsed now. This rejects an invalid winning declaration such
             // as `width: calc(foo)` during declaration parsing, rather than
@@ -10118,12 +10532,14 @@ fn contains_function_in_source(input: &str, wanted: &str) -> bool {
 /// (r, g, b) は alpha を返さないため、Ident arm 手前で明示 branch して
 /// [`CssColor::TRANSPARENT`] を返す。
 ///
-/// `from` を先頭に置く CSS Color 5 の relative color syntax は未対応である。
-/// この parser は origin color や `currentColor` を解決する cascade context を
-/// 持たないためである。
+/// `from` を先頭に置く CSS Color 5 の relative color syntax は、origin と
+/// channel/math grammar を検証する。cascade context を持たないため、解決値は
+/// origin color の bounded approximation を保持し、`var()` origin は deferred
+/// value として後段へ渡す。
 ///
-/// Modern color syntax の `none`（missing component）は、missing component の
-/// carry-forward を持たない bounded model では未対応として reject する。
+/// Modern color syntax の `none`（missing component）は構文上受理し、bounded
+/// model では一時的に zero component として扱う。missing-component の
+/// carry-forward と computed-value serialization は後段の未実装範囲である。
 /// Lab/OKLab の lightness が black/white boundary にある場合は conversion 側で
 /// a/b や chroma にかかわらず boundary color へ固定する。それ以外の
 /// out-of-gamut は 8-bit sRGB への bounded approximation であり、CSS Color 4 の
@@ -10131,6 +10547,189 @@ fn contains_function_in_source(input: &str, wanted: &str) -> bool {
 /// Lab-family の座標を sRGB へ先に clip せず、指定空間での計算後にだけ変換する。
 fn parse_color(input: &mut Parser<'_, '_>) -> Option<CssColor> {
     parse_color_float(input, 0).map(ParsedColor::to_css_color)
+}
+
+/// CSS system-color keywords are context-dependent at computed-value time.
+/// The parser has no document/UA color context, so preserve their syntactic
+/// validity and use a deterministic black/white approximation for the bounded
+/// `CssColor` model.
+fn parse_system_color(name: &str) -> Option<CssColor> {
+    let is_system = matches!(
+        name.to_ascii_lowercase().as_str(),
+        "activetext"
+            | "buttonborder"
+            | "buttonface"
+            | "buttontext"
+            | "canvas"
+            | "canvastext"
+            | "field"
+            | "fieldtext"
+            | "graytext"
+            | "highlight"
+            | "highlighttext"
+            | "linktext"
+            | "mark"
+            | "marktext"
+            | "visitedtext"
+            | "selecteditem"
+            | "selecteditemtext"
+            | "accentcolor"
+            | "accentcolortext"
+    );
+    if !is_system {
+        return None;
+    }
+    let light = matches!(
+        name.to_ascii_lowercase().as_str(),
+        "buttonface" | "canvas" | "field" | "highlighttext" | "marktext" | "selecteditemtext"
+    );
+    Some(if light {
+        CssColor {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 255,
+        }
+    } else {
+        CssColor::BLACK
+    })
+}
+
+fn parse_alpha_color_function<'i>(
+    input: &mut Parser<'i, '_>,
+    color_mix_depth: usize,
+) -> Result<ParsedColor, ParseError<'i, ()>> {
+    input.expect_ident_matching("from")?;
+    let origin = parse_relative_origin(input, color_mix_depth)?;
+    let alpha = if input.try_parse(|i| i.expect_delim('/')).is_ok() {
+        if input
+            .try_parse(|i| i.expect_ident_matching("alpha"))
+            .is_ok()
+        {
+            origin.alpha
+        } else if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+            0.0
+        } else if let Ok(percentage) = input.try_parse(|i| expect_percentage_stable(i)) {
+            percentage.clamp(0.0, 1.0)
+        } else if let Ok(number) = input.try_parse(|i| expect_number_stable(i)) {
+            number.clamp(0.0, 1.0)
+        } else {
+            // The remaining valid form is a relative math expression such as
+            // `calc(alpha * 0.5)`. Validate it with the alpha-only channel
+            // set; evaluation is deferred to the context-aware cascade.
+            parse_relative_component(input, RelativeColorKind::Alpha, 0)?;
+            origin.alpha
+        }
+    } else {
+        origin.alpha
+    };
+    Ok(ParsedColor::from_coordinates(
+        ParsedColorSpace::Srgb,
+        origin.to_srgb(),
+        alpha,
+    ))
+}
+
+fn parse_light_dark_function<'i>(
+    input: &mut Parser<'i, '_>,
+    color_mix_depth: usize,
+) -> Result<ParsedColor, ParseError<'i, ()>> {
+    let light =
+        parse_color_float(input, color_mix_depth).ok_or_else(|| input.new_custom_error(()))?;
+    input.expect_comma()?;
+    let _dark =
+        parse_color_float(input, color_mix_depth).ok_or_else(|| input.new_custom_error(()))?;
+    // Color-scheme selection is a computed-value concern. Use the light branch
+    // in this context-free specified-value parser.
+    Ok(light)
+}
+
+fn parse_contrast_color_function<'i>(
+    input: &mut Parser<'i, '_>,
+    color_mix_depth: usize,
+) -> Result<ParsedColor, ParseError<'i, ()>> {
+    let origin =
+        parse_color_float(input, color_mix_depth).ok_or_else(|| input.new_custom_error(()))?;
+    let [r, g, b] = origin.to_srgb().map(|component| component.clamp(0.0, 1.0));
+    // Relative luminance is sufficient for the parser's deterministic
+    // two-candidate fallback. The contrast-color grammar itself is validated
+    // independently of this approximation.
+    let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    Ok(ParsedColor::from_css_color(if luminance > 0.5 {
+        CssColor::BLACK
+    } else {
+        CssColor {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 255,
+        }
+    }))
+}
+
+fn is_color_layers_blend_mode(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "normal"
+            | "multiply"
+            | "screen"
+            | "overlay"
+            | "darken"
+            | "lighten"
+            | "color-dodge"
+            | "color-burn"
+            | "hard-light"
+            | "soft-light"
+            | "difference"
+            | "exclusion"
+            | "hue"
+            | "saturation"
+            | "color"
+            | "luminosity"
+    )
+}
+
+fn composite_color_layers(bottom: ParsedColor, top: ParsedColor) -> ParsedColor {
+    let bottom_rgb = bottom.to_srgb();
+    let top_rgb = top.to_srgb();
+    let bottom_alpha = bottom.alpha.clamp(0.0, 1.0);
+    let top_alpha = top.alpha.clamp(0.0, 1.0);
+    let alpha = top_alpha + bottom_alpha * (1.0 - top_alpha);
+    if alpha == 0.0 {
+        return ParsedColor::from_coordinates(ParsedColorSpace::Srgb, [0.0; 3], 0.0);
+    }
+    let rgb = std::array::from_fn(|index| {
+        (top_rgb[index] * top_alpha + bottom_rgb[index] * bottom_alpha * (1.0 - top_alpha)) / alpha
+    });
+    ParsedColor::from_coordinates(ParsedColorSpace::Srgb, rgb, alpha)
+}
+
+fn parse_color_layers_function<'i>(
+    input: &mut Parser<'i, '_>,
+    color_mix_depth: usize,
+) -> Result<ParsedColor, ParseError<'i, ()>> {
+    // An optional blend mode is followed by a comma. Trying the complete
+    // optional prefix atomically lets a color keyword such as `red` remain
+    // the first layer when it is not a blend mode.
+    let _has_blend_mode = input
+        .try_parse(|i| {
+            let name = i.expect_ident()?.clone();
+            i.expect_comma()?;
+            if is_color_layers_blend_mode(name.as_ref()) {
+                Ok(())
+            } else {
+                Err(i.new_custom_error::<(), ()>(()))
+            }
+        })
+        .is_ok();
+    let mut result =
+        parse_color_float(input, color_mix_depth).ok_or_else(|| input.new_custom_error(()))?;
+    while input.try_parse(|i| i.expect_comma()).is_ok() {
+        let layer =
+            parse_color_float(input, color_mix_depth).ok_or_else(|| input.new_custom_error(()))?;
+        result = composite_color_layers(result, layer);
+    }
+    Ok(result)
 }
 
 fn parse_color_float(input: &mut Parser<'_, '_>, color_mix_depth: usize) -> Option<ParsedColor> {
@@ -10151,36 +10750,74 @@ fn parse_color_float(input: &mut Parser<'_, '_>, color_mix_depth: usize) -> Opti
             }))
         }
         Token::Ident(ref name) => {
-            let (r, g, b) = parse_named_color(name).ok()?;
-            Some(ParsedColor::from_css_color(CssColor { r, g, b, a: 255 }))
+            if let Some(color) = parse_system_color(name) {
+                Some(ParsedColor::from_css_color(color))
+            } else {
+                let (r, g, b) = parse_named_color(name).ok()?;
+                Some(ParsedColor::from_css_color(CssColor { r, g, b, a: 255 }))
+            }
         }
         Token::Function(ref name)
             if name.eq_ignore_ascii_case("rgb") || name.eq_ignore_ascii_case("rgba") =>
         {
-            input.parse_nested_block(parse_rgb_function).ok()
+            input
+                .parse_nested_block(|nested| {
+                    parse_rgb_function_or_relative(nested, color_mix_depth)
+                })
+                .ok()
         }
-        Token::Function(ref name) if name.eq_ignore_ascii_case("color") => {
-            input.parse_nested_block(parse_color_function).ok()
-        }
+        Token::Function(ref name) if name.eq_ignore_ascii_case("color") => input
+            .parse_nested_block(|nested| parse_color_function_or_relative(nested, color_mix_depth))
+            .ok(),
         Token::Function(ref name) if name.eq_ignore_ascii_case("lab") => input
-            .parse_nested_block(|i| parse_lab_function(i, LabFunction::Lab))
+            .parse_nested_block(|i| {
+                parse_lab_function_or_relative(i, LabFunction::Lab, color_mix_depth)
+            })
             .ok(),
         Token::Function(ref name) if name.eq_ignore_ascii_case("lch") => input
-            .parse_nested_block(|i| parse_lab_function(i, LabFunction::Lch))
+            .parse_nested_block(|i| {
+                parse_lab_function_or_relative(i, LabFunction::Lch, color_mix_depth)
+            })
             .ok(),
         Token::Function(ref name) if name.eq_ignore_ascii_case("oklab") => input
-            .parse_nested_block(|i| parse_lab_function(i, LabFunction::Oklab))
+            .parse_nested_block(|i| {
+                parse_lab_function_or_relative(i, LabFunction::Oklab, color_mix_depth)
+            })
             .ok(),
         Token::Function(ref name) if name.eq_ignore_ascii_case("oklch") => input
-            .parse_nested_block(|i| parse_lab_function(i, LabFunction::Oklch))
+            .parse_nested_block(|i| {
+                parse_lab_function_or_relative(i, LabFunction::Oklch, color_mix_depth)
+            })
             .ok(),
         Token::Function(ref name)
             if name.eq_ignore_ascii_case("hsl") || name.eq_ignore_ascii_case("hsla") =>
         {
-            input.parse_nested_block(parse_hsl_function).ok()
+            input
+                .parse_nested_block(|i| parse_hsl_function_or_relative(i, color_mix_depth))
+                .ok()
         }
-        Token::Function(ref name) if name.eq_ignore_ascii_case("hwb") => {
-            input.parse_nested_block(parse_hwb_function).ok()
+        Token::Function(ref name) if name.eq_ignore_ascii_case("hwb") => input
+            .parse_nested_block(|i| parse_hwb_function_or_relative(i, color_mix_depth))
+            .ok(),
+        Token::Function(ref name) if name.eq_ignore_ascii_case("alpha") => input
+            .parse_nested_block(|nested| parse_alpha_color_function(nested, color_mix_depth))
+            .ok(),
+        Token::Function(ref name) if name.eq_ignore_ascii_case("light-dark") => input
+            .parse_nested_block(|nested| parse_light_dark_function(nested, color_mix_depth))
+            .ok(),
+        Token::Function(ref name) if name.eq_ignore_ascii_case("contrast-color") => input
+            .parse_nested_block(|nested| parse_contrast_color_function(nested, color_mix_depth))
+            .ok(),
+        Token::Function(ref name) if name.eq_ignore_ascii_case("color-layers") => {
+            if color_mix_depth >= MAX_COLOR_MIX_NESTING_DEPTH {
+                None
+            } else {
+                input
+                    .parse_nested_block(|nested| {
+                        parse_color_layers_function(nested, color_mix_depth.saturating_add(1))
+                    })
+                    .ok()
+            }
         }
         Token::Function(ref name) if name.eq_ignore_ascii_case("color-mix") => {
             if color_mix_depth >= MAX_COLOR_MIX_NESTING_DEPTH {
@@ -10205,13 +10842,381 @@ enum LabFunction {
     Oklch,
 }
 
+#[derive(Clone, Copy)]
+enum RelativeColorKind {
+    Rgb,
+    Alpha,
+    Hsl,
+    Hwb,
+    Lab,
+    Lch,
+    Oklab,
+    Oklch,
+    ColorRgb,
+    ColorXyz,
+}
+
+fn parse_rgb_function_or_relative<'i>(
+    input: &mut Parser<'i, '_>,
+    color_mix_depth: usize,
+) -> Result<ParsedColor, ParseError<'i, ()>> {
+    let start = input.state();
+    if input.try_parse(|i| i.expect_ident_matching("from")).is_ok() {
+        parse_relative_color_after_from(input, RelativeColorKind::Rgb, color_mix_depth)
+    } else {
+        input.reset(&start);
+        parse_rgb_function(input)
+    }
+}
+
+fn parse_hsl_function_or_relative<'i>(
+    input: &mut Parser<'i, '_>,
+    color_mix_depth: usize,
+) -> Result<ParsedColor, ParseError<'i, ()>> {
+    let start = input.state();
+    if input.try_parse(|i| i.expect_ident_matching("from")).is_ok() {
+        parse_relative_color_after_from(input, RelativeColorKind::Hsl, color_mix_depth)
+    } else {
+        input.reset(&start);
+        parse_hsl_function(input)
+    }
+}
+
+fn parse_hwb_function_or_relative<'i>(
+    input: &mut Parser<'i, '_>,
+    color_mix_depth: usize,
+) -> Result<ParsedColor, ParseError<'i, ()>> {
+    let start = input.state();
+    if input.try_parse(|i| i.expect_ident_matching("from")).is_ok() {
+        parse_relative_color_after_from(input, RelativeColorKind::Hwb, color_mix_depth)
+    } else {
+        input.reset(&start);
+        parse_hwb_function(input)
+    }
+}
+
+fn parse_lab_function_or_relative<'i>(
+    input: &mut Parser<'i, '_>,
+    function: LabFunction,
+    color_mix_depth: usize,
+) -> Result<ParsedColor, ParseError<'i, ()>> {
+    let start = input.state();
+    let relative_kind = match function {
+        LabFunction::Lab => RelativeColorKind::Lab,
+        LabFunction::Lch => RelativeColorKind::Lch,
+        LabFunction::Oklab => RelativeColorKind::Oklab,
+        LabFunction::Oklch => RelativeColorKind::Oklch,
+    };
+    if input.try_parse(|i| i.expect_ident_matching("from")).is_ok() {
+        parse_relative_color_after_from(input, relative_kind, color_mix_depth)
+    } else {
+        input.reset(&start);
+        parse_lab_function(input, function)
+    }
+}
+
+fn parse_color_function_or_relative<'i>(
+    input: &mut Parser<'i, '_>,
+    color_mix_depth: usize,
+) -> Result<ParsedColor, ParseError<'i, ()>> {
+    let start = input.state();
+    if input.try_parse(|i| i.expect_ident_matching("from")).is_ok() {
+        parse_relative_color_after_from(input, RelativeColorKind::ColorRgb, color_mix_depth)
+    } else {
+        input.reset(&start);
+        parse_color_function(input)
+    }
+}
+
+fn relative_kind_for_color_space(name: &str) -> Option<RelativeColorKind> {
+    match name.to_ascii_lowercase().as_str() {
+        "srgb" | "srgb-linear" | "a98-rgb" | "display-p3" | "display-p3-linear" | "rec2020"
+        | "prophoto-rgb" => Some(RelativeColorKind::ColorRgb),
+        "xyz" | "xyz-d50" | "xyz-d65" => Some(RelativeColorKind::ColorXyz),
+        _ => None,
+    }
+}
+
+fn relative_ident_allowed(kind: RelativeColorKind, name: &str) -> bool {
+    match kind {
+        RelativeColorKind::Rgb | RelativeColorKind::ColorRgb => {
+            matches!(name, "r" | "g" | "b" | "alpha")
+        }
+        RelativeColorKind::Alpha => name == "alpha",
+        RelativeColorKind::Hsl => matches!(name, "h" | "s" | "l" | "alpha"),
+        RelativeColorKind::Hwb => matches!(name, "h" | "w" | "b" | "alpha"),
+        RelativeColorKind::Lab | RelativeColorKind::Oklab => {
+            matches!(name, "l" | "a" | "b" | "alpha")
+        }
+        RelativeColorKind::Lch | RelativeColorKind::Oklch => {
+            matches!(name, "l" | "c" | "h" | "alpha")
+        }
+        RelativeColorKind::ColorXyz => matches!(name, "x" | "y" | "z" | "alpha"),
+    }
+}
+
+fn relative_component_is_hue(kind: RelativeColorKind, index: usize) -> bool {
+    match kind {
+        RelativeColorKind::Hsl | RelativeColorKind::Hwb => index == 0,
+        RelativeColorKind::Lch | RelativeColorKind::Oklch => index == 2,
+        _ => false,
+    }
+}
+
+fn relative_math_function(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "calc"
+            | "min"
+            | "max"
+            | "clamp"
+            | "sign"
+            | "abs"
+            | "round"
+            | "mod"
+            | "rem"
+            | "pow"
+            | "sqrt"
+            | "hypot"
+            | "log"
+            | "exp"
+            | "sin"
+            | "cos"
+            | "tan"
+            | "asin"
+            | "acos"
+            | "atan"
+            | "atan2"
+    )
+}
+
+fn relative_ident_math_type(
+    kind: RelativeColorKind,
+    _index: usize,
+    name: &str,
+) -> Option<ColorMathType> {
+    if relative_ident_allowed(kind, name) {
+        // Relative channel identifiers are exposed as unitless channel values.
+        // A percentage or angle can still be produced by multiplying/dividing
+        // them inside calc(), but it cannot be added directly to a number.
+        Some(ColorMathType::Number)
+    } else {
+        None
+    }
+}
+
+fn relative_math_expression_type<'i>(
+    input: &mut Parser<'i, '_>,
+    kind: RelativeColorKind,
+    index: usize,
+    allow_comma: bool,
+) -> Result<ColorMathType, ParseError<'i, ()>> {
+    let mut terms = Vec::new();
+    loop {
+        let token = match input.next() {
+            Ok(token) => token.clone(),
+            Err(_) => break,
+        };
+        match token {
+            Token::Number { .. } => terms.push(MathTerm::Value(ColorMathType::Number)),
+            Token::Percentage { .. } => terms.push(MathTerm::Value(ColorMathType::Percentage)),
+            Token::Dimension { ref unit, .. } => {
+                terms.push(MathTerm::Value(color_math_dimension_type(unit.as_ref())))
+            }
+            Token::Ident(ref name) if is_math_constant(name.as_ref()) => {
+                terms.push(MathTerm::Value(ColorMathType::Number));
+            }
+            Token::Ident(ref name) => terms.push(MathTerm::Value(
+                relative_ident_math_type(kind, index, name.as_ref())
+                    .unwrap_or(ColorMathType::Invalid),
+            )),
+            Token::Function(ref name) => {
+                let name_lower = name.as_ref().to_ascii_lowercase();
+                let function_type = if name_lower == "var" || name_lower == "env" {
+                    input.parse_nested_block(|nested| {
+                        consume_math_component_values(nested)?;
+                        Ok::<_, ParseError<'_, ()>>(ColorMathType::Unknown)
+                    })?
+                } else {
+                    let nested_allows_comma = matches!(
+                        name_lower.as_str(),
+                        "min" | "max" | "clamp" | "round" | "mod" | "rem" | "atan2"
+                    );
+                    let nested = input
+                        .parse_nested_block(|nested| {
+                            relative_math_expression_type(nested, kind, index, nested_allows_comma)
+                        })
+                        .unwrap_or(ColorMathType::Invalid);
+                    if !relative_math_function(name_lower.as_ref()) {
+                        ColorMathType::Invalid
+                    } else {
+                        match name_lower.as_str() {
+                            "calc" | "min" | "max" | "clamp" | "abs" | "round" | "mod" | "rem" => {
+                                nested
+                            }
+                            "sign" | "pow" | "sqrt" | "hypot" | "log" | "exp" | "sin" | "cos"
+                            | "tan" | "asin" | "acos" | "atan" | "atan2" => {
+                                if nested == ColorMathType::Invalid {
+                                    ColorMathType::Invalid
+                                } else {
+                                    ColorMathType::Number
+                                }
+                            }
+                            _ => ColorMathType::Invalid,
+                        }
+                    }
+                };
+                terms.push(MathTerm::Value(function_type));
+            }
+            Token::ParenthesisBlock => {
+                let nested = input
+                    .parse_nested_block(|nested| {
+                        relative_math_expression_type(nested, kind, index, false)
+                    })
+                    .unwrap_or(ColorMathType::Invalid);
+                terms.push(MathTerm::Value(nested));
+            }
+            Token::Delim('+' | '-' | '*' | '/') => {
+                if let Token::Delim(operator) = token {
+                    terms.push(MathTerm::Operator(operator));
+                }
+            }
+            Token::Comma if allow_comma => terms.push(MathTerm::Comma),
+            Token::WhiteSpace(_) | Token::Comment(_) => {}
+            _ => terms.push(MathTerm::Value(ColorMathType::Invalid)),
+        }
+    }
+    Ok(MathTermsParser::new(terms).parse_all(allow_comma))
+}
+
+fn parse_relative_component<'i>(
+    input: &mut Parser<'i, '_>,
+    kind: RelativeColorKind,
+    index: usize,
+) -> Result<(), ParseError<'i, ()>> {
+    let token = input.next()?.clone();
+    let is_hue = relative_component_is_hue(kind, index);
+    match token {
+        Token::Ident(ref name) if name.eq_ignore_ascii_case("none") => Ok(()),
+        Token::Ident(ref name) if relative_ident_allowed(kind, name.as_ref()) => Ok(()),
+        Token::Number { .. } => Ok(()),
+        Token::Percentage { .. } if !is_hue => Ok(()),
+        Token::Dimension { ref unit, .. } if is_angle_unit(unit.as_ref()) && is_hue => Ok(()),
+        Token::Function(ref name)
+            if relative_math_function(name.as_ref())
+                || name.eq_ignore_ascii_case("var")
+                || name.eq_ignore_ascii_case("env") =>
+        {
+            let name_lower = name.as_ref().to_ascii_lowercase();
+            let value = if name_lower == "var" || name_lower == "env" {
+                input.parse_nested_block(|nested| {
+                    consume_math_component_values(nested)?;
+                    Ok::<_, ParseError<'_, ()>>(ColorMathType::Unknown)
+                })?
+            } else {
+                let allows_comma = matches!(
+                    name_lower.as_str(),
+                    "min" | "max" | "clamp" | "round" | "mod" | "rem" | "atan2"
+                );
+                input
+                    .parse_nested_block(|nested| {
+                        relative_math_expression_type(nested, kind, index, allows_comma)
+                    })
+                    .map_err(|_| input.new_custom_error(()))?
+            };
+            let allowed = matches!(value, ColorMathType::Unknown)
+                || if is_hue {
+                    matches!(value, ColorMathType::Number | ColorMathType::Angle)
+                } else {
+                    matches!(value, ColorMathType::Number | ColorMathType::Percentage)
+                };
+            if allowed {
+                Ok(())
+            } else {
+                Err(input.new_custom_error(()))
+            }
+        }
+        _ => Err(input.new_custom_error(())),
+    }
+}
+
+fn parse_relative_var_origin<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<ParsedColor, ParseError<'i, ()>> {
+    let token = input.next()?.clone();
+    let Token::Function(ref name) = token else {
+        return Err(input.new_custom_error(()));
+    };
+    if !name.eq_ignore_ascii_case("var") {
+        return Err(input.new_custom_error(()));
+    }
+    input.parse_nested_block(|nested| {
+        let custom_name = nested.expect_ident()?.clone();
+        if !custom_name.as_ref().starts_with("--") {
+            return Err(nested.new_custom_error(()));
+        }
+        if nested.try_parse(|i| i.expect_comma()).is_ok() {
+            // The fallback is a component-value list. Its eventual color
+            // validity is context-dependent, but it must not be empty syntax.
+            let fallback_start = nested.state();
+            consume_math_component_values(nested)?;
+            if nested.state().position() == fallback_start.position() {
+                return Err(nested.new_custom_error(()));
+            }
+        }
+        nested
+            .expect_exhausted()
+            .map_err(|_| nested.new_custom_error(()))?;
+        Ok(())
+    })?;
+    Ok(ParsedColor::from_css_color(CssColor::BLACK))
+}
+
+fn parse_relative_origin<'i>(
+    input: &mut Parser<'i, '_>,
+    color_mix_depth: usize,
+) -> Result<ParsedColor, ParseError<'i, ()>> {
+    let origin_start = input.state();
+    if let Some(origin) = parse_color_float(input, color_mix_depth) {
+        Ok(origin)
+    } else {
+        input.reset(&origin_start);
+        parse_relative_var_origin(input)
+    }
+}
+
+fn parse_relative_color_after_from<'i>(
+    input: &mut Parser<'i, '_>,
+    kind: RelativeColorKind,
+    color_mix_depth: usize,
+) -> Result<ParsedColor, ParseError<'i, ()>> {
+    let origin = parse_relative_origin(input, color_mix_depth)?;
+    let kind = if matches!(kind, RelativeColorKind::ColorRgb) {
+        let target = input.expect_ident()?.clone();
+        relative_kind_for_color_space(target.as_ref()).ok_or_else(|| input.new_custom_error(()))?
+    } else {
+        kind
+    };
+    for index in 0..3 {
+        parse_relative_component(input, kind, index)?;
+    }
+    if input.try_parse(|i| i.expect_delim('/')).is_ok() {
+        parse_relative_component(input, kind, 3)?;
+    }
+    // The context-free style model cannot retain a relative expression or
+    // resolve currentColor/variables. Returning the origin preserves the
+    // existing bounded CssColor representation while the grammar above does
+    // the important parse-time validation.
+    Ok(origin)
+}
+
 /// `<color-space>` (CSS Color 4 §13.2 "Color Space for Interpolation"
 /// <https://www.w3.org/TR/css-color-4/#color-interpolation-method>)。
-/// 本 crate の color engine が実際に実装する subset に限定している —
-/// `hsl`/`hwb`/`xyz` 系/`display-p3`/`a98-rgb`/`prophoto-rgb`/`rec2020` は
-/// 対応する `<color>` function parser 自体が本 crate に無いため
-/// ([`parse_color`] doc の form 一覧参照)、interpolation space としても
-/// 受理しない。
+/// `color-mix()`では、bounded sRGB modelへ変換できる interpolation-space
+/// identifiers も構文上受理する。`hsl`/`hwb` は円筒座標で補間して sRGB へ戻し、
+/// wide-gamut identifiers は既存の bounded sRGB fallback を使う。Gradient
+/// callers は CSS Images 側の実装範囲を保つため、`hsl`/`hwb` と wide-gamut
+/// spaces を別途拒否する。
 ///
 /// `color-mix()` (本 type の元々の用途、[`parse_mix_color_space`]) と
 /// CSS Images 4 gradient function 群の `in <color-space>
@@ -10227,6 +11232,10 @@ pub enum MixColorSpace {
     Srgb,
     /// `srgb-linear` — linear-light sRGB。
     SrgbLinear,
+    /// `hsl` — cylindrical HSL coordinates with hue interpolation。
+    Hsl,
+    /// `hwb` — cylindrical HWB coordinates with hue interpolation。
+    Hwb,
     /// `lab` — CIE Lab (rectangular)。
     Lab,
     /// `lch` — CIE LCH (polar、[`HueInterpolationMethod`] を受理)。
@@ -10475,6 +11484,14 @@ impl ParsedColor {
                 normalize_polar(self.coordinates, true, self.polar_hue_missing),
                 self.polar_hue_missing,
             ),
+            (_, MixColorSpace::Hsl) => {
+                let coordinates = srgb_to_hsl(self.to_srgb_for_interpolation());
+                (coordinates, coordinates[1] == 0.0)
+            }
+            (_, MixColorSpace::Hwb) => {
+                let coordinates = srgb_to_hwb(self.to_srgb_for_interpolation());
+                (coordinates, coordinates[1] + coordinates[2] >= 1.0)
+            }
             (_, MixColorSpace::Srgb) => (self.to_srgb_for_interpolation(), false),
             (_, MixColorSpace::SrgbLinear) => (self.to_srgb_linear(), false),
             (_, MixColorSpace::Lab) => (self.to_lab(), false),
@@ -10504,6 +11521,7 @@ impl From<MixColorSpace> for ParsedColorSpace {
         match space {
             MixColorSpace::Srgb => Self::Srgb,
             MixColorSpace::SrgbLinear => Self::SrgbLinear,
+            MixColorSpace::Hsl | MixColorSpace::Hwb => Self::Srgb,
             MixColorSpace::Lab => Self::Lab,
             MixColorSpace::Lch => Self::Lch,
             MixColorSpace::Oklab => Self::Oklab,
@@ -10617,53 +11635,139 @@ fn parse_lab_function<'i>(
 }
 
 fn parse_hsl_function<'i>(input: &mut Parser<'i, '_>) -> Result<ParsedColor, ParseError<'i, ()>> {
-    let hue = parse_hue(input)?;
-    let saturation = if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
-        0.0
-    } else if let Ok(pct) = input.try_parse(|i| expect_percentage_stable(i)) {
-        pct.clamp(0.0, 1.0)
-    } else {
-        expect_number_stable(input)? / 100.0
-    };
-    let lightness = if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
-        0.0
-    } else if let Ok(pct) = input.try_parse(|i| expect_percentage_stable(i)) {
-        pct.clamp(0.0, 1.0)
-    } else {
-        expect_number_stable(input)? / 100.0
-    };
+    // CSS Color 4 keeps the legacy comma form alongside the modern
+    // space-separated form. The legacy grammar requires percentage
+    // saturation/lightness and does not permit `none`.
+    let hue_is_none = input.try_parse(|i| i.expect_ident_matching("none")).is_ok();
+    let hue = if hue_is_none { 0.0 } else { parse_hue(input)? };
+    if input.try_parse(|i| i.expect_comma()).is_ok() {
+        if hue_is_none {
+            return Err(input.new_custom_error(()));
+        }
+        let saturation = expect_percentage_stable(input)?.clamp(0.0, 1.0);
+        input.expect_comma()?;
+        let lightness = expect_percentage_stable(input)?.clamp(0.0, 1.0);
+        let alpha = if input.try_parse(|i| i.expect_comma()).is_ok() {
+            parse_alpha_value(input)?
+        } else {
+            1.0
+        };
+        return Ok(ParsedColor::from_coordinates(
+            ParsedColorSpace::Srgb,
+            hsl_to_srgb(hue, saturation, lightness),
+            alpha,
+        ));
+    }
+
+    let saturation = parse_hsl_percentage_or_number(input)?;
+    let lightness = parse_hsl_percentage_or_number(input)?;
     let alpha = parse_optional_modern_alpha(input)?;
-    // Minimal conversion: treat as srgb black for PASS counting; accurate conversion not needed for parsing valid check.
-    // Use hue/sat/light to produce some value but not critical.
-    let _ = (hue, saturation, lightness);
     Ok(ParsedColor::from_coordinates(
         ParsedColorSpace::Srgb,
-        [lightness, lightness, lightness],
+        hsl_to_srgb(hue, saturation, lightness),
         alpha,
     ))
 }
 
+fn parse_hsl_percentage_or_number<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<f32, ParseError<'i, ()>> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        Ok(0.0)
+    } else if let Ok((kind, value)) =
+        input.try_parse(|i| parse_color_math_value(i, ColorMathContext::NumberOrPercentage))
+    {
+        Ok(if kind == ColorMathType::Percentage {
+            value.clamp(0.0, 1.0)
+        } else {
+            (value / 100.0).clamp(0.0, 1.0)
+        })
+    } else if let Ok(pct) = input.try_parse(|i| expect_percentage_stable(i)) {
+        Ok(pct.clamp(0.0, 1.0))
+    } else {
+        Ok((expect_number_stable(input)? / 100.0).clamp(0.0, 1.0))
+    }
+}
+
+fn hsl_to_srgb(hue: f32, saturation: f32, lightness: f32) -> [f32; 3] {
+    if saturation == 0.0 {
+        return [lightness; 3];
+    }
+    let q = if lightness < 0.5 {
+        lightness * (1.0 + saturation)
+    } else {
+        lightness + saturation - lightness * saturation
+    };
+    let p = 2.0 * lightness - q;
+    let hue_to_channel = |mut t: f32| {
+        t = t.rem_euclid(1.0);
+        if t < 1.0 / 6.0 {
+            p + (q - p) * 6.0 * t
+        } else if t < 1.0 / 2.0 {
+            q
+        } else if t < 2.0 / 3.0 {
+            p + (q - p) * (2.0 / 3.0 - t) * 6.0
+        } else {
+            p
+        }
+    };
+    [
+        hue_to_channel(hue / (2.0 * std::f32::consts::PI) + 1.0 / 3.0),
+        hue_to_channel(hue / (2.0 * std::f32::consts::PI)),
+        hue_to_channel(hue / (2.0 * std::f32::consts::PI) - 1.0 / 3.0),
+    ]
+}
+
+fn srgb_to_hsl(rgb: [f32; 3]) -> [f32; 3] {
+    let [r, g, b] = rgb.map(|component| component.clamp(0.0, 1.0));
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = max - min;
+    let lightness = (max + min) * 0.5;
+    if delta == 0.0 {
+        return [0.0, 0.0, lightness];
+    }
+    let saturation = delta / (1.0 - (2.0 * lightness - 1.0).abs());
+    let hue_degrees = if max == r {
+        60.0 * ((g - b) / delta).rem_euclid(6.0)
+    } else if max == g {
+        60.0 * ((b - r) / delta + 2.0)
+    } else {
+        60.0 * ((r - g) / delta + 4.0)
+    };
+    [hue_degrees.to_radians(), saturation, lightness]
+}
+
+fn srgb_to_hwb(rgb: [f32; 3]) -> [f32; 3] {
+    let rgb = rgb.map(|component| component.clamp(0.0, 1.0));
+    let [hue, _, _] = srgb_to_hsl(rgb);
+    [
+        hue,
+        rgb[0].min(rgb[1]).min(rgb[2]),
+        1.0 - rgb[0].max(rgb[1]).max(rgb[2]),
+    ]
+}
+
+fn hwb_to_srgb(hue: f32, whiteness: f32, blackness: f32) -> [f32; 3] {
+    let whiteness = whiteness.clamp(0.0, 1.0);
+    let blackness = blackness.clamp(0.0, 1.0);
+    if whiteness + blackness >= 1.0 {
+        let gray = whiteness / (whiteness + blackness);
+        [gray; 3]
+    } else {
+        let scale = 1.0 - whiteness - blackness;
+        hsl_to_srgb(hue, 1.0, 0.5).map(|channel| channel * scale + whiteness)
+    }
+}
+
 fn parse_hwb_function<'i>(input: &mut Parser<'i, '_>) -> Result<ParsedColor, ParseError<'i, ()>> {
     let hue = parse_hue(input)?;
-    let whiteness = if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
-        0.0
-    } else if let Ok(pct) = input.try_parse(|i| expect_percentage_stable(i)) {
-        pct.clamp(0.0, 1.0)
-    } else {
-        expect_number_stable(input)? / 100.0
-    };
-    let blackness = if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
-        0.0
-    } else if let Ok(pct) = input.try_parse(|i| expect_percentage_stable(i)) {
-        pct.clamp(0.0, 1.0)
-    } else {
-        expect_number_stable(input)? / 100.0
-    };
+    let whiteness = parse_hsl_percentage_or_number(input)?;
+    let blackness = parse_hsl_percentage_or_number(input)?;
     let alpha = parse_optional_modern_alpha(input)?;
-    let _ = (hue, whiteness, blackness);
     Ok(ParsedColor::from_coordinates(
         ParsedColorSpace::Srgb,
-        [0.5, 0.5, 0.5],
+        hwb_to_srgb(hue, whiteness, blackness),
         alpha,
     ))
 }
@@ -10689,21 +11793,23 @@ fn parse_color_mix_stop<'i>(
 /// `in <color-space> <hue-interpolation-method>?` (CSS Color 4 §13.2
 /// "Color Space for Interpolation" — [`MixColorSpace`] doc参照) の共通
 /// parse + validation。`<hue-interpolation-method>` は polar な
-/// `<color-space>` (`Lch`/`Oklch`) にのみ許され、省略時は
-/// [`HueInterpolationMethod::Shorter`]がdefault — この 2 点は
-/// `color-mix()` ([`parse_color_mix_function`]) と gradient の
+/// `<color-space>` にのみ許され、省略時は
+/// [`HueInterpolationMethod::Shorter`]がdefault。`allow_hsl_hwb` は
+/// `color-mix()` では true、gradient の
 /// `<color-interpolation-method>` ([`parse_gradient_color_interpolation`])
-/// で全く同じ規則なので、呼び出し元固有の結果型 (`ParsedColor` /
-/// [`GradientColorInterpolation`]) を知らないこの共通 helper に集約する
-/// (両 caller は tuple から自分の型を組み立てるだけ)。
+/// では false とし、host grammar の実装範囲を保つ。
 fn parse_color_interpolation_method<'i>(
     input: &mut Parser<'i, '_>,
+    allow_hsl_hwb: bool,
 ) -> Result<(MixColorSpace, HueInterpolationMethod), ParseError<'i, ()>> {
     input.expect_ident_matching("in")?;
-    let color_space = parse_mix_color_space(input)?;
+    let color_space = parse_mix_color_space(input, allow_hsl_hwb)?;
     let explicit_hue_method = input.try_parse(parse_hue_interpolation_method).ok();
     if explicit_hue_method.is_some()
-        && !matches!(color_space, MixColorSpace::Lch | MixColorSpace::Oklch)
+        && !matches!(
+            color_space,
+            MixColorSpace::Hsl | MixColorSpace::Hwb | MixColorSpace::Lch | MixColorSpace::Oklch
+        )
     {
         return Err(input.new_custom_error(()));
     }
@@ -10717,53 +11823,124 @@ fn parse_color_mix_function<'i>(
     input: &mut Parser<'i, '_>,
     color_mix_depth: usize,
 ) -> Result<ParsedColor, ParseError<'i, ()>> {
-    let (color_space, hue_interpolation_method) = parse_color_interpolation_method(input)?;
-    input.expect_comma()?;
-
-    let (color_one, percentage_one) = parse_color_mix_stop(input, color_mix_depth)?;
-    input.expect_comma()?;
-    let (color_two, percentage_two) = parse_color_mix_stop(input, color_mix_depth)?;
-    if input.try_parse(|i| i.expect_comma()).is_ok() {
-        return Err(input.new_custom_error(()));
-    }
-    let (percentage_one, percentage_two) = match (percentage_one, percentage_two) {
-        (None, None) => (0.5, 0.5),
-        (Some(first), None) => (first, 1.0 - first),
-        (None, Some(second)) => (1.0 - second, second),
-        (Some(first), Some(second)) => (first, second),
-    };
-
-    let (weight_one, weight_two, alpha_multiplier) =
-        normalize_mix_percentages(percentage_one, percentage_two);
-    if weight_one + weight_two == 0.0 {
-        return Err(input.new_custom_error(()));
+    // CSS Color 5 defaults an omitted interpolation method to sRGB. Keep the
+    // shared helper strict for gradient callers, but make this color-mix
+    // shorthand explicit here (`color-mix(red, blue)`).
+    let interpolation_method = input.try_parse(|i| parse_color_interpolation_method(i, true));
+    let has_interpolation_method = interpolation_method.is_ok();
+    let (color_space, hue_interpolation_method) =
+        interpolation_method.unwrap_or((MixColorSpace::Srgb, HueInterpolationMethod::Shorter));
+    if has_interpolation_method {
+        input.expect_comma()?;
     }
 
-    let first = css_color_to_coordinates(color_one, color_space);
-    let second = css_color_to_coordinates(color_two, color_space);
-    let mixed = if hue_interpolation_method == HueInterpolationMethod::Shorter {
-        mix_coordinates(first, second, weight_one, weight_two, color_space)
+    // The current CSS Color 5 grammar accepts one or more color stops. Keep
+    // parsing until the enclosing function block is exhausted; a comma with
+    // no following stop naturally becomes an error rather than being silently
+    // accepted as a trailing comma.
+    let mut stops = vec![parse_color_mix_stop(input, color_mix_depth)?];
+    while input.try_parse(|i| i.expect_comma()).is_ok() {
+        stops.push(parse_color_mix_stop(input, color_mix_depth)?);
+    }
+
+    // A calc()-derived stop percentage is syntactically valid but cannot be
+    // evaluated in this context-free parser. Use a finite placeholder for the
+    // interpolation bookkeeping and keep the deferred marker so a placeholder
+    // zero cannot make an otherwise valid declaration fail at parse time.
+    let has_deferred_percentage = stops
+        .iter()
+        .any(|(_, percentage)| percentage.is_some_and(|value| !value.is_finite()));
+    let specified_sum: f32 = stops
+        .iter()
+        .filter_map(|(_, percentage)| percentage.filter(|value| value.is_finite()))
+        .sum();
+    let unspecified_count = stops
+        .iter()
+        .filter(|(_, percentage)| percentage.is_none())
+        .count();
+    let has_unspecified = unspecified_count != 0;
+    let mut raw_weights = Vec::with_capacity(stops.len());
+    if has_unspecified && specified_sum <= 1.0 {
+        let remainder = (1.0 - specified_sum) / unspecified_count as f32;
+        raw_weights.extend(stops.iter().map(|(_, percentage)| match percentage {
+            Some(value) if value.is_finite() => *value,
+            Some(_) => 1.0,
+            None => remainder,
+        }));
     } else {
-        mix_coordinates_with_hue(
-            first,
-            second,
-            weight_one,
-            weight_two,
-            color_space,
-            hue_interpolation_method,
-        )
+        raw_weights.extend(stops.iter().map(|(_, percentage)| match percentage {
+            Some(value) if value.is_finite() => *value,
+            Some(_) => 1.0,
+            None => 0.0,
+        }));
+    }
+    let raw_sum: f32 = raw_weights.iter().sum();
+    if raw_sum == 0.0 {
+        return Err(input.new_custom_error(()));
+    }
+    // If every stop was explicitly assigned a total below 100%, the missing
+    // portion is transparent. Otherwise normalize the interpolation weights
+    // to the full color contribution.
+    let alpha_multiplier = if !has_deferred_percentage && !has_unspecified && specified_sum < 1.0 {
+        specified_sum
+    } else {
+        1.0
     };
-    let coordinates = [mixed.first, mixed.second, mixed.third];
-    let parsed_space = color_space.into();
-    let lightness_boundary = propagated_lightness_boundary(
-        color_one,
-        color_two,
-        [weight_one, weight_two],
-        color_space,
-        mixed.first,
-        [first.first, second.first],
-    );
-    let polar_hue_missing = mixed.polar_hue_missing;
+    let weights: Vec<f32> = raw_weights.iter().map(|weight| weight / raw_sum).collect();
+
+    let first = stops[0].0;
+    let mut mixed = css_color_to_coordinates(first, color_space);
+    let mut accumulated_weight = weights[0];
+    for ((color, _), weight) in stops.iter().skip(1).zip(weights.iter().skip(1)) {
+        let next = css_color_to_coordinates(*color, color_space);
+        mixed = if hue_interpolation_method == HueInterpolationMethod::Shorter {
+            mix_coordinates(mixed, next, accumulated_weight, *weight, color_space)
+        } else {
+            mix_coordinates_with_hue(
+                mixed,
+                next,
+                accumulated_weight,
+                *weight,
+                color_space,
+                hue_interpolation_method,
+            )
+        };
+        accumulated_weight += *weight;
+    }
+
+    let lightness_boundary = if stops.len() == 2 {
+        let first = css_color_to_coordinates(stops[0].0, color_space);
+        let second = css_color_to_coordinates(stops[1].0, color_space);
+        propagated_lightness_boundary(
+            stops[0].0,
+            stops[1].0,
+            [weights[0], weights[1]],
+            color_space,
+            mixed.first,
+            [first.first, second.first],
+        )
+    } else {
+        None
+    };
+    let (parsed_space, coordinates, polar_hue_missing) = match color_space {
+        // HSL/HWB are represented as cylindrical interpolation coordinates
+        // while mixing, then converted back to the bounded sRGB model.
+        MixColorSpace::Hsl => (
+            ParsedColorSpace::Srgb,
+            hsl_to_srgb(mixed.first, mixed.second, mixed.third),
+            false,
+        ),
+        MixColorSpace::Hwb => (
+            ParsedColorSpace::Srgb,
+            hwb_to_srgb(mixed.first, mixed.second, mixed.third),
+            false,
+        ),
+        _ => (
+            color_space.into(),
+            [mixed.first, mixed.second, mixed.third],
+            mixed.polar_hue_missing,
+        ),
+    };
     Ok(ParsedColor::from_interpolation_coordinates_with_boundary(
         parsed_space,
         coordinates,
@@ -10790,15 +11967,29 @@ fn parse_hue_interpolation_method<'i>(
 
 fn parse_mix_color_space<'i>(
     input: &mut Parser<'i, '_>,
+    allow_hsl_hwb: bool,
 ) -> Result<MixColorSpace, ParseError<'i, ()>> {
     let name = input.expect_ident()?.clone();
-    match name.as_ref().to_ascii_lowercase().as_str() {
+    let name = name.as_ref().to_ascii_lowercase();
+    if allow_hsl_hwb && name == "hsl" {
+        return Ok(MixColorSpace::Hsl);
+    }
+    if allow_hsl_hwb && name == "hwb" {
+        return Ok(MixColorSpace::Hwb);
+    }
+    match name.as_str() {
         "srgb" => Ok(MixColorSpace::Srgb),
         "srgb-linear" => Ok(MixColorSpace::SrgbLinear),
         "lab" => Ok(MixColorSpace::Lab),
         "lch" => Ok(MixColorSpace::Lch),
         "oklab" => Ok(MixColorSpace::Oklab),
         "oklch" => Ok(MixColorSpace::Oklch),
+        // The bounded color model stores the result as sRGB. Accept the
+        // remaining CSS Color 4 interpolation-space identifiers for syntax
+        // coverage and use the same fallback as `parse_color_function` for
+        // wide-gamut endpoint spaces.
+        "a98-rgb" | "display-p3" | "display-p3-linear" | "rec2020" | "prophoto-rgb" | "xyz"
+        | "xyz-d50" | "xyz-d65" => Ok(MixColorSpace::Srgb),
         _ => Err(input.new_custom_error(())),
     }
 }
@@ -11057,23 +12248,19 @@ fn next_numeric_stable<'i, 't>(
 }
 
 fn parse_mix_percentage<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
+    if input
+        .try_parse(|i| parse_color_math_value(i, ColorMathContext::Percentage))
+        .is_ok()
+    {
+        // The exact weight is deferred. The caller treats NaN as a valid
+        // syntactic percentage and substitutes a bookkeeping weight.
+        return Ok(f32::NAN);
+    }
     let percentage = expect_percentage_stable(input)?;
     if (0.0..=1.0).contains(&percentage) {
         Ok(percentage)
     } else {
         Err(input.new_custom_error(()))
-    }
-}
-
-fn normalize_mix_percentages(first: f32, second: f32) -> (f32, f32, f32) {
-    let sum = first + second;
-    if sum == 0.0 {
-        return (0.0, 0.0, 0.0);
-    }
-    if sum > 1.0 {
-        (first / sum, second / sum, 1.0)
-    } else {
-        (first / sum, second / sum, sum)
     }
 }
 
@@ -11275,7 +12462,13 @@ fn lightness_boundary_matches(
         (MixColorSpace::Lab | MixColorSpace::Lch, LightnessBoundary::Upper) => 100.0,
         (MixColorSpace::Oklab | MixColorSpace::Oklch, LightnessBoundary::Lower) => 0.0,
         (MixColorSpace::Oklab | MixColorSpace::Oklch, LightnessBoundary::Upper) => 1.0,
-        (MixColorSpace::Srgb | MixColorSpace::SrgbLinear, _) => return false,
+        (
+            MixColorSpace::Srgb
+            | MixColorSpace::SrgbLinear
+            | MixColorSpace::Hsl
+            | MixColorSpace::Hwb,
+            _,
+        ) => return false,
     };
     (lightness - expected).abs() <= 4.0 * f32::EPSILON * expected.abs().max(1.0)
 }
@@ -11286,6 +12479,11 @@ fn parse_color_component<'i>(
 ) -> Result<f32, ParseError<'i, ()>> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Ok(0.0);
+    }
+    if let Ok((_, value)) =
+        input.try_parse(|i| parse_color_math_value(i, ColorMathContext::NumberOrPercentage))
+    {
+        return Ok(value * percentage_scale);
     }
     if let Ok(percentage) = input.try_parse(|i| expect_percentage_stable(i)) {
         return Ok(percentage * percentage_scale);
@@ -11300,7 +12498,15 @@ fn parse_lightness<'i>(
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Ok(0.0);
     }
-    let value = if let Ok(percentage) = input.try_parse(|i| expect_percentage_stable(i)) {
+    let value = if let Ok((kind, value)) =
+        input.try_parse(|i| parse_color_math_value(i, ColorMathContext::NumberOrPercentage))
+    {
+        if kind == ColorMathType::Percentage && !is_oklab {
+            value * 100.0
+        } else {
+            value
+        }
+    } else if let Ok(percentage) = input.try_parse(|i| expect_percentage_stable(i)) {
         if is_oklab {
             percentage
         } else {
@@ -11316,8 +12522,21 @@ fn parse_lightness<'i>(
     })
 }
 
+fn is_angle_unit(unit: &str) -> bool {
+    matches!(
+        unit.to_ascii_lowercase().as_str(),
+        "deg" | "grad" | "rad" | "turn"
+    )
+}
+
 fn parse_hue<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Ok(0.0);
+    }
+    if input
+        .try_parse(|i| parse_color_math_value(i, ColorMathContext::NumberOrAngle))
+        .is_ok()
+    {
         return Ok(0.0);
     }
     match next_numeric_stable(input)? {
@@ -11355,6 +12574,11 @@ fn parse_optional_modern_alpha<'i>(input: &mut Parser<'i, '_>) -> Result<f32, Pa
     }
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Ok(0.0);
+    }
+    if let Ok((_, value)) =
+        input.try_parse(|i| parse_color_math_value(i, ColorMathContext::NumberOrPercentage))
+    {
+        return Ok(value.clamp(0.0, 1.0));
     }
     if let Ok(percentage) = input.try_parse(|i| expect_percentage_stable(i)) {
         return Ok(percentage.clamp(0.0, 1.0));
@@ -11506,36 +12730,40 @@ fn mix_coordinates_with_hue(
             (weighted_one + weighted_two) / alpha
         }
     };
-    let (second_component, third_component) =
-        if matches!(space, MixColorSpace::Lch | MixColorSpace::Oklch) {
-            let hue = if first.polar_hue_missing != second.polar_hue_missing {
-                if first.polar_hue_missing {
-                    second.third
-                } else {
-                    first.third
-                }
-            } else if weight_one == 0.0 {
+    let (second_component, third_component) = if matches!(
+        space,
+        MixColorSpace::Hsl | MixColorSpace::Hwb | MixColorSpace::Lch | MixColorSpace::Oklch
+    ) {
+        let hue = if first.polar_hue_missing != second.polar_hue_missing {
+            if first.polar_hue_missing {
                 second.third
-            } else if weight_two == 0.0 {
-                first.third
             } else {
-                interpolate_hue(
-                    first.third,
-                    second.third,
-                    weight_two,
-                    hue_interpolation_method,
-                )
-            };
-            (component(first.second, second.second), hue)
+                first.third
+            }
+        } else if weight_one == 0.0 {
+            second.third
+        } else if weight_two == 0.0 {
+            first.third
         } else {
-            (
-                component(first.second, second.second),
-                component(first.third, second.third),
+            interpolate_hue(
+                first.third,
+                second.third,
+                weight_two,
+                hue_interpolation_method,
             )
         };
+        (component(first.second, second.second), hue)
+    } else {
+        (
+            component(first.second, second.second),
+            component(first.third, second.third),
+        )
+    };
     let first_component = component(first.first, second.first);
-    let polar_hue_missing = matches!(space, MixColorSpace::Lch | MixColorSpace::Oklch)
-        && first.polar_hue_missing
+    let polar_hue_missing = matches!(
+        space,
+        MixColorSpace::Hsl | MixColorSpace::Hwb | MixColorSpace::Lch | MixColorSpace::Oklch
+    ) && first.polar_hue_missing
         && second.polar_hue_missing;
     ColorCoordinates {
         first: first_component,
@@ -11709,16 +12937,16 @@ fn parse_border_color(input: &mut Parser<'_, '_>) -> Option<BorderColor> {
 /// Legacy parser は color-mix() の endpoint を保持できるよう normalized f32 を返し、
 /// property value へ落とす時だけ [`rgb_f32_to_css_color`] で u8 化する。
 ///
-/// # Non-goals
+/// # Notes
 ///
-/// - Modern (space + slash) syntax `rgb(R G B / A)` は本 task 対象外。legacy
-///   と modern の mix は spec で禁止だが、本 helper は最初の channel の直後で
-///   `expect_comma` を要求するため modern syntax は fall-through で reject。
-/// - Fractional number channel (`rgb(127.5, 0, 0)`) は spec grammar 上 valid
-///   だが、`expect_integer` (整数 `int_value` 必須) を採用しているため drop
-///   — 未実装 (将来対応)、future task で `<number>` に緩める余地。
-/// - Alpha の `none` component は modern syntax で許容されるが、missing value を
-///   carry-forward できない本 parser では未対応として reject する。
+/// - Modern (space + slash) syntax `rgb(R G B / A)` is parsed before the
+///   legacy comma form. The two forms are not mixed.
+/// - Fractional channels and position-aware `calc()` values are retained as
+///   deferred syntax; the bounded parser uses zero placeholders until computed
+///   value resolution is available.
+/// - Alpha and channel `none` values are accepted syntactically and represented
+///   as zero in the bounded model; missing-value carry-forward remains a later
+///   computed-value concern.
 fn parse_rgb_function<'i>(input: &mut Parser<'i, '_>) -> Result<ParsedColor, ParseError<'i, ()>> {
     // Try modern space-separated syntax first (CSS Color 4): `rgb(R G B [/ A])`
     // where each channel may be `none`, `<number>`, or `<percentage>`.
@@ -11731,8 +12959,19 @@ fn parse_rgb_function<'i>(input: &mut Parser<'i, '_>) -> Result<ParsedColor, Par
     // share the same type (all numbers or all percentages).
     let (r, is_pct) = if let Ok(pct) = input.try_parse(|i| expect_percentage_stable(i)) {
         (pct.clamp(0.0, 1.0), true)
+    } else if let Ok((kind, value)) =
+        input.try_parse(|i| parse_color_math_value(i, ColorMathContext::NumberOrPercentage))
+    {
+        (
+            if kind == ColorMathType::Percentage {
+                value.clamp(0.0, 1.0)
+            } else {
+                clamp_rgb_number(value)
+            },
+            kind == ColorMathType::Percentage,
+        )
     } else {
-        (clamp_channel(input.expect_integer()?), false)
+        (clamp_rgb_number(expect_number_stable(input)?), false)
     };
     input.expect_comma()?;
     let g = parse_rgb_channel(input, is_pct)?;
@@ -11756,6 +12995,11 @@ fn parse_modern_channel<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseErro
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Ok(0.0);
     }
+    if let Ok((_, value)) =
+        input.try_parse(|i| parse_color_math_value(i, ColorMathContext::NumberOrPercentage))
+    {
+        return Ok(value.clamp(0.0, 1.0));
+    }
     if let Ok(pct) = input.try_parse(|i| expect_percentage_stable(i)) {
         return Ok(pct.clamp(0.0, 1.0));
     }
@@ -11768,6 +13012,11 @@ fn parse_modern_channel<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseErro
 fn parse_modern_alpha<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Ok(0.0);
+    }
+    if let Ok((_, value)) =
+        input.try_parse(|i| parse_color_math_value(i, ColorMathContext::NumberOrPercentage))
+    {
+        return Ok(value.clamp(0.0, 1.0));
     }
     if let Ok(pct) = input.try_parse(|i| expect_percentage_stable(i)) {
         return Ok(pct.clamp(0.0, 1.0));
@@ -11802,9 +13051,19 @@ fn parse_rgb_channel<'i>(
     is_pct: bool,
 ) -> Result<f32, ParseError<'i, ()>> {
     if is_pct {
+        if let Ok((_, value)) =
+            input.try_parse(|i| parse_color_math_value(i, ColorMathContext::Percentage))
+        {
+            return Ok(value.clamp(0.0, 1.0));
+        }
         Ok(expect_percentage_stable(input)?.clamp(0.0, 1.0))
     } else {
-        Ok(clamp_channel(input.expect_integer()?))
+        if let Ok((_, value)) =
+            input.try_parse(|i| parse_color_math_value(i, ColorMathContext::Number))
+        {
+            return Ok(clamp_rgb_number(value));
+        }
+        Ok(clamp_rgb_number(expect_number_stable(input)?))
     }
 }
 
@@ -11818,15 +13077,19 @@ fn parse_rgb_channel<'i>(
 /// [`parse_rgb_function`] の 1 番目 channel と対称の順序 (mix reject と同じ
 /// pattern で読める)。
 fn parse_alpha_value<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
-    if let Ok(pct) = input.try_parse(|i| expect_percentage_stable(i)) {
+    if let Ok((_, value)) =
+        input.try_parse(|i| parse_color_math_value(i, ColorMathContext::NumberOrPercentage))
+    {
+        Ok(value.clamp(0.0, 1.0))
+    } else if let Ok(pct) = input.try_parse(|i| expect_percentage_stable(i)) {
         Ok(pct.clamp(0.0, 1.0))
     } else {
         Ok(expect_number_stable(input)?.clamp(0.0, 1.0))
     }
 }
 
-fn clamp_channel(value: i32) -> f32 {
-    value.clamp(0, 255) as f32 / 255.0
+fn clamp_rgb_number(value: f32) -> f32 {
+    (value / 255.0).clamp(0.0, 1.0)
 }
 
 /// `<opacity-value> = <number> | <percentage>` (CSS Color 4 §3.3
@@ -18397,7 +19660,7 @@ fn parse_non_negative_length_percentage_res<'i>(
 fn parse_gradient_color_interpolation<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<GradientColorInterpolation, ParseError<'i, ()>> {
-    let (color_space, hue_method) = parse_color_interpolation_method(input)?;
+    let (color_space, hue_method) = parse_color_interpolation_method(input, false)?;
     Ok(GradientColorInterpolation {
         color_space,
         hue_method,
@@ -21192,13 +22455,11 @@ mod tests {
     }
 
     #[test]
-    fn color_parse_color_mix_rejects_wrong_stop_count() {
-        assert_eq!(parse_color_entire("color-mix(in srgb, red)"), None,);
-        assert_eq!(
-            parse_color_entire("color-mix(in srgb, red, blue, white)"),
-            None,
-        );
+    fn color_parse_color_mix_accepts_one_or_more_stops() {
+        assert!(parse_color_entire("color-mix(in srgb, red)").is_some());
+        assert!(parse_color_entire("color-mix(in srgb, red, blue, white)").is_some());
         assert!(parse_color_entire("color-mix(in srgb, red, blue)").is_some());
+        assert_eq!(parse_color_entire("color-mix(in srgb, red, )"), None);
     }
 
     #[test]
@@ -21261,13 +22522,38 @@ mod tests {
     }
 
     #[test]
-    fn color_parse_color_level_four_rejects_relative_from_syntax() {
+    fn color_parse_relative_color_syntax() {
         for source in [
             "color(from red srgb 1 0 0)",
             "lab(from red 50% 0 0)",
             "lch(from red 50% 0 0)",
             "oklab(from red 0.5 0 0)",
             "oklch(from red 50% 0 0)",
+        ] {
+            assert!(parse(source, "color").is_some(), "{source}");
+        }
+    }
+
+    #[test]
+    fn color_parse_relative_math_is_type_checked_before_deferral() {
+        for source in [
+            "rgb(from red calc(r + 1) g b)",
+            "rgb(from var(--color) calc(r + 1) g b)",
+            "rgb(from red min(r, 10) g b)",
+            "color-mix(in srgb, red calc(10%), blue)",
+        ] {
+            assert!(
+                matches!(parse(source, "color"), Some(PropertyValue::Deferred(_))),
+                "{source}"
+            );
+        }
+        for source in [
+            "rgb(calc(1px) 0 0)",
+            "rgb(0 0 0 / calc(1px))",
+            "rgb(from red calc(r + 1%) g b)",
+            "rgb(from red calc(r,g) g b)",
+            "rgb(from var(--color) red g b)",
+            "rgb(from var(--color) r 1deg b)",
         ] {
             assert_eq!(parse(source, "color"), None, "{source}");
         }
@@ -21621,9 +22907,16 @@ mod tests {
         // `none` は <color> grammar に含まれない spec-invalid keyword (task
         // Non-goals: spec-invalid → drop)。
         assert_eq!(parse("none", "background-color"), None);
-        // hsl() は CSS Color 4 spec-valid だが現状未対応 (task
-        // Non-goals: 非対応、CSS Color 4 拡張は defer)。
-        assert_eq!(parse("hsl(0, 100%, 50%)", "background-color"), None);
+        // Legacy comma-separated hsl() is a CSS Color 4-valid spelling.
+        assert_eq!(
+            parse("hsl(0, 100%, 50%)", "background-color"),
+            Some(PropertyValue::BackgroundColor(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            }))
+        );
     }
 
     #[test]
