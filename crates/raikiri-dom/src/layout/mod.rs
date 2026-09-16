@@ -3733,6 +3733,20 @@ fn east_asian_width_map()
     icu_properties::CodePointMapDataBorrowed::<icu_properties::props::EastAsianWidth>::new()
 }
 
+/// Whether `c` is a default-ignorable code point for segment-break
+/// neighbor selection, excluding U+200B whose explicit rule is handled by
+/// the caller.
+fn is_segment_break_ignorable(c: char) -> bool {
+    // U+200B has an explicit segment-break rule and must remain visible to
+    // the caller; other default-ignorable code points (variation selectors,
+    // soft hyphen, LRM, etc.) do not participate in the EAW neighbor test.
+    c != ZERO_WIDTH_SPACE
+        && icu_properties::CodePointSetData::new::<
+            icu_properties::props::DefaultIgnorableCodePoint,
+        >()
+        .contains(c)
+}
+
 /// Whether `c` counts as wide for break removal: East Asian Width
 /// Fullwidth/Wide/Halfwidth (Ambiguous excluded) and not Hangul (which
 /// the spec carves out even when wide, e.g. Hangul syllables).
@@ -3832,6 +3846,273 @@ fn edge_char(
                         return Some(ch);
                     }
                     continue;
+                }
+                _ => continue,
+            }
+        }
+        if doc.nodes[p].kind() == NodeKind::Element && is_inline_element_box(cascade, p) {
+            node = p;
+            continue;
+        }
+        return None;
+    }
+}
+
+/// Check one side of a text node for a neighboring whitespace-only node that
+/// contains a segment break. Unlike `whitespace_run_has_break`, this keeps
+/// the direction so a leading space prefix is not associated with a later,
+/// unrelated break in the same inline sequence.
+fn whitespace_edge_has_break(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    idx: usize,
+    dir: i8,
+) -> bool {
+    let Some(parent) = parent_of[idx] else {
+        return false;
+    };
+    let Some(pos) = doc.nodes[parent].children.iter().position(|&c| c == idx) else {
+        return false;
+    };
+    let mut i = pos as isize + dir as isize;
+    while i >= 0 && (i as usize) < doc.nodes[parent].children.len() {
+        let sibling = doc.nodes[parent].children[i as usize];
+        i += dir as isize;
+        if !doc.nodes[sibling].is_in_document() {
+            continue;
+        }
+        if doc.nodes[sibling].kind() == NodeKind::Element
+            && cascade.computed[sibling].display == DisplayValue::None
+        {
+            continue;
+        }
+        if doc.nodes[sibling].kind() != NodeKind::Text {
+            break;
+        }
+        let Some(sibling_text) = text_of(doc, sibling) else {
+            break;
+        };
+        if !sibling_text.chars().all(is_css_white_space) {
+            break;
+        }
+        if sibling_text.contains(['\n', '\r']) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Remove whitespace runs whose segment break is removable because of the
+/// significant characters on both sides. The ordinary collapse pass still
+/// handles all other runs; this narrow pre-pass only prevents it from
+/// turning a removable CJK break into a space after the parser combines the
+/// surrounding indentation and character into one text node.
+fn remove_removable_segment_break_runs(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    idx: usize,
+    s: &str,
+) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0usize;
+    while i < chars.len() {
+        if !is_css_white_space(chars[i]) {
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && is_css_white_space(chars[i]) {
+            i += 1;
+        }
+        let end = i;
+        let has_break = chars[start..end]
+            .iter()
+            .any(|&ch| matches!(ch, '\n' | '\r'))
+            || (start == 0 && whitespace_edge_has_break(doc, cascade, parent_of, idx, -1))
+            || (end == chars.len() && whitespace_edge_has_break(doc, cascade, parent_of, idx, 1));
+        if !has_break {
+            out.extend(chars[start..end].iter().copied());
+            continue;
+        }
+        let significant =
+            |ch: &&char| !is_css_white_space(**ch) && !is_segment_break_ignorable(**ch);
+        let before = chars[..start]
+            .iter()
+            .rev()
+            .find(significant)
+            .copied()
+            .or_else(|| edge_non_whitespace_char(doc, cascade, parent_of, idx, -1));
+        let after = chars[end..]
+            .iter()
+            .find(significant)
+            .copied()
+            .or_else(|| edge_non_whitespace_char(doc, cascade, parent_of, idx, 1));
+        let removable = before == Some(ZERO_WIDTH_SPACE)
+            || after == Some(ZERO_WIDTH_SPACE)
+            || matches!((before, after), (Some(a), Some(b)) if is_wide_for_break(a) && is_wide_for_break(b));
+        if !removable {
+            out.extend(chars[start..end].iter().copied());
+        }
+    }
+    out
+}
+
+/// Whether the contiguous text-node whitespace run around `idx` contains
+/// a segment break. This handles the common HTML-tokenizer shape where a
+/// run's spaces and character-reference LF tokens become separate siblings.
+/// A mixed text node is intentionally not crossed: its own collapse pass has
+/// already seen the complete text and must remain the owner of that run.
+fn whitespace_run_has_break(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    idx: usize,
+    text: &str,
+) -> bool {
+    if text.contains(['\n', '\r']) {
+        return true;
+    }
+    let Some(parent) = parent_of[idx] else {
+        return false;
+    };
+    let Some(pos) = doc.nodes[parent].children.iter().position(|&c| c == idx) else {
+        return false;
+    };
+    for dir in [-1isize, 1] {
+        let mut i = pos as isize + dir;
+        while i >= 0 && (i as usize) < doc.nodes[parent].children.len() {
+            let sibling = doc.nodes[parent].children[i as usize];
+            i += dir;
+            if !doc.nodes[sibling].is_in_document() {
+                continue;
+            }
+            if doc.nodes[sibling].kind() == NodeKind::Element
+                && cascade.computed[sibling].display == DisplayValue::None
+            {
+                continue;
+            }
+            if doc.nodes[sibling].kind() != NodeKind::Text {
+                break;
+            }
+            let Some(sibling_text) = text_of(doc, sibling) else {
+                break;
+            };
+            if !sibling_text.chars().all(is_css_white_space) {
+                break;
+            }
+            if sibling_text.contains(['\n', '\r']) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Find the nearest non-CSS-whitespace character at an element edge.
+///
+/// This is deliberately different from `deep_edge_char`: segment-break
+/// transformation has to look through the whole collapsible run, not merely
+/// at the first LF/space text node in that run. The HTML tokenizer commonly
+/// creates one text node per character reference, so a run such as
+/// `一些\n\n\n中文` is represented by several adjacent whitespace nodes.
+fn deep_edge_non_whitespace_char(
+    doc: &Document,
+    cascade: &CascadeResult,
+    elem: usize,
+    dir: i8,
+) -> Option<char> {
+    let kids = &doc.nodes[elem].children;
+    let range: Box<dyn Iterator<Item = usize>> = if dir < 0 {
+        Box::new((0..kids.len()).rev())
+    } else {
+        Box::new(0..kids.len())
+    };
+    for i in range {
+        let c = kids[i];
+        if !doc.nodes[c].is_in_document() {
+            continue;
+        }
+        match doc.nodes[c].kind() {
+            NodeKind::Text => {
+                let Some(t) = text_of(doc, c) else {
+                    continue;
+                };
+                let edge = if dir < 0 {
+                    t.chars()
+                        .rev()
+                        .find(|&ch| !is_css_white_space(ch) && !is_segment_break_ignorable(ch))
+                } else {
+                    t.chars()
+                        .find(|&ch| !is_css_white_space(ch) && !is_segment_break_ignorable(ch))
+                };
+                if edge.is_some() {
+                    return edge;
+                }
+            }
+            NodeKind::Element => {
+                if cascade.computed[c].display == DisplayValue::None {
+                    continue;
+                }
+                if let Some(ch) = deep_edge_non_whitespace_char(doc, cascade, c, dir) {
+                    return Some(ch);
+                }
+            }
+            _ => continue,
+        }
+    }
+    None
+}
+
+/// Directly neighboring non-whitespace character of a text node in reading
+/// order. CSS-whitespace-only text nodes are skipped so callers can evaluate
+/// one segment-break run even when the parser split it into many nodes.
+fn edge_non_whitespace_char(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    idx: usize,
+    dir: i8,
+) -> Option<char> {
+    let mut node = idx;
+    loop {
+        let p = parent_of[node]?;
+        let kids = &doc.nodes[p].children;
+        let pos = kids.iter().position(|&c| c == node)?;
+        let mut i = pos as isize + dir as isize;
+        while i >= 0 && (i as usize) < kids.len() {
+            let sib = kids[i as usize];
+            i += dir as isize;
+            if !doc.nodes[sib].is_in_document() {
+                continue;
+            }
+            match doc.nodes[sib].kind() {
+                NodeKind::Text => {
+                    let Some(t) = text_of(doc, sib) else {
+                        continue;
+                    };
+                    let edge = if dir < 0 {
+                        t.chars()
+                            .rev()
+                            .find(|&ch| !is_css_white_space(ch) && !is_segment_break_ignorable(ch))
+                    } else {
+                        t.chars()
+                            .find(|&ch| !is_css_white_space(ch) && !is_segment_break_ignorable(ch))
+                    };
+                    if edge.is_some() {
+                        return edge;
+                    }
+                }
+                NodeKind::Element => {
+                    if cascade.computed[sib].display == DisplayValue::None {
+                        continue;
+                    }
+                    if let Some(ch) = deep_edge_non_whitespace_char(doc, cascade, sib, dir) {
+                        return Some(ch);
+                    }
                 }
                 _ => continue,
             }
@@ -4052,42 +4333,27 @@ fn collapse_text_for_shaping(
     // it always had (multi-break collapse is pinned by WPT removable-2).
     let is_pre_line = matches!(ws, WhiteSpace::PreLine);
     // Lone-break fast path (`normal`/`nowrap` only): an all-whitespace
-    // node holding line feeds decides with direct-neighbor context instead
-    // of the blanket conversion below. CSS Text 3 §4.1.2: a break next to
-    // a zero-width space vanishes; next to a collapsible space the space
+    // node holding a segment-break run decides with direct-neighbor context
+    // instead of the blanket conversion below. CSS Text 3 §4.1.2: a break
+    // next to a zero-width space vanishes; next to a collapsible space the
+    // space
     // survives (migrate); in a multi-break run one space survives; between
     // two wide (Fullwidth/Wide/Halfwidth, non-Hangul) chars it vanishes;
     // otherwise one space survives. `pre-line` keeps its feeds for the
-    // shaper via the normal pipeline (dedupe carve-out above).
-    if !is_pre_line && s.contains('\n') && s.chars().all(is_css_white_space) {
-        // Run continuation first: if the previous relevant sibling's raw
-        // text already ends in whitespace, that node migrates this run's
-        // single space (covers `"a "` + `"\\n"`, `" "` + `"\\n"`,
-        // `"\\n"` + `"\\n"` alike). Without this the decision below
-        // would migrate a second space.
-        if let Some(p) = parent_of[idx]
-            && let Some(pos) = doc.nodes[p].children.iter().position(|&c| c == idx)
-        {
-            for &prev in doc.nodes[p].children[..pos].iter().rev() {
-                if !doc.nodes[prev].is_in_document() {
-                    continue;
-                }
-                if doc.nodes[prev].kind() == NodeKind::Element
-                    && cascade.computed[prev].display == DisplayValue::None
-                {
-                    continue;
-                }
-                if doc.nodes[prev].kind() == NodeKind::Text
-                    && text_of(doc, prev)
-                        .is_some_and(|t| t.chars().next_back().is_some_and(is_css_white_space))
-                {
-                    return CollapsedText {
-                        text: String::new(),
-                        migrate_count: 0,
-                    };
-                }
-                break;
-            }
+    // shaper via the normal pipeline (dedupe carve-out above). Mixed text
+    // nodes are handled by the removable-run pre-pass below.
+    if !is_pre_line
+        && s.chars().all(is_css_white_space)
+        && whitespace_run_has_break(doc, cascade, parent_of, idx, text)
+    {
+        // A segment-break run may be split into several whitespace text
+        // nodes by the HTML tokenizer. Let only its first node decide the
+        // result; otherwise each LF would independently migrate a space.
+        if edge_char(doc, cascade, parent_of, idx, -1).is_some_and(is_css_white_space) {
+            return CollapsedText {
+                text: String::new(),
+                migrate_count: 0,
+            };
         }
         let before = has_inline_adjacent(doc, cascade, parent_of, idx, -1);
         let after = has_inline_adjacent(doc, cascade, parent_of, idx, 1);
@@ -4097,65 +4363,17 @@ fn collapse_text_for_shaping(
                 migrate_count: 0,
             };
         }
-        if s.chars().filter(|&c| c == '\n').count() >= 2 {
-            return CollapsedText {
-                text: String::new(),
-                migrate_count: 1,
-            };
-        }
-        // Exactly one feed: direct neighbors (in-node spaces count;
-        // otherwise cross-node edge chars).
-        let pos = s.find('\n').unwrap_or(0);
-        let prev_in = s[..pos].chars().next_back();
-        let next_in = s[pos + 1..].chars().next();
-        let norm = |c: Option<char>| {
-            c.map(|d| match d {
-                '\t' => ' ',
-                '\r' => '\n',
-                _ => d,
-            })
-        };
-        let p = prev_in
-            .filter(|&d| d != ' ')
-            .map(Some)
-            .unwrap_or_else(|| norm(edge_char(doc, cascade, parent_of, idx, -1)));
-        // NOTE: in-node spaces around the break mean space-adjacency only
-        // when they are the DIRECT neighbors; `prev_in`/`next_in` above
-        // are exactly that (no skipping).
-        let n = next_in
-            .filter(|&d| d != ' ')
-            .map(Some)
-            .unwrap_or_else(|| norm(edge_char(doc, cascade, parent_of, idx, 1)));
-        // Re-check space adjacency with the in-node spaces included.
-        let p_space = prev_in == Some(' ') || p == Some(' ');
-        let n_space = next_in == Some(' ') || n == Some(' ');
+        // Skip all CSS whitespace nodes surrounding this run before applying
+        // the segment-break transformation rules. In particular, removable-3
+        // and removable-4 put ordinary spaces around every LF; those spaces
+        // are part of the same sequence and must not migrate before the wide
+        // character test runs.
+        let p = edge_non_whitespace_char(doc, cascade, parent_of, idx, -1);
+        let n = edge_non_whitespace_char(doc, cascade, parent_of, idx, 1);
         if p == Some(ZERO_WIDTH_SPACE) || n == Some(ZERO_WIDTH_SPACE) {
             return CollapsedText {
                 text: String::new(),
                 migrate_count: 0,
-            };
-        }
-        if p_space || n_space {
-            return CollapsedText {
-                text: String::new(),
-                migrate_count: 1,
-            };
-        }
-        // A break run spanning nodes collapses to one space: a
-        // PRECEDING break means an earlier node already migrates it (drop
-        // here); a FOLLOWING break migrates here and dedupes away there.
-        // WPT unremovable-2 pins this over true paragraph preservation,
-        // which has no coverage.
-        if p == Some('\n') {
-            return CollapsedText {
-                text: String::new(),
-                migrate_count: 0,
-            };
-        }
-        if n == Some('\n') {
-            return CollapsedText {
-                text: String::new(),
-                migrate_count: 1,
             };
         }
         if let (Some(a), Some(b)) = (p, n)
@@ -4172,6 +4390,12 @@ fn collapse_text_for_shaping(
             migrate_count: 1,
         };
     }
+
+    let s = if is_pre_line {
+        s
+    } else {
+        remove_removable_segment_break_runs(doc, cascade, parent_of, idx, &s)
+    };
     let chars_vec: Vec<char> = s.chars().collect();
     let mut merged = String::with_capacity(s.len());
     let mut in_spaces = false;
@@ -4805,9 +5029,8 @@ mod tests {
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
         let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
         let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
-        // Single node: interior break approximates as a space (narrow and
-        // wide alike — the shaper owns single-string rules; WPT
-        // removable-2 pins the multi-break collapse).
+        // Single-node wide neighbors also follow the segment-break rule;
+        // this is handled before the generic whitespace merge.
         let t = doc.append_text(p, "\u{FF24}\u{FF26}\n\u{FF24}\u{FF26}");
         // Split nodes around a lone break: wide/fullwidth neighbors drop
         // it (CSS Text 3 §4.1.2; WPT rules-001), narrow neighbors migrate
@@ -4842,7 +5065,7 @@ mod tests {
             )
         };
         let out = collapse(t, "\u{FF24}\u{FF26}\n\u{FF24}\u{FF26}");
-        assert_eq!(out.text, "\u{FF24}\u{FF26} \u{FF24}\u{FF26}");
+        assert_eq!(out.text, "\u{FF24}\u{FF26}\u{FF24}\u{FF26}");
         assert_eq!(out.migrate_count, 0);
         let out = collapse(wb, "\n");
         assert_eq!(out.text, "");
@@ -4851,6 +5074,60 @@ mod tests {
         assert_eq!(out.text, "");
         assert_eq!(out.migrate_count, 1);
         let _ = (w1, w2, n1, n2);
+    }
+
+    #[test]
+    fn collapse_segment_break_runs_skip_whitespace_and_ignorables() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let wide = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let _ = doc.append_text(wide, "\u{4e00}");
+        let _ = doc.append_text(wide, "\u{4e9b}");
+        let first_space = doc.append_text(wide, " ");
+        let first_break = doc.append_text(wide, "\n");
+        let second_break = doc.append_text(wide, "\n");
+        let last_space = doc.append_text(wide, " ");
+        let _ = doc.append_text(wide, "\u{4e2d}");
+        let _ = doc.append_text(wide, "\u{6587}");
+
+        let ignorable = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let _ = doc.append_text(ignorable, "葛");
+        let _ = doc.append_text(ignorable, "\u{00ad}");
+        let _ = doc.append_text(ignorable, "\n");
+        let ignorable_tail = doc.append_text(ignorable, "  葛");
+
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut parent_of = vec![None; doc.nodes.len()];
+        for idx in 0..doc.nodes.len() {
+            for &child in &doc.nodes[idx].children.clone() {
+                if child < parent_of.len() {
+                    parent_of[child] = Some(idx);
+                }
+            }
+        }
+        let collapse = |idx: usize| {
+            let text = text_of(&doc, idx).expect("text node");
+            collapse_text_for_shaping(
+                &doc,
+                &cr,
+                &parent_of,
+                idx,
+                text,
+                cr.computed[idx].white_space,
+            )
+        };
+
+        for idx in [first_space, first_break, second_break, last_space] {
+            let out = collapse(idx);
+            assert_eq!(out.text, "", "node {idx} unexpectedly shaped");
+            assert_eq!(out.migrate_count, 0, "node {idx} migrated a space");
+        }
+        assert_eq!(collapse(ignorable_tail).text, "葛");
     }
 
     #[test]

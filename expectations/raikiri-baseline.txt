@@ -550,13 +550,14 @@ css/css-tables/empty-table-height.html
 css/css-tables/height-distribution/percentage-sizing-of-table-cell-007.html
 css/css-tables/html-display-table.html
 css/css-tables/max-height-table.html
-# REMOVED 2026-09-15: css/css-tables/min-max-size-table-content-box.html — was a
-# vacuous pass while `font:` shorthand was dropped (both sides equally
-# unstyled). With font parsing live, inter-table whitespace text nodes render
-# ~37px struts (newline shaped as hard break; no white-space/segment-break
-# processing in layout — see raikiri-spike-1f6w) plus min/max interplay.
-# Re-pin with the strut fix. min-height growth itself works (min-height-table
-# passes); max correctly does not shrink below intrinsic (max-height-table).
+# REMOVED 2026-09-15: css/css-tables/min-max-size-table-content-box.html — the
+# inter-table whitespace is now collapsed at block boundaries (and removing
+# the source whitespace produces byte-identical output). The remaining diff is
+# unsupported inline-block shrink-wrap in the reference facsimile: its
+# `.table { display: inline-block }` boxes are bridged as full-width blocks.
+# Re-pin after inline-block/table shrink-wrap support lands. min-height growth
+# itself works (min-height-table passes); max correctly does not shrink below
+# intrinsic (max-height-table).
 css/css-tables/out-of-order-elements-collapsed-border.html
 css/css-tables/paint/col-paint-htb-rtl.html
 css/css-tables/paint/table-border-paint-caption-change.html
@@ -664,6 +665,13 @@ css/css-text/line-breaking/segment-break-transformation-unremovable-1.html
 css/css-text/line-breaking/segment-break-transformation-unremovable-2.html
 css/css-text/line-breaking/segment-break-transformation-unremovable-3.html
 css/css-text/line-breaking/segment-break-transformation-unremovable-4.html
+# --- css-text segment-break pin 2026-09-16 (multi-node whitespace runs and
+# default-ignorable neighbors, CSS Text 3 §4.1.2; exact 800x600) ---
+css/css-text/line-breaking/segment-break-transformation-ignorable-1.html
+css/css-text/line-breaking/segment-break-transformation-removable-1.html
+css/css-text/line-breaking/segment-break-transformation-removable-2.html
+css/css-text/line-breaking/segment-break-transformation-removable-3.html
+css/css-text/line-breaking/segment-break-transformation-removable-4.html
 css/css-text/overflow-wrap/overflow-wrap-004.html
 css/css-text/overflow-wrap/overflow-wrap-anywhere-fit-content-001.html
 css/css-text/overflow-wrap/overflow-wrap-break-word-fit-content-001.html
@@ -730,6 +738,9 @@ css/css-text/text-indent/text-indent-dynamic-hanging-001.html
 css/css-text/text-indent/text-indent-dynamic-hanging-002.html
 css/css-text/text-justify/text-justify-none-001.html
 css/css-text/text-transform/text-transform-capitalize-026.html
+# --- css-text whitespace pin 2026-09-16 (collapsible runs around abspos
+# inline content; exact 800x600, isolated in full css-text sweep) ---
+css/css-text/text-transform/text-transform-capitalize-034.html
 css/css-text/text-transform/text-transform-full-size-kana-005.html
 css/css-text/text-transform/text-transform-full-size-kana-006.html
 css/css-text/text-transform/text-transform-full-size-kana-007.html

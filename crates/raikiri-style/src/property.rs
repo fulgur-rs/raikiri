@@ -4673,6 +4673,12 @@ pub enum TextWrapMode {
     Nowrap,
 }
 
+/// `white-space` property value (CSS Text 3 §4).
+///
+/// All six keyword values are preserved through parsing and cascade. The
+/// downstream text shaper collapses source whitespace for `normal`, `nowrap`,
+/// and `pre-line`; `pre`, `pre-wrap`, and `break-spaces` preserve it, with
+/// `break-spaces` end-of-line occupancy still owned by line breaking.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WhiteSpace {
