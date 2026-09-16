@@ -226,9 +226,10 @@ pub use raikiri_dom::Document;
 // gap — 「型は名指しできるが値を一切構築できない」という construction-path
 // gap であり、shorthand 展開の挙動そのものは変えていない。
 pub use raikiri_style::{
-    Atom, CascadeResult, ComputedBorder, ComputedLength, ComputedLengthPercentage,
-    ComputedLengthPercentageOrAuto, ComputedLineHeight, ComputedValues, CssColor, DisplayValue,
-    Length, LengthOrAuto, Origin, PropertyValue, RuleTree, Sides,
+    AtRuleBody, AtRuleRecord, Atom, CascadeResult, ComputedBorder, ComputedLength,
+    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLineHeight, ComputedValues,
+    CssColor, CssRule, CssRuleKind, DisplayValue, Length, LengthOrAuto, Origin, PropertyValue,
+    QualifiedRuleRecord, RuleNode, RuleTree, Sides,
 };
 // `Border` / `BorderColor` / `BorderStyle` / `LineHeight` は raikiri-style
 // crate root では re-export されておらず
