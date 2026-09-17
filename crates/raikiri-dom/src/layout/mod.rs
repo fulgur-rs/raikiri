@@ -5614,6 +5614,25 @@ pub(crate) fn preshape_text(
         let mcv = nearest_block_container(doc, cascade, &parent_of, idx)
             .map(|b| &cascade.computed[b])
             .unwrap_or(cv);
+        // A page margin can leave a very narrow content strip while the
+        // document still paints overflowing inline text into that strip's
+        // neighboring page area.  Preserve the historical full-page shaping
+        // in that extreme case; otherwise the narrowed fragmentainer width
+        // creates an extra line that a page-level clip will remove only after
+        // it has changed the document's height.
+        let page_margin_overflow = page_width.is_finite()
+            && max_advance.is_finite()
+            && max_advance > 0.0
+            && page_width >= max_advance * 2.0;
+        let shape_advance = if page_width > max_advance
+            && (is_leading_body_text(doc, body_id, idx)
+                || has_out_of_flow_ancestor(parent_of[idx])
+                || page_margin_overflow)
+        {
+            page_width
+        } else {
+            max_advance
+        };
         jobs.push(Job {
             idx,
             text,
@@ -5626,14 +5645,7 @@ pub(crate) fn preshape_text(
             tab_size: cv.tab_size,
             white_space: cv.white_space,
             nowrap: cv.white_space == WhiteSpace::Nowrap || cv.text_wrap == TextWrapMode::Nowrap,
-            max_advance: if page_width > max_advance
-                && (is_leading_body_text(doc, body_id, idx)
-                    || has_out_of_flow_ancestor(parent_of[idx]))
-            {
-                page_width
-            } else {
-                max_advance
-            },
+            max_advance: shape_advance,
             metrics_family: family_str_of(mcv),
             metrics_size: mcv.font_size.px(),
             metrics_weight: mcv.font_weight,
@@ -5973,21 +5985,24 @@ pub fn layout_single_page(
     // is also used as the synthetic page root, so feeding that UA margin into
     // taffy would apply it twice to ordinary element children.  Keep the
     // computed value for the page cursor/paint walk and remove only the exact
-    // UA-default sides from the synthetic root style; author margins remain.
+    // UA-origin sides from the synthetic root style.  The origin metadata is
+    // needed because an authored `margin: 8px` is otherwise indistinguishable
+    // from the UA rule after value computation.
     {
         let used = cascade.computed[body_id].margin;
         let style_margin = &mut document.nodes[body_id].style.margin;
+        let non_ua = cascade.non_ua_margin_sides.get(body_id);
         let is_ua_default = |value: ComputedLengthPercentageOrAuto| matches!(value, ComputedLengthPercentageOrAuto::Px(px) if (px - 8.0).abs() <= 0.001);
-        if is_ua_default(used.top) {
+        if is_ua_default(used.top) && !non_ua.is_some_and(|sides| sides.top) {
             style_margin.top = LengthPercentageAuto::length(0.0);
         }
-        if is_ua_default(used.right) {
+        if is_ua_default(used.right) && !non_ua.is_some_and(|sides| sides.right) {
             style_margin.right = LengthPercentageAuto::length(0.0);
         }
-        if is_ua_default(used.bottom) {
+        if is_ua_default(used.bottom) && !non_ua.is_some_and(|sides| sides.bottom) {
             style_margin.bottom = LengthPercentageAuto::length(0.0);
         }
-        if is_ua_default(used.left) {
+        if is_ua_default(used.left) && !non_ua.is_some_and(|sides| sides.left) {
             style_margin.left = LengthPercentageAuto::length(0.0);
         }
     }
@@ -6167,21 +6182,13 @@ pub fn layout_pages_with_page_geometry(
         document.nodes[child_id].kind() == NodeKind::Text
             && document.nodes[child_id].unrounded_layout.size.height > 0.0
     });
-    let is_ua_default_margin = |value: ComputedLengthPercentageOrAuto| matches!(value, ComputedLengthPercentageOrAuto::Px(px) if (px - 8.0).abs() <= 0.001);
-    let used_body_margin = cascade.computed[body_id].margin;
-    let body_has_non_ua_margin = [
-        used_body_margin.top,
-        used_body_margin.right,
-        used_body_margin.bottom,
-        used_body_margin.left,
-    ]
-    .iter()
-    .copied()
-    .any(|value| !is_ua_default_margin(value));
-    let body_origin_is_manual = body_has_direct_text
-        && !body_has_element_child
-        && (body_has_canvas_background || body_has_non_ua_margin);
-    let body_margin_top = if body_origin_is_manual {
+    let body_top_is_non_ua = cascade
+        .non_ua_margin_sides
+        .get(body_id)
+        .is_some_and(|sides| sides.top);
+    let body_margin_top = if body_top_is_non_ua
+        || (body_has_direct_text && !body_has_element_child && body_has_canvas_background)
+    {
         match cascade.computed[body_id].margin.top {
             ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
             _ => 0.0,
