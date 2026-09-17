@@ -6296,15 +6296,16 @@ pub fn layout_pages(
         // describes the same boundary and must not create a blank page.
         let forced_break_at_page_start = forced_before && current_page > 0 && at_page_start;
 
+        let page_transition = saw_child
+            && (pending_break
+                || (forced_before && !forced_break_at_page_start)
+                || named_page_change
+                || avoid_page_overflow);
         if saw_child {
             // A break-after on the preceding box and a break-before (or named
             // page transition) on this box describe the same boundary, not two
             // blank pages.
-            if pending_break
-                || (forced_before && !forced_break_at_page_start)
-                || named_page_change
-                || avoid_page_overflow
-            {
+            if page_transition {
                 let natural_page = if effective_y.is_finite() && effective_y >= 0.0 {
                     (effective_y / page_step).floor() as u32
                 } else {
@@ -6342,6 +6343,16 @@ pub fn layout_pages(
                 current_page = target_page;
             } else if effective_y.is_finite() && effective_y >= 0.0 {
                 current_page = current_page.max((effective_y / page_step).floor() as u32);
+            }
+            // An inline direct child keeps its source-order inline x position
+            // in taffy's single pre-pagination layout. A forced page boundary
+            // starts a fresh page formatting context, so reset that box's
+            // inline origin before painting the next slice.
+            if page_transition
+                && candidate.is_direct_body_element
+                && matches!(computed.display, DisplayValue::Inline)
+            {
+                document.nodes[node_id].unrounded_layout.location.x = 0.0;
             }
         } else {
             // A forced break before the first class-A box does not manufacture
