@@ -130,6 +130,21 @@ impl PageBox {
         };
 
         (width, height) = apply_page_orientation(width, height, orientation);
+        // Viewport-unit expansion can leave an integer CSS length a few
+        // floating-point ulps away from that integer (for example
+        // `100vw` -> `480.00003px`).  Normalize only this tiny neighborhood so
+        // raster page dimensions do not grow by one pixel; genuine subpixel
+        // page sizes remain untouched.
+        let normalize_near_integer = |value: f32| {
+            let rounded = value.round();
+            if value.is_finite() && (value - rounded).abs() < 0.001 {
+                rounded
+            } else {
+                value
+            }
+        };
+        width = normalize_near_integer(width);
+        height = normalize_near_integer(height);
 
         if width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0 {
             Self { width, height }

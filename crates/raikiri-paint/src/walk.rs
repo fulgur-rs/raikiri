@@ -33,8 +33,9 @@ use peniko::{Color, Fill};
 use raikiri_dom::Document;
 use raikiri_style::property::{
     BackgroundImage, Border, BorderColor, BorderStyle, ContentComponent, CounterStyle, CssColor,
-    DisplayValue, FloatValue, Gradient, GradientStopColor, Length, LengthOrAuto, OverflowValue,
-    PositionValue, PropertyKey, PropertyValue, QuoteKeyword, Sides, TextAlign, VerticalAlign,
+    DisplayValue, FloatValue, Gradient, GradientStopColor, Length, LengthOrAuto, OutlineColor,
+    OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue, QuoteKeyword, Sides,
+    TextAlign, VerticalAlign,
 };
 use raikiri_style::{
     CascadeResult, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
@@ -74,12 +75,14 @@ pub(crate) fn paint_canvas_background(
     }
 
     if margins.is_zero() {
-        let color = page_color.or(canvas_color).unwrap_or(white);
-        fill_rect(
-            scene,
-            color,
-            kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64),
-        );
+        let page_rect = kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64);
+        // Keep the page and propagated canvas backgrounds as separate layers.
+        // A canvas color may be translucent; selecting it with `or` would
+        // discard the opaque page color instead of compositing over it.
+        fill_rect(scene, page_color.unwrap_or(white), page_rect);
+        if let Some(color) = canvas_color {
+            fill_rect(scene, color, page_rect);
+        }
         return;
     }
 
@@ -130,12 +133,14 @@ pub(crate) fn paint_root_element_border(
     );
 }
 
-/// Paint the page-context border around the paper edge.
+/// Paint the page-context border around the page content area.
 ///
 /// Page borders are ordinary `@page` declarations, but they do not belong to
 /// the document's node tree.  Resolve their four longhands here and reuse the
 /// element-border painter so page borders share style gating, colors, and
-/// double-border handling with normal boxes.
+/// double-border handling with normal boxes.  The outer border edge is inside
+/// the physical page margins; page padding and the border itself then inset
+/// ordinary document flow from that edge.
 pub(crate) fn paint_page_border(
     scene: &mut impl PaintScene,
     cascade: &CascadeResult,
@@ -204,13 +209,103 @@ pub(crate) fn paint_page_border(
             PropertyKey::BorderLeftColor,
         ),
     };
+    let margins = raikiri_dom::page_margins(cascade, page_box);
+    let border_box_width = (page_box.width - margins.left - margins.right).max(0.0);
+    let border_box_height = (page_box.height - margins.top - margins.bottom).max(0.0);
     paint_element_border(
         scene,
-        page_box.width,
-        page_box.height,
-        0.0,
-        0.0,
+        border_box_width,
+        border_box_height,
+        margins.left,
+        margins.top,
         &borders,
+        current_color,
+    );
+}
+
+/// Paint a solid `@page` outline around the page content box.
+///
+/// The outline is outside the page area and does not consume page margins.
+/// This minimal path covers the solid outline used by the page-box WPT tests;
+/// unsupported outline styles remain intentionally unpainted.
+pub(crate) fn paint_page_outline(
+    scene: &mut impl PaintScene,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+) {
+    let declarations = cascade.page.declarations();
+    if matches!(
+        declarations.get(&PropertyKey::Visibility),
+        Some(PropertyValue::Visibility(
+            raikiri_style::property::Visibility::Hidden
+        ))
+    ) {
+        return;
+    }
+    let Some(PropertyValue::OutlineWidth(width)) = declarations.get(&PropertyKey::OutlineWidth)
+    else {
+        return;
+    };
+    let Some(PropertyValue::OutlineStyle(style)) = declarations.get(&PropertyKey::OutlineStyle)
+    else {
+        return;
+    };
+    if !matches!(style, OutlineStyle::Solid) {
+        return;
+    }
+    let outline_width = length_to_px(*width, page_box.width, 16.0);
+    if outline_width <= 0.0 {
+        return;
+    }
+    let offset = match declarations.get(&PropertyKey::OutlineOffset) {
+        Some(PropertyValue::OutlineOffset(value)) => length_to_px(*value, page_box.width, 16.0),
+        _ => 0.0,
+    };
+    let margins = raikiri_dom::page_margins(cascade, page_box);
+    let area_width = (page_box.width - margins.left - margins.right).max(0.0);
+    let area_height = (page_box.height - margins.top - margins.bottom).max(0.0);
+    let outer_x = margins.left - offset - outline_width;
+    let outer_y = margins.top - offset - outline_width;
+    let outer_width = area_width + 2.0 * (offset + outline_width);
+    let outer_height = area_height + 2.0 * (offset + outline_width);
+    if outer_width <= 0.0 || outer_height <= 0.0 {
+        return;
+    }
+    let current_color = match declarations.get(&PropertyKey::Color) {
+        Some(PropertyValue::Color(color)) => *color,
+        _ => CssColor::BLACK,
+    };
+    let color = match declarations.get(&PropertyKey::OutlineColor) {
+        Some(PropertyValue::OutlineColor(OutlineColor::Resolved(color))) => {
+            BorderColor::Resolved(*color)
+        }
+        Some(PropertyValue::OutlineColor(OutlineColor::CurrentColor))
+        | Some(PropertyValue::OutlineColor(OutlineColor::Invert))
+        | None => BorderColor::Resolved(current_color),
+        _ => BorderColor::Resolved(current_color),
+    };
+    let mut border = Border::new();
+    border.width = Length::Px(outline_width);
+    border.style = BorderStyle::Solid;
+    border.color = color;
+    let border = resolve_border(
+        border,
+        ComputedLength(16.0),
+        None,
+        &ResolveContext::initial(),
+    );
+    paint_element_border(
+        scene,
+        outer_width,
+        outer_height,
+        outer_x,
+        outer_y,
+        &Sides {
+            top: border,
+            right: border,
+            bottom: border,
+            left: border,
+        },
         current_color,
     );
 }
@@ -1838,7 +1933,10 @@ pub(crate) fn paint_document(
                     // well would leak that color into the translated top/bottom
                     // margin on every page after the first; the canvas pass has
                     // already filled the content rectangle at page-local coords.
-                    if node_id != body_id || margins.is_zero() {
+                    if node_id != body_id {
+                        // The body canvas background was already propagated by
+                        // `paint_canvas_background`; do not paint it a second
+                        // time on the synthetic body root.
                         // Paint element background (CSS Backgrounds 3 §2.2).
                         // Shift applies to the box itself per CSS 2.1 §10.8.1.
                         paint_element_background(

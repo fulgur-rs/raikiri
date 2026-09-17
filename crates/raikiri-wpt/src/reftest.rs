@@ -625,10 +625,23 @@ fn authored_page_viewport(input: &str, fallback_width: f32, fallback_height: f32
     let Some(block) = block else {
         return (fallback_width, fallback_height);
     };
+    // WPT print reftests resolve page-context `vw`/`vh` against the
+    // 5×3-inch default page box (480×288 CSS px), not the harness fallback
+    // image size.  Keep the legacy fallback for pages without viewport units.
+    let block_lower = block.to_ascii_lowercase();
+    let has_page_viewport_units = block_lower.contains("vw") || block_lower.contains("vh");
     let size_value = print_declaration(block, "size");
-    let mut page_width = fallback_width;
-    let mut page_height = fallback_height;
-    if let Some(size) = size_value.as_deref() {
+    let mut page_width = if has_page_viewport_units {
+        480.0
+    } else {
+        fallback_width
+    };
+    let mut page_height = if has_page_viewport_units {
+        288.0
+    } else {
+        fallback_height
+    };
+    if !has_page_viewport_units && let Some(size) = size_value.as_deref() {
         let mut dimensions = Vec::new();
         let mut landscape = false;
         let mut portrait = false;
@@ -936,7 +949,8 @@ fn render_raikiri_pages_inner(
     use anyrender_vello_cpu::VelloCpuImageRenderer;
     use raikiri::ParseOptions;
     use raikiri::{
-        Atom, PageBox, PageContextQuery, build_cascaded_for_page, build_page_scene_for_page_named,
+        Atom, MediaContext, PageBox, PageContextQuery, build_cascaded_with_media_context_for_page,
+        build_page_scene_for_page_named,
     };
     use raikiri_dom::layout_pages;
     use raikiri_html::parse;
@@ -946,6 +960,7 @@ fn render_raikiri_pages_inner(
         network: None,
         base_url: None,
     };
+    let media_context = MediaContext::print();
     // WPT's print UA supplies a 0.5in default page margin when an authored
     // `@page` rule omits all page-margin declarations.  Add that UA value
     // before resolving viewport units so both the content box and `vh` use the
@@ -959,7 +974,8 @@ fn render_raikiri_pages_inner(
     first_query.is_first = true;
     first_query.is_right = true;
     first_query.is_left = false;
-    let default_cascade = build_cascaded_for_page(&uncascaded, &first_query);
+    let default_cascade =
+        build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &first_query);
     // Page progression follows the root direction: in RTL the first page is
     // the left/verso page, while LTR starts on the right/recto page.
     let direction_node = {
@@ -995,11 +1011,12 @@ fn render_raikiri_pages_inner(
     } else {
         width as f32
     };
-    let first_cascade = if first_query.page_name.is_some() {
-        build_cascaded_for_page(&uncascaded, &first_query)
-    } else {
-        default_cascade
-    };
+    // Rebuild after direction detection so RTL documents use their first
+    // `:left` page cascade during the initial layout pass.  Reusing the
+    // provisional default cascade would leave the first page on `:right`
+    // margins whenever the two selectors differ.
+    let first_cascade =
+        build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &first_query);
 
     // Keep the established 800×600 (or caller-supplied) harness dimensions as
     // the fallback.  Only an authored page size changes the paper box.
@@ -1011,7 +1028,6 @@ fn render_raikiri_pages_inner(
     } else {
         fallback_page_box
     };
-
     let slices = layout_pages(
         &mut uncascaded.dom,
         &first_cascade,
@@ -1035,13 +1051,18 @@ fn render_raikiri_pages_inner(
             slice.page_index % 2 == 1
         };
         query.is_right = !query.is_left;
-        let cascade = build_cascaded_for_page(&uncascaded, &query);
+        let cascade =
+            build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &query);
         let paired_page_increment = if query.is_right {
             let mut paired_query = query.clone();
             paired_query.is_first = false;
             paired_query.is_left = true;
             paired_query.is_right = false;
-            let paired = build_cascaded_for_page(&uncascaded, &paired_query);
+            let paired = build_cascaded_with_media_context_for_page(
+                &uncascaded,
+                &media_context,
+                &paired_query,
+            );
             match paired
                 .page
                 .declarations()

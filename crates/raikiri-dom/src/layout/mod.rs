@@ -33,8 +33,8 @@ use raikiri_style::{
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
     AlignContent as TaffyAlignContent, AlignItems as TaffyAlignItems, AvailableSpace,
-    BoxSizing as TaffyBoxSizing, Clear as TaffyClear, Dimension, Display,
-    FlexDirection as TaffyFlexDirection, FlexWrap as TaffyFlexWrap, Float as TaffyFloat,
+    BoxSizing as TaffyBoxSizing, Clear as TaffyClear, Dimension, Direction as TaffyDirection,
+    Display, FlexDirection as TaffyFlexDirection, FlexWrap as TaffyFlexWrap, Float as TaffyFloat,
     GridAutoFlow as TaffyGridAutoFlow, GridPlacement, GridTemplateArea as TaffyGridTemplateArea,
     GridTemplateComponent, GridTemplateRepetition, Layout as TaffyLayout, LengthPercentage,
     LengthPercentageAuto, Line as TaffyLine, MaxTrackSizingFunction, MinTrackSizingFunction,
@@ -284,6 +284,20 @@ fn page_margin_side(
 /// on the paper/content split.
 pub fn page_margins(cascade: &CascadeResult, page_box: PageBox) -> PageMargins {
     let declarations = cascade.page.declarations();
+    // The legacy page `width`/`height` descriptors size the page area inside
+    // the page box.  When they are combined with percentage margins, those
+    // percentages resolve against the pre-descriptor page size, not the
+    // already reduced outer box.  Keep that basis stable so e.g. `size: 500px;
+    // margin: 10%; width: 40%; height: 60%` uses 50px margins and a 200x300
+    // content area after the outer box is reduced to 300x400.
+    let margin_basis = if (declarations.contains_key(&PropertyKey::Width)
+        || declarations.contains_key(&PropertyKey::Height))
+        && cascade.page.size().is_some()
+    {
+        PageBox::from_page_size(cascade.page.size())
+    } else {
+        page_box
+    };
     let shorthand = match declarations.get(&PropertyKey::Margin) {
         Some(PropertyValue::Margin(sides)) => Some(*sides),
         _ => None,
@@ -293,25 +307,25 @@ pub fn page_margins(cascade: &CascadeResult, page_box: PageBox) -> PageMargins {
             declarations,
             PropertyKey::MarginTop,
             shorthand.map(|s| s.top),
-            page_box.height,
+            margin_basis.height,
         ),
         right: page_margin_side(
             declarations,
             PropertyKey::MarginRight,
             shorthand.map(|s| s.right),
-            page_box.width,
+            margin_basis.width,
         ),
         bottom: page_margin_side(
             declarations,
             PropertyKey::MarginBottom,
             shorthand.map(|s| s.bottom),
-            page_box.height,
+            margin_basis.height,
         ),
         left: page_margin_side(
             declarations,
             PropertyKey::MarginLeft,
             shorthand.map(|s| s.left),
-            page_box.width,
+            margin_basis.width,
         ),
     }
 }
@@ -353,6 +367,7 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
 /// dispatch 1 行追加のみで足りるよう設計している。
 ///
 /// 現時点で active な bridge:
+/// - [`bridge_direction`] — [`Direction`] → [`taffy::Direction`]
 /// - [`bridge_display`] — [`DisplayValue`] → [`taffy::Display`]
 /// - [`bridge_float`] — [`ComputedValues::float`] / [`ComputedValues::clear`] →
 ///   [`taffy::Style::float`] / [`taffy::Style::clear`] (CSS2 §9.5.1 / §9.5.2)
@@ -418,6 +433,7 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
             }
         }
         let style = &mut doc.nodes[idx].style;
+        bridge_direction(style, cv);
         bridge_display(style, cv);
         bridge_position(style, cv, &mut doc.layout_warnings);
         bridge_overflow(style, cv);
@@ -448,6 +464,19 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
             doc.nodes[idx].flags.remove(NodeFlags::IS_TABLE_ROOT);
         }
     }
+}
+
+/// [`Direction`] → [`taffy::Direction`] mapping.
+///
+/// Taffy uses this field for horizontal block alignment, table/grid ordering,
+/// and overflow direction.  Keep it separate from text shaping: parley does
+/// not expose the CSS base direction through the bridge used by this crate.
+fn bridge_direction(style: &mut taffy::Style, cv: &ComputedValues) {
+    style.direction = match cv.direction {
+        Direction::Ltr => TaffyDirection::Ltr,
+        Direction::Rtl => TaffyDirection::Rtl,
+        _ => TaffyDirection::Ltr,
+    };
 }
 
 /// [`DisplayValue`] → [`taffy::Display`] mapping。
@@ -747,6 +776,7 @@ fn bridge_known_image_intrinsic_size(
     let height_auto = matches!(cv.height, ComputedLengthPercentageOrAuto::Auto);
     (width_auto || height_auto).then_some((100.0, 50.0))
 }
+
 /// [`ComputedValues::min_width`] / [`ComputedValues::min_height`] /
 /// [`ComputedValues::max_width`] / [`ComputedValues::max_height`]
 /// ([`ComputedLengthPercentageOrAuto`]) → [`taffy::Style::min_size`] /
@@ -4499,6 +4529,14 @@ fn is_inline_for_trim(doc: &Document, cascade: &CascadeResult, idx: usize) -> bo
     if doc.nodes[idx].kind() == NodeKind::Text {
         return true;
     }
+    // Absolutely/fixed-positioned boxes are out of the inline flow and cannot
+    // keep a collapsible space at the boundary of the following text.
+    if matches!(
+        cascade.computed[idx].position,
+        PositionValue::Absolute | PositionValue::Fixed
+    ) {
+        return false;
+    }
     if doc.nodes[idx].tag_name() == Some("br") {
         return false;
     }
@@ -4550,7 +4588,11 @@ fn significant_sibling(
             continue;
         }
         if doc.nodes[sib].kind() == NodeKind::Element
-            && cascade.computed[sib].display == DisplayValue::None
+            && (cascade.computed[sib].display == DisplayValue::None
+                || matches!(
+                    cascade.computed[sib].position,
+                    PositionValue::Absolute | PositionValue::Fixed
+                ))
         {
             continue;
         }
@@ -6106,6 +6148,30 @@ pub fn layout_pages(
         /// Page type inherited from the nearest containing class-A box.
         /// `None` is the anonymous page type, not an unknown value.
         page_name: Option<String>,
+        /// A named descendant nested inside a flex item defers one boundary
+        /// until the containing flex box has finished.
+        deferred_named_break_after: bool,
+    }
+
+    fn has_nested_named_page_descendant(
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+        depth: u32,
+    ) -> bool {
+        let Some(node) = document.get_node(node_id) else {
+            return false;
+        };
+        for &child_id in &node.children {
+            let child_depth = depth.saturating_add(1);
+            if child_depth >= 2 && selected_page_name(cascade, child_id).is_some() {
+                return true;
+            }
+            if has_nested_named_page_descendant(document, cascade, child_id, child_depth) {
+                return true;
+            }
+        }
+        false
     }
 
     // Candidate collection carries the recursive layout state explicitly so page
@@ -6121,6 +6187,7 @@ pub fn layout_pages(
         parent_height: f32,
         page_step: f32,
         inherited_page_name: Option<String>,
+        inside_flex: bool,
         inside_float: bool,
         out: &mut Vec<PageCandidate>,
     ) {
@@ -6148,6 +6215,7 @@ pub fn layout_pages(
                         is_named: false,
                         is_float_descendant: inside_float,
                         page_name: inherited_page_name,
+                        deferred_named_break_after: false,
                     });
                 }
             }
@@ -6164,12 +6232,14 @@ pub fn layout_pages(
                 let is_float = !matches!(computed.float, FloatValue::None);
                 let float_subtree = inside_float || is_float;
                 let explicit_page_name = selected_page_name(cascade, node_id);
-                let own_page_name = if !float_subtree {
+                let own_page_name = if !float_subtree && !inside_flex {
                     explicit_page_name.clone()
                 } else {
                     None
                 };
                 let page_name = own_page_name.clone().or(inherited_page_name);
+                let deferred_named_break_after = matches!(computed.display, DisplayValue::Flex)
+                    && has_nested_named_page_descendant(document, cascade, node_id, 0);
                 let is_body = node_id == body_id;
                 let participates_in_flow = matches!(
                     computed.position,
@@ -6198,6 +6268,7 @@ pub fn layout_pages(
                         is_named: own_page_name.is_some(),
                         is_float_descendant: inside_float,
                         page_name: page_name.clone(),
+                        deferred_named_break_after,
                     });
                 }
                 let child_is_direct_body = node_id == body_id;
@@ -6212,6 +6283,7 @@ pub fn layout_pages(
                         node.unrounded_layout.size.height.max(0.0),
                         page_step,
                         page_name.clone(),
+                        inside_flex || matches!(computed.display, DisplayValue::Flex),
                         float_subtree,
                         out,
                     );
@@ -6233,6 +6305,7 @@ pub fn layout_pages(
         page_step,
         None,
         false,
+        false,
         &mut candidates,
     );
     let mut flow_shift = 0.0_f32;
@@ -6242,6 +6315,9 @@ pub fn layout_pages(
     // When a forced-break box underflows into the preceding page, descendants
     // follow the box while later siblings still begin after the break boundary.
     let mut pending_underflow: Option<(usize, f32)> = None;
+    // A positive margin on a box after a forced break moves its descendants
+    // with the box, but does not move later siblings a second time.
+    let mut pending_descendant_margin: Option<(usize, f32)> = None;
     // Named class-A boxes at one source coordinate form one page transition.
     // This coalesces zero-height named runs such as a/b/c/d/e without creating
     // one blank page per zero-height box.
@@ -6262,6 +6338,16 @@ pub fn layout_pages(
         if document.get_node(node_id).is_none() {
             continue;
         }
+        let descendant_margin = if let Some((ancestor_id, margin)) = pending_descendant_margin {
+            if is_descendant_or_self(document, node_id, ancestor_id, &parent_of) {
+                margin
+            } else {
+                pending_descendant_margin = None;
+                0.0
+            }
+        } else {
+            0.0
+        };
         if candidate.is_text {
             // Text is not itself a class-A box, but non-empty text can be the
             // content that follows a nested named box.  Carry the containing
@@ -6273,7 +6359,7 @@ pub fn layout_pages(
             let raw_y = candidate.raw_y;
             let height = candidate.height;
             let candidate_page_name = candidate.page_name.clone();
-            let mut effective_y = raw_y + flow_shift;
+            let mut effective_y = raw_y + flow_shift + descendant_margin;
             materialize_y(document, node_id, effective_y, &parent_of);
             let named_page_change = saw_child
                 && height > 0.0
@@ -6344,7 +6430,7 @@ pub fn layout_pages(
         // borrow does not overlap the in-place location update below.
         let raw_y = candidate.raw_y;
         let height = candidate.height;
-        let mut effective_y = raw_y + flow_shift;
+        let mut effective_y = raw_y + flow_shift + descendant_margin;
         materialize_y(document, node_id, effective_y, &parent_of);
         let forced_before = page_break_is_forced(computed.break_before);
         let margin_top = match computed.margin.top {
@@ -6413,7 +6499,9 @@ pub fn layout_pages(
                 let node_target_y = if margin_top < 0.0 && underflow_y < target_y {
                     underflow_y
                 } else {
-                    target_y
+                    // The forced break is before the box's margin box, so a
+                    // positive block-start margin remains on the new page.
+                    target_y + margin_top.max(0.0)
                 };
                 // The candidate was materialized to `effective_y` above,
                 // so this is the additional movement for this boundary.
@@ -6434,6 +6522,9 @@ pub fn layout_pages(
                 current_page = target_page;
             } else if effective_y.is_finite() && effective_y >= 0.0 {
                 current_page = current_page.max((effective_y / page_step).floor() as u32);
+            }
+            if page_transition && margin_top > 0.0 {
+                pending_descendant_margin = Some((node_id, margin_top));
             }
             // An inline direct child keeps its source-order inline x position
             // in taffy's single pre-pagination layout. A forced page boundary
@@ -6476,7 +6567,8 @@ pub fn layout_pages(
                 max_page = max_page.max(end_page);
             }
         }
-        pending_break = page_break_is_forced(computed.break_after);
+        pending_break =
+            page_break_is_forced(computed.break_after) || candidate.deferred_named_break_after;
     }
 
     Ok((0..=max_page)
@@ -6817,6 +6909,21 @@ mod tests {
         assert_eq!(doc.nodes[body].style.size, default_style.size);
         assert_eq!(doc.nodes[body].style.margin, default_style.margin);
         assert_eq!(doc.nodes[body].style.padding, default_style.padding);
+    }
+
+    #[test]
+    fn apply_computed_to_style_bridges_direction_to_taffy() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("direction:rtl"));
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        apply_computed_to_style(&mut doc, &cr);
+
+        assert_eq!(doc.nodes[body].style.direction, taffy::Direction::Rtl);
     }
 
     #[test]
