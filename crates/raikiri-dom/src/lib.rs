@@ -58,7 +58,7 @@ pub use dom_impl::{ChildIter, ElementRef, NodeRef, StyleChildIter};
 pub use fonts::{FontError, FontWarn, build_wpt_font_ctx, build_wpt_font_ctx_with_observer};
 pub use layout::{
     PageContentInsets, PageMargins, PageSlice, first_page_name, layout_pages, layout_single_page,
-    page_content_insets, page_margins,
+    layout_single_page_with_resolver, page_content_insets, page_margins,
 };
 pub use node::{ElementData, Node, NodeData, NodeFlags, TextData};
 

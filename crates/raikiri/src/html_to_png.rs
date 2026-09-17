@@ -116,7 +116,7 @@ pub fn html_to_png_with_fonts<R: std::io::Read>(
 /// [`html_to_png`] と同じ、加えて `RenderError::Resolver` — `resolver` が
 /// `<img>` の resolve に失敗した場合 (現状は個々の resolve 失敗は該当要素を
 /// 0×0 にするだけで、この variant は現時点では実際には返らない —
-/// `raikiri_dom::layout::layout_single_page_with_resolver` の doc 参照)。
+/// `raikiri_dom::layout_single_page_with_resolver` の doc 参照)。
 #[allow(clippy::result_large_err)]
 pub fn html_to_png_with_resolver<R, I>(
     input: impl std::io::Read,
@@ -134,7 +134,7 @@ where
     };
     let mut doc = parse_html(input, &opts)?;
     let page_box = PageBox::from_page_size(doc.cascade.page.size());
-    raikiri_dom::layout::layout_single_page_with_resolver(
+    raikiri_dom::layout_single_page_with_resolver(
         &mut doc.uncascaded.dom,
         &doc.cascade,
         page_box,
@@ -193,7 +193,8 @@ mod tests {
 
     /// `html_to_png_with_resolver` が `<img>` の intrinsic size resolve →
     /// layout → decode 済み pixel の実描画までを end-to-end で通す
-    /// (Task 1-5 の wiring 全体の初回 proof)。
+    /// (resolver/pixel-source の配線が実際に paint するところまで証明する —
+    /// 単に呼び出しが成功するだけでは検出できない、下の `assert_ne!` 参照)。
     #[test]
     fn html_to_png_with_resolver_paints_an_img_element() {
         use raikiri_net::{FileNetworkProvider, ImageResolver};
