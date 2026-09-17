@@ -35,7 +35,7 @@ use raikiri_style::property::{
     BackgroundImage, Border, BorderColor, BorderStyle, ContentComponent, CounterStyle, CssColor,
     DisplayValue, FloatValue, Gradient, GradientStopColor, Length, LengthOrAuto, OutlineColor,
     OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue, QuoteKeyword, Sides,
-    TextAlign, VerticalAlign,
+    TextAlign, VerticalAlign, ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
@@ -2099,11 +2099,18 @@ fn paint_document_impl(
                 // from `CascadeResult`'s inheritance result.
                 let child_decorations =
                     text::decorations_for_element(&decorations, cv, child_shift_y);
-                // children を reverse push すると pop 時に document order で処理される。
-                // For position:relative, children are laid out at normal flow position but paint at offset position.
+                // Paint positioned siblings in stacking order while keeping
+                // source order for equal stack levels.  This is intentionally
+                // local to the current parent; full nested stacking-context
+                // isolation remains outside this minimal painter.
+                let mut children = node.children.clone();
+                children.sort_by_key(|&child| paint_order_key(cascade, child));
+                // Reverse push makes the lowest stack level paint first.
+                // For position:relative, children are laid out at normal flow
+                // position but paint at offset position.
                 let child_parent_x = abs_x + pos_dx + fixed_dx;
                 let child_parent_y = abs_y + pos_dy + fixed_dy;
-                for &child in node.children.iter().rev() {
+                for child in children.into_iter().rev() {
                     let body_child_margin_offset = if node_id == body_id
                         && document
                             .get_node(child)
@@ -2867,6 +2874,20 @@ fn vertical_align_shift_px(
         // ない。新しい variant を追加する際は、まずここを明示的な match
         // arm にすること。
         _ => 0.0,
+    }
+}
+
+fn paint_order_key(cascade: &CascadeResult, node_id: usize) -> (u8, i32) {
+    let computed = &cascade.computed[node_id];
+    match (&computed.position, computed.z_index) {
+        // An integer z-index applies to positioned boxes.  Keep ordinary
+        // in-flow boxes in the auto/source-order bucket.
+        (PositionValue::Static, _) | (_, ZIndexValue::Auto) => (1, 0),
+        (_, ZIndexValue::Integer(value)) if value < 0 => (0, value),
+        (_, ZIndexValue::Integer(value)) => (2, value),
+        // PositionValue and ZIndexValue are non-exhaustive.  New variants
+        // retain the default/source-order bucket until stacking support grows.
+        _ => (1, 0),
     }
 }
 
