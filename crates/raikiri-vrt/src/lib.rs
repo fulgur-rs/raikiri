@@ -165,7 +165,8 @@ mod tests {
     /// we bypass `VelloCpuImageRenderer::new` and construct `RenderContext::new_with`
     /// directly, then wrap it in `VelloCpuScenePainter` (whose fields are `pub`) to
     /// stay on the exact same production render path (`draw_fn → flush →
-    /// render_to_buffer(OptimizeSpeed)`) that `VelloCpuImageRenderer::render` uses.
+    /// render(PixmapMut)`) that `VelloCpuImageRenderer::render` uses
+    /// (`render` uses default `RasterizerSettings`, i.e. `OptimizeSpeed`).
     ///
     /// Both `num_threads: 1` and `num_threads: 4` route through
     /// `MultiThreadedDispatcher` (only `num_threads == 0` selects
@@ -173,7 +174,7 @@ mod tests {
     /// determinism, not scalar-vs-rayon parity.
     fn render_with_threads(num_threads: u16) -> Vec<u8> {
         use anyrender_vello_cpu::VelloCpuScenePainter;
-        use vello_cpu::{RenderContext, RenderMode, RenderSettings, Resources};
+        use vello_cpu::{PixmapMut, RenderContext, RenderSettings, Resources};
 
         let settings = RenderSettings {
             num_threads,
@@ -188,12 +189,9 @@ mod tests {
         scene.render_ctx.flush();
         let mut buf = vec![0u8; (W as usize) * (H as usize) * 4];
         let (w, h) = (scene.render_ctx.width(), scene.render_ctx.height());
-        scene.render_ctx.render_to_buffer(
+        scene.render_ctx.render(
+            PixmapMut::new(w, h, &mut buf).unwrap(),
             &mut scene.resources,
-            &mut buf,
-            w,
-            h,
-            RenderMode::OptimizeSpeed,
         );
         buf
     }
