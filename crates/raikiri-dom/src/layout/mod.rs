@@ -13662,4 +13662,33 @@ mod tests {
 
         assert_eq!(doc.nodes[img].image_intrinsic_size(), None);
     }
+
+    #[test]
+    fn layout_single_page_resolves_direct_absolute_auto_width_with_margin() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let abs = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("position:absolute; margin-right:20px; border:10px solid black"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        layout_single_page(&mut doc, &cascade, page, parley::FontContext::new())
+            .expect("layout Ok");
+
+        // Content-box width = 100 - 20 (margin) - 20 (horizontal border),
+        // while the resulting border box is 80px wide.
+        let layout = doc.nodes[abs].unrounded_layout;
+        assert!((layout.size.width - 80.0).abs() < 0.001);
+    }
 }
