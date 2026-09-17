@@ -38,8 +38,8 @@ use crate::property::{
     FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
     GridTemplateTracks, GridTrackSize, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal,
     LineHeight, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle,
-    OverflowValue, OverflowWrap, OverflowXY, PositionValue, SelfAlignmentValue, Sides, TabSize,
-    TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine,
+    OverflowValue, OverflowWrap, OverflowXY, PageValue, PositionValue, SelfAlignmentValue, Sides,
+    TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine,
     TextDecorationStyle, TextJustify, TextShadowItem, TextTransform, TextWrapMode,
     TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode,
     ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
@@ -340,6 +340,9 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::break_inside`] の staging。層は computed-equivalent
     /// (`BreakInside` は length を運ばない)。
     pub break_inside: BreakInside,
+    /// `page` is non-inherited and selects the page type for the box that
+    /// establishes the next class-A break point (CSS Paged Media 3 §8.1).
+    pub page: PageValue,
     /// [`ComputedValues::float`] の staging。層は computed-equivalent
     /// (`FloatValue` は length を運ばない)。
     pub float: FloatValue,
@@ -393,6 +396,8 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::quotes`] の staging。層は computed-equivalent
     /// (length を運ばないため絶対化不要)。
     pub quotes: Arc<Vec<(SmolStr, SmolStr)>>,
+    /// Whether an empty quotes list is the initial `auto` value.
+    pub quotes_auto: bool,
     /// `text-shadow` の **specified** value。phase 3
     /// ([`resolve_text_shadow_item`]) で各 item の length 3 本が絶対化される
     /// — [`Self::padding`] と同じ「specified 層のまま留まる」分類だが、こちらは
@@ -673,6 +678,8 @@ impl SpecifiedValues {
             break_before: BreakBetween::Auto,
             break_after: BreakBetween::Auto,
             break_inside: BreakInside::Auto,
+            // CSS Paged Media 3 §8.1: page initial is `auto` and is not inherited.
+            page: PageValue::Auto,
             // CSS2 §9.5.1 / §9.5.2: float / clear の initial は共に `none`。
             float: FloatValue::None,
             clear: ClearValue::None,
@@ -710,6 +717,7 @@ impl SpecifiedValues {
             // user agent"、本 impl は cleanroom 方針によりそれを空 list で
             // 表現する (`ComputedValues::quotes` doc 参照)。
             quotes: empty_quotes_entries(),
+            quotes_auto: true,
             // CSS Text Decoration Module Level 3 §4: text-shadow initial
             // は `none` — shared empty Arc slot (`empty_text_shadow_list`
             // doc 参照)。
@@ -937,6 +945,7 @@ impl SpecifiedValues {
             // CSS Content 3 §2.4.1: quotes は inherited。Arc bump のみ
             // (`ComputedValues::font_family` と同じ shape)。
             quotes: parent.quotes.clone(),
+            quotes_auto: parent.quotes_auto,
             // CSS Fragmentation Module Level 3 §3.3: orphans / widows は共に
             // inherited。
             orphans: parent.orphans,
@@ -1013,6 +1022,8 @@ impl SpecifiedValues {
             break_before: BreakBetween::Auto,
             break_after: BreakBetween::Auto,
             break_inside: BreakInside::Auto,
+            // `page` is non-inherited (CSS Paged Media 3 §8.1).
+            page: PageValue::Auto,
             // non-inherited (CSS2 §9.5.1 / §9.5.2 "Inherited: no", both)。
             float: FloatValue::None,
             clear: ClearValue::None,
@@ -1672,6 +1683,7 @@ impl SpecifiedValues {
             // 参照、length を運ばないため相対解決なし) — 自 node の winner
             // 適用結果 (または inherit_from で継承した親値) をそのまま素通し。
             quotes: self.quotes,
+            quotes_auto: self.quotes_auto,
             // `text-shadow` — each item's 3 lengths absolutized against this
             // node's own `font_size`/`own_line_height` basis
             // (`resolve_text_shadow_item`), `<color>` passed through
@@ -1792,7 +1804,7 @@ impl SpecifiedValues {
             // `object-position` の `resolve_css_position` と同型)。
             // `matrix()` の 6 `<number>` slot と `rotate()`/`skew()` 系の
             // `<angle>` slot は対象外 — 前者は fully resolved、後者は
-            // spec 上正規化されない `<angle>` ([`crate::property::Angle`] doc)。
+            // spec 上正規化されない `<angle>` (`crate::property::Angle` doc)。
             transform: if self.transform.is_empty() {
                 crate::resolve::empty_computed_transform_list()
             } else {
@@ -2148,6 +2160,7 @@ mod tests {
             row_gap: ComputedLengthPercentageOrNormal::Px(6.0),
             column_gap: ComputedLengthPercentageOrNormal::Percent(10.0),
             quotes: Arc::new(vec![(SmolStr::new("«"), SmolStr::new("»"))]),
+            quotes_auto: false,
             text_shadow: Arc::new(vec![ComputedTextShadow {
                 offset_x: ComputedLength(1.0),
                 offset_y: ComputedLength(2.0),

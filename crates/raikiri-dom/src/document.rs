@@ -74,7 +74,7 @@ pub struct Document {
     /// deliberately, not as a simplification of convenience. `<Document as
     /// taffy::LayoutPartialTree>::set_unrounded_layout` is the sole choke
     /// point that writes non-finite-clamped geometry into the arena
-    /// (`crate::layout::sanitize_taffy_layout`'s doc), but its signature is
+    /// ([`crate::layout::sanitize_taffy_layout`]'s doc), but its signature is
     /// fixed by the `taffy` trait — it cannot receive an extra observer
     /// parameter. Storing a borrowed `&mut dyn FnMut` here instead would
     /// require adding a lifetime parameter to `Document` itself, which is a
@@ -83,7 +83,7 @@ pub struct Document {
     /// plug into yet. An owned buffer sidesteps that: `set_unrounded_layout`
     /// pushes through `self` with no signature change, and
     /// `layout_single_page` drains + replays the buffer through the same
-    /// `crate::diag::emit_warn_via` mechanism the rest of this module's
+    /// [`crate::diag::emit_warn_via`] mechanism the rest of this module's
     /// diagnostics use, once per pass, after the taffy compute step returns.
     ///
     /// Cleared at the start of each `layout_single_page` call (re-entrance
@@ -192,6 +192,27 @@ impl Document {
         self.invalidate_layout_cache();
         self.flags_dirty = true;
         id
+    }
+
+    /// Append character data, merging it into the parent's adjacent final text
+    /// node when possible. HTML token streams may split one logical character
+    /// run into several callbacks; coalescing those callbacks preserves the
+    /// inline formatting run without changing the ordinary [`Document::append_text`]
+    /// mutation primitive.
+    pub fn append_text_coalesced(&mut self, parent: usize, text: impl Into<SmolStr>) -> usize {
+        let text = text.into();
+        if let Some(&last) = self.nodes[parent].children.last()
+            && let NodeData::Text(data) = &mut self.nodes[last].data
+        {
+            let mut merged = String::with_capacity(data.text_content.len() + text.len());
+            merged.push_str(data.text_content.as_str());
+            merged.push_str(text.as_str());
+            data.text_content = SmolStr::new(merged);
+            self.invalidate_layout_cache();
+            self.flags_dirty = true;
+            return last;
+        }
+        self.append_text(parent, text)
     }
 
     /// Comment node を arena に追加する。

@@ -1119,7 +1119,7 @@ fn is_css_document_white_space(c: char) -> bool {
 ///
 /// Explicit-stack iterative DFS (reverse-push children so the `Vec` pops
 /// them in original, i.e. document, order) — same shape as
-/// `crate::target::collect_descendant_text` — rather than recursion, so a
+/// [`crate::target::collect_descendant_text`] — rather than recursion, so a
 /// deeply nested DOM cannot exhaust the call stack.
 #[allow(
     dead_code,

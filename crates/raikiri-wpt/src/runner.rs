@@ -3,7 +3,7 @@
 //! `WptRunner` holds the loaded `ExpectationSet` and orchestrates reftest
 //! execution. Filtering by `deprecated`/`quarantine`/`baseline` follows
 //! spec §12.10 precedence. The actual pixel work is delegated to
-//! `crate::reftest`.
+//! [`crate::reftest`].
 
 use std::path::Path;
 
@@ -125,7 +125,7 @@ impl WptRunner {
     /// Run a reftest pair discovered at `pair`, respecting expectations.
     ///
     /// If `pair.test`'s id is filtered, the filtered outcome is returned
-    /// without rendering. Otherwise delegates to `crate::reftest::run_pair`.
+    /// without rendering. Otherwise delegates to [`crate::reftest::run_pair`].
     pub fn run_reftest_pair(&self, pair: &ReftestPair, config: ReftestConfig) -> ReftestResult {
         let test_id = pair.test.display().to_string();
         if let Some(filtered) = self.classify(&test_id) {
@@ -182,7 +182,7 @@ impl WptRunner {
     /// Run all pairs under `wpt_root` and return per-pair results plus oracle deltas.
     ///
     /// Convenience for the nightly T3 sweep. Walks `wpt_root` via
-    /// `crate::reftest::discover_all_pairs`.
+    /// [`crate::reftest::discover_all_pairs`].
     pub fn run_all_under(
         &self,
         wpt_root: &Path,

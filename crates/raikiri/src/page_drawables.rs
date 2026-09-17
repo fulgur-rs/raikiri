@@ -122,11 +122,11 @@ impl<V> TrackedMap<V> {
 ///
 /// 最初は struct field surface のみ landing、その後
 /// 各 Entry 型に fulgur reference と照合した minimal
-/// field を追加し (`crate::entries` module doc参照)、
+/// field を追加し ([`crate::entries`] module doc参照)、
 /// `build_page_scene` (crate::page_scene) が実際に
 /// [`BlockEntry`] / [`ParagraphEntry`] を construct して `block_styles` /
 /// `paragraphs` へ insert するようになった。他 9 field はまだ常に空
-/// (対応する raikiri pipeline stage が無いため、`crate::entries` module doc
+/// (対応する raikiri pipeline stage が無いため、[`crate::entries`] module doc
 /// 参照)。
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]

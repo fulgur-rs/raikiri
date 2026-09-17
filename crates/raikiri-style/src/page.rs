@@ -843,6 +843,9 @@ pub struct PageRule {
     /// 0-indexed source order among `@page` rules across all
     /// `RuleTree::add_stylesheet` calls.
     pub source_order: u32,
+    /// Normal cascade-layer order. Larger values have higher precedence;
+    /// `u32::MAX` represents unlayered rules.
+    pub layer_order: u32,
     /// Cascade origin this rule was parsed under. See [`Origin`] for the
     /// current 4-variant set (`UserAgent` / `User` / `AuthorPresentationalHint`
     /// / `Author`) — `@page` rules are only ever
@@ -1197,7 +1200,7 @@ impl<'i> RuleBodyItemParser<'i, PageBodyItem, ()> for PageDeclParser {
 /// returns whether it was present, for the caller to retain on its own
 /// `*Declaration`.
 ///
-/// Exhaustive consumption matches `crate::rule::DeclParser`: trailing
+/// Exhaustive consumption matches [`crate::rule::DeclParser`]: trailing
 /// garbage after the value (and optional `!important`) rejects the whole
 /// declaration.
 fn parse_important_and_exhaust<'i>(input: &mut Parser<'i, '_>) -> Result<bool, ParseError<'i, ()>> {
@@ -2143,6 +2146,14 @@ pub enum PageInheritance<'a> {
 /// let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
 /// // result.declarations() contains one entry: PropertyKey::Color -> red
 /// ```
+fn page_layer_rank(rule: &PageRule, important: bool) -> u32 {
+    if important {
+        u32::MAX.saturating_sub(rule.layer_order)
+    } else {
+        rule.layer_order
+    }
+}
+
 pub fn cascade_page(
     rule_tree: &RuleTree,
     query: &PageContextQuery,
@@ -2151,15 +2162,15 @@ pub fn cascade_page(
     // Candidate: (value, important, origin, specificity, source_order).
     // Shape mirrors `cascade::CascadedDecl` per the sibling convention, with
     // `PageSpecificity` in place of `selectors`-crate `Specificity`.
-    let mut candidates: Vec<(PropertyValue, bool, Origin, PageSpecificity, u32)> = Vec::new();
+    let mut candidates: Vec<(PropertyValue, bool, Origin, u32, PageSpecificity, u32)> = Vec::new();
     let mut custom_candidates: Vec<PageCustomCascadedDecl> = Vec::new();
     // Descriptor candidates use the same origin/specificity/source-order tuple
     // as ordinary page declarations. The extra declaration index is needed
     // because descriptor declarations are stored in dedicated vectors and two
     // declarations in one rule share the rule's source order.
-    let mut size_best: Option<(u8, PageSpecificity, u32, u32, PageSize)> = None;
-    let mut marks_best: Option<(u8, PageSpecificity, u32, u32, PageMarks)> = None;
-    let mut bleed_best: Option<(u8, PageSpecificity, u32, u32, PageBleed)> = None;
+    let mut size_best: Option<(u8, u32, PageSpecificity, u32, u32, PageSize)> = None;
+    let mut marks_best: Option<(u8, u32, PageSpecificity, u32, u32, PageMarks)> = None;
+    let mut bleed_best: Option<(u8, u32, PageSpecificity, u32, u32, PageBleed)> = None;
     let mut margin_boxes: Vec<PageMarginBoxCascadeResult> = Vec::new();
     for rule in &rule_tree.page_rules {
         // Comma-separated list = OR: rule contributes if any entry matches.
@@ -2179,6 +2190,7 @@ pub fn cascade_page(
             for (index, decl) in rule.size_declarations.iter().enumerate() {
                 let candidate = (
                     cascade_rank(rule.origin, decl.important),
+                    page_layer_rank(rule, decl.important),
                     spec,
                     rule.source_order,
                     index as u32,
@@ -2194,6 +2206,7 @@ pub fn cascade_page(
             for (index, decl) in rule.marks_declarations.iter().enumerate() {
                 let candidate = (
                     cascade_rank(rule.origin, decl.important),
+                    page_layer_rank(rule, decl.important),
                     spec,
                     rule.source_order,
                     index as u32,
@@ -2209,6 +2222,7 @@ pub fn cascade_page(
             for (index, decl) in rule.bleed_declarations.iter().enumerate() {
                 let candidate = (
                     cascade_rank(rule.origin, decl.important),
+                    page_layer_rank(rule, decl.important),
                     spec,
                     rule.source_order,
                     index as u32,
@@ -2236,6 +2250,7 @@ pub fn cascade_page(
                         custom.clone(),
                         decl.important,
                         rule.origin,
+                        page_layer_rank(rule, decl.important),
                         spec,
                         rule.source_order,
                     ));
@@ -2248,7 +2263,14 @@ pub fn cascade_page(
                 // `crate::cascade`'s `collect_cascaded`).
                 // Rationale is consolidated in `crate::rule::expand_shorthand_into`.
                 expand_shorthand_into(decl, |d| {
-                    candidates.push((d.value, d.important, rule.origin, spec, rule.source_order));
+                    candidates.push((
+                        d.value,
+                        d.important,
+                        rule.origin,
+                        page_layer_rank(rule, d.important),
+                        spec,
+                        rule.source_order,
+                    ));
                 });
             }
         }
@@ -2257,29 +2279,30 @@ pub fn cascade_page(
     // Custom properties have case-sensitive name keys and therefore must not
     // enter the ordinary PropertyKey winner table (which contains the
     // `PropertyKey::Custom` sentinel only for the specified-layer shape).
-    let mut custom_best: HashMap<SmolStr, (u8, PageSpecificity, u32, CustomProperty)> =
+    let mut custom_best: HashMap<SmolStr, (u8, u32, PageSpecificity, u32, CustomProperty)> =
         HashMap::new();
-    for (value, important, origin, spec, order) in custom_candidates {
+    for (value, important, origin, layer, spec, order) in custom_candidates {
         let name = value.name.clone();
         let rank = cascade_rank(origin, important);
-        let replace = custom_best
-            .get(&name)
-            .is_none_or(|existing| (rank, spec, order) >= (existing.0, existing.1, existing.2));
+        let replace = custom_best.get(&name).is_none_or(|existing| {
+            (rank, layer, spec, order) >= (existing.0, existing.1, existing.2, existing.3)
+        });
         if replace {
-            custom_best.insert(name, (rank, spec, order, value));
+            custom_best.insert(name, (rank, layer, spec, order, value));
         }
     }
     let custom_local: HashMap<SmolStr, SmolStr> = custom_best
         .into_iter()
-        .map(|(name, (_, _, _, value))| (name, value.value))
+        .map(|(name, (_, _, _, _, value))| (name, value.value))
         .collect();
 
     // Winner selection — sibling arm to `cascade::pick_winners`.
-    let mut best: HashMap<PropertyKey, (u8, PageSpecificity, u32, PropertyValue)> = HashMap::new();
-    for (value, important, origin, spec, order) in candidates {
+    let mut best: HashMap<PropertyKey, (u8, u32, PageSpecificity, u32, PropertyValue)> =
+        HashMap::new();
+    for (value, important, origin, layer, spec, order) in candidates {
         let rank = cascade_rank(origin, important);
         let key = value.key();
-        let candidate = (rank, spec, order, value);
+        let candidate = (rank, layer, spec, order, value);
         match best.get(&key) {
             Some(existing) => {
                 if page_beats(&candidate, existing) {
@@ -2291,6 +2314,7 @@ pub fn cascade_page(
             }
         }
     }
+
     // Step 3 (phase 2): resolve winners against the page context's inheritance
     // parent. `PageInheritance::LegacyInitialValues` falls back to the initial
     // values, which the L3 legacy exception in CSS Paged Media 3 §6 "Page
@@ -2334,7 +2358,7 @@ pub fn cascade_page(
     );
     let resolved: HashMap<PropertyKey, ResolvedAgainstInherited> = best
         .into_iter()
-        .filter_map(|(k, (_, _, _, value))| {
+        .filter_map(|(k, (_, _, _, _, value))| {
             let value = match value {
                 PropertyValue::Deferred(deferred) => {
                     resolve_deferred_value(&deferred, custom_properties.as_ref())
@@ -2388,10 +2412,10 @@ pub fn cascade_page(
             })
             .collect(),
         size: size_best
-            .map(|candidate| absolutize_page_size(candidate.4, font_size, own_line_height, &ctx)),
-        marks: marks_best.map(|candidate| candidate.4),
+            .map(|candidate| absolutize_page_size(candidate.5, font_size, own_line_height, &ctx)),
+        marks: marks_best.map(|candidate| candidate.5),
         bleed: bleed_best
-            .map(|candidate| absolutize_page_bleed(candidate.4, font_size, own_line_height, &ctx)),
+            .map(|candidate| absolutize_page_bleed(candidate.5, font_size, own_line_height, &ctx)),
         margin_boxes,
     }
 }
@@ -3118,6 +3142,7 @@ fn absolutize_in_page_context(
         | PropertyValue::FontWeight(_)
         | PropertyValue::Display(_)
         | PropertyValue::CounterReset(_)
+        | PropertyValue::CounterResetInherit
         | PropertyValue::CounterIncrement(_)
         | PropertyValue::CounterSet(_)
         | PropertyValue::Content(_)
@@ -3962,7 +3987,7 @@ struct PageSpecificity {
 /// One page custom-property candidate. Custom names are cascaded separately
 /// from the ordinary `PropertyKey` table because CSS Variables names compare
 /// case-sensitively.
-type PageCustomCascadedDecl = (CustomProperty, bool, Origin, PageSpecificity, u32);
+type PageCustomCascadedDecl = (CustomProperty, bool, Origin, u32, PageSpecificity, u32);
 
 /// Match a single compound `<page-selector>` entry against `query`.
 ///
@@ -4035,19 +4060,25 @@ fn match_page_entry(
 /// across rules, `source_order` is monotonically increasing so `>` and `>=`
 /// coincide.
 fn page_beats(
-    candidate: &(u8, PageSpecificity, u32, PropertyValue),
-    existing: &(u8, PageSpecificity, u32, PropertyValue),
+    candidate: &(u8, u32, PageSpecificity, u32, PropertyValue),
+    existing: &(u8, u32, PageSpecificity, u32, PropertyValue),
 ) -> bool {
-    (candidate.0, candidate.1, candidate.2) >= (existing.0, existing.1, existing.2)
+    (candidate.0, candidate.1, candidate.2, candidate.3)
+        >= (existing.0, existing.1, existing.2, existing.3)
 }
 
 /// Compare a descriptor candidate, including declaration order within one rule.
 fn descriptor_beats<T>(
-    candidate: &(u8, PageSpecificity, u32, u32, T),
-    existing: &(u8, PageSpecificity, u32, u32, T),
+    candidate: &(u8, u32, PageSpecificity, u32, u32, T),
+    existing: &(u8, u32, PageSpecificity, u32, u32, T),
 ) -> bool {
-    (candidate.0, candidate.1, candidate.2, candidate.3)
-        >= (existing.0, existing.1, existing.2, existing.3)
+    (
+        candidate.0,
+        candidate.1,
+        candidate.2,
+        candidate.3,
+        candidate.4,
+    ) >= (existing.0, existing.1, existing.2, existing.3, existing.4)
 }
 
 /// Resolve descriptor lengths using the computed page-context font bases.
@@ -7154,7 +7185,7 @@ mod tests {
     /// absolutize するため transform bucket に含めず、`caption-side` と
     /// `empty-cells` は keyword-only の pass-through bucket に含める。
     /// この値は `page_corpus` の現在の identity/pass-through arms と同期する。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 107;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 108;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -7931,6 +7962,7 @@ mod tests {
         use crate::property::{DeferredValue, RelativeFontSize};
         vec![
             PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
+            PropertyValue::CounterResetInherit,
             PropertyValue::Deferred(DeferredValue {
                 property: "width".into(),
                 value: "calc(1px + 1px)".into(),
@@ -8016,10 +8048,11 @@ mod tests {
     macro_rules! property_value_variant_registry {
         ($($variant:ident),+ $(,)?) => {
             const PROPERTY_VALUE_VARIANT_COUNT: usize = [$(stringify!($variant)),+,
-                "CalcLengthPercentage", "GridArea", "Grid"].len();
+                "CounterResetInherit", "CalcLengthPercentage", "GridArea", "Grid"].len();
 
             fn property_value_variant_name(value: &PropertyValue) -> &'static str {
                 match value {
+                    PropertyValue::CounterResetInherit => "CounterResetInherit",
                     PropertyValue::CalcLengthPercentage { .. } => "CalcLengthPercentage",
                     PropertyValue::GridArea(_) => "GridArea",
                     PropertyValue::Grid(_) => "Grid",
@@ -8595,6 +8628,7 @@ mod tests {
             | PropertyValue::FontFamily(_)
             | PropertyValue::Display(_)
             | PropertyValue::CounterReset(_)
+            | PropertyValue::CounterResetInherit
             | PropertyValue::CounterIncrement(_)
             | PropertyValue::CounterSet(_)
             | PropertyValue::Content(_)

@@ -297,13 +297,13 @@ fn expand_hex_nibble(n: u8) -> u8 {
 /// **訂正**: 本節は以前 `crates/raikiri-dom/src/
 /// layout.rs:143` の `preshape_text` を「wildcard arm を持つ既存 sibling」と
 /// して挙げていたが、これは Option A 層分離
-/// (`crate::resolve` 参照) で崩れた — `preshape_text` が消費する
+/// ([`crate::resolve`] 参照) で崩れた — `preshape_text` が消費する
 /// `cv.font_size` は現在 [`crate::resolve::ComputedLength`] (px scalar) で
 /// あり、`Length` を直接 match しないため wildcard arm ごと削除済
 /// (`layout.rs` の `preshape_text` doc "失敗しない" 節に経緯あり)。
 /// 実際 `crates/raikiri-dom` / `raikiri-paint` / `raikiri-html` /
 /// `raikiri-traits` は現状どこも `Length` を直接 match しない — 層分離後は
-/// すべて `crate::resolve` の `Computed*` 型 (`ComputedLength` /
+/// すべて [`crate::resolve`] の `Computed*` 型 (`ComputedLength` /
 /// `ComputedLengthPercentage` / `ComputedLengthPercentageOrAuto` /
 /// `ComputedBorder`) を経由するため。上記の wildcard-arm 契約は
 /// **`Length` を直接 match する将来の downstream code に対して有効**であり、
@@ -4570,7 +4570,7 @@ pub enum ClearValue {
 /// element」ではない (page box 自体を float させる CSS 機構は存在しない)
 /// ため、[`crate::page::cascade_page`] の phase 3 はこの解決を行わず、
 /// `Float` / `Clear` を [`ZIndexValue`] と同じ opaque pass-through として
-/// 扱う (`crate::page::absolutize_in_page_context` の該当 arm 参照)。
+/// 扱う ([`crate::page::absolutize_in_page_context`] の該当 arm 参照)。
 ///
 /// `pub(crate)` — 呼び手は `specified` module のみ。
 pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue) -> DisplayValue {
@@ -6690,6 +6690,10 @@ pub enum PropertyValue {
     /// `* { counter-reset: c0 c1 ... cN }` × M element で O(N × M) → O(N + M)
     /// (cascade memory DoS 対策、Content/StringSet pattern の踏襲)。
     CounterReset(Arc<Vec<(SmolStr, i32)>>),
+    /// CSS-wide `counter-reset: inherit` retained for page-context resolution.
+    /// The page-margin used-value pass resolves this marker against the
+    /// enclosing page counter scope.
+    CounterResetInherit,
     /// `counter-increment: [ <counter-name> <integer>? ]+ | none` —
     /// non-inherited。spec initial は `none` (CSS Lists 3 §4.2)、本 impl はそれを
     /// 空 list で表現する。
@@ -8370,7 +8374,9 @@ impl PropertyValue {
             PropertyValue::FontWeight(_) => PropertyKey::FontWeight,
             PropertyValue::LineHeight(_) => PropertyKey::LineHeight,
             PropertyValue::Display(_) => PropertyKey::Display,
-            PropertyValue::CounterReset(_) => PropertyKey::CounterReset,
+            PropertyValue::CounterReset(_) | PropertyValue::CounterResetInherit => {
+                PropertyKey::CounterReset
+            }
             PropertyValue::CounterIncrement(_) => PropertyKey::CounterIncrement,
             PropertyValue::CounterSet(_) => PropertyKey::CounterSet,
             PropertyValue::Content(_) => PropertyKey::Content,
@@ -9828,13 +9834,22 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // clone を shallow bump 化)、空 list は 3 property 共通 shared Arc slot
         // (`empty_counter_entries`) に落として per-node allocation regression を
         // 避ける (Content/StringSet の precedent と同 pattern)。
-        "counter-reset" => parse_counter_property(input, 0).map(|v| {
-            if v.is_empty() {
-                PropertyValue::CounterReset(empty_counter_entries())
+        "counter-reset" => {
+            if input
+                .try_parse(|i| i.expect_ident_matching("inherit"))
+                .is_ok()
+            {
+                Some(PropertyValue::CounterResetInherit)
             } else {
-                PropertyValue::CounterReset(Arc::new(v))
+                parse_counter_property(input, 0).map(|v| {
+                    if v.is_empty() {
+                        PropertyValue::CounterReset(empty_counter_entries())
+                    } else {
+                        PropertyValue::CounterReset(Arc::new(v))
+                    }
+                })
             }
-        }),
+        }
         "counter-increment" => parse_counter_property(input, 1).map(|v| {
             if v.is_empty() {
                 PropertyValue::CounterIncrement(empty_counter_entries())
@@ -10188,7 +10203,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // specified keyword.
         "white-space" => parse_white_space(input).map(PropertyValue::WhiteSpace),
         // CSS Text 4 §5 text-wrap (subset: single `wrap | nowrap` keyword;
-        // full shorthand with wrap-style deferred — see [`TextWrapMode`] doc).
+        // full shorthand with wrap-style deferred — see the TextWrapMode doc).
         "text-wrap" => parse_text_wrap_mode(input).map(PropertyValue::TextWrap),
         // CSS Flexible Box Layout Module Level 1 §5.1
         // <https://www.w3.org/TR/css-flexbox-1/#flex-direction-property>.
@@ -18817,7 +18832,7 @@ fn parse_clip_path(input: &mut Parser<'_, '_>) -> Option<ClipPath> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(ClipPath::None);
     }
-    // Try [ <basic-shape> || <geometry-box> ] — either order, at least one.
+    // Try the basic-shape / geometry-box pair — either order, at least one.
     // First try basic-shape with optional trailing geometry-box.
     if let Ok(shape_with_box) = input.try_parse(|i| -> Result<ClipPath, ParseError<'_, ()>> {
         let shape = parse_basic_shape(i).ok_or_else(|| i.new_custom_error(()))?;
@@ -23753,10 +23768,13 @@ mod tests {
     }
 
     #[test]
-    fn counter_reset_rejects_reserved_css_wide_keyword_as_name() {
-        // spec §4: <counter-name> excludes CSS-wide keywords + `default`。
-        // 先頭 ident が `inherit` → try_parse rewind で empty result → None。
-        assert_eq!(parse("inherit", "counter-reset"), None);
+    fn counter_reset_accepts_inherit_marker_and_rejects_other_reserved_names() {
+        // `counter-reset: inherit` is retained as a page-context marker;
+        // the other CSS-wide keywords are not valid counter names.
+        assert_eq!(
+            parse("inherit", "counter-reset"),
+            Some(PropertyValue::CounterResetInherit)
+        );
         assert_eq!(parse("initial", "counter-reset"), None);
         assert_eq!(parse("unset", "counter-reset"), None);
         assert_eq!(parse("revert", "counter-reset"), None);
@@ -26074,7 +26092,7 @@ mod tests {
 
     #[test]
     fn text_wrap_rejects_balance() {
-        // Full shorthand (wrap-style) is deferred — see [`TextWrapMode`] doc.
+        // Full shorthand (wrap-style) is deferred — see the TextWrapMode doc.
         assert_eq!(parse("balance", "text-wrap"), None);
     }
 
@@ -36488,7 +36506,7 @@ mod tests {
 
     #[test]
     fn clip_path_basic_shape_with_geometry_box() {
-        // [ <basic-shape> || <geometry-box> ] — either order.
+        // The basic-shape / geometry-box pair — either order.
         let a = parse("circle(50%) border-box", "clip-path");
         assert!(matches!(
             a,

@@ -88,7 +88,7 @@ impl BlitzOracle {
 
     /// Render `html` via blitz at `width`×`height` and return the image.
     ///
-    /// Convenience wrapper around `crate::reftest::render_blitz`.
+    /// Convenience wrapper around [`crate::reftest::render_blitz`].
     pub fn render_image(html: &str, width: u32, height: u32) -> Result<RenderedImage, String> {
         render_blitz(html, width, height).map_err(|e| e.to_string())
     }

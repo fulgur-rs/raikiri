@@ -15,7 +15,10 @@ use std::sync::Arc;
 
 use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
 use kurbo::{Affine, BezPath, Cap, Circle, Point, Rect, Stroke, Vec2};
-use parley::{Alignment, Glyph as ParleyGlyph, PositionedLayoutItem};
+use parley::{
+    Alignment, FontContext, FontFamily, FontStyle as ParleyFontStyle, FontWeight,
+    Glyph as ParleyGlyph, LayoutContext, LineHeight, PositionedLayoutItem, StyleProperty,
+};
 use peniko::{Color, Fill};
 use raikiri_dom::Node;
 use raikiri_style::property::{
@@ -298,6 +301,109 @@ pub(crate) fn draw_text_node(
             );
         }
     }
+}
+
+/// Vertical placement of generated margin-box text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MarginTextVerticalAlign {
+    Top,
+    Middle,
+    Bottom,
+}
+
+/// Draw generated text in a page-margin box.
+///
+/// Margin-box content is not a DOM text node, so it has no pre-shaped layout
+/// to borrow from the document arena.  This small sink-local shaper uses the
+/// same parley/anyrender path as ordinary text and deliberately accepts only
+/// the style data needed by the page-context caller.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_margin_text(
+    scene: &mut impl PaintScene,
+    content: &str,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    color: Color,
+    font_size: f32,
+    font_family: &str,
+    alignment: Alignment,
+    vertical_align: MarginTextVerticalAlign,
+) {
+    if content.is_empty() || width <= 0.0 || height <= 0.0 {
+        return;
+    }
+    let font_size = if font_size.is_finite() && font_size > 0.0 {
+        font_size
+    } else {
+        16.0
+    };
+    let mut fonts = FontContext::new();
+    let mut layout_cx = LayoutContext::<()>::new();
+    let mut builder = layout_cx.ranged_builder(&mut fonts, content, 1.0, true);
+    builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
+    builder.push_default(StyleProperty::FontSize(font_size));
+    builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
+    builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
+    builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
+    let mut layout = builder.build(content);
+    layout.break_all_lines(Some(width));
+    layout.align(alignment, parley::AlignmentOptions::default());
+
+    let free_y = (height - layout.height()).max(0.0);
+    let offset_y = match vertical_align {
+        MarginTextVerticalAlign::Top => 0.0,
+        MarginTextVerticalAlign::Middle => free_y * 0.5,
+        MarginTextVerticalAlign::Bottom => free_y,
+    } as f64;
+    let base_transform = Affine::translate((x as f64, y as f64 + offset_y));
+    for line in layout.lines() {
+        for item in line.items() {
+            let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
+                continue;
+            };
+            let run = glyph_run.run();
+            scene.draw_glyphs(
+                run.font(),
+                run.font_size(),
+                true,
+                run.normalized_coords(),
+                Vec2::ZERO,
+                Fill::NonZero,
+                color,
+                1.0,
+                base_transform,
+                None,
+                glyph_run.positioned_glyphs().map(to_anyrender_glyph),
+            );
+        }
+    }
+}
+
+/// Measure one-line generated margin text using the same font defaults as
+/// [`draw_margin_text`].  Replaced content such as an image can use the result
+/// as its inline origin without leaking URL syntax into the painted text.
+pub(crate) fn measure_margin_text(content: &str, font_size: f32, font_family: &str) -> f32 {
+    if content.is_empty() {
+        return 0.0;
+    }
+    let font_size = if font_size.is_finite() && font_size > 0.0 {
+        font_size
+    } else {
+        16.0
+    };
+    let mut fonts = FontContext::new();
+    let mut layout_cx = LayoutContext::<()>::new();
+    let mut builder = layout_cx.ranged_builder(&mut fonts, content, 1.0, true);
+    builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
+    builder.push_default(StyleProperty::FontSize(font_size));
+    builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
+    builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
+    builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
+    let mut layout = builder.build(content);
+    layout.break_all_lines(None);
+    layout.width().max(0.0)
 }
 
 fn leading_whitespace_advance(line: parley::Line<'_, ()>, rtl: bool) -> f32 {

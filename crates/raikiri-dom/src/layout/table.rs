@@ -142,7 +142,7 @@ pub fn compute_table_layout(
     // Known outer dimensions (from taffy's compute_root_layout known_dimensions or style.size)
     // The table's outer size caller may have imposed via `apply_page_box_to_body` / block layout.
     // For tables, style.size is already injected via bridge; inputs.known_dimensions carries it.
-    // Also honour doc.nodes[table_idx].style.size if known_dimensions is None (similar to spike).
+    // Also honour the node at table_idx's style.size if known_dimensions is None (similar to spike).
     // taffy's Dimension::maybe_resolve not directly available; use helper below.
     let effective_known = Size {
         width: inputs.known_dimensions.width.or(resolve_dimension(

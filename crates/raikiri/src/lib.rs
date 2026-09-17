@@ -16,6 +16,7 @@
 //! assert!(!result.computed.is_empty(), "cascade populates per-node ComputedValues");
 //! ```
 
+#![allow(rustdoc::private_intra_doc_links)]
 mod html_document;
 pub use html_document::HtmlDocument;
 
@@ -34,7 +35,10 @@ pub use html_to_png::{html_to_png, html_to_png_with_fonts};
 // `NodeId` は既存 `raikiri_traits::NodeId` (re-export 済み) を再利用し
 // PageScene と Document 間で node identity を統一する。
 mod page_scene;
-pub use page_scene::{Fragment, Orientation, PageMetadata, PageScene, Pt, build_page_scene};
+pub use page_scene::{
+    Fragment, Orientation, PageMetadata, PageScene, Pt, build_page_scene,
+    build_page_scene_for_page, build_page_scene_for_page_named,
+};
 
 mod page_drawables;
 pub use page_drawables::{PageDrawables, TrackedMap};
@@ -51,7 +55,7 @@ pub use entries::{
 // これが無いと consumer は raikiri-dom / parley を direct dep しなければ
 // ならず、実装 crate 依存が漏れる。
 pub use parley::FontContext;
-pub use raikiri_dom::{FontError, build_wpt_font_ctx};
+pub use raikiri_dom::{FontError, PageMargins, PageSlice, build_wpt_font_ctx, first_page_name};
 
 // ── raikiri-traits: shared vocabulary + DOM traits + error taxonomy ────
 // Network API (Request / FetchedResource / NetworkError / Method / Body /

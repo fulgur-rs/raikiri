@@ -80,6 +80,13 @@ pub struct CascadeResult {
     /// point. The compatibility entry point uses the unnamed/default query;
     /// paged consumers should use [`cascade_with_media_context_for_page`].
     pub page: PageCascadeResult,
+    /// Per-node computed page type (`page: auto | <custom-ident>`).
+    ///
+    /// This is kept beside, rather than inside, `ComputedValues` because the
+    /// page property is consumed by the pagination driver and is not part of
+    /// the element-to-taffy computed style bag.  The vector has the same arena
+    /// indexing contract as [`Self::computed`].
+    pub page_values: Vec<crate::property::PageValue>,
     /// `::before` / `::after` — sparse, keyed by `(originating element's own
     /// NodeId, which pseudo)`. An entry exists **iff** at least one
     /// stylesheet rule's selector targets that pseudo-element and matches
@@ -209,6 +216,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
     // 直接 index する)。事前に initial() で埋めておき、DFS で visited slot を
     // 上書きする実装。
     let mut computed: Vec<ComputedValues> = vec![ComputedValues::initial(); dom.node_count()];
+    let mut page_values = vec![crate::property::PageValue::Auto; dom.node_count()];
     let mut pseudo: HashMap<(StyleNodeId, PseudoElem), ComputedValues> = HashMap::new();
     resolve_inheritance(
         dom,
@@ -216,6 +224,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
         &ComputedValues::initial(),
         &cascaded,
         &mut computed,
+        &mut page_values,
         &mut pseudo,
     );
 
@@ -229,6 +238,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
     Ok(CascadeResult {
         computed,
         page,
+        page_values,
         pseudo,
     })
 }
@@ -5303,6 +5313,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
     parent_computed: &ComputedValues,
     cascaded: &CascadedArena,
     out: &mut Vec<ComputedValues>,
+    page_values: &mut [crate::property::PageValue],
     pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
 ) {
     let mut stack: Vec<InheritanceStackEntry> =
@@ -5345,7 +5356,13 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // 適用対象は staging 表現なので winner の適用順に依存しない。
         let mut specified = SpecifiedValues::inherit_from(&parent_computed);
         if let Some(candidates) = cascaded.candidates(id) {
-            apply_winners(candidates, &mut winners, &mut specified, &custom_properties);
+            apply_winners(
+                candidates,
+                &mut winners,
+                &mut specified,
+                &custom_properties,
+                Some(&mut page_values[id.0 as usize]),
+            );
         }
 
         // phase 2 + phase 3: 絶対化。root element (element 祖先なし) は `rem` の
@@ -5446,6 +5463,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
                         &mut winners,
                         &mut pseudo_specified,
                         &pseudo_custom_properties,
+                        None,
                     );
                 }
 
@@ -6512,6 +6530,7 @@ fn apply_winners(
     winners: &mut Vec<Option<RankedDecl>>,
     specified: &mut SpecifiedValues,
     custom_properties: &CustomPropertyEnvironment,
+    mut page_value: Option<&mut crate::property::PageValue>,
 ) {
     pick_winners(candidates, winners);
     for slot in winners.iter_mut() {
@@ -6524,6 +6543,11 @@ fn apply_winners(
                 _ => Some(value.clone()),
             };
             if let Some(value) = value {
+                if let crate::property::PropertyValue::Page(page) = &value
+                    && let Some(page_slot) = page_value.as_deref_mut()
+                {
+                    *page_slot = page.clone();
+                }
                 apply_value(value, specified);
             }
         }
@@ -7050,14 +7074,14 @@ fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
 /// fractional weight (`349.5` 等) を保持したまま渡ってくる。丸めずに直接
 /// 比較するため行選択は spec §2.2.1 のとおり正確に決まる — 旧 `u16` 実装は
 /// parse 段の丸めで `349.5` が `350` に化けてから本関数に渡り、`350 <= w < 550`
-/// 行を誤って踏んでいた (詳細: `crate::property::parse_font_weight` doc)。
+/// 行を誤って踏んでいた (詳細: [`crate::property::parse_font_weight`] doc)。
 ///
 /// # 非有限 `inherited` (`NaN` / `±Inf`) — 本関数は guard しない
 ///
 /// `u16` だった頃は非有限が型で構造的に排除されていたが、`f32` 化で
 /// finiteness は「型で保証」から「呼び出し元の値
 /// 検証で保証」に変わった。通常の cascade 経路は
-/// `crate::property::parse_font_weight` の `[1, 1000]` range guard により
+/// [`crate::property::parse_font_weight`] の `[1, 1000]` range guard により
 /// 常に finite だが、`ComputedValues` の field は全て `pub` で
 /// [`crate::page::cascade_page`] も呼び出し側提供の
 /// [`crate::page::PageInheritance`]`::FromRoot` を継承元 root として受け取るため、
@@ -7385,6 +7409,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::LineHeight(_)
         | PropertyValue::Display(_)
         | PropertyValue::CounterReset(_)
+        | PropertyValue::CounterResetInherit
         | PropertyValue::CounterIncrement(_)
         | PropertyValue::CounterSet(_)
         | PropertyValue::Content(_)
@@ -7795,7 +7820,7 @@ impl ResolvedAgainstInherited {
         self.0
     }
 
-    /// Phase 2 を通過済の値を覗き見る (所有権を取らない版)。`crate::page` の
+    /// Phase 2 を通過済の値を覗き見る (所有権を取らない版)。[`crate::page`] の
     /// `page_context_font_size` / `page_context_border_styles` が、phase 3 に
     /// 渡す前の `font-size` / `border-*-style` を読むために使う。
     pub(crate) fn as_property_value(&self) -> &PropertyValue {
@@ -7968,6 +7993,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // 向けた足場 — parse 結果をそのまま computed value に格納。counter
         // tree の実際の resolve は将来の本実装で行う。
         PropertyValue::CounterReset(v) => target.counter_reset = v,
+        PropertyValue::CounterResetInherit => {
+            target.counter_reset = crate::property::empty_counter_entries();
+        }
         PropertyValue::CounterIncrement(v) => target.counter_increment = v,
         PropertyValue::CounterSet(v) => target.counter_set = v,
         // content は将来の GCPM directive-emit の static-side 実装。
@@ -8388,7 +8416,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // 格納する (`CounterReset`/`Content` arm と同じ位置付け、
         // `ComputedValues::quotes` doc 参照)。nesting depth → 実際の
         // 引用符文字列への解決は下流 (raikiri-dom) 責務。
-        PropertyValue::Quotes(v) => target.quotes = v,
+        PropertyValue::Quotes(v) => {
+            target.quotes_auto = false;
+            target.quotes = v;
+        }
         // CSS Text Decoration Module Level 3 §4。specified 表現
         // (`Arc<Vec<TextShadowItem>>`) のまま格納 — 絶対化 (各 item の length
         // 3 本) は phase 3 (`SpecifiedValues::finalize` / `absolutize_with`)
@@ -8628,8 +8659,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         | PropertyValue::TextDecorationThickness(_)
         | PropertyValue::TextDecorationInset(_)
         | PropertyValue::TextEmphasisPosition(_)
-        | PropertyValue::TextUnderlinePosition(_)
-        | PropertyValue::Page(_) => {}
+        | PropertyValue::TextUnderlinePosition(_) => {}
+        // CSS Paged Media 3 §8.1: retain the non-inherited named-page value
+        // in the specified staging bag; the page driver consumes it when it
+        // selects the next page context.
+        PropertyValue::Page(value) => target.page = value,
         // These values are resolved before ordinary winners reach this
         // function. Keeping an explicit no-op makes direct internal callers
         // panic-free without allowing raw deferred data into a computed field.

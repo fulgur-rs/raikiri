@@ -17,10 +17,11 @@ use parley::{
     Layout, LayoutContext, LineHeight, StyleProperty,
 };
 use raikiri_style::property::{
-    AlignSelfValue, BoxSizing as StyleBoxSizing, ClearValue, ContentAlignmentValue, Direction,
-    DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle as StyleFontStyle,
-    GridAutoFlowValue, GridLineValue, GridRepeatCount, GridTemplateAreasValue, Hyphens,
-    OverflowValue, PositionValue, SelfAlignmentValue, TextAlign, TextJustify, TextTransform,
+    AlignSelfValue, BoxSizing as StyleBoxSizing, BreakBetween, CalcLengthPercentage, ClearValue,
+    ContentAlignmentValue, Direction, DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue,
+    FontStyle as StyleFontStyle, GridAutoFlowValue, GridLineValue, GridRepeatCount,
+    GridTemplateAreasValue, Hyphens, Length, LengthOrAuto, OverflowValue, PositionValue,
+    PropertyKey, PropertyValue, SelfAlignmentValue, TextAlign, TextJustify, TextTransform,
     TextWrapMode, WhiteSpace,
 };
 use raikiri_style::{
@@ -80,11 +81,269 @@ pub(crate) fn find_body(doc: &Document) -> Option<usize> {
 /// CSS Paged Media の initial containing block = @page size。現行実装は @page 非対応
 /// のため body.style.size に直接注入する妥協。将来 @page cascade + per-page
 /// PageBox を導入する際に `<html>` root style に site を昇格予定。
+#[allow(dead_code)]
 pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_box: PageBox) {
     doc.nodes[body_id].style.size = Size {
         width: Dimension::length(page_box.width),
         height: Dimension::length(page_box.height),
     };
+}
+
+fn apply_page_content_box_to_body(
+    doc: &mut Document,
+    body_id: usize,
+    page_box: PageBox,
+    margins: PageMargins,
+    insets: PageContentInsets,
+) {
+    doc.nodes[body_id].style.size = Size {
+        width: Dimension::length(
+            (margins.content_width(page_box) - insets.left - insets.right).max(0.0),
+        ),
+        height: Dimension::length(
+            (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0),
+        ),
+    };
+}
+
+/// Used page margins resolved from the page-context cascade.
+///
+/// The four values are paper-relative CSS pixels.  Unlike ordinary element
+/// margins, page percentages use the corresponding page-box axis: top and
+/// bottom use the page height, while left and right use the page width.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PageMargins {
+    /// Used top margin in CSS pixels.
+    pub top: f32,
+    /// Used right margin in CSS pixels.
+    pub right: f32,
+    /// Used bottom margin in CSS pixels.
+    pub bottom: f32,
+    /// Used left margin in CSS pixels.
+    pub left: f32,
+}
+
+impl PageMargins {
+    /// Width available to the page's content area.
+    pub fn content_width(self, page_box: PageBox) -> f32 {
+        (page_box.width - self.left - self.right).max(0.0)
+    }
+
+    /// Height available to the page's content area.
+    pub fn content_height(self, page_box: PageBox) -> f32 {
+        (page_box.height - self.top - self.bottom).max(0.0)
+    }
+
+    /// Whether all four used margins are zero.
+    pub fn is_zero(self) -> bool {
+        self.top == 0.0 && self.right == 0.0 && self.bottom == 0.0 && self.left == 0.0
+    }
+}
+
+fn page_length_to_px(length: Length, basis: f32) -> f32 {
+    let value = match length {
+        Length::Px(value) => value,
+        Length::Pt(value) => value * 96.0 / 72.0,
+        Length::Cm(value) => value * 96.0 / 2.54,
+        Length::Mm(value) => value * 96.0 / 25.4,
+        Length::Q(value) => value * 96.0 / 101.6,
+        Length::In(value) => value * 96.0,
+        Length::Pc(value) => value * 96.0 / 6.0,
+        // Page-context absolutization normally resolves these before this
+        // consumer sees them.  Keep a deterministic initial-font fallback for
+        // values introduced through direct/internal cascade construction.
+        Length::Em(value)
+        | Length::Rem(value)
+        | Length::Ex(value)
+        | Length::Rex(value)
+        | Length::Ch(value)
+        | Length::Rch(value)
+        | Length::Ic(value)
+        | Length::Ric(value)
+        | Length::Lh(value)
+        | Length::Rlh(value) => value * 16.0,
+        Length::Percent(value) => basis * value / 100.0,
+        _ => 0.0,
+    };
+    if value.is_finite() { value } else { 0.0 }
+}
+
+fn page_margin_length(value: LengthOrAuto, basis: f32) -> f32 {
+    let value = match value {
+        LengthOrAuto::Auto => 0.0,
+        LengthOrAuto::Length(length) => page_length_to_px(length, basis),
+        LengthOrAuto::Calc(CalcLengthPercentage { percent, px }) => {
+            let percent = if percent.is_finite() { percent } else { 0.0 };
+            let px = if px.is_finite() { px } else { 0.0 };
+            px + basis * percent / 100.0
+        }
+        _ => 0.0,
+    };
+    if value.is_finite() { value } else { 0.0 }
+}
+
+/// Used border and padding inset inside the page margin area.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PageContentInsets {
+    /// Top border plus padding.
+    pub top: f32,
+    /// Right border plus padding.
+    pub right: f32,
+    /// Bottom border plus padding.
+    pub bottom: f32,
+    /// Left border plus padding.
+    pub left: f32,
+}
+
+fn page_box_side(
+    declarations: &std::collections::HashMap<PropertyKey, PropertyValue>,
+    padding: PropertyKey,
+    border: PropertyKey,
+    basis: f32,
+) -> f32 {
+    let value = match declarations.get(&padding) {
+        Some(PropertyValue::PaddingTop(value))
+        | Some(PropertyValue::PaddingRight(value))
+        | Some(PropertyValue::PaddingBottom(value))
+        | Some(PropertyValue::PaddingLeft(value)) => Some(*value),
+        _ => None,
+    };
+    let padding = value.map_or(0.0, |length| page_length_to_px(length, basis));
+    // Existing page-border painting treats a border-only page decoration as an
+    // overlay. Once page padding is present, the page content box is explicit;
+    // include its border in the inset so the padding box starts inside it.
+    let border = if padding > 0.0 {
+        match declarations.get(&border) {
+            Some(PropertyValue::BorderTopWidth(value))
+            | Some(PropertyValue::BorderRightWidth(value))
+            | Some(PropertyValue::BorderBottomWidth(value))
+            | Some(PropertyValue::BorderLeftWidth(value)) => page_length_to_px(*value, basis),
+            _ => 0.0,
+        }
+    } else {
+        0.0
+    };
+    (padding + border).max(0.0)
+}
+
+/// Resolve the border and padding inset of the page content box.
+///
+/// Page margins remain separate because margin boxes occupy the margin strips;
+/// ordinary document flow starts after both the page border and page padding.
+pub fn page_content_insets(cascade: &CascadeResult, page_box: PageBox) -> PageContentInsets {
+    let declarations = cascade.page.declarations();
+    PageContentInsets {
+        top: page_box_side(
+            declarations,
+            PropertyKey::PaddingTop,
+            PropertyKey::BorderTopWidth,
+            page_box.height,
+        ),
+        right: page_box_side(
+            declarations,
+            PropertyKey::PaddingRight,
+            PropertyKey::BorderRightWidth,
+            page_box.width,
+        ),
+        bottom: page_box_side(
+            declarations,
+            PropertyKey::PaddingBottom,
+            PropertyKey::BorderBottomWidth,
+            page_box.height,
+        ),
+        left: page_box_side(
+            declarations,
+            PropertyKey::PaddingLeft,
+            PropertyKey::BorderLeftWidth,
+            page_box.width,
+        ),
+    }
+}
+
+fn page_margin_side(
+    declarations: &std::collections::HashMap<PropertyKey, PropertyValue>,
+    side: PropertyKey,
+    shorthand: Option<LengthOrAuto>,
+    basis: f32,
+) -> f32 {
+    let value = match (side, declarations.get(&side)) {
+        (PropertyKey::MarginTop, Some(PropertyValue::MarginTop(value)))
+        | (PropertyKey::MarginRight, Some(PropertyValue::MarginRight(value)))
+        | (PropertyKey::MarginBottom, Some(PropertyValue::MarginBottom(value)))
+        | (PropertyKey::MarginLeft, Some(PropertyValue::MarginLeft(value))) => Some(*value),
+        _ => shorthand,
+    };
+    value.map_or(0.0, |value| page_margin_length(value, basis))
+}
+
+/// Resolve the used page margins from a page cascade and paper size.
+///
+/// `cascade_page` deliberately keeps page percentages symbolic because the
+/// page box is a downstream used-value basis.  This is the single geometry
+/// entry point used by layout, scene extraction, and paint so all three agree
+/// on the paper/content split.
+pub fn page_margins(cascade: &CascadeResult, page_box: PageBox) -> PageMargins {
+    let declarations = cascade.page.declarations();
+    let shorthand = match declarations.get(&PropertyKey::Margin) {
+        Some(PropertyValue::Margin(sides)) => Some(*sides),
+        _ => None,
+    };
+    PageMargins {
+        top: page_margin_side(
+            declarations,
+            PropertyKey::MarginTop,
+            shorthand.map(|s| s.top),
+            page_box.height,
+        ),
+        right: page_margin_side(
+            declarations,
+            PropertyKey::MarginRight,
+            shorthand.map(|s| s.right),
+            page_box.width,
+        ),
+        bottom: page_margin_side(
+            declarations,
+            PropertyKey::MarginBottom,
+            shorthand.map(|s| s.bottom),
+            page_box.height,
+        ),
+        left: page_margin_side(
+            declarations,
+            PropertyKey::MarginLeft,
+            shorthand.map(|s| s.left),
+            page_box.width,
+        ),
+    }
+}
+
+/// Find the first named page requested by a rendered class-A box.
+///
+/// A named page on the first in-flow box selects the initial page context, so
+/// callers must resolve its `@page` size and margins before the first layout
+/// pass.  The traversal is deliberately conservative: it follows rendered
+/// elements in document order and skips inert/display-none subtrees.
+pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<String> {
+    let mut stack = vec![document.root_index()];
+    while let Some(node_id) = stack.pop() {
+        let node = document.get_node(node_id)?;
+        if !node.is_in_document()
+            || node.is_non_rendered_html_element()
+            || (node.kind() == NodeKind::Element && node.is_display_none())
+        {
+            continue;
+        }
+        if node.kind() == NodeKind::Element
+            && matches!(cascade.computed[node_id].float, FloatValue::None)
+            && let Some(raikiri_style::property::PageValue::Named(name)) =
+                cascade.page_values.get(node_id)
+        {
+            return Some(name.to_string());
+        }
+        for &child in node.children.iter().rev() {
+            stack.push(child);
+        }
+    }
+    None
 }
 
 /// ComputedValues → taffy::Style bridge の dispatch site。
@@ -1832,6 +2091,8 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
         if !containing_width.is_finite() || containing_width <= 0.0 {
             continue;
         }
+        let preserve_wide_body_run = is_leading_body_text(doc, Some(parent_idx), idx)
+            && matches!(cv.text_align, TextAlign::Start | TextAlign::Left);
         let Some(layout) = doc.nodes[idx]
             .data
             .as_text_mut()
@@ -1839,6 +2100,13 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
         else {
             continue;
         };
+        // A direct body text run may intentionally overflow the page content
+        // width when the paged containing block carries a margin.  Preserve
+        // the page-width shaping used by the paged bridge instead of
+        // re-breaking a one-line run to the narrower body box.
+        if preserve_wide_body_run && layout.width() > containing_width + 0.01 {
+            continue;
+        }
         // No-wrap (`white-space: nowrap` or `text-wrap: nowrap`): preshape
         // already broke without a width cap, so re-breaking here would wrap.
         // Apply indent and align onto the preshaped single line instead.
@@ -2378,7 +2646,7 @@ const FALLBACK_FONT_WEIGHT: f32 = 400.0;
 /// 呼ばれる — これは `taffy` crate 側が固定した trait method signature なので
 /// **観測用引数を追加できない**。
 ///
-/// `crate::diag::emit_warn_via` 共通機構を導入し、
+/// [`crate::diag::emit_warn_via`] 共通機構を導入し、
 /// この 2 点を以下で解決した:
 /// - `bridge_*` → `apply_computed_to_style` の chain は crate 内 private
 ///   function のみで構成されるため、`diag: &mut Vec<LayoutWarn>` を通すのは
@@ -2469,7 +2737,7 @@ fn sanitize_taffy(v: f32, site: &'static str, diag: &mut Vec<LayoutWarn>) -> f32
 ///
 /// 「非有限 / 範囲外 f32 の guard は値が実際に使われる sink 境界
 /// (target context) に置く。parse-time (specified 層) にも resolve 層
-/// (computed 層) にも置かない」という方針に従う。`crate::page::cascade_page`
+/// (computed 層) にも置かない」という方針に従う。[`crate::page::cascade_page`]
 /// (raikiri-style) の継承元 root 引数や `ComputedValues` の直接構築は
 /// raikiri-style 側の resolve/computed 層であり、
 /// `raikiri_style::cascade::resolve_relative_weight` も同じ層に属する —
@@ -2661,7 +2929,7 @@ fn line_height_to_parley(v: ComputedLineHeight) -> LineHeight {
 ///
 /// Every variant is fully owned (no borrowed `Path`, unlike `FontWarn`)
 /// because these clamp sites only ever see primitive `f32` values. See
-/// `crate::diag`'s module doc for why this owned shape — not `FontWarn`'s
+/// [`crate::diag`]'s module doc for why this owned shape — not `FontWarn`'s
 /// borrowed one — is what a shared generic `Observer<W>` type could actually
 /// have supported, and why a macro was used instead so both shapes share one
 /// mechanism anyway.
@@ -2787,7 +3055,7 @@ impl std::fmt::Display for LayoutWarn {
 type LayoutWarnObserver<'o> = Option<&'o mut dyn FnMut(&LayoutWarn)>;
 
 /// Emit a [`LayoutWarn`] event: call the observer if `Some`, otherwise
-/// `eprintln!` (matches `crate::fonts::emit_warn`'s shape exactly, via the
+/// `eprintln!` (matches [`crate::fonts::emit_warn`]'s shape exactly, via the
 /// shared [`crate::diag::emit_warn_via`] macro).
 fn emit_layout_warn(observer: &mut LayoutWarnObserver<'_>, event: LayoutWarn) {
     crate::diag::emit_warn_via!(observer, "[raikiri-dom::layout]", event);
@@ -4920,12 +5188,40 @@ fn full_width_char(c: char) -> char {
     }
 }
 
+fn is_leading_body_text(document: &Document, body_id: Option<usize>, node_id: usize) -> bool {
+    let Some(body_id) = body_id else {
+        return false;
+    };
+    for &child_id in &document.nodes[body_id].children {
+        if child_id == node_id {
+            return true;
+        }
+        let Some(child) = document.get_node(child_id) else {
+            continue;
+        };
+        match child.kind() {
+            NodeKind::Text => {
+                if let crate::node::NodeData::Text(text) = &child.data
+                    && !text.text_content.trim().is_empty()
+                {
+                    return false;
+                }
+            }
+            NodeKind::Element
+                if child.is_display_none() || child.is_non_rendered_html_element() => {}
+            _ => return false,
+        }
+    }
+    false
+}
+
 pub(crate) fn preshape_text(
     doc: &mut Document,
     cascade: &CascadeResult,
     fonts: &mut FontContext,
     layout_cx: &mut LayoutContext<()>,
     max_advance: f32,
+    page_width: f32,
 ) {
     // Cheap threshold: for tiny DOMs sequential is faster than rayon overhead.
     // Collect eligible Text nodes first to avoid borrowing `doc.nodes` mutably
@@ -4945,6 +5241,7 @@ pub(crate) fn preshape_text(
         // Soft wrapping suppressed (`white-space: nowrap` or
         // `text-wrap: nowrap`, bd raikiri-spike-9q1p).
         nowrap: bool,
+        max_advance: f32,
         // tab-stop metrics 用 font (block-container 祖先、無ければ自要素)。
         metrics_family: String,
         metrics_size: f32,
@@ -5004,6 +5301,19 @@ pub(crate) fn preshape_text(
             }
         }
     }
+    let body_id = (0..doc.nodes.len()).find(|&idx| doc.nodes[idx].tag_name() == Some("body"));
+    let has_out_of_flow_ancestor = |mut parent: Option<usize>| {
+        while let Some(id) = parent {
+            if matches!(
+                cascade.computed[id].position,
+                PositionValue::Absolute | PositionValue::Fixed
+            ) {
+                return true;
+            }
+            parent = parent_of[id];
+        }
+        false
+    };
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Text {
             continue;
@@ -5148,6 +5458,14 @@ pub(crate) fn preshape_text(
             tab_size: cv.tab_size,
             white_space: cv.white_space,
             nowrap: cv.white_space == WhiteSpace::Nowrap || cv.text_wrap == TextWrapMode::Nowrap,
+            max_advance: if page_width > max_advance
+                && (is_leading_body_text(doc, body_id, idx)
+                    || has_out_of_flow_ancestor(parent_of[idx]))
+            {
+                page_width
+            } else {
+                max_advance
+            },
             metrics_family: family_str_of(mcv),
             metrics_size: mcv.font_size.px(),
             metrics_weight: mcv.font_weight,
@@ -5225,7 +5543,11 @@ pub(crate) fn preshape_text(
             )));
             builder.push_default(StyleProperty::LetterSpacing(letter_spacing));
             let mut layout: Layout<()> = builder.build(&job.text);
-            layout.break_all_lines(if job.nowrap { None } else { Some(max_advance) });
+            layout.break_all_lines(if job.nowrap {
+                None
+            } else {
+                Some(job.max_advance)
+            });
             layout.align(Alignment::Start, AlignmentOptions::default());
             doc.layout_warnings.extend(warnings);
             if let Some(t) = doc.nodes[job.idx].data.as_text_mut() {
@@ -5278,7 +5600,11 @@ pub(crate) fn preshape_text(
                 )));
                 builder.push_default(StyleProperty::LetterSpacing(letter_spacing));
                 let mut layout: Layout<()> = builder.build(&job.text);
-                layout.break_all_lines(if job.nowrap { None } else { Some(max_advance) });
+                layout.break_all_lines(if job.nowrap {
+                    None
+                } else {
+                    Some(job.max_advance)
+                });
                 layout.align(Alignment::Start, AlignmentOptions::default());
                 out.push((job.idx, layout, warnings));
             }
@@ -5441,7 +5767,14 @@ pub fn layout_single_page(
     // Step 1: ComputedValues → taffy::Style bridge (現時点では no-op site)
     apply_computed_to_style(document, cascade);
 
-    // Step 2: pre-shape all text with parley
+    // Step 2: resolve the paper/content split before shaping.  Text wrapping
+    // uses the content width, not the outer paper width.
+    let margins = page_margins(cascade, page_box);
+    let insets = page_content_insets(cascade, page_box);
+    let content_width = (margins.content_width(page_box) - insets.left - insets.right).max(0.0);
+    let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
+
+    // Step 2b: pre-shape all text with parley
     // font_ctx は呼び出し側が構築 (system font 経路なら FontContext::new()、
     // VRT なら raikiri_dom::fonts::build_wpt_font_ctx で pin 済)
     let mut layout_cx = LayoutContext::<()>::new();
@@ -5450,6 +5783,7 @@ pub fn layout_single_page(
         cascade,
         &mut font_ctx,
         &mut layout_cx,
+        content_width,
         page_box.width,
     );
 
@@ -5458,16 +5792,17 @@ pub fn layout_single_page(
         message: "no <body> element found (fragment parse not supported yet)".to_string(),
     })?;
 
-    // Step 4: body.style.size を PageBox に強制セット
-    apply_page_box_to_body(document, body_id, page_box);
+    // Step 4: body.style.size は紙面ではなく page content box へ強制セット。
+    // Page margins are painted/represented outside this taffy root.
+    apply_page_content_box_to_body(document, body_id, page_box, margins, insets);
 
     // Step 5: taffy compute
     compute_root_layout(
         document,
         TaffyNodeId::from(body_id),
         taffy::Size {
-            width: AvailableSpace::Definite(page_box.width),
-            height: AvailableSpace::Definite(page_box.height),
+            width: AvailableSpace::Definite(content_width),
+            height: AvailableSpace::Definite(content_height),
         },
     );
 
@@ -5512,6 +5847,543 @@ pub fn layout_single_page(
     }
 
     Ok(())
+}
+
+/// One page in the block-flow pagination result.
+///
+/// `content_origin_y` is measured in the single laid-out document's body
+/// coordinate space.  A page-aware painter subtracts it before adding the
+/// page's physical top margin.  Keeping the source coordinate here means a
+/// later scene can select a page without cloning or relaying out the DOM.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageSlice {
+    /// Zero-based page number.
+    pub page_index: u32,
+    /// Body-content y coordinate at which this page begins.
+    pub content_origin_y: f32,
+    /// Named page selected by the first class-A box on this page.
+    pub page_name: Option<String>,
+}
+
+fn page_break_is_forced(value: BreakBetween) -> bool {
+    matches!(value, BreakBetween::Page)
+}
+
+fn selected_page_name(cascade: &CascadeResult, node_id: usize) -> Option<String> {
+    match cascade.page_values.get(node_id) {
+        Some(raikiri_style::property::PageValue::Named(name)) => Some(name.to_string()),
+        _ => None,
+    }
+}
+
+/// Layout a document once and produce ordered page slices.
+///
+/// The current fragmentainer handles ordinary block-flow children of
+/// `<body>`.  It honors forced `page` breaks (including the legacy aliases
+/// already normalized by the style cascade), coalesces adjacent forced
+/// breaks, and keeps an empty explicitly-created page.  A block that is taller
+/// than a page is exposed on each intersecting slice; splitting its internal
+/// line/child fragments is deliberately left to the next fragmentation pass.
+///
+/// This is intentionally separate from [`layout_single_page`]: existing
+/// callers retain the single-page contract while paged callers get a real
+/// per-page result and the same post-layout DOM as the scene builder.
+#[allow(clippy::result_large_err)]
+pub fn layout_pages(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    font_ctx: FontContext,
+) -> Result<Vec<PageSlice>, LayoutError> {
+    layout_single_page(document, cascade, page_box, font_ctx)?;
+
+    let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
+        message: "no <body> element found (fragment parse not supported yet)".to_string(),
+    })?;
+    let margins = page_margins(cascade, page_box);
+    let insets = page_content_insets(cascade, page_box);
+    // The current single-page bridge collapses the root box to zero size, so
+    // its block-start margin is not represented in descendant coordinates.
+    // Carry that margin into the initial fragmentainer cursor instead of
+    // treating the first text run as page zero content.
+    let root_margin_top = document.nodes[document.root]
+        .children
+        .iter()
+        .copied()
+        .find(|&node_id| document.nodes[node_id].tag_name() == Some("html"))
+        .and_then(|html_id| match cascade.computed[html_id].margin.top {
+            ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => Some(value.max(0.0)),
+            _ => None,
+        })
+        .unwrap_or(0.0);
+    let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
+    // A page with margins consuming the entire paper still needs a finite
+    // cursor for forced breaks.  No valid page box reaches this path in normal
+    // CSS, but the fallback keeps the API panic-free for direct callers.
+    let page_step = if content_height.is_finite() && content_height > 0.0 {
+        content_height
+    } else {
+        page_box.height.max(1.0)
+    };
+    // A root margin that reaches into a later fragmentainer consumes whole
+    // leading pages.  Do not leave the first content run stranded halfway
+    // down the first nonblank page.
+    let root_flow_offset = if root_margin_top >= page_step {
+        (root_margin_top / page_step).floor() * page_step
+    } else {
+        root_margin_top
+    };
+
+    // Pagination adjusts selected boxes after taffy has produced one normal
+    // flow layout.  Keep the arena's parent relation so a descendant can be
+    // materialized relative to an already-shifted ancestor instead of being
+    // shifted twice.
+    let mut parent_of = vec![None; document.nodes.len()];
+    for (parent_id, node) in document.nodes.iter().enumerate() {
+        for &child_id in &node.children {
+            if child_id < parent_of.len() {
+                parent_of[child_id] = Some(parent_id);
+            }
+        }
+    }
+
+    fn current_abs_y(document: &Document, node_id: usize, parent_of: &[Option<usize>]) -> f32 {
+        let mut id = node_id;
+        let mut y = 0.0_f32;
+        let mut guard = 0_usize;
+        while guard <= parent_of.len() {
+            y += document.nodes[id].unrounded_layout.location.y;
+            let Some(parent_id) = parent_of[id] else {
+                break;
+            };
+            id = parent_id;
+            guard += 1;
+            if id >= document.nodes.len() {
+                break;
+            }
+        }
+        y
+    }
+
+    fn materialize_y(
+        document: &mut Document,
+        node_id: usize,
+        desired_y: f32,
+        parent_of: &[Option<usize>],
+    ) {
+        if !desired_y.is_finite() {
+            return;
+        }
+        let actual_y = current_abs_y(document, node_id, parent_of);
+        let delta = desired_y - actual_y;
+        if delta.is_finite() {
+            document.nodes[node_id].unrounded_layout.location.y += delta;
+        }
+    }
+
+    fn is_descendant_or_self(
+        document: &Document,
+        node_id: usize,
+        ancestor_id: usize,
+        parent_of: &[Option<usize>],
+    ) -> bool {
+        let mut current = Some(node_id);
+        let mut guard = 0_usize;
+        while let Some(id) = current {
+            if id == ancestor_id {
+                return true;
+            }
+            if id >= document.nodes.len() || guard > parent_of.len() {
+                break;
+            }
+            current = parent_of[id];
+            guard += 1;
+        }
+        false
+    }
+
+    #[derive(Clone)]
+    struct PageCandidate {
+        node_id: usize,
+        raw_y: f32,
+        height: f32,
+        is_text: bool,
+        is_direct_body_text: bool,
+        is_direct_body_element: bool,
+        is_named: bool,
+        is_float_descendant: bool,
+        /// Page type inherited from the nearest containing class-A box.
+        /// `None` is the anonymous page type, not an unknown value.
+        page_name: Option<String>,
+    }
+
+    // Candidate collection carries the recursive layout state explicitly so page
+    // membership is decided from source coordinates before local page offsets.
+    #[allow(clippy::too_many_arguments)]
+    fn collect_candidates(
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+        parent_abs_y: f32,
+        direct_body_child: bool,
+        body_id: usize,
+        parent_height: f32,
+        page_step: f32,
+        inherited_page_name: Option<String>,
+        inside_float: bool,
+        out: &mut Vec<PageCandidate>,
+    ) {
+        let Some(node) = document.get_node(node_id) else {
+            return;
+        };
+        if !node.is_in_document() || node.is_non_rendered_html_element() {
+            return;
+        }
+        match node.kind() {
+            NodeKind::Text => {
+                if (direct_body_child || parent_height > 0.0)
+                    && matches!(
+                        &node.data,
+                        crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty()
+                    )
+                {
+                    out.push(PageCandidate {
+                        node_id,
+                        raw_y: parent_abs_y + node.unrounded_layout.location.y,
+                        height: node.unrounded_layout.size.height.max(0.0),
+                        is_text: true,
+                        is_direct_body_text: direct_body_child,
+                        is_direct_body_element: false,
+                        is_named: false,
+                        is_float_descendant: inside_float,
+                        page_name: inherited_page_name,
+                    });
+                }
+            }
+            NodeKind::Element => {
+                if node.is_display_none() {
+                    return;
+                }
+                let raw_y = parent_abs_y + node.unrounded_layout.location.y;
+                let computed = &cascade.computed[node_id];
+                // A floated box does not establish a page transition merely
+                // because it carries an inherited/explicit `page` value.  In
+                // particular, CSS Page 3 keeps a float in the preceding
+                // fragmentainer in the page-name-float cases.
+                let is_float = !matches!(computed.float, FloatValue::None);
+                let float_subtree = inside_float || is_float;
+                let explicit_page_name = selected_page_name(cascade, node_id);
+                let own_page_name = if !float_subtree {
+                    explicit_page_name.clone()
+                } else {
+                    None
+                };
+                let page_name = own_page_name.clone().or(inherited_page_name);
+                let is_body = node_id == body_id;
+                let participates_in_flow = matches!(
+                    computed.position,
+                    PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+                );
+                let is_tall_direct_absolute = direct_body_child
+                    && matches!(computed.position, PositionValue::Absolute)
+                    && node.unrounded_layout.size.height > page_step;
+                let is_break_candidate = !is_body
+                    && !inside_float
+                    && ((participates_in_flow
+                        && direct_body_child
+                        && explicit_page_name.is_none())
+                        || is_tall_direct_absolute
+                        || own_page_name.is_some()
+                        || page_break_is_forced(computed.break_before)
+                        || page_break_is_forced(computed.break_after));
+                if is_break_candidate {
+                    out.push(PageCandidate {
+                        node_id,
+                        raw_y,
+                        height: node.unrounded_layout.size.height.max(0.0),
+                        is_text: false,
+                        is_direct_body_text: false,
+                        is_direct_body_element: direct_body_child,
+                        is_named: own_page_name.is_some(),
+                        is_float_descendant: inside_float,
+                        page_name: page_name.clone(),
+                    });
+                }
+                let child_is_direct_body = node_id == body_id;
+                for &child_id in &node.children {
+                    collect_candidates(
+                        document,
+                        cascade,
+                        child_id,
+                        raw_y,
+                        child_is_direct_body,
+                        body_id,
+                        node.unrounded_layout.size.height.max(0.0),
+                        page_step,
+                        page_name.clone(),
+                        float_subtree,
+                        out,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut candidates = Vec::new();
+    collect_candidates(
+        document,
+        cascade,
+        body_id,
+        root_flow_offset,
+        false,
+        body_id,
+        0.0,
+        page_step,
+        None,
+        false,
+        &mut candidates,
+    );
+    let mut flow_shift = 0.0_f32;
+    let mut current_page = 0_u32;
+    let mut max_page = 0_u32;
+    let mut pending_break = false;
+    // When a forced-break box underflows into the preceding page, descendants
+    // follow the box while later siblings still begin after the break boundary.
+    let mut pending_underflow: Option<(usize, f32)> = None;
+    // Named class-A boxes at one source coordinate form one page transition.
+    // This coalesces zero-height named runs such as a/b/c/d/e without creating
+    // one blank page per zero-height box.
+    let mut last_named_raw_y: Option<f32> = None;
+    let mut saw_child = false;
+    let mut current_page_name =
+        selected_page_name(cascade, body_id).or_else(|| first_page_name(document, cascade));
+    let mut page_names = vec![current_page_name.clone()];
+
+    for candidate in candidates {
+        let node_id = candidate.node_id;
+        if let Some((ancestor_id, correction)) = pending_underflow
+            && !is_descendant_or_self(document, node_id, ancestor_id, &parent_of)
+        {
+            flow_shift += correction;
+            pending_underflow = None;
+        }
+        if document.get_node(node_id).is_none() {
+            continue;
+        }
+        if candidate.is_text {
+            // Text is not itself a class-A box, but non-empty text can be the
+            // content that follows a nested named box.  Carry the containing
+            // box's page type so that content after `page:b` inside a
+            // `page:a` box resumes on an `a` page rather than becoming an
+            // anonymous page.  Only direct body text consumes a pending
+            // break-after; descendants must wait until their containing box
+            // has finished.
+            let raw_y = candidate.raw_y;
+            let height = candidate.height;
+            let candidate_page_name = candidate.page_name.clone();
+            let mut effective_y = raw_y + flow_shift;
+            materialize_y(document, node_id, effective_y, &parent_of);
+            let named_page_change = saw_child
+                && height > 0.0
+                && !candidate.is_float_descendant
+                && candidate_page_name != current_page_name;
+            let consumes_pending_break = pending_break && candidate.is_direct_body_text;
+            if saw_child {
+                if consumes_pending_break || named_page_change {
+                    let natural_page = if effective_y.is_finite() && effective_y >= 0.0 {
+                        (effective_y / page_step).floor() as u32
+                    } else {
+                        current_page
+                    };
+                    let target_page = current_page.saturating_add(1).max(natural_page);
+                    let target_y = target_page as f32 * page_step;
+                    // The candidate was materialized to `effective_y` above,
+                    // so this is the additional movement for this boundary.
+                    // Keep it separate from `flow_shift`: the latter also
+                    // affects candidates whose ancestor is not moved here.
+                    let node_delta = target_y - effective_y;
+                    let shift_delta = target_y - effective_y;
+                    if node_delta.is_finite() && shift_delta.is_finite() {
+                        document.nodes[node_id].unrounded_layout.location.y += node_delta;
+                        flow_shift += shift_delta;
+                        effective_y += shift_delta;
+                    }
+                    current_page = target_page;
+                    current_page_name = candidate_page_name.clone();
+                } else if effective_y.is_finite() && effective_y >= 0.0 {
+                    current_page = current_page.max((effective_y / page_step).floor() as u32);
+                }
+            } else {
+                saw_child = true;
+                current_page = 0;
+                if !candidate.is_float_descendant {
+                    current_page_name = candidate_page_name.clone();
+                }
+            }
+            if height > 0.0
+                && !candidate.is_float_descendant
+                && !named_page_change
+                && !consumes_pending_break
+            {
+                current_page_name = candidate_page_name;
+            }
+            if page_names.len() <= current_page as usize {
+                page_names.resize(current_page as usize + 1, None);
+            }
+            page_names[current_page as usize] = current_page_name.clone();
+            max_page = max_page.max(current_page);
+            if height > 0.0 && effective_y.is_finite() && effective_y >= 0.0 {
+                let end = (effective_y + height).max(effective_y);
+                if end.is_finite() && end > 0.0 {
+                    let end_page =
+                        ((end as f64 / page_step as f64).ceil() as u32).saturating_sub(1);
+                    max_page = max_page.max(end_page);
+                }
+            }
+            if consumes_pending_break {
+                pending_break = false;
+            }
+            continue;
+        }
+
+        let computed = &cascade.computed[node_id];
+        let candidate_page_name = candidate.page_name.clone();
+        // Copy layout data before any break adjustment so the immutable node
+        // borrow does not overlap the in-place location update below.
+        let raw_y = candidate.raw_y;
+        let height = candidate.height;
+        let mut effective_y = raw_y + flow_shift;
+        materialize_y(document, node_id, effective_y, &parent_of);
+        let forced_before = page_break_is_forced(computed.break_before);
+        let margin_top = match computed.margin.top {
+            ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value,
+            _ => 0.0,
+        };
+        let margin_bottom = match computed.margin.bottom {
+            ComputedLengthPercentageOrAuto::Px(value) => value.max(0.0),
+            _ => 0.0,
+        };
+        // A block with `break-inside: avoid-page` stays intact when its used
+        // block size plus its trailing margin would cross the current page.
+        // This is the direct block-flow case; nested formatting contexts still
+        // require fragment-level break opportunities.
+        let avoid_page_overflow = matches!(
+            computed.break_inside,
+            raikiri_style::property::BreakInside::Avoid
+                | raikiri_style::property::BreakInside::AvoidPage
+        ) && effective_y.is_finite()
+            && effective_y >= current_page as f32 * page_step
+            && effective_y < (current_page + 1) as f32 * page_step
+            && effective_y + height + margin_bottom > (current_page + 1) as f32 * page_step;
+        // A named page requested by a class-A box starts a new page when it
+        // differs from the current named page. `auto` leaves the current page
+        // type in place; it does not manufacture a second break boundary.
+        // Any non-empty class-A box with a different page name starts a new
+        // page.  `None` is the anonymous/unnamed page type, so an anonymous
+        // box after a named one is a transition too.  Zero-height named boxes
+        // at the same source coordinate are coalesced into one transition;
+        // this matters for chains of empty named boxes with overflowing text.
+        let same_named_coordinate = candidate.is_named
+            && candidate.is_direct_body_element
+            && last_named_raw_y.is_some_and(|previous| (raw_y - previous).abs() <= 0.001);
+        let named_page_change =
+            saw_child && candidate_page_name != current_page_name && !same_named_coordinate;
+        let at_page_start = effective_y.is_finite()
+            && (effective_y - current_page as f32 * page_step).abs() <= 0.001;
+        // A forced break on a descendant at the start of a page opened by its
+        // parent (for example a named transition plus `break-before: page`)
+        // describes the same boundary and must not create a blank page.
+        let forced_break_at_page_start = forced_before && current_page > 0 && at_page_start;
+
+        if saw_child {
+            // A break-after on the preceding box and a break-before (or named
+            // page transition) on this box describe the same boundary, not two
+            // blank pages.
+            if pending_break
+                || (forced_before && !forced_break_at_page_start)
+                || named_page_change
+                || avoid_page_overflow
+            {
+                let natural_page = if effective_y.is_finite() && effective_y >= 0.0 {
+                    (effective_y / page_step).floor() as u32
+                } else {
+                    current_page
+                };
+                let target_page = current_page.saturating_add(1).max(natural_page);
+                let target_y = target_page as f32 * page_step;
+                // A negative block-start margin can pull a forced-break box
+                // back into the preceding page.  Keep the break boundary for
+                // following siblings (and for page count), but materialize
+                // this box at the underflowed coordinate.  This is the
+                // `underflow-from-next-page` case from CSS Break.
+                let underflow_y = target_y + margin_top;
+                let node_target_y = if margin_top < 0.0 && underflow_y < target_y {
+                    underflow_y
+                } else {
+                    target_y
+                };
+                // The candidate was materialized to `effective_y` above,
+                // so this is the additional movement for this boundary.
+                // Keep `flow_shift` at the page boundary even when the
+                // candidate itself underflows into the preceding page.
+                let node_delta = node_target_y - effective_y;
+                let shift_delta = target_y - effective_y;
+                if node_delta.is_finite() && shift_delta.is_finite() {
+                    document.nodes[node_id].unrounded_layout.location.y += node_delta;
+                    if node_target_y < target_y {
+                        flow_shift += node_delta;
+                        pending_underflow = Some((node_id, shift_delta - node_delta));
+                    } else {
+                        flow_shift += shift_delta;
+                    }
+                    effective_y += node_delta;
+                }
+                current_page = target_page;
+            } else if effective_y.is_finite() && effective_y >= 0.0 {
+                current_page = current_page.max((effective_y / page_step).floor() as u32);
+            }
+        } else {
+            // A forced break before the first class-A box does not manufacture
+            // a leading blank page.
+            saw_child = true;
+            current_page = 0;
+        }
+
+        if candidate.is_direct_body_element || candidate.is_named {
+            current_page_name = candidate_page_name;
+            if candidate.is_direct_body_element {
+                last_named_raw_y = candidate.is_named.then_some(raw_y);
+            }
+        }
+        if page_names.len() <= current_page as usize {
+            page_names.resize(current_page as usize + 1, None);
+        }
+        page_names[current_page as usize] = current_page_name.clone();
+
+        max_page = max_page.max(current_page);
+        if height > 0.0 && effective_y.is_finite() && effective_y >= 0.0 {
+            // A box ending exactly at a page edge belongs to the preceding
+            // page.  `f32::EPSILON` is too small at ordinary CSS coordinates
+            // and rounds away, so use the half-open interval directly:
+            // ceil(end / step) - 1.  The box remains visible on every slice it
+            // intersects; line-level splitting is a later pass.
+            let end = (effective_y + height).max(effective_y);
+            if end.is_finite() && end > 0.0 {
+                let end_page = ((end as f64 / page_step as f64).ceil() as u32).saturating_sub(1);
+                max_page = max_page.max(end_page);
+            }
+        }
+        pending_break = page_break_is_forced(computed.break_after);
+    }
+
+    Ok((0..=max_page)
+        .map(|page_index| PageSlice {
+            page_index,
+            content_origin_y: page_index as f32 * page_step,
+            page_name: page_names.get(page_index as usize).cloned().flatten(),
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -5732,7 +6604,14 @@ mod tests {
 
         let mut fonts = FontContext::new();
         let mut layout_cx = LayoutContext::<()>::new();
-        preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
+        preshape_text(
+            &mut doc,
+            &cr,
+            &mut fonts,
+            &mut layout_cx,
+            PageBox::A4.width,
+            PageBox::A4.width,
+        );
 
         assert!(
             doc.nodes[text].text_layout().is_some(),
@@ -5780,7 +6659,14 @@ mod tests {
             let cr = cascade(&doc, &rules).unwrap();
             let mut fonts = FontContext::new();
             let mut layout_cx = LayoutContext::<()>::new();
-            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
+            preshape_text(
+                &mut doc,
+                &cr,
+                &mut fonts,
+                &mut layout_cx,
+                PageBox::A4.width,
+                PageBox::A4.width,
+            );
             doc.nodes[text].text_layout().unwrap().height()
         }
 
@@ -9307,7 +10193,14 @@ mod tests {
             let cr = cascade(&doc, &rules).expect("cascade Ok");
             let mut fonts = FontContext::new();
             let mut layout_cx = LayoutContext::<()>::new();
-            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
+            preshape_text(
+                &mut doc,
+                &cr,
+                &mut fonts,
+                &mut layout_cx,
+                PageBox::A4.width,
+                PageBox::A4.width,
+            );
             doc.nodes[text].text_layout().unwrap().height()
         }
 
@@ -9410,7 +10303,14 @@ mod tests {
             let cr = cascade(&doc, &rules).expect("cascade Ok");
             let mut fonts = FontContext::new();
             let mut layout_cx = LayoutContext::<()>::new();
-            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
+            preshape_text(
+                &mut doc,
+                &cr,
+                &mut fonts,
+                &mut layout_cx,
+                PageBox::A4.width,
+                PageBox::A4.width,
+            );
             doc.nodes[text].text_layout().unwrap().height()
         }
 
@@ -9945,7 +10845,14 @@ mod tests {
             let cr = cascade(&doc, &rules).unwrap();
             let mut fonts = FontContext::new();
             let mut layout_cx = LayoutContext::<()>::new();
-            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
+            preshape_text(
+                &mut doc,
+                &cr,
+                &mut fonts,
+                &mut layout_cx,
+                PageBox::A4.width,
+                PageBox::A4.width,
+            );
             let layout = doc.nodes[text].text_layout().unwrap();
             let line = layout.lines().next().expect("shaped text has one line");
             let item = line
@@ -10009,7 +10916,14 @@ mod tests {
             let cr = cascade(&doc, &rules).unwrap();
             let mut fonts = FontContext::new();
             let mut layout_cx = LayoutContext::<()>::new();
-            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
+            preshape_text(
+                &mut doc,
+                &cr,
+                &mut fonts,
+                &mut layout_cx,
+                PageBox::A4.width,
+                PageBox::A4.width,
+            );
             let layout = doc.nodes[text].text_layout().unwrap();
             let line = layout.lines().next().expect("shaped text has one line");
             let item = line
@@ -10117,7 +11031,14 @@ mod tests {
 
             let mut fonts = FontContext::new();
             let mut layout_cx = LayoutContext::<()>::new();
-            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
+            preshape_text(
+                &mut doc,
+                &cr,
+                &mut fonts,
+                &mut layout_cx,
+                PageBox::A4.width,
+                PageBox::A4.width,
+            );
 
             assert!(
                 doc.nodes[text].text_layout().is_some(),
@@ -11988,7 +12909,14 @@ mod tests {
             let cr = cascade(&doc, &rules).expect("cascade Ok");
             let mut fonts = FontContext::new();
             let mut layout_cx = LayoutContext::<()>::new();
-            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
+            preshape_text(
+                &mut doc,
+                &cr,
+                &mut fonts,
+                &mut layout_cx,
+                PageBox::A4.width,
+                PageBox::A4.width,
+            );
             doc.nodes[text]
                 .text_layout()
                 .expect("text should be shaped")
@@ -12018,7 +12946,14 @@ mod tests {
             let cr = cascade(&doc, &rules).expect("cascade Ok");
             let mut fonts = FontContext::new();
             let mut layout_cx = LayoutContext::<()>::new();
-            preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, PageBox::A4.width);
+            preshape_text(
+                &mut doc,
+                &cr,
+                &mut fonts,
+                &mut layout_cx,
+                PageBox::A4.width,
+                PageBox::A4.width,
+            );
             doc.nodes[text]
                 .text_layout()
                 .expect("text should be shaped")
