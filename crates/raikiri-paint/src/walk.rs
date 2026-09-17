@@ -1695,7 +1695,7 @@ pub(crate) fn paint_document(
 /// [`paint_document`] と同一だが、`<img>` element を `pixel_source` から
 /// 取得した decode 済み pixel で実際に描画する。
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn paint_document_with_resolver(
+pub(crate) fn paint_document_with_images(
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,

@@ -146,7 +146,7 @@ where
     let dom = &doc.uncascaded.dom;
     let cascade = &doc.cascade;
     let scene = build_page_scene(dom, cascade, page_box);
-    Ok(scene.rasterize_with_resolver(dom, cascade, page_box, pixel_source))
+    Ok(scene.rasterize_with_images(dom, cascade, page_box, pixel_source))
 }
 
 #[cfg(test)]

@@ -265,8 +265,13 @@ impl PageScene {
 
     /// [`Self::rasterize`] と同一だが、`<img>` の decode 済み pixel を
     /// `pixel_source` から取得して実際に描画する。
+    ///
+    /// `_with_images` であって `_with_resolver` でないのは、この段が受け取る
+    /// のが `ImagePixelSource` (decode 済み pixel の読み出し口) であって
+    /// `ReplacedResolver` ではないため — intrinsic size の resolve は layout
+    /// 前に完了している ([`crate::html_to_png_with_resolver`] 参照)。
     #[must_use]
-    pub fn rasterize_with_resolver(
+    pub fn rasterize_with_images(
         &self,
         dom: &Document,
         cascade: &CascadeResult,
@@ -278,7 +283,7 @@ impl PageScene {
 
         let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
             |scene| {
-                raikiri_paint::paint_single_page_with_resolver(
+                raikiri_paint::paint_single_page_with_images(
                     scene,
                     dom,
                     cascade,

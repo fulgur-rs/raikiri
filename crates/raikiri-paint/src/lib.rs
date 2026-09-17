@@ -278,7 +278,13 @@ fn paint_single_page_with_origin_and_page_context_impl(
 
 /// [`paint_single_page`] と同一だが、`<img>` の decode 済み pixel を
 /// `pixel_source` から取得して実際に描画する。
-pub fn paint_single_page_with_resolver(
+///
+/// 名前が `_with_images` であって `_with_resolver` でないのは、paint 段が
+/// 受け取るのが `ImagePixelSource` (decode 済み pixel の読み出し口) であり、
+/// `ReplacedResolver` (intrinsic size を解決し、その過程で fetch/decode を
+/// 起こしうる) ではないため。resolve は layout 前に済んでいる
+/// (`raikiri_dom::layout_single_page_with_resolver`)。
+pub fn paint_single_page_with_images(
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
@@ -300,7 +306,7 @@ pub fn paint_single_page_with_resolver(
     walk::paint_page_outline(scene, cascade, page_box);
     walk::paint_root_element_border(scene, document, cascade, page_box);
     walk::paint_page_margin_boxes(scene, document, cascade, page_box, 0, 1, false, None);
-    walk::paint_document_with_resolver(
+    walk::paint_document_with_images(
         scene,
         document,
         cascade,
@@ -1664,10 +1670,10 @@ mod tests {
 
         let mut scene = Scene::new();
         // Exercises the public entry point, not just the private
-        // `walk::paint_document_with_resolver` it wraps, so this test also
-        // covers `paint_single_page_with_resolver`'s own debug_assert and
+        // `walk::paint_document_with_images` it wraps, so this test also
+        // covers `paint_single_page_with_images`'s own debug_assert and
         // canvas-background call.
-        paint_single_page_with_resolver(&mut scene, &doc, &cr, PageBox::A4, &pixel_source);
+        paint_single_page_with_images(&mut scene, &doc, &cr, PageBox::A4, &pixel_source);
 
         let fill = scene
             .commands
@@ -1755,7 +1761,7 @@ mod tests {
         let pixel_source = OneImageSource(url, decoded);
 
         let mut scene = Scene::new();
-        paint_single_page_with_resolver(&mut scene, &doc, &cr, PageBox::A4, &pixel_source);
+        paint_single_page_with_images(&mut scene, &doc, &cr, PageBox::A4, &pixel_source);
 
         let fill = scene
             .commands
