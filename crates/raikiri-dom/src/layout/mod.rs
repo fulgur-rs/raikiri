@@ -6106,6 +6106,30 @@ pub fn layout_pages(
         /// Page type inherited from the nearest containing class-A box.
         /// `None` is the anonymous page type, not an unknown value.
         page_name: Option<String>,
+        /// A named descendant nested inside a flex item defers one boundary
+        /// until the containing flex box has finished.
+        deferred_named_break_after: bool,
+    }
+
+    fn has_nested_named_page_descendant(
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+        depth: u32,
+    ) -> bool {
+        let Some(node) = document.get_node(node_id) else {
+            return false;
+        };
+        for &child_id in &node.children {
+            let child_depth = depth.saturating_add(1);
+            if child_depth >= 2 && selected_page_name(cascade, child_id).is_some() {
+                return true;
+            }
+            if has_nested_named_page_descendant(document, cascade, child_id, child_depth) {
+                return true;
+            }
+        }
+        false
     }
 
     // Candidate collection carries the recursive layout state explicitly so page
@@ -6121,6 +6145,7 @@ pub fn layout_pages(
         parent_height: f32,
         page_step: f32,
         inherited_page_name: Option<String>,
+        inside_flex: bool,
         inside_float: bool,
         out: &mut Vec<PageCandidate>,
     ) {
@@ -6148,6 +6173,7 @@ pub fn layout_pages(
                         is_named: false,
                         is_float_descendant: inside_float,
                         page_name: inherited_page_name,
+                        deferred_named_break_after: false,
                     });
                 }
             }
@@ -6164,12 +6190,14 @@ pub fn layout_pages(
                 let is_float = !matches!(computed.float, FloatValue::None);
                 let float_subtree = inside_float || is_float;
                 let explicit_page_name = selected_page_name(cascade, node_id);
-                let own_page_name = if !float_subtree {
+                let own_page_name = if !float_subtree && !inside_flex {
                     explicit_page_name.clone()
                 } else {
                     None
                 };
                 let page_name = own_page_name.clone().or(inherited_page_name);
+                let deferred_named_break_after = matches!(computed.display, DisplayValue::Flex)
+                    && has_nested_named_page_descendant(document, cascade, node_id, 0);
                 let is_body = node_id == body_id;
                 let participates_in_flow = matches!(
                     computed.position,
@@ -6198,6 +6226,7 @@ pub fn layout_pages(
                         is_named: own_page_name.is_some(),
                         is_float_descendant: inside_float,
                         page_name: page_name.clone(),
+                        deferred_named_break_after,
                     });
                 }
                 let child_is_direct_body = node_id == body_id;
@@ -6212,6 +6241,7 @@ pub fn layout_pages(
                         node.unrounded_layout.size.height.max(0.0),
                         page_step,
                         page_name.clone(),
+                        inside_flex || matches!(computed.display, DisplayValue::Flex),
                         float_subtree,
                         out,
                     );
@@ -6232,6 +6262,7 @@ pub fn layout_pages(
         0.0,
         page_step,
         None,
+        false,
         false,
         &mut candidates,
     );
@@ -6476,7 +6507,8 @@ pub fn layout_pages(
                 max_page = max_page.max(end_page);
             }
         }
-        pending_break = page_break_is_forced(computed.break_after);
+        pending_break =
+            page_break_is_forced(computed.break_after) || candidate.deferred_named_break_after;
     }
 
     Ok((0..=max_page)
