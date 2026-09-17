@@ -544,6 +544,133 @@ fn link_rel_stylesheet_fetched_css_reaches_computed_style_through_real_cascade()
 }
 
 #[test]
+fn imported_stylesheet_rules_reach_cascade_in_source_order() {
+    use std::sync::Mutex;
+
+    use raikiri::{
+        Bytes, FetchedResource, NetworkError, NetworkProvider, ParseOptions, Request, ResourceKind,
+        Url, build_cascaded, parse,
+    };
+
+    struct ImportProvider {
+        calls: Mutex<Vec<(String, ResourceKind)>>,
+    }
+
+    impl NetworkProvider for ImportProvider {
+        fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+            let requested = request.url.to_string();
+            self.calls
+                .lock()
+                .unwrap()
+                .push((requested.clone(), request.kind));
+            let (css, final_url) = match requested.as_str() {
+                "https://example.test/css/main.css" => (
+                    r#"@import "nested.css"; p { display: inline }"#,
+                    "https://example.test/css/main.css",
+                ),
+                "https://example.test/css/nested.css" => {
+                    ("p { display: none }", "https://example.test/css/nested.css")
+                }
+                _ => return Err(NetworkError::Other("not found".to_owned())),
+            };
+            Ok(FetchedResource {
+                bytes: Bytes::from(css),
+                content_type: Some("text/css".to_owned()),
+                final_url: Url::parse(final_url).unwrap(),
+                encoding: None,
+            })
+        }
+    }
+
+    let provider = ImportProvider {
+        calls: Mutex::new(Vec::new()),
+    };
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: Some(&provider as &dyn NetworkProvider),
+        base_url: Some(Url::parse("https://example.test/").unwrap()),
+    };
+    let html = br#"<html><head><link rel="stylesheet" href="css/main.css"></head>
+        <body><p>Hi</p></body></html>"#;
+    let doc = parse(&html[..], &opts).expect("parse");
+    let result = build_cascaded(&doc);
+    let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
+    assert_eq!(
+        result.computed[p_id.0 as usize].display,
+        DisplayValue::Inline,
+        "parent rules must follow imported rules at the import's source position"
+    );
+    assert_eq!(
+        *provider.calls.lock().unwrap(),
+        vec![
+            (
+                "https://example.test/css/main.css".to_owned(),
+                ResourceKind::ExternalStylesheet,
+            ),
+            (
+                "https://example.test/css/nested.css".to_owned(),
+                ResourceKind::StylesheetImport,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn imported_media_condition_is_evaluated_by_the_selected_cascade_context() {
+    use raikiri::{
+        Bytes, FetchedResource, MediaContext, NetworkError, NetworkProvider, ParseOptions, Request,
+        Url, build_cascaded, build_cascaded_with_media_context, parse,
+    };
+
+    struct ImportProvider;
+
+    impl NetworkProvider for ImportProvider {
+        fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+            let (css, final_url) = match request.url.as_str() {
+                "https://example.test/main.css" => (
+                    r#"@import "nested.css" screen;"#,
+                    "https://example.test/main.css",
+                ),
+                "https://example.test/nested.css" => {
+                    ("p { display: inline }", "https://example.test/nested.css")
+                }
+                _ => return Err(NetworkError::Other("not found".to_owned())),
+            };
+            Ok(FetchedResource {
+                bytes: Bytes::from(css),
+                content_type: Some("text/css".to_owned()),
+                final_url: Url::parse(final_url).unwrap(),
+                encoding: None,
+            })
+        }
+    }
+
+    let provider = ImportProvider;
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: Some(&provider as &dyn NetworkProvider),
+        base_url: Some(Url::parse("https://example.test/").unwrap()),
+    };
+    let html = br#"<html><head><link rel="stylesheet" href="main.css"></head>
+        <body><p>Hi</p></body></html>"#;
+    let doc = parse(&html[..], &opts).expect("parse");
+    let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
+
+    let print_result = build_cascaded(&doc);
+    assert_eq!(
+        print_result.computed[p_id.0 as usize].display,
+        DisplayValue::Block,
+        "screen-only imported rules must not apply to the default print context"
+    );
+    let screen_result = build_cascaded_with_media_context(&doc, &MediaContext::screen());
+    assert_eq!(
+        screen_result.computed[p_id.0 as usize].display,
+        DisplayValue::Inline,
+        "screen-only imported rules must apply in the screen context"
+    );
+}
+
+#[test]
 fn body_style_element_is_not_applied_per_m1_head_only_contract() {
     // raikiri-html は現状 head 配下の <style> のみ stylesheet_sources
     // に集約する (<body> 内 <style> の position-aware semantics は将来対応)。

@@ -36,6 +36,16 @@ pub trait NetworkProvider: Send + Sync {
     /// sandboxed-net-provider-impl 実装段階で NetworkError 実利用と併せて再判断する。
     #[allow(clippy::result_large_err)]
     fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError>;
+
+    /// Optional upper bound for recursive stylesheet imports.
+    ///
+    /// A provider that wraps a [`crate::ResourcePolicy`] can return its
+    /// `max_import_depth()` here. Consumers use a conservative fallback when
+    /// this method returns `None`, so adding this hook does not require
+    /// existing providers to change their implementation.
+    fn max_import_depth(&self) -> Option<u32> {
+        None
+    }
 }
 
 /// Fetch 要求の全情報。

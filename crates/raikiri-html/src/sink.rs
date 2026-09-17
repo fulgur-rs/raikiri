@@ -413,20 +413,31 @@ impl TreeSink for RaikiriTreeSink {
     }
 }
 
-/// `<head>` 内の `<style>` element の text content を DFS (iterative) で
-/// document order 集約する。
+/// A stylesheet-bearing element in `<head>`, retained in tree order so the
+/// parse layer can interleave inline and fetched external sheets without
+/// changing the public `stylesheet_sources: Vec<String>` projection.
 ///
-/// 設計仕様書 §6 MVP: `<head>` 内の `<style>` のみ head 内出現順で登録。
-/// `<body>` 内の `<style>` は "出現位置以降のみ有効" という position-aware
-/// semantics が必要なため後の拡張として defer。
+/// `<template>` subtrees are inert and skipped. An explicit stack avoids call
+/// stack growth for attacker-controlled deep documents.
+#[derive(Debug)]
+pub(crate) enum HeadStylesheetSource {
+    Inline {
+        node_id: raikiri_traits::NodeId,
+    },
+    External {
+        node_id: raikiri_traits::NodeId,
+        href: String,
+    },
+}
+
+/// Collect inline and external stylesheet elements in document order.
 ///
-/// `<template>` subtree は spec 上 inert なので skip する。
-/// 明示的 stack を使うことで attacker-controlled な深い DOM でも stack
-/// overflow を起こさない。
-fn extract_inline_stylesheets(doc: &Document) -> Vec<String> {
+/// The sink still exposes only inline text in `UncascadedDocument` at finish;
+/// this internal projection lets the post-parse network pass rebuild the same
+/// vector with external responses at their actual `<link>` positions.
+pub(crate) fn collect_head_stylesheet_sources(doc: &Document) -> Vec<HeadStylesheetSource> {
     use raikiri_traits::{Dom, Element, Node};
 
-    // まず <head> element を探す。存在しなければ MVP scope 上 stylesheet なし。
     let Some(head_id) = find_head_element(doc) else {
         return Vec::new();
     };
@@ -434,37 +445,81 @@ fn extract_inline_stylesheets(doc: &Document) -> Vec<String> {
     let mut out = Vec::new();
     let mut stack: Vec<raikiri_traits::NodeId> = vec![head_id];
     while let Some(id) = stack.pop() {
-        if let Some(node) = doc.node(id) {
-            // <template> 子孫 + 将来の inert subtree を統一 skip。
-            if !node.is_in_document() {
-                continue;
+        let Some(node) = doc.node(id) else {
+            // Every pushed id originates in this document's own tree. Keep the
+            // defensive branch required by the `Dom::node` contract.
+            continue;
+        };
+        if !node.is_in_document() {
+            continue;
+        }
+
+        if let Some(el) = node.as_element()
+            && el.tag_name() == "style"
+        {
+            if inline_stylesheet_has_content(doc, id) {
+                out.push(HeadStylesheetSource::Inline { node_id: id });
             }
-            if let Some(el) = node.as_element()
-                && el.tag_name() == "style"
-            {
-                let mut buf = String::new();
-                for c in doc.child_ids(id) {
-                    if let Some(child) = doc.node(c)
-                        && let Some(t) = child.text_content()
-                    {
-                        buf.push_str(t);
-                    }
-                }
-                if !buf.is_empty() {
-                    out.push(buf);
-                }
-                // <style> の内容は CSS のみ想定、子は stack に push しない
-                continue;
+            // `<style>` contents are CSS text, not nested HTML elements.
+            continue;
+        }
+
+        if let Some(el) = node.as_element()
+            && el.tag_name() == "link"
+            && is_stylesheet_link(el.attr("rel"), el.attr("type"), el.attr("title"))
+            && let Some(href) = el.attr("href")
+        {
+            let trimmed_href = href.trim();
+            if !trimmed_href.is_empty() {
+                out.push(HeadStylesheetSource::External {
+                    node_id: id,
+                    href: trimmed_href.to_owned(),
+                });
             }
         }
-        // Push in reverse so LIFO pop yields document order (source-order for
-        // CSS cascade tie-breaking, deterministic for detach batching).
-        let kids: Vec<_> = doc.child_ids(id).collect();
-        for c in kids.into_iter().rev() {
-            stack.push(c);
+
+        // Push in reverse so LIFO pop yields document order.
+        let children: Vec<_> = doc.child_ids(id).collect();
+        for child_id in children.into_iter().rev() {
+            stack.push(child_id);
         }
     }
     out
+}
+
+fn inline_stylesheet_text(doc: &Document, node_id: raikiri_traits::NodeId) -> String {
+    use raikiri_traits::{Dom, Node};
+
+    let mut text = String::new();
+    for child_id in doc.child_ids(node_id) {
+        if let Some(child) = doc.node(child_id)
+            && let Some(value) = child.text_content()
+        {
+            text.push_str(value);
+        }
+    }
+    text
+}
+
+fn inline_stylesheet_has_content(doc: &Document, node_id: raikiri_traits::NodeId) -> bool {
+    use raikiri_traits::{Dom, Node};
+
+    doc.child_ids(node_id).any(|child_id| {
+        let Some(child) = doc.node(child_id) else {
+            return false;
+        };
+        child.text_content().is_some_and(|text| !text.is_empty())
+    })
+}
+
+fn extract_inline_stylesheets(doc: &Document) -> Vec<String> {
+    collect_head_stylesheet_sources(doc)
+        .into_iter()
+        .filter_map(|source| match source {
+            HeadStylesheetSource::Inline { node_id } => Some(inline_stylesheet_text(doc, node_id)),
+            HeadStylesheetSource::External { .. } => None,
+        })
+        .collect()
 }
 
 /// Document tree の `<head>` element を DFS (iterative) で探す。
@@ -586,61 +641,17 @@ pub(crate) fn find_document_base_href(doc: &Document) -> Option<String> {
 /// 通りなら「複数の named stylesheet set のうち preferred set 以外は
 /// 無効化する」べきところを無視している。この逸脱は `<link>` /
 /// `<style>` 双方に共通する。
+#[allow(dead_code)] // retained as a narrow compatibility/test projection
 pub(crate) fn collect_external_stylesheet_hrefs(
     doc: &Document,
 ) -> Vec<(raikiri_traits::NodeId, String)> {
-    use raikiri_traits::{Dom, Element, Node};
-
-    let Some(head_id) = find_head_element(doc) else {
-        return Vec::new();
-    };
-
-    let mut out = Vec::new();
-    let mut stack: Vec<raikiri_traits::NodeId> = vec![head_id];
-    while let Some(id) = stack.pop() {
-        // Flat `let...else continue` (rather than nesting the rest of the
-        // loop body inside `if let Some(node) = doc.node(id) { ... }`, the
-        // shape `extract_inline_stylesheets` above uses) — same intent, but
-        // makes the never-taken `None` case an isolated one-line branch
-        // instead of leaving an ambiguous coverage region on the enclosing
-        // block's closing brace.
-        let Some(node) = doc.node(id) else {
-            // cov:ignore: unreachable in practice — every `id` pushed onto
-            // `stack` comes from `find_head_element` or `doc.child_ids` for
-            // this same `doc`, both of which only ever yield valid ids, so
-            // `doc.node(id)` can't return `None` here. Kept as a `let...else`
-            // (rather than `.expect(...)`) to match `Dom::node`'s documented
-            // `Option` contract defensively, same as the sibling check this
-            // mirrors in `extract_inline_stylesheets` above.
-            continue;
-        };
-        if !node.is_in_document() {
-            continue;
-        }
-        if let Some(el) = node.as_element()
-            && el.tag_name() == "link"
-            && is_stylesheet_link(el.attr("rel"), el.attr("type"), el.attr("title"))
-            && let Some(href) = el.attr("href")
-        {
-            // `href`'s attribute type is "valid non-empty URL potentially
-            // surrounded by spaces" — `Element::attr` only filters a truly
-            // empty (`""`) value, so a whitespace-only `href="   "` still
-            // reaches here. Trim before checking emptiness; without this,
-            // `resolve_url`'s `Url::join("   ")` resolves to the
-            // *page's own URL* (verified empirically against the `url`
-            // crate), causing the page's own HTML to be fetched and fed to
-            // the CSS parser as a stylesheet.
-            let trimmed_href = href.trim();
-            if !trimmed_href.is_empty() {
-                out.push((id, trimmed_href.to_string()));
-            }
-        }
-        let kids: Vec<_> = doc.child_ids(id).collect();
-        for c in kids.into_iter().rev() {
-            stack.push(c);
-        }
-    }
-    out
+    collect_head_stylesheet_sources(doc)
+        .into_iter()
+        .filter_map(|source| match source {
+            HeadStylesheetSource::Inline { .. } => None,
+            HeadStylesheetSource::External { node_id, href } => Some((node_id, href)),
+        })
+        .collect()
 }
 
 /// `rel` トークンリストに `stylesheet` (ASCII case-insensitive) が含まれ、

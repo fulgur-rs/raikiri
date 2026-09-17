@@ -12,6 +12,10 @@ use raikiri_traits::{
 };
 use url::Url;
 
+use crate::import::{
+    ImportBudget, expand_stylesheet_imports_with_budget, network_error_summary, redacted_url,
+    sanitize_policy_violation,
+};
 use crate::sink::RaikiriTreeSink;
 use crate::types::{ParseOptions, UncascadedDocument};
 
@@ -47,10 +51,14 @@ pub fn parse<R: Read>(
 ///
 /// parse 完了時に既定 UA CSS + `options.extra_stylesheets` を
 /// [`raikiri_dom::Document::add_stylesheet`] 経由で Document 状態に注入する
-/// (UA=UserAgent/extra=Author kind)。続けて `<head>` 内
-/// `<link rel="stylesheet">` を `options.network` / `options.base_url`
-/// 経由で fetch し、成功分を `UncascadedDocument.stylesheet_sources` に
-/// Author として追加する (`fetch_external_stylesheets` doc 参照)。
+/// (UA=UserAgent/extra=User kind)。Extra と head stylesheet の leading `@import`
+/// は `options.network` がある場合に source order に従って展開される。続けて
+/// `<head>` 内の external stylesheet を `options.network` / `options.base_url` 経由で
+/// fetch し、成功分を `UncascadedDocument.stylesheet_sources` に Author として
+/// head order で統合する (`fetch_external_stylesheets` doc 参照)。外部 stylesheet
+/// の import は response の `final_url` を nested import の base として使う。
+/// 失敗した import は元の at-rule を保持し、fetch failure は
+/// `NetworkFallback` / `PolicyWarning` を記録する。
 pub fn parse_with_sink<R, S>(
     mut input: R,
     sink: S,
@@ -79,170 +87,219 @@ where
         StylesheetKind::UserAgent,
     );
 
+    // HTML の document base URL は inline / extra stylesheet の relative
+    // `@import` 解決にも使う。外部 stylesheet 自身は fetch 後の
+    // `FetchedResource::final_url` を base に使う。
+    let effective_base = effective_document_base_url(&doc, options.base_url.as_ref());
+    // Share import limits across every stylesheet root in this document. A
+    // separate per-root expander would let many inline/link sheets multiply
+    // the fetch and expansion caps.
+    let mut import_budget = ImportBudget::default();
+
     // Consumer 提供の extra_stylesheets を User origin として追加
     // (ParseOptions::extra_stylesheets の実 consume 経路)。
     // StylesheetKind::Author retag から独立 StylesheetKind::User へ移行済み —
     // real author-origin stylesheet (`<link rel=stylesheet>` 等) が将来
     // Author として届く経路と混同しないため。
     for extra in options.extra_stylesheets {
+        let expanded = expand_stylesheet_imports_with_budget(
+            extra,
+            effective_base.as_ref(),
+            None,
+            options.network,
+            &mut doc.warnings,
+            &mut import_budget,
+        );
         doc.dom
-            .add_stylesheet(Cow::Owned((*extra).to_string()), StylesheetKind::User);
+            .add_stylesheet(Cow::Owned(expanded), StylesheetKind::User);
     }
 
     // <link rel="stylesheet" href="..."> を検出し、ParseOptions::network
     // 経由で fetch、CSS text を Author stylesheet source として
     // doc.stylesheet_sources に統合する。
-    fetch_external_stylesheets(&mut doc, options);
+    fetch_external_stylesheets(&mut doc, options, &mut import_budget);
 
     Ok(doc)
 }
 
-/// `<head>` 内 `<link rel="stylesheet">` を fetch し、成功した CSS text を
-/// `doc.stylesheet_sources` に追加する (Author origin、既存の `<style>`
-/// 抽出結果と同じ bucket — raikiri umbrella crate の `build_cascaded` が
-/// `stylesheet_sources` を丸ごと Author として消費するので、ここに追加する
-/// だけで umbrella 側は無変更のまま cascade に統合される)。
+/// `<head>` 内の stylesheet-bearing elements を document order で処理し、成功した
+/// external CSS を `doc.stylesheet_sources` に Author origin として追加する。
+/// Inline `<style>` と `<link>` は同じ `stylesheet_sources` bucket 内で元の
+/// head order に並ぶ。`raikiri` umbrella の `build_cascaded` はこの Vec を
+/// 丸ごと Author として消費するため、umbrella 側の API 変更は不要である。
 ///
-/// href の検出自体は `sink::collect_external_stylesheet_hrefs` (`finish()` 後
-/// の `Document` を読むだけの純粋関数、副作用なし) が担う。実 fetch は
-/// `TreeSink::finish()` の外、ここで行う — Sink 実装は I/O を持たない契約を
-/// 保つ必要がある (sink 実装が観測可能な副作用を追加すると wall/sink 対象)。
-///
-/// `options.network` が `None` の場合 (Consumer が network capability を渡し
-/// ていない) は何もしない — 外部 stylesheet 機能は opt-in。fetch 失敗
-/// (network error / policy violation) は fatal にせず `doc.warnings` に記録
-/// して parse 全体は継続する (html5ever の forgiving-parsing の精神、および
-/// 既存の `HtmlParseError` warning 降格パターンに合わせる)。
+/// href の検出は `sink::collect_head_stylesheet_sources` (`finish()` 後の
+/// `Document` を読むだけの純粋関数) が担う。実 fetch は `TreeSink::finish()`
+/// の外で行うため、Sink 実装は I/O を持たない。`options.network` が `None`
+/// の場合は external stylesheet を処理しない。fetch 失敗は fatal にせず
+/// `doc.warnings` に記録して parse 全体を継続する。
 ///
 /// # 既知の scope 制限
 ///
-/// - **順序**: `doc.stylesheet_sources` には既に (`<style>` 抽出由来の) head
-///   内 `<style>` テキストが document order で入っている。ここで fetch した
-///   外部 stylesheet はその**後ろ**に追記するため、`<style>` と `<link>` が
-///   同一 `<head>` 内で入り交じる文書では真の document-order interleave に
-///   ならない (cascade の same-specificity tie-break にのみ影響。既存の
-///   `Document::stylesheets()` (UA CSS / extra_stylesheets) と
-///   `stylesheet_sources` (head `<style>`) の 2-bucket 方式も同様に文書上の
-///   真の出現順とは無関係に前者が必ず先行する — 本 task 固有の妥協ではなく
-///   既存 architecture の延長)。
+/// - `Document::stylesheets()` (UA CSS / extra stylesheets) は既存の別 bucket
+///   なので、head stylesheet より先に cascade される。extra stylesheet 内の
+///   imports はこの post-processing pass より前に展開される。
 /// - **`disabled` / `media` / `crossorigin` / `integrity`**:
 ///   `sink::collect_external_stylesheet_hrefs` doc 参照。
-/// - **`<base>` の探索範囲と href="" の扱い**:
-///   `sink::find_document_base_href` doc 参照 (head-only DFS、非空 href を
-///   持つ最初の `<base>` を採用)。frozen base URL algorithm の "Is base
-///   allowed for Document?" チェック (Document 単位の security policy) は
-///   本 crate に相当する概念が無いため未実装 — `data:` / `javascript:`
-///   scheme の除外のみ実装する。
-/// - **`<base>` と `<link>` の相対順序**: HTML Standard の実際の処理モデル
-///   では、`<link>` の外部 resource fetch はパーサがその `<link>` を挿入
-///   した時点の document base URL に対して行われる — 同じ `<head>` 内で
-///   `<link>` が `<base>` より**前**にあれば、その `<link>` は override 前の
-///   `options.base_url` で解決されるべきで、後から出現する `<base>` は遡って
-///   適用されない。本実装は全 parse 完了後の単一 post-processing pass で
-///   `<head>` 内の全 `<link>` を一括 fetch するため、この出現順の違いを
-///   区別できず、`<head>` 内のどの `<link>` にも (前後を問わず) 同じ
-///   effective base を一律適用する (上記「順序」bullet と同じ single-pass
-///   architecture に起因する制約)。
+/// - **`<base>` の探索範囲と href の扱い**:
+///   `sink::find_document_base_href` doc 参照。frozen base URL algorithm の
+///   Document-level security policy は本 crate に相当する概念がないため未実装。
+/// - **`<base>` と `<link>` の相対順序**: 全 parse 完了後に一括 fetch するため、
+///   links before a later `<base>` also use the final effective base URL.
 /// - **encoding**: HTML body の parse と同様 UTF-8 前提
-///   (`String::from_utf8_lossy`)、非 UTF-8 CSS は文字化けする。encoding_rs
-///   導入は本 crate の `parse()` 全体で将来に defer 済み (`parse()` doc 参照)。
-fn fetch_external_stylesheets(doc: &mut UncascadedDocument, options: &ParseOptions<'_>) {
+///   (`String::from_utf8_lossy`)。非 UTF-8 CSS の decoding は将来対応する。
+///
+fn fetch_external_stylesheets(
+    doc: &mut UncascadedDocument,
+    options: &ParseOptions<'_>,
+    import_budget: &mut ImportBudget,
+) {
     let Some(network) = options.network else {
         return;
     };
 
     // HTML Standard §4.2.7 "The base element" / "document base URL": a
     // <base href> in <head>, if present, overrides options.base_url as the
-    // base for resolving <link href>. The <base>'s own href can itself be
-    // relative, so it is resolved against options.base_url first
-    // (`find_document_base_href` doc comment covers the head-only search
-    // scope and the empty-href edge case).
-    //
-    // Per the base element's "frozen base URL" algorithm, the resolved URL
-    // is discarded in favor of the fallback base URL (options.base_url,
-    // unchanged) when it: (a) fails to parse — e.g. a relative <base href>
-    // with no options.base_url to resolve against; or (b) has a `data:` or
-    // `javascript:` scheme. (The algorithm's third exclusion, "Is base
-    // allowed for Document?", is a Document-level security policy concept
-    // this crate has no equivalent of, and is not implemented here.)
-    //
-    // This applies uniformly to every <link> in <head>, regardless of
-    // whether it appears before or after the <base> in source order (this
-    // function's doc comment, "<base> と <link> の相対順序" bullet, covers
-    // why: a single post-parse fetch pass can't distinguish "before" from
-    // "after").
-    let effective_base: Option<Url> = match crate::sink::find_document_base_href(&doc.dom) {
-        Some(base_href) => resolve_url(&base_href, options.base_url.as_ref())
-            .filter(|url| !matches!(url.scheme(), "data" | "javascript"))
-            .or_else(|| options.base_url.clone()),
-        None => options.base_url.clone(),
-    };
+    // base for resolving <link href> and inline stylesheet imports.
+    let effective_base = effective_document_base_url(doc, options.base_url.as_ref());
 
-    for (node_id, href) in crate::sink::collect_external_stylesheet_hrefs(&doc.dom) {
-        let Some(url) = resolve_url(&href, effective_base.as_ref()) else {
-            // 解決不能な href (相対 URL なのに base 未提供、または href
-            // 自体が invalid) — fetch しようがないので silent skip。
-            continue;
-        };
-
-        let request = Request {
-            url: url.clone(),
-            method: Method::Get,
-            content_type: None,
-            headers: Vec::new(),
-            body: Body::Empty,
-            signal: None,
-            kind: ResourceKind::ExternalStylesheet,
-        };
-
-        match network.fetch(request) {
-            Ok(fetched) => {
-                // extract_inline_stylesheets と同じ empty-body guard: 200-with-
-                // empty-body な応答を無意味な空 stylesheet として追加しない。
-                let css = String::from_utf8_lossy(&fetched.bytes).into_owned();
-                if !css.is_empty() {
-                    doc.stylesheet_sources.push(css);
+    // `finish()` has already projected inline sources into this public Vec.
+    // Rebuild it in the order of the original head elements so a fetched link
+    // does not silently move after every inline style.
+    let head_sources = crate::sink::collect_head_stylesheet_sources(&doc.dom);
+    let mut inline_sources = std::mem::take(&mut doc.stylesheet_sources).into_iter();
+    if head_sources.is_empty() {
+        // Preserve the generic `parse_with_sink` contract for a consumer sink
+        // that supplies stylesheet_sources without a normal HTML `<head>`.
+        doc.stylesheet_sources = inline_sources
+            .map(|css| {
+                expand_stylesheet_imports_with_budget(
+                    &css,
+                    effective_base.as_ref(),
+                    None,
+                    Some(network),
+                    &mut doc.warnings,
+                    import_budget,
+                )
+            })
+            .collect();
+        return;
+    }
+    let mut ordered_sources = Vec::new();
+    for source in head_sources {
+        match source {
+            crate::sink::HeadStylesheetSource::Inline { .. } => {
+                if let Some(css) = inline_sources.next() {
+                    let expanded = expand_stylesheet_imports_with_budget(
+                        &css,
+                        effective_base.as_ref(),
+                        None,
+                        Some(network),
+                        &mut doc.warnings,
+                        import_budget,
+                    );
+                    ordered_sources.push(expanded);
                 }
             }
-            Err(NetworkError::PolicyViolation(violation)) => {
-                // ResourcePolicy が拒否した (SandboxedNetProvider 等、既存
-                // sandboxing 契約側の判定) — 専用 warning variant が既にある
-                // のでそれを使う。
-                doc.warnings.push(RenderWarning {
-                    kind: WarningKind::PolicyWarning { violation },
-                    node_id: Some(node_id),
-                    details: format!(
-                        "<link rel=stylesheet href={href:?}>: fetch denied by resource policy"
-                    ),
-                });
-            }
-            Err(err) => {
-                // Aborted / Io / Http / Other: どれも「この stylesheet は諦めて
-                // 続行する」という結果は同じなので NetworkFallback に統一する。
-                // これは content が一切適用されない Err-disposition の使用
-                // であり、`WarningKind::NetworkFallback` のドキュメントが
-                // 明示的に扱う 2 つの disposition のうちの一方 (詳細は
-                // raikiri-traits 側の doc 参照)。個々の `NetworkError` variant
-                // の区別自体は失わず、details に元の error の Display 出力を
-                // 埋め込んで可観測性を保つ。
-                doc.warnings.push(RenderWarning {
-                    kind: WarningKind::NetworkFallback { url },
-                    node_id: Some(node_id),
-                    details: format!("<link rel=stylesheet href={href:?}>: fetch failed: {err}"),
-                });
+            crate::sink::HeadStylesheetSource::External { node_id, href } => {
+                let Some(url) = resolve_url(&href, effective_base.as_ref()) else {
+                    // Relative URL without a base, or otherwise invalid href:
+                    // there is no request to report and the link contributes no
+                    // stylesheet source.
+                    continue;
+                };
+
+                let request = Request {
+                    url: url.clone(),
+                    method: Method::Get,
+                    content_type: None,
+                    headers: Vec::new(),
+                    body: Body::Empty,
+                    signal: None,
+                    kind: ResourceKind::ExternalStylesheet,
+                };
+
+                match network.fetch(request) {
+                    Ok(fetched) => {
+                        // A successful empty response contributes no source.
+                        let css = String::from_utf8_lossy(&fetched.bytes).into_owned();
+                        if !css.is_empty() {
+                            let expanded = expand_stylesheet_imports_with_budget(
+                                &css,
+                                Some(&fetched.final_url),
+                                Some(&fetched.final_url),
+                                Some(network),
+                                &mut doc.warnings,
+                                import_budget,
+                            );
+                            ordered_sources.push(expanded);
+                        }
+                    }
+                    Err(NetworkError::PolicyViolation(violation)) => {
+                        // ResourcePolicy が拒否した (SandboxedNetProvider 等、既存
+                        // sandboxing 契約側の判定) — 専用 warning variant が既にある
+                        // のでそれを使う。URL と provider-controlled details は
+                        // warning に漏らさない。
+                        doc.warnings.push(RenderWarning {
+                            kind: WarningKind::PolicyWarning {
+                                violation: sanitize_policy_violation(violation),
+                            },
+                            node_id: Some(node_id),
+                            details: "<link rel=stylesheet>: fetch denied by resource policy"
+                                .to_owned(),
+                        });
+                    }
+                    Err(err) => {
+                        // All other errors are non-fatal. Keep a safe,
+                        // structured summary instead of formatting arbitrary
+                        // provider-controlled error text into the warning.
+                        let safe_url = redacted_url(&url);
+                        let summary = network_error_summary(&err);
+                        doc.warnings.push(RenderWarning {
+                            kind: WarningKind::NetworkFallback {
+                                url: safe_url.clone(),
+                            },
+                            node_id: Some(node_id),
+                            details: format!(
+                                "<link rel=stylesheet>: fetch failed for {safe_url}: {summary}"
+                            ),
+                        });
+                    }
+                }
             }
         }
     }
+    // Defensive: preserve any inline projection that did not have a matching
+    // collector entry if the sink projection changes in the future.
+    ordered_sources.extend(inline_sources.map(|css| {
+        expand_stylesheet_imports_with_budget(
+            &css,
+            effective_base.as_ref(),
+            None,
+            Some(network),
+            &mut doc.warnings,
+            import_budget,
+        )
+    }));
+    doc.stylesheet_sources = ordered_sources;
 }
 
-/// `href` を `base` に対して resolve する。`href` が既に absolute URL なら
-/// `base` は無視される (`Url::join` の標準挙動)。`base` が無い場合は `href`
-/// 自体が absolute な場合のみ成功する。
+/// Resolve the document's effective base URL for stylesheet and link fetches.
 ///
-/// 呼び出し元は 2 つ: `<link rel=stylesheet href>` の解決 (`base` は
-/// `<base>` element を織り込んだ effective base)、および `<base href>` 自身
-/// の解決 (`base` は `options.base_url` そのもの — spec 上 `<base>` の href
-/// は常に document の fallback base URL に対して解決される)。
+/// A valid `<base>` in the document is resolved against the caller-provided
+/// fallback. Invalid, `data:`, and `javascript:` base URLs fall back to the
+/// caller-provided URL, matching the existing link-fetch behavior.
+fn effective_document_base_url(doc: &UncascadedDocument, fallback: Option<&Url>) -> Option<Url> {
+    match crate::sink::find_document_base_href(&doc.dom) {
+        Some(base_href) => resolve_url(&base_href, fallback)
+            .filter(|url| !matches!(url.scheme(), "data" | "javascript"))
+            .or_else(|| fallback.cloned()),
+        None => fallback.cloned(),
+    }
+}
+
+/// Resolve `href` against `base`. Absolute URLs do not need a base; relative
+/// URLs are rejected when no base is available.
 fn resolve_url(href: &str, base: Option<&Url>) -> Option<Url> {
     match base {
         Some(base) => base.join(href).ok(),

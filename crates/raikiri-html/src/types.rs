@@ -8,26 +8,25 @@ use url::Url;
 /// 集約結果 + parse warnings。
 ///
 /// `stylesheet_sources` には `<head>` 内 `<style>` element の text content
-/// に加えて、`<head>` 内 `<link rel="stylesheet">` を `ParseOptions::network`
-/// 経由で fetch した CSS text も Author stylesheet として集約される
-/// (`parse.rs::parse_with_sink` が
-/// `TreeSink::finish()` 後に追記する — fetch は I/O を伴うため Sink 実装内では
-/// 行わない)。fetch 失敗や `network` 未提供時は `warnings` に記録されるのみで
-/// parse 全体は継続する。順序についての scope 制限は
-/// `parse.rs::fetch_external_stylesheets` の doc を参照。
+/// と、`<head>` 内 `<link rel="stylesheet">` を `ParseOptions::network`
+/// 経由で fetch した CSS text が Author stylesheet として集約される
+/// (`TreeSink::finish()` 後に parse 層が fetch するため Sink は I/O を持たない)。
+/// Inline と external source は head の document order で並ぶ。Inline、extra、
+/// 外部 stylesheet の leading `@import` は、利用可能な provider で出現位置に
+/// 展開される。解決不能、循環、深度制限、または resource limit に該当する
+/// import は元の at-rule のまま残り、parse 全体は継続する。
 /// `warnings` は html5ever tokenizer 由来の非致命 parse error を
-/// [`raikiri_traits::WarningKind::HtmlParseError`] variant で、外部
-/// stylesheet の fetch 失敗を [`raikiri_traits::WarningKind::NetworkFallback`] /
+/// [`raikiri_traits::WarningKind::HtmlParseError`] variant で、stylesheet の fetch
+/// 失敗を [`raikiri_traits::WarningKind::NetworkFallback`] /
 /// [`raikiri_traits::WarningKind::PolicyWarning`] variant で保持する。
 #[derive(Debug)]
 pub struct UncascadedDocument {
     /// DOM tree (raikiri-dom arena)。
     pub dom: Document,
-    /// `<head>` 内 `<style>` element の text content (document order)、および
-    /// 同じく `<head>` 内で fetch に成功した `<link rel="stylesheet">` の CSS
-    /// text (fetch 成功順に後続で追記、struct doc 参照)。いずれも Author
-    /// origin として cascade に統合される想定 (raikiri umbrella crate の
-    /// `build_cascaded` が消費)。
+    /// `<head>` 内 `<style>` element の text content と、同じく `<head>` 内で
+    /// fetch に成功した `<link rel="stylesheet">` の CSS text。両者は head の
+    /// document order で並び、Author origin として cascade に統合される想定
+    /// (raikiri umbrella crate の `build_cascaded` が消費)。
     pub stylesheet_sources: Vec<String>,
     /// html5ever が報告した非致命 parse error を warning として保持。
     /// 上位の orchestrator (raikiri umbrella crate) が `Document` を経由し
@@ -42,11 +41,15 @@ pub struct UncascadedDocument {
 /// Parse に渡す option 群。
 ///
 /// `extra_stylesheets` は `parse_with_sink` が `Document::add_stylesheet`
-/// (`StylesheetKind::Author`) 経由で消費する。`network` / `base_url` は
-/// `parse_with_sink` が `<head>` 内
-/// `<link rel="stylesheet">` の fetch に消費する
-/// (`parse.rs::fetch_external_stylesheets`)。Replaced element (`<img>` 等) の
-/// 外部 resource fetch はこの task の scope 外、引き続き未消費。
+/// (`StylesheetKind::User`) 経由で消費する。Inline、extra、外部 stylesheet の
+/// leading `@import` も `network` がある場合はここで解決される。`network` /
+/// `base_url` は `parse_with_sink` が `<head>` 内 `<link rel="stylesheet">` と
+/// stylesheet 内 `@import` の fetch / relative URL 解決に消費する
+/// (`parse.rs::fetch_external_stylesheets`)。fetch を試みて失敗した import は
+/// warning を記録する。base 不在や unsafe URL などで request を作れない import、
+/// さらに循環・深度/resource limit に該当する import は opaque な at-rule として
+/// 残し、parse を継続する。Replaced element
+/// (`<img>` 等) の外部 resource fetch はこの task の scope 外、引き続き未消費。
 pub struct ParseOptions<'a> {
     /// Consumer が cascade 時に追加供給する CSS 文字列列 (fulgur の内部 UA CSS 等)。
     pub extra_stylesheets: &'a [&'a str],

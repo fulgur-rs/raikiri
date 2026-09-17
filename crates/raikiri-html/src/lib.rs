@@ -2,6 +2,7 @@
 //! [`parse_with_sink`] entrypoints。cascade 前の [`UncascadedDocument`] を produce
 //! する薄い parser layer (責務は parse だけ、cascade / layout は含まない)。
 
+mod import;
 mod parse;
 mod sink;
 mod types;
@@ -158,6 +159,80 @@ mod tests {
             }
         }
 
+        struct ImportProvider {
+            requests: std::sync::Mutex<Vec<(String, ResourceKind)>>,
+        }
+
+        impl NetworkProvider for ImportProvider {
+            fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+                let requested = request.url.to_string();
+                self.requests
+                    .lock()
+                    .unwrap()
+                    .push((requested.clone(), request.kind));
+                let (css, final_url) = match requested.as_str() {
+                    "https://page.example/css/inline.css" => (
+                        ".inline { color: red }",
+                        "https://page.example/css/inline.css",
+                    ),
+                    "https://page.example/css/main.css" => (
+                        "@import \"nested.css\" screen; .root { color: green }",
+                        "https://cdn.example/assets/main.css",
+                    ),
+                    "https://cdn.example/assets/nested.css" => (
+                        ".nested { color: blue }",
+                        "https://cdn.example/assets/nested.css",
+                    ),
+                    _ => return Err(NetworkError::Other("not found".to_owned())),
+                };
+                Ok(FetchedResource {
+                    bytes: bytes::Bytes::from(css),
+                    content_type: Some("text/css".to_owned()),
+                    final_url: url::Url::parse(final_url).unwrap(),
+                    encoding: None,
+                })
+            }
+        }
+
+        #[test]
+        fn parse_expands_inline_and_external_imports_with_request_kinds_and_redirect_base() {
+            let provider = ImportProvider {
+                requests: std::sync::Mutex::new(Vec::new()),
+            };
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: Some(url::Url::parse("https://page.example/css/page.html").unwrap()),
+            };
+            let html = br#"<html><head>
+                <style>@import "inline.css"; .inline { color: red }</style>
+                <link rel="stylesheet" href="main.css">
+                </head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+
+            assert_eq!(uncascaded.stylesheet_sources.len(), 2);
+            assert!(uncascaded.stylesheet_sources[0].contains(".inline { color: red }"));
+            assert!(uncascaded.stylesheet_sources[1].contains(".nested { color: blue }"));
+            assert!(uncascaded.stylesheet_sources[1].contains("@media screen"));
+            assert_eq!(
+                *provider.requests.lock().unwrap(),
+                vec![
+                    (
+                        "https://page.example/css/inline.css".to_owned(),
+                        ResourceKind::StylesheetImport,
+                    ),
+                    (
+                        "https://page.example/css/main.css".to_owned(),
+                        ResourceKind::ExternalStylesheet,
+                    ),
+                    (
+                        "https://cdn.example/assets/nested.css".to_owned(),
+                        ResourceKind::StylesheetImport,
+                    ),
+                ]
+            );
+        }
+
         /// `NetworkProvider` that returns a successful, empty-body response
         /// (verifies the `extract_inline_stylesheets`-style empty-body
         /// guard: an empty fetched stylesheet must not be pushed).
@@ -198,6 +273,43 @@ mod tests {
             fn fetch(&self, _request: Request) -> Result<FetchedResource, NetworkError> {
                 panic!("fetch must not be called for a <link> that is not a stylesheet reference");
             }
+        }
+
+        #[test]
+        fn parse_resolves_imports_in_head_source_order() {
+            let provider = ImportProvider {
+                requests: std::sync::Mutex::new(Vec::new()),
+            };
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: Some(url::Url::parse("https://page.example/css/page.html").unwrap()),
+            };
+            let html = br#"<html><head>
+                <link rel="stylesheet" href="main.css">
+                <style>@import "inline.css";</style>
+                </head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+
+            assert!(uncascaded.stylesheet_sources[0].contains(".nested { color: blue }"));
+            assert!(uncascaded.stylesheet_sources[1].contains(".inline { color: red }"));
+            assert_eq!(
+                *provider.requests.lock().unwrap(),
+                vec![
+                    (
+                        "https://page.example/css/main.css".to_owned(),
+                        ResourceKind::ExternalStylesheet,
+                    ),
+                    (
+                        "https://cdn.example/assets/nested.css".to_owned(),
+                        ResourceKind::StylesheetImport,
+                    ),
+                    (
+                        "https://page.example/css/inline.css".to_owned(),
+                        ResourceKind::StylesheetImport,
+                    ),
+                ]
+            );
         }
 
         #[test]
@@ -531,11 +643,9 @@ mod tests {
         }
 
         #[test]
-        fn parse_appends_external_stylesheets_after_inline_style_sources() {
-            // 既知の scope 制限 (parse.rs::fetch_external_stylesheets doc
-            // 参照): 同一 <head> 内で <style> と <link> が混在する場合、
-            // <link> は常に全ての <style> の後ろに追記される (真の
-            // document-order interleave ではない)。
+        fn parse_preserves_document_order_between_inline_and_external_sources() {
+            // `<style>` and `<link>` share the stylesheet_sources bucket, so
+            // same-specificity rules retain their original head order.
             let provider = EchoUrlProvider;
             let opts = ParseOptions {
                 extra_stylesheets: &[],
@@ -552,10 +662,10 @@ mod tests {
             assert_eq!(
                 uncascaded.stylesheet_sources,
                 vec![
-                    String::from("p{color:red}"),
                     String::from("/* https://example.test/a.css */"),
+                    String::from("p{color:red}"),
                 ],
-                "external stylesheet is appended after inline <style> sources (known scope limitation)"
+                "stylesheet sources must retain the original head order"
             );
         }
 
@@ -747,19 +857,15 @@ mod tests {
             // condition is false; this assertion passes in every run.
             assert!(
                 warning.details.contains("404"),
-                "details should carry the underlying NetworkError message, got: {}",
+                "details should carry the safe HTTP status summary, got: {}",
                 warning.details
             );
             // `WarningKind::NetworkFallback` covers two dispositions (content
             // substituted vs. fetch failed with nothing applied), but
             // `RenderWarning::details` is documented as unstructured
-            // free-form prose, not a discrimination contract. This assertion
-            // isn't claiming `details` is a reliable disposition signal — it
-            // just pins today's specific error-formatting string
-            // (`format!("... fetch failed: {err}")` in
-            // `fetch_external_stylesheets`) as failure-shaped, so a future
-            // change to that string is a visible, deliberate decision rather
-            // than a silent drift.
+            // free-form prose, not a discrimination contract. The status is
+            // retained for useful diagnostics while arbitrary provider error
+            // text is intentionally omitted to prevent credential/token leaks.
             // cov:ignore: assert! message args only evaluate when the
             // condition is false; this assertion passes in every run.
             assert!(
@@ -771,13 +877,86 @@ mod tests {
         }
 
         #[test]
+        fn parse_redacts_credentials_from_external_stylesheet_warnings() {
+            let provider = AlwaysErrorProvider(|| NetworkError::Http(403));
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head><link rel="stylesheet" href="https://user:secret@example.test/missing.css"></head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            let warning = uncascaded
+                .warnings
+                .iter()
+                .find(|w| matches!(&w.kind, WarningKind::NetworkFallback { .. }))
+                .expect("expected a NetworkFallback warning");
+            let WarningKind::NetworkFallback { url } = &warning.kind else {
+                unreachable!("filtered above");
+            };
+            assert_eq!(url.as_str(), "https://example.test/missing.css");
+            assert!(!warning.details.contains("user:secret"));
+        }
+
+        #[test]
+        fn parse_does_not_copy_provider_error_text_into_warnings() {
+            let provider = AlwaysErrorProvider(|| {
+                NetworkError::Other("request https://user:secret@example.test/token".to_owned())
+            });
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head><link rel="stylesheet" href="https://example.test/a.css"></head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            let warning = uncascaded
+                .warnings
+                .iter()
+                .find(|w| matches!(&w.kind, WarningKind::NetworkFallback { .. }))
+                .expect("expected a NetworkFallback warning");
+            assert!(!warning.details.contains("user:secret"));
+            assert!(!warning.details.contains("/token"));
+            assert!(
+                warning
+                    .details
+                    .contains("provider returned a network error")
+            );
+        }
+
+        #[test]
+        fn parse_keeps_failed_inline_import_and_records_warning() {
+            let provider = AlwaysErrorProvider(|| NetworkError::Http(404));
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: Some(url::Url::parse("https://example.test/page.html").unwrap()),
+            };
+            let html = br#"<html><head><style>
+                @import "missing.css";
+                p { color: blue }
+            </style></head><body>x</body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert_eq!(uncascaded.stylesheet_sources.len(), 1);
+            assert!(uncascaded.stylesheet_sources[0].contains(r#"@import "missing.css";"#));
+            assert!(uncascaded.stylesheet_sources[0].contains("p { color: blue }"));
+            assert!(
+                uncascaded
+                    .warnings
+                    .iter()
+                    .any(|warning| matches!(&warning.kind, WarningKind::NetworkFallback { .. }))
+            );
+        }
+
+        #[test]
         fn parse_records_policy_warning_on_policy_violation() {
             let provider = AlwaysErrorProvider(|| {
                 NetworkError::PolicyViolation(PolicyViolation {
                     kind: ResourceKind::ExternalStylesheet,
-                    url: url::Url::parse("https://blocked.test/a.css").expect("valid url"),
+                    url: url::Url::parse("https://user:secret@blocked.test/a.css")
+                        .expect("valid url"),
                     violation_type: ViolationType::HostNotAllowed,
-                    details: "host not on allow-list".to_string(),
+                    details: "blocked https://user:secret@blocked.test/token".to_string(),
                 })
             });
             let opts = ParseOptions {
@@ -785,7 +964,7 @@ mod tests {
                 network: Some(&provider as &dyn NetworkProvider),
                 base_url: None,
             };
-            let html = br#"<html><head><link rel="stylesheet" href="https://blocked.test/a.css"></head><body>x</body></html>"#;
+            let html = br#"<html><head><link rel="stylesheet" href="https://user:secret@blocked.test/a.css"></head><body>x</body></html>"#;
             let uncascaded = parse(&html[..], &opts).expect("parse ok");
             assert!(uncascaded.stylesheet_sources.is_empty());
             let warning = uncascaded
@@ -800,6 +979,9 @@ mod tests {
                         violation.violation_type,
                         ViolationType::HostNotAllowed
                     ));
+                    assert_eq!(violation.url.as_str(), "https://blocked.test/a.css");
+                    assert_eq!(violation.details, "network policy denied the request");
+                    assert!(!warning.details.contains("user:secret"));
                 }
                 // cov:ignore: defensive "unexpected variant" arm, unreachable
                 // while production code matches this test's expectation.
