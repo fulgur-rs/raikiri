@@ -3,17 +3,12 @@
 //! Mirrors [`crate::layout::preshape_text`]'s role: runs once before taffy
 //! layout, writes results onto [`crate::node::Node`], so the taffy
 //! leaf-measure closures (`crate::taffy_impl`) stay synchronous flat reads
-//! with no new plumbing into taffy's own trait surface.
-//!
-//! Unlike `preshape_text` (which clears every node's prior `text_layout`
-//! before re-shaping, see its Step 0 in
-//! [`crate::layout::layout_single_page`]), this pass does not clear a
-//! previous run's `image_intrinsic_size` before writing new results. Every
-//! `<img>` node visited here is overwritten with the current resolve
-//! outcome (`Some` or `None`) each call, so re-running on the same
-//! `Document` is still correct; the difference only matters if a caller
-//! removes/detaches `<img>` nodes between calls without a corresponding
-//! `layout_single_page` (non-resolver) pass to reset them.
+//! with no new plumbing into taffy's own trait surface. Like
+//! `preshape_text`'s Step-0 `text_layout` clear (see
+//! [`crate::layout::layout_single_page`]), every `<img>` node visited here
+//! has `image_intrinsic_size` reset to `None` before being re-resolved, so
+//! re-running on the same `Document` after a mutation (e.g. `src` changed
+//! or removed) never observes a stale value from a previous pass.
 
 use raikiri_traits::{ReplacedResolver, ResolverRequest};
 use url::Url;
@@ -39,6 +34,10 @@ pub(crate) fn resolve_images(document: &mut Document, resolver: &dyn ReplacedRes
         if element.tag_name.as_str() != "img" {
             continue;
         }
+        // Reset before the src lookup so every early `continue` below
+        // (missing/unparsable/relative src) leaves this at `None` rather
+        // than a previous pass's stale value.
+        element.image_intrinsic_size = None;
         let Some(src) = element
             .attributes
             .iter()
@@ -126,5 +125,24 @@ mod tests {
         resolve_images(&mut doc, &FixedSizeResolver(10.0, 20.0));
 
         assert_eq!(doc.nodes[div].image_intrinsic_size(), None);
+    }
+
+    #[test]
+    fn re_resolving_after_src_becomes_unresolvable_clears_stale_value() {
+        // Regression pin for the re-entrance reset: a node that previously
+        // resolved to `Some` must not keep that value once its `src` is
+        // mutated to something unresolvable and `resolve_images` runs again
+        // (mirrors `preshape_text`'s Step-0 `text_layout = None` clear).
+        let mut doc = Document::new();
+        let root = doc.root_index();
+        let img = doc.append_element(Some(root), "img", Style::default(), None::<&str>);
+        doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
+        resolve_images(&mut doc, &FixedSizeResolver(10.0, 20.0));
+        assert_eq!(doc.nodes[img].image_intrinsic_size(), Some((10.0, 20.0)));
+
+        doc.set_element_attributes(img, vec![("src".into(), "relative.png".into())]);
+        resolve_images(&mut doc, &FixedSizeResolver(10.0, 20.0));
+
+        assert_eq!(doc.nodes[img].image_intrinsic_size(), None);
     }
 }

@@ -23,8 +23,10 @@ use raikiri_style::property::DisplayValue;
 /// Combines an `<img>`'s resolved intrinsic size (if any) with a text
 /// node's shaped intrinsic size (if any) into the single `Option<Size<f32>>`
 /// the leaf-measure closures fall back to when CSS gives no explicit size.
-/// At most one of the two is ever `Some` for a given leaf in this scope
-/// (a node is either an `<img>` element or a text node, never both).
+/// A given `Node` is either an element or a text node
+/// ([`crate::node::NodeData`]), so at most one of
+/// [`crate::node::Node::image_intrinsic_size`] /
+/// [`crate::node::Node::text_layout`] ever returns `Some` here.
 fn leaf_intrinsic_size(node: &crate::node::Node) -> Option<Size<f32>> {
     node.image_intrinsic_size()
         .map(|(width, height)| Size { width, height })
