@@ -5999,6 +5999,41 @@ pub fn layout_pages(
     page_box: PageBox,
     font_ctx: FontContext,
 ) -> Result<Vec<PageSlice>, LayoutError> {
+    layout_pages_with_page_steps(document, cascade, page_box, font_ctx, &[])
+}
+
+/// Layout ordinary block flow with an optional per-page content-height schedule.
+///
+/// An empty schedule preserves the historical fixed fragmentainer height.  The
+/// paged WPT adapter supplies a schedule when `@page` changes the page size or
+/// margins after the first page; the normal API remains fixed-size by default.
+#[allow(clippy::result_large_err)]
+pub fn layout_pages_with_page_steps(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    font_ctx: FontContext,
+    page_steps: &[f32],
+) -> Result<Vec<PageSlice>, LayoutError> {
+    layout_pages_with_page_geometry(document, cascade, page_box, font_ctx, page_steps, &[])
+}
+
+/// Layout ordinary block flow with per-page content heights and widths.
+///
+/// `page_widths` contains content-box widths corresponding to `page_steps`.
+/// When present, percentage-sized boxes are rescaled after pagination so a
+/// later page with a different containing-block width does not retain the
+/// first page's used percentage width.  An empty width schedule keeps the
+/// existing fixed-page behavior.
+#[allow(clippy::result_large_err)]
+pub fn layout_pages_with_page_geometry(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    font_ctx: FontContext,
+    page_steps: &[f32],
+    page_widths: &[f32],
+) -> Result<Vec<PageSlice>, LayoutError> {
     layout_single_page(document, cascade, page_box, font_ctx)?;
 
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
@@ -6055,20 +6090,66 @@ pub fn layout_pages(
         0.0
     };
     let root_margin_top = html_margin_top + body_margin_top;
+    let content_width = (margins.content_width(page_box) - insets.left - insets.right).max(0.0);
     let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
     // A page with margins consuming the entire paper still needs a finite
     // cursor for forced breaks.  No valid page box reaches this path in normal
     // CSS, but the fallback keeps the API panic-free for direct callers.
-    let page_step = if content_height.is_finite() && content_height > 0.0 {
+    let fixed_page_step = if content_height.is_finite() && content_height > 0.0 {
         content_height
     } else {
         page_box.height.max(1.0)
     };
+    // A page-size/margin change can make the fragmentainer height vary by
+    // page.  The default API supplies no schedule and therefore follows the
+    // fixed first-page height used historically.
+    let page_step = fixed_page_step;
+    let page_step_at = |page_index: u32| {
+        page_steps
+            .get(page_index as usize)
+            .copied()
+            .filter(|step| step.is_finite() && *step > 0.0)
+            .unwrap_or(fixed_page_step)
+    };
+    let page_origin = |page_index: u32| {
+        (0..page_index)
+            .map(page_step_at)
+            .fold(0.0_f32, |sum, step| sum + step)
+    };
+    let page_index_for_y = |y: f32| {
+        if !y.is_finite() || y <= 0.0 {
+            return 0;
+        }
+        let mut origin = 0.0_f32;
+        for page_index in 0..4096_u32 {
+            let step = page_step_at(page_index);
+            if y < origin + step {
+                return page_index;
+            }
+            origin += step;
+        }
+        4095
+    };
+    // A box ending exactly at a page edge belongs to the preceding page.
+    let page_index_for_end = |end: f32| {
+        if !end.is_finite() || end <= 0.0 {
+            return 0;
+        }
+        let mut origin = 0.0_f32;
+        for page_index in 0..4096_u32 {
+            let step = page_step_at(page_index);
+            if end <= origin + step {
+                return page_index;
+            }
+            origin += step;
+        }
+        4095
+    };
     // A root margin that reaches into a later fragmentainer consumes whole
     // leading pages.  Do not leave the first content run stranded halfway
     // down the first nonblank page.
-    let root_flow_offset = if root_margin_top >= page_step {
-        (root_margin_top / page_step).floor() * page_step
+    let root_flow_offset = if root_margin_top >= fixed_page_step {
+        page_origin(page_index_for_y(root_margin_top))
     } else {
         root_margin_top
     };
@@ -6375,12 +6456,12 @@ pub fn layout_pages(
             if saw_child {
                 if consumes_pending_break || named_page_change {
                     let natural_page = if effective_y.is_finite() && effective_y >= 0.0 {
-                        (effective_y / page_step).floor() as u32
+                        page_index_for_y(effective_y)
                     } else {
                         current_page
                     };
                     let target_page = current_page.saturating_add(1).max(natural_page);
-                    let target_y = target_page as f32 * page_step;
+                    let target_y = page_origin(target_page);
                     // The candidate was materialized to `effective_y` above,
                     // so this is the additional movement for this boundary.
                     // Keep it separate from `flow_shift`: the latter also
@@ -6395,7 +6476,7 @@ pub fn layout_pages(
                     current_page = target_page;
                     current_page_name = candidate_page_name.clone();
                 } else if effective_y.is_finite() && effective_y >= 0.0 {
-                    current_page = current_page.max((effective_y / page_step).floor() as u32);
+                    current_page = current_page.max(page_index_for_y(effective_y));
                 }
             } else {
                 saw_child = true;
@@ -6419,8 +6500,7 @@ pub fn layout_pages(
             if height > 0.0 && effective_y.is_finite() && effective_y >= 0.0 {
                 let end = (effective_y + height).max(effective_y);
                 if end.is_finite() && end > 0.0 {
-                    let end_page =
-                        ((end as f64 / page_step as f64).ceil() as u32).saturating_sub(1);
+                    let end_page = page_index_for_end(end);
                     max_page = max_page.max(end_page);
                 }
             }
@@ -6451,14 +6531,15 @@ pub fn layout_pages(
         // block size plus its trailing margin would cross the current page.
         // This is the direct block-flow case; nested formatting contexts still
         // require fragment-level break opportunities.
-        let avoid_page_overflow = matches!(
+        let page_overflow = matches!(
             computed.break_inside,
             raikiri_style::property::BreakInside::Avoid
                 | raikiri_style::property::BreakInside::AvoidPage
         ) && effective_y.is_finite()
-            && effective_y >= current_page as f32 * page_step
-            && effective_y < (current_page + 1) as f32 * page_step
-            && effective_y + height + margin_bottom > (current_page + 1) as f32 * page_step;
+            && effective_y >= page_origin(current_page)
+            && effective_y < page_origin(current_page) + page_step_at(current_page)
+            && effective_y + height + margin_bottom
+                > page_origin(current_page) + page_step_at(current_page);
         // A named page requested by a class-A box starts a new page when it
         // differs from the current named page. `auto` leaves the current page
         // type in place; it does not manufacture a second break boundary.
@@ -6472,30 +6553,39 @@ pub fn layout_pages(
             && last_named_raw_y.is_some_and(|previous| (raw_y - previous).abs() <= 0.001);
         let named_page_change =
             saw_child && candidate_page_name != current_page_name && !same_named_coordinate;
-        let at_page_start = effective_y.is_finite()
-            && (effective_y - current_page as f32 * page_step).abs() <= 0.001;
-        // A forced break on a descendant at the start of a page opened by its
-        // parent (for example a named transition plus `break-before: page`)
-        // describes the same boundary and must not create a blank page.
-        let forced_break_at_page_start = forced_before && current_page > 0 && at_page_start;
+        let at_page_start =
+            effective_y.is_finite() && (effective_y - page_origin(current_page)).abs() <= 0.001;
+        let natural_page_at_position = if effective_y.is_finite() && effective_y >= 0.0 {
+            page_index_for_y(effective_y)
+        } else {
+            current_page
+        };
+        // A forced break at the start of a page already opened by natural
+        // overflow describes the same boundary and must not create a blank
+        // page.  This matters when the page height changes after page zero:
+        // the fixed-height pass may have considered the box to be on the
+        // current page, while the scheduled pass places it exactly at the
+        // next page origin.
+        let forced_break_at_page_start =
+            forced_before && (at_page_start || natural_page_at_position > current_page);
 
         let page_transition = saw_child
             && (pending_break
                 || (forced_before && !forced_break_at_page_start)
                 || named_page_change
-                || avoid_page_overflow);
+                || page_overflow);
         if saw_child {
             // A break-after on the preceding box and a break-before (or named
             // page transition) on this box describe the same boundary, not two
             // blank pages.
             if page_transition {
                 let natural_page = if effective_y.is_finite() && effective_y >= 0.0 {
-                    (effective_y / page_step).floor() as u32
+                    page_index_for_y(effective_y)
                 } else {
                     current_page
                 };
                 let target_page = current_page.saturating_add(1).max(natural_page);
-                let target_y = target_page as f32 * page_step;
+                let target_y = page_origin(target_page);
                 // A negative block-start margin can pull a forced-break box
                 // back into the preceding page.  Keep the break boundary for
                 // following siblings (and for page count), but materialize
@@ -6527,7 +6617,7 @@ pub fn layout_pages(
                 }
                 current_page = target_page;
             } else if effective_y.is_finite() && effective_y >= 0.0 {
-                current_page = current_page.max((effective_y / page_step).floor() as u32);
+                current_page = current_page.max(page_index_for_y(effective_y));
             }
             if page_transition && margin_top > 0.0 {
                 pending_descendant_margin = Some((node_id, margin_top));
@@ -6569,7 +6659,7 @@ pub fn layout_pages(
             // intersects; line-level splitting is a later pass.
             let end = (effective_y + height).max(effective_y);
             if end.is_finite() && end > 0.0 {
-                let end_page = ((end as f64 / page_step as f64).ceil() as u32).saturating_sub(1);
+                let end_page = page_index_for_end(end);
                 max_page = max_page.max(end_page);
             }
         }
@@ -6577,10 +6667,40 @@ pub fn layout_pages(
             page_break_is_forced(computed.break_after) || candidate.deferred_named_break_after;
     }
 
+    if !page_widths.is_empty() {
+        let base_width = page_widths
+            .first()
+            .copied()
+            .filter(|width| width.is_finite() && *width > 0.0)
+            .unwrap_or(content_width);
+        if base_width.is_finite() && base_width > 0.0 {
+            for node_id in 0..document.nodes.len() {
+                if !matches!(
+                    cascade.computed[node_id].width,
+                    ComputedLengthPercentageOrAuto::Percent(_)
+                ) {
+                    continue;
+                }
+                let page_index = page_index_for_y(current_abs_y(document, node_id, &parent_of));
+                let Some(target_width) = page_widths
+                    .get(page_index as usize)
+                    .copied()
+                    .filter(|width| width.is_finite() && *width > 0.0)
+                else {
+                    continue;
+                };
+                let scale = target_width / base_width;
+                if scale.is_finite() && (scale - 1.0).abs() > 0.0001 {
+                    document.nodes[node_id].unrounded_layout.size.width *= scale;
+                }
+            }
+        }
+    }
+
     Ok((0..=max_page)
         .map(|page_index| PageSlice {
             page_index,
-            content_origin_y: page_index as f32 * page_step,
+            content_origin_y: page_origin(page_index),
             page_name: page_names.get(page_index as usize).cloned().flatten(),
         })
         .collect())

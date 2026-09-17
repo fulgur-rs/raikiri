@@ -952,7 +952,9 @@ fn render_raikiri_pages_inner(
         Atom, MediaContext, PageBox, PageContextQuery, build_cascaded_with_media_context_for_page,
         build_page_scene_for_page_named,
     };
-    use raikiri_dom::layout_pages;
+    use raikiri_dom::{
+        layout_pages, layout_pages_with_page_geometry, page_content_insets, page_margins,
+    };
     use raikiri_html::parse;
 
     let opts = ParseOptions {
@@ -1028,13 +1030,81 @@ fn render_raikiri_pages_inner(
     } else {
         fallback_page_box
     };
-    let slices = layout_pages(
+    let provisional_slices = layout_pages(
         &mut uncascaded.dom,
         &first_cascade,
         first_page_box,
         resolve_font_ctx(),
     )
     .map_err(|e| format!("layout: {e:?}"))?;
+    // A first-page-only layout cannot know that a later `@page` context has a
+    // different content height.  Use the provisional page names to build a
+    // small schedule, then rerun the ordinary block-flow paginator with those
+    // per-page fragmentainer heights.  The extra tail entries cover pages that
+    // the fixed-height provisional pass merged into its last slice.
+    let schedule_len = provisional_slices.len().saturating_add(32).max(1);
+    let fallback_page_name = provisional_slices
+        .last()
+        .and_then(|slice| slice.page_name.clone());
+    let mut page_steps = Vec::with_capacity(schedule_len);
+    let mut page_widths = Vec::with_capacity(schedule_len);
+    for page_index in 0..schedule_len {
+        let mut query = PageContextQuery::default();
+        query.page_name = provisional_slices
+            .get(page_index)
+            .and_then(|slice| slice.page_name.clone())
+            .or_else(|| fallback_page_name.clone())
+            .map(|name| Atom::from(name.as_str()));
+        query.is_first = page_index == 0;
+        query.is_left = if first_page_is_left {
+            page_index % 2 == 0
+        } else {
+            page_index % 2 == 1
+        };
+        query.is_right = !query.is_left;
+        let page_cascade =
+            build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &query);
+        let page_box = if page_cascade.page.size().is_some() {
+            page_box_from_cascade(&page_cascade)
+        } else {
+            first_page_box
+        };
+        let margins = page_margins(&page_cascade, page_box);
+        let insets = page_content_insets(&page_cascade, page_box);
+        let step = (margins.content_height(page_box) - insets.top - insets.bottom).max(1.0);
+        let content_width = (margins.content_width(page_box) - insets.left - insets.right).max(1.0);
+        page_steps.push(step);
+        page_widths.push(content_width);
+    }
+    let base_step = page_steps.first().copied().unwrap_or(0.0);
+    let base_width = page_widths.first().copied().unwrap_or(0.0);
+    let geometry_varies = page_steps
+        .iter()
+        .any(|step| (step - base_step).abs() > 0.001)
+        || page_widths
+            .iter()
+            .any(|width| (width - base_width).abs() > 0.001);
+    // The provisional pagination mutates arena layout locations.  Reparse only
+    // when a later page really changes its content geometry; fixed-size WPT
+    // documents can keep the already-laid-out result and avoid a second full
+    // parse/layout pass.
+    let (uncascaded, slices) = if geometry_varies {
+        let mut fresh = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
+        let fresh_cascade =
+            build_cascaded_with_media_context_for_page(&fresh, &media_context, &first_query);
+        let fresh_slices = layout_pages_with_page_geometry(
+            &mut fresh.dom,
+            &fresh_cascade,
+            first_page_box,
+            resolve_font_ctx(),
+            &page_steps,
+            &page_widths,
+        )
+        .map_err(|e| format!("layout: {e:?}"))?;
+        (fresh, fresh_slices)
+    } else {
+        (uncascaded, provisional_slices)
+    };
 
     let page_count = slices.len() as u32;
     let mut pages = Vec::with_capacity(slices.len());
