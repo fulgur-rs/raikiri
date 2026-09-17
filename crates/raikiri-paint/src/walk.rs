@@ -37,8 +37,9 @@ use raikiri_style::property::{
     PositionValue, PropertyKey, PropertyValue, QuoteKeyword, Sides, TextAlign, VerticalAlign,
 };
 use raikiri_style::{
-    CascadeResult, ComputedLength, ComputedLengthPercentage, ComputedTransformFunction,
-    PageMarginBoxCascadeResult, PageMarginBoxSlot, ResolveContext, resolve_border,
+    CascadeResult, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
+    ComputedTransformFunction, PageMarginBoxCascadeResult, PageMarginBoxSlot, ResolveContext,
+    resolve_border,
 };
 use raikiri_traits::{NodeKind, PageBox};
 
@@ -1618,6 +1619,49 @@ pub(crate) fn paint_document(
     // — body に `display: inline` を override するような病的な入力でない
     // 限り、この fallback の精度は実質無関係。
     let body_font_size = cascade.computed[body_id].font_size.px();
+    // Taffy carries the body margin through element-box geometry.  Direct text
+    // children are painted from their raw text layout coordinates, so the
+    // horizontal body origin is supplied explicitly when the walk seeds them.
+    let body_has_element_child = document.get_node(body_id).is_some_and(|body| {
+        body.children.iter().any(|&child_id| {
+            document
+                .get_node(child_id)
+                .is_some_and(|child| child.kind() == NodeKind::Element)
+        })
+    });
+    let body_has_canvas_background = {
+        let body = &cascade.computed[body_id];
+        body.background_color.a != 0 || !matches!(body.background_image, BackgroundImage::None)
+    };
+    let body_has_direct_text = document.get_node(body_id).is_some_and(|body| {
+        body.children.iter().any(|&child_id| {
+            document.get_node(child_id).is_some_and(|child| {
+                child.kind() == NodeKind::Text && child.unrounded_layout.size.height > 0.0
+            })
+        })
+    });
+    let is_ua_default_margin = |value: ComputedLengthPercentageOrAuto| matches!(value, ComputedLengthPercentageOrAuto::Px(px) if (px - 8.0).abs() <= 0.001);
+    let used_body_margin = cascade.computed[body_id].margin;
+    let body_has_non_ua_margin = [
+        used_body_margin.top,
+        used_body_margin.right,
+        used_body_margin.bottom,
+        used_body_margin.left,
+    ]
+    .iter()
+    .copied()
+    .any(|value| !is_ua_default_margin(value));
+    let body_margin_left = if body_has_direct_text
+        && !body_has_element_child
+        && (body_has_canvas_background || body_has_non_ua_margin)
+    {
+        match cascade.computed[body_id].margin.left {
+            ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
+            _ => 0.0,
+        }
+    } else {
+        0.0
+    };
     // The paint walk starts at `<body>` because the html box itself is not a
     // paint item here. Seed the context with html's originating decoration so
     // root-element lines still propagate through the body subtree.
@@ -1886,9 +1930,18 @@ pub(crate) fn paint_document(
                 let child_parent_x = abs_x + pos_dx + fixed_dx;
                 let child_parent_y = abs_y + pos_dy + fixed_dy;
                 for &child in node.children.iter().rev() {
+                    let body_child_margin_offset = if node_id == body_id
+                        && document
+                            .get_node(child)
+                            .is_some_and(|node| node.kind() == NodeKind::Text)
+                    {
+                        body_margin_left
+                    } else {
+                        0.0
+                    };
                     stack.push(PaintFrame::Visit {
                         node_id: child,
-                        parent_abs_x: child_parent_x,
+                        parent_abs_x: child_parent_x + body_child_margin_offset,
                         parent_abs_y: child_parent_y,
                         parent_font_size: child_font_size,
                         shift_y: child_shift_y,
