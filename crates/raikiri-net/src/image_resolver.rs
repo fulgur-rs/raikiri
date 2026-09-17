@@ -83,10 +83,12 @@ impl<N: NetworkProvider> ImagePixelSource for ImageResolver<N> {
 /// Decodes PNG bytes into straight (non-premultiplied) RGBA8.
 ///
 /// Supports 8-bit Rgba/Rgb/Grayscale/GrayscaleAlpha source color types
-/// (normalizing all to RGBA8); anything else (16-bit depth, indexed/palette,
-/// interlaced-unsupported-by-this-normalization) is a decode error. This
-/// MVP only needs to decode images this same pipeline or common tools
-/// produce, not the full PNG format matrix.
+/// (normalizing all to RGBA8); anything else (16-bit depth, sub-byte
+/// (1/2/4-bit) depth, indexed/palette) is a decode error. Interlaced PNGs
+/// decode fine — `png::Reader::next_frame` de-interlaces into the output
+/// buffer before this function ever sees it. This MVP only needs to decode
+/// images this same pipeline or common tools produce, not the full PNG
+/// format matrix.
 fn decode_png(bytes: &[u8]) -> Result<DecodedImage, String> {
     let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     let mut reader = decoder.read_info().map_err(|e| e.to_string())?;
@@ -95,8 +97,11 @@ fn decode_png(bytes: &[u8]) -> Result<DecodedImage, String> {
         .ok_or_else(|| "PNG output buffer size overflows address space".to_string())?;
     let mut buf = vec![0u8; buf_size];
     let info = reader.next_frame(&mut buf).map_err(|e| e.to_string())?;
+    if info.bit_depth != png::BitDepth::Eight {
+        return Err(format!("unsupported PNG bit depth: {:?}", info.bit_depth));
+    }
     let raw = &buf[..info.buffer_size()];
-    let rgba = match info.color_type {
+    let rgba: Vec<u8> = match info.color_type {
         png::ColorType::Rgba => raw.to_vec(),
         png::ColorType::Rgb => raw
             .chunks_exact(3)
@@ -109,6 +114,18 @@ fn decode_png(bytes: &[u8]) -> Result<DecodedImage, String> {
             .collect(),
         other => return Err(format!("unsupported PNG color type: {other:?}")),
     };
+    // Defensive invariant check: `DecodedImage::rgba`'s contract (see
+    // raikiri-traits::image) is exactly `width * height * 4` bytes. Catches
+    // any future color-type/transformation combination that slips past the
+    // arms above without normalizing to that shape, converting a would-be
+    // silent out-of-bounds read at paint time into a decode error here.
+    let expected_len = info.width as usize * info.height as usize * 4;
+    if rgba.len() != expected_len {
+        return Err(format!(
+            "decoded PNG pixel buffer size mismatch: expected {expected_len} bytes, got {}",
+            rgba.len()
+        ));
+    }
     Ok(DecodedImage {
         width: info.width,
         height: info.height,
@@ -168,5 +185,31 @@ mod tests {
             .expect("should be cached after resolve");
         assert_eq!((decoded.width, decoded.height), (2, 1));
         assert_eq!(decoded.rgba, vec![255, 0, 0, 255, 0, 255, 0, 255]); // red px, green px
+    }
+
+    /// A 16-bit-per-channel RGBA PNG must be rejected as a decode error
+    /// rather than silently treated as 8-bit (which would return a
+    /// `DecodedImage::rgba` twice the length `width * height * 4` promises,
+    /// per `raikiri_traits::DecodedImage`'s doc contract).
+    #[test]
+    fn resolve_rejects_16_bit_depth_png() {
+        let mut buf = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut buf, 1, 1);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Sixteen);
+            let mut writer = encoder.write_header().unwrap();
+            writer
+                .write_image_data(&[0, 255, 0, 255, 0, 255, 0, 255])
+                .unwrap();
+        }
+
+        let resolver = ImageResolver::new(StaticBytesProvider(Box::leak(buf.into_boxed_slice())));
+        let url = url::Url::parse("file:///sixteen-bit.png").unwrap();
+        let err = resolver.resolve(ResolverRequest::new(&url)).unwrap_err();
+        assert!(
+            matches!(err, raikiri_traits::ResolverError::Decode(_)),
+            "expected Decode error for unsupported bit depth, got {err:?}"
+        );
     }
 }

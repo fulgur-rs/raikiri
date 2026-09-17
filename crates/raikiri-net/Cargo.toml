@@ -9,7 +9,7 @@ license.workspace = true
 [dependencies]
 raikiri-traits = { workspace = true }
 url            = { workspace = true }
-png            = "0.18"
+png            = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
