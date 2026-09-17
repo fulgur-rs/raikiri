@@ -37,6 +37,10 @@ parley              = { workspace = true }
 #  path を strip した後 crates.io からの resolution が失敗するため)。
 # path-only dev-dep は cargo publish 時に完全に strip される。
 raikiri-vrt = { path = "../raikiri-vrt" }
+# html_to_png_with_resolver test 用: 一時ファイルへの PNG 書き出しに使う。
+tempfile    = { workspace = true }
+# img_element_basic test 用: 出力 PNG を decode してピクセル値を検証する。
+png         = { workspace = true }
 
 [lints]
 workspace = true

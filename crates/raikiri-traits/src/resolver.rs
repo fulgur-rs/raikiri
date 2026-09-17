@@ -3,7 +3,9 @@
 //! Consumer が `<img>`, `<object>`, `<embed>`, `<svg>` 等の replaced element の
 //! intrinsic size を返す trait。size 決定 だけを扱う (fetch は Consumer 側)。
 
-use std::marker::PhantomData;
+use url::Url;
+
+use crate::net::NetworkError;
 
 /// Replaced element の intrinsic size を resolve する Consumer 側 trait。
 ///
@@ -16,27 +18,29 @@ use std::marker::PhantomData;
 ///   `RenderSummary.warnings` に自動記録する。
 pub trait ReplacedResolver {
     /// 1 replaced element の resolve。
+    ///
+    /// `ResolverError::Network(NetworkError)` は `NetworkError` 自体が
+    /// `PolicyViolation` payload を直接保有するため約 144 bytes となり、
+    /// clippy::result_large_err の閾値 (128 bytes) を超える。
+    /// Box wrapper 化の適用可否は実装段階で再判断する。
+    #[allow(clippy::result_large_err)]
     fn resolve(&self, req: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError>;
 }
 
-/// Intrinsic size + metadata。将来 fields を populate。現時点では opaque。
-#[allow(missing_docs)]
-#[derive(Debug, Default, Clone)]
+/// Intrinsic size。
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct IntrinsicBox {
-    // 将来 populate 予定:
-    //   pub width: Option<f32>,
-    //   pub height: Option<f32>,
-    //   pub aspect_ratio: Option<f32>,
-    //   pub baseline: Option<f32>,
-    //   pub encoding: MediaEncoding,
-    //   ...
+    /// Intrinsic width (px).
+    pub width: f32,
+    /// Intrinsic height (px).
+    pub height: f32,
 }
 
 impl IntrinsicBox {
-    /// Placeholder constructor (not yet populated).
-    pub fn new() -> Self {
-        Self::default()
+    /// Constructs an intrinsic box from a decoded image's pixel dimensions.
+    pub fn new(width: f32, height: f32) -> Self {
+        Self { width, height }
     }
 }
 
@@ -66,52 +70,72 @@ pub enum ResolveDisposition {
 
 /// Resolve 対象 element の詳細 (borrowed reference)。
 ///
-/// 将来 fields (element_kind / url / hint_size / attributes 等) を populate。
-/// 現時点では phantom lifetime marker のみ。
-#[allow(missing_docs)]
-#[derive(Debug)]
+/// `element_kind`/`hint_size`/`attributes` は本 crate の `<img>` PNG-only
+/// スコープでは不要なため未追加 (YAGNI) — 将来 `<object>`/`<svg>` 等に
+/// 対応する際に populate する。
 #[non_exhaustive]
+#[derive(Debug)]
 pub struct ResolverRequest<'a> {
-    // 将来 populate 予定:
-    //   pub url: &'a Url,
-    //   pub element_kind: ReplacedElementKind,
-    //   pub hint_size: Option<Size>,
-    //   pub attributes: &'a Attributes,
-    _marker: PhantomData<&'a ()>,
+    url: &'a Url,
 }
 
 impl<'a> ResolverRequest<'a> {
-    /// Placeholder constructor (not yet populated).
-    pub fn new() -> Self {
-        Self {
-            _marker: PhantomData,
+    /// Constructs a request for the given absolute resource URL.
+    pub fn new(url: &'a Url) -> Self {
+        Self { url }
+    }
+
+    /// The resource URL to resolve.
+    pub fn url(&self) -> &Url {
+        self.url
+    }
+}
+
+/// Resolver 層 error。
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum ResolverError {
+    /// Byte 取得に失敗した (`NetworkProvider::fetch` が `Err` を返した)。
+    Network(NetworkError),
+    /// 取得した byte 列のデコードに失敗した (不正な PNG 等)。
+    Decode(String),
+}
+
+impl std::fmt::Display for ResolverError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Network(e) => write!(f, "image fetch failed: {e}"),
+            Self::Decode(msg) => write!(f, "image decode failed: {msg}"),
         }
     }
 }
 
-impl<'a> Default for ResolverRequest<'a> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Resolver 層 error。将来 variant を populate。現時点では uninhabited。
-///
-/// 想定 variant:
-///   - `Io(std::io::Error)`
-///   - `Decode(String)`
-///   - `Timeout`
-///   - `NotSupported { kind: ReplacedElementKind }`
-#[non_exhaustive]
-#[derive(Debug)]
-pub enum ResolverError {
-    // 将来 populate 予定。
-}
-
-impl std::fmt::Display for ResolverError {
-    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match *self {}
-    }
-}
-
 impl std::error::Error for ResolverError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolver_request_carries_url() {
+        let url = Url::parse("file:///tmp/x.png").unwrap();
+        let req = ResolverRequest::new(&url);
+        assert_eq!(req.url(), &url);
+    }
+
+    #[test]
+    fn intrinsic_box_carries_dimensions() {
+        let b = IntrinsicBox::new(64.0, 32.0);
+        assert_eq!((b.width, b.height), (64.0, 32.0));
+    }
+
+    #[test]
+    fn resolver_error_network_and_decode_display() {
+        let net_err = NetworkError::Other("boom".into());
+        let e = ResolverError::Network(net_err);
+        assert!(format!("{e}").contains("boom"));
+
+        let e = ResolverError::Decode("bad PNG".into());
+        assert_eq!(format!("{e}"), "image decode failed: bad PNG");
+    }
+}

@@ -1714,6 +1714,7 @@ dependencies = [
  "anyrender_vello_cpu",
  "bytes",
  "parley",
+ "png 0.18.1",
  "raikiri-dom",
  "raikiri-html",
  "raikiri-net",
@@ -1721,6 +1722,7 @@ dependencies = [
  "raikiri-style",
  "raikiri-traits",
  "raikiri-vrt",
+ "tempfile",
  "tiny-skia",
  "url",
 ]
@@ -1764,6 +1766,7 @@ dependencies = [
  "smol_str",
  "taffy",
  "tempfile",
+ "url",
 ]
 
 [[package]]
@@ -1787,7 +1790,9 @@ dependencies = [
 name = "raikiri-net"
 version = "0.1.0"
 dependencies = [
+ "png 0.18.1",
  "raikiri-traits",
+ "tempfile",
  "url",
 ]
 
@@ -1806,6 +1811,7 @@ dependencies = [
  "raikiri-style",
  "raikiri-traits",
  "taffy",
+ "url",
 ]
 
 [[package]]

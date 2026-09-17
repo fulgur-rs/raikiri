@@ -27,7 +27,7 @@ mod stubs;
 pub use stubs::{plan, render_streaming};
 
 mod html_to_png;
-pub use html_to_png::{html_to_png, html_to_png_with_fonts};
+pub use html_to_png::{html_to_png, html_to_png_with_fonts, html_to_png_with_resolver};
 
 // ── PageScene + PageDrawables consumer surface ────────
 // 実装 body は placeholder (empty struct + Default)、

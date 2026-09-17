@@ -276,6 +276,48 @@ fn paint_single_page_with_origin_and_page_context_impl(
     );
 }
 
+/// [`paint_single_page`] と同一だが、`<img>` の decode 済み pixel を
+/// `pixel_source` から取得して実際に描画する。
+///
+/// 名前が `_with_images` であって `_with_resolver` でないのは、paint 段が
+/// 受け取るのが `ImagePixelSource` (decode 済み pixel の読み出し口) であり、
+/// `ReplacedResolver` (intrinsic size を解決し、その過程で fetch/decode を
+/// 起こしうる) ではないため。resolve は layout 前に済んでいる
+/// (`raikiri_dom::layout_single_page_with_resolver`)。
+pub fn paint_single_page_with_images(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    pixel_source: &dyn raikiri_traits::ImagePixelSource,
+) {
+    debug_assert!(
+        cascade.computed.len() == document.node_count(),
+        "cascade.computed.len() ({}) must equal document.node_count() ({})",
+        cascade.computed.len(),
+        document.node_count(),
+    );
+    // Single-page only (no pagination integration, see this crate's design
+    // non-goals) — mirrors `paint_single_page`'s own single-page defaults
+    // (page 0 of 1, no named-page filtering, unpaired) rather than joining
+    // the `paint_single_page_with_origin_and_page_context*` chain.
+    walk::paint_canvas_background(scene, document, cascade, page_box);
+    walk::paint_page_border(scene, cascade, page_box);
+    walk::paint_page_outline(scene, cascade, page_box);
+    walk::paint_root_element_border(scene, document, cascade, page_box);
+    walk::paint_page_margin_boxes(scene, document, cascade, page_box, 0, 1, false, None);
+    walk::paint_document_with_images(
+        scene,
+        document,
+        cascade,
+        page_box,
+        0.0,
+        None,
+        page_box.width,
+        pixel_source,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1584,6 +1626,167 @@ mod tests {
         doc.append_element(Some(0), "p", Style::default(), None::<&str>);
         let mut scene = Scene::new();
         paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    }
+
+    #[test]
+    fn img_element_paints_its_decoded_pixels() {
+        use raikiri_traits::{DecodedImage, ImagePixelSource};
+        use std::sync::Arc;
+
+        struct OneImageSource(url::Url, Arc<DecodedImage>);
+        impl ImagePixelSource for OneImageSource {
+            fn get_decoded(&self, url: &url::Url) -> Option<Arc<DecodedImage>> {
+                (*url == self.0).then(|| self.1.clone())
+            }
+        }
+
+        // A single `<img src="file:///x.png">` inside <body>, sized via
+        // inline style (same idiom as `hello_world_paint_setup`'s
+        // `Some("color:red")`) so the content box has a known, non-zero
+        // size independent of any resolver-driven intrinsic sizing layout
+        // may separately apply — this test only checks paint's own draw
+        // call given a known box.
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let img = doc.append_element(
+            Some(body),
+            "img",
+            Style::default(),
+            Some("width:10px;height:10px"),
+        );
+        doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let url = url::Url::parse("file:///x.png").unwrap();
+        let decoded = Arc::new(DecodedImage {
+            width: 1,
+            height: 1,
+            rgba: vec![255, 0, 0, 255],
+        });
+        let pixel_source = OneImageSource(url, decoded);
+
+        let mut scene = Scene::new();
+        // Exercises the public entry point, not just the private
+        // `walk::paint_document_with_images` it wraps, so this test also
+        // covers `paint_single_page_with_images`'s own debug_assert and
+        // canvas-background call.
+        paint_single_page_with_images(&mut scene, &doc, &cr, PageBox::A4, &pixel_source);
+
+        let fill = scene
+            .commands
+            .iter()
+            .find_map(|cmd| match cmd {
+                RenderCommand::Fill(f) if matches!(f.brush, anyrender::types::Paint::Image(_)) => {
+                    Some(f)
+                }
+                _ => None,
+            })
+            .expect("expected an image fill command in the recorded scene");
+
+        // `object-fit: fill` (the only value this scope implements, CSS
+        // Images 3 §4.3) must stretch the 1×1 source to exactly cover the
+        // 10×10 content box (no border/padding here, so content box ==
+        // border box) — not draw it at its native size with an identity
+        // transform. `Affine::translate(t) * Affine::scale_non_uniform(sx,
+        // sy)` composes to coeffs `[sx, 0, 0, sy, tx, ty]` (kurbo's `Mul for
+        // Affine`), so `as_coeffs()[0]`/`[3]` are the scale factors and
+        // `[4]`/`[5]` are the translation.
+        let body_loc = doc.get_node(body).unwrap().unrounded_layout.location;
+        let img_loc = doc.get_node(img).unwrap().unrounded_layout.location;
+        let expected_x = (body_loc.x + img_loc.x) as f64;
+        let expected_y = (body_loc.y + img_loc.y) as f64;
+        let coeffs = fill.transform.as_coeffs();
+        let epsilon = 1e-4;
+        assert!(
+            (coeffs[0] - 10.0).abs() < epsilon && (coeffs[3] - 10.0).abs() < epsilon,
+            "expected the 1x1 source scaled by 10x/10y to fill the 10px content box, got scale ({}, {})",
+            coeffs[0],
+            coeffs[3]
+        );
+        assert!(
+            (coeffs[4] - expected_x).abs() < epsilon && (coeffs[5] - expected_y).abs() < epsilon,
+            "expected the image translated to the content-box origin ({}, {}), got ({}, {})",
+            expected_x,
+            expected_y,
+            coeffs[4],
+            coeffs[5]
+        );
+    }
+
+    #[test]
+    fn img_padding_percentage_resolves_against_width_not_height() {
+        use raikiri_traits::{DecodedImage, ImagePixelSource};
+        use std::sync::Arc;
+
+        struct OneImageSource(url::Url, Arc<DecodedImage>);
+        impl ImagePixelSource for OneImageSource {
+            fn get_decoded(&self, url: &url::Url) -> Option<Arc<DecodedImage>> {
+                (*url == self.0).then(|| self.1.clone())
+            }
+        }
+
+        // CSS 2.1 §8.4 <https://www.w3.org/TR/CSS21/box.html#propdef-padding-top>:
+        // every `padding-*` percentage — top/bottom included — resolves
+        // against the containing block's *inline size* (width), never the
+        // element's own height. width=100px, height=50px, padding-top:20%
+        // deliberately makes "resolved against width" (20px) and "resolved
+        // against height" (10px) disagree, so a wrong reference axis
+        // produces a different, assertion-failing offset.
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let img = doc.append_element(
+            Some(body),
+            "img",
+            Style::default(),
+            Some(
+                "width:100px;height:50px;padding-top:20%;padding-right:0px;\
+                 padding-bottom:0px;padding-left:0px",
+            ),
+        );
+        doc.set_element_attributes(img, vec![("src".into(), "file:///pad.png".into())]);
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let url = url::Url::parse("file:///pad.png").unwrap();
+        let decoded = Arc::new(DecodedImage {
+            width: 1,
+            height: 1,
+            rgba: vec![0, 255, 0, 255],
+        });
+        let pixel_source = OneImageSource(url, decoded);
+
+        let mut scene = Scene::new();
+        paint_single_page_with_images(&mut scene, &doc, &cr, PageBox::A4, &pixel_source);
+
+        let fill = scene
+            .commands
+            .iter()
+            .find_map(|cmd| match cmd {
+                RenderCommand::Fill(f) if matches!(f.brush, anyrender::types::Paint::Image(_)) => {
+                    Some(f)
+                }
+                _ => None,
+            })
+            .expect("expected an image fill command in the recorded scene");
+
+        let body_loc = doc.get_node(body).unwrap().unrounded_layout.location;
+        let img_loc = doc.get_node(img).unwrap().unrounded_layout.location;
+        // border-box top + padding-top resolved against width (100px * 20% = 20px).
+        let expected_content_y = (body_loc.y + img_loc.y + 20.0) as f64;
+        let coeffs = fill.transform.as_coeffs();
+        let epsilon = 1e-4;
+        assert!(
+            (coeffs[5] - expected_content_y).abs() < epsilon,
+            "content-box y translation = {}, expected {} (padding-top:20% of \
+             width=100px is 20px, not 20% of height=50px which would be 10px)",
+            coeffs[5],
+            expected_content_y
+        );
     }
 }
 

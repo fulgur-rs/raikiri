@@ -3696,4 +3696,23 @@ mod tests {
             "extra_stylesheets should no longer tag as Author"
         );
     }
+
+    #[test]
+    fn img_defaults_to_inline_block_via_ua_css() {
+        use raikiri_style::Origin;
+
+        let mut doc = raikiri_dom::Document::new();
+        let html = doc.append_element(Some(0), "html", taffy::Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", taffy::Style::default(), None::<&str>);
+        let img = doc.append_element(Some(body), "img", taffy::Style::default(), None::<&str>);
+
+        let mut tree = raikiri_style::build_rule_tree(&doc);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&doc, &tree).expect("cascade ok");
+
+        assert_eq!(
+            cascade.computed[img].display,
+            raikiri_style::property::DisplayValue::InlineBlock
+        );
+    }
 }

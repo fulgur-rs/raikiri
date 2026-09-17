@@ -440,6 +440,16 @@ code, kbd, samp, tt { font-family: monospace; }
  * and not resolved by this rule. */
 listing, plaintext, pre, xmp { font-family: monospace; white-space: pre; }
 
+/* HTML Living Standard §15.3.4 "The display property": <img> is a
+ * replaced element whose UA default is `inline-block` (CSS 2.1 Appendix D
+ * lists replaced elements as inline-level by default; `inline-block`
+ * specifically so its box participates in shrink-to-fit sizing against its
+ * own intrinsic dimensions rather than flowing as plain `inline`, which has
+ * no width/height of its own to size against). */
+img {
+  display: inline-block;
+}
+
 /* HTML Living Standard "Rendering" §tables (15.3.9) + CSS 2.1 §17.2 / Appendix D
  * — table model display types. Each HTML table-related element maps to its
  * corresponding internal display value (CSS Display 3 §2 `<display-internal>`).

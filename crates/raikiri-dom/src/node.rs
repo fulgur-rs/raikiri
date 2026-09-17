@@ -179,6 +179,18 @@ pub struct ElementData {
     /// 同名・同 shape。sink が populate しなかった (template 判定を経ずに
     /// 直接組み立てる test / 将来の manual construction) 場合は `None` のまま。
     pub(crate) template_contents: Option<usize>,
+    /// Resolved intrinsic size (px) for a replaced element (`<img>` only, in
+    /// this scope), populated by [`crate::image_resolve::resolve_images`]
+    /// before layout runs — mirrors how [`TextData::text_layout`] is populated
+    /// by `preshape_text` ahead of the same taffy compute pass. `None` means
+    /// either this element is not a resolvable replaced element, or
+    /// resolution was not attempted — a missing/relative `src`, or an inert
+    /// subtree the pre-pass skips. It never means "resolution failed": a
+    /// resolver `Err` aborts the pre-pass and fails the render instead of
+    /// leaving a size behind here (no fallback size in this scope — see
+    /// `ReplacedResolver` doc for why `Err` is terminal rather than silently
+    /// substituting a size).
+    pub(crate) image_intrinsic_size: Option<(f32, f32)>,
 }
 
 /// Text-only data。blitz `TextNodeData` (nominally) に対応。
@@ -314,6 +326,7 @@ impl Node {
                 namespace: None,
                 attributes: Vec::new(),
                 template_contents: None,
+                image_intrinsic_size: None,
             })),
         }
     }
@@ -450,6 +463,17 @@ impl Node {
     pub fn text_layout(&self) -> Option<&parley::Layout<()>> {
         match &self.data {
             NodeData::Text(t) => t.text_layout.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Resolved intrinsic size (px) for a replaced element, if
+    /// [`crate::image_resolve::resolve_images`] has populated one for this
+    /// node. `None` for non-`<img>` elements, unresolved images, and all
+    /// non-element node kinds.
+    pub(crate) fn image_intrinsic_size(&self) -> Option<(f32, f32)> {
+        match &self.data {
+            NodeData::Element(e) => e.image_intrinsic_size,
             _ => None,
         }
     }

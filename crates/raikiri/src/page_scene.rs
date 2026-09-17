@@ -262,6 +262,41 @@ impl PageScene {
 
         encode_png(&rgba, width, height)
     }
+
+    /// [`Self::rasterize`] と同一だが、`<img>` の decode 済み pixel を
+    /// `pixel_source` から取得して実際に描画する。
+    ///
+    /// `_with_images` であって `_with_resolver` でないのは、この段が受け取る
+    /// のが `ImagePixelSource` (decode 済み pixel の読み出し口) であって
+    /// `ReplacedResolver` ではないため — intrinsic size の resolve は layout
+    /// 前に完了している ([`crate::html_to_png_with_resolver`] 参照)。
+    #[must_use]
+    pub fn rasterize_with_images(
+        &self,
+        dom: &Document,
+        cascade: &CascadeResult,
+        page_box: PageBox,
+        pixel_source: &dyn raikiri_traits::ImagePixelSource,
+    ) -> Vec<u8> {
+        let width = page_box.width.ceil() as u32;
+        let height = page_box.height.ceil() as u32;
+
+        let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
+            |scene| {
+                raikiri_paint::paint_single_page_with_images(
+                    scene,
+                    dom,
+                    cascade,
+                    page_box,
+                    pixel_source,
+                )
+            },
+            width,
+            height,
+        );
+
+        encode_png(&rgba, width, height)
+    }
 }
 
 /// Post-layout Document から metadata + fragments + drawables を抽出し

@@ -26,6 +26,7 @@
 pub mod config;
 pub mod dom;
 pub mod error;
+pub mod image;
 pub mod io;
 pub mod net;
 pub mod page;
@@ -46,6 +47,7 @@ pub use error::{
     RenderError, RenderStatus, RenderSummary, RenderWarning, TargetDiscrepancy, TargetKind,
     TargetSlotId, UnresolvedReason, UnresolvedTarget, WarningKind,
 };
+pub use image::{DecodedImage, ImagePixelSource};
 pub use io::{OversizePhase, RejectReason, read_bounded_regular_file};
 pub use net::{
     AbortController, AbortSignal, Body, FetchedResource, HeaderMap, Method, NetworkError,
@@ -108,6 +110,7 @@ mod tests {
         fn _assert<T: ?Sized>() {}
         _assert::<dyn RenderSink>();
         _assert::<dyn ReplacedResolver>();
+        _assert::<dyn ImagePixelSource>();
         _assert::<dyn NetworkProvider>();
         _assert::<dyn ResourcePolicy>();
         // Strategy traits (LookaheadPolicy / TargetResolver / EmissionPolicy /
@@ -134,7 +137,6 @@ mod tests {
     #[test]
     fn resolver_placeholder_types_default_construct() {
         let _ = IntrinsicBox::default();
-        let _ = ResolverRequest::default();
     }
 
     // ── Error taxonomy ──────────────────────────────────────────

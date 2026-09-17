@@ -144,7 +144,10 @@ impl From<CascadeError> for RenderError {
 
 impl From<LayoutError> for RenderError {
     fn from(e: LayoutError) -> Self {
-        Self::Layout(e)
+        match e {
+            LayoutError::Resolver(re) => Self::Resolver(re),
+            other => Self::Layout(other),
+        }
     }
 }
 
@@ -433,8 +436,6 @@ impl From<std::io::Error> for ParseError {
 /// **同じ責務境界**: taffy 固有 error 型は raikiri-dom 内部に閉じ込め、
 /// この enum は raikiri-dom が明示的に fail-hard を選択した場合の signal のみ。
 ///
-/// `Internal` variant のみ populate 済み。taffy 実装詳細を trait layer
-/// に漏らさない。必要になった時点で `#[non_exhaustive]` の恩恵で追加する。
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum LayoutError {
@@ -444,12 +445,16 @@ pub enum LayoutError {
         /// 人間可読な失敗詳細 (raikiri-dom 内部で構成)。
         message: String,
     },
+    /// `<img>` 等 replaced element の resolve が失敗した
+    /// (`ReplacedResolver::resolve` が `Err` を返した)。
+    Resolver(ResolverError),
 }
 
 impl std::fmt::Display for LayoutError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Internal { message } => write!(f, "Layout internal error: {message}"),
+            Self::Resolver(e) => write!(f, "Layout resolver error: {e}"),
         }
     }
 }
@@ -489,5 +494,13 @@ mod unimplemented_variant_tests {
             migration_hint: "hint",
         };
         assert!(err.source().is_none(), "Unimplemented has no inner cause");
+    }
+
+    #[test]
+    fn layout_error_resolver_variant_converts_to_render_error_resolver() {
+        let re = ResolverError::Decode("bad PNG".into());
+        let le = LayoutError::Resolver(re);
+        let render_err: RenderError = le.into();
+        assert!(matches!(render_err, RenderError::Resolver(_)));
     }
 }

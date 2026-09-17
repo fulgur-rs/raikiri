@@ -1,7 +1,7 @@
 [package]
 name = "raikiri-net"
 version = "0.1.0"
-description = "NetworkProvider / ReplacedResolver base implementations for raikiri (NoOpNetworkProvider, SandboxedNetProvider<P>, SandboxedResolver<R>, DenyAllPolicy, DefaultSandboxPolicy)"
+description = "NetworkProvider / ReplacedResolver base implementations for raikiri (FileNetworkProvider, ImageResolver<N>). Sandboxed*/DenyAllPolicy/DefaultSandboxPolicy wrappers are a separate, not-yet-implemented follow-up."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -9,6 +9,10 @@ license.workspace = true
 [dependencies]
 raikiri-traits = { workspace = true }
 url            = { workspace = true }
+png            = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints]
 workspace = true
