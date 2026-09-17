@@ -183,10 +183,13 @@ pub struct ElementData {
     /// this scope), populated by [`crate::image_resolve::resolve_images`]
     /// before layout runs — mirrors how [`TextData::text_layout`] is populated
     /// by `preshape_text` ahead of the same taffy compute pass. `None` means
-    /// either this element is not a resolvable replaced element, or resolution
-    /// was not attempted/failed (no fallback size in this scope — see
+    /// either this element is not a resolvable replaced element, or
+    /// resolution was not attempted — a missing/relative `src`, or an inert
+    /// subtree the pre-pass skips. It never means "resolution failed": a
+    /// resolver `Err` aborts the pre-pass and fails the render instead of
+    /// leaving a size behind here (no fallback size in this scope — see
     /// `ReplacedResolver` doc for why `Err` is terminal rather than silently
-    /// substituting a size here).
+    /// substituting a size).
     pub(crate) image_intrinsic_size: Option<(f32, f32)>,
 }
 

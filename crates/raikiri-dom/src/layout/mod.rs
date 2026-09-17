@@ -6591,12 +6591,21 @@ pub fn layout_pages(
 ///
 /// # Errors
 /// [`layout_single_page`] と同じ、加えて `LayoutError::Resolver` はこの
-/// 関数固有 — 本関数は現状 `resolve_images` の結果を無条件に `None`
-/// 化けさせる (個々の resolve 失敗は該当要素を 0×0 にするだけで
-/// `layout_single_page_with_resolver` 全体は失敗させない、
-/// `crate::image_resolve::resolve_images` の doc 参照) ため、実際には
-/// この variant は現時点では返らない。将来 resolve 失敗を fail-fast
-/// させたくなった時のために型だけ用意してある。
+/// 関数固有 — `resolver.resolve()` が `Err` を返した時点で pre-pass を
+/// 打ち切り、その error を `LayoutError::Resolver` に包んで返す (taffy
+/// layout 自体は走らない)。`ReplacedResolver` の契約上 `Err` は常に
+/// terminal であり、placeholder への degrade は Consumer が
+/// `Ok(ResolvedIntrinsic { disposition: Fallback { .. } })` として表現する
+/// — 詳細は `crate::image_resolve::resolve_images` の doc 参照。
+///
+/// # 実行順 (load-bearing)
+/// `resolve_images` の前に [`Document::mark_in_document_flags`] を呼ぶ。
+/// `resolve_images` は inert subtree (`<template>` 子孫等) の `<img>` を
+/// membership flag で skip するので、flag が stale だと本来 fetch すべきで
+/// ない URL に対して実 fetch が走ってしまう。[`layout_single_page`] 内でも
+/// 同じ sync が走るが、そちらは本 pre-pass より**後**なので間に合わない。
+/// `mark_in_document_flags` は `flags_dirty == false` のとき O(1) no-op
+/// なので、二重呼び出しの実コストは無い。
 ///
 /// # Note on error size
 /// `LayoutError::Resolver(ResolverError)` transitively contains
@@ -6610,7 +6619,10 @@ pub fn layout_single_page_with_resolver(
     font_ctx: FontContext,
     resolver: &dyn ReplacedResolver,
 ) -> Result<(), LayoutError> {
-    crate::image_resolve::resolve_images(document, resolver);
+    // See "# 実行順" above — this must precede `resolve_images`, whose
+    // membership gate reads the flags this refreshes.
+    document.mark_in_document_flags();
+    crate::image_resolve::resolve_images(document, resolver).map_err(LayoutError::Resolver)?;
     layout_single_page(document, cascade, page_box, font_ctx)
 }
 
@@ -13372,5 +13384,59 @@ mod tests {
 
         let layout = doc.nodes[img].unrounded_layout;
         assert_eq!((layout.size.width, layout.size.height), (64.0, 32.0));
+    }
+
+    /// Ordering pin: `layout_single_page_with_resolver` must refresh flat-tree
+    /// membership *before* running the `<img>` pre-pass, not rely on the
+    /// refresh that `layout_single_page` does afterwards. The pre-pass skips
+    /// inert `<img>` elements by `is_in_document()`, so stale flags would
+    /// make it fetch a URL for an element that is never laid out or painted.
+    ///
+    /// This document is deliberately left with `flags_dirty == true` (nothing
+    /// calls `mark_in_document_flags` between the appends and the layout
+    /// call), which is the state a caller that skips the parser sink is in.
+    #[test]
+    fn with_resolver_refreshes_membership_before_the_image_pre_pass() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        struct NeverCalledResolver;
+        impl raikiri_traits::ReplacedResolver for NeverCalledResolver {
+            fn resolve(
+                &self,
+                req: raikiri_traits::ResolverRequest<'_>,
+            ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError>
+            {
+                unimplemented!(
+                    "an <img> inside <template> must never be resolved (was called for {})",
+                    req.url()
+                )
+            }
+        }
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let tmpl = doc.append_element(Some(body), "template", Style::default(), None::<&str>);
+        let img = doc.append_element(Some(tmpl), "img", Style::default(), None::<&str>);
+        doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        assert!(
+            doc.flags_dirty,
+            "test premise: membership flags are stale entering layout"
+        );
+
+        layout_single_page_with_resolver(
+            &mut doc,
+            &cascade,
+            PageBox::A4,
+            parley::FontContext::new(),
+            &NeverCalledResolver,
+        )
+        .expect("layout Ok");
+
+        assert_eq!(doc.nodes[img].image_intrinsic_size(), None);
     }
 }

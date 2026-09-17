@@ -114,9 +114,11 @@ pub fn html_to_png_with_fonts<R: std::io::Read>(
 ///
 /// # Errors
 /// [`html_to_png`] と同じ、加えて `RenderError::Resolver` — `resolver` が
-/// `<img>` の resolve に失敗した場合 (現状は個々の resolve 失敗は該当要素を
-/// 0×0 にするだけで、この variant は現時点では実際には返らない —
-/// `raikiri_dom::layout_single_page_with_resolver` の doc 参照)。
+/// いずれかの `<img>` の resolve に失敗した場合。`ReplacedResolver` の
+/// 契約上 `Err` は terminal なので、最初の失敗で render 全体が停止する
+/// (握りつぶして 0×0 にはしない)。placeholder への degrade を望む Consumer
+/// は `Ok(ResolvedIntrinsic { disposition: Fallback { .. } })` を返す —
+/// `raikiri_dom::layout_single_page_with_resolver` の doc 参照。
 #[allow(clippy::result_large_err)]
 pub fn html_to_png_with_resolver<R, I>(
     input: impl std::io::Read,
@@ -231,6 +233,49 @@ mod tests {
         assert_ne!(
             png, without_resolver,
             "resolver path must paint different pixels than the no-resolver baseline"
+        );
+    }
+
+    /// A `ReplacedResolver::resolve()` `Err` is terminal: it must fail the
+    /// whole render as `RenderError::Resolver`, not be swallowed into a
+    /// silently unsized `<img>`. Graceful degradation is the Consumer's job,
+    /// expressed as `Ok(ResolvedIntrinsic { disposition: Fallback { .. } })`
+    /// (see `raikiri_traits::ReplacedResolver`'s doc), so raikiri must not
+    /// perform it on the Consumer's behalf.
+    #[test]
+    fn html_to_png_with_resolver_propagates_a_terminal_resolver_error() {
+        use raikiri_traits::{
+            DecodedImage, ImagePixelSource, ReplacedResolver, ResolvedIntrinsic, ResolverError,
+            ResolverRequest,
+        };
+        use std::sync::Arc;
+
+        struct AlwaysErrResolver;
+        impl ReplacedResolver for AlwaysErrResolver {
+            fn resolve(
+                &self,
+                _req: ResolverRequest<'_>,
+            ) -> Result<ResolvedIntrinsic, ResolverError> {
+                Err(ResolverError::Decode("simulated decode failure".into()))
+            }
+        }
+        impl ImagePixelSource for AlwaysErrResolver {
+            fn get_decoded(&self, _url: &url::Url) -> Option<Arc<DecodedImage>> {
+                // Unreachable: the render fails before paint. Returning None
+                // keeps this honest rather than fabricating pixels.
+                None
+            }
+        }
+
+        // The `src` must parse as an absolute URL — a relative one is skipped
+        // before `resolve()` is ever called, which would make this vacuous.
+        let html = br#"<html><body><img src="file:///nonexistent-fixture.png"></body></html>"#;
+        let resolver = AlwaysErrResolver;
+        let err = html_to_png_with_resolver(&html[..], &resolver, &resolver)
+            .expect_err("a resolver Err must fail the render");
+        assert!(
+            matches!(err, RenderError::Resolver(ResolverError::Decode(_))),
+            "expected RenderError::Resolver(Decode(_)), got {err:?}"
         );
     }
 
