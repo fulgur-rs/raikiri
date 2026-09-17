@@ -299,10 +299,22 @@ fn page_box_side(
         _ => None,
     };
     let padding = value.map_or(0.0, |length| page_length_to_px(length, basis));
-    // Existing page-border painting treats a border-only page decoration as an
-    // overlay. Once page padding is present, the page content box is explicit;
-    // include its border in the inset so the padding box starts inside it.
-    let border = if padding > 0.0 {
+    // A page border with an explicit margin encloses the page content box;
+    // preserve the existing overlay behavior for a border-only page with no
+    // margin (for example the page-box border smoke test).  Padding already
+    // establishes an explicit content box and therefore always includes the
+    // border.
+    let has_page_margin = declarations.keys().any(|key| {
+        matches!(
+            key,
+            PropertyKey::Margin
+                | PropertyKey::MarginTop
+                | PropertyKey::MarginRight
+                | PropertyKey::MarginBottom
+                | PropertyKey::MarginLeft
+        )
+    });
+    let border = if padding > 0.0 || has_page_margin {
         match declarations.get(&border) {
             Some(PropertyValue::BorderTopWidth(value))
             | Some(PropertyValue::BorderRightWidth(value))
@@ -6868,6 +6880,42 @@ mod tests {
         let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
         let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
         assert_eq!(find_body(&doc), Some(body));
+    }
+
+    #[test]
+    fn page_border_inset_requires_page_content_box() {
+        let mut declarations = std::collections::HashMap::new();
+        declarations.insert(
+            PropertyKey::BorderTopWidth,
+            PropertyValue::BorderTopWidth(Length::Px(3.0)),
+        );
+
+        // A border-only page keeps the legacy overlay behavior.
+        assert_eq!(
+            page_box_side(
+                &declarations,
+                PropertyKey::PaddingTop,
+                PropertyKey::BorderTopWidth,
+                100.0
+            ),
+            0.0
+        );
+
+        // An explicit page margin makes the page content box distinct from
+        // the border edge, so the border consumes flow space.
+        declarations.insert(
+            PropertyKey::MarginTop,
+            PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(30.0))),
+        );
+        assert_eq!(
+            page_box_side(
+                &declarations,
+                PropertyKey::PaddingTop,
+                PropertyKey::BorderTopWidth,
+                100.0
+            ),
+            3.0
+        );
     }
 
     #[test]
