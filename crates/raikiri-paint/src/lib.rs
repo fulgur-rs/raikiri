@@ -253,6 +253,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
     );
     walk::paint_canvas_background(scene, document, cascade, page_box);
     walk::paint_page_border(scene, cascade, page_box);
+    walk::paint_page_outline(scene, cascade, page_box);
     walk::paint_root_element_border(scene, document, cascade, page_box);
     walk::paint_page_margin_boxes(
         scene,

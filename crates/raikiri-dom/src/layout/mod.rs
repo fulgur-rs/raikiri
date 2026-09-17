@@ -33,8 +33,8 @@ use raikiri_style::{
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
     AlignContent as TaffyAlignContent, AlignItems as TaffyAlignItems, AvailableSpace,
-    BoxSizing as TaffyBoxSizing, Clear as TaffyClear, Dimension, Display,
-    FlexDirection as TaffyFlexDirection, FlexWrap as TaffyFlexWrap, Float as TaffyFloat,
+    BoxSizing as TaffyBoxSizing, Clear as TaffyClear, Dimension, Direction as TaffyDirection,
+    Display, FlexDirection as TaffyFlexDirection, FlexWrap as TaffyFlexWrap, Float as TaffyFloat,
     GridAutoFlow as TaffyGridAutoFlow, GridPlacement, GridTemplateArea as TaffyGridTemplateArea,
     GridTemplateComponent, GridTemplateRepetition, Layout as TaffyLayout, LengthPercentage,
     LengthPercentageAuto, Line as TaffyLine, MaxTrackSizingFunction, MinTrackSizingFunction,
@@ -284,6 +284,20 @@ fn page_margin_side(
 /// on the paper/content split.
 pub fn page_margins(cascade: &CascadeResult, page_box: PageBox) -> PageMargins {
     let declarations = cascade.page.declarations();
+    // The legacy page `width`/`height` descriptors size the page area inside
+    // the page box.  When they are combined with percentage margins, those
+    // percentages resolve against the pre-descriptor page size, not the
+    // already reduced outer box.  Keep that basis stable so e.g. `size: 500px;
+    // margin: 10%; width: 40%; height: 60%` uses 50px margins and a 200x300
+    // content area after the outer box is reduced to 300x400.
+    let margin_basis = if (declarations.contains_key(&PropertyKey::Width)
+        || declarations.contains_key(&PropertyKey::Height))
+        && cascade.page.size().is_some()
+    {
+        PageBox::from_page_size(cascade.page.size())
+    } else {
+        page_box
+    };
     let shorthand = match declarations.get(&PropertyKey::Margin) {
         Some(PropertyValue::Margin(sides)) => Some(*sides),
         _ => None,
@@ -293,25 +307,25 @@ pub fn page_margins(cascade: &CascadeResult, page_box: PageBox) -> PageMargins {
             declarations,
             PropertyKey::MarginTop,
             shorthand.map(|s| s.top),
-            page_box.height,
+            margin_basis.height,
         ),
         right: page_margin_side(
             declarations,
             PropertyKey::MarginRight,
             shorthand.map(|s| s.right),
-            page_box.width,
+            margin_basis.width,
         ),
         bottom: page_margin_side(
             declarations,
             PropertyKey::MarginBottom,
             shorthand.map(|s| s.bottom),
-            page_box.height,
+            margin_basis.height,
         ),
         left: page_margin_side(
             declarations,
             PropertyKey::MarginLeft,
             shorthand.map(|s| s.left),
-            page_box.width,
+            margin_basis.width,
         ),
     }
 }
@@ -353,6 +367,7 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
 /// dispatch 1 行追加のみで足りるよう設計している。
 ///
 /// 現時点で active な bridge:
+/// - [`bridge_direction`] — [`Direction`] → [`taffy::Direction`]
 /// - [`bridge_display`] — [`DisplayValue`] → [`taffy::Display`]
 /// - [`bridge_float`] — [`ComputedValues::float`] / [`ComputedValues::clear`] →
 ///   [`taffy::Style::float`] / [`taffy::Style::clear`] (CSS2 §9.5.1 / §9.5.2)
@@ -418,6 +433,7 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
             }
         }
         let style = &mut doc.nodes[idx].style;
+        bridge_direction(style, cv);
         bridge_display(style, cv);
         bridge_position(style, cv, &mut doc.layout_warnings);
         bridge_overflow(style, cv);
@@ -448,6 +464,19 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
             doc.nodes[idx].flags.remove(NodeFlags::IS_TABLE_ROOT);
         }
     }
+}
+
+/// [`Direction`] → [`taffy::Direction`] mapping.
+///
+/// Taffy uses this field for horizontal block alignment, table/grid ordering,
+/// and overflow direction.  Keep it separate from text shaping: parley does
+/// not expose the CSS base direction through the bridge used by this crate.
+fn bridge_direction(style: &mut taffy::Style, cv: &ComputedValues) {
+    style.direction = match cv.direction {
+        Direction::Ltr => TaffyDirection::Ltr,
+        Direction::Rtl => TaffyDirection::Rtl,
+        _ => TaffyDirection::Ltr,
+    };
 }
 
 /// [`DisplayValue`] → [`taffy::Display`] mapping。
@@ -747,6 +776,7 @@ fn bridge_known_image_intrinsic_size(
     let height_auto = matches!(cv.height, ComputedLengthPercentageOrAuto::Auto);
     (width_auto || height_auto).then_some((100.0, 50.0))
 }
+
 /// [`ComputedValues::min_width`] / [`ComputedValues::min_height`] /
 /// [`ComputedValues::max_width`] / [`ComputedValues::max_height`]
 /// ([`ComputedLengthPercentageOrAuto`]) → [`taffy::Style::min_size`] /
@@ -4499,6 +4529,14 @@ fn is_inline_for_trim(doc: &Document, cascade: &CascadeResult, idx: usize) -> bo
     if doc.nodes[idx].kind() == NodeKind::Text {
         return true;
     }
+    // Absolutely/fixed-positioned boxes are out of the inline flow and cannot
+    // keep a collapsible space at the boundary of the following text.
+    if matches!(
+        cascade.computed[idx].position,
+        PositionValue::Absolute | PositionValue::Fixed
+    ) {
+        return false;
+    }
     if doc.nodes[idx].tag_name() == Some("br") {
         return false;
     }
@@ -4550,7 +4588,11 @@ fn significant_sibling(
             continue;
         }
         if doc.nodes[sib].kind() == NodeKind::Element
-            && cascade.computed[sib].display == DisplayValue::None
+            && (cascade.computed[sib].display == DisplayValue::None
+                || matches!(
+                    cascade.computed[sib].position,
+                    PositionValue::Absolute | PositionValue::Fixed
+                ))
         {
             continue;
         }
@@ -6867,6 +6909,21 @@ mod tests {
         assert_eq!(doc.nodes[body].style.size, default_style.size);
         assert_eq!(doc.nodes[body].style.margin, default_style.margin);
         assert_eq!(doc.nodes[body].style.padding, default_style.padding);
+    }
+
+    #[test]
+    fn apply_computed_to_style_bridges_direction_to_taffy() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("direction:rtl"));
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        apply_computed_to_style(&mut doc, &cr);
+
+        assert_eq!(doc.nodes[body].style.direction, taffy::Direction::Rtl);
     }
 
     #[test]
