@@ -5808,6 +5808,12 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
 /// 新規 `_with_fonts`) との trade-off の末、raikiri-dom 内 caller が全て
 /// in-repo (12 箇所 = production 1 + test 11) であり、内部 DI の explicit
 /// 化と signature 統一の方が長期保守で優れると判断した。
+///
+/// # Note on error size
+/// `LayoutError::Resolver(ResolverError)` transitively contains
+/// `NetworkError` which embeds a `PolicyViolation` payload (~144 bytes),
+/// exceeding clippy::result_large_err's 128 byte threshold.
+#[allow(clippy::result_large_err)]
 pub fn layout_single_page(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -6591,6 +6597,12 @@ pub fn layout_pages(
 /// `crate::image_resolve::resolve_images` の doc 参照) ため、実際には
 /// この variant は現時点では返らない。将来 resolve 失敗を fail-fast
 /// させたくなった時のために型だけ用意してある。
+///
+/// # Note on error size
+/// `LayoutError::Resolver(ResolverError)` transitively contains
+/// `NetworkError` which embeds a `PolicyViolation` payload (~144 bytes),
+/// exceeding clippy::result_large_err's 128 byte threshold.
+#[allow(clippy::result_large_err)]
 pub fn layout_single_page_with_resolver(
     document: &mut Document,
     cascade: &CascadeResult,
