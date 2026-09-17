@@ -1764,6 +1764,7 @@ dependencies = [
  "smol_str",
  "taffy",
  "tempfile",
+ "url",
 ]
 
 [[package]]

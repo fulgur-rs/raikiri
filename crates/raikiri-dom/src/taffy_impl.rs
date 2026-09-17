@@ -20,6 +20,20 @@ use crate::document::Document;
 use crate::node::NodeData;
 use raikiri_style::property::DisplayValue;
 
+/// Combines an `<img>`'s resolved intrinsic size (if any) with a text
+/// node's shaped intrinsic size (if any) into the single `Option<Size<f32>>`
+/// the leaf-measure closures fall back to when CSS gives no explicit size.
+/// At most one of the two is ever `Some` for a given leaf in this scope
+/// (a node is either an `<img>` element or a text node, never both).
+fn leaf_intrinsic_size(node: &crate::node::Node) -> Option<Size<f32>> {
+    node.image_intrinsic_size()
+        .map(|(width, height)| Size { width, height })
+        .or_else(|| {
+            node.text_layout()
+                .map(|l| Size { width: l.width(), height: l.height() })
+        })
+}
+
 /// Taffy child iterator。raw arena children から `is_in_document() == false`
 /// (`<template>` descendants など) を filter する。
 ///
@@ -250,27 +264,23 @@ impl Document {
             let is_leaf = tree.nodes[idx].children.is_empty();
             if is_leaf {
                 let style = tree.nodes[idx].style.clone();
-                let text_intrinsic: Option<Size<f32>> =
-                    tree.nodes[idx].text_layout().map(|l| Size {
-                        width: l.width(),
-                        height: l.height(),
-                    });
+                let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]);
                 compute_leaf_layout(
                     inputs,
                     &style,
                     |_val, _basis| 0.0,
                     |known, _avail| {
                         // taffy が style から算出した known.width / .height が Some なら
-                        // それを優先 (explicit size)、None なら parley intrinsic を使う、
-                        // 両方無ければ 0。
+                        // それを優先 (explicit size)、None なら parley intrinsic / 画像
+                        // intrinsic を使う、両方無ければ 0。
                         Size {
                             width: known
                                 .width
-                                .or(text_intrinsic.map(|s| s.width))
+                                .or(leaf_intrinsic.map(|s| s.width))
                                 .unwrap_or(0.0),
                             height: known
                                 .height
-                                .or(text_intrinsic.map(|s| s.height))
+                                .or(leaf_intrinsic.map(|s| s.height))
                                 .unwrap_or(0.0),
                         }
                     },
@@ -323,10 +333,7 @@ fn compute_inline_block_shrink_wrap(
     let is_leaf = tree.nodes[idx].children.is_empty();
     // Clone what the leaf path needs before any exclusive tree use below.
     let leaf_style = tree.nodes[idx].style.clone();
-    let leaf_text: Option<Size<f32>> = tree.nodes[idx].text_layout().map(|l| Size {
-        width: l.width(),
-        height: l.height(),
-    });
+    let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]);
     // Scalar copies so the measure closure below captures no large state.
     let sizing_mode = inputs.sizing_mode;
     let known_height = inputs.known_dimensions.height;
@@ -350,8 +357,14 @@ fn compute_inline_block_shrink_wrap(
                 &leaf_style,
                 |_val, _basis| 0.0,
                 |known, _avail| Size {
-                    width: known.width.or(leaf_text.map(|s| s.width)).unwrap_or(0.0),
-                    height: known.height.or(leaf_text.map(|s| s.height)).unwrap_or(0.0),
+                    width: known
+                        .width
+                        .or(leaf_intrinsic.map(|s| s.width))
+                        .unwrap_or(0.0),
+                    height: known
+                        .height
+                        .or(leaf_intrinsic.map(|s| s.height))
+                        .unwrap_or(0.0),
                 },
             )
             .size
@@ -422,8 +435,14 @@ fn compute_inline_block_shrink_wrap(
             &leaf_style,
             |_val, _basis| 0.0,
             |known, _avail| Size {
-                width: known.width.or(leaf_text.map(|s| s.width)).unwrap_or(0.0),
-                height: known.height.or(leaf_text.map(|s| s.height)).unwrap_or(0.0),
+                width: known
+                    .width
+                    .or(leaf_intrinsic.map(|s| s.width))
+                    .unwrap_or(0.0),
+                height: known
+                    .height
+                    .or(leaf_intrinsic.map(|s| s.height))
+                    .unwrap_or(0.0),
             },
         )
     } else {

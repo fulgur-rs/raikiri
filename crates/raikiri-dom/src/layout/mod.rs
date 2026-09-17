@@ -30,7 +30,7 @@ use raikiri_style::{
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
     ComputedLineHeight, ComputedTabSize, ComputedValues,
 };
-use raikiri_traits::{LayoutError, PageBox};
+use raikiri_traits::{LayoutError, PageBox, ReplacedResolver};
 use taffy::{
     AlignContent as TaffyAlignContent, AlignItems as TaffyAlignItems, AvailableSpace,
     BoxSizing as TaffyBoxSizing, Clear as TaffyClear, Dimension, Direction as TaffyDirection,
@@ -6578,6 +6578,28 @@ pub fn layout_pages(
             page_name: page_names.get(page_index as usize).cloned().flatten(),
         })
         .collect())
+}
+
+/// [`layout_single_page`] と同一だが、`<img>` 等 replaced element の
+/// intrinsic size を `resolver` 経由で解決してから layout する。
+///
+/// # Errors
+/// [`layout_single_page`] と同じ、加えて `LayoutError::Resolver` はこの
+/// 関数固有 — 本関数は現状 `resolve_images` の結果を無条件に `None`
+/// 化けさせる (個々の resolve 失敗は該当要素を 0×0 にするだけで
+/// `layout_single_page_with_resolver` 全体は失敗させない、
+/// `crate::image_resolve::resolve_images` の doc 参照) ため、実際には
+/// この variant は現時点では返らない。将来 resolve 失敗を fail-fast
+/// させたくなった時のために型だけ用意してある。
+pub fn layout_single_page_with_resolver(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    font_ctx: FontContext,
+    resolver: &dyn ReplacedResolver,
+) -> Result<(), LayoutError> {
+    crate::image_resolve::resolve_images(document, resolver);
+    layout_single_page(document, cascade, page_box, font_ctx)
 }
 
 #[cfg(test)]
@@ -13283,5 +13305,59 @@ mod tests {
             first_loc.x,
             z_loc.x
         );
+    }
+
+    #[test]
+    fn img_element_uses_resolver_intrinsic_size_when_css_gives_no_size() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        struct FixedSizeResolver(f32, f32);
+        impl raikiri_traits::ReplacedResolver for FixedSizeResolver {
+            fn resolve(
+                &self,
+                _req: raikiri_traits::ResolverRequest<'_>,
+            ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+                Ok(raikiri_traits::ResolvedIntrinsic {
+                    intrinsic: raikiri_traits::IntrinsicBox::new(self.0, self.1),
+                    disposition: raikiri_traits::ResolveDisposition::Ok,
+                })
+            }
+        }
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        // `<img>` is a replaced element: with `width: auto` its used width is
+        // its intrinsic width (CSS 2.1 §10.3.2/10.3.4), which the
+        // inline-block shrink-wrap path (`compute_inline_block_shrink_wrap`)
+        // resolves via `leaf_intrinsic_size`. A plain `display: block` box
+        // does not take this path — taffy's block algorithm stretch-fills a
+        // non-replaced block child's width before the leaf measure closure
+        // ever runs, so it would not observe the resolved intrinsic size
+        // here (this is why the UA default for `<img>` is `inline-block`,
+        // not `block`).
+        let img = doc.append_element(
+            Some(body),
+            "img",
+            Style::default(),
+            Some("display:inline-block"),
+        );
+        doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+
+        layout_single_page_with_resolver(
+            &mut doc,
+            &cascade,
+            PageBox::A4,
+            parley::FontContext::new(),
+            &FixedSizeResolver(64.0, 32.0),
+        )
+        .unwrap();
+
+        let layout = doc.nodes[img].unrounded_layout;
+        assert_eq!((layout.size.width, layout.size.height), (64.0, 32.0));
     }
 }
