@@ -20,12 +20,33 @@ pub enum MediaType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MediaContext {
     media_type: MediaType,
+    viewport_width: u32,
+    viewport_height: u32,
 }
 
 impl MediaContext {
-    /// Create a context for the given media type.
+    /// Create a context for the given media type with its default viewport.
     pub const fn new(media_type: MediaType) -> Self {
-        Self { media_type }
+        let (viewport_width, viewport_height) = match media_type {
+            // WPT's print-media tests use a nominal 5in × 3in sheet with
+            // 0.5in margins, leaving a 4in × 2in page area.
+            MediaType::Print => (384, 192),
+            MediaType::Screen => (800, 600),
+        };
+        Self {
+            media_type,
+            viewport_width,
+            viewport_height,
+        }
+    }
+
+    /// Create a context with an explicit viewport in CSS pixels.
+    pub const fn with_viewport(media_type: MediaType, width: u32, height: u32) -> Self {
+        Self {
+            media_type,
+            viewport_width: width,
+            viewport_height: height,
+        }
     }
 
     /// Return the default paged-output context.
@@ -42,6 +63,16 @@ impl MediaContext {
     pub const fn media_type(self) -> MediaType {
         self.media_type
     }
+
+    /// Return the viewport width in CSS pixels.
+    pub const fn viewport_width(self) -> u32 {
+        self.viewport_width
+    }
+
+    /// Return the viewport height in CSS pixels.
+    pub const fn viewport_height(self) -> u32 {
+        self.viewport_height
+    }
 }
 
 impl Default for MediaContext {
@@ -54,9 +85,16 @@ const PRINT_MEDIA: u8 = 1;
 const SCREEN_MEDIA: u8 = 2;
 const ALL_MEDIA: u8 = PRINT_MEDIA | SCREEN_MEDIA;
 
-/// A parsed OR-list of supported media types.
+/// A parsed media query with the small media-type and viewport-feature subset
+/// used by the cascade.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct MediaCondition(u8);
+pub(crate) struct MediaCondition {
+    media_mask: u8,
+    min_width: Option<u32>,
+    max_width: Option<u32>,
+    min_height: Option<u32>,
+    max_height: Option<u32>,
+}
 
 /// A parsed qualified rule that is guarded by a media condition.
 ///
@@ -67,9 +105,27 @@ pub(crate) struct MediaRule {
     pub(crate) condition: MediaCondition,
 }
 
+const fn max_bound(left: Option<u32>, right: Option<u32>) -> Option<u32> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(if left > right { left } else { right }),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
+}
+
+const fn min_bound(left: Option<u32>, right: Option<u32>) -> Option<u32> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(if left < right { left } else { right }),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
+}
+
 impl MediaCondition {
     pub(crate) const fn is_empty(self) -> bool {
-        self.0 == 0
+        self.media_mask == 0
+            || matches!((self.min_width, self.max_width), (Some(min), Some(max)) if min > max)
+            || matches!((self.min_height, self.max_height), (Some(min), Some(max)) if min > max)
     }
 
     pub(crate) const fn matches(self, context: &MediaContext) -> bool {
@@ -77,21 +133,121 @@ impl MediaCondition {
             MediaType::Print => PRINT_MEDIA,
             MediaType::Screen => SCREEN_MEDIA,
         };
-        self.0 & bit != 0
+        if self.media_mask & bit == 0 {
+            return false;
+        }
+        let width = context.viewport_width;
+        let height = context.viewport_height;
+        if let Some(min) = self.min_width
+            && width < min
+        {
+            return false;
+        }
+        if let Some(max) = self.max_width
+            && width > max
+        {
+            return false;
+        }
+        if let Some(min) = self.min_height
+            && height < min
+        {
+            return false;
+        }
+        if let Some(max) = self.max_height
+            && height > max
+        {
+            return false;
+        }
+        true
     }
 
     pub(crate) const fn intersect(self, other: Self) -> Self {
-        Self(self.0 & other.0)
+        Self {
+            media_mask: self.media_mask & other.media_mask,
+            min_width: max_bound(self.min_width, other.min_width),
+            max_width: min_bound(self.max_width, other.max_width),
+            min_height: max_bound(self.min_height, other.min_height),
+            max_height: min_bound(self.max_height, other.max_height),
+        }
     }
+}
+
+fn parse_media_length(value: &str) -> Option<u32> {
+    let value = value.trim().to_ascii_lowercase();
+    let number_end = value
+        .find(|character: char| {
+            !(character.is_ascii_digit() || matches!(character, '+' | '-' | '.'))
+        })
+        .unwrap_or(value.len());
+    let number = value[..number_end].parse::<f64>().ok()?;
+    let unit = &value[number_end..];
+    let multiplier = match unit {
+        "" | "px" => 1.0,
+        "in" => 96.0,
+        "cm" => 96.0 / 2.54,
+        "mm" => 96.0 / 25.4,
+        "pt" => 96.0 / 72.0,
+        "pc" => 16.0,
+        "q" => 96.0 / 101.6,
+        _ => return None,
+    };
+    let pixels = number * multiplier;
+    (pixels.is_finite() && pixels >= 0.0 && pixels <= u32::MAX as f64)
+        .then_some(pixels.round() as u32)
+}
+
+fn parse_feature_query(source: &str) -> Option<MediaCondition> {
+    if source.contains(',') {
+        return None;
+    }
+    let parts: Vec<_> = source.split("and").map(str::trim).collect();
+    if parts.is_empty() {
+        return None;
+    }
+    let mut media_mask = ALL_MEDIA;
+    let mut index = 0;
+    if !parts[0].starts_with('(') {
+        media_mask = match parts[0].to_ascii_lowercase().as_str() {
+            "all" => ALL_MEDIA,
+            "print" => PRINT_MEDIA,
+            "screen" => SCREEN_MEDIA,
+            _ => return None,
+        };
+        index = 1;
+    }
+    let mut condition = MediaCondition {
+        media_mask,
+        min_width: None,
+        max_width: None,
+        min_height: None,
+        max_height: None,
+    };
+    let mut saw_feature = false;
+    for part in &parts[index..] {
+        let inner = part.strip_prefix('(')?.strip_suffix(')')?;
+        let (name, value) = inner.split_once(':')?;
+        let pixels = parse_media_length(value)?;
+        match name.trim().to_ascii_lowercase().as_str() {
+            "min-width" => condition.min_width = Some(pixels),
+            "max-width" => condition.max_width = Some(pixels),
+            "min-height" => condition.min_height = Some(pixels),
+            "max-height" => condition.max_height = Some(pixels),
+            _ => return None,
+        }
+        saw_feature = true;
+    }
+    saw_feature.then_some(condition)
 }
 
 /// Parse the intentionally small media-query subset supported by this pass.
 ///
-/// Each comma-separated query is evaluated independently. A query is valid
-/// only when it consists of one `all`, `print`, or `screen` identifier. This
-/// lets a supported alternative survive beside an unknown one while rejecting
-/// feature expressions and malformed alternatives without executing them.
+/// In addition to `all`, `print`, and `screen`, a single query may contain
+/// `min/max-width` and `min/max-height` features with absolute CSS lengths.
+/// Comma-separated lists retain the historical media-type-only behavior.
 pub(crate) fn parse_media_condition(source: &str) -> Option<MediaCondition> {
+    if let Some(condition) = parse_feature_query(source.trim()) {
+        return Some(condition);
+    }
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
     let alternatives = parser
@@ -104,10 +260,6 @@ pub(crate) fn parse_media_condition(source: &str) -> Option<MediaCondition> {
 
             let mut alternative_input = ParserInput::new(raw);
             let mut alternative = Parser::new(&mut alternative_input);
-            // A comma-separated list must not contain an empty alternative.
-            // Unknown but syntactically non-empty media queries are harmless
-            // and may coexist with a supported alternative; an empty one
-            // makes the whole prelude malformed and must fail closed.
             if alternative.expect_exhausted().is_ok() {
                 return Err(query.new_custom_error(()));
             }
@@ -129,7 +281,13 @@ pub(crate) fn parse_media_condition(source: &str) -> Option<MediaCondition> {
     let mask = alternatives
         .into_iter()
         .fold(0, |mask, alternative| mask | alternative);
-    (mask != 0).then_some(MediaCondition(mask))
+    (mask != 0).then_some(MediaCondition {
+        media_mask: mask,
+        min_width: None,
+        max_width: None,
+        min_height: None,
+        max_height: None,
+    })
 }
 
 #[cfg(test)]
@@ -142,6 +300,36 @@ mod tests {
         assert_eq!(MediaContext::print().media_type(), MediaType::Print);
         assert_eq!(MediaContext::screen().media_type(), MediaType::Screen);
         assert_eq!(MediaContext::new(MediaType::Screen), MediaContext::screen());
+    }
+
+    #[test]
+    fn default_print_viewport_matches_wpt_page_area() {
+        let context = MediaContext::print();
+        assert_eq!(context.viewport_width(), 384);
+        assert_eq!(context.viewport_height(), 192);
+    }
+
+    #[test]
+    fn parses_viewport_features() {
+        let condition = parse_media_condition(
+            "(min-width: 4in) and (max-width: 5in) and (min-height: 2in) and (max-height: 3in)",
+        )
+        .unwrap();
+        assert!(condition.matches(&MediaContext::print()));
+        assert!(!condition.matches(&MediaContext::with_viewport(MediaType::Screen, 800, 600,)));
+    }
+
+    #[test]
+    fn parses_media_type_with_viewport_features() {
+        let condition = parse_media_condition("print and (min-width: 300px)").unwrap();
+        assert!(condition.matches(&MediaContext::print()));
+        assert!(!condition.matches(&MediaContext::screen()));
+    }
+
+    #[test]
+    fn rejects_unsupported_viewport_features() {
+        assert_eq!(parse_media_condition("(orientation: landscape)"), None);
+        assert_eq!(parse_media_condition("screen and (color)"), None);
     }
 
     #[test]

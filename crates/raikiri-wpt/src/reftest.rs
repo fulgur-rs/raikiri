@@ -936,7 +936,8 @@ fn render_raikiri_pages_inner(
     use anyrender_vello_cpu::VelloCpuImageRenderer;
     use raikiri::ParseOptions;
     use raikiri::{
-        Atom, PageBox, PageContextQuery, build_cascaded_for_page, build_page_scene_for_page_named,
+        Atom, MediaContext, PageBox, PageContextQuery, build_cascaded_with_media_context_for_page,
+        build_page_scene_for_page_named,
     };
     use raikiri_dom::layout_pages;
     use raikiri_html::parse;
@@ -946,6 +947,7 @@ fn render_raikiri_pages_inner(
         network: None,
         base_url: None,
     };
+    let media_context = MediaContext::print();
     // WPT's print UA supplies a 0.5in default page margin when an authored
     // `@page` rule omits all page-margin declarations.  Add that UA value
     // before resolving viewport units so both the content box and `vh` use the
@@ -959,7 +961,8 @@ fn render_raikiri_pages_inner(
     first_query.is_first = true;
     first_query.is_right = true;
     first_query.is_left = false;
-    let default_cascade = build_cascaded_for_page(&uncascaded, &first_query);
+    let default_cascade =
+        build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &first_query);
     // Page progression follows the root direction: in RTL the first page is
     // the left/verso page, while LTR starts on the right/recto page.
     let direction_node = {
@@ -996,7 +999,7 @@ fn render_raikiri_pages_inner(
         width as f32
     };
     let first_cascade = if first_query.page_name.is_some() {
-        build_cascaded_for_page(&uncascaded, &first_query)
+        build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &first_query)
     } else {
         default_cascade
     };
@@ -1035,13 +1038,18 @@ fn render_raikiri_pages_inner(
             slice.page_index % 2 == 1
         };
         query.is_right = !query.is_left;
-        let cascade = build_cascaded_for_page(&uncascaded, &query);
+        let cascade =
+            build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &query);
         let paired_page_increment = if query.is_right {
             let mut paired_query = query.clone();
             paired_query.is_first = false;
             paired_query.is_left = true;
             paired_query.is_right = false;
-            let paired = build_cascaded_for_page(&uncascaded, &paired_query);
+            let paired = build_cascaded_with_media_context_for_page(
+                &uncascaded,
+                &media_context,
+                &paired_query,
+            );
             match paired
                 .page
                 .declarations()
