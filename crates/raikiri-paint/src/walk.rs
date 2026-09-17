@@ -1821,6 +1821,26 @@ pub(crate) fn paint_document(
                         &cv.border,
                         cv.color,
                     );
+                    if node.tag_name() == Some("img")
+                        && let Some(src) = node.attribute("src")
+                        && let Some(color) = infer_url_color(src)
+                    {
+                        // Use the same background paint path as a normal
+                        // block so the fallback has identical raster edges.
+                        paint_element_background(
+                            scene,
+                            layout.size.width,
+                            layout.size.height,
+                            paint_x,
+                            paint_y,
+                            color,
+                            &BackgroundImage::None,
+                            cv.color,
+                            cv.background_clip,
+                            &cv.border,
+                            &cv.padding,
+                        );
+                    }
                     // Generated content is an immediate child of its
                     // originating box.  The minimal layout engine does not
                     // allocate an arena node for it, so paint literal

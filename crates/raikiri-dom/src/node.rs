@@ -422,6 +422,26 @@ impl Node {
         }
     }
 
+    /// Return a null-namespace element attribute value, if present.
+    ///
+    /// The `style` attribute is stored separately from the ordinary attribute
+    /// vector and is exposed here as the same raw value for consumers that need
+    /// a small DOM-side resource hint (for example a replaced image `src`).
+    #[inline]
+    pub fn attribute(&self, local: &str) -> Option<&str> {
+        let NodeData::Element(element) = &self.data else {
+            return None;
+        };
+        if local == "style" {
+            return element.inline_style.as_deref();
+        }
+        element
+            .attributes
+            .iter()
+            .find(|attribute| attribute.local == local)
+            .map(|attribute| attribute.value.as_str())
+    }
+
     /// Text の場合 text_layout を、それ以外は `None` を返す。
     ///
     /// 旧 `pub text_layout: Option<parley::Layout<()>>` field の accessor 版。

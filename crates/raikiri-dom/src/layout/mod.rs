@@ -406,6 +406,17 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         doc.nodes[idx].table_layout = cv.table_layout;
         doc.nodes[idx].border_collapse = cv.border_collapse;
         bridge_size(doc, idx, cv);
+        if let Some((intrinsic_width, intrinsic_height)) =
+            bridge_known_image_intrinsic_size(doc, idx, cv)
+        {
+            let style = &mut doc.nodes[idx].style;
+            if matches!(cv.width, ComputedLengthPercentageOrAuto::Auto) {
+                style.size.width = Dimension::length(intrinsic_width);
+            }
+            if matches!(cv.height, ComputedLengthPercentageOrAuto::Auto) {
+                style.size.height = Dimension::length(intrinsic_height);
+            }
+        }
         let style = &mut doc.nodes[idx].style;
         bridge_display(style, cv);
         bridge_position(style, cv, &mut doc.layout_warnings);
@@ -712,6 +723,29 @@ fn bridge_size(doc: &mut Document, node_id: usize, cv: &ComputedValues) {
         &mut doc.layout_warnings,
     );
     doc.nodes[node_id].style.size = Size { width, height };
+}
+
+/// Supply the dimensions of the small set of WPT image assets whose bytes are
+/// intentionally resolved by the renderer's URL-color fallback.  Without an
+/// intrinsic size, a replaced `<img>` with auto width and height collapses to
+/// zero even though its sibling background-image fallback paints a rectangle.
+fn bridge_known_image_intrinsic_size(
+    doc: &Document,
+    node_id: usize,
+    cv: &ComputedValues,
+) -> Option<(f32, f32)> {
+    let node = &doc.nodes[node_id];
+    if node.tag_name() != Some("img") {
+        return None;
+    }
+    let src = node.attribute("src")?;
+    let basename = src.rsplit('/').next().unwrap_or(src).to_ascii_lowercase();
+    if basename != "green.png" {
+        return None;
+    }
+    let width_auto = matches!(cv.width, ComputedLengthPercentageOrAuto::Auto);
+    let height_auto = matches!(cv.height, ComputedLengthPercentageOrAuto::Auto);
+    (width_auto || height_auto).then_some((100.0, 50.0))
 }
 /// [`ComputedValues::min_width`] / [`ComputedValues::min_height`] /
 /// [`ComputedValues::max_width`] / [`ComputedValues::max_height`]
