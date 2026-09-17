@@ -1809,6 +1809,7 @@ dependencies = [
  "raikiri-style",
  "raikiri-traits",
  "taffy",
+ "url",
 ]
 
 [[package]]

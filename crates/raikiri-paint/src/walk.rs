@@ -42,7 +42,7 @@ use raikiri_style::{
     ComputedTransformFunction, PageMarginBoxCascadeResult, PageMarginBoxSlot, ResolveContext,
     resolve_border,
 };
-use raikiri_traits::{NodeKind, PageBox};
+use raikiri_traits::{ImagePixelSource, NodeKind, PageBox};
 
 use crate::text;
 
@@ -1680,6 +1680,54 @@ pub(crate) fn paint_document(
     active_page_name: Option<Option<&str>>,
     fixed_page_width: f32,
 ) {
+    paint_document_impl(
+        scene,
+        document,
+        cascade,
+        page_box,
+        content_origin_y,
+        active_page_name,
+        fixed_page_width,
+        None,
+    );
+}
+
+/// [`paint_document`] と同一だが、`<img>` element を `pixel_source` から
+/// 取得した decode 済み pixel で実際に描画する。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_document_with_resolver(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    content_origin_y: f32,
+    active_page_name: Option<Option<&str>>,
+    fixed_page_width: f32,
+    pixel_source: &dyn ImagePixelSource,
+) {
+    paint_document_impl(
+        scene,
+        document,
+        cascade,
+        page_box,
+        content_origin_y,
+        active_page_name,
+        fixed_page_width,
+        Some(pixel_source),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_document_impl(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    content_origin_y: f32,
+    active_page_name: Option<Option<&str>>,
+    fixed_page_width: f32,
+    pixel_source: Option<&dyn ImagePixelSource>,
+) {
     let Some(body_id) = find_body(document) else {
         return;
     };
@@ -1963,7 +2011,33 @@ pub(crate) fn paint_document(
                         &cv.border,
                         cv.color,
                     );
-                    if node.tag_name() == Some("img")
+                    // Draw the decoded pixels of an `<img>` element, when a
+                    // resolver is supplied and it already has decoded pixels
+                    // for this element's `src` (CSS Images 3 §4.3, `object-fit:
+                    // fill` only — see `paint_image`'s doc). Absent a resolver
+                    // (the plain `paint_document` entry point), `pixel_source`
+                    // is always `None` and the chain short-circuits before
+                    // `img_src_url` runs at all, keeping that path's per-element
+                    // work (not just its output) identical to before this was
+                    // added. When no real decoded pixels are available, fall
+                    // back to the pre-existing filename-color heuristic so an
+                    // `<img>` still renders an approximation in the no-resolver
+                    // (e.g. plain WPT sweep) path.
+                    if let Some(pixel_source) = pixel_source
+                        && let Some(src_url) = img_src_url(document, node_id)
+                        && let Some(decoded) = pixel_source.get_decoded(&src_url)
+                    {
+                        paint_image(
+                            scene,
+                            &decoded,
+                            layout.size.width,
+                            layout.size.height,
+                            paint_x,
+                            paint_y,
+                            &cv.border,
+                            &cv.padding,
+                        );
+                    } else if node.tag_name() == Some("img")
                         && let Some(src) = node.attribute("src")
                         && let Some(color) = infer_url_color(src)
                     {
@@ -2091,6 +2165,84 @@ pub(crate) fn paint_document(
             }
         }
     }
+}
+
+/// Reads the `src` attribute of `node_id` as an absolute URL, if the node
+/// is an `<img>` element with a `src` that parses directly.
+///
+/// This mirrors the same absolute-URL-only scope as
+/// `raikiri_dom::image_resolve::resolve_images` (relative-URL resolution
+/// against a document base URL is out of scope) — necessarily a separate
+/// implementation, since this crate cannot reach that crate's
+/// crate-private `Node::attributes` field and must go through the public
+/// `raikiri_traits::{Dom, Node, Element}` trait path instead.
+fn img_src_url(document: &Document, node_id: usize) -> Option<url::Url> {
+    use raikiri_traits::{Dom, Element as _, Node as _};
+    let node_ref = document.node(raikiri_traits::NodeId::new(node_id as u64))?;
+    let element = node_ref.as_element()?;
+    if element.tag_name() != "img" {
+        return None;
+    }
+    url::Url::parse(element.attr("src")?).ok()
+}
+
+/// Draws `decoded`'s pixels stretched to exactly fill the element's content
+/// box (CSS Images 3 §4.3 `object-fit: fill`, the only value this scope
+/// implements — no aspect-ratio preservation, no letterboxing).
+#[allow(clippy::too_many_arguments)]
+fn paint_image(
+    scene: &mut impl PaintScene,
+    decoded: &raikiri_traits::DecodedImage,
+    border_box_width: f32,
+    border_box_height: f32,
+    abs_x: f32,
+    abs_y: f32,
+    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
+    padding: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedLengthPercentage>,
+) {
+    fn padding_px(v: raikiri_style::resolve::ComputedLengthPercentage, reference: f32) -> f32 {
+        match v {
+            raikiri_style::resolve::ComputedLengthPercentage::Px(px) => px,
+            raikiri_style::resolve::ComputedLengthPercentage::Percent(p) => reference * p / 100.0,
+        }
+    }
+    let bl = border.left.width().px();
+    let bt = border.top.width().px();
+    let br = border.right.width().px();
+    let bb = border.bottom.width().px();
+    let pl = padding_px(padding.left, border_box_width);
+    let pr = padding_px(padding.right, border_box_width);
+    let pt = padding_px(padding.top, border_box_height);
+    let pb = padding_px(padding.bottom, border_box_height);
+    let content_x = (abs_x + bl + pl) as f64;
+    let content_y = (abs_y + bt + pt) as f64;
+    let content_w = (border_box_width - bl - br - pl - pr).max(0.0) as f64;
+    let content_h = (border_box_height - bt - bb - pt - pb).max(0.0) as f64;
+    if content_w <= 0.0 || content_h <= 0.0 || decoded.width == 0 || decoded.height == 0 {
+        return;
+    }
+
+    let image_data = peniko::ImageData {
+        data: peniko::Blob::from(decoded.rgba.clone()),
+        format: peniko::ImageFormat::Rgba8,
+        alpha_type: peniko::ImageAlphaType::Alpha,
+        width: decoded.width,
+        height: decoded.height,
+    };
+    let brush = peniko::ImageBrush::new(image_data);
+    let transform = kurbo::Affine::translate((content_x, content_y))
+        * kurbo::Affine::scale_non_uniform(
+            content_w / decoded.width as f64,
+            content_h / decoded.height as f64,
+        );
+    let shape = kurbo::Rect::new(0.0, 0.0, decoded.width as f64, decoded.height as f64);
+    scene.fill(
+        peniko::Fill::NonZero,
+        transform,
+        brush.as_ref(),
+        None,
+        &shape,
+    );
 }
 
 /// `vertical-align` が inline-level box の位置へ寄与する pixel offset。

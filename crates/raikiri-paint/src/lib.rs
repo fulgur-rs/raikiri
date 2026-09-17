@@ -276,6 +276,42 @@ fn paint_single_page_with_origin_and_page_context_impl(
     );
 }
 
+/// [`paint_single_page`] と同一だが、`<img>` の decode 済み pixel を
+/// `pixel_source` から取得して実際に描画する。
+pub fn paint_single_page_with_resolver(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    pixel_source: &dyn raikiri_traits::ImagePixelSource,
+) {
+    debug_assert!(
+        cascade.computed.len() == document.node_count(),
+        "cascade.computed.len() ({}) must equal document.node_count() ({})",
+        cascade.computed.len(),
+        document.node_count(),
+    );
+    // Single-page only (no pagination integration, see this crate's design
+    // non-goals) — mirrors `paint_single_page`'s own single-page defaults
+    // (page 0 of 1, no named-page filtering, unpaired) rather than joining
+    // the `paint_single_page_with_origin_and_page_context*` chain.
+    walk::paint_canvas_background(scene, document, cascade, page_box);
+    walk::paint_page_border(scene, cascade, page_box);
+    walk::paint_page_outline(scene, cascade, page_box);
+    walk::paint_root_element_border(scene, document, cascade, page_box);
+    walk::paint_page_margin_boxes(scene, document, cascade, page_box, 0, 1, false, None);
+    walk::paint_document_with_resolver(
+        scene,
+        document,
+        cascade,
+        page_box,
+        0.0,
+        None,
+        page_box.width,
+        pixel_source,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1584,6 +1620,62 @@ mod tests {
         doc.append_element(Some(0), "p", Style::default(), None::<&str>);
         let mut scene = Scene::new();
         paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+    }
+
+    #[test]
+    fn img_element_paints_its_decoded_pixels() {
+        use raikiri_traits::{DecodedImage, ImagePixelSource};
+        use std::sync::Arc;
+
+        struct OneImageSource(url::Url, Arc<DecodedImage>);
+        impl ImagePixelSource for OneImageSource {
+            fn get_decoded(&self, url: &url::Url) -> Option<Arc<DecodedImage>> {
+                (*url == self.0).then(|| self.1.clone())
+            }
+        }
+
+        // A single `<img src="file:///x.png">` inside <body>, sized via
+        // inline style (same idiom as `hello_world_paint_setup`'s
+        // `Some("color:red")`) so the content box has a known, non-zero
+        // size independent of any resolver-driven intrinsic sizing layout
+        // may separately apply — this test only checks paint's own draw
+        // call given a known box.
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let img = doc.append_element(
+            Some(body),
+            "img",
+            Style::default(),
+            Some("width:10px;height:10px"),
+        );
+        doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let url = url::Url::parse("file:///x.png").unwrap();
+        let decoded = Arc::new(DecodedImage {
+            width: 1,
+            height: 1,
+            rgba: vec![255, 0, 0, 255],
+        });
+        let pixel_source = OneImageSource(url, decoded);
+
+        let mut scene = Scene::new();
+        // Exercises the public entry point, not just the private
+        // `walk::paint_document_with_resolver` it wraps, so this test also
+        // covers `paint_single_page_with_resolver`'s own debug_assert and
+        // canvas-background call.
+        paint_single_page_with_resolver(&mut scene, &doc, &cr, PageBox::A4, &pixel_source);
+
+        let drew_an_image = scene.commands.iter().any(|cmd| {
+            matches!(cmd, RenderCommand::Fill(f) if matches!(f.brush, anyrender::types::Paint::Image(_)))
+        });
+        assert!(
+            drew_an_image,
+            "expected an image fill command in the recorded scene"
+        );
     }
 }
 
