@@ -55,7 +55,7 @@ taffy = { version = "0.14", default-features = false, features = [
 parley = { version = "0.11", default-features = false, features = ["std", "system"] }
 
 # ── Rendering (anyrender + peniko + kurbo) ─────────────────────────────
-anyrender = "0.11"
+anyrender = "0.13"
 peniko    = "0.6"
 kurbo     = "0.13"
 
@@ -69,14 +69,14 @@ url        = "2.5"
 time = { version = "0.3", default-features = false, features = ["std", "parsing", "macros"] }
 
 # ── Dev-only: VRT rasterizer / snapshot / oracle ───────────────────────
-anyrender_vello_cpu = { version = "0.14", features = ["multithreading"] }
-vello_cpu           = "0.0.9"                    # m1.18 thread-pin test; RenderContext::new_with(RenderSettings::num_threads)
+anyrender_vello_cpu = { version = "0.16", features = ["multithreading"] }
+vello_cpu           = "0.1"                      # m1.18 thread-pin test; RenderContext::new_with(RenderSettings::num_threads)
 tiny-skia           = "0.11"
 insta               = "1"
-blitz-traits        = "=0.3.0-beta.1"
-blitz-html          = "=0.3.0-beta.1"
-blitz-dom           = "=0.3.0-beta.1"
-blitz-paint         = "=0.3.0-beta.1"
+blitz-traits        = "=0.3.0-beta.2"
+blitz-html          = "=0.3.0-beta.2"
+blitz-dom           = "=0.3.0-beta.2"
+blitz-paint         = "=0.3.0-beta.2"
 
 # ── Dev-only: lint fixtures + bin tests (raikiri-spike-yps) ────────────
 tempfile   = "3"
