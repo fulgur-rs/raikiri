@@ -47,3 +47,10 @@ css/css-grid
 # undiscoverable (MissingReference) and silently skipped from sweeps.
 css/css-tables
 css/reference
+
+# <img> replaced-element sizing reftests (2026-09-17, raikiri-spike-a8zd).
+# All 9 files use .svg fixtures for precise intrinsic-size/ratio control;
+# quarantined in expectations/known-issues.txt (PNG-only scope). Fetched
+# anyway so the runner sees and correctly skips them rather than silently
+# missing the whole category.
+css/CSS2/visudet

@@ -333,3 +333,19 @@ css/selectors/parsing/parse-state.html | :state() Level4 not implemented (CSS Cu
 
 # --- css-writing-modes parsing computed quarantine (2026-09-14, vertical collapse intentional) ---
 css/css-writing-modes/parsing/writing-mode-computed.html | writing-mode vertical values collapse to horizontal-tb per WritingMode doc Non-goal (raikiri-spike-zhmp), WPT expects vertical to remain (CSS Writing Modes 4 §3.2)
+
+# --- css/CSS2/visudet replaced-element sizing quarantine (2026-09-17, <img> PNG-only scope) ---
+# All 9 tests use .svg fixtures (support/*.svg) to control intrinsic size /
+# aspect ratio precisely. SVG intrinsic-size sniffing is not implemented;
+# only PNG decoding is in scope. The replaced-element auto/width/height/
+# min/max sizing algorithm itself (CSS2.1 10.3.2, 10.6.2) is implemented
+# and exercised instead by a PNG-based raikiri-native reftest fixture.
+css/CSS2/visudet/replaced-elements-all-auto.html | SVG intrinsic-size sniffing not implemented (PNG-only scope)
+css/CSS2/visudet/replaced-elements-height-20.html | SVG intrinsic-size sniffing not implemented (PNG-only scope)
+css/CSS2/visudet/replaced-elements-max-height-20.html | SVG intrinsic-size sniffing not implemented (PNG-only scope)
+css/CSS2/visudet/replaced-elements-max-width-40.html | SVG intrinsic-size sniffing not implemented (PNG-only scope)
+css/CSS2/visudet/replaced-elements-min-height-20.html | SVG intrinsic-size sniffing not implemented (PNG-only scope)
+css/CSS2/visudet/replaced-elements-min-height-40.html | SVG intrinsic-size sniffing not implemented (PNG-only scope)
+css/CSS2/visudet/replaced-elements-min-width-40.html | SVG intrinsic-size sniffing not implemented (PNG-only scope)
+css/CSS2/visudet/replaced-elements-min-width-80.html | SVG intrinsic-size sniffing not implemented (PNG-only scope)
+css/CSS2/visudet/replaced-elements-width-40.html | SVG intrinsic-size sniffing not implemented (PNG-only scope)
