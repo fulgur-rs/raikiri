@@ -1832,7 +1832,9 @@ fn paint_document_impl(
 
     let margins = raikiri_dom::page_margins(cascade, page_box);
     let insets = raikiri_dom::page_content_insets(cascade, page_box);
-    let content_width = (margins.content_width(page_box) - insets.left - insets.right).max(0.0);
+    // Keep fixed-position sizing consistent with layout: page border/padding
+    // are applied through `page_offset_x`, not by shrinking the inline size.
+    let content_width = margins.content_width(page_box).max(0.0);
     let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
     // Fixed-position containing blocks use the initial laid-out viewport even
     // when a later named page has a different paper width.

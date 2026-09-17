@@ -1072,7 +1072,9 @@ fn render_raikiri_pages_inner(
         let margins = page_margins(&page_cascade, page_box);
         let insets = page_content_insets(&page_cascade, page_box);
         let step = (margins.content_height(page_box) - insets.top - insets.bottom).max(1.0);
-        let content_width = (margins.content_width(page_box) - insets.left - insets.right).max(1.0);
+        // Match the layout pass: page decorations shift the flow origin but
+        // do not reduce the inline containing-block width.
+        let content_width = margins.content_width(page_box).max(1.0);
         page_steps.push(step);
         page_widths.push(content_width);
     }

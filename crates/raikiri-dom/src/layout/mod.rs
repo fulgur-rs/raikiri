@@ -96,10 +96,12 @@ fn apply_page_content_box_to_body(
     margins: PageMargins,
     insets: PageContentInsets,
 ) {
+    // Page border/padding shift the painted page origin, but they do not
+    // establish a narrower inline containing block for document flow.  Keep
+    // the initial containing-block width at the margin content width; the
+    // paint walk applies the horizontal inset when positioning the flow.
     doc.nodes[body_id].style.size = Size {
-        width: Dimension::length(
-            (margins.content_width(page_box) - insets.left - insets.right).max(0.0),
-        ),
+        width: Dimension::length(margins.content_width(page_box).max(0.0)),
         height: Dimension::length(
             (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0),
         ),
@@ -228,8 +230,10 @@ fn page_box_side(
 
 /// Resolve the border and padding inset of the page content box.
 ///
-/// Page margins remain separate because margin boxes occupy the margin strips;
-/// ordinary document flow starts after both the page border and page padding.
+/// Page margins remain separate because margin boxes occupy the margin strips.
+/// The inset shifts the physical flow origin and reduces the block-axis
+/// fragmentainer extent; the inline containing-block width remains the page's
+/// margin content width so page decorations do not force text rewrapping.
 pub fn page_content_insets(cascade: &CascadeResult, page_box: PageBox) -> PageContentInsets {
     let declarations = cascade.page.declarations();
     PageContentInsets {
@@ -5853,7 +5857,10 @@ pub fn layout_single_page(
     // uses the content width, not the outer paper width.
     let margins = page_margins(cascade, page_box);
     let insets = page_content_insets(cascade, page_box);
-    let content_width = (margins.content_width(page_box) - insets.left - insets.right).max(0.0);
+    // Page decorations affect the physical origin, not the inline size of the
+    // initial containing block.  This also keeps text from wrapping merely
+    // because an @page rule adds border/padding around the paper.
+    let content_width = margins.content_width(page_box).max(0.0);
     let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
 
     // Step 2b: pre-shape all text with parley
@@ -6090,7 +6097,10 @@ pub fn layout_pages_with_page_geometry(
         0.0
     };
     let root_margin_top = html_margin_top + body_margin_top;
-    let content_width = (margins.content_width(page_box) - insets.left - insets.right).max(0.0);
+    // Keep the scheduled inline size identical to the first layout pass;
+    // page border/padding are applied as a paint offset, not as a narrower
+    // containing block.
+    let content_width = margins.content_width(page_box).max(0.0);
     let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
     // A page with margins consuming the entire paper still needs a finite
     // cursor for forced breaks.  No valid page box reaches this path in normal
