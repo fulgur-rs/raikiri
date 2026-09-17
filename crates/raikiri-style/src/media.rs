@@ -228,6 +228,14 @@ fn parse_feature_query(source: &str) -> Option<MediaCondition> {
         let (name, value) = inner.split_once(':')?;
         let pixels = parse_media_length(value)?;
         match name.trim().to_ascii_lowercase().as_str() {
+            "width" => {
+                condition.min_width = Some(pixels);
+                condition.max_width = Some(pixels);
+            }
+            "height" => {
+                condition.min_height = Some(pixels);
+                condition.max_height = Some(pixels);
+            }
             "min-width" => condition.min_width = Some(pixels),
             "max-width" => condition.max_width = Some(pixels),
             "min-height" => condition.min_height = Some(pixels),
@@ -317,6 +325,13 @@ mod tests {
         .unwrap();
         assert!(condition.matches(&MediaContext::print()));
         assert!(!condition.matches(&MediaContext::with_viewport(MediaType::Screen, 800, 600,)));
+    }
+
+    #[test]
+    fn parses_exact_viewport_features() {
+        let condition = parse_media_condition("(width: 100px) and (height: 100px)").unwrap();
+        assert!(condition.matches(&MediaContext::with_viewport(MediaType::Print, 100, 100,)));
+        assert!(!condition.matches(&MediaContext::print()));
     }
 
     #[test]
