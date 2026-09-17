@@ -187,6 +187,128 @@ mod tests {
         assert_eq!(decoded.rgba, vec![255, 0, 0, 255, 0, 255, 0, 255]); // red px, green px
     }
 
+    /// Encodes an 8-bit PNG of `color` from `data` and hands it to a fresh
+    /// resolver, returning that resolver plus the fixture URL. The bytes are
+    /// produced by `png::Encoder` at test time (same approach as
+    /// `resolve_rejects_16_bit_depth_png`) rather than hand-crafted, so the
+    /// fixtures stay valid if the `png` crate's output details change.
+    fn resolver_for_encoded(
+        color: png::ColorType,
+        width: u32,
+        height: u32,
+        data: &[u8],
+        palette: Option<Vec<u8>>,
+    ) -> (ImageResolver<StaticBytesProvider>, url::Url) {
+        let mut buf = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut buf, width, height);
+            encoder.set_color(color);
+            encoder.set_depth(png::BitDepth::Eight);
+            if let Some(palette) = palette {
+                encoder.set_palette(palette);
+            }
+            let mut writer = encoder.write_header().unwrap();
+            writer.write_image_data(data).unwrap();
+        }
+        (
+            ImageResolver::new(StaticBytesProvider(Box::leak(buf.into_boxed_slice()))),
+            url::Url::parse("file:///fixture.png").unwrap(),
+        )
+    }
+
+    /// `ColorType::Rgb` is the most common real-world PNG color type, and its
+    /// arm does real 3→4 byte index arithmetic. Pin both the expansion and
+    /// the opaque alpha it synthesizes.
+    #[test]
+    fn decodes_rgb_png_to_rgba8_with_opaque_alpha() {
+        use raikiri_traits::ImagePixelSource;
+
+        // 2x1: red, then blue.
+        let (resolver, url) =
+            resolver_for_encoded(png::ColorType::Rgb, 2, 1, &[255, 0, 0, 0, 0, 255], None);
+        let resolved = resolver.resolve(ResolverRequest::new(&url)).unwrap();
+        assert_eq!(
+            (resolved.intrinsic.width, resolved.intrinsic.height),
+            (2.0, 1.0)
+        );
+
+        let decoded = resolver.get_decoded(&url).expect("cached after resolve");
+        assert_eq!(
+            decoded.rgba,
+            vec![255, 0, 0, 255, 0, 0, 255, 255],
+            "each 3-byte RGB pixel must expand to RGBA with alpha=255"
+        );
+    }
+
+    /// `ColorType::Grayscale` expands 1 byte to 4, replicating the gray value
+    /// across R/G/B and synthesizing an opaque alpha.
+    #[test]
+    fn decodes_grayscale_png_to_rgba8_with_replicated_channels() {
+        use raikiri_traits::ImagePixelSource;
+
+        // 3x1: black, mid-gray, white.
+        let (resolver, url) =
+            resolver_for_encoded(png::ColorType::Grayscale, 3, 1, &[0, 128, 255], None);
+        resolver.resolve(ResolverRequest::new(&url)).unwrap();
+
+        let decoded = resolver.get_decoded(&url).expect("cached after resolve");
+        assert_eq!(
+            decoded.rgba,
+            vec![0, 0, 0, 255, 128, 128, 128, 255, 255, 255, 255, 255],
+            "gray value must land in R, G and B, with alpha=255"
+        );
+    }
+
+    /// `ColorType::GrayscaleAlpha` expands 2 bytes to 4, replicating the gray
+    /// value and carrying the source alpha through rather than forcing 255.
+    #[test]
+    fn decodes_grayscale_alpha_png_to_rgba8_preserving_alpha() {
+        use raikiri_traits::ImagePixelSource;
+
+        // 2x1: opaque mid-gray, then half-transparent white.
+        let (resolver, url) = resolver_for_encoded(
+            png::ColorType::GrayscaleAlpha,
+            2,
+            1,
+            &[128, 255, 255, 128],
+            None,
+        );
+        resolver.resolve(ResolverRequest::new(&url)).unwrap();
+
+        let decoded = resolver.get_decoded(&url).expect("cached after resolve");
+        assert_eq!(
+            decoded.rgba,
+            vec![128, 128, 128, 255, 255, 255, 255, 128],
+            "source alpha must be carried through, not replaced by 255"
+        );
+    }
+
+    /// An indexed/palette PNG must hit `decode_png`'s `other =>` rejection
+    /// arm. Decoding it as if the index bytes were pixel data would produce a
+    /// buffer of the wrong length and wholly wrong colors, so this must be a
+    /// decode error rather than a silent mis-decode.
+    #[test]
+    fn resolve_rejects_indexed_palette_png() {
+        // 2x1 image of palette entries 0 and 1 (red, blue).
+        let (resolver, url) = resolver_for_encoded(
+            png::ColorType::Indexed,
+            2,
+            1,
+            &[0, 1],
+            Some(vec![255, 0, 0, 0, 0, 255]),
+        );
+
+        let err = resolver.resolve(ResolverRequest::new(&url)).unwrap_err();
+        let raikiri_traits::ResolverError::Decode(msg) = &err else {
+            panic!("expected a Decode error for an indexed PNG, got {err:?}");
+        };
+        assert!(
+            msg.contains("unsupported PNG color type"),
+            "must be rejected by decode_png's color-type arm (not some unrelated \
+             upstream failure); got {msg:?}"
+        );
+    }
+
     /// A 16-bit-per-channel RGBA PNG must be rejected as a decode error
     /// rather than silently treated as 8-bit (which would return a
     /// `DecodedImage::rgba` twice the length `width * height * 4` promises,
