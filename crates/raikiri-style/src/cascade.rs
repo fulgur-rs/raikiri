@@ -44,6 +44,7 @@ use crate::computed::{
 };
 use crate::error::CascadeError;
 use crate::media::MediaContext;
+use crate::page::{PageCascadeResult, PageContextQuery, PageInheritance, cascade_page};
 use crate::property::{
     CalcLengthPercentage, CustomProperty, DeferredValue, FontWeightValue, GridAutoFlowValue,
     GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto, MAX_DEFERRED_VALUE_NESTING_DEPTH,
@@ -75,6 +76,10 @@ pub struct CascadeResult {
     /// Per-node computed values (NodeId.0 as usize で index)。
     /// Element / Text / Document 全 kind に populate、範囲外は panic (caller 責任)。
     pub computed: Vec<ComputedValues>,
+    /// The `@page` cascade for the page query supplied to the cascade entry
+    /// point. The compatibility entry point uses the unnamed/default query;
+    /// paged consumers should use [`cascade_with_media_context_for_page`].
+    pub page: PageCascadeResult,
     /// `::before` / `::after` — sparse, keyed by `(originating element's own
     /// NodeId, which pseudo)`. An entry exists **iff** at least one
     /// stylesheet rule's selector targets that pseudo-element and matches
@@ -167,6 +172,21 @@ pub fn cascade_with_media_context<D: StyleDom>(
     rule_tree: &RuleTree,
     media_context: &MediaContext,
 ) -> Result<CascadeResult, CascadeError> {
+    cascade_with_media_context_for_page(dom, rule_tree, media_context, &PageContextQuery::default())
+}
+
+/// Run the element and `@page` cascades for one page-context query.
+///
+/// This is the page-aware sibling of [`cascade_with_media_context`]. It keeps
+/// the ordinary element cascade and the page-context cascade in one result so
+/// a paged consumer cannot accidentally render with a page box selected from a
+/// different stylesheet or root inheritance context.
+pub fn cascade_with_media_context_for_page<D: StyleDom>(
+    dom: &D,
+    rule_tree: &RuleTree,
+    media_context: &MediaContext,
+    page_query: &PageContextQuery,
+) -> Result<CascadeResult, CascadeError> {
     let mut cascaded = CascadedArena::new();
 
     // Phase 1: per-node cascaded values を収集
@@ -199,7 +219,18 @@ pub fn cascade_with_media_context<D: StyleDom>(
         &mut pseudo,
     );
 
-    Ok(CascadeResult { computed, pseudo })
+    let root_computed = computed[dom.root_id().0 as usize].clone();
+    let page = cascade_page(
+        rule_tree,
+        page_query,
+        PageInheritance::FromRoot(&root_computed),
+    );
+
+    Ok(CascadeResult {
+        computed,
+        page,
+        pseudo,
+    })
 }
 
 /// selectors 由来の 32-bit specificity。u32 で完全順序比較。

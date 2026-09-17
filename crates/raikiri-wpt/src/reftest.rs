@@ -410,9 +410,10 @@ pub fn discover_all_pairs_with_docroot(walk_root: &Path, docroot: &Path) -> Vec<
 
 /// Render `html` to a `RenderedImage` via raikiri (800×600 default).
 ///
-/// Uses `raikiri::parse_html` → `layout_single_page` → `paint_single_page`
-/// → `anyrender::render_to_buffer::<VelloCpuImageRenderer>`. Font selection
-/// is via `wpt/fonts` when available, otherwise `FontContext::new()`.
+/// Uses `raikiri_html::parse` → first-page `build_cascaded_for_page` →
+/// `layout_single_page` → `paint_single_page` →
+/// `anyrender::render_to_buffer::<VelloCpuImageRenderer>`. Font selection is
+/// via `wpt/fonts` when available, otherwise `FontContext::new()`.
 pub fn render_raikiri(html: &str, width: u32, height: u32) -> Result<RenderedImage, ReftestError> {
     render_raikiri_inner(html, width, height)
         .map_err(|e| ReftestError::RaikiriRender(e.to_string()))
@@ -425,7 +426,7 @@ fn render_raikiri_inner(
 ) -> Result<RenderedImage, Box<dyn std::error::Error>> {
     use raikiri::PageBox;
     use raikiri::ParseOptions;
-    use raikiri::build_cascaded;
+    use raikiri::build_cascaded_for_page;
     use raikiri_dom::layout_single_page;
     use raikiri_html::parse;
 
@@ -437,7 +438,10 @@ fn render_raikiri_inner(
     // Use bounded parse with raikiri_html directly to get UncascadedDocument,
     // then cascade, then layout.
     let uncascaded = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
-    let cascade = build_cascaded(&uncascaded);
+    let mut page_query = raikiri::PageContextQuery::default();
+    page_query.is_first = true;
+    page_query.is_right = true;
+    let cascade = build_cascaded_for_page(&uncascaded, &page_query);
     let mut dom = uncascaded.dom;
     let mut page_box = PageBox::A4;
     page_box.width = width as f32;
@@ -873,6 +877,37 @@ mod tests {
         assert_eq!(img.width, 200);
         assert_eq!(img.height, 100);
         assert_eq!(img.rgba.len(), 200 * 100 * 4);
+    }
+
+    #[test]
+    fn run_pair_css_page_background_matches_body_background_reference() {
+        // Focused equivalent of WPT css/css-page/page-box-001-print.html.
+        // The test page paints the page canvas; the reference paints the body
+        // canvas. Without @page background support the two images differ.
+        let dir = tempfile::tempdir().unwrap();
+        let test_path = dir.path().join("page-box-001-print.html");
+        let ref_path = dir.path().join("page-box-001-print-ref.html");
+        std::fs::write(
+            &test_path,
+            r#"<html><head><link rel="match" href="page-box-001-print-ref.html"><style>@page { margin: 0; background: yellow } body { margin: 100px }</style></head><body>The entire page should be yellow.</body></html>"#,
+        )
+        .unwrap();
+        std::fs::write(
+            &ref_path,
+            r#"<html><head><style>@page { margin: 0 } body { margin: 100px; background: yellow }</style></head><body>The entire page should be yellow.</body></html>"#,
+        )
+        .unwrap();
+        let pairs = discover_pairs_for_file(&test_path).unwrap();
+        let result = run_pair(
+            &pairs[0],
+            ReftestConfig {
+                width: 200,
+                height: 100,
+                tolerance: Tolerance::EXACT,
+            },
+        )
+        .unwrap();
+        assert_eq!(result.outcome, TestOutcome::Pass);
     }
 
     #[test]

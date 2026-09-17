@@ -4,8 +4,9 @@
 repository into `target/wpt/`, pinned to the SHA in `pinned_sha.txt`.
 
 The set of fetched paths is controlled by `subset.txt` (one pattern per line,
-Git sparse-checkout syntax). Currently M1 scope: `fonts` only (Ahem, Lato,
-CSSTest 等) for VRT cross-machine determinism (raikiri-spike-e93).
+Git sparse-checkout syntax). The current subset includes `fonts` (Ahem, Lato,
+CSSTest 等) for VRT cross-machine determinism and the focused
+`css/css-page/page-box-001-print.html` canvas-background pin.
 
 ## Usage
 
@@ -35,10 +36,11 @@ Steps:
 
 ## Relation to `raikiri-wpt`
 
-`raikiri-wpt` (WPT test runner harness) does not currently depend on
-`target/wpt/`. This subset is dedicated to raikiri VRT font pin
-(raikiri-spike-e93). When `raikiri-wpt` starts consuming WPT test
-resources, extend `subset.txt` and update this README.
+`raikiri-wpt` (WPT test runner harness) does not currently discover the
+whole `target/wpt/` tree. The css-page subset is used as a focused source pin;
+its equivalent reftest is covered by the `raikiri-wpt` unit suite. When the
+runner starts consuming the full WPT tree, extend `subset.txt` and update this
+README.
 
 ## Updating the CSS dashboard
 

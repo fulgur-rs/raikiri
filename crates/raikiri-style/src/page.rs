@@ -382,11 +382,9 @@ pub enum PageSize {
 /// earlier one is *also* `!important` (CSS Cascading L4 §6.1's "declarations
 /// … sorted by … importance, then … order" tie-break chain
 /// (<https://www.w3.org/TR/css-cascade-4/#cascade-sort>) applies
-/// importance *before* source order). A field that reduced to a single
-/// `PageSize` at parse time would have to invent that winner-selection logic
-/// ahead of the rest of the `size` cascade wiring, which is future scope —
-/// so this field mirrors [`PageRule::declarations`]'s shape instead of
-/// pre-empting it.
+/// importance *before* source order). [`cascade_page`] performs that
+/// winner-selection logic after parsing, so this field mirrors
+/// [`PageRule::declarations`]'s shape instead of pre-empting the cascade.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PageSizeDeclaration {
@@ -662,13 +660,12 @@ pub enum PageMarginBoxSlot {
 ///
 /// Two things are explicitly *not* done here, and are future scope:
 ///
-/// - **Cascade resolution across rules.** Multiple margin-box at-rules
+/// - **Used-value selection across rules.** Multiple margin-box at-rules
 ///   naming the same [`PageMarginBoxSlot`] (duplicate `@top-left` blocks within
 ///   one `@page` rule, or the same slot named by several `@page` rules that
-///   match one page) are kept as separate entries in
-///   [`PageRule::margin_box_rules`] — winner selection across them is not
-///   performed, mirroring [`PageRule::size_declarations`]'s "kept in source
-///   order, cascade wiring is future work" treatment.
+///   match one page) remain separate source-ordered entries. The page cascade
+///   attaches origin, specificity, and rule order metadata; declaration
+///   winner selection and margin-box inheritance remain downstream work.
 /// - **Geometry / layout.** The sixteen margin boxes' actual size and
 ///   position within the page margin is used-value work that consumes this
 ///   declaration bag; it is not computed by this type.
@@ -772,14 +769,10 @@ pub struct PageRule {
     /// [`PropertyValue`] the general [`crate::property::parse_value`]
     /// dispatch recognizes. Empty when the block declares no `size`.
     ///
-    /// Not yet consumed by [`cascade_page`] / [`PageCascadeResult`] —
-    /// wiring a `size` cascade winner across multiple matching `@page`
-    /// rules, and translating the winner into an actual page-box
-    /// width/height, are both future scope. `marks` / `bleed` are parsed the
-    /// same way — see [`PageRule::marks_declarations`] /
-    /// [`PageRule::bleed_declarations`]. The margin-box at-rules are parsed
-    /// separately (they are nested at-rules, not declarations) — see
-    /// [`PageRule::margin_box_rules`].
+    /// Consumed by [`cascade_page`] / [`PageCascadeResult`] using the same
+    /// page-selector cascade tuple as ordinary declarations. The resulting
+    /// typed value is still converted into a concrete `PageBox` by the
+    /// downstream page-layout consumer.
     ///
     /// # `pub` surface — same shape as `declarations`
     ///
@@ -806,9 +799,9 @@ pub struct PageRule {
     /// [`PropertyValue`] the general [`crate::property::parse_value`]
     /// dispatch recognizes. Empty when the block declares no `marks`.
     ///
-    /// Not yet consumed by [`cascade_page`] / [`PageCascadeResult`] — same
-    /// future-scope split [`PageRule::size_declarations`]'s doc describes
-    /// for `size`. Shares that field's `pub` surface analysis
+    /// Consumed by [`cascade_page`] / [`PageCascadeResult`] with the same
+    /// origin, specificity, importance, and source-order ordering as `size`.
+    /// Shares that field's `pub` surface analysis
     /// ([`PageRule::declarations`]'s doc) and the same
     /// never-construct-the-parser-unreachable-state guarantee
     /// ([`PageMarksDeclaration::value`] is `pub(crate)`, so a consumer
@@ -825,19 +818,18 @@ pub struct PageRule {
     /// the general [`crate::property::parse_value`] dispatch recognizes.
     /// Empty when the block declares no `bleed`.
     ///
-    /// Not yet consumed by [`cascade_page`] / [`PageCascadeResult`] — same
-    /// future-scope split [`PageRule::size_declarations`]'s doc describes
-    /// for `size`; resolving `PageBleed::Auto` additionally depends on the
-    /// cascaded `marks` value (see [`PageBleed::Auto`]'s doc), so it cannot
-    /// be resolved any earlier than that `marks` wiring lands. Shares
-    /// `size_declarations`'s `pub` surface analysis
+    /// Consumed by [`cascade_page`] / [`PageCascadeResult`] with the same
+    /// descriptor cascade ordering as `size` and `marks`. `auto` remains a
+    /// typed used-value decision because it depends on the cascaded `marks`
+    /// value (see [`PageBleed::Auto`]'s doc). Shares `size_declarations`'s
+    /// `pub` surface analysis
     /// ([`PageRule::declarations`]'s doc).
     pub bleed_declarations: Vec<PageBleedDeclaration>,
     /// Margin-box at-rules (`@top-left { … }` etc.) nested in the block
     /// body, in source order — see [`PageMarginBoxRule`] for the value shape
-    /// and its doc's "Scope" section for what is deliberately deferred
-    /// (cascade winner selection across rules naming the same
-    /// [`PageMarginBoxSlot`], and the sixteen boxes' geometry). Parsed by
+    /// and its doc's "Scope" section for the geometry work deliberately
+    /// deferred downstream. [`cascade_page`] preserves matching entries in
+    /// [`PageCascadeResult::margin_boxes`]. Parsed by
     /// [`parse_page_declaration_block`] via the [`PageDeclParser`]
     /// `AtRuleParser` impl, since a margin-box at-rule is a nested at-rule
     /// (CSS Paged Media Level 3 §5.1, <https://www.w3.org/TR/css-page-3/#margin-at-rules>),
@@ -1585,35 +1577,42 @@ pub struct PageContextQuery {
     pub is_blank: bool,
 }
 
-/// Winning declarations from an `@page` cascade pass.
+/// Cascaded declarations belonging to one page-margin box slot.
 ///
-/// Contains one entry per property that at least one matching `@page` rule
-/// declared. `@page`-specific **descriptors** (`size`, `marks`, `bleed`) are
-/// absent from this result. All three *are* parsed (see
-/// [`PageRule::size_declarations`] / [`PageRule::marks_declarations`] /
-/// [`PageRule::bleed_declarations`] and [`PageSize`] / [`PageMarks`] /
-/// [`PageBleed`]), but none of the three parsed values is yet folded into
-/// this cascade result — wiring a cascade winner across multiple matching
-/// `@page` rules for each descriptor is still future scope, tracked
-/// separately from ordinary property cascading. The margin-box at-rules (L3
-/// §5.1) are similarly absent: they *are* parsed and their declaration
-/// bodies stored (see [`PageRule::margin_box_rules`] /
-/// [`PageMarginBoxRule`]), but that storage is not a declaration `parse_value`
-/// dispatches on — it comes from [`PageDeclParser`]'s `AtRuleParser` impl,
-/// a separate path from the ordinary-property one this cascade result
-/// folds — and cascading margin-box declarations into a per-slot result is
-/// unstarted future work, same layering as `size` / `marks` / `bleed`
-/// above.
+/// The declaration list is kept in source order. The page-context cascade and
+/// the margin-context inheritance/used-value pass are separate operations, so
+/// this type deliberately carries one parsed nested at-rule rather than
+/// pretending that a margin box is an ordinary element node.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageMarginBoxCascadeResult {
+    /// The margin-box slot named by the nested at-rule.
+    pub slot: PageMarginBoxSlot,
+    /// Declarations from this nested margin-box rule, in source order.
+    pub declarations: Vec<Declaration>,
+    /// Enclosing `@page` rule source order.
+    pub source_order: u32,
+    /// Enclosing `@page` rule cascade origin.
+    pub origin: Origin,
+    /// Enclosing page-selector specificity `(f, g, h)`.
+    pub specificity: (u32, u32, u32),
+}
+
+/// Winning values from an `@page` cascade pass.
+///
+/// Ordinary declarations are exposed through [`Self::declarations`]. The
+/// dedicated `size`, `marks`, and `bleed` descriptors are cascaded with the
+/// same origin, page-selector specificity, importance, and source-order rules
+/// and are exposed through their typed accessors. Matching margin-box at-rules
+/// are exposed in source order; resolving their inherited computed values and
+/// used geometry remains a downstream layout operation.
 ///
 /// The ordinary box properties are **not** in that category: `margin` /
 /// `padding` / `border-*` / `width` / `height` are parsed (the `margin`
-/// shorthand is expanded to longhands) and go
-/// through both resolution phases below. Downstream page-layout code is
-/// expected to translate this bag into its page-box model, plus
-/// [`PageRule::size_declarations`] / [`PageRule::marks_declarations`] /
-/// [`PageRule::bleed_declarations`] and future `@page`-descriptor fields
-/// once those gain cascade wiring of their own; raikiri-style remains a
-/// leaf crate.
+/// shorthand is expanded to longhands) and go through both resolution phases
+/// below. Downstream page-layout code consumes the typed descriptor accessors
+/// for the concrete page box; margin-box inheritance and used geometry remain
+/// downstream responsibilities.
 ///
 /// Iteration order over `declarations` is `HashMap`-random; consumers that
 /// need a deterministic order should sort or look up by [`PropertyKey`]
@@ -1632,6 +1631,14 @@ pub struct PageCascadeResult {
     // access is public API — see the `declarations()` accessor below, in
     // particular its "Why this is a method, not a field" section.
     declarations: HashMap<PropertyKey, PropertyValue>,
+    /// Winning `size` descriptor, if one of the matching rules declared it.
+    size: Option<PageSize>,
+    /// Winning `marks` descriptor, if one of the matching rules declared it.
+    marks: Option<PageMarks>,
+    /// Winning `bleed` descriptor, if one of the matching rules declared it.
+    bleed: Option<PageBleed>,
+    /// Matching margin-box at-rules in source order.
+    margin_boxes: Vec<PageMarginBoxCascadeResult>,
 }
 
 impl PageCascadeResult {
@@ -1962,6 +1969,26 @@ impl PageCascadeResult {
     pub fn declarations(&self) -> &HashMap<PropertyKey, PropertyValue> {
         &self.declarations
     }
+
+    /// The winning `size` descriptor for this page context, if declared.
+    pub fn size(&self) -> Option<PageSize> {
+        self.size
+    }
+
+    /// The winning `marks` descriptor for this page context, if declared.
+    pub fn marks(&self) -> Option<PageMarks> {
+        self.marks
+    }
+
+    /// The winning `bleed` descriptor for this page context, if declared.
+    pub fn bleed(&self) -> Option<PageBleed> {
+        self.bleed
+    }
+
+    /// Matching margin-box declarations, in source order.
+    pub fn margin_boxes(&self) -> &[PageMarginBoxCascadeResult] {
+        &self.margin_boxes
+    }
 }
 
 /// Selects the page context's inheritance parent for [`cascade_page`] — CSS
@@ -2126,6 +2153,14 @@ pub fn cascade_page(
     // `PageSpecificity` in place of `selectors`-crate `Specificity`.
     let mut candidates: Vec<(PropertyValue, bool, Origin, PageSpecificity, u32)> = Vec::new();
     let mut custom_candidates: Vec<PageCustomCascadedDecl> = Vec::new();
+    // Descriptor candidates use the same origin/specificity/source-order tuple
+    // as ordinary page declarations. The extra declaration index is needed
+    // because descriptor declarations are stored in dedicated vectors and two
+    // declarations in one rule share the rule's source order.
+    let mut size_best: Option<(u8, PageSpecificity, u32, u32, PageSize)> = None;
+    let mut marks_best: Option<(u8, PageSpecificity, u32, u32, PageMarks)> = None;
+    let mut bleed_best: Option<(u8, PageSpecificity, u32, u32, PageBleed)> = None;
+    let mut margin_boxes: Vec<PageMarginBoxCascadeResult> = Vec::new();
     for rule in &rule_tree.page_rules {
         // Comma-separated list = OR: rule contributes if any entry matches.
         // Take the highest-specificity matching entry within this rule (spec
@@ -2141,6 +2176,60 @@ pub fn cascade_page(
             }
         }
         if let Some(spec) = best_spec {
+            for (index, decl) in rule.size_declarations.iter().enumerate() {
+                let candidate = (
+                    cascade_rank(rule.origin, decl.important),
+                    spec,
+                    rule.source_order,
+                    index as u32,
+                    decl.value(),
+                );
+                if size_best
+                    .as_ref()
+                    .is_none_or(|existing| descriptor_beats(&candidate, existing))
+                {
+                    size_best = Some(candidate);
+                }
+            }
+            for (index, decl) in rule.marks_declarations.iter().enumerate() {
+                let candidate = (
+                    cascade_rank(rule.origin, decl.important),
+                    spec,
+                    rule.source_order,
+                    index as u32,
+                    decl.value(),
+                );
+                if marks_best
+                    .as_ref()
+                    .is_none_or(|existing| descriptor_beats(&candidate, existing))
+                {
+                    marks_best = Some(candidate);
+                }
+            }
+            for (index, decl) in rule.bleed_declarations.iter().enumerate() {
+                let candidate = (
+                    cascade_rank(rule.origin, decl.important),
+                    spec,
+                    rule.source_order,
+                    index as u32,
+                    decl.value(),
+                );
+                if bleed_best
+                    .as_ref()
+                    .is_none_or(|existing| descriptor_beats(&candidate, existing))
+                {
+                    bleed_best = Some(candidate);
+                }
+            }
+            for margin_box in &rule.margin_box_rules {
+                margin_boxes.push(PageMarginBoxCascadeResult {
+                    slot: margin_box.slot,
+                    declarations: margin_box.declarations.clone(),
+                    source_order: rule.source_order,
+                    origin: rule.origin,
+                    specificity: (spec.f, spec.g, spec.h),
+                });
+            }
             for decl in &rule.declarations {
                 if let PropertyValue::CustomProperty(custom) = &decl.value {
                     custom_candidates.push((
@@ -2298,6 +2387,12 @@ pub fn cascade_page(
                 )
             })
             .collect(),
+        size: size_best
+            .map(|candidate| absolutize_page_size(candidate.4, font_size, own_line_height, &ctx)),
+        marks: marks_best.map(|candidate| candidate.4),
+        bleed: bleed_best
+            .map(|candidate| absolutize_page_bleed(candidate.4, font_size, own_line_height, &ctx)),
+        margin_boxes,
     }
 }
 
@@ -3946,6 +4041,45 @@ fn page_beats(
     (candidate.0, candidate.1, candidate.2) >= (existing.0, existing.1, existing.2)
 }
 
+/// Compare a descriptor candidate, including declaration order within one rule.
+fn descriptor_beats<T>(
+    candidate: &(u8, PageSpecificity, u32, u32, T),
+    existing: &(u8, PageSpecificity, u32, u32, T),
+) -> bool {
+    (candidate.0, candidate.1, candidate.2, candidate.3)
+        >= (existing.0, existing.1, existing.2, existing.3)
+}
+
+/// Resolve descriptor lengths using the computed page-context font bases.
+fn absolutize_page_size(
+    size: PageSize,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> PageSize {
+    match size {
+        PageSize::Lengths { width, height } => PageSize::Lengths {
+            width: Length::Px(resolve_length(width, font_size, own_line_height, ctx).px()),
+            height: Length::Px(resolve_length(height, font_size, own_line_height, ctx).px()),
+        },
+        other => other,
+    }
+}
+
+fn absolutize_page_bleed(
+    bleed: PageBleed,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> PageBleed {
+    match bleed {
+        PageBleed::Length(length) => PageBleed::Length(Length::Px(
+            resolve_length(length, font_size, own_line_height, ctx).px(),
+        )),
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! Verification tests for `@page` cascade order.
@@ -4044,6 +4178,146 @@ mod tests {
             PageInheritance::LegacyInitialValues,
         );
         assert_eq!(color_of(&result), Some(RED));
+    }
+
+    #[test]
+    fn cascade_page_descriptor_size_uses_page_selector_specificity() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page { size: 300px 50px }", Origin::Author);
+        tree.add_stylesheet("@page :first { size: 400px 60px }", Origin::Author);
+        let query = PageContextQuery {
+            is_first: true,
+            ..Default::default()
+        };
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
+        assert_eq!(
+            result.size(),
+            Some(PageSize::Lengths {
+                width: Length::Px(400.0),
+                height: Length::Px(60.0),
+            })
+        );
+    }
+
+    #[test]
+    fn cascade_page_descriptor_size_uses_important_and_source_order() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page { size: 300px !important }", Origin::Author);
+        tree.add_stylesheet("@page { size: 400px }", Origin::Author);
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
+        assert_eq!(
+            result.size(),
+            Some(PageSize::Lengths {
+                width: Length::Px(300.0),
+                height: Length::Px(300.0),
+            })
+        );
+
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page { size: 300px }", Origin::Author);
+        tree.add_stylesheet("@page { size: 400px }", Origin::Author);
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
+        assert_eq!(
+            result.size(),
+            Some(PageSize::Lengths {
+                width: Length::Px(400.0),
+                height: Length::Px(400.0),
+            })
+        );
+    }
+
+    #[test]
+    fn cascade_page_descriptor_marks_bleed_and_margin_boxes_are_exposed() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@page { marks: crop cross; bleed: 6pt; @top-left { content: \"A\" } @top-left { content: \"B\" } }",
+            Origin::Author,
+        );
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
+        assert_eq!(
+            result.marks(),
+            Some(PageMarks::Marks {
+                crop: true,
+                cross: true
+            })
+        );
+        assert_eq!(result.bleed(), Some(PageBleed::Length(Length::Px(8.0))));
+        assert_eq!(result.margin_boxes().len(), 2);
+        assert_eq!(result.margin_boxes()[0].slot, PageMarginBoxSlot::TopLeft);
+        assert_eq!(result.margin_boxes()[1].slot, PageMarginBoxSlot::TopLeft);
+        assert_eq!(result.margin_boxes()[0].declarations.len(), 1);
+        assert_eq!(result.margin_boxes()[1].declarations.len(), 1);
+    }
+
+    #[test]
+    fn cascade_page_margin_box_source_order_and_selector_metadata_are_retained() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page { @top-left { content: \"A\" } }", Origin::Author);
+        tree.add_stylesheet(
+            "@page :first { @top-left { content: \"B\" } }",
+            Origin::Author,
+        );
+        let query = PageContextQuery {
+            is_first: true,
+            ..Default::default()
+        };
+        let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
+        let boxes = result.margin_boxes();
+        assert_eq!(boxes.len(), 2);
+        assert!(boxes[0].source_order < boxes[1].source_order);
+        assert_eq!(boxes[0].specificity, (0, 0, 0));
+        assert_eq!(boxes[1].specificity, (0, 1, 0));
+        assert_eq!(boxes[0].origin, Origin::Author);
+        assert_eq!(boxes[1].origin, Origin::Author);
+    }
+
+    #[test]
+    fn cascade_page_descriptor_named_and_auto_values_stay_typed() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page { size: A4 landscape; bleed: auto }", Origin::Author);
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
+        assert_eq!(
+            result.size(),
+            Some(PageSize::Named {
+                keyword: Some(PageSizeKeyword::A4),
+                orientation: Some(PageOrientation::Landscape),
+            })
+        );
+        assert_eq!(result.bleed(), Some(PageBleed::Auto));
+    }
+
+    #[test]
+    fn cascade_page_descriptor_relative_size_uses_page_font_size() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("@page { font-size: 20px; size: 2em 3em }", Origin::Author);
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
+        assert_eq!(
+            result.size(),
+            Some(PageSize::Lengths {
+                width: Length::Px(40.0),
+                height: Length::Px(60.0),
+            })
+        );
     }
 
     #[test]

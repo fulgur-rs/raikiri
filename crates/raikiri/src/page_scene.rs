@@ -53,7 +53,7 @@ use crate::entries::{BlockEntry, ParagraphEntry};
 use anyrender::render_to_buffer;
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use raikiri_dom::Document;
-use raikiri_style::CascadeResult;
+use raikiri_style::{CascadeResult, PageMarginBoxCascadeResult};
 use raikiri_traits::{NodeId, NodeKind, PageBox};
 use std::collections::BTreeMap;
 
@@ -163,6 +163,8 @@ pub struct Fragment {
 ///   の `body_offset_pt` semantic 準拠)。consumer が [`fragments`](PageScene::fragments)
 ///   の per-fragment (x, y) (body-content-area-relative) に加算することで
 ///   page-absolute 座標を得る
+/// - [`margin_boxes`](PageScene::margin_boxes): matching `@page` margin-box
+///   declaration bags for the downstream slot-layout pass
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct PageScene {
@@ -181,6 +183,12 @@ pub struct PageScene {
     /// html → body margin collapse を折り込んだ page-absolute offset (Pt, Pt) —
     /// Fragment 座標 (body-content-area-relative) に加算して page-absolute 座標を得る。
     pub body_offset_pt: (Pt, Pt),
+    /// Cascaded margin-box declaration bags for this page, in source order.
+    ///
+    /// This is the page-scene consumer boundary: the future margin-box layout
+    /// pass can resolve inherited values and geometry without reparsing the
+    /// stylesheet or reaching back into the document rule tree.
+    pub margin_boxes: Vec<PageMarginBoxCascadeResult>,
 }
 
 impl PageScene {
@@ -385,6 +393,7 @@ pub fn build_page_scene(dom: &Document, cascade: &CascadeResult, page_box: PageB
         root_id,
         body_id,
         body_offset_pt,
+        margin_boxes: cascade.page.margin_boxes().to_vec(),
     }
 }
 
@@ -523,6 +532,32 @@ mod tests {
     /// `ParagraphEntry` を `drawables` へ populate する (regression pin —
     /// `TrackedMap::insert` の非-test call site がこの production path
     /// 経由で exercise されることも同時に確認する)。
+    #[test]
+    fn build_page_scene_consumes_cascaded_margin_box_rules() {
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let uncascaded = parse(
+            &b"<html><head><style>@page { @top-left { content: \"A\" } }</style></head><body>Hi</body></html>"[..],
+            &opts,
+        )
+        .expect("parse Ok");
+        let cascade = build_cascaded(&uncascaded);
+        let mut dom = uncascaded.dom;
+        raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4, FontContext::new())
+            .expect("layout Ok");
+        let scene = build_page_scene(&dom, &cascade, PageBox::A4);
+
+        assert_eq!(scene.margin_boxes.len(), 1);
+        assert_eq!(
+            scene.margin_boxes[0].slot,
+            raikiri_style::PageMarginBoxSlot::TopLeft
+        );
+        assert_eq!(scene.margin_boxes[0].declarations.len(), 1);
+    }
+
     #[test]
     fn build_page_scene_populates_block_and_paragraph_entries_from_hello_world() {
         let (dom, cascade) = hello_world_post_layout();
