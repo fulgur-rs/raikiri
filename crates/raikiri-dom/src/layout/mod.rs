@@ -17,12 +17,12 @@ use parley::{
     Layout, LayoutContext, LineHeight, StyleProperty,
 };
 use raikiri_style::property::{
-    AlignSelfValue, BoxSizing as StyleBoxSizing, BreakBetween, CalcLengthPercentage, ClearValue,
-    ContentAlignmentValue, Direction, DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue,
-    FontStyle as StyleFontStyle, GridAutoFlowValue, GridLineValue, GridRepeatCount,
-    GridTemplateAreasValue, Hyphens, Length, LengthOrAuto, OverflowValue, PositionValue,
-    PropertyKey, PropertyValue, SelfAlignmentValue, TextAlign, TextJustify, TextTransform,
-    TextWrapMode, WhiteSpace,
+    AlignSelfValue, BackgroundImage, BoxSizing as StyleBoxSizing, BreakBetween,
+    CalcLengthPercentage, ClearValue, ContentAlignmentValue, Direction, DisplayValue,
+    FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle as StyleFontStyle, GridAutoFlowValue,
+    GridLineValue, GridRepeatCount, GridTemplateAreasValue, Hyphens, Length, LengthOrAuto,
+    OverflowValue, PositionValue, PropertyKey, PropertyValue, SelfAlignmentValue, TextAlign,
+    TextJustify, TextTransform, TextWrapMode, WhiteSpace,
 };
 use raikiri_style::{
     CascadeResult, ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth,
@@ -5826,6 +5826,29 @@ pub fn layout_single_page(
         message: "no <body> element found (fragment parse not supported yet)".to_string(),
     })?;
 
+    // The minimal UA sheet contributes the usual 8px body margin.  The body
+    // is also used as the synthetic page root, so feeding that UA margin into
+    // taffy would apply it twice to ordinary element children.  Keep the
+    // computed value for the page cursor/paint walk and remove only the exact
+    // UA-default sides from the synthetic root style; author margins remain.
+    {
+        let used = cascade.computed[body_id].margin;
+        let style_margin = &mut document.nodes[body_id].style.margin;
+        let is_ua_default = |value: ComputedLengthPercentageOrAuto| matches!(value, ComputedLengthPercentageOrAuto::Px(px) if (px - 8.0).abs() <= 0.001);
+        if is_ua_default(used.top) {
+            style_margin.top = LengthPercentageAuto::length(0.0);
+        }
+        if is_ua_default(used.right) {
+            style_margin.right = LengthPercentageAuto::length(0.0);
+        }
+        if is_ua_default(used.bottom) {
+            style_margin.bottom = LengthPercentageAuto::length(0.0);
+        }
+        if is_ua_default(used.left) {
+            style_margin.left = LengthPercentageAuto::length(0.0);
+        }
+    }
+
     // Step 4: body.style.size は紙面ではなく page content box へ強制セット。
     // Page margins are painted/represented outside this taffy root.
     apply_page_content_box_to_body(document, body_id, page_box, margins, insets);
@@ -5839,7 +5862,6 @@ pub fn layout_single_page(
             height: AvailableSpace::Definite(content_height),
         },
     );
-
     // Step 5a: taffy 確定幅基準の text 再配置 (`text-align: center` 等)。
     // glyph offset のみを変え、box geometry は変えないため invariant 検査の前後
     // どちらでもよいが、確定幅を読む側として compute 直後に置く。
@@ -5937,10 +5959,10 @@ pub fn layout_pages(
     let margins = page_margins(cascade, page_box);
     let insets = page_content_insets(cascade, page_box);
     // The current single-page bridge collapses the root box to zero size, so
-    // its block-start margin is not represented in descendant coordinates.
-    // Carry that margin into the initial fragmentainer cursor instead of
-    // treating the first text run as page zero content.
-    let root_margin_top = document.nodes[document.root]
+    // html/body block-start margins are not represented in descendant
+    // coordinates. Carry both margins into the initial fragmentainer cursor
+    // instead of treating the first text run as page-zero content.
+    let html_margin_top = document.nodes[document.root]
         .children
         .iter()
         .copied()
@@ -5950,6 +5972,41 @@ pub fn layout_pages(
             _ => None,
         })
         .unwrap_or(0.0);
+    let body_has_element_child = document.nodes[body_id]
+        .children
+        .iter()
+        .any(|&child_id| document.nodes[child_id].kind() == NodeKind::Element);
+    let body_has_canvas_background = {
+        let body = &cascade.computed[body_id];
+        body.background_color.a != 0 || !matches!(body.background_image, BackgroundImage::None)
+    };
+    let body_has_direct_text = document.nodes[body_id].children.iter().any(|&child_id| {
+        document.nodes[child_id].kind() == NodeKind::Text
+            && document.nodes[child_id].unrounded_layout.size.height > 0.0
+    });
+    let is_ua_default_margin = |value: ComputedLengthPercentageOrAuto| matches!(value, ComputedLengthPercentageOrAuto::Px(px) if (px - 8.0).abs() <= 0.001);
+    let used_body_margin = cascade.computed[body_id].margin;
+    let body_has_non_ua_margin = [
+        used_body_margin.top,
+        used_body_margin.right,
+        used_body_margin.bottom,
+        used_body_margin.left,
+    ]
+    .iter()
+    .copied()
+    .any(|value| !is_ua_default_margin(value));
+    let body_origin_is_manual = body_has_direct_text
+        && !body_has_element_child
+        && (body_has_canvas_background || body_has_non_ua_margin);
+    let body_margin_top = if body_origin_is_manual {
+        match cascade.computed[body_id].margin.top {
+            ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
+            _ => 0.0,
+        }
+    } else {
+        0.0
+    };
+    let root_margin_top = html_margin_top + body_margin_top;
     let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
     // A page with margins consuming the entire paper still needs a finite
     // cursor for forced breaks.  No valid page box reaches this path in normal

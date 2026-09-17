@@ -18,7 +18,7 @@
 
 /* CSS 2.1 App.D — html and body form the initial containing block */
 html   { display: block; }
-body   { display: block; }
+body   { display: block; margin: 8px; }
 
 /* CSS 2.1 App.D — generic grouping content (div) is block-level */
 div    { display: block; }
