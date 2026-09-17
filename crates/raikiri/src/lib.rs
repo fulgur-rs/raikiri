@@ -227,8 +227,10 @@ pub use raikiri_style::{
     AtRuleBody, AtRuleRecord, Atom, CascadeResult, ComputedBorder, ComputedLength,
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLineHeight, ComputedValues,
     CssColor, CssRule, CssRuleKind, DisplayValue, Length, LengthOrAuto, MediaContext, MediaType,
-    Origin, PropertyValue, QualifiedRuleRecord, RuleNode, RuleTree, Sides,
-    cascade_with_media_context,
+    Origin, PageBleed, PageCascadeResult, PageContextQuery, PageInheritance,
+    PageMarginBoxCascadeResult, PageMarginBoxSlot, PageMarks, PageOrientation, PageSize,
+    PageSizeKeyword, PropertyValue, QualifiedRuleRecord, RuleNode, RuleTree, Sides,
+    cascade_with_media_context, cascade_with_media_context_for_page,
 };
 // `Border` / `BorderColor` / `BorderStyle` / `LineHeight` は raikiri-style
 // crate root では re-export されておらず
@@ -300,6 +302,15 @@ pub fn build_cascaded(doc: &UncascadedDocument) -> CascadeResult {
     build_cascaded_with_media_context(doc, &MediaContext::default())
 }
 
+/// Build the cascade for one page-context query using the default media
+/// context.
+pub fn build_cascaded_for_page(
+    doc: &UncascadedDocument,
+    page_query: &PageContextQuery,
+) -> CascadeResult {
+    build_cascaded_with_media_context_for_page(doc, &MediaContext::default(), page_query)
+}
+
 /// Build the rule tree and run the cascade for an explicit media context.
 ///
 /// [`build_cascaded`] remains the compatibility entry point and uses the
@@ -308,6 +319,29 @@ pub fn build_cascaded_with_media_context(
     doc: &UncascadedDocument,
     media_context: &MediaContext,
 ) -> CascadeResult {
+    build_cascaded_with_media_context_for_page(doc, media_context, &PageContextQuery::default())
+}
+
+/// Build the element and `@page` cascades for one page-context query.
+///
+/// The first-page render path uses this entry point with `is_first` and
+/// `is_right` set. A future page-stream driver can call it once per page with
+/// the page name and pseudo-page state selected by its break algorithm.
+pub fn build_cascaded_with_media_context_for_page(
+    doc: &UncascadedDocument,
+    media_context: &MediaContext,
+    page_query: &PageContextQuery,
+) -> CascadeResult {
+    let tree = build_rule_tree(doc);
+    cascade_with_media_context_for_page(&doc.dom, &tree, media_context, page_query)
+        .expect("cascade は常に Ok のはず")
+}
+
+/// Build the stylesheet rule tree used by the umbrella cascade.
+///
+/// Keeping this operation separate lets a paged renderer retain the parsed
+/// `@page` rules while it performs a per-page cascade in a later page loop.
+pub fn build_rule_tree(doc: &UncascadedDocument) -> RuleTree {
     let mut tree = RuleTree::empty();
 
     // Document に associate されている全 stylesheet を kind に応じて Origin
@@ -323,7 +357,7 @@ pub fn build_cascaded_with_media_context(
         tree.add_stylesheet(source, Origin::Author);
     }
 
-    cascade_with_media_context(&doc.dom, &tree, media_context).expect("cascade は常に Ok のはず")
+    tree
 }
 
 /// dom-level の [`StylesheetKind`] (raikiri-traits) を cascade-level の

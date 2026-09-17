@@ -1,11 +1,12 @@
-//! `html_to_png` — dogfooding helper: HTML → single-page A4 PNG bytes。
+//! `html_to_png` — dogfooding helper: HTML → first-page PNG bytes (A4 fallback)。
 //!
 //! spec §L1118 の convenience wrapper。VRT (hello-world) / examples 用途。
 //! Consumer が multi-page / custom PageBox / streaming を要する場合は
 //! `parse_html` + `render_streaming` (将来対応) を chain する。
 //!
 //! # 現状の契約
-//! - PageBox は `PageBox::A4` 固定。custom PageBox は将来
+//! - PageBox は `@page { size: ... }` の first-page cascadeを優先し、未指定時は
+//!   `PageBox::A4`。custom PageBox は将来
 //!   `html_to_png_with(input, PageBox, PageDefaults)` variant を追加予定
 //! - `ReplacedResolver` 不要 (replaced element 非対応)
 //! - 単一ページのみ。overflow の 2 ページ目 clip は将来の pagestream state
@@ -46,7 +47,7 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
     };
     let mut doc = parse_html(input, &opts)?;
 
-    let page_box = PageBox::A4;
+    let page_box = PageBox::from_page_size(doc.cascade.page.size());
     // pub(crate) field を crate-internal から split-borrow。accessor 経由だと
     // `&mut self` が要求されて cascade への同時参照が壊れるが、field 直接なら OK。
     // `?` は raikiri-traits の `From<LayoutError> for RenderError` (error.rs:137-140)
@@ -65,7 +66,7 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
     Ok(scene.rasterize(dom, cascade, page_box))
 }
 
-/// HTML byte stream を単一 A4 ページの PNG に raster する。
+/// HTML byte stream を単一の first page (A4 fallback) の PNG に raster する。
 ///
 /// System font resolver 経由 (`FontContext::new()`) で `html_to_png_impl` に
 /// delegate する。production runtime 用の経路。
@@ -134,6 +135,16 @@ mod tests {
             "output must start with PNG magic bytes; got {:?}",
             &png[..8]
         );
+    }
+
+    #[test]
+    fn html_to_png_uses_first_page_size_descriptor_for_png_dimensions() {
+        let html = br#"<html><head><style>@page { size: 300px 50px }</style></head><body>Hi</body></html>"#;
+        let png = html_to_png(&html[..]).expect("custom @page size should render");
+        assert!(png.len() >= 24, "PNG must contain the IHDR header");
+        let width = u32::from_be_bytes(png[16..20].try_into().unwrap());
+        let height = u32::from_be_bytes(png[20..24].try_into().unwrap());
+        assert_eq!((width, height), (300, 50));
     }
 
     #[test]

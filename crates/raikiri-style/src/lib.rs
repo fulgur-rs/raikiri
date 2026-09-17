@@ -61,9 +61,9 @@ pub use media::{MediaContext, MediaType};
 pub mod page;
 pub use page::{
     PageBleed, PageBleedDeclaration, PageCascadeResult, PageContextQuery, PageInheritance,
-    PageMarginBoxRule, PageMarginBoxSlot, PageMarks, PageMarksDeclaration, PageOrientation,
-    PagePseudo, PageRule, PageSelector, PageSelectorEntry, PageSize, PageSizeDeclaration,
-    PageSizeKeyword, cascade_page,
+    PageMarginBoxCascadeResult, PageMarginBoxRule, PageMarginBoxSlot, PageMarks,
+    PageMarksDeclaration, PageOrientation, PagePseudo, PageRule, PageSelector, PageSelectorEntry,
+    PageSize, PageSizeDeclaration, PageSizeKeyword, cascade_page,
 };
 
 pub mod ruletree;
@@ -99,7 +99,9 @@ pub mod specified;
 pub use specified::SpecifiedValues;
 
 pub mod cascade;
-pub use cascade::{CascadeResult, cascade, cascade_with_media_context};
+pub use cascade::{
+    CascadeResult, cascade, cascade_with_media_context, cascade_with_media_context_for_page,
+};
 
 #[cfg(test)]
 pub(crate) mod test_dom;

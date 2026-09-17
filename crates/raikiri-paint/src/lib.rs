@@ -167,6 +167,40 @@ mod tests {
     }
 
     #[test]
+    fn paint_single_page_uses_page_background_color_before_document_canvas() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let _text = doc.append_text(body, "Hi");
+        let mut rules = build_rule_tree(&doc);
+        rules.add_stylesheet(
+            "@page { color: green; background-color: yellow; background-image: none }",
+            raikiri_style::Origin::Author,
+        );
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+        // Force the matcher below through its non-fill arm as well as the
+        // page-background fill arm.
+        scene.commands.push(RenderCommand::PopLayer);
+
+        let fill = scene
+            .commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                RenderCommand::Fill(command) => Some(&command.brush),
+                _ => None,
+            })
+            .expect("canvas fill command");
+        assert_eq!(
+            fill,
+            &anyrender::Paint::Solid(peniko::Color::from_rgba8(255, 255, 0, 255))
+        );
+    }
+
+    #[test]
     fn paint_single_page_without_body_returns_early() {
         // fragment (Document → <p> 直子、no <body>) → paint_document は早期 return するが
         // canvas background (white) は依然として emit される。

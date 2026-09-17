@@ -17,6 +17,9 @@ css/css-lists/parsing
 css/css-masking/parsing
 css/css-overscroll-behavior/parsing
 css/css-page/parsing
+# css-page focused reftest pin: @page canvas background (page-box-001).
+css/css-page/page-box-001-print.html
+css/css-page/page-box-001-print-ref.html
 css/css-pseudo/parsing
 css/css-rhythm/parsing
 css/css-scroll-anchoring/parsing

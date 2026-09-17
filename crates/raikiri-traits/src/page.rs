@@ -25,6 +25,7 @@ use raikiri_style::property::{
     ContentComponent, ContentPart, ContentTextKeyword, CounterStyle, LeaderType, QuoteKeyword,
     StringFetchMode,
 };
+use raikiri_style::{Length, PageOrientation, PageSize, PageSizeKeyword};
 #[cfg(test)]
 use smol_str::SmolStr;
 use url::Url;
@@ -50,13 +51,16 @@ impl PageFragment {
     }
 }
 
-/// PageBox — @page rule 解決結果 (size, margins, margin box slots)。
+/// PageBox — the concrete paper-size part of an `@page` result.
 /// `width` / `height` および `A4` / `US_LETTER` const は実装済み。
-/// `margins` / `margin_boxes` は未実装で、将来 populate される予定。
+/// Page margins and margin-box declaration bags are carried by the page
+/// cascade/scene layers rather than this two-dimensional paper-size value.
 ///
 /// **単位 = CSS px** (1 CSS px = 1/96 in in print context per CSS Values L4 §6.2
 /// "Absolute Lengths" <https://www.w3.org/TR/css-values-4/#absolute-lengths>)。
-/// pt / mm / in への換算は Consumer 責務。
+/// `from_page_size` は cascaded `@page size` の CSS absolute units をこの
+/// CSS-px shape に変換する。直接 `PageBox` を構築する consumer は引き続き
+/// CSS px を渡す。
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct PageBox {
@@ -87,6 +91,106 @@ impl PageBox {
     /// zero-arg constructor を残すため保持。
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Resolve a cascaded CSS `size` descriptor into a concrete page box.
+    ///
+    /// `None` and `auto` use the A4 fallback. Absolute CSS lengths use the
+    /// CSS 96-DPI conversion; relative lengths use the initial 16px font size
+    /// because page descriptors have no element font context at this boundary.
+    /// Invalid or non-positive values also use the fallback.
+    pub fn from_page_size(size: Option<PageSize>) -> Self {
+        let fallback = Self::A4;
+        let Some(size) = size else {
+            return fallback;
+        };
+
+        let (mut width, mut height, orientation) = match size {
+            PageSize::Auto => return fallback,
+            PageSize::Lengths { width, height } => {
+                let Some(width) = page_length_to_px(width) else {
+                    return fallback;
+                };
+                let Some(height) = page_length_to_px(height) else {
+                    return fallback;
+                };
+                (width, height, None)
+            }
+            PageSize::Named {
+                keyword,
+                orientation,
+            } => {
+                let (width, height) = match keyword {
+                    Some(keyword) => named_page_size(keyword),
+                    None => (fallback.width, fallback.height),
+                };
+                (width, height, orientation)
+            }
+            _ => return fallback, // cov:ignore: future non-exhaustive PageSize variant
+        };
+
+        (width, height) = apply_page_orientation(width, height, orientation);
+
+        if width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0 {
+            Self { width, height }
+        } else {
+            fallback // cov:ignore: conversion rejects non-finite and non-positive lengths earlier
+        }
+    }
+}
+
+fn apply_page_orientation(
+    mut width: f32,
+    mut height: f32,
+    orientation: Option<PageOrientation>,
+) -> (f32, f32) {
+    match orientation {
+        Some(PageOrientation::Landscape) if height > width => {
+            std::mem::swap(&mut width, &mut height);
+        }
+        Some(PageOrientation::Portrait) if width > height => {
+            std::mem::swap(&mut width, &mut height);
+        }
+        _ => {}
+    }
+    (width, height)
+}
+
+fn page_length_to_px(length: Length) -> Option<f32> {
+    let px = match length {
+        Length::Px(value) => value,
+        Length::Pt(value) => value * 96.0 / 72.0,
+        Length::Cm(value) => value * 96.0 / 2.54,
+        Length::Mm(value) => value * 96.0 / 25.4,
+        Length::Q(value) => value * 96.0 / 101.6,
+        Length::In(value) => value * 96.0,
+        Length::Pc(value) => value * 16.0,
+        Length::Em(value) | Length::Rem(value) => value * 16.0,
+        Length::Ex(value) | Length::Ch(value) => value * 8.0,
+        Length::Ic(value) => value * 16.0,
+        Length::Rex(value) | Length::Rch(value) => value * 8.0,
+        Length::Ric(value) => value * 16.0,
+        Length::Lh(value) | Length::Rlh(value) => value * 16.0,
+        Length::Percent(_) => return None,
+        _ => return None, // cov:ignore: future non-exhaustive Length variant
+    };
+    (px.is_finite() && px > 0.0).then_some(px)
+}
+
+fn named_page_size(keyword: PageSizeKeyword) -> (f32, f32) {
+    const MM: f32 = 96.0 / 25.4;
+    match keyword {
+        PageSizeKeyword::A5 => (148.0 * MM, 210.0 * MM),
+        PageSizeKeyword::A4 => (210.0 * MM, 297.0 * MM),
+        PageSizeKeyword::A3 => (297.0 * MM, 420.0 * MM),
+        PageSizeKeyword::B5 => (176.0 * MM, 250.0 * MM),
+        PageSizeKeyword::B4 => (250.0 * MM, 353.0 * MM),
+        PageSizeKeyword::JisB5 => (182.0 * MM, 257.0 * MM),
+        PageSizeKeyword::JisB4 => (257.0 * MM, 364.0 * MM),
+        PageSizeKeyword::Letter => (8.5 * 96.0, 11.0 * 96.0),
+        PageSizeKeyword::Legal => (8.5 * 96.0, 14.0 * 96.0),
+        PageSizeKeyword::Ledger => (11.0 * 96.0, 17.0 * 96.0),
+        _ => (PageBox::A4.width, PageBox::A4.height), // cov:ignore: future non-exhaustive PageSizeKeyword variant
     }
 }
 
@@ -683,6 +787,130 @@ mod pagebox_px_baseline_tests {
     #[test]
     fn pagebox_default_is_a4() {
         assert_eq!(PageBox::default(), PageBox::A4);
+    }
+
+    #[test]
+    fn pagebox_from_page_size_resolves_lengths_and_orientation() {
+        let box_size = PageBox::from_page_size(Some(raikiri_style::PageSize::Lengths {
+            width: raikiri_style::Length::Px(300.0),
+            height: raikiri_style::Length::Px(50.0),
+        }));
+        assert_eq!(
+            box_size,
+            PageBox {
+                width: 300.0,
+                height: 50.0
+            }
+        );
+
+        let landscape = PageBox::from_page_size(Some(raikiri_style::PageSize::Named {
+            keyword: Some(raikiri_style::PageSizeKeyword::A5),
+            orientation: Some(raikiri_style::PageOrientation::Landscape),
+        }));
+        assert!(landscape.width > landscape.height);
+    }
+
+    #[test]
+    fn pagebox_from_page_size_covers_orientation_swaps() {
+        assert_eq!(
+            apply_page_orientation(50.0, 300.0, Some(PageOrientation::Landscape)),
+            (300.0, 50.0)
+        );
+        assert_eq!(
+            apply_page_orientation(300.0, 50.0, Some(PageOrientation::Portrait)),
+            (50.0, 300.0)
+        );
+        assert_eq!(apply_page_orientation(300.0, 50.0, None), (300.0, 50.0));
+    }
+
+    #[test]
+    fn pagebox_from_page_size_covers_length_units() {
+        let cases = [
+            (raikiri_style::Length::Px(1.0), 1.0),
+            (raikiri_style::Length::Pt(1.0), 96.0 / 72.0),
+            (raikiri_style::Length::Cm(1.0), 96.0 / 2.54),
+            (raikiri_style::Length::Mm(1.0), 96.0 / 25.4),
+            (raikiri_style::Length::Q(1.0), 96.0 / 101.6),
+            (raikiri_style::Length::In(1.0), 96.0),
+            (raikiri_style::Length::Pc(1.0), 16.0),
+            (raikiri_style::Length::Em(1.0), 16.0),
+            (raikiri_style::Length::Rem(1.0), 16.0),
+            (raikiri_style::Length::Ex(1.0), 8.0),
+            (raikiri_style::Length::Ch(1.0), 8.0),
+            (raikiri_style::Length::Ic(1.0), 16.0),
+            (raikiri_style::Length::Rex(1.0), 8.0),
+            (raikiri_style::Length::Rch(1.0), 8.0),
+            (raikiri_style::Length::Ric(1.0), 16.0),
+            (raikiri_style::Length::Lh(1.0), 16.0),
+            (raikiri_style::Length::Rlh(1.0), 16.0),
+        ];
+        for (length, expected) in cases {
+            let page = PageBox::from_page_size(Some(raikiri_style::PageSize::Lengths {
+                width: length,
+                height: raikiri_style::Length::Px(1.0),
+            }));
+            assert!((page.width - expected).abs() < 0.001, "got {}", page.width);
+        }
+    }
+
+    #[test]
+    fn pagebox_from_page_size_covers_named_keywords_and_invalid_fallbacks() {
+        let keywords = [
+            raikiri_style::PageSizeKeyword::A5,
+            raikiri_style::PageSizeKeyword::A4,
+            raikiri_style::PageSizeKeyword::A3,
+            raikiri_style::PageSizeKeyword::B5,
+            raikiri_style::PageSizeKeyword::B4,
+            raikiri_style::PageSizeKeyword::JisB5,
+            raikiri_style::PageSizeKeyword::JisB4,
+            raikiri_style::PageSizeKeyword::Letter,
+            raikiri_style::PageSizeKeyword::Legal,
+            raikiri_style::PageSizeKeyword::Ledger,
+        ];
+        for keyword in keywords {
+            let page = PageBox::from_page_size(Some(raikiri_style::PageSize::Named {
+                keyword: Some(keyword),
+                orientation: None,
+            }));
+            assert!(page.width > 0.0 && page.height > page.width);
+        }
+
+        assert_eq!(
+            PageBox::from_page_size(Some(raikiri_style::PageSize::Named {
+                keyword: None,
+                orientation: None,
+            })),
+            PageBox::A4
+        );
+        assert_eq!(
+            PageBox::from_page_size(Some(raikiri_style::PageSize::Lengths {
+                width: raikiri_style::Length::Px(10.0),
+                height: raikiri_style::Length::Percent(50.0),
+            })),
+            PageBox::A4
+        );
+        assert_eq!(
+            PageBox::from_page_size(Some(raikiri_style::PageSize::Lengths {
+                width: raikiri_style::Length::Px(0.0),
+                height: raikiri_style::Length::Px(10.0),
+            })),
+            PageBox::A4
+        );
+    }
+
+    #[test]
+    fn pagebox_from_page_size_uses_a4_for_auto_or_invalid_relative_input() {
+        assert_eq!(
+            PageBox::from_page_size(Some(raikiri_style::PageSize::Auto)),
+            PageBox::A4
+        );
+        assert_eq!(
+            PageBox::from_page_size(Some(raikiri_style::PageSize::Lengths {
+                width: raikiri_style::Length::Percent(50.0),
+                height: raikiri_style::Length::Px(50.0),
+            })),
+            PageBox::A4
+        );
     }
 }
 

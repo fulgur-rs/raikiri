@@ -76,6 +76,12 @@ if [ "$(git -C "$WPT_DIR" rev-parse HEAD 2>/dev/null || true)" != "$SHA" ]; then
   git -C "$WPT_DIR" checkout -q --detach FETCH_HEAD
 fi
 
+# Re-apply the current sparse patterns even when HEAD already equals the pin.
+# This matters when a worktree adds a focused test path to subset.txt after a
+# previous fetch: changing sparse-checkout patterns alone does not materialize
+# newly selected blobs.
+git -C "$WPT_DIR" sparse-checkout reapply
+
 if [ "$REPO_ROOT" != "$MAIN_WORKTREE_ROOT" ]; then
   mkdir -p "$REPO_ROOT/target"
   if [ -e "$LOCAL_WPT_DIR" ] && [ ! -L "$LOCAL_WPT_DIR" ]; then

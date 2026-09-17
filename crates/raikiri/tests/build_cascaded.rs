@@ -4,8 +4,9 @@
 //! 完結できることを verify する。
 
 use raikiri::{
-    DisplayValue, Dom, Element, MediaContext, Node, NodeId, NodeKind, ParseOptions, build_cascaded,
-    build_cascaded_with_media_context, parse,
+    DisplayValue, Dom, Element, MediaContext, Node, NodeId, NodeKind, PageBox, PageContextQuery,
+    ParseOptions, build_cascaded, build_cascaded_for_page, build_cascaded_with_media_context,
+    parse,
 };
 
 fn parse_html(source: &str) -> raikiri::UncascadedDocument {
@@ -75,6 +76,34 @@ fn explicit_media_context_reaches_umbrella_cascade() {
         screen_result.computed[p_id.0 as usize].display,
         DisplayValue::Inline
     );
+}
+
+#[test]
+fn page_size_cascade_reaches_umbrella_page_box_consumer() {
+    let doc = parse_html(
+        "<html><head><style>@page { size: 300px 50px }</style></head>         <body><p>Hi</p></body></html>",
+    );
+    let mut query = PageContextQuery::default();
+    query.is_first = true;
+    query.is_right = true;
+    let cascade = build_cascaded_for_page(&doc, &query);
+    let page_box = PageBox::from_page_size(cascade.page.size());
+    assert_eq!(page_box.width, 300.0);
+    assert_eq!(page_box.height, 50.0);
+}
+
+#[test]
+fn page_first_selector_reaches_umbrella_page_cascade() {
+    let doc = parse_html(
+        "<html><head><style>         @page { size: 300px } @page :first { size: 400px 60px }         </style></head><body><p>Hi</p></body></html>",
+    );
+    let mut query = PageContextQuery::default();
+    query.is_first = true;
+    query.is_right = true;
+    let cascade = build_cascaded_for_page(&doc, &query);
+    let page_box = PageBox::from_page_size(cascade.page.size());
+    assert_eq!(page_box.width, 400.0);
+    assert_eq!(page_box.height, 60.0);
 }
 
 #[test]

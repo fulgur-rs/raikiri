@@ -34,7 +34,7 @@ use raikiri_dom::Document;
 use raikiri_style::CascadeResult;
 use raikiri_style::property::{
     BackgroundImage, BorderStyle, CssColor, DisplayValue, Gradient, GradientStopColor,
-    OverflowValue, VerticalAlign,
+    OverflowValue, PropertyKey, PropertyValue, VerticalAlign,
 };
 use raikiri_traits::{NodeKind, PageBox};
 
@@ -42,8 +42,9 @@ use crate::text;
 
 /// Canvas 背景 fill site — CSS Backgrounds 3 §2.11 canvas propagation の minimal 実装。
 ///
-/// html の background を取得し、TRANSPARENT なら body に fallback。どちらかが opaque なら
-/// PageBox 全域をその色で fill。両方 transparent なら UA default white。
+/// First consume the cascaded page-context background, then inspect html and
+/// body backgrounds. An opaque source fills the PageBox; when all sources are
+/// transparent the UA default is white.
 pub(crate) fn paint_canvas_background(
     scene: &mut impl PaintScene,
     document: &Document,
@@ -51,7 +52,8 @@ pub(crate) fn paint_canvas_background(
     page_box: PageBox,
 ) {
     let rect = kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64);
-    let canvas_color = canvas_background_color(document, cascade);
+    let canvas_color =
+        page_background_color(cascade).or_else(|| canvas_background_color(document, cascade));
     let color = canvas_color.unwrap_or(peniko::Color::from_rgba8(255, 255, 255, 255));
     scene.fill(
         peniko::Fill::NonZero,
@@ -60,6 +62,36 @@ pub(crate) fn paint_canvas_background(
         None,
         &rect,
     );
+}
+
+fn page_background_color(cascade: &CascadeResult) -> Option<Color> {
+    let declarations = cascade.page.declarations();
+    let mut has_background_declaration = false;
+    let mut background_color = CssColor::TRANSPARENT;
+    let mut background_image = BackgroundImage::None;
+    let mut current_color = CssColor::BLACK;
+
+    if let Some(PropertyValue::BackgroundColor(value)) =
+        declarations.get(&PropertyKey::BackgroundColor)
+    {
+        background_color = *value;
+        has_background_declaration = true;
+    }
+    if let Some(PropertyValue::BackgroundImage(value)) =
+        declarations.get(&PropertyKey::BackgroundImage)
+    {
+        background_image = value.clone();
+        has_background_declaration = true;
+    }
+    if let Some(PropertyValue::Color(value)) = declarations.get(&PropertyKey::Color) {
+        current_color = *value;
+    }
+
+    if !has_background_declaration {
+        return None;
+    }
+    effective_background_color(background_color, &background_image, current_color)
+        .map(|color| Color::from_rgba8(color.r, color.g, color.b, color.a))
 }
 
 fn canvas_background_color(document: &Document, cascade: &CascadeResult) -> Option<Color> {
