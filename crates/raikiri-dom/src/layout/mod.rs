@@ -108,6 +108,94 @@ fn apply_page_content_box_to_body(
     };
 }
 
+/// Resolve the width of a direct-body absolutely positioned box whose
+/// horizontal insets and preferred width are all `auto`.
+///
+/// Taffy's absolute-position fallback leaves such a box at the containing
+/// block width even when a resolved horizontal margin consumes part of that
+/// width. CSS 2.1 §10.3.7 solves the horizontal constraint instead: the
+/// border box plus both margins must fit the containing block. Do this before
+/// the root layout so text descendants receive the corrected width while
+/// shaping/reflowing; changing only `unrounded_layout` after the compute would
+/// leave their line breaks stale.
+///
+/// The first implementation is deliberately limited to direct `<body>`
+/// children in the static containing block. Nested containing blocks and
+/// viewport-fixed boxes need their own containing-block geometry and remain
+/// on Taffy's normal path until that geometry is available.
+fn resolve_direct_absolute_auto_widths(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    containing_width: f32,
+) {
+    fn used(value: ComputedLengthPercentageOrAuto, basis: f32) -> Option<f32> {
+        let px = match value {
+            ComputedLengthPercentageOrAuto::Px(px) => px,
+            ComputedLengthPercentageOrAuto::Percent(percent) => basis * percent / 100.0,
+            ComputedLengthPercentageOrAuto::Calc(value) => value.px + basis * value.percent / 100.0,
+            ComputedLengthPercentageOrAuto::Auto => return None,
+        };
+        px.is_finite().then_some(px)
+    }
+
+    fn padding(value: ComputedLengthPercentage, basis: f32) -> Option<f32> {
+        let px = match value {
+            ComputedLengthPercentage::Px(px) => px,
+            ComputedLengthPercentage::Percent(percent) => basis * percent / 100.0,
+        };
+        px.is_finite().then_some(px)
+    }
+
+    if !containing_width.is_finite() || containing_width <= 0.0 {
+        return;
+    }
+    let children = document.nodes[body_id].children.clone();
+    for child_id in children {
+        let computed = &cascade.computed[child_id];
+        if !matches!(computed.position, PositionValue::Absolute)
+            || !matches!(computed.width, ComputedLengthPercentageOrAuto::Auto)
+            || !matches!(computed.left, ComputedLengthPercentageOrAuto::Auto)
+            || !matches!(computed.right, ComputedLengthPercentageOrAuto::Auto)
+        {
+            continue;
+        }
+
+        let margin_left = used(computed.margin.left, containing_width);
+        let margin_right = used(computed.margin.right, containing_width);
+        if margin_left.is_none() && margin_right.is_none() {
+            continue;
+        }
+        let margin_left = margin_left.unwrap_or(0.0);
+        let margin_right = margin_right.unwrap_or(0.0);
+        let padding_left = padding(computed.padding.left, containing_width);
+        let padding_right = padding(computed.padding.right, containing_width);
+        let Some(padding_left) = padding_left else {
+            continue;
+        };
+        let Some(padding_right) = padding_right else {
+            continue;
+        };
+        let border_left = computed.border.left.width().px();
+        let border_right = computed.border.right.width().px();
+        if !border_left.is_finite() || !border_right.is_finite() {
+            continue;
+        }
+
+        let available_border_box = containing_width - margin_left - margin_right;
+        let width = match computed.box_sizing {
+            StyleBoxSizing::BorderBox => available_border_box,
+            StyleBoxSizing::ContentBox => {
+                available_border_box - border_left - border_right - padding_left - padding_right
+            }
+            _ => available_border_box - border_left - border_right - padding_left - padding_right,
+        };
+        if width.is_finite() {
+            document.nodes[child_id].style.size.width = Dimension::length(width.max(0.0));
+        }
+    }
+}
+
 /// Used page margins resolved from the page-context cascade.
 ///
 /// The four values are paper-relative CSS pixels.  Unlike ordinary element
@@ -5907,6 +5995,11 @@ pub fn layout_single_page(
     // Step 4: body.style.size は紙面ではなく page content box へ強制セット。
     // Page margins are painted/represented outside this taffy root.
     apply_page_content_box_to_body(document, body_id, page_box, margins, insets);
+    // Taffy's static-position absolute fallback does not account for a
+    // resolved horizontal margin when width/left/right are all auto. Resolve
+    // that narrow case before compute so descendants are shaped against the
+    // same border-box width that the containing-block equation requires.
+    resolve_direct_absolute_auto_widths(document, cascade, body_id, content_width);
 
     // Step 5: taffy compute
     compute_root_layout(
