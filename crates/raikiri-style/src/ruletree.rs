@@ -20,6 +20,246 @@ use crate::rule::{Declaration, StyleRule, parse_declaration_block};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 use crate::{PseudoClass, PseudoElem, RaikiriSelectorImpl, RaikiriSelectorParser};
 
+/// Flatten the subset of cascade layers that the rule parser can evaluate.
+///
+/// The generic rule parser stores unsupported at-rules as opaque records, which
+/// would otherwise hide `@page` and ordinary style rules nested in `@layer`.
+/// Flattening here keeps the existing parser and rule-tree representation while
+/// ordering normal layers from lower to higher precedence.  Unlayered rules are
+/// appended last, as required by the normal cascade.  This is intentionally a
+/// small source-level pass; nested blocks, strings, and comments are skipped
+/// while locating only top-level layer blocks.
+fn expand_cascade_layers(source: &str) -> Vec<(u32, String)> {
+    let mut cursor = 0;
+    let mut plain_start = 0;
+    let mut unlayered = String::with_capacity(source.len());
+    let mut blocks: Vec<(String, String)> = Vec::new();
+    let mut declared_order = Vec::new();
+    let mut found_layer = false;
+
+    while let Some(start) = find_top_level_layer(source, cursor) {
+        unlayered.push_str(&source[plain_start..start]);
+        let prelude_start = start + "@layer".len();
+        let Some((delimiter, delimiter_index)) = find_layer_delimiter(source, prelude_start) else {
+            unlayered.push_str(&source[start..]);
+            break;
+        };
+        let prelude = source[prelude_start..delimiter_index].trim();
+        match delimiter {
+            b';' => {
+                for name in prelude
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                {
+                    if !declared_order.iter().any(|existing| existing == name) {
+                        declared_order.push(name.to_owned());
+                    }
+                }
+                cursor = delimiter_index + 1;
+                plain_start = cursor;
+                found_layer = true;
+            }
+            b'{' => {
+                let Some(close) = matching_brace(source, delimiter_index) else {
+                    unlayered.push_str(&source[start..]);
+                    break;
+                };
+                if !prelude.is_empty() {
+                    blocks.push((
+                        prelude.to_owned(),
+                        source[delimiter_index + 1..close].to_owned(),
+                    ));
+                    found_layer = true;
+                    cursor = close + 1;
+                    plain_start = cursor;
+                } else {
+                    unlayered.push_str(&source[start..=close]);
+                    cursor = close + 1;
+                    plain_start = cursor;
+                }
+            }
+            _ => {
+                unlayered.push_str(&source[start..]);
+                break;
+            }
+        }
+    }
+
+    if !found_layer {
+        return vec![(u32::MAX, source.to_owned())];
+    }
+    unlayered.push_str(&source[plain_start..]);
+
+    let mut order = declared_order;
+    for (name, _) in &blocks {
+        if !order.iter().any(|existing| existing == name) {
+            order.push(name.clone());
+        }
+    }
+    let mut chunks = Vec::with_capacity(order.len() + 1);
+    for (layer_order, name) in order.into_iter().enumerate() {
+        let mut body = String::new();
+        for (block_name, block_body) in &blocks {
+            if block_name == &name {
+                body.push_str(block_body);
+                body.push('\n');
+            }
+        }
+        chunks.push((layer_order as u32, body));
+    }
+    chunks.push((u32::MAX, unlayered));
+    chunks
+}
+
+fn find_top_level_layer(source: &str, from: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut index = from;
+    let mut depth = 0_u32;
+    let mut quote = None;
+    let mut comment = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if comment {
+            if byte == b'*' && bytes.get(index + 1) == Some(&b'/') {
+                comment = false;
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if let Some(delimiter) = quote {
+            if byte == b'\\' {
+                index = index.saturating_add(2);
+            } else {
+                if byte == delimiter {
+                    quote = None;
+                }
+                index += 1;
+            }
+            continue;
+        }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            comment = true;
+            index += 2;
+            continue;
+        }
+        if byte == b'\'' || byte == b'"' {
+            quote = Some(byte);
+            index += 1;
+            continue;
+        }
+        match byte {
+            b'{' => depth = depth.saturating_add(1),
+            b'}' => depth = depth.saturating_sub(1),
+            b'@' if depth == 0
+                && source[index..].len() >= "@layer".len()
+                && source[index..index + "@layer".len()].eq_ignore_ascii_case("@layer")
+                && source
+                    .as_bytes()
+                    .get(index + "@layer".len())
+                    .is_none_or(|next| !next.is_ascii_alphanumeric() && *next != b'-') =>
+            {
+                return Some(index);
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+fn find_layer_delimiter(source: &str, from: usize) -> Option<(u8, usize)> {
+    let bytes = source.as_bytes();
+    let mut index = from;
+    let mut quote = None;
+    let mut comment = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if comment {
+            if byte == b'*' && bytes.get(index + 1) == Some(&b'/') {
+                comment = false;
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if let Some(delimiter) = quote {
+            if byte == b'\\' {
+                index = index.saturating_add(2);
+            } else {
+                if byte == delimiter {
+                    quote = None;
+                }
+                index += 1;
+            }
+            continue;
+        }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            comment = true;
+            index += 2;
+            continue;
+        }
+        if byte == b'\'' || byte == b'"' {
+            quote = Some(byte);
+        } else if byte == b'{' || byte == b';' {
+            return Some((byte, index));
+        }
+        index += 1;
+    }
+    None
+}
+
+fn matching_brace(source: &str, open: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut index = open + 1;
+    let mut depth = 1_u32;
+    let mut quote = None;
+    let mut comment = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if comment {
+            if byte == b'*' && bytes.get(index + 1) == Some(&b'/') {
+                comment = false;
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if let Some(delimiter) = quote {
+            if byte == b'\\' {
+                index = index.saturating_add(2);
+            } else {
+                if byte == delimiter {
+                    quote = None;
+                }
+                index += 1;
+            }
+            continue;
+        }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            comment = true;
+            index += 2;
+            continue;
+        }
+        if byte == b'\'' || byte == b'"' {
+            quote = Some(byte);
+        } else if byte == b'{' {
+            depth = depth.saturating_add(1);
+        } else if byte == b'}' {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                return Some(index);
+            }
+        }
+        index += 1;
+    }
+    None
+}
+
 /// Cascade origin (CSS Cascading L4 §6.2)。
 ///
 /// [`Origin::AuthorPresentationalHint`] は CSS Cascading L5 §6.5 "Precedence
@@ -379,6 +619,12 @@ impl RuleTree {
     ///   gate により無条件 drop されていたが) `counter_styles` に反映される
     ///   ようになった。
     pub fn add_stylesheet(&mut self, source: &str, origin: Origin) {
+        for (layer_order, chunk) in expand_cascade_layers(source) {
+            self.add_stylesheet_chunk(&chunk, origin, layer_order);
+        }
+    }
+
+    fn add_stylesheet_chunk(&mut self, source: &str, origin: Origin, layer_order: u32) {
         let mut input = ParserInput::new(source);
         let mut parser = Parser::new(&mut input);
         let mut rule_parser = StyleRuleParser { source };
@@ -445,6 +691,7 @@ impl RuleTree {
                         bleed_declarations,
                         margin_box_rules,
                         source_order: page_order,
+                        layer_order,
                         origin,
                     });
                     self.rules.push(CssRule {

@@ -80,16 +80,15 @@ impl RaikiriTreeSink {
         idx
     }
 
-    /// Text を parent の最後の child に append。
+    /// Text を parent の最後の child に追記する。
     ///
-    /// Note: TreeSink 契約 "既に末尾 child が Text なら concat" は現状の spike
-    /// では実装せず、毎回新規 Text node を作る (raikiri-dom::Node.text_content
-    /// が SmolStr で pit-of-success な mutate API 未整備のため)。parley layout
-    /// は adjacent Text を単一 inline run として処理する想定。
+    /// HTML tokenizer は一つの inline run を複数 callback に分割することが
+    /// ある。隣接 Text を別々の block leaf にすると通常フローで誤改行
+    /// するため、TreeSink 契約どおり末尾 Text と結合する。
     fn append_text_smart(&self, parent: usize, text: StrTendril) {
         self.document
             .borrow_mut()
-            .append_text(parent, text.to_string());
+            .append_text_coalesced(parent, text.to_string());
     }
 }
 

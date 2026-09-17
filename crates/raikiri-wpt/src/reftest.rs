@@ -78,6 +78,15 @@ pub struct RenderedImage {
     pub rgba: Vec<u8>,
 }
 
+/// Rasterized paged document. Each page keeps its own paper dimensions so a
+/// page selector can change `@page size` without flattening the result into a
+/// viewport-sized strip.
+#[derive(Debug, Clone, Default)]
+pub struct RenderedDocument {
+    /// Pages in document order.
+    pub pages: Vec<RenderedImage>,
+}
+
 // ── Tolerance re-use ───────────────────────────────────────────────────
 // Tolerance lives in `crate::runner` to keep a single source of truth.
 // Re-export here for convenience.
@@ -408,14 +417,27 @@ pub fn discover_all_pairs_with_docroot(walk_root: &Path, docroot: &Path) -> Vec<
 
 // ── Rendering: raikiri ─────────────────────────────────────────────────
 
-/// Render `html` to a `RenderedImage` via raikiri (800×600 default).
+/// Render the first page of `html` via raikiri.
 ///
-/// Uses `raikiri_html::parse` → first-page `build_cascaded_for_page` →
-/// `layout_single_page` → `paint_single_page` →
-/// `anyrender::render_to_buffer::<VelloCpuImageRenderer>`. Font selection is
-/// via `wpt/fonts` when available, otherwise `FontContext::new()`.
+/// This compatibility wrapper retains the original single-image API.  Paged
+/// callers should use [`render_raikiri_pages`] so page count and per-page
+/// `@page` selectors are preserved.
 pub fn render_raikiri(html: &str, width: u32, height: u32) -> Result<RenderedImage, ReftestError> {
     render_raikiri_inner(html, width, height)
+        .map_err(|e| ReftestError::RaikiriRender(e.to_string()))
+}
+
+/// Render `html` into one image per output page.
+///
+/// The reftest viewport remains the fallback PageBox (and the returned page
+/// images are never concatenated into a synthetic strip).  An explicit
+/// `@page size` replaces that fallback for the matching page context.
+pub fn render_raikiri_pages(
+    html: &str,
+    width: u32,
+    height: u32,
+) -> Result<RenderedDocument, ReftestError> {
+    render_raikiri_pages_inner(html, width, height)
         .map_err(|e| ReftestError::RaikiriRender(e.to_string()))
 }
 
@@ -424,10 +446,499 @@ fn render_raikiri_inner(
     width: u32,
     height: u32,
 ) -> Result<RenderedImage, Box<dyn std::error::Error>> {
-    use raikiri::PageBox;
+    let document = render_raikiri_pages_inner(html, width, height)?;
+    document
+        .pages
+        .into_iter()
+        .next()
+        .ok_or_else(|| "raikiri produced no pages".into())
+}
+
+fn parse_print_length(token: &str, percent_basis: Option<f32>) -> Option<f32> {
+    let token = token.trim().trim_matches(|c: char| c == ',' || c == ';');
+    if token.is_empty() {
+        return None;
+    }
+    let mut split = 0;
+    for (index, ch) in token.char_indices() {
+        if ch.is_ascii_alphabetic() || ch == '%' {
+            split = index;
+            break;
+        }
+    }
+    if split == 0 {
+        split = token.len();
+    }
+    let value = token[..split].parse::<f32>().ok()?;
+    let unit = token[split..].to_ascii_lowercase();
+    let px = match unit.as_str() {
+        "" | "px" => value,
+        "in" => value * 96.0,
+        "cm" => value * 96.0 / 2.54,
+        "mm" => value * 96.0 / 25.4,
+        "q" => value * 96.0 / 101.6,
+        "pt" => value * 96.0 / 72.0,
+        "pc" => value * 16.0,
+        "%" => percent_basis? * value / 100.0,
+        _ => return None,
+    };
+    px.is_finite().then_some(px)
+}
+
+fn print_declaration(block: &str, name: &str) -> Option<String> {
+    let name = name.to_ascii_lowercase();
+    for declaration in block.split(';') {
+        let Some((key, value)) = declaration.split_once(':') else {
+            continue;
+        };
+        if key
+            .split_whitespace()
+            .last()
+            .is_some_and(|key| key.eq_ignore_ascii_case(name.as_str()))
+        {
+            return Some(value.trim().to_string());
+        }
+    }
+    None
+}
+
+fn balanced_css_block(input: &str, open: usize) -> Option<&str> {
+    let bytes = input.as_bytes();
+    let mut depth = 0_u32;
+    let mut quote = None;
+    for (index, &byte) in bytes.iter().enumerate().skip(open) {
+        if let Some(delimiter) = quote {
+            if byte == delimiter {
+                quote = None;
+            }
+            continue;
+        }
+        if byte == b'"' || byte == b'\'' {
+            quote = Some(byte);
+        } else if byte == b'{' {
+            depth += 1;
+        } else if byte == b'}' {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                return input.get(open + 1..index);
+            }
+        }
+    }
+    None
+}
+
+fn page_block(input: &str) -> Option<&str> {
+    let lower = input.to_ascii_lowercase();
+    let page_start = lower.find("@page")?;
+    let open = lower[page_start..].find('{')? + page_start;
+    balanced_css_block(input, open)
+}
+
+fn page_block_named<'a>(input: &'a str, name: &str) -> Option<&'a str> {
+    let lower = input.to_ascii_lowercase();
+    let name = name.to_ascii_lowercase();
+    let mut search = 0;
+    while let Some(relative) = lower[search..].find("@page") {
+        let page_start = search + relative;
+        let open = lower[page_start..].find('{')? + page_start;
+        let selector = lower[page_start + "@page".len()..open].trim();
+        if selector
+            .split_whitespace()
+            .any(|token| !token.starts_with(':') && token == name)
+        {
+            return balanced_css_block(input, open);
+        }
+        search = open + 1;
+    }
+    None
+}
+
+fn first_authored_page_name(input: &str) -> Option<String> {
+    let lower = input.to_ascii_lowercase();
+    let start = lower.find("page:")? + "page:".len();
+    let rest = &input[start..];
+    let end = rest
+        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'))
+        .unwrap_or(rest.len());
+    let name = rest[..end].trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+fn inject_default_page_margin(input: &str) -> String {
+    let lower = input.to_ascii_lowercase();
+    let Some(page_start) = lower.find("@page") else {
+        return input.to_string();
+    };
+    let Some(relative_open) = lower[page_start..].find('{') else {
+        return input.to_string();
+    };
+    let open = page_start + relative_open;
+    let content_start = open + 1;
+    let mut nested_start = input.len();
+    let mut depth = 0_u32;
+    let mut quote = None;
+    for index in content_start..input.len() {
+        let byte = input.as_bytes()[index];
+        if let Some(delimiter) = quote {
+            if byte == delimiter {
+                quote = None;
+            }
+            continue;
+        }
+        if byte == b'"' || byte == b'\'' {
+            quote = Some(byte);
+        } else if (byte == b'{' || byte == b'}') && depth == 0 {
+            nested_start = index;
+            break;
+        } else if byte == b'{' {
+            depth += 1;
+        }
+    }
+    let top_level = &input[content_start..nested_start];
+    let has_authored_page_edge = top_level.split(';').any(|declaration| {
+        declaration
+            .split_once(':')
+            .and_then(|(key, _)| key.split_whitespace().last())
+            .is_some_and(|key| {
+                let key = key.to_ascii_lowercase();
+                key == "margin"
+                    || key.starts_with("margin-")
+                    || key == "border"
+                    || key.starts_with("border-")
+            })
+    });
+    if has_authored_page_edge {
+        return input.to_string();
+    }
+    let mut output = String::with_capacity(input.len() + 16);
+    output.push_str(&input[..content_start]);
+    output.push_str("margin: 48px;");
+    output.push_str(&input[content_start..]);
+    output
+}
+
+fn authored_page_viewport(input: &str, fallback_width: f32, fallback_height: f32) -> (f32, f32) {
+    let block = first_authored_page_name(input)
+        .as_deref()
+        .and_then(|name| page_block_named(input, name))
+        .or_else(|| page_block(input));
+    let Some(block) = block else {
+        return (fallback_width, fallback_height);
+    };
+    let size_value = print_declaration(block, "size");
+    let mut page_width = fallback_width;
+    let mut page_height = fallback_height;
+    if let Some(size) = size_value.as_deref() {
+        let mut dimensions = Vec::new();
+        let mut landscape = false;
+        let mut portrait = false;
+        for token in size.split_whitespace() {
+            match token.to_ascii_lowercase().as_str() {
+                "landscape" => landscape = true,
+                "portrait" => portrait = true,
+                "a4" => {
+                    dimensions = vec![793.7008, 1122.5197];
+                }
+                "a3" => {
+                    dimensions = vec![1122.5197, 1587.4016];
+                }
+                "a5" => {
+                    dimensions = vec![559.3701, 793.7008];
+                }
+                "letter" => {
+                    dimensions = vec![612.0, 792.0];
+                }
+                "legal" => {
+                    dimensions = vec![612.0, 1008.0];
+                }
+                _ => {
+                    if let Some(value) = parse_print_length(token, None) {
+                        dimensions.push(value);
+                    }
+                }
+            }
+        }
+        if dimensions.len() == 1 {
+            page_width = dimensions[0];
+            page_height = dimensions[0];
+        } else if dimensions.len() >= 2 {
+            page_width = dimensions[0];
+            page_height = dimensions[1];
+        }
+        if (landscape && page_width < page_height) || (portrait && page_width > page_height) {
+            std::mem::swap(&mut page_width, &mut page_height);
+        }
+    }
+
+    let mut margins = [0.0_f32; 4];
+    if let Some(value) = print_declaration(block, "margin") {
+        let tokens: Vec<_> = value.split_whitespace().collect();
+        let values: Vec<_> = tokens
+            .iter()
+            .map(|token| parse_print_length(token, Some(page_width)))
+            .collect();
+        if values.iter().all(Option::is_some) && !values.is_empty() {
+            let values: Vec<f32> = values.into_iter().map(Option::unwrap).collect();
+            margins = match values.as_slice() {
+                [one] => [*one, *one, *one, *one],
+                [vertical, horizontal] => [*vertical, *horizontal, *vertical, *horizontal],
+                [top, horizontal, bottom] => [*top, *horizontal, *bottom, *horizontal],
+                [top, right, bottom, left] => [*top, *right, *bottom, *left],
+                _ => margins,
+            };
+        }
+    }
+    for (name, index) in [
+        ("margin-top", 0),
+        ("margin-right", 1),
+        ("margin-bottom", 2),
+        ("margin-left", 3),
+    ] {
+        if let Some(value) = print_declaration(block, name)
+            && let Some(value) = parse_print_length(&value, Some(page_width))
+        {
+            margins[index] = value;
+        }
+    }
+    (
+        (page_width - margins[1] - margins[3]).max(1.0),
+        (page_height - margins[0] - margins[2]).max(1.0),
+    )
+}
+
+/// Expand viewport-relative lengths before the style cascade.
+///
+/// The style layer stores only resolved absolute lengths and intentionally has
+/// no viewport object.  The WPT adapter does have the harness viewport, so it
+/// resolves the viewport units here while preserving other CSS tokens.  This
+/// is also useful for reference documents that express one printed page as
+/// `height: 100vh`.
+fn expand_viewport_units(input: &str, width: f32, height: f32) -> String {
+    fn unit_value(unit: &str, width: f32, height: f32) -> Option<f32> {
+        let value = match unit {
+            "vw" | "svw" | "lvw" | "dvw" => width / 100.0,
+            "vh" | "svh" | "lvh" | "dvh" => height / 100.0,
+            "vmin" | "svmin" | "lvmin" | "dvmin" => width.min(height) / 100.0,
+            "vmax" | "svmax" | "lvmax" | "dvmax" => width.max(height) / 100.0,
+            _ => return None,
+        };
+        Some(value)
+    }
+
+    // Resolve units in inline `style` attributes as well as stylesheet text.
+    // The normal scanner intentionally skips quoted strings, but an HTML
+    // attribute quote is not a CSS string; reference pages commonly put
+    // `height:100vh` on an inline grid container.
+    let mut source = input.to_string();
+    let lower = input.to_ascii_lowercase();
+    let mut cursor = 0usize;
+    let mut copied_until = 0usize;
+    let mut attributes = String::with_capacity(input.len());
+    while let Some(relative) = lower[cursor..].find("style") {
+        let start = cursor + relative;
+        let preceded_by_ident = start > 0
+            && (lower.as_bytes()[start - 1].is_ascii_alphanumeric()
+                || lower.as_bytes()[start - 1] == b'-'
+                || lower.as_bytes()[start - 1] == b'_');
+        if preceded_by_ident {
+            cursor = start + 5;
+            continue;
+        }
+        let mut after = start + 5;
+        while after < input.len() && input.as_bytes()[after].is_ascii_whitespace() {
+            after += 1;
+        }
+        if after >= input.len() || input.as_bytes()[after] != b'=' {
+            cursor = start + 5;
+            continue;
+        }
+        after += 1;
+        while after < input.len() && input.as_bytes()[after].is_ascii_whitespace() {
+            after += 1;
+        }
+        let Some(&delimiter) = input.as_bytes().get(after) else {
+            break;
+        };
+        if delimiter != b'"' && delimiter != b'\'' {
+            cursor = after;
+            continue;
+        }
+        let value_start = after + 1;
+        let mut value_end = value_start;
+        while value_end < input.len() && input.as_bytes()[value_end] != delimiter {
+            value_end += 1;
+        }
+        if value_end >= input.len() {
+            break;
+        }
+        attributes.push_str(&input[copied_until..value_start]);
+        attributes.push_str(&expand_viewport_units(
+            &input[value_start..value_end],
+            width,
+            height,
+        ));
+        copied_until = value_end;
+        cursor = value_end + 1;
+    }
+    if copied_until != 0 {
+        attributes.push_str(&input[copied_until..]);
+        source = attributes;
+    }
+    let input = source.as_str();
+    let bytes = input.as_bytes();
+    let mut result = String::with_capacity(input.len());
+    let mut i = 0;
+    let mut quote = None;
+    while i < bytes.len() {
+        if let Some(delimiter) = quote {
+            result.push(bytes[i] as char);
+            if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                i += 1;
+                result.push(bytes[i] as char);
+            } else if bytes[i] == delimiter {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        if bytes[i] == b'"' || bytes[i] == b'\'' {
+            quote = Some(bytes[i]);
+            result.push(bytes[i] as char);
+            i += 1;
+            continue;
+        }
+        if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+            let start = i;
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i = (i + 2).min(bytes.len());
+            result.push_str(&input[start..i]);
+            continue;
+        }
+
+        let number_start = i;
+        if bytes[i] == b'+' || bytes[i] == b'-' {
+            if i + 1 >= bytes.len() || !(bytes[i + 1].is_ascii_digit() || bytes[i + 1] == b'.') {
+                result.push(bytes[i] as char);
+                i += 1;
+                continue;
+            }
+            i += 1;
+        }
+        let mut digits = false;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            digits = true;
+            i += 1;
+        }
+        if i < bytes.len() && bytes[i] == b'.' {
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                digits = true;
+                i += 1;
+            }
+        }
+        if !digits {
+            result.push(bytes[number_start] as char);
+            i = number_start + 1;
+            continue;
+        }
+        let number = &input[number_start..i];
+        let unit_start = i;
+        while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+            i += 1;
+        }
+        let unit = input[unit_start..i].to_ascii_lowercase();
+        let Some(px_per_unit) = unit_value(&unit, width, height) else {
+            result.push_str(&input[number_start..i]);
+            continue;
+        };
+        let Ok(number) = number.parse::<f32>() else {
+            result.push_str(&input[number_start..i]);
+            continue;
+        };
+        result.push_str(&format!("{:.6}px", number * px_per_unit));
+    }
+    result
+}
+
+fn page_descriptor_length(value: &raikiri_style::property::Length, basis: f32) -> Option<f32> {
+    use raikiri_style::property::Length;
+    let value = match value {
+        Length::Px(value) => *value,
+        Length::Percent(value) => basis * *value / 100.0,
+        Length::Pt(value) => *value * 96.0 / 72.0,
+        Length::Cm(value) => *value * 96.0 / 2.54,
+        Length::Mm(value) => *value * 96.0 / 25.4,
+        Length::Q(value) => *value * 96.0 / 101.6,
+        Length::In(value) => *value * 96.0,
+        Length::Pc(value) => *value * 16.0,
+        _ => return None,
+    };
+    value.is_finite().then_some(value)
+}
+
+fn page_descriptor_dimension(
+    value: &raikiri_style::property::PropertyValue,
+    basis: f32,
+) -> Option<f32> {
+    use raikiri_style::property::{LengthOrAuto, PropertyValue};
+    let value = match value {
+        PropertyValue::Width(LengthOrAuto::Length(value))
+        | PropertyValue::Height(LengthOrAuto::Length(value)) => {
+            page_descriptor_length(value, basis)?
+        }
+        PropertyValue::Width(LengthOrAuto::Calc(value))
+        | PropertyValue::Height(LengthOrAuto::Calc(value)) => {
+            value.px + basis * value.percent / 100.0
+        }
+        _ => return None,
+    };
+    if !value.is_finite() || value <= 0.0 {
+        return None;
+    }
+    let rounded = value.round();
+    Some(if (value - rounded).abs() < 0.001 {
+        rounded
+    } else {
+        value
+    })
+}
+
+fn page_box_from_cascade(cascade: &raikiri_style::CascadeResult) -> raikiri_traits::PageBox {
+    let base = raikiri_traits::PageBox::from_page_size(cascade.page.size());
+    let margins = raikiri_dom::page_margins(cascade, base);
+    let declarations = cascade.page.declarations();
+    let width = declarations
+        .get(&raikiri_style::property::PropertyKey::Width)
+        .and_then(|value| page_descriptor_dimension(value, base.width));
+    let height = declarations
+        .get(&raikiri_style::property::PropertyKey::Height)
+        .and_then(|value| page_descriptor_dimension(value, base.height));
+    match (width, height) {
+        (Some(width), Some(height)) => {
+            let mut page = raikiri_traits::PageBox::new();
+            page.width = width + margins.left + margins.right;
+            page.height = height + margins.top + margins.bottom;
+            page
+        }
+        _ => base,
+    }
+}
+
+fn render_raikiri_pages_inner(
+    html: &str,
+    width: u32,
+    height: u32,
+) -> Result<RenderedDocument, Box<dyn std::error::Error>> {
+    use anyrender::render_to_buffer;
+    use anyrender_vello_cpu::VelloCpuImageRenderer;
     use raikiri::ParseOptions;
-    use raikiri::build_cascaded_for_page;
-    use raikiri_dom::layout_single_page;
+    use raikiri::{
+        Atom, PageBox, PageContextQuery, build_cascaded_for_page, build_page_scene_for_page_named,
+    };
+    use raikiri_dom::layout_pages;
     use raikiri_html::parse;
 
     let opts = ParseOptions {
@@ -435,45 +946,160 @@ fn render_raikiri_inner(
         network: None,
         base_url: None,
     };
-    // Use bounded parse with raikiri_html directly to get UncascadedDocument,
-    // then cascade, then layout.
-    let uncascaded = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
-    let mut page_query = raikiri::PageContextQuery::default();
-    page_query.is_first = true;
-    page_query.is_right = true;
-    let cascade = build_cascaded_for_page(&uncascaded, &page_query);
-    let mut dom = uncascaded.dom;
-    let mut page_box = PageBox::A4;
-    page_box.width = width as f32;
-    page_box.height = height as f32;
-    // For WPT fixtures we prefer bundled fonts when wpt/fonts exists; fallback to system.
-    let font_ctx = resolve_font_ctx();
-    layout_single_page(&mut dom, &cascade, page_box, font_ctx)
-        .map_err(|e| format!("layout: {e:?}"))?;
-    // Paint via PageScene rasterize path (reuses raikiri_paint verbatim)
-    let scene = raikiri::build_page_scene(&dom, &cascade, page_box);
-    // Rasterize produces PNG; we want raw RGBA for diff without encode/decode roundtrip.
-    // Reproduce the triple inline to get RGBA directly, to avoid PNG overhead.
-    let rgba = {
-        use anyrender::render_to_buffer;
-        use anyrender_vello_cpu::VelloCpuImageRenderer;
-        let w = page_box.width.ceil() as u32;
-        let h = page_box.height.ceil() as u32;
-        render_to_buffer::<VelloCpuImageRenderer, _>(
-            |painter| raikiri_paint::paint_single_page(painter, &dom, &cascade, page_box),
-            w,
-            h,
-        )
+    // WPT's print UA supplies a 0.5in default page margin when an authored
+    // `@page` rule omits all page-margin declarations.  Add that UA value
+    // before resolving viewport units so both the content box and `vh` use the
+    // same print viewport as the reference renderer.
+    let html = inject_default_page_margin(html);
+    let (viewport_width, viewport_height) =
+        authored_page_viewport(&html, width as f32, height as f32);
+    let html = expand_viewport_units(&html, viewport_width, viewport_height);
+    let mut uncascaded = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
+    let mut first_query = PageContextQuery::default();
+    first_query.is_first = true;
+    first_query.is_right = true;
+    first_query.is_left = false;
+    let default_cascade = build_cascaded_for_page(&uncascaded, &first_query);
+    // Page progression follows the root direction: in RTL the first page is
+    // the left/verso page, while LTR starts on the right/recto page.
+    let direction_node = {
+        let mut stack = vec![uncascaded.dom.root_index()];
+        let mut found = None;
+        while let Some(node_id) = stack.pop() {
+            let Some(node) = uncascaded.dom.get_node(node_id) else {
+                continue;
+            };
+            if node.tag_name() == Some("html") {
+                found = Some(node_id);
+                break;
+            }
+            stack.extend(node.children.iter().rev().copied());
+        }
+        found
     };
-    // Ensure we actually used the scene (avoid dead-code warning); scene is still built for parity.
-    let _ = scene;
-    Ok(RenderedImage {
-        width,
-        height,
-        rgba,
-    })
-}
+    let first_page_is_left = direction_node
+        .and_then(|node_id| default_cascade.computed.get(node_id))
+        .is_some_and(|computed| {
+            matches!(computed.direction, raikiri_style::property::Direction::Rtl)
+        });
+    first_query.is_left = first_page_is_left;
+    first_query.is_right = !first_page_is_left;
+    // A named page on the first rendered box selects the initial page context;
+    // resolve that selector before layout so its size/margins become the
+    // containing block used by the first shaping pass.
+    if let Some(name) = raikiri_dom::first_page_name(&uncascaded.dom, &default_cascade) {
+        first_query.page_name = Some(Atom::from(name.as_str()));
+    }
+    let fixed_page_width = if default_cascade.page.size().is_some() {
+        page_box_from_cascade(&default_cascade).width
+    } else {
+        width as f32
+    };
+    let first_cascade = if first_query.page_name.is_some() {
+        build_cascaded_for_page(&uncascaded, &first_query)
+    } else {
+        default_cascade
+    };
 
+    // Keep the established 800×600 (or caller-supplied) harness dimensions as
+    // the fallback.  Only an authored page size changes the paper box.
+    let mut fallback_page_box = PageBox::new();
+    fallback_page_box.width = width as f32;
+    fallback_page_box.height = height as f32;
+    let first_page_box = if first_cascade.page.size().is_some() {
+        page_box_from_cascade(&first_cascade)
+    } else {
+        fallback_page_box
+    };
+
+    let slices = layout_pages(
+        &mut uncascaded.dom,
+        &first_cascade,
+        first_page_box,
+        resolve_font_ctx(),
+    )
+    .map_err(|e| format!("layout: {e:?}"))?;
+
+    let page_count = slices.len() as u32;
+    let mut pages = Vec::with_capacity(slices.len());
+    for slice in slices {
+        let mut query = PageContextQuery::default();
+        query.page_name = slice
+            .page_name
+            .clone()
+            .map(|name| Atom::from(name.as_str()));
+        query.is_first = slice.page_index == 0;
+        query.is_left = if first_page_is_left {
+            slice.page_index % 2 == 0
+        } else {
+            slice.page_index % 2 == 1
+        };
+        query.is_right = !query.is_left;
+        let cascade = build_cascaded_for_page(&uncascaded, &query);
+        let paired_page_increment = if query.is_right {
+            let mut paired_query = query.clone();
+            paired_query.is_first = false;
+            paired_query.is_left = true;
+            paired_query.is_right = false;
+            let paired = build_cascaded_for_page(&uncascaded, &paired_query);
+            match paired
+                .page
+                .declarations()
+                .get(&raikiri_style::property::PropertyKey::CounterIncrement)
+            {
+                Some(raikiri_style::property::PropertyValue::CounterIncrement(entries)) => entries
+                    .iter()
+                    .find(|(name, _)| name.as_str() == "page")
+                    .map(|(_, value)| *value),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let page_box = if cascade.page.size().is_some() {
+            page_box_from_cascade(&cascade)
+        } else {
+            first_page_box
+        };
+        let active_page_name = slice.page_name.clone();
+        let scene = build_page_scene_for_page_named(
+            &uncascaded.dom,
+            &cascade,
+            page_box,
+            slice.page_index,
+            slice.content_origin_y,
+            active_page_name.clone(),
+        );
+        let _ = &scene;
+        let page_width = page_box.width.ceil() as u32;
+        let page_height = page_box.height.ceil() as u32;
+        let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
+            |painter| {
+                raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(
+                    painter,
+                    &uncascaded.dom,
+                    &cascade,
+                    page_box,
+                    slice.content_origin_y,
+                    slice.page_index,
+                    page_count,
+                    query.is_left,
+                    paired_page_increment,
+                    active_page_name.as_deref(),
+                    fixed_page_width,
+                )
+            },
+            page_width,
+            page_height,
+        );
+        pages.push(RenderedImage {
+            width: page_width,
+            height: page_height,
+            rgba,
+        });
+    }
+    Ok(RenderedDocument { pages })
+}
 fn resolve_font_ctx() -> raikiri::FontContext {
     // Try WPT bundled fonts: `<workspace>/wpt/fonts` or `<workspace>/../wpt/fonts`
     // Fallback to system fonts.
@@ -623,6 +1249,61 @@ pub fn compare_images(a: &RenderedImage, b: &RenderedImage, tolerance: Tolerance
     }
 }
 
+/// Result of comparing two rendered paged documents.
+#[derive(Debug, Clone)]
+pub struct DocumentDiff {
+    /// Number of pages on the left and right.
+    pub left_pages: usize,
+    /// Number of pages rendered by the reference document.
+    pub right_pages: usize,
+    /// Aggregate mismatched pixels across corresponding pages and unmatched
+    /// pages.
+    pub mismatched_pixels: u64,
+    /// Aggregate pixels considered by the comparison.
+    pub total_pixels: u64,
+    /// True only when page count and every corresponding page match.
+    pub matched: bool,
+}
+
+/// Compare paged output without flattening pages into a synthetic viewport.
+///
+/// A page-count difference is a visual mismatch even when all overlapping
+/// pages are identical.  Unmatched pages contribute their own pixel area to
+/// the aggregate counters so runner reports remain meaningful.
+pub fn compare_documents(
+    left: &RenderedDocument,
+    right: &RenderedDocument,
+    tolerance: Tolerance,
+) -> DocumentDiff {
+    let mut mismatched_pixels = 0_u64;
+    let mut total_pixels = 0_u64;
+    let common = left.pages.len().min(right.pages.len());
+    let mut matched = left.pages.len() == right.pages.len();
+
+    for (left_page, right_page) in left.pages.iter().zip(&right.pages) {
+        let diff = compare_images(left_page, right_page, tolerance);
+        mismatched_pixels = mismatched_pixels.saturating_add(diff.mismatched_pixels);
+        total_pixels = total_pixels.saturating_add(diff.total_pixels);
+        matched &= diff.matched;
+    }
+    for page in left.pages[common..]
+        .iter()
+        .chain(right.pages[common..].iter())
+    {
+        let pixels = u64::from(page.width).saturating_mul(u64::from(page.height));
+        mismatched_pixels = mismatched_pixels.saturating_add(pixels);
+        total_pixels = total_pixels.saturating_add(pixels);
+    }
+
+    DocumentDiff {
+        left_pages: left.pages.len(),
+        right_pages: right.pages.len(),
+        mismatched_pixels,
+        total_pixels,
+        matched,
+    }
+}
+
 // ── High-level runner ──────────────────────────────────────────────────
 
 /// Execute one `ReftestPair` via raikiri and return a `ReftestResult`.
@@ -652,9 +1333,9 @@ where
 {
     let test_html = read_html(&pair.test)?;
     let ref_html = read_html(&pair.reference)?;
-    let test_img = render_raikiri(&test_html, config.width, config.height)?;
-    let ref_img = render_raikiri(&ref_html, config.width, config.height)?;
-    let diff = compare_images(&test_img, &ref_img, config.tolerance);
+    let test_doc = render_raikiri_pages(&test_html, config.width, config.height)?;
+    let ref_doc = render_raikiri_pages(&ref_html, config.width, config.height)?;
+    let diff = compare_documents(&test_doc, &ref_doc, config.tolerance);
     let pass = match pair.kind {
         ReftestKind::Match => diff.matched,
         ReftestKind::Mismatch => !diff.matched,
@@ -663,8 +1344,13 @@ where
         TestOutcome::Pass
     } else {
         TestOutcome::Fail(format!(
-            "reftest {:?} failed: {} mismatched pixels of {} (tolerance {:?})",
-            pair.kind, diff.mismatched_pixels, diff.total_pixels, config.tolerance
+            "reftest {:?} failed: {} mismatched pixels of {} across {} vs {} pages (tolerance {:?})",
+            pair.kind,
+            diff.mismatched_pixels,
+            diff.total_pixels,
+            diff.left_pages,
+            diff.right_pages,
+            config.tolerance
         ))
     };
     Ok(ReftestResult {
@@ -680,7 +1366,7 @@ where
 ///
 /// The oracle uses the same `config` and compares blitz's test/reference
 /// pair under the same `kind` rule. The two outcomes are returned
-/// separately so callers can compute `OracleDiff` (see `crate::oracle`).
+/// separately so callers can compute `OracleDiff` (see [`crate::oracle`]).
 pub fn run_pair_with_oracle(
     pair: &ReftestPair,
     config: ReftestConfig,
@@ -749,6 +1435,34 @@ mod tests {
         let m = ReftestKind::Match;
         let mm = ReftestKind::Mismatch;
         assert_ne!(m, mm);
+    }
+
+    #[test]
+    fn authored_page_viewport_uses_print_content_box() {
+        let html = "<style>@page { size: 5in 3in; margin: 0.5in; }</style>";
+        let (width, height) = authored_page_viewport(html, 800.0, 600.0);
+        assert!((width - 384.0).abs() < 0.01);
+        assert!((height - 192.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn authored_page_viewport_prefers_the_first_named_page() {
+        let html = r#"<style>
+            @page { size: 300px 400px; margin: 0; }
+            @page smaller { size: 200px; }
+        </style><div style="page:smaller">first</div>"#;
+        let (width, height) = authored_page_viewport(html, 800.0, 600.0);
+        assert!((width - 200.0).abs() < 0.01);
+        assert!((height - 200.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn default_page_margin_is_added_only_when_page_margin_is_absent() {
+        let injected = inject_default_page_margin("<style>@page { size: 300px 400px; }</style>");
+        assert!(injected.contains("margin: 48px;"));
+        let explicit =
+            inject_default_page_margin("<style>@page { size: 300px 400px; margin: 0; }</style>");
+        assert!(!explicit.contains("margin: 48px;"));
     }
 
     #[test]

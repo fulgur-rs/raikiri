@@ -898,7 +898,7 @@ fn parse_counter_style_rule_name<'i>(
 /// [`CounterStyleSheetParser`]'s `QualifiedRuleParser` impl — but
 /// `cssparser::StyleSheetParser` requires `AtRuleParser::AtRule` and
 /// `QualifiedRuleParser::QualifiedRule` to be the same type, mirroring
-/// `crate::ruletree`'s identical `ParsedRule` shape for the same reason.
+/// [`crate::ruletree`]'s identical `ParsedRule` shape for the same reason.
 enum TopLevelItem {
     CounterStyle(SmolStr, Vec<ParsedDescriptor>),
 }

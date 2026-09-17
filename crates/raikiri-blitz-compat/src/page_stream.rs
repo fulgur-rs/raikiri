@@ -23,7 +23,7 @@
 //! `PageBox::A4` にフォールバック ( fulgur が viewport 未設定時に A4 相当でレイアウトする
 //! 挙動に合わせる )。
 
-use raikiri::{FontContext, PageBox, PageScene, build_cascaded, build_page_scene};
+use raikiri::{FontContext, PageBox, PageScene, build_cascaded, build_page_scene_for_page_named};
 use raikiri_html::{ParseOptions, parse as html_parse};
 use raikiri_traits::RenderError;
 
@@ -128,12 +128,58 @@ pub fn html_to_page_scenes(html: &str, page_box: PageBox) -> Result<Vec<PageScen
         base_url: None,
     };
     let mut uncascaded = html_parse(html.as_bytes(), &opts).map_err(RenderError::Parse)?;
-    let cascade = build_cascaded(&uncascaded);
+    let mut first_query = raikiri::PageContextQuery::default();
+    first_query.is_first = true;
+    first_query.is_right = true;
+    let default_cascade = raikiri::build_cascaded_for_page(&uncascaded, &first_query);
+    if let Some(name) = raikiri::first_page_name(&uncascaded.dom, &default_cascade) {
+        first_query.page_name = Some(raikiri::Atom::from(name.as_str()));
+    }
+    let first_cascade = if first_query.page_name.is_some() {
+        raikiri::build_cascaded_for_page(&uncascaded, &first_query)
+    } else {
+        default_cascade
+    };
+    let first_page_box = if first_cascade.page.size().is_some() {
+        PageBox::from_page_size(first_cascade.page.size())
+    } else {
+        page_box
+    };
     let font_ctx = FontContext::new();
-    raikiri_dom::layout_single_page(&mut uncascaded.dom, &cascade, page_box, font_ctx)
-        .map_err(RenderError::Layout)?;
-    let scene = build_page_scene(&uncascaded.dom, &cascade, page_box);
-    Ok(vec![scene])
+    let slices = raikiri_dom::layout_pages(
+        &mut uncascaded.dom,
+        &first_cascade,
+        first_page_box,
+        font_ctx,
+    )
+    .map_err(RenderError::Layout)?;
+
+    let mut pages = Vec::with_capacity(slices.len());
+    for slice in slices {
+        let mut query = raikiri::PageContextQuery::default();
+        query.page_name = slice
+            .page_name
+            .clone()
+            .map(|name| raikiri::Atom::from(name.as_str()));
+        query.is_first = slice.page_index == 0;
+        query.is_right = slice.page_index % 2 == 0;
+        query.is_left = !query.is_right;
+        let cascade = raikiri::build_cascaded_for_page(&uncascaded, &query);
+        let effective_page_box = if cascade.page.size().is_some() {
+            PageBox::from_page_size(cascade.page.size())
+        } else {
+            first_page_box
+        };
+        pages.push(build_page_scene_for_page_named(
+            &uncascaded.dom,
+            &cascade,
+            effective_page_box,
+            slice.page_index,
+            slice.content_origin_y,
+            slice.page_name,
+        ));
+    }
+    Ok(pages)
 }
 
 /// `blitz_adapter::parse_and_layout` 相当を raikiri で置換する PoC 関数。
@@ -183,9 +229,21 @@ pub fn html_to_png_via_page_stream(html: &str, page_box: PageBox) -> Result<Vec<
     let cascade = build_cascaded(&uncascaded);
     let font_ctx = FontContext::new();
     // Clone for rasterize after layout ( PageScene holds snapshot but rasterize still needs dom+cascade )
-    raikiri_dom::layout_single_page(&mut uncascaded.dom, &cascade, page_box, font_ctx)
+    let slices = raikiri_dom::layout_pages(&mut uncascaded.dom, &cascade, page_box, font_ctx)
         .map_err(RenderError::Layout)?;
-    let scene = build_page_scene(&uncascaded.dom, &cascade, page_box);
+    let slice = slices.first().cloned().unwrap_or(raikiri_dom::PageSlice {
+        page_index: 0,
+        content_origin_y: 0.0,
+        page_name: None,
+    });
+    let scene = build_page_scene_for_page_named(
+        &uncascaded.dom,
+        &cascade,
+        page_box,
+        slice.page_index,
+        slice.content_origin_y,
+        slice.page_name,
+    );
     Ok(scene.rasterize(&uncascaded.dom, &cascade, page_box))
 }
 

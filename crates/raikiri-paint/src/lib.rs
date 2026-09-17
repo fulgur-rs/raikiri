@@ -14,6 +14,7 @@
 //! - infallible — raikiri-traits::RenderError に Paint variant はない
 //!   (pre-shape / layout 済の Document 消費が原理的 infallible)
 
+#![allow(rustdoc::private_intra_doc_links)]
 use anyrender::PaintScene;
 use raikiri_dom::Document;
 use raikiri_style::CascadeResult;
@@ -60,6 +61,179 @@ pub fn paint_single_page(
     cascade: &CascadeResult,
     page_box: PageBox,
 ) {
+    paint_single_page_with_origin(scene, document, cascade, page_box, 0.0);
+}
+
+/// Paint one page from a document whose block flow may span several pages.
+///
+/// `content_origin_y` is the page's origin in the shared body-content layout.
+/// The paper background is emitted at local `(0, 0)`; document boxes are
+/// translated by the origin before the normal walk.  This lets callers render
+/// independent page buffers without cloning the DOM or repainting another
+/// page's content into the current one.
+pub fn paint_single_page_with_origin(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    content_origin_y: f32,
+) {
+    paint_single_page_with_origin_and_page(
+        scene,
+        document,
+        cascade,
+        page_box,
+        content_origin_y,
+        0,
+        1,
+        false,
+    );
+}
+
+/// Paint one page with the page-counter context used by generated margin-box
+/// content.
+///
+/// `page_index` is zero based and `page_count` is the final number of pages.
+/// The older [`paint_single_page_with_origin`] entry point remains equivalent
+/// to page zero of a one-page document.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_single_page_with_origin_and_page(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    content_origin_y: f32,
+    page_index: u32,
+    page_count: u32,
+    page_is_left: bool,
+) {
+    paint_single_page_with_origin_and_page_context(
+        scene,
+        document,
+        cascade,
+        page_box,
+        content_origin_y,
+        page_index,
+        page_count,
+        page_is_left,
+        None,
+    );
+}
+
+/// Paint one page while supplying the increment from the paired page side.
+///
+/// This optional context keeps parity-sensitive page counters stateful without
+/// changing the established page-paint entry point.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_single_page_with_origin_and_page_context(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    content_origin_y: f32,
+    page_index: u32,
+    page_count: u32,
+    page_is_left: bool,
+    paired_page_increment: Option<i32>,
+) {
+    paint_single_page_with_origin_and_page_context_impl(
+        scene,
+        document,
+        cascade,
+        page_box,
+        content_origin_y,
+        page_index,
+        page_count,
+        page_is_left,
+        paired_page_increment,
+        None,
+        page_box.width,
+    );
+}
+
+/// Paint one page while filtering boxes whose computed named page differs from
+/// the page slice being rendered.
+///
+/// The ordinary context entry point remains unchanged for existing callers;
+/// paged consumers should provide the slice's selected page name so a named
+/// class-A box is not painted once on the preceding anonymous slice.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_single_page_with_origin_and_page_context_named(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    content_origin_y: f32,
+    page_index: u32,
+    page_count: u32,
+    page_is_left: bool,
+    paired_page_increment: Option<i32>,
+    active_page_name: Option<&str>,
+) {
+    paint_single_page_with_origin_and_page_context_impl(
+        scene,
+        document,
+        cascade,
+        page_box,
+        content_origin_y,
+        page_index,
+        page_count,
+        page_is_left,
+        paired_page_increment,
+        Some(active_page_name),
+        page_box.width,
+    );
+}
+
+/// Paint a named-page slice while using an explicit initial viewport width for
+/// `position: fixed` containing-block resolution.
+///
+/// Named pages may change the paper width after a fixed box has been laid out.
+/// This entry point keeps that fixed containing block stable without changing
+/// the established paint API above.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    content_origin_y: f32,
+    page_index: u32,
+    page_count: u32,
+    page_is_left: bool,
+    paired_page_increment: Option<i32>,
+    active_page_name: Option<&str>,
+    fixed_page_width: f32,
+) {
+    paint_single_page_with_origin_and_page_context_impl(
+        scene,
+        document,
+        cascade,
+        page_box,
+        content_origin_y,
+        page_index,
+        page_count,
+        page_is_left,
+        paired_page_increment,
+        Some(active_page_name),
+        fixed_page_width,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_single_page_with_origin_and_page_context_impl(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    content_origin_y: f32,
+    page_index: u32,
+    page_count: u32,
+    page_is_left: bool,
+    paired_page_increment: Option<i32>,
+    active_page_name: Option<Option<&str>>,
+    fixed_page_width: f32,
+) {
     // walk 本体 (`walk::paint_document` / `text::draw_text_node`) は
     // `cascade.computed[node_id]` を raw index で読む複数 site を持ち、それぞれが
     // この crate の module doc `## Contract` (`cascade.computed.len() ==
@@ -78,7 +252,27 @@ pub fn paint_single_page(
         document.node_count(),
     );
     walk::paint_canvas_background(scene, document, cascade, page_box);
-    walk::paint_document(scene, document, cascade);
+    walk::paint_page_border(scene, cascade, page_box);
+    walk::paint_root_element_border(scene, document, cascade, page_box);
+    walk::paint_page_margin_boxes(
+        scene,
+        document,
+        cascade,
+        page_box,
+        page_index,
+        page_count,
+        page_is_left,
+        paired_page_increment,
+    );
+    walk::paint_document(
+        scene,
+        document,
+        cascade,
+        page_box,
+        content_origin_y,
+        active_page_name,
+        fixed_page_width,
+    );
 }
 
 #[cfg(test)]
@@ -838,7 +1032,7 @@ mod tests {
     ///
     /// `<p>` / `<span>` とも author font-size を与えないため、CSS initial
     /// (16px) がそのまま used font-size になる — `vertical-align: sub`/
-    /// `super` の shift 量 (`crate::walk::vertical_align_shift_px`) の基準
+    /// `super` の shift 量 ([`crate::walk::vertical_align_shift_px`]) の基準
     /// である「`<span>` の親 (`<p>`) の used font-size」は全 test 共通で
     /// 16px 固定。`paint_single_page_vertical_align_*` 系 test の共通
     /// helper。

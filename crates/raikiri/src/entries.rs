@@ -38,7 +38,7 @@
 //!
 //! Numeric な長さ系 field は [`crate::page_scene::Pt`] (= `f32` alias) を
 //! 再利用する。名前は "Pt" (PDF point) だが、[`crate::page_scene::build_page_scene`] は CSS px
-//! 値をそのまま詰める既存の unit debt (`crate::page_scene` module doc 参照)
+//! 値をそのまま詰める既存の unit debt ([`crate::page_scene`] module doc 参照)
 //! に本 entry 群も従う — 新たに別種の unit debt を作らないための意図的な
 //! 選択。
 //!

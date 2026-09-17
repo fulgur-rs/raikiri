@@ -39,7 +39,7 @@
 //!
 //! [`build_page_scene`] が `drawables` を実際に populate するようになった
 //! (post-layout Element node → [`crate::BlockEntry`]、post-layout Text node →
-//! [`crate::ParagraphEntry`]、`crate::entries` module doc参照)。ただし
+//! [`crate::ParagraphEntry`]、[`crate::entries`] module doc参照)。ただし
 //! **paint pipeline は今回も `PageDrawables` を一切消費しない** —
 //! [`PageScene::rasterize`] は引き続き `dom` + `cascade` を thread して
 //! `raikiri_paint::paint_single_page` を verbatim call する (下記
@@ -76,10 +76,10 @@ use std::collections::BTreeMap;
 /// 持ち越し (byte-identical maintenance が primary scope だったため defer、
 /// 将来 resolve 予定)。
 ///
-/// 後続の `crate::entries` 群 (`BlockEntry` の
+/// 後続の [`crate::entries`] 群 (`BlockEntry` の
 /// `layout_size` / `border_widths` 等) も同じ `Pt` alias を再利用し、同じ
 /// CSS-px-in-Pt debt を意図的に踏襲する (新たな別種の unit debt を作らない
-/// ための選択、`crate::entries` module doc参照)。
+/// ための選択、[`crate::entries`] module doc参照)。
 pub type Pt = f32;
 
 /// Page 向きを示す enum。
@@ -106,6 +106,8 @@ pub enum Orientation {
 pub struct PageMetadata {
     /// Page の (幅, 高さ) を Pt で保持。
     pub size: (Pt, Pt),
+    /// Zero-based position in the paginated document.
+    pub page_index: u32,
     /// CSS `@page :first { size: A4 landscape; }` 等で名前付き page を
     /// 選択する場合の page name。無名 page (default) の場合は `None`。
     pub page_name: Option<String>,
@@ -189,6 +191,10 @@ pub struct PageScene {
     /// pass can resolve inherited values and geometry without reparsing the
     /// stylesheet or reaching back into the document rule tree.
     pub margin_boxes: Vec<PageMarginBoxCascadeResult>,
+    /// Body-content y origin used to extract this page from a shared layout.
+    /// Zero for the first page and for scenes built through the compatibility
+    /// single-page helper.
+    pub content_origin_y: Pt,
 }
 
 impl PageScene {
@@ -199,7 +205,7 @@ impl PageScene {
     /// [`PageDrawables`] entries (BlockEntry / ParagraphEntry) は
     /// minimal field を populate されているが、paint 消費
     /// 側はまだ切り替わっていない — glyph run 自体 (実 shape / position) は
-    /// 依然 `parley::Layout` 型そのものであり `crate::entries` の field type
+    /// 依然 `parley::Layout` 型そのものであり [`crate::entries`] の field type
     /// 方針 (raikiri-style/parley 型を持たない) の対象外なので、真の paint
     /// truth は post-layout `Node.text_layout` (DOM arena) に住んだまま
     /// [`raikiri_paint::paint_single_page`] が DFS で消費する。従って
@@ -241,7 +247,15 @@ impl PageScene {
         let height = page_box.height.ceil() as u32;
 
         let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
-            |scene| raikiri_paint::paint_single_page(scene, dom, cascade, page_box),
+            |scene| {
+                raikiri_paint::paint_single_page_with_origin(
+                    scene,
+                    dom,
+                    cascade,
+                    page_box,
+                    self.content_origin_y,
+                )
+            },
             width,
             height,
         );
@@ -258,7 +272,7 @@ impl PageScene {
 /// (旧 `_cascade`)、DFS walk 中に Element node を
 /// [`BlockEntry`]、Text node を [`ParagraphEntry`] として `drawables` へ
 /// insert する (§module doc の landing scope 参照)。他 9 Entry 型は
-/// 対応する pipeline stage が無いため insert されない (`crate::entries`
+/// 対応する pipeline stage が無いため insert されない ([`crate::entries`]
 /// module doc参照)。
 ///
 /// # NodeId identity mapping
@@ -279,10 +293,48 @@ impl PageScene {
 /// margin なしで body_id が taffy root として (0, 0) から compute されるため
 /// 常に `(0.0, 0.0)`。将来 @page margin が導入された時点で cascade から
 /// 引き出す予定。
+/// Build the first page of a document using the compatibility single-page
+/// coordinates.
 pub fn build_page_scene(dom: &Document, cascade: &CascadeResult, page_box: PageBox) -> PageScene {
+    build_page_scene_for_page(dom, cascade, page_box, 0, 0.0)
+}
+
+/// Extract one page from a shared post-pagination layout.
+///
+/// Nodes whose border boxes intersect the page's body-content interval are
+/// included.  The body container is included on every page so its propagated
+/// background and page-local fragment remain available to consumers.  A box
+/// crossing a page edge is currently represented on both scenes; the next
+/// fragmentation pass can replace it with line/child-level fragments without
+/// changing this scene boundary.
+pub fn build_page_scene_for_page(
+    dom: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    page_index: u32,
+    content_origin_y: Pt,
+) -> PageScene {
+    build_page_scene_for_page_named(dom, cascade, page_box, page_index, content_origin_y, None)
+}
+
+/// Extract one page and attach the page type selected by the pagination pass.
+pub fn build_page_scene_for_page_named(
+    dom: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    page_index: u32,
+    content_origin_y: Pt,
+    page_name: Option<String>,
+) -> PageScene {
+    let margins = raikiri_dom::page_margins(cascade, page_box);
+    let insets = raikiri_dom::page_content_insets(cascade, page_box);
+    let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
+    let page_top = content_origin_y;
+    let page_bottom = content_origin_y + content_height;
     let page_metadata = PageMetadata {
         size: (page_box.width, page_box.height),
-        page_name: None,
+        page_index,
+        page_name,
         orientation: if page_box.width > page_box.height {
             Orientation::Landscape
         } else {
@@ -294,96 +346,92 @@ pub fn build_page_scene(dom: &Document, cascade: &CascadeResult, page_box: PageB
     let body_arena_idx = find_first_element_by_tag(dom, "body");
     let body_id = body_arena_idx.map(|idx| NodeId::new(idx as u64));
 
-    // body が無い document (fragment parse) は node_ids / fragments / drawables
-    // 空で return。layout_single_page が Err を先に返すため実質 unreachable、
-    // defense-in-depth。
     let mut node_ids: Vec<NodeId> = Vec::new();
     let mut fragments: BTreeMap<NodeId, Vec<Fragment>> = BTreeMap::new();
     let mut drawables = PageDrawables::default();
 
     if let Some(body_idx) = body_arena_idx {
-        // DFS from body、paint_document と同じ traversal 順で collect。
-        // Stack frame = (arena_idx, parent_abs_x, parent_abs_y)。
-        // 各 node の absolute pos = parent_abs + node.unrounded_layout.location。
+        // DFS from body, matching paint_document's traversal order.  Absolute
+        // y stays in the shared document coordinate space until the fragment
+        // is committed, which makes page intersection independent of nesting.
         let mut stack: Vec<(usize, Pt, Pt)> = vec![(body_idx, 0.0, 0.0)];
         while let Some((idx, parent_abs_x, parent_abs_y)) = stack.pop() {
             let Some(node) = dom.get_node(idx) else {
                 continue;
             };
-            if !node.is_in_document() {
-                continue;
-            }
-            if node.is_non_rendered_html_element() {
-                continue;
-            }
-            // display:none は paint_document で subtree skip されるため node_ids からも除外
-            // (fragment 集合 vs 実 paint 集合を drift させない)。
-            if node.kind() == NodeKind::Element && node.is_display_none() {
+            if !node.is_in_document()
+                || node.is_non_rendered_html_element()
+                || node.is_display_none()
+            {
                 continue;
             }
             let layout = node.unrounded_layout;
             let abs_x = parent_abs_x + layout.location.x;
             let abs_y = parent_abs_y + layout.location.y;
+            let is_body = idx == body_idx;
+            let height = layout.size.height.max(0.0);
+            let intersects = is_body
+                || if height == 0.0 {
+                    abs_y >= page_top && abs_y <= page_bottom
+                } else {
+                    abs_y < page_bottom && abs_y + height > page_top
+                };
 
-            let node_id = NodeId::new(idx as u64);
-            node_ids.push(node_id);
-            fragments.entry(node_id).or_default().push(Fragment {
-                page_index: 0,
-                x: abs_x,
-                y: abs_y,
-                width: layout.size.width,
-                height: layout.size.height,
-            });
+            if intersects {
+                let node_id = NodeId::new(idx as u64);
+                node_ids.push(node_id);
+                fragments.entry(node_id).or_default().push(Fragment {
+                    page_index,
+                    x: abs_x,
+                    y: abs_y - content_origin_y,
+                    width: layout.size.width,
+                    height: layout.size.height,
+                });
 
-            // `crate::entries` module doc の field type 方針 (raikiri-style 型を
-            // 直接持たない) に従い、cascade の値は primitive へ変換して詰める。
-            // Element → BlockEntry / Text → ParagraphEntry の 2 型のみ populate
-            // (他 9 型は対応する pipeline stage が無い、同 module doc参照)。
-            match node.kind() {
-                NodeKind::Element => {
-                    let cv = &cascade.computed[idx];
-                    let entry = BlockEntry {
-                        background_color: (
-                            cv.background_color.r,
-                            cv.background_color.g,
-                            cv.background_color.b,
-                            cv.background_color.a,
-                        ),
-                        border_widths: (
-                            cv.border.top.width().0,
-                            cv.border.right.width().0,
-                            cv.border.bottom.width().0,
-                            cv.border.left.width().0,
-                        ),
-                        id: element_id(dom, node_id),
-                        layout_size: Some((layout.size.width, layout.size.height)),
-                        ..BlockEntry::default()
-                    };
-                    drawables.block_styles.insert(node_id, entry);
+                // `crate::entries` keeps primitive snapshots; the live DOM is
+                // still the paint truth until drawables become the renderer
+                // input.
+                match node.kind() {
+                    NodeKind::Element => {
+                        let cv = &cascade.computed[idx];
+                        let entry = BlockEntry {
+                            background_color: (
+                                cv.background_color.r,
+                                cv.background_color.g,
+                                cv.background_color.b,
+                                cv.background_color.a,
+                            ),
+                            border_widths: (
+                                cv.border.top.width().0,
+                                cv.border.right.width().0,
+                                cv.border.bottom.width().0,
+                                cv.border.left.width().0,
+                            ),
+                            id: element_id(dom, node_id),
+                            layout_size: Some((layout.size.width, layout.size.height)),
+                            ..BlockEntry::default()
+                        };
+                        drawables.block_styles.insert(node_id, entry);
+                    }
+                    NodeKind::Text => {
+                        let line_count = node.text_layout().map_or(0, |l| l.lines().count());
+                        let entry = ParagraphEntry {
+                            line_count,
+                            ..ParagraphEntry::default()
+                        };
+                        drawables.paragraphs.insert(node_id, entry);
+                    }
+                    _ => {}
                 }
-                NodeKind::Text => {
-                    let line_count = node.text_layout().map_or(0, |l| l.lines().count());
-                    let entry = ParagraphEntry {
-                        line_count,
-                        ..ParagraphEntry::default()
-                    };
-                    drawables.paragraphs.insert(node_id, entry);
-                }
-                _ => {}
             }
 
             if node.kind() == NodeKind::Element {
-                // reverse push で pop 時に document order — paint_document 準拠。
                 for &child in node.children.iter().rev() {
                     stack.push((child, abs_x, abs_y));
                 }
             }
         }
     }
-
-    // 現状: @page margin なし、body は page origin (0, 0) 起点。
-    // 将来 cascade @page margin から引き出す予定。
-    let body_offset_pt: (Pt, Pt) = (0.0, 0.0);
 
     PageScene {
         page_metadata,
@@ -392,8 +440,9 @@ pub fn build_page_scene(dom: &Document, cascade: &CascadeResult, page_box: PageB
         drawables,
         root_id,
         body_id,
-        body_offset_pt,
+        body_offset_pt: (margins.left + insets.left, margins.top + insets.top),
         margin_boxes: cascade.page.margin_boxes().to_vec(),
+        content_origin_y,
     }
 }
 

@@ -15,7 +15,7 @@
 //! can be closed with a pinned, tested bridge between `BorderColor` and
 //! `CascadeResult.computed[node].color`.
 //!
-//! Reference pattern: `crate::text::draw_text_node` reads
+//! Reference pattern: [`crate::text::draw_text_node`] reads
 //! `cascade.computed[node_id].color` for the text brush in the same shape
 //! (`CascadeResult.computed[node].color`). A future border paint site will
 //! call [`resolve_border_color`] with that same `color` value.
@@ -30,7 +30,7 @@ use raikiri_style::property::{BorderColor, CssColor};
 /// - [`BorderColor::Resolved`] → the contained color unchanged.
 ///
 /// `current_color` is expected to be `cascade.computed[node_id].color` — the
-/// same lookup `crate::text::draw_text_node` uses for the text brush
+/// same lookup [`crate::text::draw_text_node`] uses for the text brush
 /// (`cv.color`). No other node, no inheritance walk, no extra indirection.
 ///
 /// # Examples

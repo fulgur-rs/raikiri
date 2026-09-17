@@ -16,10 +16,12 @@ css/css-images/parsing
 css/css-lists/parsing
 css/css-masking/parsing
 css/css-overscroll-behavior/parsing
-css/css-page/parsing
-# css-page focused reftest pin: @page canvas background (page-box-001).
-css/css-page/page-box-001-print.html
-css/css-page/page-box-001-print-ref.html
+# CSS Paged Media category sweep: parser, page-box, margin-box, and pagination
+# candidates are needed for the css-page goal. The runner still filters to
+# files with reftest links, so non-reftest parsing cases remain cheap to carry.
+css/css-page
+# CSS Fragmentation category sweep for break-before/after/inside and page flow.
+css/css-break
 css/css-pseudo/parsing
 css/css-rhythm/parsing
 css/css-scroll-anchoring/parsing

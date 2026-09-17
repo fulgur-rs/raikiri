@@ -1175,6 +1175,9 @@ pub struct ComputedValues {
     /// [`Self::counter_reset`] — cascade winner clone / inheritance walk
     /// clone become a shallow Arc bump instead of a per-node `Vec` copy.
     pub quotes: Arc<Vec<(SmolStr, SmolStr)>>,
+    /// Whether an empty `quotes` list represents the initial `auto` value.
+    /// Explicit `quotes: none` keeps the list empty but clears this marker.
+    pub quotes_auto: bool,
     /// `text-shadow`. **inherited**, initial: empty list (= `none`) (CSS
     /// Text Decoration Module Level 3 §4
     /// <https://www.w3.org/TR/css-text-decor-3/#text-shadow-property>,
@@ -1710,6 +1713,7 @@ impl ComputedValues {
             // 表現する (`none` と同じ shared empty Arc slot、`Self::quotes`
             // field doc / `empty_quotes_entries` doc 参照)。
             quotes: empty_quotes_entries(),
+            quotes_auto: true,
             // CSS Text Decoration Module Level 3 §4: text-shadow initial
             // は `none` — shared empty Arc slot
             // (`empty_computed_text_shadow_list` doc 参照)。
@@ -1890,6 +1894,7 @@ impl ComputedValues {
         // starts with the ordinary computed initial state, so carry this
         // crate-private bridge explicitly through the public helper too.
         child.custom_properties = parent.custom_properties.clone();
+        child.quotes_auto = parent.quotes_auto;
         child
     }
 }
@@ -2272,6 +2277,7 @@ mod tests {
             // CSS Content 3 §2.4.1: `quotes` — initial (空 list) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             quotes: Arc::new(vec![(SmolStr::new("«"), SmolStr::new("»"))]),
+            quotes_auto: false,
             // CSS Text Decoration Module Level 3 §4: initial (`none` =
             // 空 list) と異なる値 (non_initial_parent の趣旨どおり全 field を
             // 非 initial に)。
@@ -2464,6 +2470,7 @@ mod tests {
         assert_eq!(child.line_height, parent.line_height);
         // CSS Content 3 §2.4.1: quotes は inherited。
         assert_eq!(child.quotes, parent.quotes);
+        assert_eq!(child.quotes_auto, parent.quotes_auto);
         // CSS Fragmentation Module Level 3 §3.3: orphans / widows は共に
         // inherited。
         assert_eq!(child.orphans, parent.orphans);

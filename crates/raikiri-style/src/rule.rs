@@ -99,7 +99,7 @@ use crate::property::{
 ///
 /// (`raikiri-paint`
 /// の `draw_glyphs_at_natural_font_size_is_a_non_vacuous_control` /
-/// `crate::page` の `specified_layer_residue_detector_is_not_vacuous` と同じ
+/// [`crate::page`] の `specified_layer_residue_detector_is_not_vacuous` と同じ
 /// 語彙 — 「非 vacuous であることを示す control」。)
 ///
 /// 上 3 fence はいずれも `.clone()` / `CssColor::BLACK` / `PropertyValue::Color`
@@ -492,6 +492,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::LineHeight(_)
         | PropertyValue::Display(_)
         | PropertyValue::CounterReset(_)
+        | PropertyValue::CounterResetInherit
         | PropertyValue::CounterIncrement(_)
         | PropertyValue::CounterSet(_)
         | PropertyValue::Content(_)
