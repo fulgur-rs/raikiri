@@ -1721,6 +1721,7 @@ dependencies = [
  "raikiri-style",
  "raikiri-traits",
  "raikiri-vrt",
+ "tempfile",
  "tiny-skia",
  "url",
 ]
