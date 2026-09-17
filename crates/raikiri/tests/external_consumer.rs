@@ -134,7 +134,6 @@ fn external_consumer_can_construct_all_non_exhaustive_types() {
     // これらは将来 populate 予定だが Default 契約は今から crate 外に露出。
     let _ = TargetDefinition::default();
     let _ = IntrinsicBox::default();
-    let _ = ResolverRequest::default();
     let _ = ProbeContext::default();
     let _ = TargetRequest::default();
 
@@ -271,8 +270,9 @@ fn external_consumer_can_use_new_constructor_on_all_types() {
 
     // resolver types (raikiri-traits::resolver) — ResolverRequest<'a> の 'a は
     // return-type inference で local frame lifetime に落ちる。
-    let _ = IntrinsicBox::new();
-    let _ = ResolverRequest::new();
+    let _ = IntrinsicBox::new(1.0, 1.0);
+    let url = url::Url::parse("https://example.com/image.png").unwrap();
+    let _ = ResolverRequest::new(&url);
 
     // strategy types (raikiri-traits::strategy) — TargetRequest も lifetime 同上。
     let _ = ProbeContext::new();
