@@ -31,8 +31,10 @@ fn leaf_intrinsic_size(node: &crate::node::Node) -> Option<Size<f32>> {
     node.image_intrinsic_size()
         .map(|(width, height)| Size { width, height })
         .or_else(|| {
-            node.text_layout()
-                .map(|l| Size { width: l.width(), height: l.height() })
+            node.text_layout().map(|l| Size {
+                width: l.width(),
+                height: l.height(),
+            })
         })
 }
 

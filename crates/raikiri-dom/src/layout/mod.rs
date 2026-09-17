@@ -13329,7 +13329,8 @@ mod tests {
             fn resolve(
                 &self,
                 _req: raikiri_traits::ResolverRequest<'_>,
-            ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+            ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError>
+            {
                 Ok(raikiri_traits::ResolvedIntrinsic {
                     intrinsic: raikiri_traits::IntrinsicBox::new(self.0, self.1),
                     disposition: raikiri_traits::ResolveDisposition::Ok,
