@@ -2210,10 +2210,15 @@ fn paint_image(
     let bt = border.top.width().px();
     let br = border.right.width().px();
     let bb = border.bottom.width().px();
+    // CSS 2.1 §8.4 <https://www.w3.org/TR/CSS21/box.html#propdef-padding-top>:
+    // all four `padding-*` percentages resolve against the containing
+    // block's inline size (width) — top/bottom included, never against the
+    // element's own height. Matches `paint_element_background`'s identical
+    // (unmodified) `padding_px(padding.top/.bottom, width)` calls below.
     let pl = padding_px(padding.left, border_box_width);
     let pr = padding_px(padding.right, border_box_width);
-    let pt = padding_px(padding.top, border_box_height);
-    let pb = padding_px(padding.bottom, border_box_height);
+    let pt = padding_px(padding.top, border_box_width);
+    let pb = padding_px(padding.bottom, border_box_width);
     let content_x = (abs_x + bl + pl) as f64;
     let content_y = (abs_y + bt + pt) as f64;
     let content_w = (border_box_width - bl - br - pl - pr).max(0.0) as f64;
