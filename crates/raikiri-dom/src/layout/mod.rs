@@ -6273,6 +6273,9 @@ pub fn layout_pages(
     // When a forced-break box underflows into the preceding page, descendants
     // follow the box while later siblings still begin after the break boundary.
     let mut pending_underflow: Option<(usize, f32)> = None;
+    // A positive margin on a box after a forced break moves its descendants
+    // with the box, but does not move later siblings a second time.
+    let mut pending_descendant_margin: Option<(usize, f32)> = None;
     // Named class-A boxes at one source coordinate form one page transition.
     // This coalesces zero-height named runs such as a/b/c/d/e without creating
     // one blank page per zero-height box.
@@ -6293,6 +6296,16 @@ pub fn layout_pages(
         if document.get_node(node_id).is_none() {
             continue;
         }
+        let descendant_margin = if let Some((ancestor_id, margin)) = pending_descendant_margin {
+            if is_descendant_or_self(document, node_id, ancestor_id, &parent_of) {
+                margin
+            } else {
+                pending_descendant_margin = None;
+                0.0
+            }
+        } else {
+            0.0
+        };
         if candidate.is_text {
             // Text is not itself a class-A box, but non-empty text can be the
             // content that follows a nested named box.  Carry the containing
@@ -6304,7 +6317,7 @@ pub fn layout_pages(
             let raw_y = candidate.raw_y;
             let height = candidate.height;
             let candidate_page_name = candidate.page_name.clone();
-            let mut effective_y = raw_y + flow_shift;
+            let mut effective_y = raw_y + flow_shift + descendant_margin;
             materialize_y(document, node_id, effective_y, &parent_of);
             let named_page_change = saw_child
                 && height > 0.0
@@ -6375,7 +6388,7 @@ pub fn layout_pages(
         // borrow does not overlap the in-place location update below.
         let raw_y = candidate.raw_y;
         let height = candidate.height;
-        let mut effective_y = raw_y + flow_shift;
+        let mut effective_y = raw_y + flow_shift + descendant_margin;
         materialize_y(document, node_id, effective_y, &parent_of);
         let forced_before = page_break_is_forced(computed.break_before);
         let margin_top = match computed.margin.top {
@@ -6444,7 +6457,9 @@ pub fn layout_pages(
                 let node_target_y = if margin_top < 0.0 && underflow_y < target_y {
                     underflow_y
                 } else {
-                    target_y
+                    // The forced break is before the box's margin box, so a
+                    // positive block-start margin remains on the new page.
+                    target_y + margin_top.max(0.0)
                 };
                 // The candidate was materialized to `effective_y` above,
                 // so this is the additional movement for this boundary.
@@ -6465,6 +6480,9 @@ pub fn layout_pages(
                 current_page = target_page;
             } else if effective_y.is_finite() && effective_y >= 0.0 {
                 current_page = current_page.max((effective_y / page_step).floor() as u32);
+            }
+            if page_transition && margin_top > 0.0 {
+                pending_descendant_margin = Some((node_id, margin_top));
             }
             // An inline direct child keeps its source-order inline x position
             // in taffy's single pre-pagination layout. A forced page boundary
