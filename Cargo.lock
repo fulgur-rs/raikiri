@@ -1714,6 +1714,7 @@ dependencies = [
  "anyrender_vello_cpu",
  "bytes",
  "parley",
+ "png 0.18.1",
  "raikiri-dom",
  "raikiri-html",
  "raikiri-net",
