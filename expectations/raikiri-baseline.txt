@@ -647,7 +647,10 @@ css/css-text/letter-spacing/letter-spacing-percent-001.html
 css/css-text/line-break/line-break-loose-hyphens-003.html
 css/css-text/line-break/line-break-normal-hyphens-003.html
 css/css-text/line-break/line-break-strict-hyphens-003.html
+css/css-text/line-breaking/line-breaking-013.html
+css/css-text/line-breaking/line-breaking-014.html
 css/css-text/line-breaking/line-breaking-015.html
+css/css-text/line-breaking/line-breaking-016.html
 css/css-text/line-breaking/line-breaking-021.html
 css/css-text/line-breaking/line-breaking-replaced-001.html
 css/css-text/line-breaking/line-breaking-replaced-005.html
