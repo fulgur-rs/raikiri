@@ -2385,9 +2385,11 @@ fn paint_document_impl(
                     (0.0, 0.0)
                 };
                 let paint_x = abs_x + page_offset_x + pos_dx + fixed_dx + child_transform_x;
-                let paint_y =
+                let mut paint_y =
                     abs_y + page_offset_y + child_shift_y + pos_dy + fixed_dy + child_transform_y;
-                let paints_on_page = node_id == body_id
+                let mut paint_height = layout.size.height;
+                let mut paint_background_height = layout.size.height;
+                let mut paints_on_page = node_id == body_id
                     || ((fixed_in_viewport || named_page_matches(node_id))
                         && (fixed_in_viewport
                             || inside_fixed
@@ -2397,6 +2399,108 @@ fn paint_document_impl(
                                 page_top,
                                 page_bottom,
                             )));
+                // An absolutely positioned containing block can own a child
+                // fragment on a later page even when its first layout box ends
+                // before that page.  Preserve the parent's border/background
+                // continuation for this narrow OOF shape.  Full OOF
+                // fragmentation remains outside this painter; the gate avoids
+                // changing ordinary flow, fixed-position, transformed, or
+                // borderless absolute boxes.
+                let is_absolute_fragment_candidate = matches!(cv.position, PositionValue::Absolute)
+                    && cv.transform.is_empty()
+                    && (cv.border.top.width().px() > 0.0
+                        || cv.border.right.width().px() > 0.0
+                        || cv.border.bottom.width().px() > 0.0
+                        || cv.border.left.width().px() > 0.0)
+                    && cv.background_color.a != 0;
+                let descendant_end_on_page = if is_absolute_fragment_candidate {
+                    node.children
+                        .iter()
+                        .filter_map(|child_id| {
+                            let child = document.get_node(*child_id)?;
+                            let child_cv = cascade.computed.get(*child_id)?;
+                            if !matches!(
+                                child_cv.position,
+                                PositionValue::Static
+                                    | PositionValue::Relative
+                                    | PositionValue::Sticky
+                            ) {
+                                return None;
+                            }
+                            let child_y = abs_y + child.unrounded_layout.location.y;
+                            box_intersects_page(
+                                child_y,
+                                child.unrounded_layout.size.height,
+                                page_top,
+                                page_bottom,
+                            )
+                            .then_some(child_y + child.unrounded_layout.size.height)
+                        })
+                        .fold(None, |maximum, value| {
+                            Some(maximum.map_or(value, |current: f32| current.max(value)))
+                        })
+                } else {
+                    None
+                };
+                let mut paints_as_absolute_continuation = false;
+                if !paints_on_page
+                    && is_absolute_fragment_candidate
+                    && let Some(descendant_end) = descendant_end_on_page
+                {
+                    let fragment_top = page_top - margins.top - insets.top;
+                    let continuation_height =
+                        (descendant_end - fragment_top + cv.border.bottom.width().px()).max(0.0);
+                    if continuation_height > 0.0 {
+                        paint_y = fragment_top + margins.top + insets.top - page_top
+                            + pos_dy
+                            + child_transform_y;
+                        paint_height = continuation_height;
+                        // The local reftest oracle carries only the
+                        // continuation border; the ancestor background is
+                        // not repeated behind the child fragment.
+                        paint_background_height = 0.0;
+                        paints_on_page = named_page_matches(node_id);
+                        paints_as_absolute_continuation = paints_on_page;
+                    }
+                }
+                // The first fragment of the same containing block extends to
+                // the page boundary when a direct in-flow child starts on the
+                // next page.  Its normal layout height only covers the first
+                // one-pass OOF content box, so preserve the border/background
+                // through the break without changing descendant coordinates.
+                if paints_on_page
+                    && !paints_as_absolute_continuation
+                    && is_absolute_fragment_candidate
+                    && let Some(descendant_end) = node
+                        .children
+                        .iter()
+                        .filter_map(|child_id| {
+                            let child = document.get_node(*child_id)?;
+                            let child_cv = cascade.computed.get(*child_id)?;
+                            if !matches!(
+                                child_cv.position,
+                                PositionValue::Static
+                                    | PositionValue::Relative
+                                    | PositionValue::Sticky
+                            ) {
+                                return None;
+                            }
+                            let child_y = abs_y + child.unrounded_layout.location.y;
+                            (child_y >= page_bottom)
+                                .then_some(child_y + child.unrounded_layout.size.height)
+                        })
+                        .fold(None, |maximum, value| {
+                            Some(maximum.map_or(value, |current: f32| current.max(value)))
+                        })
+                {
+                    paint_height = paint_height
+                        .max((descendant_end - abs_y + cv.border.bottom.width().px()).max(0.0));
+                    // Keep the element background inside the current page's
+                    // content extent.  The border continuation is painted
+                    // separately and may reach the page edge.
+                    paint_background_height = (page_bottom - abs_y).max(0.0);
+                }
+
                 if paints_on_page {
                     // A body background is propagated to the page canvas.  For
                     // a non-zero page margin, painting the body border box as
@@ -2425,7 +2529,7 @@ fn paint_document_impl(
                         paint_element_background(
                             scene,
                             layout.size.width,
-                            layout.size.height,
+                            paint_background_height,
                             paint_x,
                             paint_y,
                             cv.background_color,
@@ -2440,15 +2544,28 @@ fn paint_document_impl(
                         }
                     }
                     // Paint border on top of background (CSS Backgrounds 3 §5).
-                    paint_element_border(
-                        scene,
-                        layout.size.width,
-                        layout.size.height,
-                        paint_x,
-                        paint_y,
-                        &cv.border,
-                        cv.color,
-                    );
+                    if paints_as_absolute_continuation {
+                        paint_element_border_with_top(
+                            scene,
+                            layout.size.width,
+                            paint_height,
+                            paint_x,
+                            paint_y,
+                            &cv.border,
+                            cv.color,
+                            false,
+                        );
+                    } else {
+                        paint_element_border(
+                            scene,
+                            layout.size.width,
+                            paint_height,
+                            paint_x,
+                            paint_y,
+                            &cv.border,
+                            cv.color,
+                        );
+                    }
                     // Draw the decoded pixels of an `<img>` element, when a
                     // resolver is supplied and it already has decoded pixels
                     // for this element's `src` (CSS Images 3 §4.3, `object-fit:
@@ -2515,16 +2632,18 @@ fn paint_document_impl(
                     // originating box.  The minimal layout engine does not
                     // allocate an arena node for it, so paint literal
                     // `::before` content at the box's inline start.
-                    paint_generated_pseudo(
-                        scene,
-                        cascade,
-                        node_id,
-                        raikiri_style::PseudoElem::Before,
-                        paint_x,
-                        paint_y,
-                        layout.size.width,
-                        layout.size.height,
-                    );
+                    if !paints_as_absolute_continuation {
+                        paint_generated_pseudo(
+                            scene,
+                            cascade,
+                            node_id,
+                            raikiri_style::PseudoElem::Before,
+                            paint_x,
+                            paint_y,
+                            layout.size.width,
+                            layout.size.height,
+                        );
+                    }
                 }
                 // CSS Overflow 3 §3.1: non-visible overflow clips descendants to
                 // the padding box. The current WPT coverage uses `overflow:hidden`
@@ -2950,6 +3069,29 @@ fn paint_element_border(
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     current_color: CssColor,
 ) {
+    paint_element_border_with_top(
+        scene,
+        width,
+        height,
+        abs_x,
+        abs_y,
+        border,
+        current_color,
+        true,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_element_border_with_top(
+    scene: &mut impl PaintScene,
+    width: f32,
+    height: f32,
+    abs_x: f32,
+    abs_y: f32,
+    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
+    current_color: CssColor,
+    paint_top: bool,
+) {
     if width <= 0.0 || height <= 0.0 {
         return;
     }
@@ -2987,7 +3129,7 @@ fn paint_element_border(
     let c_right = resolve(&border.right);
     let c_bottom = resolve(&border.bottom);
     let inner_x0 = (x0 + bl).round();
-    let inner_y0 = (y0 + bt).round();
+    let inner_y0 = if paint_top { (y0 + bt).round() } else { y0 };
     let inner_x1 = (x1 - br).round();
     let inner_y1 = (y1 - bb).round();
     let inner_valid = inner_x1 > inner_x0 && inner_y1 > inner_y0;
@@ -3024,7 +3166,8 @@ fn paint_element_border(
         }
     };
     let is_double = |b: &raikiri_style::resolve::ComputedBorder| b.style() == BorderStyle::Double;
-    if bt > 0.0
+    if paint_top
+        && bt > 0.0
         && let Some(col) = c_top
     {
         strip(x0, y0, x1, y0 + bt, bt, true, col, is_double(&border.top));

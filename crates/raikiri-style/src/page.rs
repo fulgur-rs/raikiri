@@ -1099,7 +1099,32 @@ impl<'i> DeclarationParser<'i> for PageDeclParser {
                 important,
             }));
         }
-        let value = parse_value(name.as_ref(), input).ok_or_else(|| input.new_custom_error(()))?;
+        let inherited_marker = match name.as_ref().to_ascii_lowercase().as_str() {
+            "margin" => input
+                .try_parse(|input| input.expect_ident_matching("inherit"))
+                .is_ok()
+                .then_some(PropertyValue::MarginInherit),
+            "margin-top" => input
+                .try_parse(|input| input.expect_ident_matching("inherit"))
+                .is_ok()
+                .then_some(PropertyValue::MarginTopInherit),
+            "margin-right" => input
+                .try_parse(|input| input.expect_ident_matching("inherit"))
+                .is_ok()
+                .then_some(PropertyValue::MarginRightInherit),
+            "margin-bottom" => input
+                .try_parse(|input| input.expect_ident_matching("inherit"))
+                .is_ok()
+                .then_some(PropertyValue::MarginBottomInherit),
+            "margin-left" => input
+                .try_parse(|input| input.expect_ident_matching("inherit"))
+                .is_ok()
+                .then_some(PropertyValue::MarginLeftInherit),
+            _ => None,
+        };
+        let value = inherited_marker
+            .or_else(|| parse_value(name.as_ref(), input))
+            .ok_or_else(|| input.new_custom_error(()))?;
         let important = parse_important_and_exhaust(input)?;
         Ok(PageBodyItem::Property(Declaration { value, important }))
     }
@@ -3519,6 +3544,13 @@ fn absolutize_in_page_context(
         PropertyValue::MarginLeft(v) => {
             PropertyValue::MarginLeft(margin_lpa(v, font_size, own_line_height, ctx))
         }
+        // Inherit markers are normally resolved in phase 2. Keep them
+        // panic-free if an internal caller bypasses that phase.
+        v @ (PropertyValue::MarginTopInherit
+        | PropertyValue::MarginRightInherit
+        | PropertyValue::MarginBottomInherit
+        | PropertyValue::MarginLeftInherit
+        | PropertyValue::MarginInherit) => v,
         // Shorthand fall-through (see `Padding` above).
         PropertyValue::Margin(sides) => {
             PropertyValue::Margin(sides.map(|l| margin_lpa(l, font_size, own_line_height, ctx)))
@@ -7185,7 +7217,9 @@ mod tests {
     /// absolutize するため transform bucket に含めず、`caption-side` と
     /// `empty-cells` は keyword-only の pass-through bucket に含める。
     /// この値は `page_corpus` の現在の identity/pass-through arms と同期する。
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 108;
+    // Includes the five page-only inherit markers, which phase 3 leaves
+    // untouched as a defensive no-op after phase 2 has normally resolved them.
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 113;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -7291,7 +7325,9 @@ mod tests {
     const KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE: usize = 5;
 
     fn raw_corpus_residue_variants() -> usize {
-        phase_3_transformed_variants() + 4 - KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE
+        // The five raw page-only inherit markers add specified-layer residue
+        // just like the existing four phase-2-only samples.
+        phase_3_transformed_variants() + 9 - KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE
     }
 
     /// `sample_for` / `ALL_PROPERTY_KEYS` を **1 つの token 列**から生成する。
@@ -7963,6 +7999,11 @@ mod tests {
         vec![
             PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
             PropertyValue::CounterResetInherit,
+            PropertyValue::MarginTopInherit,
+            PropertyValue::MarginRightInherit,
+            PropertyValue::MarginBottomInherit,
+            PropertyValue::MarginLeftInherit,
+            PropertyValue::MarginInherit,
             PropertyValue::Deferred(DeferredValue {
                 property: "width".into(),
                 value: "calc(1px + 1px)".into(),
@@ -8048,11 +8089,18 @@ mod tests {
     macro_rules! property_value_variant_registry {
         ($($variant:ident),+ $(,)?) => {
             const PROPERTY_VALUE_VARIANT_COUNT: usize = [$(stringify!($variant)),+,
-                "CounterResetInherit", "CalcLengthPercentage", "GridArea", "Grid"].len();
+                "CounterResetInherit", "MarginTopInherit", "MarginRightInherit",
+                "MarginBottomInherit", "MarginLeftInherit", "MarginInherit",
+                "CalcLengthPercentage", "GridArea", "Grid"].len();
 
             fn property_value_variant_name(value: &PropertyValue) -> &'static str {
                 match value {
                     PropertyValue::CounterResetInherit => "CounterResetInherit",
+                    PropertyValue::MarginTopInherit => "MarginTopInherit",
+                    PropertyValue::MarginRightInherit => "MarginRightInherit",
+                    PropertyValue::MarginBottomInherit => "MarginBottomInherit",
+                    PropertyValue::MarginLeftInherit => "MarginLeftInherit",
+                    PropertyValue::MarginInherit => "MarginInherit",
                     PropertyValue::CalcLengthPercentage { .. } => "CalcLengthPercentage",
                     PropertyValue::GridArea(_) => "GridArea",
                     PropertyValue::Grid(_) => "Grid",
@@ -8577,6 +8625,11 @@ mod tests {
             | PropertyValue::BorderBottomWidth(l)
             | PropertyValue::BorderLeftWidth(l)
             | PropertyValue::OutlineOffset(l) => length(*l),
+            PropertyValue::MarginTopInherit
+            | PropertyValue::MarginRightInherit
+            | PropertyValue::MarginBottomInherit
+            | PropertyValue::MarginLeftInherit
+            | PropertyValue::MarginInherit => Some("margin: inherit"),
             PropertyValue::MarginTop(l)
             | PropertyValue::MarginRight(l)
             | PropertyValue::MarginBottom(l)
