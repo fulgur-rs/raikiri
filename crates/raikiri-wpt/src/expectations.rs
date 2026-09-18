@@ -1267,7 +1267,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + word-break auto-phrase baseline slice (+2, exact 800x600 pass).
         // + line-breaking segment-break slice (+3, exact 800x600 pass).
         // + word-spacing `ch` shaping slice (+1, exact 800x600 pass).
-        assert_eq!(set.baseline.entries.len(), 1037);
+        // + white-space follow-up slice (+6, exact 800x600 pass).
+        assert_eq!(set.baseline.entries.len(), 1043);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
