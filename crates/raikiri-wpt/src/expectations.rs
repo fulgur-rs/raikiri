@@ -1264,7 +1264,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // - inline-flex percentage sizing: one flex-item pin restored after
         //   the Taffy calc resolver was connected; one remains deferred.
         // + white-space break-spaces narrow-container slice (+2, exact 800x600 pass).
-        assert_eq!(set.baseline.entries.len(), 1031);
+        // + word-break auto-phrase baseline slice (+2, exact 800x600 pass).
+        assert_eq!(set.baseline.entries.len(), 1033);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }

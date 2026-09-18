@@ -804,6 +804,8 @@ css/css-text/white-space/trailing-space-rtl-001.html
 css/css-text/white-space/white-space-pre-wrap-justify-001.html
 css/css-text/white-space/white-space-vs-joiners-001.html
 css/css-text/word-break/auto-phrase/word-break-auto-phrase-001.html
+css/css-text/word-break/auto-phrase/word-break-auto-phrase-002.html
+css/css-text/word-break/auto-phrase/word-break-auto-phrase-003.html
 css/css-text/word-break/auto-phrase/word-break-auto-phrase-004.html
 css/css-text/word-break/auto-phrase/word-break-auto-phrase-005.html
 css/css-text/word-break/auto-phrase/word-break-auto-phrase-006.html
