@@ -141,7 +141,7 @@ const INFALLIBLE_SETUP: &str = "cascade/layout are Ok for this benchmark's fixed
 /// `div` carries the `vertical-align` declaration.
 ///
 /// Returns the `Document` together with `<body>`'s id and the first
-/// `<div>`/text ids, which [`workload`]'s shift-pin assertion needs to
+/// `<div>`/text ids, which [`workload`]'s shift-check assertion needs to
 /// independently recompute the expected glyph position. `n_elems == 0`
 /// would leave the last two `None` — every caller in this file uses
 /// [`ELEMENT_COUNTS`], which is always non-empty.
@@ -205,7 +205,7 @@ fn workload(n_elems: usize) -> (Document, CascadeResult) {
         glyph_runs.len(),
     );
 
-    // Shift-pin: independently recompute the first div's text glyph Y offset
+    // Shift-check: independently recompute the first div's text glyph Y offset
     // and compare it against `paint_document`'s actual output — see the
     // module doc's "Does it actually walk the whole document?" section for
     // why a zero-shift-everywhere workload alone would not catch a fault

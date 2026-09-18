@@ -21,14 +21,14 @@ use crate::property::{
 /// `value` が私有なので、crate 外からは struct literal / functional-update
 /// のいずれでも構築できない。
 ///
-/// # write 経路が無いことの compile-fail pin
+/// # write 経路が無いことの compile-fail check
 ///
 /// `value` は `pub(crate)` に絞ってあるが、そのことは prose の主張のまま
 /// だった — read 経路 (`value()`) が届くことは
-/// `crates/raikiri/tests/external_consumer.rs` の実行時 test が pin するが、
+/// `crates/raikiri/tests/external_consumer.rs` の実行時 test が check するが、
 /// 「write 経路が無い」ことは compile する code では表現できないので、それだけ
-/// では pin されない。以下は struct literal 構築が external crate から reject
-/// されることの compile-fail pin:
+/// では check されない。以下は struct literal 構築が external crate から reject
+/// されることの compile-fail check:
 ///
 /// ```compile_fail
 /// use raikiri_style::{CssColor, Declaration, PropertyValue};
@@ -78,12 +78,12 @@ use crate::property::{
 /// 最後に、`Declaration` は `Clone` を derive しているので、external crate は
 /// `declarations()` 経由で得た `&Declaration` を `.clone()` して**所有権のある
 /// 可変値**を手に入れられる — このとき `value` への代入が reject されることが
-/// 唯一の実効的な write-pin である (issue が挙げた
+/// 唯一の実効的な write-check である (issue が挙げた
 /// `tree.style_rules()[0].declarations()[0].value = ...;` は `style_rules()` /
 /// `declarations()` が両方とも `&[_]` を返す ので、`value` の visibility に
 /// 関係なく常に `E0594` (immutable な参照への代入) で reject される — つまり
 /// これは「常に compile-fail」であり `value` の可視性が将来 `pub` に戻っても
-/// 検出できない vacuous な pin になってしまう。下は `.clone()` を挟むことで
+/// 検出できない vacuous な check になってしまう。下は `.clone()` を挟むことで
 /// `value` の visibility だけを discriminate する版):
 ///
 /// ```compile_fail
@@ -187,10 +187,10 @@ impl StyleRule {
     /// gate であり、`StyleRule` を external crate が所有値として保持する
     /// 経路はどちらの意味でも存在しない。触れられるのはこの accessor が返す
     /// `&[Declaration]` だけである。したがって「write 経路」を意味のある形で
-    /// discriminate する pin は存在しない (どんな可視性でも `&StyleRule` から
+    /// discriminate する check は存在しない (どんな可視性でも `&StyleRule` から
     /// は書けない) が、
     /// `declarations` という field 名そのものが private であることは以下で
-    /// 直接 pin できる — `pub` に戻れば以下は compile が通るようになる:
+    /// 直接 check できる — `pub` に戻れば以下は compile が通るようになる:
     ///
     /// ```compile_fail
     /// use raikiri_style::{Origin, RuleTree};
@@ -1905,7 +1905,7 @@ mod tests {
     fn margin_shorthand_five_values_declaration_dropped() {
         // 5+ value shorthand: parse_margin_shorthand は 4 value 消費、5th 残り
         // token は expect_exhausted で declaration drop。end-to-end で 0 decl
-        // になることを pin (property.rs の
+        // になることを check (property.rs の
         // `margin_shorthand_leaves_extra_values_for_caller_exhausted_check` と complementary)。
         let decls = parse_block("margin: 10px 20px 30px 40px 50px;");
         assert!(
@@ -1982,7 +1982,7 @@ mod tests {
     #[test]
     fn margin_longhand_declaration_not_expanded() {
         // longhand は expand_shorthand_into の match arm を no-op で通過 (1 decl のまま)。
-        // shorthand-only expansion の scope を pin する negative test。
+        // shorthand-only expansion の scope を check する negative test。
         let decls = parse_block("margin-top: 10px;");
         assert_eq!(decls.len(), 1);
         assert_eq!(
@@ -2044,7 +2044,7 @@ mod tests {
         // `border: 1px solid red` → 12 longhand (4 side × {width, style, color})。
         // order: top-w / top-s / top-c / right-w / right-s / right-c / bottom-* /
         // left-* (`expand_shorthand_into` の hand-written
-        // order を pin することでcopy-paste regression を検知)。
+        // order を check することでcopy-paste regression を検知)。
         let decls = parse_block("border: 1px solid red;");
         assert_eq!(
             decls.len(),
@@ -2114,7 +2114,7 @@ mod tests {
     #[test]
     fn border_longhand_declaration_not_expanded() {
         // longhand は expand_shorthand_into の match arm を no-op で通過 (1 decl のまま)。
-        // shorthand-only expansion の scope を pin する negative test (margin /
+        // shorthand-only expansion の scope を check する negative test (margin /
         // padding sibling と同 pattern)。
         let decls = parse_block("border-top-width: 10px;");
         assert_eq!(decls.len(), 1);
@@ -2127,7 +2127,7 @@ mod tests {
     #[test]
     fn border_shorthand_two_widths_declaration_dropped() {
         // property.rs `border_shorthand_two_widths_leaves_leftover_for_caller_exhausted_check`
-        // の end-to-end 側 pin: `border: 1px 2px` は shorthand helper が 1px を
+        // の end-to-end 側 check: `border: 1px 2px` は shorthand helper が 1px を
         // width slot に置いた後 2px は他 slot (style/color) に match しないため
         // fall-through 到達で leftover になり、caller の `expect_exhausted` が
         // declaration 全体を drop する (0 decl)。
@@ -2306,7 +2306,7 @@ mod tests {
     fn overflow_shorthand_three_values_declaration_dropped() {
         // property.rs
         // `overflow_shorthand_leaves_extra_values_for_caller_exhausted_check`
-        // の end-to-end 側 pin: `parse_overflow_shorthand` は 2 value 消費、3rd
+        // の end-to-end 側 check: `parse_overflow_shorthand` は 2 value 消費、3rd
         // 残り token は expect_exhausted で declaration 全体を drop する
         // (0 decl、margin 5-value sibling と同 pattern)。
         let decls = parse_block("overflow: hidden scroll auto;");
@@ -2321,7 +2321,7 @@ mod tests {
     #[test]
     fn overflow_longhand_declaration_not_expanded() {
         // longhand は expand_shorthand_into の match arm を no-op で通過 (1 decl
-        // のまま)。shorthand-only expansion の scope を pin する negative test
+        // のまま)。shorthand-only expansion の scope を check する negative test
         // (margin / padding / border sibling と同 pattern)。
         let decls = parse_block("overflow-x: hidden;");
         assert_eq!(decls.len(), 1);
@@ -2384,7 +2384,7 @@ mod tests {
     fn text_decoration_shorthand_two_style_components_declaration_dropped() {
         // property.rs
         // `text_decoration_shorthand_two_style_components_leaves_leftover_for_caller_exhausted_check`
-        // の end-to-end 側 pin: 2nd style keyword は leftover token として
+        // の end-to-end 側 check: 2nd style keyword は leftover token として
         // expect_exhausted に検知され、declaration 全体が drop される (0 decl)。
         let decls = parse_block("text-decoration: solid wavy;");
         assert!(
@@ -2398,7 +2398,7 @@ mod tests {
         use crate::property::{TextDecorationColor, TextDecorationLine, TextDecorationStyle};
 
         // longhand は expand_shorthand_into の match arm を no-op で通過 (1 decl
-        // のまま)。shorthand-only expansion の scope を pin する negative test
+        // のまま)。shorthand-only expansion の scope を check する negative test
         // (margin / padding / border / overflow sibling と同 pattern)。
         let decls = parse_block("text-decoration-line: underline;");
         assert_eq!(decls.len(), 1);
@@ -2462,7 +2462,7 @@ mod tests {
 
     #[test]
     fn text_decoration_line_duplicate_and_none_combination_declarations_dropped() {
-        // End-to-end pin for the leftover-token cases property.rs's
+        // End-to-end check for the leftover-token cases property.rs's
         // `text_decoration_line_two_underlines_leaves_leftover_for_caller_exhausted_check`
         // and `text_decoration_line_none_combined_with_a_keyword_leaves_leftover`
         // exercise at the `parse_text_decoration_line` helper level: the

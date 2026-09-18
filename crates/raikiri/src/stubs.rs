@@ -1,4 +1,4 @@
-//! `plan` / `render_streaming` の stub 実装。
+//! `plan` / `render_streaming` の 未実装 API。
 //!
 //! この module 内の全 fn は `RenderError::Unimplemented` を返す。
 //! **pagination 実装完了時に、本 module を丸ごと削除して parse.rs / dedicated
@@ -22,7 +22,7 @@ use crate::HtmlDocument;
 
 /// Plan mode (dry-run: parse+cascade+layout planning のみ、PaintedBox 構築なし)。
 ///
-/// **Stub**: 常に `Err(RenderError::Unimplemented { feature: "plan", .. })` を
+/// **Unavailable implementation**: 常に `Err(RenderError::Unimplemented { feature: "plan", .. })` を
 /// 返す。本実装は pagination 完了後。
 ///
 /// spec §L1075 の signature 準拠。
@@ -42,7 +42,7 @@ pub fn plan(
 /// Streaming rendering (1 pass、BoundedLookahead + PlaceholderTargetResolver +
 /// ImmediateEmission)。
 ///
-/// **Stub**: 常に `Err(RenderError::Unimplemented { feature: "render_streaming", .. })`
+/// **Unavailable implementation**: 常に `Err(RenderError::Unimplemented { feature: "render_streaming", .. })`
 /// を返す。本実装は pagestream state machine 実装後。
 ///
 /// spec §L1084 の signature 準拠。

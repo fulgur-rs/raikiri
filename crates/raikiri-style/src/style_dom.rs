@@ -1,4 +1,4 @@
-//! Style-owned DOM abstraction — cleanroom decoupling of raikiri-style from
+//! Style-owned DOM abstraction — 独立実装 decoupling of raikiri-style from
 //! raikiri-traits (a two-part decoupling — Phase A introduced this trait
 //! surface, Phase B dropped the Cargo dependency on raikiri-traits entirely).
 //!
@@ -228,7 +228,7 @@ pub trait StyleElement {
     }
 
     /// Namespace URI (`Some("http://www.w3.org/2000/svg")` for SVG etc).
-    /// HTML default namespace returns `None` (fast path).
+    /// HTML default namespace returns `None` (optimized path).
     fn namespace_uri(&self) -> Option<&str> {
         None
     }
@@ -315,7 +315,7 @@ pub trait StyleElement {
     /// `cascade::tests::attribute_exists_selector_does_not_match_empty_value_attr`
     /// and
     /// `cascade::tests::attribute_exact_match_selector_does_not_match_empty_value_attr`
-    /// pin that mock-only behavior; they describe matching against
+    /// check that mock-only behavior; they describe matching against
     /// `TestDoc`, not against a real `Document`.
     ///
     /// `id`'s own empty-is-absent normalization ([`Self::id`]) is a

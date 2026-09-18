@@ -2,7 +2,7 @@
 //!
 //! CSS Backgrounds 3 §5.3 <https://www.w3.org/TR/css-backgrounds-3/#border-color>
 //! defines `border-*-color`'s initial value as `currentcolor`. In raikiri's
-//! cascade (raikiri-spike-0vv.17) that keyword is preserved as
+//! cascade that keyword is preserved as
 //! [`BorderColor::CurrentColor`] — a specified-value sentinel — rather than
 //! baked to a concrete color at cascade time. The true used value is
 //! `currentcolor` → "the value of the `color` property" (CSS Color 3 §4.4
@@ -11,7 +11,7 @@
 //!
 //! This module is intentionally tiny: one `match` plus docs. Border *drawing*
 //! itself is still deferred (see [`crate`] docs `Non-goals`), so this helper
-//! has no call site yet — it exists so the hazard in `raikiri-spike-q7qf`
+//! has no call site yet — it exists so the hazard in this implementation
 //! can be closed with a pinned, tested bridge between `BorderColor` and
 //! `CascadeResult.computed[node].color`.
 //!
@@ -91,8 +91,8 @@ mod tests {
     fn initial_current_color_resolves_to_computed_color() {
         // Hazard 2: <div style="color: red"> (border-color omitted → initial
         // is CurrentColor per CSS Backgrounds 3 §3.1). Same helper path;
-        // cascade-side pin is in raikiri-style's initial_values_match_spec,
-        // here we pin the paint-side resolution.
+        // cascade-side check is in raikiri-style's initial_values_match_spec,
+        // here we check the paint-side resolution.
         assert_eq!(resolve_border_color(BorderColor::CurrentColor, RED), RED);
     }
 

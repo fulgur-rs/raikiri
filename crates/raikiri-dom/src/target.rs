@@ -4,7 +4,7 @@
 //! Companion to [`crate::running`]'s register-site
 //! walker (already landed) — same document-order
 //! arena-walk shape, different [`GcpmDirective`] variant. `running`'s
-//! [`crate::running::collect_running_template`] already *emits*
+//! [`mod@crate::running`] の `collect_running_template` already *emits*
 //! `CounterIncrement`/`CounterReset`/`CounterSet`/`StringSet` (and
 //! `RegisterRunning` is emitted by [`crate::running::build_running_template_store`]
 //! itself) into each `position: running(name)` template's own
@@ -28,13 +28,13 @@
 //! this module owns only the **producer** — walking the arena and calling
 //! [`TargetRegistry::register`]. The `TargetRegistry` instance built here
 //! is **dom-local**: [`build_target_registry`] returns an owned
-//! `TargetRegistry` to its caller (test harness or a future per-document
+//! `TargetRegistry` to its caller (test setup or a future per-document
 //! driver), and that caller wires it into
 //! `raikiri_traits::page::context::PageContext.targets` via
 //! `PageContext::set_targets` (already landed) — a bulk replace, not a
 //! `GcpmDirective`-mediated apply, since this walk never goes through the
 //! directive stream in the first place (see "synthesized here" below). No
-//! production per-document driver calls `set_targets` yet; that wiring is
+//! production per-document driver calls `set_targets` yet; that integration is
 //! part of a DOM-tree-walking driver that is still to be built.
 //!
 //! # `GcpmDirective::RegisterTarget` is synthesized here, not consumed
@@ -42,7 +42,7 @@
 //! Every other producing [`GcpmDirective`] variant
 //! (`CounterIncrement`/`CounterReset`/`CounterSet`/`StringSet`) is a direct
 //! mirror of a CSS property cascade already resolved onto
-//! [`raikiri_style::ComputedValues`] (see [`crate::running::collect_running_template`]).
+//! [`raikiri_style::ComputedValues`] (see [`mod@crate::running`] の `collect_running_template`).
 //! `RegisterTarget { fragment_id }` is different: it is **HTML
 //! `id`-attribute-driven, not CSS-property-driven** — there is no CSS
 //! property whose cascade could produce it, and `raikiri_style::CascadeResult`
@@ -95,7 +95,7 @@
 //! `counter_increment_on_following_sibling_of_reset_element_continues_that_scope`,
 //! and
 //! `counter_increment_without_ancestor_reset_persists_across_siblings`
-//! each pin one shape of following-sibling continuation: a shared-ancestor
+//! each check one shape of following-sibling continuation: a shared-ancestor
 //! scope, a sibling-established `counter-reset` scope, and a
 //! no-`counter-reset`-anywhere auto-instantiated scope, respectively.
 //! `build_target_registry_counter_scope_resets_between_independent_sections`
@@ -122,7 +122,7 @@
 //! paint/layout, not this dom-side arena walk. `TargetInfo::text_part`'s own
 //! fallback already resolves missing parts to `""` (CSS Content 3 §2.6.3,
 //! documented on `raikiri_traits::page::target`'s `text_parts` field), so
-//! leaving them absent here is spec-safe, not a stub bug.
+//! leaving them absent here is spec-safe, not a implementation issue.
 //!
 //! **`collect_descendant_text` scope note.** Gated only on
 //! [`raikiri_traits::Node::is_in_document`] (DOM-tree membership), not CSS
@@ -161,7 +161,7 @@ impl CounterScopes {
     /// Apply one element's `counter-reset` / `counter-increment` /
     /// `counter-set` directives, in CSS Lists 3 §4 processing order (reset →
     /// increment → set — the same order
-    /// [`crate::running::collect_running_template`] already pins for the
+    /// [`mod@crate::running`] の `collect_running_template` already pins for the
     /// sibling `GcpmDirective`-emit walk, and for the same reason: §4.2's
     /// note that `counter-set` is applied after `counter-increment`).
     ///
@@ -336,7 +336,7 @@ fn element_id(doc: &Document, idx: usize) -> Option<String> {
 /// text — only its descendants do).
 ///
 /// Same reverse-push-children iterative DFS shape as
-/// [`crate::running::collect_running_template`] (and, one level up,
+/// [`mod@crate::running`] の `collect_running_template` (and, one level up,
 /// [`build_target_registry`] itself) — see that function's doc for the
 /// document-order rationale. Nested per register-site element, same
 /// per-subtree walk cost tradeoff `collect_running_template` already
@@ -811,7 +811,7 @@ mod tests {
         // (leaf-only read) can't distinguish a correct single-level stack
         // "7" from a wrongly-pushed two-level stack "5, 2" (both read "2" as
         // the leaf) — resolve_target_counters over the full stack is
-        // required to pin this.
+        // required to check this.
         let mut doc = Document::new();
         let el = doc.append_element(
             Some(0),
@@ -839,7 +839,7 @@ mod tests {
 
     #[test]
     fn build_target_registry_increment_saturates_instead_of_panicking_or_wrapping_on_overflow() {
-        // Regression pin: spec-legal CSS driving
+        // Regression check: spec-legal CSS driving
         // counter-increment past i32::MAX must saturate, not panic (debug
         // builds) or wrap to i32::MIN (release builds). Same finding, same
         // fix, as `CounterStack::increment` in `raikiri-traits`'s
@@ -1020,10 +1020,10 @@ mod tests {
         // display:contents does not remove its descendants from the box
         // tree, so `target` below is still walked and registered normally.
         //
-        // Regression-pin shape: the id-bearing probe is a *descendant* of
+        // Regression-check shape: the id-bearing probe is a *descendant* of
         // the display:contents element, registered while that element's
         // scope (if any had wrongly been pushed) would still be directly
-        // observable — the most direct way to pin "this element's own
+        // observable — the most direct way to check "this element's own
         // counter-reset never even ran".
         let mut doc = Document::new();
         let contents = doc.append_element(

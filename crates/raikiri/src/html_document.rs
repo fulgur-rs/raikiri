@@ -6,7 +6,7 @@
 //! Document` に透過的に置換される (Consumer surface 不変)。
 //!
 //! blitz `HtmlDocument` の analog (spec §L1134 blitz-compat 対応)。名前のみ
-//! 一致、shape / code / UA CSS の持ち込みなし (cleanroom implementation)。
+//! 一致、shape / code / UA CSS の持ち込みなし (independent implementation)。
 
 use raikiri_html::UncascadedDocument;
 use raikiri_style::CascadeResult;

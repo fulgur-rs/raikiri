@@ -473,7 +473,7 @@ mod tests {
     fn paint_single_page_skips_zero_size_subtree() {
         // display:none 相当を模した zero-size element (display: None, size 明示) が
         // walk されないことを pin。paint_element の early return が正しく発火する
-        // regression pin (layout side でも empty_display_none_leaf... で pin 済)。
+        // regression check (layout side でも empty_display_none_leaf... で check 済)。
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
         let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
@@ -499,7 +499,7 @@ mod tests {
         );
         let mut scene = Scene::new();
         paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
-        // text が stub の間も、実装後も glyph run は 0 個のはず (hidden 配下の text は skip)
+        // text が 未実装の間も、実装後も glyph run は 0 個のはず (hidden 配下の text は skip)
         let glyph_commands: Vec<_> = scene
             .commands
             .iter()
@@ -975,7 +975,7 @@ mod tests {
     #[test]
     fn paint_single_page_positions_glyphs_via_absolute_offset() {
         // body / p / text の accumulate location が draw_glyphs の transform に
-        // 正しく反映されることを exact-match で pin する。
+        // 正しく反映されることを exact-match で check する。
         //
         // 従来 `translation >= 0` の弱い assertion では identity transform (=
         // accumulation を丸ごと忘れた実装) でも pass してしまう。<p> に非ゼロの
@@ -996,7 +996,7 @@ mod tests {
         // hand-set と同 shape を CSS で再現。`0px` は明示 (raikiri-style
         // `parse_length_value` は bare unitless `0` を受理しない spec-subset
         // 実装のため、shorthand の 4 side で unit を全 side に付ける)。
-        // `color:red` は既存 assertion で brush 経路の regression pin として
+        // `color:red` は既存 assertion で brush 経路の regression check として
         // 保持されているため concatenate する。
         let p = doc.append_element(
             Some(body),
@@ -1393,7 +1393,7 @@ mod tests {
     /// HTML の hidden elements
     /// (`<style>` / `<script>` / `<noscript>` / `<datalist>` / `<noembed>` /
     /// `<noframes>` / `<rp>` 等) 内の text が rendered artifact に混入しない
-    /// ことを pin する。
+    /// ことを check する。
     ///
     /// 各 fixture では:
     /// - inert element 手前の "before" text と後ろの "after" text を配置し、
@@ -1619,7 +1619,7 @@ mod tests {
         // document.node_count()` を意図的に破り (cascade 後に arena へ
         // node を 1 つ足して `cascade.computed` を置き去りにする)、
         // `paint_single_page` 冒頭の debug_assert がその契約違反を捕まえて
-        // panic することを pin する。release build (debug_assertions off)
+        // panic することを check する。release build (debug_assertions off)
         // では debug_assert 自体が消えるため #[cfg(debug_assertions)] で
         // gate する — さもないと `cargo test --release` で失敗する。
         let (mut doc, cr) = hello_world_paint_setup();
@@ -1866,7 +1866,7 @@ mod tests {
 /// [`nonfinite_rasterizer_probe::draw_glyphs_at_natural_font_size_is_a_non_vacuous_control`]
 /// pinning that the identical font/glyphs/canvas/transform *does* draw when
 /// `font_size` is ordinary — isolating `font_size` as the one variable that
-/// silences the output, rather than the harness being unable to draw at all.
+/// silences the output, rather than the test setup being unable to draw at all.
 ///
 /// # Residual risk (not this module's job to close)
 ///
@@ -1903,7 +1903,7 @@ mod nonfinite_rasterizer_probe {
     /// blank (a glyph many orders of magnitude larger than 16px does not
     /// happen to place any of its ink inside a 16x16 window at this
     /// position), which this module treats as an informative finding, not a
-    /// probe defect, precisely because the control above proves the harness
+    /// probe defect, precisely because the control above proves the test setup
     /// can draw when the input is ordinary.
     const CANVAS_W: u32 = 16;
     const CANVAS_H: u32 = 16;
@@ -2009,7 +2009,7 @@ mod nonfinite_rasterizer_probe {
     }
 
     /// Non-vacuity control: **without any extreme input**, does this exact
-    /// harness (font, glyphs, `CANVAS_W`×`CANVAS_H` canvas, `Affine::IDENTITY`
+    /// test setup (font, glyphs, `CANVAS_W`×`CANVAS_H` canvas, `Affine::IDENTITY`
     /// transform) actually put visible ink on the canvas? Drawn at the run's
     /// own natural (unmodified, un-overridden) font-size — i.e. this is the
     /// one call in this module that does not touch `font_size` at all.
@@ -2111,7 +2111,7 @@ mod nonfinite_rasterizer_probe {
     /// this module's doc comment for the full mechanism (the
     /// `max_cached_font_size` gate) and source citations.
     ///
-    /// This is the module's load-bearing regression pin: if a future
+    /// This is the module's load-bearing regression check: if a future
     /// `glifo`/`vello_cpu` upgrade changes this dispatch (e.g. raises/removes
     /// the atlas-caching font-size gate, or the uncached fill path stops
     /// being canvas-bounded), this test flips to `Panicked` or a timeout and
@@ -2185,7 +2185,7 @@ mod nonfinite_rasterizer_probe {
     /// is already ~7800x past `glifo`'s own 128px atlas-cache-eligibility
     /// cutoff, so production text has *never* exercised that caching path
     /// for any remotely large heading/display font-size — not just for
-    /// pathological input). Not a new guard — a pin that the current guard's
+    /// pathological input). Not a new guard — a check that the current guard's
     /// chosen bound is also safe for this previously-uncharacterized sink.
     /// Like the two tests above (and unlike the natural-size control), a
     /// production-clamp-sized glyph is *also* far too large to put visible

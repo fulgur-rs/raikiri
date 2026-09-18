@@ -168,7 +168,7 @@ pub fn to_raikiri_request(req: Request) -> raikiri_traits::Request {
         Body::Bytes(b) => raikiri_traits::Body::Bytes(b),
         Body::Empty => raikiri_traits::Body::Empty,
         Body::Form(_fd) => {
-            // Raikiri FormData is currently an empty placeholder; preserve shape.
+            // Raikiri FormData is currently an empty value; preserve shape.
             raikiri_traits::Body::Form(raikiri_traits::FormData::default())
         }
     };

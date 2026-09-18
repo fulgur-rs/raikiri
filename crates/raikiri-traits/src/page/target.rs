@@ -2038,7 +2038,7 @@ mod tests {
 
     #[test]
     fn target_registry_default_is_empty() {
-        // Constructibility pin: `TargetRegistry::default()` yields an empty
+        // Constructibility check: `TargetRegistry::default()` yields an empty
         // registry. The directive-apply driver will consume this
         // constructor.
         let reg = TargetRegistry::default();
@@ -2050,7 +2050,7 @@ mod tests {
 
     #[test]
     fn target_registry_shape_matches_design_7_2() {
-        // Canonical shape pin (design §7.2, lines 1961-1964):
+        // Canonical shape check (design §7.2, lines 1961-1964):
         //   resolved: HashMap<Symbol, TargetInfo>
         //   pending_slots: Vec<TargetSlot>
         // If this test breaks, the type has drifted from the design and
@@ -2726,7 +2726,7 @@ mod tests {
     #[test]
     fn format_counter_cjk_ideographic_matches_trad_chinese_informal() {
         // §7.1.3's own dfn: "cjk-ideographic ... identical to
-        // trad-chinese-informal. (It exists for legacy reasons.)" — pin
+        // trad-chinese-informal. (It exists for legacy reasons.)" — check
         // both a positive and the negative case (same rationale as the
         // trad-chinese-informal-vs-simp-chinese-informal test above: a
         // positive-only assertion can't distinguish "correctly aliased to
@@ -2816,7 +2816,7 @@ mod tests {
     fn join_counter_stack_non_decimal_style() {
         // target-counters() path (TargetRequest::Counters) threads `style`
         // through join_counter_stack the same as the single-value path —
-        // pin that a non-decimal style formats every level, not just the
+        // check that a non-decimal style formats every level, not just the
         // leaf.
         let style = CounterStyle::Named(SmolStr::new("lower-alpha"));
         assert_eq!(join_counter_stack(&[1, 2, 3], ".", &style), "a.b.c");
@@ -2894,7 +2894,7 @@ mod tests {
         // CSS Content 3 §2.6.2: an undefined counter has value 0;
         // `counters(name, sep)` renders that as the single formatted "0"
         // (join-with-sep of a one-element `[0]`) — NOT the empty string.
-        // Regression pin against a prior implementation that used
+        // Regression check against a prior implementation that used
         // `.unwrap_or_default()` on the joined output.
         let mut reg = TargetRegistry::default();
         reg.register(Symbol::new("sec-1"), make_info(&[], &[]));
@@ -3197,7 +3197,7 @@ mod tests {
     #[test]
     fn flush_pending_counters_variant_joins_stack() {
         // Pending path for target-counters must remember `separator` and
-        // `style`, not just the counter `name` — regression pin for the
+        // `style`, not just the counter `name` — regression check for the
         // TargetRequest::Counters variant fields.
         let mut reg = TargetRegistry::default();
         let out = reg.resolve_target_counters(

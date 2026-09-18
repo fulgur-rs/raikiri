@@ -1,6 +1,6 @@
-//! raikiri-vrt — VRT harness for raikiri (dev-only).
+//! raikiri-vrt — VRT test setup for raikiri (dev-only).
 //!
-//! Provides the reference-image fixture / diff / tolerance harness via the
+//! Provides the reference-image fixture / diff / tolerance test setup via the
 //! `reference` module, plus anyrender rasterize + rayon determinism tests
 //! that guard the raster pipeline used by production PNG encoding.
 //! Production PNG encoding itself lives in `raikiri::html_to_png` as an
@@ -161,7 +161,7 @@ mod tests {
     ///
     /// `anyrender_vello_cpu::VelloCpuImageRenderer` internally constructs
     /// `vello_cpu::RenderContext::new(w, h)` which uses `RenderSettings::default()`
-    /// (num_threads = `min(available_parallelism - 1, 8)`). To pin the worker count
+    /// (num_threads = `min(available_parallelism - 1, 8)`). To check the worker count
     /// we bypass `VelloCpuImageRenderer::new` and construct `RenderContext::new_with`
     /// directly, then wrap it in `VelloCpuScenePainter` (whose fields are `pub`) to
     /// stay on the exact same production render path (`draw_fn → flush →

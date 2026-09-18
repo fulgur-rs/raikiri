@@ -52,8 +52,8 @@ pub struct RenderLimits {
     ///
     /// **Semantic**: [`max_aggregate_bytes`](Self::max_aggregate_bytes) は
     /// post-parse の approximate memory footprint (DOM node arena / cascade
-    /// table 等の合計) を pin する一方、`max_input_bytes` は parse-time の
-    /// raw byte stream を pin する (parse 開始前に enforce できるので DoS
+    /// table 等の合計) を check する一方、`max_input_bytes` は parse-time の
+    /// raw byte stream を check する (parse 開始前に enforce できるので DoS
     /// 対策として直接的、fail-closed 早期返却)。
     pub max_input_bytes: Option<u64>,
     /// HTML parse 中に html5ever が報告する非致命 parse error を warning
@@ -74,9 +74,9 @@ pub struct RenderLimits {
     /// 設ける前提であること。
     ///
     /// **Semantic**: [`max_input_bytes`](Self::max_input_bytes) が生の入力
-    /// byte 数 (線形) を pin するのに対し、`max_parse_warnings` は同じ入力
+    /// byte 数 (線形) を check するのに対し、`max_parse_warnings` は同じ入力
     /// サイズでも malformed token の密度によって非線形に増幅しうる出力側の
-    /// warning 件数を pin する — 短い入力でも極端に高密度な malformed token
+    /// warning 件数を check する — 短い入力でも極端に高密度な malformed token
     /// 列を送り込めば大量の warning を生成できるため、入力 byte cap だけでは
     /// この増幅を防げない。
     pub max_parse_warnings: Option<usize>,

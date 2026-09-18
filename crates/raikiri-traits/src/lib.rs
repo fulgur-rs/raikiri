@@ -246,7 +246,7 @@ mod tests {
 
         // Direct field construct pattern (`with_*` ergonomic を持たない
         // sibling convention に揃えている)。同一 crate 内なので struct update
-        // syntax が使える (external consumer 視点の直接代入 pin は
+        // syntax が使える (external consumer 視点の直接代入 check は
         // `external_consumer_can_mutate_pub_fields_via_default_shorthand` 側
         // が担当)。
         let via_field = RenderLimits {
@@ -367,7 +367,7 @@ mod tests {
 
     // ── ViolationType::Display ──────────────
     // Debug-in-Display の排除。Display 出力は stability 契約の対象なので
-    // 全 variant の string を pin する。Debug format (auto-derived) が
+    // 全 variant の string を check する。Debug format (auto-derived) が
     // variant field 追加時に silently 変わるのを防ぐため、代表 field 値も
     // 合わせて assert する。
 
@@ -427,7 +427,7 @@ mod tests {
     #[test]
     fn policy_violation_display_uses_violation_type_display_not_debug() {
         // PolicyViolation::Display が violation_type / kind を `{}` で format
-        // することを regression pin。旧実装は `{:?}` で
+        // することを regression check。旧実装は `{:?}` で
         // "FetchTooLarge { limit: .., actual: .. }" や "Image" を垂れ流していた。
         // kind Display swap 分の kind assertion も含む。
         use url::Url;
@@ -463,7 +463,7 @@ mod tests {
     // ── ResourceKind::Display ───────────────
     // Debug-in-Display の排除 (ViolationType::Display と対になるタスクとして
     // 完結)。Display 出力は stability 契約の対象なので、全 7 variants の
-    // string を pin する。Debug format (auto-derived) が variant 追加時に
+    // string を check する。Debug format (auto-derived) が variant 追加時に
     // silently 変わるのを防ぐため、`violation_type_display_*` pattern に
     // 合わせて per-variant assert_eq! で固定する。
 
@@ -514,7 +514,7 @@ mod tests {
         // Resolver / Network / Sink / Io) と同じ label-only 方針: 詳細は
         // std::error::Error::source() 経由で PolicyViolation Display に届く。
         // 「violation_type が Display で format される (Debug ではない)」
-        // regression pin は本 test の source 側 assert + 上段 test
+        // regression check は本 test の source 側 assert + 上段 test
         // `policy_violation_display_uses_violation_type_display_not_debug`
         // (PolicyViolation 直の Display) の両方でカバー。
         use std::error::Error;
@@ -750,7 +750,7 @@ mod tests {
     #[test]
     fn element_default_id_and_has_class_delegate_to_attr() {
         // impl 側が attr() のみ override すれば id() / has_class() /
-        // attr("style") が default 経由で追従することを regression pin する。
+        // attr("style") が default 経由で追従することを regression check する。
         use crate::Element;
 
         struct AttrOnlyElement;

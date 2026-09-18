@@ -279,7 +279,7 @@ blockquote, figure, listing, p, plaintext, pre, xmp { margin-top: 1em; margin-bo
  *   a:link, a:visited { text-decoration: underline; cursor: pointer; }
  *
  * `:link` / `:visited` are an explicit non-goal here — visited-link
- * history is not something a static cleanroom style engine can observe.
+ * history is not something a static 独立実装 style engine can observe.
  * This rule applies the unvisited `#0000EE` color to `a` unconditionally
  * instead of gating it on `:link`, an accepted simplification that does
  * not distinguish visited from unvisited. `:active` (`#FF0000`)
@@ -370,7 +370,7 @@ a[href] { color: #0000EE; text-decoration: underline; }
  * `O`. A VRT snapshot of `sub`/`sup` content taken before that gap closes
  * captures this row-stacked layout, not an inline subscript/superscript
  * appearance — expected given the current renderer's scope, not a defect
- * in this rule or in the vertical-align wiring itself. Separately, the
+ * in this rule or in the vertical-align integration itself. Separately, the
  * offset is applied only at paint time, after layout has already placed
  * every box — it does not participate in box-model computation and is
  * not clipped against the page box, so a large enough shift (e.g.

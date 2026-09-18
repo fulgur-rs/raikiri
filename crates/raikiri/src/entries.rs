@@ -23,7 +23,7 @@
 //! に済むよう、各 struct の field 型は
 //! **raikiri-style / taffy / parley の型を直接参照しない** — `f32` / `bool` /
 //! `u8` tuple / `Option<String>` / [`NodeId`] / `Vec<NodeId>` のみを使う。
-//! 理由: raikiri-traits は raikiri-style に依存していない (原則5 cleanroom
+//! 理由: raikiri-traits は raikiri-style に依存していない (原則5 独立実装
 //! 境界とは別の、純粋な dependency-graph 制約) ため、これらの型を relocate
 //! 先の crate が新たに引き込む必要が生じるのを避ける。`ComputedValues` の
 //! 値は populate 時に primitive へ変換して埋める。
@@ -38,8 +38,8 @@
 //!
 //! Numeric な長さ系 field は [`crate::page_scene::Pt`] (= `f32` alias) を
 //! 再利用する。名前は "Pt" (PDF point) だが、[`crate::page_scene::build_page_scene`] は CSS px
-//! 値をそのまま詰める既存の unit debt ([`crate::page_scene`] module doc 参照)
-//! に本 entry 群も従う — 新たに別種の unit debt を作らないための意図的な
+//! 値をそのまま詰める既存の known unit mismatch ([`crate::page_scene`] module doc 参照)
+//! に本 entry 群も従う — 新たに別種の known unit mismatch を作らないための意図的な
 //! 選択。
 //!
 //! `#[non_exhaustive]` を全 struct に付与しているため、future field 追加は

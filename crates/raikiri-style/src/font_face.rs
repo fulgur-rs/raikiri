@@ -59,12 +59,12 @@
 //!   serves a given element). The parsed descriptors are stored verbatim so
 //!   the matcher has them; the matcher itself is a separate task.
 //!
-//! # RuleTree wiring (origin-aware)
+//! # RuleTree integration (origin-aware)
 //!
 //! [`crate::ruletree::RuleTree`] owns a `font_faces` [`FontFaceRegistry`],
 //! populated by every call to [`crate::ruletree::RuleTree::add_stylesheet`]
 //! regardless of `origin` — the same independent-second-pass split
-//! [`crate::counter_style`] uses (see that module's "RuleTree wiring"
+//! [`crate::counter_style`] uses (see that module's "RuleTree integration"
 //! section for why the scan runs separately rather than folding into the
 //! existing `style_rules`/`page_rules` parser). Read the populated registry
 //! back via [`crate::ruletree::RuleTree::font_faces`].
@@ -272,7 +272,7 @@ fn parse_descriptor_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Pars
 
 /// Per-declaration parser for the `@font-face` block's `<declaration-list>`
 /// — mirrors [`mod@crate::rule`]'s `DeclParser` shape exactly (same
-/// `RuleBodyItemParser` wiring, same "unsupported name / invalid value →
+/// `RuleBodyItemParser` integration, same "unsupported name / invalid value →
 /// `Err` → whole declaration silently dropped by `RuleBodyParser`'s error
 /// recovery" behavior), specialized to font-face descriptor names instead
 /// of CSS property names.
@@ -625,7 +625,7 @@ enum TopLevelItem {
 /// Stylesheet-level parser: accepts only `@font-face` at-rules with a
 /// block, drops everything else (other at-rules, all qualified/style
 /// rules) — this module has no interest in anything but `@font-face`. See
-/// the module doc's "RuleTree wiring" section on why this runs its own
+/// the module doc's "RuleTree integration" section on why this runs its own
 /// independent scan rather than extending [`crate::ruletree`]'s
 /// `StyleRuleParser`.
 struct FontFaceSheetParser;

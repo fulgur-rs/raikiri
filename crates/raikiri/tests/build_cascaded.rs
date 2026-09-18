@@ -239,7 +239,7 @@ fn dom_style_element_author_rule_overrides_ua() {
     assert_eq!(
         display,
         DisplayValue::Inline,
-        "DOM <style> Author rule should override UA (both via umbrella wiring)",
+        "DOM <style> Author rule should override UA (both via umbrella integration)",
     );
 }
 
@@ -251,7 +251,7 @@ fn lang_pseudo_class_inherits_from_html_lang_attribute_through_real_parse_pipeli
     // uses):
     // `<html lang="ja">` with a `<p>` descendant that carries no `lang`
     // attribute of its own must still match `:lang(ja)`. This also pins
-    // that the `lang` attribute wiring
+    // that the `lang` attribute integration
     // (`raikiri-html`'s sink -> `raikiri-dom::Node.attributes` ->
     // `ElementRef::attr`) actually surfaces `lang` where
     // `raikiri-style::StyleElement::attr("lang")` reads it end to end.
@@ -341,11 +341,11 @@ fn user_important_beats_normal_ua_via_umbrella() {
     // NB: この test 段階では bundled UA CSS は !important を含まない (minimal.css)。
     // User !important があると User が勝つ (Normal UA 0 < ... < Important User 6)。
     // したがって p の display は inline になる。この test は "Important User > Normal UA"
-    // の origin-rank ordering が umbrella wiring 越しに保存されることを confirm する。
+    // の origin-rank ordering が umbrella integration 越しに保存されることを confirm する。
     assert_eq!(
         display,
         DisplayValue::Inline,
-        "Important User (extra_stylesheets) should beat Normal UA via umbrella cascade wiring",
+        "Important User (extra_stylesheets) should beat Normal UA via umbrella cascade integration",
     );
 }
 
@@ -427,13 +427,13 @@ fn umbrella_re_exports_cover_sides_and_specified_payload_types() {
     // `Border(Sides<Border>)` — 以前は `Border` struct
     // 自体が `#[non_exhaustive]` のため raikiri crate から `Border { .. }`
     // struct-literal 構築ができず (E0639)、tuple-variant constructor を fn
-    // pointer に coerce する形で型だけ pin していた (値そのものは作れなかった)。
+    // pointer に coerce する形で型だけ check していた (値そのものは作れなかった)。
     // `Border::new()` (= `Self::default()`) の追加で、
     // FontSize/Padding/Margin/LineHeight と同じ「実際に値を construct する」
     // 形に揃った。全 field が `pub` なので `Border::new()` の後に non-initial
     // 値へ mutation することも確認する (`BorderStyle` / `BorderColor` も
     // 同時期に umbrella re-export に追加、その2型も型付きで construct できる
-    // ことを合わせて pin する)。
+    // ことを合わせて check する)。
     let mut border = Border::new();
     assert_eq!(
         border.width,
@@ -792,7 +792,7 @@ fn img_width_presentational_hint_beats_extra_stylesheets_user_origin_via_umbrell
     // value, not just width) — `extra_stylesheets` reachability on its own is already
     // covered by `extra_stylesheets_user_rule_overrides_ua_via_umbrella` above, but this
     // test is the one cited by name from crates/raikiri-style/src/cascade.rs's
-    // `push_img_dimension_hints` doc as *the* end-to-end pin for the flipped ranking, so it
+    // `push_img_dimension_hints` doc as *the* end-to-end check for the flipped ranking, so it
     // should stand alone.
     let extra: &[&str] = &["img { width: 30px; height: 7px }"];
     let opts = raikiri::ParseOptions {
@@ -833,9 +833,9 @@ fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
     // property のいずれも実装がない (overflow property 自体は
     // 実装済み — 詳細は minimal.css のコメント参照)
     // — 本 test は「minimal.css が実際に宣言
-    // している *置換後* の rule」の cascade 出力を pin する (border
+    // している *置換後* の rule」の cascade 出力を check する (border
     // shorthand + margin shorthand + color)。spec 原文
-    // そのものを pin しているわけではない点に注意。
+    // そのものを check しているわけではない点に注意。
     //
     // NB: `computed.overflow` (raikiri-style `OverflowValue`/`OverflowXY`)
     // is deliberately **not** asserted here — this

@@ -1,4 +1,4 @@
-//! Basic CSS reftest 10 cases (raikiri-spike-ewyj).
+//! Basic CSS reftest 10 cases (the current reference set).
 //!
 //! Each case is a WPT-style reftest pair (test.html with `<link rel=match|mismatch href=ref.html>`).
 //! We create temp files, discover pairs via `discover_pairs_for_file`, and assert `run_pair` passes.

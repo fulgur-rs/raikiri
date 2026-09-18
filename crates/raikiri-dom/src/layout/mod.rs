@@ -831,7 +831,7 @@ fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<
 ///
 /// 本 bridge が同じ判定を再実装してはならない (spec 規則の二重実装になり、
 /// 一方だけ直す drift の温床になる)。かつてあった `used_border_width` helper は
-/// この理由で削除した。end-to-end の gating pin は本 file の
+/// この理由で削除した。end-to-end の gating check は本 file の
 /// `apply_computed_to_style_bridges_border_to_taffy` が引き続き持つ。
 ///
 /// `@page` 経路 (`PageCascadeResult::declarations`) も同じ `resolve_border` へ
@@ -886,11 +886,11 @@ fn bridge_border(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<L
 /// 値は本 helper で一度 taffy に write されるが、Step 4 で PageBox 値に
 /// clobber される — 現行実装で意図された挙動 (将来 @page cascade + per-page
 /// PageBox に refactor 予定)。width 側 clobber の author→PageBox 上書き経路は
-/// test `apply_page_box_clobbers_body_width_from_bridge` が pin する。height
+/// test `apply_page_box_clobbers_body_width_from_bridge` が check する。height
 /// 側は [`apply_page_box_to_body`] が `style.size = Size { width, height }` の
 /// struct literal で **field を分岐なく一括代入する** ため、width と同じ
 /// clobber 経路を通る (両 field は同一 statement で書かれる)。同 helper の
-/// PageBox output pin は test `apply_page_box_to_body_sets_body_style_size_to_page_dimensions`
+/// PageBox output check は test `apply_page_box_to_body_sets_body_style_size_to_page_dimensions`
 /// が担う (author→PageBox の bridge→clobber 連鎖 test は width 側で十分、
 /// 冗長化を避け height 側は structural 保証に留める)。
 fn bridge_overflow(style: &mut taffy::Style, cv: &ComputedValues) {
@@ -1780,7 +1780,7 @@ fn grid_line_value_to_taffy_placement(v: &GridLineValue) -> GridPlacement {
 /// size-based wrapping が technically 可能になる — line 内の
 /// inline-level item 群が container の available width を超えれば、
 /// `<br>` の有無に関わらず taffy 自身が折り返してしまう。この delta は
-/// `<br>` を含む container にのみ生じ、これまで pin されていた
+/// `<br>` を含む container にのみ生じ、これまで check されていた
 /// no-wrap な挙動 (`establish_minimal_line_boxes_upgrades_qualifying_container_to_flex_row`
 /// 等の regression test) は `<br>` を含まないケースなので影響を受けない。
 ///
@@ -1867,7 +1867,7 @@ fn text_align_to_parley(v: TextAlign) -> Alignment {
 ///
 /// [`preshape_text`] は taffy より前に走り、使える幅は `page_box.width`
 /// のみ。`Center` 等をそこで素朴に渡すと、狭い containing block 内の text が
-/// ページ幅基準で中央寄せされ、大きくズレる (bd raikiri-spike-4b6c)。
+/// ページ幅基準で中央寄せされ、大きくズレる。
 /// taffy 後に親 box の確定幅 (`unrounded_layout.size.width`) を
 /// containing 幅として `break_all_lines(Some(w))` + `align(...)` し直すことで、
 /// 正しい幅基準の offset を glyph run に bake する。
@@ -1892,9 +1892,9 @@ fn text_align_to_parley(v: TextAlign) -> Alignment {
 ///   変わるが taffy box は更新しない (sibling の y が stale のまま)。
 ///   中央寄せの主 target である短文・単一行では高さ不変のため無害。
 ///   長文 wrap の完全な整合は inline formatting context 全体の再設計時に扱う。
-/// - `Start` / `End` の論理→物理解決は自要素の `cv.direction` で行う
-///   (bd raikiri-spike-5u1y)。parley public API に base direction を渡す口が
-///   無いため (bd raikiri-spike-4b6c)、parley 側の `Start` / `End` には頼らず
+/// - `Start` / `End` の論理→物理解決は自要素の `cv.direction` で行う。
+///   parley public API に base direction を渡す口が無いため、parley 側の
+///   `Start` / `End` には頼らず
 ///   `Left` / `Right` に解決してから渡す。`dir=rtl` 属性は対象外
 ///   (`direction` CSS のみ — dir 属性→direction 反映は Epic 3 領域)。
 /// - `text-indent` の `%` は親の border-box 幅基準で解決する (content-box
@@ -1999,7 +1999,7 @@ fn is_block_content(doc: &Document, cascade: &CascadeResult, sib: usize) -> bool
 /// content が 1 つでもあれば false。
 /// block 祖先が無い場合は true (fail-safe — 従来挙動を維持)。
 /// Maps computed hanging/each-line flags plus node line position to parley
-/// [`IndentOptions`] (CSS Text 3 §8.1, bd raikiri-spike-5u1y).
+/// [`IndentOptions`] (CSS Text 3 §8.1).
 ///
 /// Returns `None` when the node must not indent at all. Position semantics:
 /// - [`LineStart::MidLine`] (mid-line inline split): never indent — parley
@@ -2277,7 +2277,7 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
         // 論理値 (`start` / `end`) は自要素の `direction` で物理値に解決する
         // (CSS Text 3 §6.1)。parley の `Start` / `End` は content-inferred
         // bidi に委ねられるため、RTL では誤った側に寄る
-        // (bd raikiri-spike-5u1y: text-align-end-001 の regress で実測)。
+        // (text-align-end-001 の regress で実測)。
         // `Start` + LTR のみ skip (preshape のまま正しい — 再 break による
         // wrap 変化の regress を避ける)。
         let cv = &cascade.computed[idx];
@@ -2315,14 +2315,14 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
             None
         };
         // preshape は page 幅で break するため、narrow container 内の text の
-        // 折り返しは container 幅に整合しない (bd raikiri-spike-5u1y slice 1b で
+        // 折り返しは container 幅に整合しない (slice 1b で
         // 実測: length-001 の 3-line article が single-line のまま残る)。
         // 全 node re-break の実験は nowrap-001 の pinned regress を起こしたため
         // revert した (当該 experiment は別途 full-baseline 判定が必要 —
-        // bd raikiri-spike-5u1y コメント参照)。したがって re-break は
+        // the preceding comment参照)。したがって re-break は
         // indent 付き / 非 Start の node のみに限定する。
         // All non-flex text re-breaks against the containing width here
-        // (bd raikiri-spike-9q1p): preshape only knows the page width, so
+        // preshape only knows the page width, so
         // narrow-container wrapping would otherwise never apply. `nowrap`
         // nodes are handled by the branch below without re-breaking.
         // `Start` alignment after re-break is a no-op offset-wise; only the
@@ -2335,7 +2335,7 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
         // flex line box の child は container 側の justify に委ねる (上記 doc)。
         // indent も同様に skip する — flex item の幅は taffy が indent 無し
         // layout から測っており、ここで indent を付けると box と run が乖離
-        // する (bd raikiri-spike-5u1y の既知の限界として doc に残す)。
+        // する (既知の限界として doc に残す)。
         let needs_line_break_property = matches!(
             cv.word_break,
             WordBreak::BreakAll | WordBreak::KeepAll | WordBreak::BreakWord
@@ -2420,7 +2420,7 @@ fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
         }
         // display:none な child も含む — taffy はそのような child を
         // Display::None として layout tree から丸ごと除外するため、
-        // flex_grow/flex_shrink を pin することに実害は無い (無駄では
+        // flex_grow/flex_shrink を check することに実害は無い (無駄では
         // あるが害はない)。
         let participating_children: Vec<usize> = doc.nodes[idx]
             .children
@@ -2655,7 +2655,7 @@ fn saturate_u16(n: u32) -> u16 {
 /// 起き、**nest するたびに再び掛かる**ので深さについて指数的に複利する。A4
 /// (793.7 px) を起点にすると f32 が非有限になるまでの余裕は約 35.6 桁なので、
 /// fraction の上限を `F` (> 1) としたとき最初に非有限になる深さは概ね
-/// `35.6 / log10(F)` — **常に有限**である。修正前の depth sweep 実測はこの
+/// `35.6 / log10(F)` — **常に有限**である。修正前の depth range 実測はこの
 /// model と一致する:
 ///
 /// | decl | fraction | `35.6 / log10(F)` | 実測の最初の非有限 depth |
@@ -2665,7 +2665,7 @@ fn saturate_u16(n: u32) -> u16 {
 /// | `width: 10000%` | 1e2 | 17.8 | 18 |
 /// | `width: 1000%` | 1e1 | 35.6 | 36 |
 ///
-/// (`padding-left` を同じ値にすると probe harness で 4 / 8 / — / 25 とより
+/// (`padding-left` を同じ値にすると test setup で 4 / 8 / — / 25 とより
 /// 浅い。padding は `location` / `scrollable_overflow_rect` の累積にも寄与するため。)
 ///
 /// depth 1 の直接証拠: `width: 1e9%` → `size.width = 7937008000.0`
@@ -2700,7 +2700,7 @@ fn saturate_u16(n: u32) -> u16 {
 ///
 /// 入力側 guard ([`sanitize_taffy`]) は出力側 guard 導入後も**外さないこと**:
 /// ±Inf / NaN を taffy の内部演算に入れない役割が残っており (site 1-4 の
-/// test がこれを pin している)、出力側 clamp は「arena に
+/// test がこれを check している)、出力側 clamp は「arena に
 /// 非有限が入らない」ことしか保証しない。
 ///
 /// # 出力側 clamp が実際に効く帯 (通常 layout との境界)
@@ -2798,16 +2798,16 @@ const MAX_FONT_SIZE_PX: f32 = 1e6;
 /// line-height multiplier (実用上せいぜい 1 桁台) から見て両方とも同程度に
 /// 過大な安全域だから。
 ///
-/// # 結合の compile-time pin
+/// # 結合の compile-time check
 ///
 /// 上記の overflow 非発生の論証は「両定数が同じ `1e6`」という結合そのものに
 /// 依存しており、どちらか一方だけを書き換えると崩れる。直下の
 /// `const _: () = assert!(...)` は「積は高々 `1e12`」という上記 paragraph
 /// 自体の関係式を compile time に固定する — `f32::MAX` 直下ではなく現在の
-/// 積そのものを band として pin してあるので、積が**増える**方向にどちらか
+/// 積そのものを band として check してあるので、積が**増える**方向にどちらか
 /// の定数を変更すればビルドが落ちる (減る方向は安全域が広がるだけなので
 /// 素通しする)。値だけ緩めて通すのではなく、両定数と overflow 論証を
-/// 併せて見直すこと。[`MAX_FONT_SIZE_PX`] 自身の妥当域は同じ形の pin を
+/// 併せて見直すこと。[`MAX_FONT_SIZE_PX`] 自身の妥当域は同じ形の check を
 /// `clamp_limits_are_in_the_documented_range` (test) が別途固定している。
 const MAX_LINE_HEIGHT_NUMBER: f32 = 1e6;
 
@@ -3001,7 +3001,7 @@ fn sanitize_taffy(v: f32, site: &'static str, diag: &mut Vec<LayoutWarn>) -> f32
 ///
 /// 「非有限 / 範囲外 f32 の guard は値が実際に使われる sink 境界
 /// (target context) に置く。parse-time (specified 層) にも resolve 層
-/// (computed 層) にも置かない」という方針に従う。[`crate::page::cascade_page`]
+/// (computed 層) にも置かない」という方針に従う。[`raikiri_style::page::cascade_page`]
 /// (raikiri-style) の継承元 root 引数や `ComputedValues` の直接構築は
 /// raikiri-style 側の resolve/computed 層であり、
 /// `raikiri_style::cascade::resolve_relative_weight` も同じ層に属する —
@@ -3319,7 +3319,7 @@ impl std::fmt::Display for LayoutWarn {
 type LayoutWarnObserver<'o> = Option<&'o mut dyn FnMut(&LayoutWarn)>;
 
 /// Emit a [`LayoutWarn`] event: call the observer if `Some`, otherwise
-/// `eprintln!` (matches [`crate::fonts::emit_warn`]'s shape exactly, via the
+/// `eprintln!` (matches [`crate::fonts`] の `emit_warn`'s shape exactly, via the
 /// shared [`crate::diag::emit_warn_via`] macro).
 fn emit_layout_warn(observer: &mut LayoutWarnObserver<'_>, event: LayoutWarn) {
     crate::diag::emit_warn_via!(observer, "[raikiri-dom::layout]", event);
@@ -3372,7 +3372,7 @@ fn push_layout_warn(diag: &mut Vec<LayoutWarn>, event: LayoutWarn) {
 /// (`taffy_impl.rs`) — taffy が arena へ layout を書き戻す**唯一の**経路
 /// (`taffy-0.12.1` の block / flexbox / grid / leaf 各 algorithm はすべて
 /// この 1 メソッドを通る)。したがって「`Node.unrounded_layout` は決して
-/// 非有限を含まない」は構造的な invariant であり、後付けの一括 sweep のように
+/// 非有限を含まない」は構造的な invariant であり、後付けの一括 range のように
 /// 呼び忘れで破れることがない。
 ///
 /// invariant の残り半分は**初期値**: `Node::new*` は
@@ -3528,10 +3528,10 @@ pub(crate) fn sanitize_taffy_layout(
 ///    いようといまいと本関数が reset の理由にすることはない、という結論に
 ///    符号を問わず統一された (詳細は後述の符号別の節)。
 ///    `saturated_but_contained_layout_is_not_reset` は元々「gate かつ
-///    containment 違反」という conjunction を pin する目的の test だった
+///    containment 違反」という conjunction を check する目的の test だった
 ///    が、この変更以降は assert 自体は変わらず通る (この test の fixture が
 ///    たまたま「収まっている」ケースなので) ものの、conjunction の主張は
-///    もう成立しない — 同 test の doc および対の regression pin
+///    もう成立しない — 同 test の doc および対の regression check
 ///    (`saturated_child_outside_parent_is_not_reset`、
 ///    「明らかに収まっていない」fixture でも reset されないことを直接示す
 ///    ために追加/改名) を参照。
@@ -3558,14 +3558,14 @@ pub(crate) fn sanitize_taffy_layout(
 ///    field は必ず「それ自身が近似された」field に限られるため、legitimate
 ///    な小さい負値がこの gate を通ることはない
 ///    (`saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset`
-///    が直接 pin する — 「`y` 軸だけでも reset の説明がつく」fixture では
+///    が直接 check する — 「`y` 軸だけでも reset の説明がつく」fixture では
 ///    新旧実装を区別できないという指摘を受けて、`y` 軸が
 ///    飽和かつ収まっている fixture に差し替えた経緯は同 test の doc参照。
 ///    `saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`
 ///    はこの変更が入る前は `y` 軸の検出力が保たれていることの
-///    pin だったが、この変更でその検出力自体が失われたため、現在は同 test の
+///    check だったが、この変更でその検出力自体が失われたため、現在は同 test の
 ///    doc が記録するとおり別の主張 (どちらの axis も reset の理由に
-///    ならない) の pin になっている)。
+///    ならない) の check になっている)。
 ///
 ///    **負方向の false positive (当初は残余リスクとして認識されていたが、
 ///    後に解決)**: axis 単位の gate まで閉じた上でも、飽和した axis 自身が
@@ -3625,7 +3625,7 @@ pub(crate) fn sanitize_taffy_layout(
 ///    は別途明示的に deferred とされた decision であり、
 ///    本 doc のこの時点では未解決。
 ///
-///    この変更で挙動が反転した regression pin: 旧
+///    この変更で挙動が反転した regression check: 旧
 ///    `saturated_child_outside_parent_resets_subtree_to_zero_layout` は
 ///    `saturated_child_outside_parent_is_not_reset` に改名・反転し、旧
 ///    `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`
@@ -3796,7 +3796,7 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 /// していない浅い段も含め) 同じ「child は parent の 2 倍」という一貫した
 /// 関係を表しており、破綻ではない。深い nest で個々の used value が
 /// [`MAX_TAFFY_MAGNITUDE`] の帯を超えて近似され始めても、この関係自体は
-/// 変わらない (`legitimate_negative_margin_overflow_is_not_reset` が pin する
+/// 変わらない (`legitimate_negative_margin_overflow_is_not_reset` が check する
 /// 「小さい parent + 大きい child」も同じ class の legitimate overflow)。
 /// この関数の設計もこの区別を反映しており、「child の
 /// **location** が parent の border box 内」とだけ書いている — extent では
@@ -3834,7 +3834,7 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 ///
 /// `saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset`
 /// は当初「飽和した axis だけ検査、他 axis は無条件 ok」という
-/// conjunction を直接 pin していた — 飽和している axis 自身は実際には
+/// conjunction を直接 check していた — 飽和している axis 自身は実際には
 /// 収まっているようにし、もう一方の (飽和していない) axis に legitimate な
 /// 負 margin を与えることで、「`y` 軸だけでも reset の説明がつく」fixture
 /// では新旧実装を区別できないという指摘を踏まえた設計だった。この変更以降はこの test の assert 自体は
@@ -3844,7 +3844,7 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 /// `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`
 /// (現
 /// `saturated_axis_outside_parent_with_legitimate_negative_margin_on_other_axis_is_not_reset`)
-/// は当初「`y` 軸の検出力」の pin だったが、この変更でその検出力
+/// は当初「`y` 軸の検出力」の check だったが、この変更でその検出力
 /// 自体が失われたため reset されなくなった。旧
 /// `saturated_child_outside_parent_resets_subtree_to_zero_layout`
 /// (現 `saturated_child_outside_parent_is_not_reset`) も同様 — 飽和した
@@ -3886,7 +3886,7 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 /// いない。`margin-left: 1e9%` (`width: 100px` container 内) は
 /// `location.x` を正方向に飽和させ、旧実装はこれを誤って reset していた —
 /// `saturated_positive_margin_percentage_child_is_not_reset` が実際の
-/// CSS パイプライン経由でこれを pin する (`saturated_negative_margin_
+/// CSS パイプライン経由でこれを check する (`saturated_negative_margin_
 /// percentage_child_is_not_reset` の正方向対)。根拠 (b) (「検出力を失う」)
 /// は反証されていない — その損失は承知の上で受け入れられた: 既存 test
 /// (`saturated_but_contained_layout_is_not_reset`、旧
@@ -3912,13 +3912,13 @@ fn taffy_magnitude_is_saturated(v: f32) -> bool {
 /// `deep_nested_negative_percentage_margin_saturating_location_is_not_reset`
 /// (`width: 200%; margin-left: -100%` の深い nest chain、
 /// `nested_percentage_wide_child_chain_is_not_reset` の負方向対) が
-/// 実際の CSS パイプライン経由でこれを pin する。前者は特に、「`parent.size`
+/// 実際の CSS パイプライン経由でこれを check する。前者は特に、「`parent.size`
 /// 自身も同じ axis で飽和していれば符号を見ずに re-validate をスキップ
 /// する」という検討したが却下した別案を反証する最小 fixture でもある —
 /// この fixture は `parent.size.width` が飽和していない (`100.0` のまま)
 /// ので、判別軸は「parent も飽和しているか」ではなく「child 自身の符号」
 /// でなければならないことを示す (この変更以降、この判別軸自体は意味を失った
-/// が、fixture と regression pin としての価値は変わらない)。
+/// が、fixture と regression check としての価値は変わらない)。
 /// `saturated_negative_location_is_not_reset` は同じ組み合わせを直接構築
 /// した最小 synthetic case で孤立させて検査する
 /// (`saturated_but_contained_layout_is_not_reset` と対になる、正方向
@@ -4147,8 +4147,8 @@ fn computed_length_to_taffy_length_percentage(
 ///   (確定した containing block 幅で `break_all_lines` + `align` し直す)。
 ///   本関数で素朴に enum mapping してしまうと、使える幅が `max_advance`
 ///   (= 通常 `page_box.width`) のみのため、狭い containing block 内の
-///   `Center` / `Right` / `End` / `Justify` がページ幅基準にズレる
-///   (bd raikiri-spike-4b6c)。`Start` は幅に依存しないためここでも正しい。
+///   `Center` / `Right` / `End` / `Justify` がページ幅基準にズレる。
+///   `Start` は幅に依存しないためここでも正しい。
 ///   加えて `parley::Alignment::Start` / `End` は layout 内の bidi 解析結果から
 ///   physical 方向を解決するため、`direction` を配線せずに `text_align`
 ///   だけ配線しても `Start`/`End` は content-inferred direction での解決に
@@ -4254,7 +4254,7 @@ fn expand_tabs(
 ///
 /// [`expand_tabs`] の `<length>` 換算専用。probe text `" "` 1 文字を shape し
 /// [`Layout::width`] を読む。非有限・0・異常に大きい値の場合は
-/// `font_size * 0.5` (monospace 慣行近似) に倒す — caller の sweep を壊さない
+/// `font_size * 0.5` (monospace 慣行近似) に倒す — caller の range を壊さない
 /// ための fail-safe であり、正確性の主張ではない。
 ///
 /// [`Layout::width`]: parley::Layout::width
@@ -4937,7 +4937,7 @@ fn collapse_text_for_shaping(
     // Asian Width data; single-node content keeps the space approximation
     // it always had (multi-break collapse is pinned by WPT removable-2).
     let is_pre_line = matches!(ws, WhiteSpace::PreLine);
-    // Lone-break fast path (`normal`/`nowrap` only): an all-whitespace
+    // Lone-break optimized path (`normal`/`nowrap` only): an all-whitespace
     // node holding a segment-break run decides with direct-neighbor context
     // instead of the blanket conversion below. CSS Text 3 §4.1.2: a break
     // next to a zero-width space vanishes; next to a collapsible space the
@@ -5552,7 +5552,7 @@ pub(crate) fn preshape_text(
         overflow_wrap: OverflowWrap,
         text_wrap_mode: TextWrapMode,
         // Soft wrapping suppressed (`white-space: nowrap` or
-        // `text-wrap: nowrap`, bd raikiri-spike-9q1p).
+        // `text-wrap: nowrap`).
         nowrap: bool,
         max_advance: f32,
         // tab-stop metrics 用 font (block-container 祖先、無ければ自要素)。
@@ -5707,7 +5707,7 @@ pub(crate) fn preshape_text(
             migrated_prefix_count = pending_in;
             text = "\u{00A0}".repeat(pending_in as usize) + &text;
         }
-        // white-space phase 1 collapsing (bd raikiri-spike-25uv)。
+        // white-space phase 1 collapsing。
         // pre 系は無変換 (tab 展開は後段)。collapse 系のみ trim 位置付きで変換。
         let start = line_start_pos(doc, cascade, &parent_of, idx);
         let trim_end = trail_trim(doc, cascade, &parent_of, idx);
@@ -6162,7 +6162,7 @@ pub fn layout_single_page(
 
     // Step 2b: pre-shape all text with parley
     // font_ctx は呼び出し側が構築 (system font 経路なら FontContext::new()、
-    // VRT なら raikiri_dom::fonts::build_wpt_font_ctx で pin 済)
+    // VRT なら raikiri_dom::fonts::build_wpt_font_ctx で 確認済み)
     let mut layout_cx = LayoutContext::<()>::new();
     preshape_text(
         document,
@@ -6255,7 +6255,7 @@ pub fn layout_single_page(
     // sibling, is a decision for that wall rather than this task. `observer`
     // is therefore always `None` today, so this always falls back to the
     // same `eprintln!` shape `fonts.rs` uses when uncalled with an observer —
-    // but the plumbing is real and ready for a future `_with_observer`
+    // but the integration logic is real and ready for a future `_with_observer`
     // sibling to wire an observer through with no further refactor.
     let mut observer: LayoutWarnObserver<'_> = None;
     for event in document.layout_warnings.drain(..) {
@@ -7203,7 +7203,7 @@ mod tests {
     #[test]
     fn find_body_iterative_no_stack_overflow_on_deep_dom() {
         // 5000 深さで stack overflow を起こさず None を返す。
-        // cascade §deep_nesting_5000_cascade_no_overflow と同水準の regression pin。
+        // cascade §deep_nesting_5000_cascade_no_overflow と同水準の regression check。
         let mut doc = Document::new();
         let mut parent = 0usize;
         for _ in 0..5000 {
@@ -7464,22 +7464,23 @@ mod tests {
 
         let small = shape_text_height_at_font_size("8px");
         let large = shape_text_height_at_font_size("32px");
+        // cov:ignore: assertion text is only evaluated when this test fails
         assert!(
             large > small,
-            "font-size:32px must produce taller text than 8px (cascade→shape inheritance regression pin, got small={small}, large={large})"
+            "font-size:32px must produce taller text than 8px (cascade→shape inheritance regression check, got small={small}, large={large})"
         );
     }
 
     #[test]
     fn apply_computed_to_style_bridges_display_to_taffy() {
         // display bridge active — DisplayValue → taffy::Display
-        // mapping が正しく行われていることを確認する regression pin。
+        // mapping が正しく行われていることを確認する regression check。
         //
         // bridge_margin が dispatch に加わったが
         // margin unspecified の element では initial `Sides::all(Length::Px(0.0))`
         // が cascade で入る → taffy `LengthPercentageAuto::length(0.0)` に translate、
         // これは `taffy::Style::default().margin` (all `Length(0.0)`) と一致するため
-        // 既存 assertion は無変更で通ることを確認する pin にもなる。
+        // 既存 assertion は無変更で通ることを確認する check にもなる。
         //
         // bridge_padding も dispatch に
         // 加わったが同様に padding unspecified の element では initial
@@ -7680,7 +7681,7 @@ mod tests {
 
     #[test]
     fn qualifies_for_minimal_line_box_skips_not_in_document_sibling() {
-        // Regression pin for the `if !doc.nodes[c].is_in_document() {
+        // Regression check for the `if !doc.nodes[c].is_in_document() {
         // continue; }` guard in `qualifies_for_minimal_line_box`: a
         // Comment sibling is reachable in the raw arena tree but always
         // has `IS_IN_DOCUMENT` cleared by `mark_in_document_flags`
@@ -7777,7 +7778,7 @@ mod tests {
 
     #[test]
     fn establish_minimal_line_boxes_lays_out_children_side_by_side_not_stacked() {
-        // End-to-end pin (via the full `layout_single_page` pipeline, not
+        // End-to-end check (via the full `layout_single_page` pipeline, not
         // just `apply_computed_to_style` in isolation) that qualifying
         // inline-level siblings actually end up beside each other, not
         // independently stacked — the concrete geometry bug this pass
@@ -7830,7 +7831,7 @@ mod tests {
 
     #[test]
     fn text_align_center_offsets_glyphs_to_container_middle() {
-        // `text-align: center` の最小 regression pin (bd raikiri-spike-4b6c):
+        // `text-align: center` の最小 regression check:
         // 単独 Text の block container (`<p>` + 1 Text は minimal line box の
         // 2-child threshold 未満のため plain block path) で、glyph run の
         // 先頭 x が container 幅の中央付近に寄ること。
@@ -7889,7 +7890,7 @@ mod tests {
 
     #[test]
     fn text_indent_px_offsets_first_line() {
-        // `text-indent` 基本配線の regression pin (bd raikiri-spike-5u1y):
+        // `text-indent` 基本配線の regression check:
         // 単独 Text の block container で first line の先頭 x が indent 分
         // 右に寄ること。parley `set_text_indent` 経由 (basic のみ —
         // hanging/each-line は parse 層 drop のため常に default)。
@@ -8276,7 +8277,7 @@ mod tests {
     #[test]
     fn text_wrap_nowrap_keeps_single_line_in_narrow_container() {
         // `text-wrap: nowrap` suppresses soft wrapping (CSS Text 4 §5,
-        // bd raikiri-spike-9q1p): long text in a narrow block stays one line.
+        // Long text in a narrow block stays one line.
         use parley::FontContext;
         use raikiri_style::{build_rule_tree, cascade};
         use raikiri_traits::PageBox;
@@ -8453,7 +8454,7 @@ mod tests {
 
     #[test]
     fn establish_minimal_line_boxes_does_not_compress_children_narrower_than_shaped_text() {
-        // Regression pin for the flex-shrink hazard documented on
+        // Regression check for the flex-shrink hazard documented on
         // `establish_minimal_line_boxes`: flex items default to
         // `flex-shrink: 1`, which under `flex_wrap: NoWrap` would (absent
         // this pass's override) compress each child's box narrower than
@@ -8496,7 +8497,7 @@ mod tests {
             // Fixture precondition: each string is one unbroken run with
             // no whitespace, so `preshape_text`'s own per-node soft-wrap
             // (against the full page width) has no break opportunity and
-            // leaves it on a single line regardless of length — pin that
+            // leaves it on a single line regardless of length — check that
             // so a `shaped_width` below isn't silently the width of one
             // wrapped sub-line instead of the whole run.
             // cov:ignore: panic-message literal only executed on assertion
@@ -8536,7 +8537,7 @@ mod tests {
 
     #[test]
     fn establish_minimal_line_boxes_resets_conflicting_flex_basis() {
-        // Regression pin for the `flex_basis: auto` reset documented on
+        // Regression check for the `flex_basis: auto` reset documented on
         // `establish_minimal_line_boxes`. `b` below carries an explicit
         // `flex-basis: 10px` far smaller than its own shaped content — a
         // declaration that was inert while `p` was a plain block
@@ -8599,7 +8600,7 @@ mod tests {
 
     #[test]
     fn establish_minimal_line_boxes_resets_conflicting_justify_content_and_gap() {
-        // Regression pin for the `justify_content: None` / `gap: 0`
+        // Regression check for the `justify_content: None` / `gap: 0`
         // resets documented on `establish_minimal_line_boxes`. `p` below
         // carries explicit `justify-content: space-between` and
         // `column-gap: 500px` — both inert while `p` was a plain block
@@ -8668,7 +8669,7 @@ mod tests {
 
     #[test]
     fn establish_minimal_line_boxes_resets_conflicting_align_self() {
-        // Regression pin for the `align_self: None` reset documented on
+        // Regression check for the `align_self: None` reset documented on
         // `establish_minimal_line_boxes`. `b` below carries an explicit
         // `align-self: flex-end` — inert while `p` was a plain block
         // container, a live cross-axis override once `p` qualifies here,
@@ -8706,7 +8707,7 @@ mod tests {
 
     #[test]
     fn establish_minimal_line_boxes_br_switches_container_to_wrap_and_forces_full_basis() {
-        // Unit-level pin for the "`<br>` forced break" mechanism documented
+        // Unit-level check for the "`<br>` forced break" mechanism documented
         // on `establish_minimal_line_boxes`: a qualifying container with a
         // participating `<br>` switches from `flex_wrap: NoWrap` to `Wrap`,
         // and only the `<br>` child (not its siblings) gets its flex_basis
@@ -8790,7 +8791,7 @@ mod tests {
 
     #[test]
     fn establish_minimal_line_boxes_br_forces_second_line_end_to_end() {
-        // End-to-end pin (full `layout_single_page` pipeline, matching
+        // End-to-end check (full `layout_single_page` pipeline, matching
         // `establish_minimal_line_boxes_lays_out_children_side_by_side_not_stacked`'s
         // style) for the concrete geometry `<br>` must produce: the content
         // after `<br>` lands on a lower line than the content before it,
@@ -8979,7 +8980,7 @@ mod tests {
     #[test]
     fn establish_minimal_line_boxes_br_line_stays_zero_height_under_explicit_tall_container_height()
     {
-        // Regression pin for a property-leak this pass must guard against:
+        // Regression check for a property-leak this pass must guard against:
         // `bridge_size` unconditionally copies an author `height` into
         // `style.size.height`, and `bridge_alignment` unconditionally
         // copies an author `align-content` into `style.align_content`
@@ -9155,7 +9156,7 @@ mod tests {
     fn apply_computed_to_style_bridges_margin_to_taffy() {
         // bridge_margin が
         // Sides<ComputedLengthPercentageOrAuto> を taffy::Rect<LengthPercentageAuto>
-        // に translate することを確認する regression pin。bridge の 3 分岐
+        // に translate することを確認する regression check。bridge の 3 分岐
         // (Px / Percent / Auto) をそれぞれ 1 case で covering。
         //
         // Case 4 の `pt` は bridge の分岐ではなくなった
@@ -9164,7 +9165,7 @@ mod tests {
         //
         // Test 戦略: 各 case は独立 fixture で cascade → apply_computed_to_style
         // → body.style.margin を assert。inline style 経由なので raikiri-style
-        // の parse_margin_shorthand + longhand path も同時に regression pin。
+        // の parse_margin_shorthand + longhand path も同時に regression check。
         use raikiri_style::{build_rule_tree, cascade};
         use taffy::{LengthPercentageAuto, Rect};
 
@@ -9181,7 +9182,7 @@ mod tests {
         // Case 1: shorthand `margin: 10px 20px 30px 40px` (top/right/bottom/left)
         //   → Rect { top: 10, right: 20, bottom: 30, left: 40 } (all Px identity)。
         //   Sides.top,right,bottom,left → Rect.top,right,bottom,left の field-name
-        //   mapping を pin (positional silent transpose を防ぐ)。
+        //   mapping を check (positional silent transpose を防ぐ)。
         assert_eq!(
             margin_for("margin: 10px 20px 30px 40px"),
             Rect {
@@ -9221,7 +9222,7 @@ mod tests {
         //   **この変換は bridge ではなく cascade の phase 3
         //   (`raikiri_style::resolve_length_percentage_or_auto`) が行う**。
         //   bridge に届く時点で既に px。本 case は
-        //   end-to-end の値を pin する。
+        //   end-to-end の値を check する。
         //   f32 bit-identical assert のため右辺を expression のまま書く
         //   (`13.333` literal は round-trip で drift する。この式は
         //   `resolve::pt_to_px` 本体と同じ `v * 4.0 / 3.0` の評価順を使う —
@@ -9242,7 +9243,7 @@ mod tests {
     fn apply_computed_to_style_bridges_padding_to_taffy() {
         // bridge_padding が
         // Sides<ComputedLengthPercentage> を taffy::Rect<LengthPercentage> に
-        // translate することを確認する regression pin。padding は margin と違い
+        // translate することを確認する regression check。padding は margin と違い
         // `auto` を持たない (<length-percentage `[0,∞]`>) ため bridge は **2 arm**
         // (Px / Percent) で網羅する。
         //
@@ -9252,7 +9253,7 @@ mod tests {
         //
         // Test 戦略: 各 case は独立 fixture で cascade → apply_computed_to_style
         // → body.style.padding を assert。inline style 経由なので raikiri-style
-        // の parse_padding_shorthand + longhand path も同時に regression pin。
+        // の parse_padding_shorthand + longhand path も同時に regression check。
         use raikiri_style::{build_rule_tree, cascade};
 
         fn padding_for(inline: &str) -> Rect<LengthPercentage> {
@@ -9268,7 +9269,7 @@ mod tests {
         // Case 1: shorthand `padding: 5px 10px 15px 20px` (top/right/bottom/left)
         //   → Rect { top: 5, right: 10, bottom: 15, left: 20 } (all Px identity)。
         //   Sides.top,right,bottom,left → Rect.top,right,bottom,left の field-name
-        //   mapping を pin (positional silent transpose を防ぐ — Sides の field 順は
+        //   mapping を check (positional silent transpose を防ぐ — Sides の field 順は
         //   top,right,bottom,left、Rect の field 順は left,right,top,bottom で異なる)。
         assert_eq!(
             padding_for("padding: 5px 10px 15px 20px"),
@@ -9314,7 +9315,7 @@ mod tests {
     fn apply_computed_to_style_bridges_width_to_taffy() {
         // bridge_size (width component)
         // が cv.width: ComputedLengthPercentageOrAuto を taffy::Style::size.width:
-        // Dimension に translate することを pin する。bridge の 3 分岐
+        // Dimension に translate することを check する。bridge の 3 分岐
         // (Px / Percent / Auto) をそれぞれ 1 case で covering
         // (`pt` は cascade の phase 3 で px 化される)。
         //
@@ -9323,11 +9324,11 @@ mod tests {
         // の効果は observable でない (別 test `apply_page_box_clobbers_body_width_from_bridge`
         // で clobber 挙動を pin)。inline style 経由なので raikiri-style の
         // parse_width path + ComputedLengthPercentageOrAuto encoding も同時に
-        // regression pin。
+        // regression check。
         //
         // 本 test は width 軸に絞る — height 軸は sibling test
         // `apply_computed_to_style_bridges_height_to_taffy`
-        // が同 fixture pattern で LengthOrAuto → Dimension bridge を pin する。
+        // が同 fixture pattern で LengthOrAuto → Dimension bridge を check する。
         use raikiri_style::{build_rule_tree, cascade};
 
         fn width_for(inline: &str) -> Dimension {
@@ -9368,7 +9369,7 @@ mod tests {
     fn apply_computed_to_style_bridges_height_to_taffy() {
         // bridge_size の height 側
         // 拡張。cv.height: ComputedLengthPercentageOrAuto を
-        // taffy::Style::size.height: Dimension に translate することを pin する。
+        // taffy::Style::size.height: Dimension に translate することを check する。
         // sibling test `apply_computed_to_style_bridges_width_to_taffy` と
         // 対を成し、struct literal 化 (Size { width, height } の 1 発
         // assign) で height 側の 3 分岐 (Px / Percent / Auto) が意図通り
@@ -9378,11 +9379,11 @@ mod tests {
         // 後段 `apply_page_box_to_body` で height も clobber されるため本 bridge
         // の効果は body 上で observable でない。inline style 経由で raikiri-style
         // の parse_height path + ComputedLengthPercentageOrAuto encoding も同時に
-        // regression pin。
+        // regression check。
         //
         // Pt case は sibling width test が同じ
         // computed_length_percentage_or_auto_to_taffy_dimension policy を
-        // pin しているため redundant (かつ pt → px 変換は
+        // check しているため redundant (かつ pt → px 変換は
         // cascade の phase 3 の責務)。ここでは height
         // 特有の 3 arm (auto default 保持、`Px` 通路、`Percent` 通路) に絞る。
         use raikiri_style::{build_rule_tree, cascade};
@@ -9417,14 +9418,14 @@ mod tests {
     fn apply_computed_to_style_bridges_min_size_to_taffy() {
         // bridge_min_max_size の min 側。cv.min_width / cv.min_height:
         // ComputedLengthPercentageOrAuto を taffy::Style::min_size:
-        // Size<Dimension> に translate することを pin する。sibling test
+        // Size<Dimension> に translate することを check する。sibling test
         // `apply_computed_to_style_bridges_height_to_taffy` と同 fixture
         // pattern (非 body element `<p>` — body は apply_page_box_to_body
         // が size のみ clobber し min/max には触らないが、size 系 test と
         // 同じ fixture に揃える)。
         //
         // CSS Sizing 3 §4 initial `auto` の identity round-trip (unspecified
-        // → taffy default と一致) も同時に pin — bridge が unspecified 時に
+        // → taffy default と一致) も同時に check — bridge が unspecified 時に
         // default を壊さないことの regression guard。
         use raikiri_style::{build_rule_tree, cascade};
 
@@ -9467,11 +9468,11 @@ mod tests {
     #[test]
     fn apply_computed_to_style_bridges_max_size_to_taffy() {
         // bridge_min_max_size の max 側。cv.max_width / cv.max_height を
-        // taffy::Style::max_size: Size<Dimension> に translate することを pin
+        // taffy::Style::max_size: Size<Dimension> に translate することを check
         // する。sibling min test と同 fixture pattern。
         //
         // CSS Sizing 3 §5 initial `none` → computed Auto placeholder →
-        // `Dimension::auto()` (no max) の連鎖を pin — unspecified が taffy
+        // `Dimension::auto()` (no max) の連鎖を check — unspecified が taffy
         // default と一致することも同時に確認する。
         use raikiri_style::{build_rule_tree, cascade};
 
@@ -9515,7 +9516,7 @@ mod tests {
     fn apply_computed_to_style_bridges_border_to_taffy() {
         // bridge_border が
         // Sides<ComputedBorder> を taffy::Rect<LengthPercentage> に translate
-        // することを確認する regression pin。
+        // することを確認する regression check。
         //
         // spec correctness gate: border-style が `none` / `hidden` の場合、
         // specified border-width にかかわらず width は 0 でなければならない。
@@ -9533,7 +9534,7 @@ mod tests {
         // "No border. Color and width are ignored (i.e., the border has width
         // 0)." と整合する。
         //
-        // 本 test は依然 gating の **end-to-end** pin である (gate が上流に
+        // 本 test は依然 gating の **end-to-end** check である (gate が上流に
         // 移っても `5px none red` の 5px が taffy に leak しないことを保証する
         // のが目的)。§ 番号と引用は spec の `data-level` / 本文実測に基づく —
         // 以前あった "§5.2 The used values of the corresponding border-*-width
@@ -9541,7 +9542,7 @@ mod tests {
         //
         // Test 戦略: `border: <w> <s> <c>` 4-side shorthand と longhand の
         // 両方を使い、shorthand 展開 → per-side cascade → bridge_border の
-        // pipeline を end-to-end で pin する (単一 side shorthand
+        // pipeline を end-to-end で check する (単一 side shorthand
         // `border-top: ...` は現時点で parser 未対応、
         // computed.rs 228-229 参照)。
         use raikiri_style::{build_rule_tree, cascade};
@@ -9653,7 +9654,7 @@ mod tests {
     /// 引き続き可能で、いずれも本 invariant を破らない。
     ///
     /// **本 test は「narrowing 前の値で確認できる 1 入力が正しく gate される」
-    /// ことの pin であり、「crate 外からこの invariant を破る経路が存在しない」
+    /// ことの check であり、「crate 外からこの invariant を破る経路が存在しない」
     /// ことを本 test 自身が総当たりで示すものではない。** ただし後者自体は
     /// 現状すでに **型の visibility 境界で構造的に防がれている** — `width` /
     /// `style` は `pub(crate)`、公開 API は値渡し read-only accessor (`width()` /
@@ -9664,7 +9665,7 @@ mod tests {
     /// `style` を `pub(crate)` から `pub` に戻す (= 上記の型保証そのものを
     /// 撤回する) 変更をしても、それを検知して落ちる test が現状無い。
     /// 他の 3 field (`Declaration::value` 等) には同じ形の regression を
-    /// 検知する compile-fail harness がすでに追加され既に main に merge 済みだが、
+    /// 検知する compile-fail test setup がすでに追加され既に main に merge 済みだが、
     /// `ComputedBorder::width` / `::style` への横展開はまだ行われていない。
     #[test]
     fn border_width_alone_without_declared_style_reaches_taffy_as_zero() {
@@ -9758,7 +9759,7 @@ mod tests {
     fn apply_computed_to_style_bridges_box_sizing_to_taffy() {
         // bridge_box_sizing が
         // raikiri_style::BoxSizing → taffy::BoxSizing の enum 1:1 mapping を
-        // 実施することを確認する regression pin。
+        // 実施することを確認する regression check。
         //
         // 3 case:
         //   #1 border-box (specified)   → taffy::BoxSizing::BorderBox
@@ -9769,7 +9770,7 @@ mod tests {
         // 特筆: taffy 0.12 default は BorderBox (spec 違反)、raikiri-style initial
         // は ContentBox (CSS Sizing 3 §3.3 準拠)。#3 は cascade が initial 経由で
         // ContentBox を seed し、bridge がそれを taffy に伝播することで、taffy default
-        // の spec 違反を副作用的に補正することを pin する。
+        // の spec 違反を副作用的に補正することを check する。
         use raikiri_style::{build_rule_tree, cascade};
 
         fn box_sizing_for(inline: Option<&str>) -> TaffyBoxSizing {
@@ -9802,7 +9803,7 @@ mod tests {
     #[test]
     fn apply_page_box_clobbers_body_width_from_bridge() {
         // PageBox
-        // 妥協の regression pin — `<body style="width: 100px">` に対して
+        // 妥協の regression check — `<body style="width: 100px">` に対して
         //   Step 1 (`apply_computed_to_style`) → bridge_size が body.style.size.width
         //       を length(100.0) に write
         //   Step 4 (`apply_page_box_to_body`) → PageBox.width で clobber
@@ -9909,7 +9910,7 @@ mod tests {
         let first_size = doc.nodes[body_id].unrounded_layout.size;
 
         // 2 回目呼び出し — text_layout の re-entrance clear と layout の再走が
-        // 同じ結果を返すことを pin (将来 incremental optimization が silent
+        // 同じ結果を返すことを check (将来 incremental optimization が silent
         // regression を起こしても検出できる)
         layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("second call Ok");
         let second_size = doc.nodes[body_id].unrounded_layout.size;
@@ -10005,7 +10006,7 @@ mod tests {
     fn inline_block_width_auto_shrink_wraps_to_content() {
         // width:auto の inline-block は containing block いっぱいに広がらず
         // content に shrink-wrap する (shrink-to-fit)。block の子として
-        // fill される plain block との差を geometry で pin する:
+        // fill される plain block との差を geometry で check する:
         // 100px の child を持つ inline-block は幅 100 に、明示 width:300px の
         // inline-block は 300 のままになる (どちらも body 幅 fill ではない)。
         use raikiri_style::{build_rule_tree, cascade};
@@ -10166,7 +10167,7 @@ mod tests {
     #[test]
     fn content_alignment_to_taffy_maps_every_keyword() {
         // `content_alignment_to_taffy` backs both `justify-content` and
-        // `align-content` (`bridge_alignment`) — pin every keyword→taffy
+        // `align-content` (`bridge_alignment`) — check every keyword→taffy
         // constant mapping directly, since only `Center`-ish geometry is
         // exercised end-to-end elsewhere.
         for (value, expected) in [
@@ -10215,7 +10216,7 @@ mod tests {
     #[test]
     fn self_alignment_to_taffy_maps_every_keyword() {
         // `self_alignment_to_taffy` backs `align-items` and the
-        // non-`auto` branch of `align-self` (`bridge_alignment`) — pin
+        // non-`auto` branch of `align-self` (`bridge_alignment`) — check
         // every keyword→taffy constant mapping directly.
         for (value, expected) in [
             (SelfAlignmentValue::Normal, None),
@@ -10273,7 +10274,7 @@ mod tests {
         // `normal` independently behaves as `stretch` in flex layout
         // regardless of the parent's `align-items` — mapping it to `None`
         // would incorrectly make it inherit the parent's value like `auto`
-        // does. See the end-to-end behavioral pin below.
+        // does. See the end-to-end behavioral check below.
         let mut cv = ComputedValues::initial();
         cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Normal);
         let mut style = Style::default();
@@ -10283,7 +10284,7 @@ mod tests {
 
     #[test]
     fn align_self_normal_stretches_even_when_parent_align_items_is_center() {
-        // End-to-end pin of the §8.3 review finding: with the container's
+        // End-to-end check of the §8.3 review finding: with the container's
         // `align-items: center`, a child with `align-self: auto` would
         // center (inheriting the parent's value per spec), but a child
         // with `align-self: normal` must independently stretch to fill the
@@ -10326,7 +10327,7 @@ mod tests {
     fn flex_direction_column_stacks_children_vertically() {
         // `bridge_flex`'s `flex_direction` field must actually reach
         // taffy's `compute_flexbox_layout` — asserting `style.flex_direction
-        // == Column` alone would only prove the assignment, not the wiring,
+        // == Column` alone would only prove the assignment, not the integration,
         // since reading the field back off the taffy `Style` cannot
         // distinguish "assigned" from "used by the layout algorithm". With
         // `flex-direction: column`, the main axis flips to the block (y)
@@ -10334,7 +10335,7 @@ mod tests {
         // x offset with y offsets 20px (the first child's height) apart.
         //
         // Also carries `gap:10px 30px` (row-gap column-gap) to independently
-        // pin `row-gap → taffy::Style::gap.height`, which the sibling
+        // check `row-gap → taffy::Style::gap.height`, which the sibling
         // `gap_adds_space_between_flex_items` test cannot exercise — that
         // test's default row-direction container only puts `column-gap` on
         // the main axis. Here, `flex-direction: column` makes `row-gap` the
@@ -10343,7 +10344,7 @@ mod tests {
         // mapping), so the two children's y-offset becomes 20px (first
         // child's height) + 10px (row-gap) = 30px — discriminating a dropped
         // row-gap (would stay at 20px) or a transposed bridge (would become
-        // 20px + 30px = 50px) from the correct wiring.
+        // 20px + 30px = 50px) from the correct integration.
         use raikiri_style::{build_rule_tree, cascade};
         use raikiri_traits::PageBox;
 
@@ -10786,7 +10787,7 @@ mod tests {
         // だけが scope) なので、implicit single-track grid の挙動は block と
         // 見分けがつきにくい — ここでは「bridge が Display::Grid を発火させ、
         // compute_grid_layout がクラッシュせず有限な box を返す」ことのみを
-        // pin する。track-level の挙動 pin は grid-* property 実装時の
+        // check する。track-level の挙動 check は grid-* property 実装時の
         // follow-up の責務。
         use raikiri_style::{build_rule_tree, cascade};
         use raikiri_traits::PageBox;
@@ -10839,7 +10840,7 @@ mod tests {
     #[test]
     fn layout_single_page_deterministic_across_10_runs() {
         // 10 回連続実行で byte-identical であることを acceptance 条件とする。
-        // 同一マシン上の determinism を pin (cross-machine は将来 font
+        // 同一マシン上の determinism を check (cross-machine は将来 font
         // pinning に置き換わる)。
         use raikiri_traits::PageBox;
 
@@ -10860,7 +10861,7 @@ mod tests {
             for (j, (b, r)) in baseline.iter().zip(run.iter()).enumerate() {
                 // taffy::Layout の全 field を byte-identical で比較。
                 // 浮動小数点の subnormal / NaN drift があると here が最も先に
-                // 反応する (design doc §12.8 の NonFiniteFloat 検討の pin 相当)
+                // 反応する (design doc §12.8 の NonFiniteFloat 検討の check 相当)
                 assert_eq!(
                     b.size.width, r.size.width,
                     "run {i} node {j}: size.width differs (baseline={} run={})",
@@ -10893,7 +10894,7 @@ mod tests {
     // ── 非有限 f32 guard ────────
     //
     // untrusted author CSS から +Inf / NaN が taffy / parley に到達しないことを
-    // **5 site すべて**で pin する。reproducer は元の probe comment 由来。
+    // **5 site すべて**で check する。reproducer は元の probe comment 由来。
     //
     // 期待値は「非有限でない」ではなく **clamp 後の具体値** で書く — NaN は
     // `NaN != NaN` なので `assert_ne!(x, ...NAN)` は無条件に pass してしまい
@@ -11442,7 +11443,7 @@ mod tests {
             );
         }
         // 範囲内 (clamp が実質 no-op) では何も積まない — per-node spam を
-        // 避ける設計の pin (`sanitize_finite` の doc参照)。
+        // 避ける設計の check (`sanitize_finite` の doc参照)。
         assert!(
             diag.is_empty(),
             "in-range value must not push a LayoutWarn: {diag:?}"
@@ -11745,7 +11746,7 @@ mod tests {
         // the always-executed call/comparison lines, not just the
         // panic-message continuation lines below — reports exempted). The
         // assertion itself is fully exercised on every run and would fail
-        // on a wiring regression; only the panic-message string (only
+        // on an integration regression; only the panic-message string (only
         // "entered" on assertion failure, which doesn't happen while this
         // test passes) is the actual reason for the coverage-attribution
         // gap this marker works around.
@@ -11753,7 +11754,7 @@ mod tests {
             shape_run_font_style("font-style:italic"),
             FontStyle::Italic,
             "font-style:italic must reach the shaped Run's font-matching attributes \
-             (wiring regression: StyleProperty::FontStyle push missing or dropped)"
+             (integration regression: StyleProperty::FontStyle push missing or dropped)"
         );
     }
 
@@ -11816,7 +11817,7 @@ mod tests {
             shaped_run_line_height("font-size: 16px; line-height: 3"),
             48.0,
             "line-height: 3 at font-size: 16px must reach the shaped Run's \
-             line_height as exactly 3.0 * 16.0 (wiring regression: \
+             line_height as exactly 3.0 * 16.0 (integration regression: \
              StyleProperty::LineHeight push missing, dropped, or mismapped)"
         );
 
@@ -11830,12 +11831,12 @@ mod tests {
             shaped_run_line_height("font-size: 16px; line-height: 50px"),
             50.0,
             "line-height: 50px must reach the shaped Run's line_height as \
-             exactly 50.0 regardless of font-size (wiring regression: \
+             exactly 50.0 regardless of font-size (integration regression: \
              StyleProperty::LineHeight push missing, dropped, or mismapped)"
         );
 
         // `Normal` (the property's initial value, and the case this module
-        // used unconditionally before this wiring) must still resolve to a
+        // used unconditionally before this integration) must still resolve to a
         // positive, finite metrics-derived value — pins that leaving
         // line-height unset doesn't regress to 0 or a non-finite value.
         let normal = shaped_run_line_height("font-size: 16px");
@@ -12052,7 +12053,7 @@ mod tests {
     }
 
     /// `LayoutWarn` の `Display` が両 variant で人間可読な文字列を出す
-    /// ことの pin (`crate::diag::emit_warn_via` の `eprintln!` fallback が // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+    /// ことの check (`crate::diag::emit_warn_via` の `eprintln!` fallback が // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// 実際に読める行になることの保証)。
     #[test]
     fn layout_warn_display_is_human_readable() {
@@ -12146,10 +12147,10 @@ mod tests {
     /// document を [`layout_single_page`] に通し、**各段の**
     /// `unrounded_layout` を浅い順に返す。
     ///
-    /// 起点は probe 材料の depth sweep harness だが、**depth ごとに document を作り直さない** —
+    /// 起点は probe 材料の depth range test setup だが、**depth ごとに document を作り直さない** —
     /// depth `N` の chain は 1..=`N` の各深さの node を既に含んでおり、
     /// probe が depth ごとに払っていた `FontContext::new()`
-    /// (`font_context_new_cost_is_reasonable` が 10 回 5 秒未満を pin =
+    /// (`font_context_new_cost_is_reasonable` が 10 回 5 秒未満を check =
     /// 決して安くない) を depth 数だけ払う理由が無いため。
     fn nested_decl_layouts(decl: &str, depth: usize) -> Vec<TaffyLayout> {
         use raikiri_style::{build_rule_tree, cascade};
@@ -12171,11 +12172,11 @@ mod tests {
     }
 
     /// 修正前は下記の depth で `unrounded_layout` が
-    /// 非有限に戻っていた。probe 材料 RAWDATA.txt の depth sweep 実測では
+    /// 非有限に戻っていた。probe 材料 RAWDATA.txt の depth range 実測では
     /// **base (guard 前) / head (入力側 guard 後) が完全に一致**していた =
     /// 入力側 guard では閉じない穴であることの証拠:
     ///
-    /// | decl | probe harness | 本 harness (実測) |
+    /// | decl | test setup | 本 test setup (実測) |
     /// |---|---|---|
     /// | `width: 1e9%` | 6 | 6 |
     /// | `width: 100000%` | 12 | 12 |
@@ -12187,26 +12188,26 @@ mod tests {
     /// | `padding-left: 1000%` | 25 | 25 |
     /// | `padding-left: 200%` | 到達せず | 到達せず |
     ///
-    /// (`padding-left` 系 2 行の ±1 は 2 harness の差に由来する。probe は
-    /// depth ごとに document を作り直すので最深段が leaf になるが、本 harness
+    /// (`padding-left` 系 2 行の ±1 は 2 test setup の差に由来する。probe は
+    /// depth ごとに document を作り直すので最深段が leaf になるが、本 test setup
     /// は 1 本の chain を最深まで伸ばして各段を見るので同じ段が container に
     /// なる。**ただし機構は特定できていない** — この構造差が原因なら padding
     /// 系 3 行すべてがずれるはずだが `padding-left: 1000%` は 25/25 で一致
-    /// する。数値自体は再現可能で、本 harness 列は `set_unrounded_layout` の
+    /// する。数値自体は再現可能で、本 test setup 列は `set_unrounded_layout` の
     /// `sanitize_taffy_layout` 呼び出しだけを外して実測した値である。
     /// `width` 系 4 行は完全一致。)
     ///
     /// 修正後はすべて「到達せず」になる。
     ///
-    /// **検査幅 45 は表の sweep 範囲に揃えた値であって、保証の上限ではない。**
-    /// 本 test が pin するのは「この 9 declaration を深さ 45 まで見た範囲で
+    /// **検査幅 45 は表の range 範囲に揃えた値であって、保証の上限ではない。**
+    /// 本 test が check するのは「この 9 declaration を深さ 45 まで見た範囲で
     /// 保存値が全 field 有限」という**検査した点**だけである。深さ非依存性
     /// そのものは test からは出てこない — 根拠は
     /// `sanitize_taffy_layout` が taffy から arena への唯一の書き込み経路に
     /// 置かれているという **choke point の構造的議論**の側にある。
-    /// `nested_percentage_output_stays_finite_far_past_the_sweep` も
-    /// 「sweep よりかなり深い一例」を足すだけで、全称的な深さ非依存性を
-    /// pin するものではない。したがってこの 45 を「安全な上限」として
+    /// `nested_percentage_output_stays_finite_far_past_the_range` も
+    /// 「range よりかなり深い一例」を足すだけで、全称的な深さ非依存性を
+    /// check するものではない。したがってこの 45 を「安全な上限」として
     /// 下げないこと (下げてよい根拠は test ではなく構造の側にある)。
     #[test]
     fn nested_percentage_output_is_finite_through_probe_sweep_depth() {
@@ -12239,12 +12240,12 @@ mod tests {
 
     /// **深さ 96 でも保存値が有限**であることの pin。
     ///
-    /// `nested_percentage_output_is_finite_through_probe_sweep_depth` は上
+    /// `nested_percentage_output_is_finite_through_probe_range_depth` は上
     /// の表に揃えた深さ 45 までしか見ないので、修正前に最も浅く破れた
-    /// `padding-left: 1e9%` (probe harness で depth 4 / 本 harness で depth 5)
-    /// を、その sweep 幅の 2 倍超で追加の 1 点として見る。
+    /// `padding-left: 1e9%` (test setup で depth 4 / 本 test setup で depth 5)
+    /// を、その range 幅の 2 倍超で追加の 1 点として見る。
     ///
-    /// **本 test は深さ非依存性を pin しない** — 有限深さの test が示せるのは
+    /// **本 test は深さ非依存性を check しない** — 有限深さの test が示せるのは
     /// 常に「検査した深さでは有限」までである。深さ非依存性の根拠は
     /// `sanitize_taffy_layout` が taffy から arena への唯一の書き込み経路に
     /// 置かれているという **choke point の構造的議論**であって、本 test では
@@ -12272,7 +12273,7 @@ mod tests {
     }
 
     /// `sanitize_taffy_layout` の field 単位の挙動 (上の 2 test は「有限で
-    /// ある」までしか見ないので、どの値に落ちるかはこちらで pin する)。
+    /// ある」までしか見ないので、どの値に落ちるかはこちらで check する)。
     #[test]
     fn sanitize_taffy_layout_clamps_every_f32_field() {
         let poisoned = TaffyLayout {
@@ -12496,7 +12497,7 @@ mod tests {
         );
     }
 
-    /// **この変更で挙動が反転した直接 pin (旧名
+    /// **この変更で挙動が反転した直接 check (旧名
     /// `saturated_child_outside_parent_resets_subtree_to_zero_layout`)**。
     /// `child_within_parent_border_box` の gate (「その axis 自身の
     /// `child.location` が飽和している」) を満たし、かつ旧実装なら
@@ -12506,7 +12507,7 @@ mod tests {
     /// 符号を問わず無条件 `true` になったため、この fixture は — 実際には
     /// 明らかに parent border box の外にあるにもかかわらず — もう reset
     /// されない。「fixture を直接構築しても、もはやこの invariant を
-    /// 破らせることはできない」ことを示す regression pin として残す
+    /// 破らせることはできない」ことを示す regression check として残す
     /// (`child_within_parent_border_box` の doc「符号を問わず無条件
     /// accept になった理由」節、および将来「この check 自体を維持すべきか」
     /// を判断する follow-up (別途明示的に deferred とされた問題)
@@ -12605,7 +12606,7 @@ mod tests {
         );
     }
 
-    /// invariant 2 の gate が **無条件ではない**ことの pin — CSS が普通に
+    /// invariant 2 の gate が **無条件ではない**ことの check — CSS が普通に
     /// 許す overflow (小さい parent + 負 margin で右/下/左にはみ出す child)
     /// を `layout_single_page` のフルパイプラインで実際に layout し、
     /// `enforce_layout_invariants` がそれを誤って fallback しないことを
@@ -12678,16 +12679,16 @@ mod tests {
     /// (飽和 かつ containment 違反 → reset、この変更で
     /// `saturated_child_outside_parent_is_not_reset` に改名・反転) と
     /// 対にして、「gate 単独ではなく『gate かつ containment 違反』という
-    /// conjunction を検査している」ことを示す pin だった。この変更で
+    /// conjunction を検査している」ことを示す check だった。この変更で
     /// `axis_ok` が符号を問わず無条件 `true` になったため、この
     /// conjunction はもう成立しない — containment が実際にどうであっても
     /// (境界ちょうどで収まっていても、明らかに外れていても) reset は
     /// 起きない。本 test の assert 自体は (この fixture がたまたま
     /// 「収まっている」ケースだったため) 引き続き通るが、それは
     /// 「containment を検査して pass した」からではなく「そもそも
-    /// containment を見ていない」から — その事実を示す対の regression pin
+    /// containment を見ていない」から — その事実を示す対の regression check
     /// は `saturated_child_outside_parent_is_not_reset` を参照。
-    /// 実際の nested percentage chain を使った同種の pin は
+    /// 実際の nested percentage chain を使った同種の check は
     /// `nested_percentage_wide_child_chain_is_not_reset` を参照
     /// (extent ではなく origin だけを見る現行の `child_within_parent_border_box`
     /// を選んだ直接の理由になった regression)。
@@ -12759,13 +12760,13 @@ mod tests {
         );
     }
 
-    /// **この変更で挙動が反転した pin (旧名
+    /// **この変更で挙動が反転した check (旧名
     /// `saturated_location_with_legitimate_negative_margin_on_other_axis_is_not_reset`,
     /// 旧主張「`y` 軸の検出力が保たれていること」)**。
     ///
     /// この変更が入る前は、この fixture (`y` 軸が飽和かつ実際に parent に
     /// 収まっていない = 真の violation、`x` 軸は飽和していない legitimate
-    /// な負 margin `-30`) は `y` 軸の検出力を示す pin として意味があった —
+    /// な負 margin `-30`) は `y` 軸の検出力を示す check として意味があった —
     /// `y` 軸の再検査だけで reset の理由が説明でき、`x` 軸の legitimate な
     /// 負値は無視されることを示せた。この変更で `axis_ok` が符号を問わず
     /// 無条件 `true` になったため、`y` 軸は飽和しているだけでもう
@@ -12773,7 +12774,7 @@ mod tests {
     /// reset の理由になり得なくなった。
     ///
     /// 本 test は現在、`saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is_not_reset`
-    /// とほぼ同じ主張 (どちらの axis も reset の理由にならない) の近縁 pin
+    /// とほぼ同じ主張 (どちらの axis も reset の理由にならない) の近縁 check
     /// になっている。唯一の違いは `y` 軸の値 — こちらは `y` が **実際には
     /// parent に収まっていない** (`MAX_TAFFY_MAGNITUDE > 100.0`) のに対し、
     /// あちらは境界ちょうどで収まっている。両方とも reset されないことで、
@@ -12933,7 +12934,7 @@ mod tests {
         );
     }
 
-    /// **直前の指摘への直接回帰 pin (その 2)**
+    /// **直前の指摘への直接回帰 check (その 2)**
     /// — 指摘された元の scenario そのもの: 同じ subtree の**無関係な
     /// 別の場所** (ここでは同じ `parent` 自身) の `size` が飽和している状況で、
     /// **その child 自身は何も飽和していない**のに legitimate な負 margin
@@ -12999,7 +13000,7 @@ mod tests {
         );
     }
 
-    /// Regression pin for a false positive found while implementing this
+    /// Regression check for a false positive found while implementing this
     /// task: `width: 200%` nested `DEPTH`-ish levels deep is
     /// **legitimate** CSS (each level is, by design, twice its parent — the
     /// child's origin never moves off `(0, 0)`), yet an earlier version of
@@ -13014,7 +13015,7 @@ mod tests {
     ///
     /// `saturated_but_contained_layout_is_not_reset` pins the equivalent
     /// minimal synthetic case (its doc records how a later change
-    /// changed what that pin actually demonstrates); this test pins the
+    /// changed what that check actually demonstrates); this test pins the
     /// same "not reset" outcome against the exact real-world shape that
     /// first surfaced the bug, so a future edit that reintroduces an
     /// extent-based check (or anything else that treats "child bigger than
@@ -13051,7 +13052,7 @@ mod tests {
         }
     }
 
-    /// Minimal synthetic pin for the new negative-
+    /// Minimal synthetic check for the new negative-
     /// saturation branch of `child_within_parent_border_box`, isolated
     /// from any real CSS pipeline (mirrors how
     /// `saturated_but_contained_layout_is_not_reset` pins the positive-
@@ -13135,7 +13136,7 @@ mod tests {
         );
     }
 
-    /// Real CSS pipeline regression pin, and the
+    /// Real CSS pipeline regression check, and the
     /// **discriminating fixture** between the sign-based fix and a
     /// considered-and-rejected alternative ("skip re-validation whenever
     /// `parent.size` on that axis is also saturated, regardless of sign").
@@ -13216,7 +13217,7 @@ mod tests {
 
     /// **Positive-direction analog of
     /// `saturated_negative_margin_percentage_child_is_not_reset`**, real
-    /// CSS pipeline regression pin for the decision to extend
+    /// CSS pipeline regression check for the decision to extend
     /// the negative-side unconditional-accept treatment symmetrically to
     /// the positive side.
     ///
@@ -13643,7 +13644,7 @@ mod tests {
     fn grid_template_columns_actually_sizes_columns_through_taffy_grid_algorithm() {
         // `bridge_grid`'s `grid_template_columns` field must actually reach
         // taffy's `compute_grid_layout` — asserting the `taffy::Style`
-        // field alone would only prove the assignment, not the wiring
+        // field alone would only prove the assignment, not the integration
         // (same rationale as `flex_direction_column_stacks_children_vertically`
         // above). A 2-column `100px 200px` grid with one child explicitly
         // placed in each column must position the second child 100px to
@@ -13997,7 +13998,7 @@ mod tests {
         assert_eq!((layout.size.width, layout.size.height), (64.0, 32.0));
     }
 
-    /// Ordering pin: `layout_single_page_with_resolver` must refresh flat-tree
+    /// Ordering check: `layout_single_page_with_resolver` must refresh flat-tree
     /// membership *before* running the `<img>` pre-pass, not rely on the
     /// refresh that `layout_single_page` does afterwards. The pre-pass skips
     /// inert `<img>` elements by `is_in_document()`, so stale flags would

@@ -181,7 +181,7 @@ impl WptRunner {
 
     /// Run all pairs under `wpt_root` and return per-pair results plus oracle deltas.
     ///
-    /// Convenience for the nightly T3 sweep. Walks `wpt_root` via
+    /// Convenience for the nightly T3 range. Walks `wpt_root` via
     /// [`crate::reftest::discover_all_pairs`].
     pub fn run_all_under(
         &self,

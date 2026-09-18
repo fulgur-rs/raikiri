@@ -513,7 +513,7 @@ fn read_bounded_font_file(
 /// every warn+skip site (walker + read-time TOCTOU + fontique register-empty).
 /// Consumers pass an `Option<&mut dyn FnMut(&FontWarn<'_>)>` observer to opt
 /// into programmatic consumption of these events; the [`build_wpt_font_ctx`]
-/// shim omits the observer and keeps the CLI-facing `eprintln!` behavior.
+/// compatibility wrapper omits the observer and keeps the CLI-facing `eprintln!` behavior.
 ///
 /// # Design
 ///
@@ -821,7 +821,7 @@ fn read_reject_to_warn<'a>(path: &'a Path, reject: &'a FontReadReject) -> FontWa
 /// preserving the CLI-facing `eprintln!` warn output.  Consumers wanting a
 /// structured observer callback for TOCTOU-swap/grow anomalies
 /// should call `_with_observer` directly.  Signature preserved
-/// for the `crates/raikiri/tests/external_consumer.rs` pin.
+/// for the `crates/raikiri/tests/external_consumer.rs` check.
 ///
 /// # Errors
 ///
@@ -1062,7 +1062,7 @@ pub enum FontError {
     /// `fonts_dir` は存在するが `.ttf`/`.otf` が 1 個も見つからない
     EmptyDir(PathBuf),
     /// dir に `.ttf`/`.otf` はあったが 1 個も fontique に register されなかった
-    /// (全 file が parse-invalid、または pin drift で asset が壊れた等)。
+    /// (全 file が parse-invalid、または check drift で asset が壊れた等)。
     /// `PREFERRED_FIRST` が空の future 想定でのみ到達する defensive backstop。
     NoFontsRegistered(PathBuf),
     /// `PREFERRED_FIRST` に list された font が dir に存在しない、または
@@ -1129,7 +1129,7 @@ impl std::error::Error for FontError {
 /// **配列 index 順に**先頭に register される。cascade `"serif"` の
 /// resolve 順の決定性と、hello-world VRT visual (Ahem square "Hi") のため。
 ///
-/// 現在は Ahem のみ (fulgur pin では Lato-Regular が不在)。将来 Lato-Medium 等の
+/// 現在は Ahem のみ (fulgur check では Lato-Regular が不在)。将来 Lato-Medium 等の
 /// real-text primary を追加したい場合は array に append する。
 const PREFERRED_FIRST: &[&str] = &["Ahem.ttf"];
 
@@ -1153,7 +1153,7 @@ fn walk_fonts(dir: &Path, observer: &mut FontWarnObserver<'_>) -> Result<Vec<Pat
             .unwrap_or(false)
     });
     // 3. preferred は PREFERRED_FIRST の配列 index 順に再ソート。
-    // 同一 basename が複数 subdir に存在するケース (例: 将来の WPT pin で
+    // 同一 basename が複数 subdir に存在するケース (例: 将来の WPT check で
     // Ahem.ttf が fonts/ と fonts/CSSTest/ 両方に存在) では **全 match** を
     // drain する — `.find()` を 1 回だけ呼ぶと最初の match 以外が
     // ordered_preferred からも rest からも silently drop されてしまう。
@@ -1216,7 +1216,7 @@ fn collect_recursive(
     entries_with_type.sort_by(|a, b| a.0.cmp(&b.0));
 
     for (path, file_type) in entries_with_type {
-        // symlink (dir でも file でも) は skip: cycle-safe。将来 WPT pin に
+        // symlink (dir でも file でも) は skip: cycle-safe。将来 WPT check に
         // 意図的な symlink が含まれるようになったら別途 canonicalize+visited
         // set 方式に拡張する。今は WPT font tree は plain hierarchy 前提。
         if file_type.is_symlink() {
@@ -1362,7 +1362,7 @@ fn font_face_style_override(style: FontFaceStyle) -> parley::fontique::FontStyle
 
 /// Seed `fonts` from an `@font-face` registry and prepare computed
 /// `font-family` lists for selection — the "resolved faces participate in
-/// font selection" half of `raikiri-spike-0vv.19.6` (parsing/registry is
+/// font selection" half of this implementation (parsing/registry is
 /// `raikiri-style`'s `font_face` module).
 ///
 /// For each rule, sources are tried in author order (first resolvable wins,
@@ -1395,7 +1395,7 @@ fn font_face_style_override(style: FontFaceStyle) -> parley::fontique::FontStyle
 /// the same registry produce the same collection state and the same report.
 /// Register the `url(...)` faces of one [`FontFaceRegistry`]
 /// into `fonts` — the download half of [`apply_font_faces`], split out so
-/// consumers that build several cascades from one document (the WPT harness
+/// consumers that build several cascades from one document (the WPT test setup
 /// builds one cascade per page) can register once and expand aliases per
 /// cascade via [`expand_font_face_aliases`].
 ///
@@ -1501,7 +1501,7 @@ pub fn expand_font_face_aliases(
 
 /// Seed `fonts` from an `@font-face` registry and prepare computed
 /// `font-family` lists for selection — the "resolved faces participate in
-/// font selection" half of `raikiri-spike-0vv.19.6` (parsing/registry is
+/// font selection" half of this implementation (parsing/registry is
 /// `raikiri-style`'s `font_face` module).
 ///
 /// This is [`register_font_face_sources`] + [`expand_font_face_aliases`] in
@@ -1681,8 +1681,8 @@ mod tests {
 
     #[test]
     fn walker_handles_duplicate_preferred_basename_in_subdirs() {
-        // Regression pin: 同一 basename (Ahem.ttf) が top-level と
-        // subdir 両方に存在するケース (将来の WPT pin で fonts/Ahem.ttf +
+        // Regression check: 同一 basename (Ahem.ttf) が top-level と
+        // subdir 両方に存在するケース (将来の WPT check で fonts/Ahem.ttf +
         // fonts/CSSTest/Ahem.ttf のような構成があり得る)。旧実装は
         // `.find()` を 1 回しか呼ばない為、2 個目以降の match が
         // ordered_preferred からも rest からも silently drop されていた。
@@ -1753,10 +1753,10 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn walker_skips_named_pipe_font_entry() {
-        // Regression pin: 攻撃者が制御下 fonts dir に
+        // Regression check: 攻撃者が制御下 fonts dir に
         // `evil.ttf` という名前の FIFO を配置した場合、`std::fs::read` が
         // writer 未定の FIFO で無限 block してしまう。walk 段階で
-        // `file_type.is_file()` filter が named pipe を弾くことを pin する。
+        // `file_type.is_file()` filter が named pipe を弾くことを check する。
         // このテストが落ちる = time-DoS surface が再度開いた合図。
         let tmp = tempfile::tempdir().unwrap();
         write_fake_ttf(tmp.path(), "good.ttf");
@@ -1783,9 +1783,9 @@ mod tests {
 
     #[test]
     fn walker_skips_oversized_font_file() {
-        // Regression pin: FONT_SIZE_CAP + 1 byte の
+        // Regression check: FONT_SIZE_CAP + 1 byte の
         // sparse regular file (実際には zero-block、`set_len` で logical size
-        // のみ膨らむ) を walker が skip することを pin する。
+        // のみ膨らむ) を walker が skip することを check する。
         // sparse file を使うのは、テスト実行時に 100 MiB+ の実 block 消費を
         // 避けるため (metadata.len() は logical size を返すので filter は
         // 正しく発火する)。
@@ -1810,12 +1810,12 @@ mod tests {
 
     #[test]
     fn walker_accepts_regular_file_at_size_cap_boundary() {
-        // Regression pin: filter が silently over-reject していないことを
-        // pin する (境界値 == FONT_SIZE_CAP は通す — build_wpt_font_ctx 側の
+        // Regression check: filter が silently over-reject していないことを
+        // check する (境界値 == FONT_SIZE_CAP は通す — build_wpt_font_ctx 側の
         // `take(FONT_SIZE_CAP)` bounded read は境界を全 consume する)。
         // boundary.ttf: `File::set_len(FONT_SIZE_CAP)` で sparse file を作り、
         // 境界値ちょうど (`metadata.len() == FONT_SIZE_CAP`) が accept 側に
-        // 落ちる (`>` cap で skip、`<= cap` で accept) ことを直接 pin する
+        // 落ちる (`>` cap で skip、`<= cap` で accept) ことを直接 check する
         // (tiny file では境界を実際に触れず silent over-reject を
         // 捕捉できないため)。
         let tmp = tempfile::tempdir().unwrap();
@@ -1835,7 +1835,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn walker_skips_symlink_dirs_no_cycle_overflow() {
-        // Regression pin: `Path::is_dir()`
+        // Regression check: `Path::is_dir()`
         // が symlink を follow して recursion loop に入る問題。`fonts/loop → .`
         // のような self-cycle でも walker が有限時間で return することを pin。
         let tmp = tempfile::tempdir().unwrap();
@@ -1857,7 +1857,7 @@ mod tests {
 
     #[test]
     fn preferred_font_missing_from_disk_returns_err() {
-        // Regression pin: PREFERRED_FIRST
+        // Regression check: PREFERRED_FIRST
         // font (Ahem.ttf) が dir に存在しない場合、他の valid font (Other.ttf)
         // が silent fallback として cascade "serif" に解決されてはならない。
         let tmp = tempfile::tempdir().unwrap();
@@ -1881,7 +1881,7 @@ mod tests {
 
     #[test]
     fn preferred_font_register_failure_returns_err() {
-        // Regression pin: PREFERRED_FIRST
+        // Regression check: PREFERRED_FIRST
         // font (Ahem.ttf) が disk に存在するが fontique に reject された場合、
         // 他の valid font が silent fallback として cascade "serif" に解決
         // されてはならない (read failure を hard-error に昇格させたのと
@@ -1939,16 +1939,16 @@ mod tests {
         // に解決されることを assert する完全な検証は将来の end-to-end VRT
         // が担保する。ここでは build_wpt_font_ctx が real WPT font dir
         // (Ahem.ttf 含む) に対して panic せず Ok を返すことのみを smoke
-        // check する (spike scope。controller ambiguity は解決済み)。
+        // check する (current implementation scope。controller ambiguity は解決済み)。
         let _ = ctx;
     }
 
-    /// End-to-end pin: `read_bounded_font_file` rejects a symlink at the
+    /// End-to-end check: `read_bounded_font_file` rejects a symlink at the
     /// pre-open `symlink_metadata` check.  This test does NOT exercise the
     /// `O_NOFOLLOW` path (the open never runs because the pre-open check
     /// short-circuits) — that unit is covered by
     /// `raikiri_traits::io`'s own `safe_open_rejects_symlink_at_open_time`
-    /// test.  Kept to pin the full-path behavior against future refactors
+    /// test.  Kept to check the full-path behavior against future refactors
     /// that might reorder the checks.
     #[cfg(unix)]
     #[test]
@@ -1969,7 +1969,7 @@ mod tests {
         }
     }
 
-    /// Regression pin: O_NOFOLLOW on the internal open path does not reject a
+    /// Regression check: O_NOFOLLOW on the internal open path does not reject a
     /// legitimate regular file.  Without this test, an implementation that
     /// broke the safe_open fallback (e.g. accidentally always returning
     /// ELOOP) would be missed by the symlink-only tests.
@@ -2032,7 +2032,7 @@ mod tests {
     }
 
     /// Happy path: a regular font file inside the canonical root reads
-    /// through the containment check without incident. Regression pin —
+    /// through the containment check without incident. Regression check —
     /// without this, an implementation that made the `starts_with`
     /// comparison too strict (e.g. required byte-identical paths after
     /// canonicalization but not before) would fail silently on tmpdir
@@ -2115,7 +2115,7 @@ mod tests {
 
     /// Nonexistent path is caught by the pre-open `symlink_metadata` gate
     /// and surfaced as the existing `FontReadReject::Io` variant (not
-    /// `PathEscape`). Regression pin — without this an implementation
+    /// `PathEscape`). Regression check — without this an implementation
     /// that reordered the canonicalize call before the pre-open gate
     /// would silently reclassify NotFound as an Io-under-canonicalize
     /// (still Io, but with confusing provenance) or worse, the pre-open
@@ -2139,7 +2139,7 @@ mod tests {
     /// and `Oversized { phase: DuringRead }` are only reachable through
     /// `read_bounded_font_file` via a genuine TOCTOU race (cov:ignore at
     /// that callsite, same shape as `read_reject_to_warn`'s race-only
-    /// variants above), so this is the sole deterministic pin that a future
+    /// variants above), so this is the sole deterministic check that a future
     /// match reorder can't silently reroute a race-detected reject into the
     /// wildcard `Io` arm (which this module treats as a hard-propagate,
     /// not warn+skip).
@@ -2204,7 +2204,7 @@ mod tests {
     // path string observed at a different point in time would say.
 
     /// `check_open_handle_containment` accepts a file whose fd resolves
-    /// under the given `canonical_root` — the happy-path regression pin
+    /// under the given `canonical_root` — the happy-path regression check
     /// that the `/proc/self/fd/<fd>` readlink does not spuriously reject
     /// files that are, in fact, inside the root.
     #[cfg(target_os = "linux")]
@@ -2225,7 +2225,7 @@ mod tests {
     }
 
     /// `check_open_handle_containment` rejects a file whose fd resolves
-    /// outside the given `canonical_root`. This is the primitive-level pin
+    /// outside the given `canonical_root`. This is the primitive-level check
     /// of the actual defense: even though the open succeeded (it is a
     /// perfectly regular file, just not under the expected root), the
     /// fd-derived `/proc/self/fd/<fd>` path fails
@@ -2298,7 +2298,7 @@ mod tests {
 
     /// `check_open_handle_containment` (Apple-platform arm) accepts a file
     /// whose fd resolves under the given `canonical_root` — the happy-path
-    /// regression pin that `fcntl(fd, F_GETPATH, ..)` does not spuriously
+    /// regression check that `fcntl(fd, F_GETPATH, ..)` does not spuriously
     /// reject files that are, in fact, inside the root.
     #[cfg(any(
         target_os = "macos",
@@ -2325,7 +2325,7 @@ mod tests {
 
     /// `check_open_handle_containment` (Apple-platform arm) rejects a file
     /// whose fd resolves outside the given `canonical_root`. Mirrors the
-    /// Linux primitive-level pin: even though the open succeeded (it is a
+    /// Linux primitive-level check: even though the open succeeded (it is a
     /// perfectly regular file, just not under the expected root), the
     /// fd-derived `F_GETPATH` path fails
     /// `starts_with(canonical_root)` and the recheck rejects — proving the
@@ -2438,7 +2438,7 @@ mod tests {
     }
 
     /// Observer fires `WalkerSkippedSymlink` when a symlink entry sits
-    /// alongside real fonts.  Regression pin: the walker's cycle-safe skip
+    /// alongside real fonts.  Regression check: the walker's cycle-safe skip
     /// must route through the shared observer, not just the legacy
     /// eprintln!.
     #[cfg(unix)]
@@ -2553,8 +2553,8 @@ mod tests {
 
     /// Default-None observer path: `build_wpt_font_ctx` (which delegates
     /// with `None`) must not panic and must preserve the original error
-    /// classification even when warn+skip sites fire.  Regression pin: the
-    /// observer plumbing must not divert the `FontError` return channel or
+    /// classification even when warn+skip sites fire.  Regression check: the
+    /// observer integration logic must not divert the `FontError` return channel or
     /// change the eprintln! fallback in a way that breaks CLI use.
     #[cfg(unix)]
     #[test]
@@ -2572,7 +2572,7 @@ mod tests {
 
         // `build_wpt_font_ctx` delegates to `_with_observer(_, None)`, so
         // this exercises the eprintln! fallback path end-to-end.  The
-        // aggregate result depends on Ahem.ttf presence — the pin is that
+        // aggregate result depends on Ahem.ttf presence — the check is that
         // the call returns *some* Result (Ok or Err) without panicking.
         let _ = build_wpt_font_ctx(tmp.path());
     }
@@ -2598,7 +2598,7 @@ mod tests {
         ));
         // NotRegularFilePostOpen: the read-time arm is cov:ignore
         // (pre-open+O_NONBLOCK+fstat window race required to fire), so
-        // this is the sole deterministic pin of the new mapping.
+        // this is the sole deterministic check of the new mapping.
         assert!(matches!(
             read_reject_to_warn(path, &FontReadReject::NotRegularFilePostOpen),
             FontWarn::ReadRejectedNotRegularFilePostOpen { path: p } if p == path
@@ -2624,7 +2624,7 @@ mod tests {
         ));
         // PathEscape: since the loop's read-time arm is cov:ignore
         // (walker pre-filter + intermediate-symlink race required to fire),
-        // this is the sole deterministic pin of the new mapping.
+        // this is the sole deterministic check of the new mapping.
         let canonical = PathBuf::from("/tmp/outside/font.ttf");
         let root = PathBuf::from("/tmp/fonts");
         assert!(matches!(
@@ -2644,7 +2644,7 @@ mod tests {
         // PathEscapePostOpen: the read-time arm requires a genuine race
         // between the open and the fd-based containment recheck (cov:ignore
         // in the loop, same shape as PathEscape above), so this is the sole
-        // deterministic pin of the mapping.
+        // deterministic check of the mapping.
         assert!(matches!(
             read_reject_to_warn(
                 path,

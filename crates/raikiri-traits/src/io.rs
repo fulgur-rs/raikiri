@@ -429,7 +429,7 @@ pub fn open_bounded_regular_file(
 /// contract of returning `Err` instead of aborting must not permit). A real
 /// file larger than 1 MiB still reads through fine: `read_to_end` grows the
 /// buffer via its normal reallocation as bytes come in, so the 1 MiB
-/// ceiling only gives up the single-allocation fast path above that size,
+/// ceiling only gives up the single-allocation optimized path above that size,
 /// not correctness or the `size_cap` bound itself (still enforced by the
 /// `+1-probe` below, independent of this reservation). A `metadata()`
 /// failure here is folded into the same `Io` reject the read itself would
@@ -600,7 +600,7 @@ mod tests {
         }
     }
 
-    /// Companion pin: silent over-reject canary. A file of exactly `cap`
+    /// Companion check: silent over-reject canary. A file of exactly `cap`
     /// bytes must load successfully — the post-read check is `>` cap, not
     /// `>=`, and the `take(cap + 1)` read yields exactly `cap` bytes when
     /// the file is not growing.
@@ -672,7 +672,7 @@ mod tests {
     /// and other BSDs (NetBSD, OpenBSD) may return EMLINK or EFTYPE too.
     /// The test accepts any `Err` on unix, because a passing implementation must not
     /// follow the symlink regardless of the exact errno. The `Ok` arm is the
-    /// regression pin — an implementation that dropped `O_NOFOLLOW` would
+    /// regression check — an implementation that dropped `O_NOFOLLOW` would
     /// silently follow the link and return `Ok(file)`, failing this test.
     #[cfg(unix)]
     #[test]
@@ -824,7 +824,7 @@ mod tests {
     // ------------------------------------------------------------------
 
     /// `check_open_handle_regular` accepts a regular file opened via
-    /// `safe_open` — the primitive-level happy-path regression pin (also
+    /// `safe_open` — the primitive-level happy-path regression check (also
     /// pins that `O_NONBLOCK` does not break a regular-file open).
     #[test]
     fn check_open_handle_regular_accepts_regular_file() {
@@ -862,7 +862,7 @@ mod tests {
     }
 
     /// `safe_open` + `check_open_handle_regular` rejects a FIFO. Two
-    /// asserts pin the composite defense:
+    /// asserts check the composite defense:
     ///
     /// 1. `safe_open` returns `Ok` (without hanging) — proves `O_NONBLOCK`
     ///    prevents `open()` from blocking on a writer-less FIFO.

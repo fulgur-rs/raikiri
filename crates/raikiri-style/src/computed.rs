@@ -49,7 +49,7 @@ use crate::resolve::{
 /// [`crate::resolve::ResolveContext::initial`] の `root_font_size` が参照する。
 /// 両者は同一値でなければならず、独立に literal を持つと乖離を型検査で拾えない。
 ///
-/// 一方「initial value が **16px そのものである**」ことの pin は test 側が
+/// 一方「initial value が **16px そのものである**」ことの check は test 側が
 /// literal で持つ。**これらを「一貫性のため」本 const への参照に書き換えては
 /// ならない** — 全体が自己参照になり、const の誤編集を何も検出できなくなる。
 /// 該当 test は本 const を `20.0` 等に摂動すれば列挙できる (lib test が
@@ -264,7 +264,7 @@ pub struct ComputedValues {
     /// [`Arc<Vec<..>>`] wrap: inheritance walk clone
     /// (`SpecifiedValues::inherit_from` の `parent.font_family.clone()`、
     /// `resolve_inheritance` の stack push + `out[idx] = computed.clone()`) が
-    /// **shallow (Arc bump)** になる。`font-family` は inherited property なので、
+    /// **shallow (Arc reference-count increment)** になる。`font-family` は inherited property なので、
     /// [`Self::counter_reset`] 等 (non-inherited) とはコストの形が異なる —
     /// 「毎 node で initial にリセットする」コストではなく「inheritance walk が
     /// 毎 node で値を運ぶ」コストで、N-node document あたり O(N) の 1-element
@@ -362,7 +362,7 @@ pub struct ComputedValues {
     /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`apply_winners` の drain での
     /// `value.clone()`、`apply_value` move) と inheritance walk clone
     /// (`resolve_inheritance` の stack push + `out[idx] = computed.clone()`) が
-    /// **shallow (Arc bump)** になる。
+    /// **shallow (Arc reference-count increment)** になる。
     /// `* { counter-reset: c0 c1 ... cN }` × M element の O(N × M) memory
     /// blow-up を単一 heap slot 共有で塞ぐ (security-relevant な DoS 対策、
     /// Content/StringSet と同 pattern の踏襲)。`Arc<Vec<T>>: Deref<Target = Vec<T>>`
@@ -398,7 +398,7 @@ pub struct ComputedValues {
     /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`apply_winners` の drain での
     /// `value.clone()`、`apply_value` move) と inheritance walk clone
     /// (`resolve_inheritance` の stack push + `out[idx] = computed.clone()`) が
-    /// **shallow (Arc bump)** になる。
+    /// **shallow (Arc reference-count increment)** になる。
     /// `* { content: "<large>" }` × N element の O(N × M) memory blow-up
     /// を単一 heap slot 共有で塞ぐ (security-relevant な DoS 対策)。
     /// `Arc<Vec<T>>: Deref<Target = Vec<T>>` により downstream の `.iter()` /
@@ -506,7 +506,7 @@ pub struct ComputedValues {
     /// [`crate::property::resolve_writing_mode`] により
     /// [`WritingMode::HorizontalTb`] に正規化されてからこの field へ
     /// 書き込まれる ([`WritingMode`] doc の Non-goal 節が canonical rationale)。
-    /// Debt (`raikiri-spike-zhmp`): vertical writing-mode 実装時に本 collapse を
+    /// Future work: vertical writing-mode 実装時に本 collapse を
     /// 削除し、本 doc の「観測されることは無い」記述を撤回すること。
     pub writing_mode: WritingMode,
     /// `text-indent` — first-line indentation of a block container.
@@ -837,7 +837,7 @@ pub struct ComputedValues {
     /// with its surrounding text — raikiri-dom has no inline formatting
     /// context yet (every element, `inline` included, lays out as its own
     /// block row), which is a separate, larger, pre-existing gap this
-    /// field's wiring does not close.
+    /// field's integration does not close.
     pub vertical_align: VerticalAlign,
     /// `font-style`. **inherited**, initial: [`FontStyle::Normal`] (CSS
     /// Fonts Module Level 4 §2.4 "Font style: the font-style property"
@@ -1159,7 +1159,7 @@ pub struct ComputedValues {
     /// §12.3.1 <https://www.w3.org/TR/CSS21/generate.html#quotes-specify>.
     /// Spec initial is "depends on user agent" — no concrete string table is
     /// specified. This implementation represents both the explicit `none`
-    /// keyword and the (cleanroom-motivated) unspecified-initial case as an
+    /// keyword and the (independent-implementation) unspecified-initial case as an
     /// empty list — no other implementation's UA default is imported (see
     /// [`crate::property::PropertyValue::Quotes`] doc for the full
     /// rationale, including the `auto`/`match-parent` keywords this crate
@@ -1173,7 +1173,7 @@ pub struct ComputedValues {
     ///
     /// [`Arc<Vec<..>>`] wrap is the same DoS-mitigation shape as
     /// [`Self::counter_reset`] — cascade winner clone / inheritance walk
-    /// clone become a shallow Arc bump instead of a per-node `Vec` copy.
+    /// clone become a shallow Arc reference-count increment instead of a per-node `Vec` copy.
     pub quotes: Arc<Vec<(SmolStr, SmolStr)>>,
     /// Whether an empty `quotes` list represents the initial `auto` value.
     /// Explicit `quotes: none` keeps the list empty but clears this marker.
@@ -1492,7 +1492,7 @@ pub struct ComputedValues {
     /// This field carries the cascaded + absolutized value only. Whether
     /// cell separation actually gaps the table grid at layout time is
     /// layout-time behavior (raikiri-dom scope — parse + cascade + compute
-    /// only in this task, no table layout wiring) — [`Self::table_layout`]
+    /// only in this task, no table layout integration) — [`Self::table_layout`]
     /// doc's split applies here as well.
     pub border_spacing: ComputedBorderSpacing,
     /// `caption-side`. **inherited**, initial:
@@ -1709,7 +1709,7 @@ impl ComputedValues {
             row_gap: ComputedLengthPercentageOrNormal::Normal,
             column_gap: ComputedLengthPercentageOrNormal::Normal,
             // CSS Content 3 §2.4.1: quotes の spec initial は "depends on
-            // user agent"、本 impl は cleanroom 方針によりそれを空 list で
+            // user agent"、本 impl は 独立実装方針によりそれを空 list で
             // 表現する (`none` と同じ shared empty Arc slot、`Self::quotes`
             // field doc / `empty_quotes_entries` doc 参照)。
             quotes: empty_quotes_entries(),
@@ -1839,7 +1839,7 @@ impl ComputedValues {
     /// silent な継承 bug になる。新しい inherited property を追加する際は両方の
     /// doc を同時に更新すること。将来的には単一の const 配列 / 生成マクロから
     /// 両方の doc と実装を駆動できれば drift を機械的に防げるが、現状は手動同期
-    /// である (bd `raikiri-spike-eawr`)。
+    /// である。
     ///
     /// # 実装 (delegation)
     ///
@@ -1862,7 +1862,7 @@ impl ComputedValues {
     /// 帰結として `finalize` は `em` / `rem` / `%` の arm を一度も踏まないので、
     /// **`ResolveContext` の中身は結果に影響しない** (`rem` の参照値が現れない)。
     /// 下で `parent.font_size` を渡しているのは形式上の要請にすぎず、
-    /// `ResolveContext::initial()` でも同じ値になる。pin:
+    /// `ResolveContext::initial()` でも同じ値になる。check:
     /// `inherit_from_is_independent_of_resolve_context`。
     ///
     /// `border` だけは「specified の initial (`medium` = 3px) が computed 層で
@@ -1879,7 +1879,7 @@ impl ComputedValues {
     /// `self.text_align` は常に `parent.text_align` と等しく、`MatchParent`
     /// では**あり得ない** (computed 値が `MatchParent` を取らない invariant、
     /// [`crate::property::resolve_text_align_match_parent`] の debug_assert が
-    /// pin する)。よって解決関数は常に "as specified" の pass-through 分岐を
+    /// check する)。よって解決関数は常に "as specified" の pass-through 分岐を
     /// 通り、`child.text_align == parent.text_align` になる。
     ///
     /// [`SpecifiedValues`]: crate::specified::SpecifiedValues
@@ -1961,7 +1961,7 @@ mod tests {
         // CSS Backgrounds 3 §2.2: background-color initial は `transparent`
         // (= rgba(0, 0, 0, 0))
         assert_eq!(cv.background_color, CssColor::TRANSPARENT);
-        // literal を保持する (`INITIAL_FONT_SIZE_PX` pin
+        // literal を保持する (`INITIAL_FONT_SIZE_PX` check
         // と同じ理由 — `initial_font_family()` 参照に書き換えると自己参照になり
         // 同 helper の誤編集を検出できなくなる)。`*cv.font_family` で
         // `Arc<Vec<Atom>>` を `Vec<Atom>` に deref してから比較する。
@@ -2024,7 +2024,7 @@ mod tests {
         // の "Computed value: … zero if the border style is `none` or `hidden`"
         // により computed 層で潰れる。specified 側の
         // initial は `crate::specified` の
-        // `initial_border_width_is_gated_to_zero_at_computed_layer` が pin する。
+        // `initial_border_width_is_gated_to_zero_at_computed_layer` が check する。
         assert_eq!(
             cv.border,
             Sides::all(ComputedBorder {
@@ -2132,7 +2132,7 @@ mod tests {
             // `assert_eq!(child.writing_mode, parent.writing_mode)`
             // **ではない** (下記 `inherit_from_copies_inherited_and_resets_non_inherited`
             // の該当行 doc comment 参照)。
-            // Debt (`raikiri-spike-zhmp`): vertical writing-mode 実装時に
+            // Future work: vertical writing-mode 実装時に
             // `VerticalRl` が実 cascade 到達可能になったら、本 fixture の
             // 到達不能コメントと下記 `HorizontalTb` assertion を `VerticalRl` へ
             // 戻すこと。
@@ -2435,8 +2435,8 @@ mod tests {
         // `resolve_writing_mode` は inherit 経由でも常に `HorizontalTb` へ
         // 正規化する (`WritingMode` doc の Non-goal 節参照)。この
         // assert は「inherit_from が本 field を素通しコピーしていない」こと
-        // 自体が正しい挙動であることを pin する。
-        // Debt (`raikiri-spike-zhmp`): vertical writing-mode 実装時に本 collapse を
+        // 自体が正しい挙動であることを check する。
+        // Future work: vertical writing-mode 実装時に本 collapse を
         // 削除したら、`HorizontalTb` 期待値を `VerticalRl` へ戻すこと。
         assert_eq!(child.writing_mode, WritingMode::HorizontalTb);
         // CSS Fonts 4 §2.4: font-style は inherited。
@@ -2588,7 +2588,7 @@ mod tests {
 
     /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。
     ///
-    /// `ComputedValues::inherit_from` の doc が主張する invariant の pin —
+    /// `ComputedValues::inherit_from` の doc が主張する invariant の check —
     /// `SpecifiedValues::inherit_from` の出力に font-relative な値が 1 つも
     /// 含まれないので、`finalize` は `rem` arm を踏まず context を参照しない。
     /// 将来 lift 側が `Px` 以外を返すようになったら (= 不動点性が壊れたら)

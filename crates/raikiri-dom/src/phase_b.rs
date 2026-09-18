@@ -11,7 +11,7 @@
 //! — [`PageContext::begin_page`]'s own doc states its `resolved` /
 //! `pending_slots` maps "persist across pages too" and that "a single
 //! `PageContext` instance must live for the whole document". Building and
-//! wiring it is therefore a one-time, per-document step, kept separate from
+//! integration it is therefore a one-time, per-document step, kept separate from
 //! the per-page advance:
 //!
 //! 1. [`drive_document`] builds the whole document's
@@ -155,7 +155,7 @@ use crate::target::build_target_registry;
 /// **Precondition: `ctx.targets` must already be wired** via
 /// [`PageContext::set_targets`] — this function never builds or replaces
 /// `targets` itself. See the module-level doc "Per-document setup, then one
-/// `drive_page` call per page" for why that wiring is a one-time,
+/// `drive_page` call per page" for why that integration is a one-time,
 /// per-document step this function deliberately stays out of, and
 /// [`drive_document`] for the sanctioned way to satisfy this precondition
 /// for a whole document in one call.
@@ -775,7 +775,7 @@ mod tests {
         // The bug this pins: an earlier version of drive_page rebuilt and
         // wholesale-replaced ctx.targets on *every* call (not just the
         // first), which silently discarded whatever the document's initial
-        // wiring had registered the moment a second page was driven —
+        // integration had registered the moment a second page was driven —
         // exactly the "targets persist across pages" contract violation
         // PageContext::begin_page's own doc warns about. Proven here by
         // driving page 1 with a *different* doc/cascade pair (one with no
@@ -810,7 +810,7 @@ mod tests {
         assert_eq!(
             out,
             ResolveOutcome::Resolved("0".to_owned()),
-            "\"#intro\", registered by drive_document's initial wiring from \
+            "\"#intro\", registered by drive_document's initial integration from \
              doc0, must still resolve after a second drive_page call driven \
              by an unrelated, id-less doc/cascade pair — proving drive_page \
              did not rebuild ctx.targets from that second call's own doc"
@@ -1154,7 +1154,7 @@ mod tests {
         // parent) an independent inner scope, and (b) not corrupt the outer
         // scope once the inner one closes — the outer value must reappear
         // unchanged for whatever comes after the inner scope's parent
-        // exits. `CounterStack`'s own unit tests already pin the underlying
+        // exits. `CounterStack`'s own unit tests already check the underlying
         // push/pop mechanics directly; this is the integration-level
         // version through this driver's actual document-order walk.
         let mut doc = Document::new();

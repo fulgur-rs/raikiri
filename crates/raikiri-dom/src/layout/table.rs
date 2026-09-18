@@ -1,10 +1,10 @@
 //! Native table layout — CSS Tables 3 auto + fixed layout, separate + collapse borders.
 //!
-//! Ported from `taffy-table-spike` (Blitz L3 column distribution) and adapted to
+//! Ported from `table layout design` (Blitz L3 column distribution) and adapted to
 //! raikiri's `Document` arena + `DisplayValue`.
 //!
 //! Pipeline (per `docs/superpowers/specs/2026-07-10-taffy-table-layout-design.md`
-//! and taffy-table-spike design):
+//! and the table layout design):
 //!
 //! 1. Build `TableGrid` (rows, cells with col/row spans) via `build_table_grid`.
 //! 2. Column sizing — `table-layout` branch:
@@ -142,7 +142,7 @@ pub fn compute_table_layout(
     // Known outer dimensions (from taffy's compute_root_layout known_dimensions or style.size)
     // The table's outer size caller may have imposed via `apply_page_box_to_body` / block layout.
     // For tables, style.size is already injected via bridge; inputs.known_dimensions carries it.
-    // Also honour the node at table_idx's style.size if known_dimensions is None (similar to spike).
+    // Also honour the node at table_idx's style.size if known_dimensions is None (similar to prototype).
     // taffy's Dimension::maybe_resolve not directly available; use helper below.
     let effective_known = Size {
         width: inputs.known_dimensions.width.or(resolve_dimension(
@@ -346,7 +346,7 @@ pub fn compute_table_layout(
     let content_height: f32 = row_heights.iter().sum::<f32>() - overlap_h;
     // min grows the box; max NEVER shrinks a table below its intrinsic
     // content size (csswg-drafts#5336 / Mozilla bug 1651530: WPT
-    // min-max-size-table-content-box and max-height-table pin that
+    // min-max-size-table-content-box and max-height-table check that
     // max-height/max-width leave sub-intrinsic tables at natural size —
     // only min-* grow). min still wins over max on direct conflict.
     let clamp_min_max = |v: f32, mn: Option<f32>, mx: Option<f32>| -> f32 {
@@ -617,7 +617,7 @@ fn collect_rows_inner(
             flush_pending(doc, &mut pending, rows, cells, n_cols);
             collect_rows_inner(doc, child_id, rows, cells, n_cols, false);
         } else {
-            // Non-table descendent (e.g., caption, div inside table). For MVP, skip but flush pending.
+            // Non-table descendent (e.g., caption, div inside table). For initial implementation, skip but flush pending.
             flush_pending(doc, &mut pending, rows, cells, n_cols);
             // If this is a caption etc., ignore for grid. If it's inside table but not row/cell,
             // recursion not needed - those children are not part of table grid.
@@ -683,7 +683,7 @@ fn collect_cells_in_row(
             continue;
         }
         // Only collect cells; non-cell children are anonymous? Per spec, non-cell child of a row
-        // is wrapped in anonymous cell — for MVP we skip non-cells inside row.
+        // is wrapped in anonymous cell — for initial implementation we skip non-cells inside row.
         if doc.nodes[cell_id].display != DisplayValue::TableCell {
             continue;
         }
@@ -769,7 +769,7 @@ fn measure_cell_inline(doc: &mut Document, cell_id: usize, axis: AvailableSpace)
 }
 
 // ---------------------------------------------------------------------------
-// Column sizing — ported from Blitz L3 (taffy-table-spike)
+// Column sizing — ported from Blitz L3 (table layout design)
 // ---------------------------------------------------------------------------
 
 fn resolve_column_widths(
@@ -2059,7 +2059,7 @@ mod tests {
 
     #[test]
     fn separate_cells_abut_without_overlap() {
-        // Counterpart pin: without `border-collapse: collapse` the same
+        // Counterpart check: without `border-collapse: collapse` the same
         // bordered cells abut exactly (no absorbed line).
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);

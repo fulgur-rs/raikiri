@@ -24,7 +24,7 @@ use crate::types::{ParseOptions, UncascadedDocument};
 ///
 /// `input` は UTF-8 の byte stream として扱う。Read 失敗は
 /// [`ParseError::Io`]、UTF-8 として invalid な入力は [`ParseError::Encoding`]
-/// を返す (spike scope。encoding_rs 導入は将来予定)。
+/// を返す (current implementation scope。encoding_rs 導入は将来予定)。
 ///
 /// # Example
 ///

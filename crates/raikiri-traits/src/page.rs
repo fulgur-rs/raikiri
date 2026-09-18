@@ -1204,7 +1204,7 @@ mod content_value_item_populate_tests {
     #[test]
     fn target_counters_sep_field_name_matches_design_doc() {
         // design doc §7.1 line 1935: `sep: String` (not `separator`)。
-        // Regression pin for the deliberate field-name deviation from
+        // Regression check for the deliberate field-name deviation from
         // ContentComponent::TargetCounters (which uses `separator`).
         let url = Url::parse("https://example.com/#foo").expect("valid URL");
         let c = ContentValueItem::TargetCounters {

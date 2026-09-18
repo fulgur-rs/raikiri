@@ -67,7 +67,7 @@ fn external_consumer_can_call_parse_plan_render_streaming() {
         &NoopResolver,
         PlanConfig::default(),
     )
-    .expect_err("plan stub must Err");
+    .expect_err("unimplemented plan API must Err");
     assert!(matches!(
         plan_err,
         RenderError::Unimplemented {
@@ -84,7 +84,7 @@ fn external_consumer_can_call_parse_plan_render_streaming() {
         StreamingConfig::default(),
         &mut sink,
     )
-    .expect_err("render_streaming stub must Err");
+    .expect_err("unimplemented render_streaming API must Err");
     assert!(matches!(
         stream_err,
         RenderError::Unimplemented {
@@ -95,10 +95,10 @@ fn external_consumer_can_call_parse_plan_render_streaming() {
 }
 
 /// 全 `#[non_exhaustive]` struct が external crate から X::default() / builder
-/// で constructable なことを pin (acceptance criteria、design test #10)。
+/// で constructable なことを check (acceptance criteria、design test #10)。
 ///
 /// 対象は umbrella `raikiri` から re-export される全 `#[non_exhaustive]` pub
-/// struct with `impl Default` (下記 new()-pin test と同じ coverage set)。
+/// struct with `impl Default` (下記 new()-check test と同じ coverage set)。
 ///
 /// `raikiri_style::property::Border` (後に re-export 追加)
 /// は当初 `impl Default` を持たず対象外だった — `Default` どころか `new()`
@@ -156,18 +156,18 @@ fn external_consumer_can_construct_all_non_exhaustive_types() {
 }
 
 /// `RuleTree` の read-only accessor chain (`style_rules()` → `declarations()`
-/// → `value()`) が external crate から通ることを compile + run で pin
+/// → `value()`) が external crate から通ることを compile + run で check
 /// (可視性を絞る判断)。
 ///
-/// ⚠️ 本 test が pin するのは **read 経路が届くこと**だけである。「write 経路が
-/// 無い」ことは compile する code では表現できないので pin されていない —
-/// そちらは compile-fail doctest が別途 pin する:
+/// ⚠️ 本 test が check するのは **read 経路が届くこと**だけである。「write 経路が
+/// 無い」ことは compile する code では表現できないので check されていない —
+/// そちらは compile-fail doctest が別途 check する:
 /// `raikiri_style::rule::Declaration` の struct doc (struct literal /
 /// functional-update / clone 後の field 代入、計 3 fence)、
 /// `raikiri_style::rule::StyleRule::declarations` の doc (1 fence)、
 /// `raikiri_style::ruletree::RuleTree::style_rules` の doc (1 fence)。
 /// `Declaration` / `StyleRule` は umbrella `raikiri` から re-export されて
-/// いないため、この pin は umbrella 経由ではなく raikiri-style 自身の
+/// いないため、この check は umbrella 経由ではなく raikiri-style 自身の
 /// doctest として存在する (pub(crate) の境界は raikiri-style crate に対して
 /// 定義されるものなので、それが自然な置き場所)。
 #[test]
@@ -188,7 +188,7 @@ fn external_consumer_reads_rule_tree_through_readonly_accessors() {
     );
 }
 
-/// PageBox の px 単位切替の regression pin (design test #11)。
+/// PageBox の px 単位切替の regression check (design test #11)。
 #[test]
 fn pagedefaults_us_letter_and_a4_have_expected_px_values() {
     assert!(
@@ -202,7 +202,7 @@ fn pagedefaults_us_letter_and_a4_have_expected_px_values() {
     assert_eq!(PageBox::US_LETTER.width, 816.0);
     assert_eq!(PageBox::US_LETTER.height, 1056.0);
 
-    // PageDefaults の default paper が A4 であることも pin
+    // PageDefaults の default paper が A4 であることも check
     assert_eq!(PageDefaults::default().page_box, PageBox::A4);
 }
 
@@ -210,7 +210,7 @@ fn pagedefaults_us_letter_and_a4_have_expected_px_values() {
 // public-api-compile-tests-lookaheadconfig (round 3 review #2 対応)
 //
 // 設計仕様書 §L681-715 "struct construction pattern" (Acceptance criteria)
-// を external consumer 側で pin する。`#[non_exhaustive]` は crate 外での
+// を external consumer 側で check する。`#[non_exhaustive]` は crate 外での
 // literal construction を封じるため、Consumer は必ず以下 3 pattern のいずれか
 // を使わなければならない:
 //
@@ -218,19 +218,19 @@ fn pagedefaults_us_letter_and_a4_have_expected_px_values() {
 //   2. `let mut c = X::default(); c.field = v;`  (mutation pattern)
 //   3. `X::builder().field_a(v1).field_b(v2).build()`  (fluent builder)
 //
-// これらの test は runtime 挙動ではなく **compile 契約** を pin する。
+// これらの test は runtime 挙動ではなく **compile 契約** を check する。
 // もし将来 `LookaheadConfig::widow_line_buffer` が pub → pub(crate) に落ちる
 // / `PageBox::new()` が削除される 等の regression が起きれば、この test は
 // compile error になる (= external consumer の API break が CI で捕捉される)。
 // ─────────────────────────────────────────────────────────────────────────
 
-/// Pattern 1 の残り半分 (default() は既存 test で pin 済み) — `X::new()` 存在の
+/// Pattern 1 の残り半分 (default() は既存 test で check 済み) — `X::new()` 存在の
 /// compile pin。umbrella `raikiri` から re-export される全 `#[non_exhaustive]`
 /// pub struct のうち zero-arg `new()` を持つもの全てを対象とする (§L703-704)。
 ///
 /// 将来 populate 予定の placeholder struct (LayoutBuffer / TargetRegistry /
 /// RunningTemplate / FormData / TargetDefinition / IntrinsicBox / ResolverRequest
-/// / ProbeContext / TargetRequest) も現時点の zero-arg constructor を pin する
+/// / ProbeContext / TargetRequest) も現時点の zero-arg constructor を check する
 /// ため含める — future populate 時に `new()` signature が非破壊拡張のまま維持
 /// されていることを保証する。
 ///
@@ -285,7 +285,7 @@ fn external_consumer_can_use_new_constructor_on_all_types() {
 /// 必要がある。この test は `LookaheadConfig`, `RenderLimits`, `PageDefaults`,
 /// `PageBox`, `PlanConfig`, `StreamingConfig`, `BatchConfig`, `Border` の各 pub
 /// field に対し `c.field = value` が compile することで、Consumer の runtime
-/// tuning 経路を pin する。
+/// tuning 経路を check する。
 #[test]
 fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
     // spec §L705-706 の canonical mutation example そのまま。
@@ -313,7 +313,7 @@ fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
     page_defaults.page_box = PageBox::US_LETTER;
 
     // raikiri-style value 型 — 全 3 field (width /
-    // style / color) への直接代入を pin する。`style` / `color` の型
+    // style / color) への直接代入を check する。`style` / `color` の型
     // (`BorderStyle` / `BorderColor`) も umbrella re-export に同時期に追加
     // されたので、ここで型付きに構築できることも合わせて確認する。
     let mut border = Border::default();
@@ -328,7 +328,7 @@ fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
 
     // Nested config (§4 "対象 struct" list) — inner struct の swap も pin。
     // `initial_registry` は明示的に `Option<TargetRegistry>` に対する
-    // `Some(TargetRegistry::new())` で inner type も pin する (単に `None` を
+    // `Some(TargetRegistry::new())` で inner type も check する (単に `None` を
     // 代入するだけでは Option の T が別 type に silently 変わっても検出できない)。
     let mut plan_cfg = PlanConfig::default();
     plan_cfg.lookahead = lookahead.clone();
@@ -377,7 +377,7 @@ fn external_consumer_can_chain_builder_fluent_setters() {
     assert!(lookahead.allow_cross_size_lookahead);
 
     // RenderLimitsBuilder は全 7 setter を chain (全 method が `Self` を返す
-    // regression pin)。
+    // regression check)。
     let limits = RenderLimits::builder()
         .max_document_pages(Some(100))
         .max_dom_nodes(Some(2_000_000))
@@ -392,9 +392,9 @@ fn external_consumer_can_chain_builder_fluent_setters() {
     assert_eq!(limits.max_input_bytes, Some(16 * 1_024 * 1_024));
     assert_eq!(limits.max_parse_warnings, Some(256));
 
-    // Cross-struct wiring: LookaheadConfig を PlanConfig / StreamingConfig /
+    // Cross-struct integration: LookaheadConfig を PlanConfig / StreamingConfig /
     // BatchConfig に差し込む fluent chain も pin。`initial_registry` は
-    // `Option<TargetRegistry>` の inner type も pin するため `Some(...)` 経路を
+    // `Option<TargetRegistry>` の inner type も check するため `Some(...)` 経路を
     // 使う (`None` だけでは inner の T が silently 変わっても検出できない)。
     let _plan = PlanConfig::builder()
         .lookahead(lookahead.clone())
@@ -418,9 +418,9 @@ fn external_consumer_can_chain_builder_fluent_setters() {
     let _defaults = PageDefaults::builder().page_box(PageBox::US_LETTER).build();
 }
 
-/// External consumer が `use raikiri::*;` のみで VRT font pin API
+/// External consumer が `use raikiri::*;` のみで VRT font check API
 /// (`build_wpt_font_ctx`, `FontError`, `FontContext`, `html_to_png_with_fonts`)
-/// を chain できることを compile + run で pin (raikiri-dom/parley を
+/// を chain できることを compile + run で check (raikiri-dom/parley を
 /// direct dep しなくて良い保証)。
 #[test]
 fn external_consumer_can_reference_vrt_font_pin_api() {
@@ -437,7 +437,7 @@ fn external_consumer_can_reference_vrt_font_pin_api() {
     assert!(matches!(err, FontError::DirNotFound(_)));
 
     // 3. html_to_png_with_fonts は FontContext を受ける signature、
-    //    system font FontContext (fallback) との組み合わせで compile pin
+    //    system font FontContext (fallback) との組み合わせで compile check
     //    (実 render は system font 経路、determinism 不要な smoke)
     let font_ctx = FontContext::new();
     let _ = html_to_png_with_fonts(&b"<p>x</p>"[..], font_ctx);
