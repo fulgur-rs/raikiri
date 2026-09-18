@@ -3,7 +3,7 @@
 # by raikiri-wpt / raikiri VRT tests. Idempotent: re-running updates to
 # the pinned SHA.
 #
-# Worktree-aware (raikiri-spike-dz8t): target/ is per-worktree working
+# Worktree-aware (the earlier change): target/ is per-worktree working
 # state (gitignored; cargo/git don't share it across `git worktree`
 # checkouts), so each fresh worktree-<taskid> would otherwise need its own
 # shallow clone of WPT. To avoid that, the actual checkout always lives
@@ -67,7 +67,7 @@ grep -v '^#' "$SUBSET_FILE" | sed '/^[[:space:]]*$/d' > "$WPT_DIR/.git/info/spar
 
 # Fetch only the pinned SHA, filter=blob:none to keep it lean. Skip when
 # already at $SHA: with WPT_DIR now shared across every worktree of this
-# repo (raikiri-spike-dz8t), an unconditional fetch+checkout here would be
+# repo (the earlier change), an unconditional fetch+checkout here would be
 # redundant network I/O on every worktree setup, and a source of
 # `index.lock` contention when concurrent worktree sessions race to fetch
 # the same already-current checkout.
@@ -87,7 +87,7 @@ if [ "$REPO_ROOT" != "$MAIN_WORKTREE_ROOT" ]; then
   if [ -e "$LOCAL_WPT_DIR" ] && [ ! -L "$LOCAL_WPT_DIR" ]; then
     echo "error: $LOCAL_WPT_DIR exists and is not a symlink; refusing to" \
       "overwrite (remove it manually if it's a stale per-worktree clone" \
-      "from before raikiri-spike-dz8t)" >&2
+      "from before the worktree fix)" >&2
     exit 1
   fi
   ln -sfn "$WPT_DIR" "$LOCAL_WPT_DIR"

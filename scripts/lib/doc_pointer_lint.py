@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""scripts/lib/doc_pointer_lint.py — `crate::…` doc-pointer census / lint.
+"""scripts/lib/doc_pointer_lint.py — `crate::…` doc-pointer scan / lint.
 
-Shared checker for three sibling bd issues that all reduce to the same
-occurrence-level census over `crates/*/src/**/*.rs` (bd raikiri-spike-acsw /
-raikiri-spike-vyse / raikiri-spike-luxp all say explicitly: don't design
+Shared checker for three related design changes that all reduce to the same
+occurrence-level scan over `crates/*/src/**/*.rs` (the earlier changes both say explicitly: don't design
 three separate checks). It classifies every `//`-comment line as `doc`
 (`///` / `//!`) or `plain` (any other `//` line, including `////`-style
 separators) and extracts two kinds of Markdown-link-shaped occurrence:
@@ -18,22 +17,22 @@ separators) and extracts two kinds of Markdown-link-shaped occurrence:
 Two gate roles (pass/fail, occurrence-counted) plus one informational-only
 role (role 4, described right after them — see its own paragraph for why
 the numbering skips 3), all restricted to `crate::…` pointers
-(module-relative pointers are a known under-count — see AGENTS.md's
-`crate::…` pointer section on why `crate::`-only grep already under-counts
+(module-relative pointers are a known missed result — see AGENTS.md's
+`crate::…` pointer section on why `crate::`-only grep already missed results
 by design; this script inherits that same scope rather than widening it,
-to keep its numbers comparable to the historical census this task is
+to keep its numbers comparable to the historical scan this task is
 retiring):
 
-  1. **vyse rule (hard-zero)**: bracket-link syntax in a `plain` `//`
+  1. **role 1 rule (must be zero)**: bracket-link syntax in a `plain` `//`
      comment line. AGENTS.md's "既知の限界" section says rustdoc reads zero
      bytes of a plain `//` comment, so a bracket there *looks* like a
      verified intra-doc link but is not — worse than a bare backtick span,
      which at least doesn't claim to be verified. This applies to ANY
-     bracket-link, not just `crate::`-prefixed ones (bd raikiri-spike-vyse
+     bracket-link, not just `crate::`-prefixed ones (the earlier change
      comment 2026-07-28: scoping this to `crate::` only closes 3/21 sites;
      the danger is unrelated to the `crate::` prefix). Must be 0.
 
-     Role 1 has **no ignore-marker escape hatch** — unlike role 2, a
+     Role 1 has **no ignore-marker exemption mechanism** — unlike role 2, a
      flagged occurrence cannot be exempted with
      `doc-pointer-lint:ignore:`. AGENTS.md's decided rule for plain `//`
      comments is unconditional ("一切書かない"), so the only remedy is to
@@ -44,19 +43,18 @@ retiring):
      is never flagged). `_BARE_BRACKET_RE` matches ANY bracket content
      (not just identifier/path-shaped text — see its own comment for why:
      an earlier, narrower version of this pattern silently missed
-     `[two words]` / `[foo-bar]`-shaped brackets, a §8.3 Codex final
+     `[two words]` / `[foo-bar]`-shaped brackets, a §8.3 final
      review finding), with two narrow exclusions: `#[attr]` / `&[T]`
      (Rust attribute/slice syntax, not a markdown-link look-alike) and
      `[text](url)` (a genuine Markdown inline link to an explicit URL —
      not currently present in `crates/*/src` plain comments, checked at
      authoring time, but excluded defensively). Block comments (`/* */`)
      — which this script does not scan at all — were independently
-     confirmed to hold 0 `crate::` references (bd raikiri-spike-vyse's
-     original census); if that construct is ever introduced, re-check
+     confirmed to hold 0 `crate::` references (the earlier change's
+     original scan); if that construct is ever introduced, re-check
      before trusting role 1's output blindly.
 
-     Two further known scan-scope gaps (bd raikiri-spike-1ghc, from bd
-     raikiri-spike-luxp §8.2 roborev-refine iter3's independent finding),
+     Two further known scan coverage gaps from an independent review,
      both re-verified inert (0, or 1 harmless, live hits) and left as a
      documented caveat rather than a logic change. They pull in opposite
      directions — gap 1 is under-scanning (a hazard could go uncaught),
@@ -84,13 +82,13 @@ retiring):
          violation (a false FAIL on ordinary Rust syntax, not a missed
          hazard). Repo-wide at filing/re-verification time: 0 hits.
 
-  2. **luxp ratchet (drift prevention)**: bare (non-linked) `crate::…`
+  2. **role 2 maximum-count guard (prevents new occurrences)**: bare (non-linked) `crate::…`
      pointers in `doc` (`///` / `//!`) comment lines — i.e. occurrences of
      the exact violation AGENTS.md's "`crate::…` pointer は intra-doc link
      で書く" rule prohibits, that have not yet been fixed. Must not exceed
      a pinned baseline (`doc_pointer_lint_baseline.txt`).
 
-  4. **role 4 (bd raikiri-spike-gq7x, informational only — NOT gated, no
+  4. **role 4 (the earlier change, informational only — NOT gated, no
      baseline, no `doc-pointer-lint:ignore:` interaction)**: bracket-linked
      (not bare) `crate::…` pointers found on a `doc` (`///` / `//!`) line
      at or after the first `#[cfg(test)] mod …` block in the file — a
@@ -100,25 +98,24 @@ retiring):
      mod-level item's doc *inside* such a block (e.g. a private helper fn
      used only by that module's own tests) looks rustdoc-verified but
      never actually gets resolved — empirically confirmed for two such
-     sites by bd raikiri-spike-csmj's block-wide re-scan (see
-     `doc_pointer_lint_baseline.txt`'s 2026-08-10 csmj entry). Numbering
-     skips 3 because the bd issue that requested this role (gq7x) itself
+     sites by the earlier change's block-wide re-scan (see
+     `doc_pointer_lint_baseline.txt`'s 2026-08-10 block-wide scan entry). Numbering
+     skips 3 because the design note that requested this role (role 4) itself
      calls it "role 4 (仮称)" against a 3-role count that was never a
-     literal code construct in this file — kept as-is here so the bd
-     issue text and this code stay traceably in sync rather than silently
+     literal code construct in this file — kept as-is here so the design note's text and this code stay traceably in sync rather than silently
      renumbering.
 
-     This is deliberately NOT a third ratchet. Two structural reasons,
+     This is deliberately NOT a third maximum-count guard. Two structural reasons,
      not just a style preference: (a) a *linked* span cannot be exempted
      with `doc-pointer-lint:ignore:` at all — that marker's regex and
      `_classify_opt_out()` only ever run against the role-2 bare-span
      candidate set, so there is no remediation path a marker could offer
      here (the actual remedy, demoting the link to a bare span, is
-     role 2's territory, not role 4's — see bd raikiri-spike-gq7x's own
-     issue text, which reaches the same conclusion); (b) role 2's own
+     role 2's territory, not role 4's — see the earlier change's own
+     note, which reaches the same conclusion); (b) role 2's own
      baseline file spends roughly 30 lines documenting that a single
      pinned integer "structurally cannot tell new-since-baseline apart
-     from was-already-there" under this repo's foreign-merge-drift
+     from was-already-there" under this repo's changes from merges on another branch conditions
      conditions — adding a second gated integer would reproduce that same
      failure mode for a hazard class with no marker-based fix. So role 4
      is visibility only: every run's summary line shows the current
@@ -130,19 +127,19 @@ retiring):
      tracking**: it locates the first `#[cfg(test)]` attribute line in the
      file that is (skipping only blank lines) immediately followed by a
      `mod …` declaration, and treats every line at or after that line
-     number as "inside/after a test-mod block". bd raikiri-spike-csmj's
+     number as "inside/after a test-mod block". the earlier change's
      own block-wide re-scan used exactly this same approximation by hand
      (`doc_pointer_lint_baseline.txt`: "a plain line-number comparison,
      not dependent on any brace-matching") to prove *absence* — that no
-     ratchet-relevant bare span in this repo sits inside a
+     guard-relevant bare span in this repo sits inside a
      `#[cfg(test)] mod` block, since every such span's line number was
      strictly *before* the first such block in its file. Role 4 reuses the
      same predicate to positively enumerate linked spans instead, which
-     inherits a direction asymmetry that didn't matter for csmj's
+     inherits a direction asymmetry that didn't matter for block-wide scan's
      absence proof but does matter here: a file with production code
      (another `mod`/`fn`, not itself gated by `#[cfg(test)]`) appearing
      *after* its first `#[cfg(test)] mod` block would have any doc-linked
-     `crate::…` span in that later code over-counted by role 4, since the
+     `crate::…` span in that later code counted extra by role 4, since the
      predicate has no way to know the test-mod block has already closed.
      This codebase's prevailing convention for an *inline* (brace-form)
      `#[cfg(test)] mod tests { … }` block is tests-at-end-of-file — and this
@@ -151,7 +148,7 @@ retiring):
      (rather than a claim this script re-derives from the convention
      itself, which it has no way to verify). The convention does NOT
      reliably hold for the external-file (semicolon) form
-     `#[cfg(test)] mod <name>;` that bd raikiri-spike-8m2l (below)
+     `#[cfg(test)] mod <name>;` that the earlier change (below)
      separately deals with: `crates/raikiri-style/src/lib.rs`'s
      `#[cfg(test)] mod test_dom;` declaration is grouped with the file's
      other `pub mod …` declarations, with substantial production code
@@ -160,23 +157,23 @@ retiring):
      pinned line reference goes stale (and *looks* still-verified) the
      moment `lib.rs` gains or loses a `pub mod` line above it; re-derive
      current numbers from the file directly if needed rather than trusting
-     one frozen here. Presence (an actual over-count) is still not
+     one frozen here. Presence (an actual extra result) is still not
      provable without brace-depth tracking, which this role deliberately
      does not implement (would be the single largest complexity addition
      in this script's history, spent on a non-gating, informational role).
      This is documented here in the same register as the two `1ghc`
-     scan-scope gaps below: a known, inspected approximation that only
-     over-counts (never under-counts, and over-counting cannot fail a gate
+     scan coverage gaps below: a known, inspected approximation that only
+     extra counts (never missed results, and extra counts cannot fail a gate
      this role doesn't have), not a silently wrong one.
 
-     **Cross-file extension (bd raikiri-spike-8m2l)**: the position
+     **Cross-file extension (the earlier change)**: the position
      predicate above only ever looks *inside* the file being scanned — but
      a `#[cfg(test)] mod <name>;` declaration (semicolon form, as opposed
      to an inline `mod <name> { … }` block) gates a *different* file
      (`<name>.rs` or `<name>/mod.rs`), and that target file's own content
      has no `#[cfg(test)]` line in it at all — the attribute lives one
      file away, at the declaration site. Scanned in isolation, such a
-     target file's `first_test_mod_line` was always `None`: a false-clean,
+     target file's `first_test_mod_line` was always `None`: an incorrectly clean result,
      since every line in it — doc comments included — only compiles under
      `#[cfg(test)]` in the first place. Confirmed real (not hypothetical):
      `crates/raikiri-style/src/lib.rs`'s `#[cfg(test)] mod test_dom;` →
@@ -221,26 +218,26 @@ retiring):
      the "line-position, not brace-depth" constraint above still holds
      without exception.
 
-Opt-out classification (AGENTS.md "opt-out (link 化しない)"), applied only
-to the role-2 (ratchet) candidate set:
+Opt-out classification (AGENTS.md "explicit exemption (link 化しない)"), applied only
+to the role-2 maximum-count candidate set:
 
   1. **(removed) marker** — grep-able, same line as the flagged span.
   2. **points into `#[cfg(test)] mod tests`** — approximated by checking
      whether the pointer path itself contains a `tests::` segment (AGENTS.md
-     opt-out 2's own reasoning: "path 中の `tests::` がtest であることを
-     示す"), per bd raikiri-spike-luxp's own framing of this opt-out as
+     explicit exemption 2's own reasoning: "path 中の `tests::` がtest であることを
+     示す"), per the earlier change's own framing of this explicit exemption as
      "path の `tests::` パターンで概ね判定可能".
-  3. **rustdoc-blind position** (`#[test]` item doc, fn-body-local item
+  3. **not checked by rustdoc position** (`#[test]` item doc, fn-body-local item
      doc, `#[doc(hidden)]`, `tests/`/`benches`/`examples` targets,
      `#[cfg]`-excluded item, unexpanded `macro_rules!` body) — bd
-     raikiri-spike-luxp's issue text states plainly that this is **not
+     the design note's text states plainly that this is **not
      statically decidable** from the surrounding text alone. This script
      does not attempt to decide it: such spans are counted toward the
-     ratchet by default (fail-closed), and an author who has separately
+     counted by default (count uncertain cases by default), and an author who has separately
      confirmed (by the "わざと壊して確かめる" procedure in AGENTS.md) that a
-     specific span is rustdoc-blind must say so explicitly with a
+     specific span is not checked by rustdoc must say so explicitly with a
      `doc-pointer-lint:ignore: <reason>` marker on the same line — the same
-     "explicit opt-out only, no implicit exemption" posture
+     "an explicit exemption only, with no implicit exemption" posture
      `scripts/lib/patch_coverage.py`'s `cov:ignore:` uses. Unlike
      `cov:ignore:`, this marker is same-line only (no block-scoping): a doc
      comment span doesn't have a brace-delimited "block" to scope over the
@@ -281,16 +278,16 @@ def classify_line(lstripped: str) -> str:
     return "code"
 
 
-# -- role-4 position predicate (bd raikiri-spike-gq7x) ----------------------
+# -- role-4 position predicate (the earlier change) ----------------------
 
 # Matches only the exact, unadorned `#[cfg(test)]` attribute line (rustfmt's
-# canonical form for gating a `mod` — bd raikiri-spike-csmj's block-wide
+# canonical form for gating a `mod` — the earlier change's block-wide
 # re-scan separately confirmed no `cfg(all(test, …))` / `cfg(any(test, …))`
 # / same-line `#[cfg(test)] mod x {}` form exists anywhere in this tree at
 # that scan's time). A combined-cfg or same-line form would silently not
 # match here and so would not advance `find_first_cfg_test_mod_line()`'s
 # search — the same "known, inspected gap, not a silent one" register as
-# this module's other documented scan-scope gaps.
+# this module's other documented scan coverage gaps.
 _CFG_TEST_ATTR_RE = re.compile(r"^#\[cfg\(test\)\]\s*$")
 # The `mod` declaration a `#[cfg(test)]` attribute gates. Deliberately not
 # anchored to a trailing `{` (rustfmt sometimes breaks a long `mod` line
@@ -301,7 +298,7 @@ _MOD_DECL_RE = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?mod\s+\w")
 # *separate* file (`<name>.rs` or `<name>/mod.rs`) rather than the
 # following block in this same file. Captures the module name so
 # `find_external_test_mod_names()` can resolve it to a target path (bd
-# raikiri-spike-8m2l). An inline `mod <name> { … }` block never matches
+# the earlier change). An inline `mod <name> { … }` block never matches
 # this (no trailing `;`) — its body already lives in this same file, so it
 # needs no cross-file handling at all.
 _EXTERNAL_MOD_DECL_RE = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*;")
@@ -320,15 +317,15 @@ def _iter_cfg_test_mod_lines(lines: list[str]) -> Iterator[tuple[int, str]]:
 
     Shared by `find_first_cfg_test_mod_line()` (role 4's in-file,
     first-match-only predicate) and `find_external_test_mod_names()` (bd
-    raikiri-spike-8m2l's cross-file extension, which needs every match in
+    the earlier change's cross-file extension, which needs every match in
     the file, not just the first) so the two functions can never disagree
     about what counts as "the mod line a `#[cfg(test)]` attribute gates."
 
     Deliberately a line-position search, not a brace-depth parser — see
     role 4's paragraph in this module's docstring for why: this is the same
-    approximation bd raikiri-spike-csmj's own block-wide re-scan used by
+    approximation the earlier change's own block-wide re-scan used by
     hand ("a plain line-number comparison, not dependent on any
-    brace-matching") to prove no ratchet-relevant bare span sits inside a
+    brace-matching") to prove no guard-relevant bare span sits inside a
     test-mod block.
     """
     for i, raw in enumerate(lines):
@@ -367,7 +364,7 @@ def find_external_test_mod_names(lines: list[str]) -> set[str]:
     """Return every module name declared as `#[cfg(test)] mod <name>;`
     (external-file form) in `lines` — sibling modules whose *body* lives in
     a separate file, one this file's own `#[cfg(test)]` attribute never
-    appears in (bd raikiri-spike-8m2l). An inline
+    appears in (the earlier change). An inline
     `#[cfg(test)] mod <name> { … }` block is deliberately not returned
     here: its body is already in this same file, so
     `find_first_cfg_test_mod_line()`'s existing in-file search already
@@ -419,7 +416,7 @@ def _module_dir_for(path: Path) -> Path:
 
 def find_external_test_mod_targets(texts: dict[str, str]) -> set[str]:
     """Cross-file counterpart to `find_first_cfg_test_mod_line()` (bd
-    raikiri-spike-8m2l) — see this module's docstring ("Cross-file
+    the earlier change) — see this module's docstring ("Cross-file
     extension" paragraph) for the full rationale and the concrete
     `lib.rs` → `test_dom.rs` example this exists to catch, and its
     "Canonical statement of the override rule" paragraph for how a `True`
@@ -453,7 +450,7 @@ def find_external_test_mod_targets(texts: dict[str, str]) -> set[str]:
     filesystem location diverges from what its declaring file's own path
     implies — is likewise outside what this can resolve. None of these
     shapes appear anywhere in this repo's current `#[cfg(test)] mod` sites
-    (only the one plain, standard-convention site this bd task addresses),
+    (only the one plain, standard-convention site this cleanup task addresses),
     so this is a documented scope limit, not a known-wrong resolution.
 
     Returns the set of target file paths (same repo-relative string form
@@ -493,7 +490,7 @@ _BACKTICK_RE = re.compile(r"`([^`\n]+)`")
 # here): a bare bracket-link. AGENTS.md's rule for plain `//` comments is
 # blanket — "bracket link 構文 (`[...]` / `` [`...`] ``) を一切書かない" —
 # not conditioned on the bracket content looking like a Rust path/ident.
-# §8.3 Codex final review (bd raikiri-spike gate iter): an earlier version
+# §8.3 final review (the earlier review iteration): an earlier version
 # of this pattern only matched identifier/path-shaped content
 # (`[A-Za-z_][A-Za-z0-9_:<>]*`), which silently let `[two words]` and
 # `[foo-bar]` — anything with a space, hyphen, or other punctuation —
@@ -568,7 +565,7 @@ def analyze_line(raw: str, *, in_backtick: bool = False) -> tuple[LineFindings, 
     "inside a code span"; `[0,∞]` would then wrongly reach the bare-bracket
     step and get flagged as a role-1 violation, even though it is (once
     the two lines are read as the single quoted phrase they are) already
-    safely inside backticks. bd raikiri-spike gate §8.3 Codex final review
+    safely inside backticks. the earlier review §8.3 final review
     surfaced this the moment role 1's bracket matching was broadened to
     catch non-identifier-shaped content (this exact `[0,∞]` shape was one
     of the false negatives that broadening fixed) — a version of this
@@ -618,7 +615,7 @@ def analyze_line(raw: str, *, in_backtick: bool = False) -> tuple[LineFindings, 
     # span opened on this line and didn't close before end-of-line —
     # everything from that backtick to end-of-line is *inside* that span
     # (it's the text between the opener and wherever the closer ends up
-    # landing on a later line), so it must be blanked out here too, the
+    # appearing on a later line), so it must be blanked out here too, the
     # same way the carried-in prefix was blanked above, before the
     # bare-bracket step runs. Without this, a bracket following a
     # same-line span-opener (e.g. `` `<length [0,∞]> | `` — the span
@@ -652,19 +649,19 @@ class Occurrence:
 
 @dataclass
 class CensusResult:
-    # Role 1 (vyse): ANY bracket-link in a `plain` line, crate:: or not.
+    # Role 1 (role 1): ANY bracket-link in a `plain` line, crate:: or not.
     plain_bracket_violations: list[Occurrence] = field(default_factory=list)
-    # Role 2 (luxp) candidate set, pre-opt-out: bare `crate::` backtick spans
+    # Role 2 (role 2) candidate set, pre-explicit exemption: bare `crate::` backtick spans
     # in `doc` lines.
     doc_bare_crate_all: list[Occurrence] = field(default_factory=list)
-    # Subset of the above that survives opt-out classification — this is
+    # Subset of the above that survives explicit exemption classification — this is
     # the number compared against the pinned baseline.
     doc_bare_crate_ratchet: list[Occurrence] = field(default_factory=list)
     doc_bare_crate_excluded: list[tuple[Occurrence, str]] = field(default_factory=list)
-    # Role 4 (gq7x): linked `crate::` spans in `doc` lines at/after the
+    # Role 4 (role 4): linked `crate::` spans in `doc` lines at/after the
     # first `#[cfg(test)] mod …` block in their file — informational only,
     # not gated (see this module's docstring for why), so unlike role 2's
-    # bare-span set this has no ratchet/baseline/opt-out counterpart.
+    # bare-span set this has no ratchet/baseline/explicit exemption counterpart.
     doc_linked_crate_in_test_mod: list[Occurrence] = field(default_factory=list)
     # Informational only, not gated:
     doc_linked_crate_count: int = 0
@@ -672,8 +669,8 @@ class CensusResult:
 
 
 def _classify_opt_out(occ: Occurrence) -> str | None:
-    """Return the opt-out reason name if `occ` is exempted from the role-2
-    ratchet, else None (counted, fail-closed default)."""
+    """Return the explicit exemption reason name if `occ` is exempted from the role-2
+    maximum-count check, else None (counted by default)."""
     if "(removed)" in occ.raw_line:
         return "opt-out-1:(removed)"
     if "tests::" in occ.span:
@@ -687,7 +684,7 @@ def census_file(
     path: str, text: str, *, is_external_test_mod_target: bool = False
 ) -> CensusResult:
     """Census one file's `text`. `is_external_test_mod_target`
-    (bd raikiri-spike-8m2l): True iff some *other* file in the crate
+    (the earlier change): True iff some *other* file in the crate
     declares `#[cfg(test)] mod <name>;` where `<name>` resolves to this
     file — see `find_external_test_mod_targets()`. Defaults to False so
     existing single-file callers (this module's own test suite) are
@@ -698,7 +695,7 @@ def census_file(
     # Carried across consecutive lines of the *same* comment kind (see
     # analyze_line()'s docstring for why: a backtick span word-wrapped
     # across several `//`/`///` lines must not have its interior treated
-    # as bracket-scannable just because the census is line-based). Reset
+    # as bracket-scannable just because the scan is line-based). Reset
     # on any `code` line and on a `doc`<->`plain` kind change — a comment
     # run authored as one continuous phrase is never observed to switch
     # comment style mid-span in this codebase, and a code line ends any
@@ -706,13 +703,13 @@ def census_file(
     in_backtick = False
     prev_kind: str | None = None
     lines = text.splitlines()
-    # Role 4 (gq7x): computed once per file, up front — see
+    # Role 4 (role 4): computed once per file, up front — see
     # find_first_cfg_test_mod_line()'s own docstring and this module's
     # docstring for why this is a line-position search, not a brace-depth
     # parser.
     first_test_mod_line = find_first_cfg_test_mod_line(lines)
     if is_external_test_mod_target:
-        # bd raikiri-spike-8m2l: unconditional override (not None-only) —
+        # the earlier change: unconditional override (not None-only) —
         # see this module's docstring, "Canonical statement of the
         # override rule" paragraph, for why.
         first_test_mod_line = 1
@@ -773,7 +770,7 @@ def discover_files(repo_root: str) -> list[str]:
     module dirs (`crates/raikiri-html/src/ua/`, `crates/raikiri-traits/
     src/page/`, `crates/raikiri-wpt/src/bin/`, `.../snapshots/`) are
     covered — a flat `crates/*/src/*.rs` glob (the literal pattern quoted
-    in the bd raikiri-spike-vyse/luxp issue text) would silently skip
+    in the role 2 design note) would silently skip
     those.
     """
     root = Path(repo_root)
@@ -789,7 +786,7 @@ def run_census(repo_root: str, files: list[str] | None = None) -> CensusResult:
     single `discover_files()` call instead of running the glob twice.
 
     Reads every file's text into memory up front, rather than streaming
-    one file at a time (the pre-bd-8m2l shape): role 4's cross-file
+    one file at a time (the pre-cross-file extension shape): role 4's cross-file
     extension (`find_external_test_mod_targets()`) needs a first pass over
     every file's content before any single file's `census_file()` call can
     know whether *it* is an external `#[cfg(test)] mod` target, and a full
@@ -817,7 +814,7 @@ def run_census(repo_root: str, files: list[str] | None = None) -> CensusResult:
 
 
 def load_baseline(baseline_file: str) -> int:
-    """Read the pinned ratchet baseline: the first non-blank, non-`#`-comment
+    """Read the pinned maximum-count baseline: the first non-blank, non-`#`-comment
     line, parsed as an int. Raises `FileNotFoundError` (an `OSError`
     subclass) if `baseline_file` doesn't exist, and `ValueError` if it
     exists but contains no such line (or that line isn't a valid int) —
@@ -836,9 +833,9 @@ def evaluate_gate(result: CensusResult, baseline: int) -> tuple[bool, bool]:
     printing so it's directly unit-testable. Returns `(role1_ok, role2_ok)`:
 
       - role1_ok: True iff there are 0 plain-comment bracket-link
-        violations (vyse's hard-zero rule — no baseline involved).
-      - role2_ok: True iff the ratchet-relevant doc-comment bare `crate::…`
-        pointer count is at or below `baseline` (luxp's ratchet).
+        violations (role 1's must be zero rule — no baseline involved).
+      - role2_ok: True iff the guard-relevant doc-comment bare `crate::…`
+        pointer count is at or below `baseline` (role 2's maximum-count check).
 
     `main()`'s overall exit code is 0 iff both are True, else 1 — see its
     body for the exact mapping (this function does not decide exit codes
@@ -854,13 +851,13 @@ def main() -> int:
     ap.add_argument(
         "--baseline-file",
         default=None,
-        help="path to the pinned ratchet baseline (default: "
+        help="path to the pinned maximum-count baseline (default: "
         "<this script's dir>/doc_pointer_lint_baseline.txt)",
     )
     ap.add_argument(
         "--print-count",
         action="store_true",
-        help="print only the current role-2 ratchet-relevant count and exit "
+        help="print only the current role-2 guard-relevant count and exit "
         "0 (for regenerating the baseline file; does not gate)",
     )
     ap.add_argument(
@@ -898,28 +895,28 @@ def main() -> int:
             len(result.doc_linked_crate_in_test_mod),
         ),
         ("doc-comment bare crate:: pointers (total)", len(result.doc_bare_crate_all)),
-        ("  excluded by opt-out/marker", len(result.doc_bare_crate_excluded)),
-        ("  ratchet-relevant (role 2)", ratchet_count),
+        ("  excluded by explicit exemption/marker", len(result.doc_bare_crate_excluded)),
+        ("  guard-relevant (role 2)", ratchet_count),
         ("  pinned baseline", baseline),
         ("plain-comment bare crate:: pointers (info)", result.plain_bare_crate_count),
         ("plain-comment bracket-link violations (role 1)", len(result.plain_bracket_violations)),
     ]
     label_width = max(len(label) for label, _ in summary_rows)
 
-    print("== scripts/doc-pointer-lint.sh census ==")
+    print("== scripts/doc-pointer-lint.sh scan ==")
     for label, value in summary_rows:
         print(f"{label.ljust(label_width)} : {value}")
     print()
 
     if args.verbose and result.doc_bare_crate_excluded:
-        print("doc-comment bare crate:: pointers excluded from the ratchet:")
+        print("doc-comment bare crate:: pointers excluded by the maximum-count guard:")
         for occ, reason in result.doc_bare_crate_excluded:
             print(f"  {occ.path}:{occ.line}  [{reason}]  `{occ.span}`")
         print()
 
     role1_ok, role2_ok = evaluate_gate(result, baseline)
 
-    print("-- role 1 (vyse): plain `//` comment bracket-link, must be 0 --")
+    print("-- role 1: plain `//` comment bracket-link, must be 0 --")
     if not role1_ok:
         print(f"FAIL: {len(result.plain_bracket_violations)} occurrence(s):")
         for occ in result.plain_bracket_violations:
@@ -928,21 +925,21 @@ def main() -> int:
         print("PASS: 0 occurrences.")
     print()
 
-    print("-- role 2 (luxp): doc-comment bare crate:: pointers, ratchet vs baseline --")
+    print("-- role 2: doc-comment bare crate:: pointers, maximum-count check vs baseline --")
     if not role2_ok:
         print(f"FAIL: {ratchet_count} > baseline {baseline} (+{ratchet_count - baseline}).")
         # NOT a new-vs-baseline diff: the baseline is a plain integer, not a
         # line set, so this script has no record of *which* occurrences it
         # was measured against — it structurally cannot tell "new since the
         # baseline was pinned" apart from "was already there but happens to
-        # push the total over." This lists every current ratchet-relevant
+        # push the total over." This lists every current guard-relevant
         # occurrence; per scripts/lib/doc_pointer_lint_baseline.txt's own
         # guidance (a foreign merge can move this count without this
         # branch's own commits touching a single one of these lines),
         # isolate what actually changed by diffing this same command's
         # output against a run at the baseline-pinning commit.
         print(
-            "All ratchet-relevant occurrences (not a new-vs-baseline diff — "
+            "All guard-relevant occurrences (not a new-vs-baseline diff — "
             "compare against a run at the baseline-pinning commit to "
             "isolate what changed):"
         )
@@ -950,19 +947,19 @@ def main() -> int:
             for occ in result.doc_bare_crate_ratchet:
                 print(f"  {occ.path}:{occ.line}  `{occ.span}`")
         else:
-            print("  (re-run with -v to list every ratchet-relevant occurrence)")
+            print("  (re-run with -v to list every guard-relevant occurrence)")
         print()
         print(
             "Fix: convert to an intra-doc link (AGENTS.md's `crate::…` "
             "pointer 節) — but ONLY after checking this span isn't in a "
-            "rustdoc-blind position first (opt-out 3: #[test]-item doc, "
+            "not checked by rustdoc position first (explicit exemption 3: #[test]-item doc, "
             "fn-body-local item doc, #[doc(hidden)], #[cfg]-excluded item, "
             "unexpanded macro_rules! body — see this file's module "
             "docstring). A bracket link written there looks like a "
-            "verified intra-doc link but rustdoc never resolves it (bd "
-            "raikiri-spike-hrau — this exact ratchet's own baseline was "
-            "~40% such spans). If this span is a confirmed opt-out (removed "
-            "marker / tests:: target / rustdoc-blind position verified by "
+            "verified intra-doc link but rustdoc never resolves it (review note — "
+            "this exact guard's own baseline was "
+            "~40% such spans). If this span is a confirmed explicit exemption (removed "
+            "marker / tests:: target / not checked by rustdoc position verified by "
             "the わざと壊して確かめる procedure), mark it with "
             "`doc-pointer-lint:ignore: <reason>` on the same line instead "
             "of linking it."
@@ -975,7 +972,7 @@ def main() -> int:
     print()
 
     print(
-        "-- role 4 (gq7x): linked crate:: pointers inside/after a "
+        "-- role 4: linked crate:: pointers inside/after a "
         "#[cfg(test)] mod block, informational only, NOT gated --"
     )
     if result.doc_linked_crate_in_test_mod:
@@ -985,7 +982,7 @@ def main() -> int:
             "docstring for why: an already-linked span cannot be exempted "
             "with doc-pointer-lint:ignore:, so the only real remedy is "
             "demoting it to a bare code span, which then falls under "
-            "role 2's ratchet/marker machinery instead)."
+            "role 2's maximum-count and marker rules instead)."
         )
         if args.verbose:
             for occ in result.doc_linked_crate_in_test_mod:

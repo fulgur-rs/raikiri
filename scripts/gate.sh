@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# scripts/gate.sh — mechanical §8.1 automated check, in one command.
+# scripts/gate.sh — automated §8.1 automated check, in one command.
 #
 # Implements `../raikiri-workflow/rules/gate.md` §8.1 (a)(b), plus the
 # §8.1.4 applicability predicate. §8.1(c) (patch coverage) and the optional
 # cascade benchmark step are separate scripts this file shells out to once
-# they exist (bd raikiri-spike-wvch / raikiri-spike-iebo); see --help.
+# they exist (the optional scripts); see --help.
 #
 # This script is *tooling*, not the rule itself: it encodes what gate.md
 # already says (cite the section on any behavior change) so an agent gets
@@ -16,19 +16,19 @@
 #
 #   --base <ref>       Base ref for the §8.1.4 applicability diff and for
 #                       patch coverage's merge-base (default: main).
-#   --skip-coverage     Skip §8.1(c) patch coverage (bd raikiri-spike-wvch).
+#   --skip-coverage     Skip §8.1(c) patch coverage (the related change).
 #                       Useful for a fast fmt/clippy/test-only iteration loop;
 #                       do not skip before an actual gate pass declaration.
 #   --with-bench        Also run the cascade benchmark comparison
-#                       (bd raikiri-spike-iebo) against --base. This is
+#                       (the related change) against --base. This is
 #                       deliberately NOT part of the default run — it is an
 #                       explicit, human/coordinator-invoked step, not
 #                       something CI or this script's default path runs
-#                       automatically (walls.md 壁 7 escalation boundary).
+#                       automatically (package-boundary rule escalation boundary).
 #
 # Exit status: 0 if every applicable check passed (or §8.1.4 judged the
 # whole thing non-applicable), non-zero otherwise. Output is intentionally
-# verbose — it is itself the gate record (`N passed`, census output, etc.)
+# verbose — it is itself the gate record (`N passed`, scan output, etc.)
 # gate.md's 記録義務 requires quoting verbatim.
 
 set -euo pipefail
@@ -126,7 +126,7 @@ else
 fi
 echo
 
-# ── optional: cascade benchmark comparison (bd raikiri-spike-iebo) ─────────
+# ── optional: cascade benchmark comparison (the related change) ─────────
 #
 # Deliberately gated behind --with-bench, and deliberately run *before* the
 # §8.1.4 applicability early-exit below: --with-bench is not part of §8.1
@@ -134,11 +134,11 @@ echo
 # caller who explicitly asks for the bench comparison must get it run (or
 # see an explicit note that it wasn't) regardless of what §8.1.4 decides —
 # an early exit that silently drops an explicitly-requested step is exactly
-# the vacuous-green shape gate.md's own §8.1(a) discussion warns about.
+# the false-pass shape gate.md's own §8.1(a) discussion warns about.
 #
 # This is NOT part of §8.1 proper (rules/gate.md has not been changed to
-# require it — that would need a retro → bd decision → human approve) and
-# is NOT wired into CI or any cargo profile. It exists so a coordinator/gate
+# require it — that would need a review → documented decision → human approval) and
+# is NOT connected to CI or any cargo profile. It exists so a coordinator/gate
 # reviewer can invoke it on demand when a diff touches
 # crates/raikiri-style/src/cascade.rs or adjacent hot-loop code.
 if [[ "$WITH_BENCH" -eq 1 ]]; then
@@ -150,7 +150,7 @@ if [[ "$WITH_BENCH" -eq 1 ]]; then
     fi
   else
     echo "-- optional: --with-bench passed but scripts/cascade-bench-compare.sh"
-    echo "   not found (bd raikiri-spike-iebo not yet landed in this tree) --"
+    echo "   not found (benchmark comparison script is not present in this tree) --"
     FAIL=1
   fi
   echo
@@ -183,7 +183,7 @@ if ! cargo test --workspace --locked; then
 fi
 echo
 
-echo "-- §8.1(a) #[ignore] census --"
+echo "-- §8.1(a) #[ignore] scan --"
 CENSUS_CMD="git grep -nE '#\[ignore(\]| *=)' -- '*.rs'"
 echo "$CENSUS_CMD"
 set +e
@@ -199,27 +199,27 @@ CENSUS_COUNT=$(echo "$CENSUS_OUTPUT" | grep -c . || true)
 if [[ "$CENSUS_STATUS" -ne 0 ]]; then
   CENSUS_COUNT=0
 fi
-echo "census matches: $CENSUS_COUNT"
+echo "scan matches: $CENSUS_COUNT"
 echo
 
 if [[ "$CENSUS_COUNT" -eq 0 ]]; then
-  echo "-- §8.1(a) --ignored run: skipped (census is 0; this line is the"
+  echo "-- §8.1(a) --ignored run: skipped (scan is 0; this line is the"
   echo "   0-count assertion's satisfaction record per gate.md §8.1(a).2) --"
   IGNORED_N=0
 else
   # gate.md §8.1(a): "-- --ignored" needs target/wpt (VRT font fixtures)
   # fetched. In a linked worktree, target/ is per-worktree and doesn't
-  # inherit main's fetch (bd raikiri-spike-dz8t). Auto-repair the symlink
+  # inherit main's fetch (the related change). Auto-repair the symlink
   # rather than fail the whole gate on a one-line environment gap — this is
-  # exactly the "record verified by re-running it" spirit bd raikiri-spike-
-  # weky's own comment asks for; a gate that requires a silent manual
+  # exactly the "record verified by re-running it" spirit described in the
+  # temporary-directory change's note; a gate that requires a silent manual
   # `ln -s` before it works is the same failure class as the tmpfs bug.
   if [[ ! -e "$REPO_ROOT/target/wpt" ]]; then
     MAIN_WORKTREE="$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')"
     if [[ -n "$MAIN_WORKTREE" && "$MAIN_WORKTREE" != "$REPO_ROOT" && -e "$MAIN_WORKTREE/target/wpt" ]]; then
       mkdir -p "$REPO_ROOT/target"
       ln -s "$MAIN_WORKTREE/target/wpt" "$REPO_ROOT/target/wpt"
-      echo "(re-linked target/wpt -> $MAIN_WORKTREE/target/wpt, bd raikiri-spike-dz8t)"
+      echo "(re-linked target/wpt -> $MAIN_WORKTREE/target/wpt)"
     else
       echo "warning: target/wpt missing and no main worktree fetch found to"
       echo "         link against. Run scripts/wpt/fetch.sh first if the"
@@ -238,13 +238,13 @@ else
     echo "FAIL: cargo test --workspace --locked -- --ignored"
     FAIL=1
   fi
-  # Sum "N passed" across every harness's "test result:" summary line —
+  # Sum "N passed" across every test runner's "test result:" summary line —
   # gate.md 記録義務: this is the sum the record must cite, not any single
-  # harness's line and not the normal run's "N ignored" figure.
+  # test runner's line and not the normal run's "N ignored" figure.
   IGNORED_N=$(echo "$IGNORED_OUTPUT" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' | awk '{s+=$1} END {print s+0}')
-  echo "N passed (summed across all harness summary lines): $IGNORED_N"
+  echo "N passed (summed across all test-runner summary lines): $IGNORED_N"
   if [[ "$IGNORED_N" -eq 0 ]]; then
-    echo "FAIL: N passed == 0 on a non-zero census (gate.md §8.1(a): N=0 is"
+    echo "FAIL: N passed == 0 on a non-zero scan (gate.md §8.1(a): N=0 is"
     echo "      'not run', not a pass)"
     FAIL=1
   fi
@@ -281,11 +281,11 @@ echo
 # no dedicated script in this repo yet (raikiri-wpt's validate-expectations
 # binary covers a related but not identical surface — see
 # crates/raikiri-wpt/src/bin/validate-expectations.rs). Out of scope for bd
-# raikiri-spike-weky/wvch/iebo; flagged here rather than silently omitted.
+# the related scripts; flagged here rather than silently omitted.
 echo "-- §8.1(b) expectations/*.txt lint --"
 echo "NOT AUTOMATED by this script yet (no dedicated lint entry point found)."
 echo "See crates/raikiri-wpt/src/bin/validate-expectations.rs for the closest"
-echo "existing tool and confirm manually until this is wired in."
+echo "existing tool and confirm manually until this is connected."
 echo
 
 # ── §8.1(c) patch coverage ───────────────────────────────────────────────────
@@ -300,7 +300,7 @@ elif [[ -x "$SCRIPT_DIR/patch-coverage.sh" ]]; then
   if [[ "$PATCH_COVERAGE_STATUS" -eq 1 ]]; then
     echo "FAIL: scripts/patch-coverage.sh reported uncovered changed lines"
     echo "      without a cov:ignore escape. Per gate.md §8.1.1: add a"
-    echo "      covering test (in-scope) or escalate to a bd issue"
+    echo "      covering test (in-scope) or escalate to a follow-up item"
     echo "      (out-of-scope), then re-run."
     FAIL=1
   elif [[ "$PATCH_COVERAGE_STATUS" -eq 2 ]]; then
@@ -322,7 +322,7 @@ elif [[ -x "$SCRIPT_DIR/patch-coverage.sh" ]]; then
   fi
 else
   echo "-- §8.1(c) patch coverage: scripts/patch-coverage.sh not found --"
-  echo "   (bd raikiri-spike-wvch not yet landed in this tree). Patch"
+  echo "   (patch-coverage.sh is not present in this tree). Patch"
   echo "   coverage was NOT measured by this run — do not record this as a"
   echo "   pass."
 fi

@@ -24,7 +24,7 @@ human reading the same console output would call "the time".
 
 # Why "minimum across runs", not any single run's estimate
 
-bd raikiri-spike-iebo's gate history measured that a single `--baseline`/
+the earlier change's gate history measured that a single `--baseline`/
 `--save-baseline` comparison is dominated by build/rustc contention from
 concurrent worktree sessions on this machine (+18.8%/+11.5% on a tree with
 *zero* source changes, one case reaching +157%). Contention only ever adds
@@ -44,7 +44,7 @@ import sys
 from pathlib import Path
 
 # Bounds enforced independently of scripts/cascade-bench-compare.sh's own
-# validation, since this module can be invoked directly (Codex §8.3 review
+# validation, since this module can be invoked directly (review §8.3 review
 # finding: env-var overrides had no validation at all — argparse's plain
 # `type=int`/`type=float` accept e.g. "nan"/"inf" for the threshold, under
 # which `delta_pct > threshold` is always False and a real regression would
@@ -121,7 +121,7 @@ def main() -> int:
         # runs' own point estimates — NOT compared against the delta or the
         # threshold (they measure different things: this is how noisy the N
         # good-side *runs* were, delta is min-vs-min between good and bad).
-        # Context only, since the module doc's own noise floor (2.0%/3.3%)
+        # Context only, since the module doc's own residual measurement variation (2.0%/3.3%)
         # was measured the same way.
         spread_pct = (max(good_vals) - min(good_vals)) / min(good_vals) * 100.0
         status = "FAIL" if delta_pct > args.threshold_pct else "ok"

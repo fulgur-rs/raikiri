@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """scripts/lib/test_doc_pointer_lint.py — unit tests for doc_pointer_lint.py.
 
-Covers the checker's roles: role 1 / role 2 (bd raikiri-spike-acsw /
-raikiri-spike-vyse / raikiri-spike-luxp) and role 4 (bd raikiri-spike-gq7x,
-informational only, plus its bd raikiri-spike-8m2l cross-file extension).
+Covers the checker's roles: role 1 / role 2 and role 4 (informational only,
+plus its cross-file extension).
 No class here invokes `cargo` or depends on this repo's actual crate tree.
 
 ClassifyLineTests / Role1PlainBracketTests / Role2DocBarePointerTests /
@@ -17,12 +16,12 @@ out) — no filesystem dependency at all.
 LoadBaselineTests, MainExitCodeTests, and
 ExternalTestModCrossFileCensusTests *do* touch the filesystem: all use
 `tempfile.TemporaryDirectory()`, and `MainExitCodeTests` /
-`ExternalTestModCrossFileCensusTests` additionally write a small throwaway
+`ExternalTestModCrossFileCensusTests` additionally write a small temporary
 `crates/*/src/*.rs` tree to disk (to drive `main()`'s / `run_census()`'s
 `--repo-root`/`discover_files()` path end-to-end, not just a single
 function's pure logic) — see `MainExitCodeTests`'s own docstring for why
 that's deliberate; `ExternalTestModCrossFileCensusTests` needs the same
-end-to-end shape because its regression (bd raikiri-spike-8m2l) is
+end-to-end shape because its regression (the earlier change) is
 specifically about *crate-wide* file discovery, not anything
 `census_file()` alone could exercise on a single file's text. All of it is
 temp-dir-scoped and still fast.
@@ -80,7 +79,7 @@ class ClassifyLineTests(unittest.TestCase):
 
 
 class Role1PlainBracketTests(unittest.TestCase):
-    """vyse rule: any bracket-link in a plain `//` comment, crate:: or not."""
+    """role 1 rule: any bracket-link in a plain `//` comment, crate:: or not."""
 
     def test_bracket_backtick_form_flagged(self) -> None:
         text = "    // see [`crate::foo::Bar`] for details\n"
@@ -89,7 +88,7 @@ class Role1PlainBracketTests(unittest.TestCase):
         self.assertEqual(result.plain_bracket_violations[0].span, "crate::foo::Bar")
 
     def test_bare_bracket_form_flagged_even_without_crate_prefix(self) -> None:
-        # bd raikiri-spike-vyse 2026-07-28 comment: scoping this rule to
+        # the earlier change 2026-07-28 comment: scoping this rule to
         # crate::-prefixed brackets only would miss 18/21 known sites.
         text = "// [PropertyKey] is the enum in question\n"
         result = census_file("f.rs", text)
@@ -97,7 +96,7 @@ class Role1PlainBracketTests(unittest.TestCase):
         self.assertEqual(result.plain_bracket_violations[0].span, "PropertyKey")
 
     def test_two_occurrences_same_line_both_counted(self) -> None:
-        # bd raikiri-spike-vyse's own example: page.rs had one line with two
+        # the earlier change's own example: page.rs had one line with two
         # bracket occurrences, both must be counted (occurrence-level, not
         # line-level census).
         text = "// see [crate::cascade::collect_cascaded] and [crate::cascade::pick_winners]\n"
@@ -105,7 +104,7 @@ class Role1PlainBracketTests(unittest.TestCase):
         self.assertEqual(len(result.plain_bracket_violations), 2)
 
     def test_bracket_with_spaces_is_flagged(self) -> None:
-        # §8.3 Codex final review (GATE FAIL, non-trivial): an earlier
+        # §8.3 final review (GATE FAIL, non-trivial): an earlier
         # version of _BARE_BRACKET_RE only matched identifier/path-shaped
         # content and silently let this through with 0 violations —
         # contradicting AGENTS.md's unconditional "一切書かない" for plain
@@ -190,7 +189,7 @@ class MultiLineBacktickSpanTests(unittest.TestCase):
     """A backtick code span word-wrapped across consecutive `//`/`///`
     lines must protect a bracket inside it from role 1/2, the same way a
     single-line backtick span does. This whole class exists because an
-    earlier version of the §8.3 Codex broadening fix got this wrong: it
+    earlier version of the §8.3 review broadening fix got this wrong: it
     correctly widened _BARE_BRACKET_RE's content match (see
     Role1PlainBracketTests), but analyze_line()/census_file() were still
     line-scoped, so a bracket that's actually safely inside a still-open
@@ -288,7 +287,7 @@ class MultiLineBacktickSpanTests(unittest.TestCase):
 
 
 class Role2DocBarePointerTests(unittest.TestCase):
-    """luxp ratchet: bare (non-linked) crate:: pointers in doc comments."""
+    """role 2 maximum-count check: bare (non-linked) crate:: pointers in doc comments."""
 
     def test_bare_crate_pointer_in_doc_comment_counted(self) -> None:
         text = "    /// see `crate::foo::Bar` for details\n"
@@ -304,8 +303,8 @@ class Role2DocBarePointerTests(unittest.TestCase):
 
     def test_non_crate_bare_pointer_not_counted(self) -> None:
         # Short-form (no crate:: prefix) bare code spans are out of this
-        # metric's scope (bd raikiri-spike-acsw's target, tracked
-        # separately/manually, not by this ratchet).
+        # metric's scope (the earlier change's target, tracked
+        # separately/manually, not by this maximum-count check).
         text = "    /// see `expand_shorthand_into` for details\n"
         result = census_file("f.rs", text)
         self.assertEqual(result.doc_bare_crate_all, [])
@@ -325,7 +324,7 @@ class Role2DocBarePointerTests(unittest.TestCase):
         self.assertEqual(result.doc_bare_crate_excluded[0][1], "opt-out-2:tests::")
 
     def test_explicit_ignore_marker_excludes_from_ratchet(self) -> None:
-        text = "/// see `crate::foo::Bar` // doc-pointer-lint:ignore: rustdoc-blind, verified\n"
+        text = "/// see `crate::foo::Bar` // doc-pointer-lint:ignore: not checked by rustdoc, verified\n"
         result = census_file("f.rs", text)
         self.assertEqual(result.doc_bare_crate_ratchet, [])
         self.assertEqual(
@@ -340,15 +339,15 @@ class Role2DocBarePointerTests(unittest.TestCase):
         self.assertEqual(len(result.doc_bare_crate_ratchet), 1)
 
     def test_fail_closed_default_no_marker_counts_toward_ratchet(self) -> None:
-        # bd raikiri-spike-luxp: opt-out 3 (rustdoc-blind position) is not
+        # the earlier change: explicit exemption 3 (not checked by rustdoc position) is not
         # statically decidable, so with no explicit marker the default is
-        # to count it (fail-closed), not silently exempt it.
+        # to count it (count uncertain cases by default), not silently exempt it.
         text = "    /// [`#[test]` item doc] `crate::foo::Bar`\n"
         result = census_file("f.rs", text)
         self.assertEqual(len(result.doc_bare_crate_ratchet), 1)
 
     def test_ignore_marker_requires_a_nested_double_slash(self) -> None:
-        # §8.2 roborev-refine iter1 quality lens (optional item): the
+        # §8.2 quality review (optional item): the
         # marker must be anchored to an actual `//`-introduced fragment,
         # the same way scripts/lib/patch_coverage.py's cov:ignore: is
         # anchored via comment_part() rather than matched as a bare
@@ -399,7 +398,7 @@ class FindFirstCfgTestModLineTests(unittest.TestCase):
         # this function only skipped blank lines, so it stopped at the
         # second attribute line, didn't see `mod`, and returned None for
         # the whole file, silently hiding every doc-linked crate:: span in
-        # it from role 4 (a false-clean, not the documented over-count
+        # it from role 4 (an incorrectly clean result, not the documented extra result
         # gap). Any number of stacked attributes must be skipped, not just
         # one.
         lines = [
@@ -418,7 +417,7 @@ class FindFirstCfgTestModLineTests(unittest.TestCase):
         self.assertIsNone(find_first_cfg_test_mod_line(lines))
 
     def test_named_test_mod_matches_same_as_plain_tests(self) -> None:
-        # bd raikiri-spike-csmj's own re-scan found #[cfg(test)] mod blocks
+        # the earlier change's own re-scan found #[cfg(test)] mod blocks
         # under many names (flags_tests, stylesheets_tests, …), not just
         # the literal `tests` — the predicate must not be name-anchored.
         lines = ["#[cfg(test)]", "mod flags_tests {", "}"]
@@ -440,7 +439,7 @@ class FindFirstCfgTestModLineTests(unittest.TestCase):
         self.assertEqual(find_first_cfg_test_mod_line(lines), 1)
 
     def test_combined_cfg_form_not_matched_documented_gap(self) -> None:
-        # bd raikiri-spike-csmj confirmed no cfg(all(test, …)) / cfg(any(
+        # the earlier change confirmed no cfg(all(test, …)) / cfg(any(
         # test, …)) form exists in this tree at its scan time, so
         # _CFG_TEST_ATTR_RE deliberately only matches the exact, unadorned
         # `#[cfg(test)]` line — this test documents that as a known,
@@ -451,7 +450,7 @@ class FindFirstCfgTestModLineTests(unittest.TestCase):
 
 
 class Role4LinkedInTestModTests(unittest.TestCase):
-    """role 4 (bd raikiri-spike-gq7x): linked crate:: spans at/after the
+    """role 4 (the earlier change): linked crate:: spans at/after the
     first #[cfg(test)] mod block — informational only, never gated."""
 
     def _lines(self, *lines: str) -> str:
@@ -502,7 +501,7 @@ class Role4LinkedInTestModTests(unittest.TestCase):
 
     def test_bare_span_inside_test_mod_not_counted_by_role_4(self) -> None:
         # A *bare* crate:: pointer inside a test mod is role 2's territory
-        # (opt-out-2, tests:: path) or role 2's ratchet — never role 4,
+        # (explicit exemption-2, tests:: path) or role 2's ratchet — never role 4,
         # which only ever looks at linked spans.
         text = self._lines(
             "#[cfg(test)]",
@@ -519,7 +518,7 @@ class Role4LinkedInTestModTests(unittest.TestCase):
         # Structural point from the module docstring: doc-pointer-lint:
         # ignore: only ever exempts role 2's *bare*-span candidate set —
         # it has no effect on a linked span at all, by design (role 4 has
-        # no marker-based escape hatch).
+        # no marker-based exemption mechanism).
         text = self._lines(
             "#[cfg(test)]",
             "mod tests {",
@@ -533,9 +532,9 @@ class Role4LinkedInTestModTests(unittest.TestCase):
     def test_direction_asymmetry_gap_over_counts_after_block_closes(self) -> None:
         # Documented known gap (module docstring): the position predicate
         # cannot see the test-mod block's closing brace, so a doc-linked
-        # span in *later* production code is over-counted. This test
+        # span in *later* production code is counted extra. This test
         # exists to pin that documented behavior, not to claim it's
-        # correct — over-counting is acceptable for an informational,
+        # correct — an extra count is acceptable for an informational,
         # non-gating role.
         text = self._lines(
             "#[cfg(test)]",
@@ -549,7 +548,7 @@ class Role4LinkedInTestModTests(unittest.TestCase):
 
 
 class FindExternalTestModNamesTests(unittest.TestCase):
-    """find_external_test_mod_names() — bd raikiri-spike-8m2l's cross-file
+    """find_external_test_mod_names() — the earlier change's cross-file
     extension. Unlike find_first_cfg_test_mod_line(), this collects every
     match (a file may declare more than one external test module) and only
     the semicolon (external-file) form, never an inline `{ … }` block."""
@@ -648,8 +647,8 @@ class FindExternalTestModTargetsTests(unittest.TestCase):
 
 class ExternalTestModCrossFileCensusTests(unittest.TestCase):
     """census_file()'s is_external_test_mod_target parameter and
-    run_census()'s crate-wide wiring of it (bd raikiri-spike-8m2l) — the
-    actual false-clean regression this task fixes: a target file named by
+    run_census()'s crate-wide integration of it (the earlier change) — the
+    actual incorrectly clean result this task fixes: a target file named by
     a *different* file's `#[cfg(test)] mod <name>;` declaration has no
     #[cfg(test)] line of its own, so find_first_cfg_test_mod_line() alone
     always returned None for it (every line "before" any test-mod block,
@@ -678,14 +677,14 @@ class ExternalTestModCrossFileCensusTests(unittest.TestCase):
 
     def test_census_file_default_false_matches_pre_8m2l_behavior(self) -> None:
         # Same text, is_external_test_mod_target omitted (defaults False):
-        # must reproduce the exact pre-fix false-clean this task addresses.
+        # must reproduce the exact pre-fix incorrectly clean result this task addresses.
         text = "/// see [`crate::foo::Bar`] for details\nfn helper() {}\n"
         result = census_file("f.rs", text)
         self.assertEqual(result.doc_linked_crate_in_test_mod, [])
 
     def test_run_census_end_to_end_catches_the_lib_rs_test_dom_shape(self) -> None:
-        # The actual bd raikiri-spike-8m2l scenario, reproduced as a
-        # throwaway two-file crate tree and driven through run_census()
+        # The actual cross-file scenario, reproduced as a
+        # temporary two-file crate tree and driven through run_census()
         # (not just census_file() in isolation) so the crate-wide
         # file-discovery step itself is exercised, not only the per-file
         # override it feeds.
@@ -796,7 +795,7 @@ class ExternalTestModCrossFileCensusTests(unittest.TestCase):
 
 
 class LoadBaselineTests(unittest.TestCase):
-    """§8.2 roborev-refine iter1 quality lens Fix 1: load_baseline() had no
+    """§8.2 quality review Fix 1: load_baseline() had no
     direct test — the real baseline file has 32 comment lines before its
     integer, so a regression there would silently change what the gate
     compares against."""
@@ -846,7 +845,7 @@ def _occ(n: int = 1) -> list[Occurrence]:
 
 
 class EvaluateGateTests(unittest.TestCase):
-    """§8.2 roborev-refine iter1 quality lens Fix 1: the gate's PASS/FAIL
+    """§8.2 quality review Fix 1: the gate's PASS/FAIL
     decision, extracted from main() into evaluate_gate() specifically so
     it's testable without argparse/print/sys.exit."""
 
@@ -877,10 +876,10 @@ class EvaluateGateTests(unittest.TestCase):
 
 
 class MainExitCodeTests(unittest.TestCase):
-    """§8.2 roborev-refine iter1 quality lens Fix 1: drive main()'s actual
-    PASS/FAIL/exit-code contract (0/1/2) end-to-end against a throwaway
+    """§8.2 quality review Fix 1: drive main()'s actual
+    PASS/FAIL/exit-code contract (0/1/2) end-to-end against a temporary
     repo tree, not just the CensusResult-level evaluate_gate() logic —
-    catches a wiring bug (e.g. main() ignoring evaluate_gate()'s verdict)
+    catches an integration bug (e.g. main() ignoring evaluate_gate()'s verdict)
     that a pure evaluate_gate() test can't."""
 
     def _write_crate_file(self, repo_root: str, crate: str, rel: str, content: str) -> None:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fetch the pinned WPT tree, verify the smoke harness, and regenerate the
+# Fetch the pinned WPT tree, verify the smoke test runner, and regenerate the
 # tracked CSS coverage dashboard from the current T2 baseline.
 set -euo pipefail
 
