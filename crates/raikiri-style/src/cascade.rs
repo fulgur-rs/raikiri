@@ -48,7 +48,7 @@ use crate::page::{PageCascadeResult, PageContextQuery, PageInheritance, cascade_
 use crate::property::{
     CalcLengthPercentage, CustomProperty, DeferredValue, FontWeightValue, GridAutoFlowValue,
     GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto, MAX_DEFERRED_VALUE_NESTING_DEPTH,
-    MAX_SUBSTITUTED_VALUE_BYTES, PositionValue, PropertyValue, RelativeFontSize,
+    MAX_SUBSTITUTED_VALUE_BYTES, PositionValue, PropertyValue, RelativeFontSize, Sides,
     initial_grid_auto_track_list, is_custom_property_name, parse_value,
     resolve_text_align_match_parent,
 };
@@ -76,6 +76,13 @@ pub struct CascadeResult {
     /// Per-node computed values (NodeId.0 as usize で index)。
     /// Element / Text / Document 全 kind に populate、範囲外は panic (caller 責任)。
     pub computed: Vec<ComputedValues>,
+    /// Per-node flags identifying margin sides whose winning declaration came
+    /// from an origin other than the user-agent stylesheet.  The paged DOM
+    /// adapter uses this to distinguish an authored `margin: 8px` from the
+    /// minimal UA body's default `margin: 8px` before it builds the synthetic
+    /// page root.  The side order is [`Sides`] top/right/bottom/left and the
+    /// vector follows the same node-index contract as [`Self::computed`].
+    pub non_ua_margin_sides: Vec<Sides<bool>>,
     /// The `@page` cascade for the page query supplied to the cascade entry
     /// point. The compatibility entry point uses the unnamed/default query;
     /// paged consumers should use [`cascade_with_media_context_for_page`].
@@ -216,6 +223,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
     // 直接 index する)。事前に initial() で埋めておき、DFS で visited slot を
     // 上書きする実装。
     let mut computed: Vec<ComputedValues> = vec![ComputedValues::initial(); dom.node_count()];
+    let mut non_ua_margin_sides = vec![Sides::all(false); dom.node_count()];
     let mut page_values = vec![crate::property::PageValue::Auto; dom.node_count()];
     let mut pseudo: HashMap<(StyleNodeId, PseudoElem), ComputedValues> = HashMap::new();
     resolve_inheritance(
@@ -224,6 +232,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
         &ComputedValues::initial(),
         &cascaded,
         &mut computed,
+        &mut non_ua_margin_sides,
         &mut page_values,
         &mut pseudo,
     );
@@ -237,6 +246,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
 
     Ok(CascadeResult {
         computed,
+        non_ua_margin_sides,
         page,
         page_values,
         pseudo,
@@ -5307,12 +5317,14 @@ fn parse_html_dimension_value(input: &str) -> Option<Length> {
 /// の規則を素直に適用した結果であり、意図した挙動である。
 ///
 /// `pub(crate)` は他 module の doc からの intra-doc link のため — private 化で gate が red (規約 3)。
+#[allow(clippy::too_many_arguments)] // the traversal writes several independent cascade outputs
 pub(crate) fn resolve_inheritance<D: StyleDom>(
     dom: &D,
     id: StyleNodeId,
     parent_computed: &ComputedValues,
     cascaded: &CascadedArena,
     out: &mut Vec<ComputedValues>,
+    non_ua_margin_sides: &mut Vec<Sides<bool>>,
     page_values: &mut [crate::property::PageValue],
     pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
 ) {
@@ -5355,6 +5367,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // からコピー、非継承は initial) に自 node の cascaded winner を適用する。
         // 適用対象は staging 表現なので winner の適用順に依存しない。
         let mut specified = SpecifiedValues::inherit_from(&parent_computed);
+        let mut node_non_ua_margin = Sides::all(false);
         if let Some(candidates) = cascaded.candidates(id) {
             apply_winners(
                 candidates,
@@ -5362,6 +5375,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
                 &mut specified,
                 &custom_properties,
                 Some(&mut page_values[id.0 as usize]),
+                Some(&mut node_non_ua_margin),
             );
         }
 
@@ -5464,6 +5478,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
                         &mut pseudo_specified,
                         &pseudo_custom_properties,
                         None,
+                        None,
                     );
                 }
 
@@ -5491,6 +5506,10 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
             out.resize(idx + 1, ComputedValues::initial());
         }
         out[idx] = computed.clone();
+        if non_ua_margin_sides.len() <= idx {
+            non_ua_margin_sides.resize(idx + 1, Sides::all(false));
+        }
+        non_ua_margin_sides[idx] = node_non_ua_margin;
 
         // 子を stack に push (own computed value を parent_computed として渡す)。
         // stack は LIFO なので document order で push するため reverse。
@@ -6531,11 +6550,30 @@ fn apply_winners(
     specified: &mut SpecifiedValues,
     custom_properties: &CustomPropertyEnvironment,
     mut page_value: Option<&mut crate::property::PageValue>,
+    mut non_ua_margin_sides: Option<&mut Sides<bool>>,
 ) {
     pick_winners(candidates, winners);
     for slot in winners.iter_mut() {
         if let Some(winner) = slot.take() {
             let value = &candidates[winner.idx].0;
+            if let Some(sides) = non_ua_margin_sides.as_deref_mut() {
+                let non_ua = candidates[winner.idx].2 != Origin::UserAgent;
+                match value.key() {
+                    crate::property::PropertyKey::MarginTop => sides.top = non_ua,
+                    crate::property::PropertyKey::MarginRight => sides.right = non_ua,
+                    crate::property::PropertyKey::MarginBottom => sides.bottom = non_ua,
+                    crate::property::PropertyKey::MarginLeft => sides.left = non_ua,
+                    crate::property::PropertyKey::Margin
+                    | crate::property::PropertyKey::MarginInline
+                    | crate::property::PropertyKey::MarginBlock => {
+                        sides.top = non_ua;
+                        sides.right = non_ua;
+                        sides.bottom = non_ua;
+                        sides.left = non_ua;
+                    }
+                    _ => {}
+                }
+            }
             let value = match value {
                 PropertyValue::Deferred(deferred) => {
                     resolve_deferred_value(deferred, custom_properties)
@@ -22039,6 +22077,27 @@ mod tests {
         assert!(collect_var_references(&oversized, &mut Vec::new()).is_err());
         assert_eq!(split_top_level_commas(&oversized), None);
         assert_eq!(split_var_arguments(&oversized), None);
+    }
+
+    #[test]
+    fn cascade_records_non_ua_margin_winners() {
+        let mut doc = TestDoc::new();
+        let ua_body = doc.push_element(0, "body", None);
+        let author_body = doc.push_element(0, "body", Some("margin: 8px"));
+        let mut rules = build_rule_tree(&doc);
+        rules.add_stylesheet("body { margin: 8px }", Origin::UserAgent);
+
+        let result = cascade(&doc, &rules).expect("cascade Ok");
+        assert_eq!(
+            result.non_ua_margin_sides[ua_body],
+            Sides::all(false),
+            "the UA body's default margin must remain identifiable as UA-origin"
+        );
+        assert_eq!(
+            result.non_ua_margin_sides[author_body],
+            Sides::all(true),
+            "an authored margin equal to the UA value must remain distinguishable"
+        );
     }
 
     #[test]

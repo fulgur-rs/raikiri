@@ -35,7 +35,7 @@ use raikiri_style::property::{
     BackgroundImage, Border, BorderColor, BorderStyle, ContentComponent, CounterStyle, CssColor,
     DisplayValue, FloatValue, Gradient, GradientStopColor, Length, LengthOrAuto, OutlineColor,
     OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue, QuoteKeyword, Sides,
-    TextAlign, VerticalAlign,
+    TextAlign, VerticalAlign, ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
@@ -1762,9 +1762,10 @@ fn paint_document_impl(
     // — body に `display: inline` を override するような病的な入力でない
     // 限り、この fallback の精度は実質無関係。
     let body_font_size = cascade.computed[body_id].font_size.px();
-    // Taffy carries the body margin through element-box geometry.  Direct text
-    // children are painted from their raw text layout coordinates, so the
-    // horizontal body origin is supplied explicitly when the walk seeds them.
+    // The synthetic body root does not expose its root margin in descendant
+    // coordinates.  Direct text and ordinary flow children are therefore
+    // seeded with the authored horizontal body origin below; fixed/absolute
+    // children keep their own containing-block coordinates.
     let body_has_element_child = document.get_node(body_id).is_some_and(|body| {
         body.children.iter().any(|&child_id| {
             document
@@ -1783,20 +1784,12 @@ fn paint_document_impl(
             })
         })
     });
-    let is_ua_default_margin = |value: ComputedLengthPercentageOrAuto| matches!(value, ComputedLengthPercentageOrAuto::Px(px) if (px - 8.0).abs() <= 0.001);
-    let used_body_margin = cascade.computed[body_id].margin;
-    let body_has_non_ua_margin = [
-        used_body_margin.top,
-        used_body_margin.right,
-        used_body_margin.bottom,
-        used_body_margin.left,
-    ]
-    .iter()
-    .copied()
-    .any(|value| !is_ua_default_margin(value));
-    let body_margin_left = if body_has_direct_text
-        && !body_has_element_child
-        && (body_has_canvas_background || body_has_non_ua_margin)
+    let body_has_non_ua_margin = cascade
+        .non_ua_margin_sides
+        .get(body_id)
+        .is_some_and(|sides| sides.left);
+    let body_margin_left = if body_has_non_ua_margin
+        || (body_has_direct_text && !body_has_element_child && body_has_canvas_background)
     {
         match cascade.computed[body_id].margin.left {
             ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
@@ -1832,7 +1825,9 @@ fn paint_document_impl(
 
     let margins = raikiri_dom::page_margins(cascade, page_box);
     let insets = raikiri_dom::page_content_insets(cascade, page_box);
-    let content_width = (margins.content_width(page_box) - insets.left - insets.right).max(0.0);
+    // Keep fixed-position sizing consistent with layout: page border/padding
+    // are applied through `page_offset_x`, not by shrinking the inline size.
+    let content_width = margins.content_width(page_box).max(0.0);
     let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
     // Fixed-position containing blocks use the initial laid-out viewport even
     // when a later named page has a different paper width.
@@ -2097,16 +2092,28 @@ fn paint_document_impl(
                 // from `CascadeResult`'s inheritance result.
                 let child_decorations =
                     text::decorations_for_element(&decorations, cv, child_shift_y);
-                // children を reverse push すると pop 時に document order で処理される。
-                // For position:relative, children are laid out at normal flow position but paint at offset position.
+                // Paint positioned siblings in stacking order while keeping
+                // source order for equal stack levels.  This is intentionally
+                // local to the current parent; full nested stacking-context
+                // isolation remains outside this minimal painter.
+                let mut children = node.children.clone();
+                children.sort_by_key(|&child| paint_order_key(cascade, child));
+                // Reverse push makes the lowest stack level paint first.
+                // For position:relative, children are laid out at normal flow
+                // position but paint at offset position.
                 let child_parent_x = abs_x + pos_dx + fixed_dx;
                 let child_parent_y = abs_y + pos_dy + fixed_dy;
-                for &child in node.children.iter().rev() {
+                for child in children.into_iter().rev() {
                     let body_child_margin_offset = if node_id == body_id
-                        && document
+                        && (document
                             .get_node(child)
                             .is_some_and(|node| node.kind() == NodeKind::Text)
-                    {
+                            || matches!(
+                                cascade.computed[child].position,
+                                PositionValue::Static
+                                    | PositionValue::Relative
+                                    | PositionValue::Sticky
+                            )) {
                         body_margin_left
                     } else {
                         0.0
@@ -2134,6 +2141,20 @@ fn paint_document_impl(
                     && (inside_fixed
                         || box_intersects_page(abs_y, layout.size.height, page_top, page_bottom))
                 {
+                    let clip_text_to_page_content = !inside_fixed
+                        && content_width.is_finite()
+                        && content_width > 0.0
+                        && page_box.width >= content_width * 2.0
+                        && cascade.page.margin_boxes().is_empty();
+                    if clip_text_to_page_content {
+                        let clip = Rect::new(
+                            page_offset_x as f64,
+                            (margins.top + insets.top) as f64,
+                            (page_box.width - margins.right - insets.right) as f64,
+                            (margins.top + insets.top + content_height) as f64,
+                        );
+                        scene.push_clip_layer(Affine::IDENTITY, &clip);
+                    }
                     text::draw_text_node(
                         scene,
                         node,
@@ -2146,6 +2167,9 @@ fn paint_document_impl(
                         },
                         &decorations,
                     );
+                    if clip_text_to_page_content {
+                        scene.pop_layer();
+                    }
                 }
             }
             NodeKind::Document => {
@@ -2865,6 +2889,20 @@ fn vertical_align_shift_px(
         // ない。新しい variant を追加する際は、まずここを明示的な match
         // arm にすること。
         _ => 0.0,
+    }
+}
+
+fn paint_order_key(cascade: &CascadeResult, node_id: usize) -> (u8, i32) {
+    let computed = &cascade.computed[node_id];
+    match (&computed.position, computed.z_index) {
+        // An integer z-index applies to positioned boxes.  Keep ordinary
+        // in-flow boxes in the auto/source-order bucket.
+        (PositionValue::Static, _) | (_, ZIndexValue::Auto) => (1, 0),
+        (_, ZIndexValue::Integer(value)) if value < 0 => (0, value),
+        (_, ZIndexValue::Integer(value)) => (2, value),
+        // PositionValue and ZIndexValue are non-exhaustive.  New variants
+        // retain the default/source-order bucket until stacking support grows.
+        _ => (1, 0),
     }
 }
 

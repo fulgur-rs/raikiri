@@ -96,14 +96,104 @@ fn apply_page_content_box_to_body(
     margins: PageMargins,
     insets: PageContentInsets,
 ) {
+    // Page border/padding shift the painted page origin, but they do not
+    // establish a narrower inline containing block for document flow.  Keep
+    // the initial containing-block width at the margin content width; the
+    // paint walk applies the horizontal inset when positioning the flow.
     doc.nodes[body_id].style.size = Size {
-        width: Dimension::length(
-            (margins.content_width(page_box) - insets.left - insets.right).max(0.0),
-        ),
+        width: Dimension::length(margins.content_width(page_box).max(0.0)),
         height: Dimension::length(
             (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0),
         ),
     };
+}
+
+/// Resolve the width of a direct-body absolutely positioned box whose
+/// horizontal insets and preferred width are all `auto`.
+///
+/// Taffy's absolute-position fallback leaves such a box at the containing
+/// block width even when a resolved horizontal margin consumes part of that
+/// width. CSS 2.1 §10.3.7 solves the horizontal constraint instead: the
+/// border box plus both margins must fit the containing block. Do this before
+/// the root layout so text descendants receive the corrected width while
+/// shaping/reflowing; changing only `unrounded_layout` after the compute would
+/// leave their line breaks stale.
+///
+/// The first implementation is deliberately limited to direct `<body>`
+/// children in the static containing block. Nested containing blocks and
+/// viewport-fixed boxes need their own containing-block geometry and remain
+/// on Taffy's normal path until that geometry is available.
+fn resolve_direct_absolute_auto_widths(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    containing_width: f32,
+) {
+    fn used(value: ComputedLengthPercentageOrAuto, basis: f32) -> Option<f32> {
+        let px = match value {
+            ComputedLengthPercentageOrAuto::Px(px) => px,
+            ComputedLengthPercentageOrAuto::Percent(percent) => basis * percent / 100.0,
+            ComputedLengthPercentageOrAuto::Calc(value) => value.px + basis * value.percent / 100.0,
+            ComputedLengthPercentageOrAuto::Auto => return None,
+        };
+        px.is_finite().then_some(px)
+    }
+
+    fn padding(value: ComputedLengthPercentage, basis: f32) -> Option<f32> {
+        let px = match value {
+            ComputedLengthPercentage::Px(px) => px,
+            ComputedLengthPercentage::Percent(percent) => basis * percent / 100.0,
+        };
+        px.is_finite().then_some(px)
+    }
+
+    if !containing_width.is_finite() || containing_width <= 0.0 {
+        return;
+    }
+    let children = document.nodes[body_id].children.clone();
+    for child_id in children {
+        let computed = &cascade.computed[child_id];
+        if !matches!(computed.position, PositionValue::Absolute)
+            || !matches!(computed.width, ComputedLengthPercentageOrAuto::Auto)
+            || !matches!(computed.left, ComputedLengthPercentageOrAuto::Auto)
+            || !matches!(computed.right, ComputedLengthPercentageOrAuto::Auto)
+        {
+            continue;
+        }
+
+        let margin_left = used(computed.margin.left, containing_width);
+        let margin_right = used(computed.margin.right, containing_width);
+        if margin_left.is_none() && margin_right.is_none() {
+            continue;
+        }
+        let margin_left = margin_left.unwrap_or(0.0);
+        let margin_right = margin_right.unwrap_or(0.0);
+        let padding_left = padding(computed.padding.left, containing_width);
+        let padding_right = padding(computed.padding.right, containing_width);
+        let Some(padding_left) = padding_left else {
+            continue;
+        };
+        let Some(padding_right) = padding_right else {
+            continue;
+        };
+        let border_left = computed.border.left.width().px();
+        let border_right = computed.border.right.width().px();
+        if !border_left.is_finite() || !border_right.is_finite() {
+            continue;
+        }
+
+        let available_border_box = containing_width - margin_left - margin_right;
+        let width = match computed.box_sizing {
+            StyleBoxSizing::BorderBox => available_border_box,
+            StyleBoxSizing::ContentBox => {
+                available_border_box - border_left - border_right - padding_left - padding_right
+            }
+            _ => available_border_box - border_left - border_right - padding_left - padding_right,
+        };
+        if width.is_finite() {
+            document.nodes[child_id].style.size.width = Dimension::length(width.max(0.0));
+        }
+    }
 }
 
 /// Used page margins resolved from the page-context cascade.
@@ -209,10 +299,22 @@ fn page_box_side(
         _ => None,
     };
     let padding = value.map_or(0.0, |length| page_length_to_px(length, basis));
-    // Existing page-border painting treats a border-only page decoration as an
-    // overlay. Once page padding is present, the page content box is explicit;
-    // include its border in the inset so the padding box starts inside it.
-    let border = if padding > 0.0 {
+    // A page border with an explicit margin encloses the page content box;
+    // preserve the existing overlay behavior for a border-only page with no
+    // margin (for example the page-box border smoke test).  Padding already
+    // establishes an explicit content box and therefore always includes the
+    // border.
+    let has_page_margin = declarations.keys().any(|key| {
+        matches!(
+            key,
+            PropertyKey::Margin
+                | PropertyKey::MarginTop
+                | PropertyKey::MarginRight
+                | PropertyKey::MarginBottom
+                | PropertyKey::MarginLeft
+        )
+    });
+    let border = if padding > 0.0 || has_page_margin {
         match declarations.get(&border) {
             Some(PropertyValue::BorderTopWidth(value))
             | Some(PropertyValue::BorderRightWidth(value))
@@ -228,8 +330,10 @@ fn page_box_side(
 
 /// Resolve the border and padding inset of the page content box.
 ///
-/// Page margins remain separate because margin boxes occupy the margin strips;
-/// ordinary document flow starts after both the page border and page padding.
+/// Page margins remain separate because margin boxes occupy the margin strips.
+/// The inset shifts the physical flow origin and reduces the block-axis
+/// fragmentainer extent; the inline containing-block width remains the page's
+/// margin content width so page decorations do not force text rewrapping.
 pub fn page_content_insets(cascade: &CascadeResult, page_box: PageBox) -> PageContentInsets {
     let declarations = cascade.page.declarations();
     PageContentInsets {
@@ -5522,6 +5626,25 @@ pub(crate) fn preshape_text(
         let mcv = nearest_block_container(doc, cascade, &parent_of, idx)
             .map(|b| &cascade.computed[b])
             .unwrap_or(cv);
+        // A page margin can leave a very narrow content strip while the
+        // document still paints overflowing inline text into that strip's
+        // neighboring page area.  Preserve the historical full-page shaping
+        // in that extreme case; otherwise the narrowed fragmentainer width
+        // creates an extra line that a page-level clip will remove only after
+        // it has changed the document's height.
+        let page_margin_overflow = page_width.is_finite()
+            && max_advance.is_finite()
+            && max_advance > 0.0
+            && page_width >= max_advance * 2.0;
+        let shape_advance = if page_width > max_advance
+            && (is_leading_body_text(doc, body_id, idx)
+                || has_out_of_flow_ancestor(parent_of[idx])
+                || page_margin_overflow)
+        {
+            page_width
+        } else {
+            max_advance
+        };
         jobs.push(Job {
             idx,
             text,
@@ -5534,14 +5657,7 @@ pub(crate) fn preshape_text(
             tab_size: cv.tab_size,
             white_space: cv.white_space,
             nowrap: cv.white_space == WhiteSpace::Nowrap || cv.text_wrap == TextWrapMode::Nowrap,
-            max_advance: if page_width > max_advance
-                && (is_leading_body_text(doc, body_id, idx)
-                    || has_out_of_flow_ancestor(parent_of[idx]))
-            {
-                page_width
-            } else {
-                max_advance
-            },
+            max_advance: shape_advance,
             metrics_family: family_str_of(mcv),
             metrics_size: mcv.font_size.px(),
             metrics_weight: mcv.font_weight,
@@ -5853,7 +5969,10 @@ pub fn layout_single_page(
     // uses the content width, not the outer paper width.
     let margins = page_margins(cascade, page_box);
     let insets = page_content_insets(cascade, page_box);
-    let content_width = (margins.content_width(page_box) - insets.left - insets.right).max(0.0);
+    // Page decorations affect the physical origin, not the inline size of the
+    // initial containing block.  This also keeps text from wrapping merely
+    // because an @page rule adds border/padding around the paper.
+    let content_width = margins.content_width(page_box).max(0.0);
     let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
 
     // Step 2b: pre-shape all text with parley
@@ -5878,21 +5997,24 @@ pub fn layout_single_page(
     // is also used as the synthetic page root, so feeding that UA margin into
     // taffy would apply it twice to ordinary element children.  Keep the
     // computed value for the page cursor/paint walk and remove only the exact
-    // UA-default sides from the synthetic root style; author margins remain.
+    // UA-origin sides from the synthetic root style.  The origin metadata is
+    // needed because an authored `margin: 8px` is otherwise indistinguishable
+    // from the UA rule after value computation.
     {
         let used = cascade.computed[body_id].margin;
         let style_margin = &mut document.nodes[body_id].style.margin;
+        let non_ua = cascade.non_ua_margin_sides.get(body_id);
         let is_ua_default = |value: ComputedLengthPercentageOrAuto| matches!(value, ComputedLengthPercentageOrAuto::Px(px) if (px - 8.0).abs() <= 0.001);
-        if is_ua_default(used.top) {
+        if is_ua_default(used.top) && !non_ua.is_some_and(|sides| sides.top) {
             style_margin.top = LengthPercentageAuto::length(0.0);
         }
-        if is_ua_default(used.right) {
+        if is_ua_default(used.right) && !non_ua.is_some_and(|sides| sides.right) {
             style_margin.right = LengthPercentageAuto::length(0.0);
         }
-        if is_ua_default(used.bottom) {
+        if is_ua_default(used.bottom) && !non_ua.is_some_and(|sides| sides.bottom) {
             style_margin.bottom = LengthPercentageAuto::length(0.0);
         }
-        if is_ua_default(used.left) {
+        if is_ua_default(used.left) && !non_ua.is_some_and(|sides| sides.left) {
             style_margin.left = LengthPercentageAuto::length(0.0);
         }
     }
@@ -5900,6 +6022,11 @@ pub fn layout_single_page(
     // Step 4: body.style.size は紙面ではなく page content box へ強制セット。
     // Page margins are painted/represented outside this taffy root.
     apply_page_content_box_to_body(document, body_id, page_box, margins, insets);
+    // Taffy's static-position absolute fallback does not account for a
+    // resolved horizontal margin when width/left/right are all auto. Resolve
+    // that narrow case before compute so descendants are shaped against the
+    // same border-box width that the containing-block equation requires.
+    resolve_direct_absolute_auto_widths(document, cascade, body_id, content_width);
 
     // Step 5: taffy compute
     compute_root_layout(
@@ -5999,6 +6126,41 @@ pub fn layout_pages(
     page_box: PageBox,
     font_ctx: FontContext,
 ) -> Result<Vec<PageSlice>, LayoutError> {
+    layout_pages_with_page_steps(document, cascade, page_box, font_ctx, &[])
+}
+
+/// Layout ordinary block flow with an optional per-page content-height schedule.
+///
+/// An empty schedule preserves the historical fixed fragmentainer height.  The
+/// paged WPT adapter supplies a schedule when `@page` changes the page size or
+/// margins after the first page; the normal API remains fixed-size by default.
+#[allow(clippy::result_large_err)]
+pub fn layout_pages_with_page_steps(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    font_ctx: FontContext,
+    page_steps: &[f32],
+) -> Result<Vec<PageSlice>, LayoutError> {
+    layout_pages_with_page_geometry(document, cascade, page_box, font_ctx, page_steps, &[])
+}
+
+/// Layout ordinary block flow with per-page content heights and widths.
+///
+/// `page_widths` contains content-box widths corresponding to `page_steps`.
+/// When present, percentage-sized boxes are rescaled after pagination so a
+/// later page with a different containing-block width does not retain the
+/// first page's used percentage width.  An empty width schedule keeps the
+/// existing fixed-page behavior.
+#[allow(clippy::result_large_err)]
+pub fn layout_pages_with_page_geometry(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    font_ctx: FontContext,
+    page_steps: &[f32],
+    page_widths: &[f32],
+) -> Result<Vec<PageSlice>, LayoutError> {
     layout_single_page(document, cascade, page_box, font_ctx)?;
 
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
@@ -6032,21 +6194,13 @@ pub fn layout_pages(
         document.nodes[child_id].kind() == NodeKind::Text
             && document.nodes[child_id].unrounded_layout.size.height > 0.0
     });
-    let is_ua_default_margin = |value: ComputedLengthPercentageOrAuto| matches!(value, ComputedLengthPercentageOrAuto::Px(px) if (px - 8.0).abs() <= 0.001);
-    let used_body_margin = cascade.computed[body_id].margin;
-    let body_has_non_ua_margin = [
-        used_body_margin.top,
-        used_body_margin.right,
-        used_body_margin.bottom,
-        used_body_margin.left,
-    ]
-    .iter()
-    .copied()
-    .any(|value| !is_ua_default_margin(value));
-    let body_origin_is_manual = body_has_direct_text
-        && !body_has_element_child
-        && (body_has_canvas_background || body_has_non_ua_margin);
-    let body_margin_top = if body_origin_is_manual {
+    let body_top_is_non_ua = cascade
+        .non_ua_margin_sides
+        .get(body_id)
+        .is_some_and(|sides| sides.top);
+    let body_margin_top = if body_top_is_non_ua
+        || (body_has_direct_text && !body_has_element_child && body_has_canvas_background)
+    {
         match cascade.computed[body_id].margin.top {
             ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
             _ => 0.0,
@@ -6055,20 +6209,69 @@ pub fn layout_pages(
         0.0
     };
     let root_margin_top = html_margin_top + body_margin_top;
+    // Keep the scheduled inline size identical to the first layout pass;
+    // page border/padding are applied as a paint offset, not as a narrower
+    // containing block.
+    let content_width = margins.content_width(page_box).max(0.0);
     let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
     // A page with margins consuming the entire paper still needs a finite
     // cursor for forced breaks.  No valid page box reaches this path in normal
     // CSS, but the fallback keeps the API panic-free for direct callers.
-    let page_step = if content_height.is_finite() && content_height > 0.0 {
+    let fixed_page_step = if content_height.is_finite() && content_height > 0.0 {
         content_height
     } else {
         page_box.height.max(1.0)
     };
+    // A page-size/margin change can make the fragmentainer height vary by
+    // page.  The default API supplies no schedule and therefore follows the
+    // fixed first-page height used historically.
+    let page_step = fixed_page_step;
+    let page_step_at = |page_index: u32| {
+        page_steps
+            .get(page_index as usize)
+            .copied()
+            .filter(|step| step.is_finite() && *step > 0.0)
+            .unwrap_or(fixed_page_step)
+    };
+    let page_origin = |page_index: u32| {
+        (0..page_index)
+            .map(page_step_at)
+            .fold(0.0_f32, |sum, step| sum + step)
+    };
+    let page_index_for_y = |y: f32| {
+        if !y.is_finite() || y <= 0.0 {
+            return 0;
+        }
+        let mut origin = 0.0_f32;
+        for page_index in 0..4096_u32 {
+            let step = page_step_at(page_index);
+            if y < origin + step {
+                return page_index;
+            }
+            origin += step;
+        }
+        4095
+    };
+    // A box ending exactly at a page edge belongs to the preceding page.
+    let page_index_for_end = |end: f32| {
+        if !end.is_finite() || end <= 0.0 {
+            return 0;
+        }
+        let mut origin = 0.0_f32;
+        for page_index in 0..4096_u32 {
+            let step = page_step_at(page_index);
+            if end <= origin + step {
+                return page_index;
+            }
+            origin += step;
+        }
+        4095
+    };
     // A root margin that reaches into a later fragmentainer consumes whole
     // leading pages.  Do not leave the first content run stranded halfway
     // down the first nonblank page.
-    let root_flow_offset = if root_margin_top >= page_step {
-        (root_margin_top / page_step).floor() * page_step
+    let root_flow_offset = if root_margin_top >= fixed_page_step {
+        page_origin(page_index_for_y(root_margin_top))
     } else {
         root_margin_top
     };
@@ -6375,12 +6578,12 @@ pub fn layout_pages(
             if saw_child {
                 if consumes_pending_break || named_page_change {
                     let natural_page = if effective_y.is_finite() && effective_y >= 0.0 {
-                        (effective_y / page_step).floor() as u32
+                        page_index_for_y(effective_y)
                     } else {
                         current_page
                     };
                     let target_page = current_page.saturating_add(1).max(natural_page);
-                    let target_y = target_page as f32 * page_step;
+                    let target_y = page_origin(target_page);
                     // The candidate was materialized to `effective_y` above,
                     // so this is the additional movement for this boundary.
                     // Keep it separate from `flow_shift`: the latter also
@@ -6395,7 +6598,7 @@ pub fn layout_pages(
                     current_page = target_page;
                     current_page_name = candidate_page_name.clone();
                 } else if effective_y.is_finite() && effective_y >= 0.0 {
-                    current_page = current_page.max((effective_y / page_step).floor() as u32);
+                    current_page = current_page.max(page_index_for_y(effective_y));
                 }
             } else {
                 saw_child = true;
@@ -6419,8 +6622,7 @@ pub fn layout_pages(
             if height > 0.0 && effective_y.is_finite() && effective_y >= 0.0 {
                 let end = (effective_y + height).max(effective_y);
                 if end.is_finite() && end > 0.0 {
-                    let end_page =
-                        ((end as f64 / page_step as f64).ceil() as u32).saturating_sub(1);
+                    let end_page = page_index_for_end(end);
                     max_page = max_page.max(end_page);
                 }
             }
@@ -6451,14 +6653,15 @@ pub fn layout_pages(
         // block size plus its trailing margin would cross the current page.
         // This is the direct block-flow case; nested formatting contexts still
         // require fragment-level break opportunities.
-        let avoid_page_overflow = matches!(
+        let page_overflow = matches!(
             computed.break_inside,
             raikiri_style::property::BreakInside::Avoid
                 | raikiri_style::property::BreakInside::AvoidPage
         ) && effective_y.is_finite()
-            && effective_y >= current_page as f32 * page_step
-            && effective_y < (current_page + 1) as f32 * page_step
-            && effective_y + height + margin_bottom > (current_page + 1) as f32 * page_step;
+            && effective_y >= page_origin(current_page)
+            && effective_y < page_origin(current_page) + page_step_at(current_page)
+            && effective_y + height + margin_bottom
+                > page_origin(current_page) + page_step_at(current_page);
         // A named page requested by a class-A box starts a new page when it
         // differs from the current named page. `auto` leaves the current page
         // type in place; it does not manufacture a second break boundary.
@@ -6472,30 +6675,39 @@ pub fn layout_pages(
             && last_named_raw_y.is_some_and(|previous| (raw_y - previous).abs() <= 0.001);
         let named_page_change =
             saw_child && candidate_page_name != current_page_name && !same_named_coordinate;
-        let at_page_start = effective_y.is_finite()
-            && (effective_y - current_page as f32 * page_step).abs() <= 0.001;
-        // A forced break on a descendant at the start of a page opened by its
-        // parent (for example a named transition plus `break-before: page`)
-        // describes the same boundary and must not create a blank page.
-        let forced_break_at_page_start = forced_before && current_page > 0 && at_page_start;
+        let at_page_start =
+            effective_y.is_finite() && (effective_y - page_origin(current_page)).abs() <= 0.001;
+        let natural_page_at_position = if effective_y.is_finite() && effective_y >= 0.0 {
+            page_index_for_y(effective_y)
+        } else {
+            current_page
+        };
+        // A forced break at the start of a page already opened by natural
+        // overflow describes the same boundary and must not create a blank
+        // page.  This matters when the page height changes after page zero:
+        // the fixed-height pass may have considered the box to be on the
+        // current page, while the scheduled pass places it exactly at the
+        // next page origin.
+        let forced_break_at_page_start =
+            forced_before && (at_page_start || natural_page_at_position > current_page);
 
         let page_transition = saw_child
             && (pending_break
                 || (forced_before && !forced_break_at_page_start)
                 || named_page_change
-                || avoid_page_overflow);
+                || page_overflow);
         if saw_child {
             // A break-after on the preceding box and a break-before (or named
             // page transition) on this box describe the same boundary, not two
             // blank pages.
             if page_transition {
                 let natural_page = if effective_y.is_finite() && effective_y >= 0.0 {
-                    (effective_y / page_step).floor() as u32
+                    page_index_for_y(effective_y)
                 } else {
                     current_page
                 };
                 let target_page = current_page.saturating_add(1).max(natural_page);
-                let target_y = target_page as f32 * page_step;
+                let target_y = page_origin(target_page);
                 // A negative block-start margin can pull a forced-break box
                 // back into the preceding page.  Keep the break boundary for
                 // following siblings (and for page count), but materialize
@@ -6527,7 +6739,7 @@ pub fn layout_pages(
                 }
                 current_page = target_page;
             } else if effective_y.is_finite() && effective_y >= 0.0 {
-                current_page = current_page.max((effective_y / page_step).floor() as u32);
+                current_page = current_page.max(page_index_for_y(effective_y));
             }
             if page_transition && margin_top > 0.0 {
                 pending_descendant_margin = Some((node_id, margin_top));
@@ -6569,7 +6781,7 @@ pub fn layout_pages(
             // intersects; line-level splitting is a later pass.
             let end = (effective_y + height).max(effective_y);
             if end.is_finite() && end > 0.0 {
-                let end_page = ((end as f64 / page_step as f64).ceil() as u32).saturating_sub(1);
+                let end_page = page_index_for_end(end);
                 max_page = max_page.max(end_page);
             }
         }
@@ -6577,10 +6789,40 @@ pub fn layout_pages(
             page_break_is_forced(computed.break_after) || candidate.deferred_named_break_after;
     }
 
+    if !page_widths.is_empty() {
+        let base_width = page_widths
+            .first()
+            .copied()
+            .filter(|width| width.is_finite() && *width > 0.0)
+            .unwrap_or(content_width);
+        if base_width.is_finite() && base_width > 0.0 {
+            for node_id in 0..document.nodes.len() {
+                if !matches!(
+                    cascade.computed[node_id].width,
+                    ComputedLengthPercentageOrAuto::Percent(_)
+                ) {
+                    continue;
+                }
+                let page_index = page_index_for_y(current_abs_y(document, node_id, &parent_of));
+                let Some(target_width) = page_widths
+                    .get(page_index as usize)
+                    .copied()
+                    .filter(|width| width.is_finite() && *width > 0.0)
+                else {
+                    continue;
+                };
+                let scale = target_width / base_width;
+                if scale.is_finite() && (scale - 1.0).abs() > 0.0001 {
+                    document.nodes[node_id].unrounded_layout.size.width *= scale;
+                }
+            }
+        }
+    }
+
     Ok((0..=max_page)
         .map(|page_index| PageSlice {
             page_index,
-            content_origin_y: page_index as f32 * page_step,
+            content_origin_y: page_origin(page_index),
             page_name: page_names.get(page_index as usize).cloned().flatten(),
         })
         .collect())
@@ -6638,6 +6880,42 @@ mod tests {
         let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
         let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
         assert_eq!(find_body(&doc), Some(body));
+    }
+
+    #[test]
+    fn page_border_inset_requires_page_content_box() {
+        let mut declarations = std::collections::HashMap::new();
+        declarations.insert(
+            PropertyKey::BorderTopWidth,
+            PropertyValue::BorderTopWidth(Length::Px(3.0)),
+        );
+
+        // A border-only page keeps the legacy overlay behavior.
+        assert_eq!(
+            page_box_side(
+                &declarations,
+                PropertyKey::PaddingTop,
+                PropertyKey::BorderTopWidth,
+                100.0
+            ),
+            0.0
+        );
+
+        // An explicit page margin makes the page content box distinct from
+        // the border edge, so the border consumes flow space.
+        declarations.insert(
+            PropertyKey::MarginTop,
+            PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(30.0))),
+        );
+        assert_eq!(
+            page_box_side(
+                &declarations,
+                PropertyKey::PaddingTop,
+                PropertyKey::BorderTopWidth,
+                100.0
+            ),
+            3.0
+        );
     }
 
     #[test]
@@ -13438,5 +13716,34 @@ mod tests {
         .expect("layout Ok");
 
         assert_eq!(doc.nodes[img].image_intrinsic_size(), None);
+    }
+
+    #[test]
+    fn layout_single_page_resolves_direct_absolute_auto_width_with_margin() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let abs = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("position:absolute; margin-right:20px; border:10px solid black"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        layout_single_page(&mut doc, &cascade, page, parley::FontContext::new())
+            .expect("layout Ok");
+
+        // Content-box width = 100 - 20 (margin) - 20 (horizontal border),
+        // while the resulting border box is 80px wide.
+        let layout = doc.nodes[abs].unrounded_layout;
+        assert!((layout.size.width - 80.0).abs() < 0.001);
     }
 }
