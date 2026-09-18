@@ -8416,7 +8416,13 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // まま格納する」節)。inherited property のため cascade winner が無い
         // child は inherit_from で親値を引き継ぐ (`FontStyle` arm と同じ
         // handling)。`LengthOrNormal` は Copy、by-value 代入で十分。
-        PropertyValue::LetterSpacing(ls) => target.letter_spacing = ls,
+        PropertyValue::LetterSpacing(ls) => {
+            target.letter_spacing = ls;
+            target.letter_spacing_ch_factor = match ls {
+                LengthOrNormal::Length(Length::Ch(factor)) if factor.is_finite() => Some(factor),
+                _ => None,
+            };
+        }
         // CSS Text 3 §7.1。直上の LetterSpacing arm と同型。
         PropertyValue::WordSpacing(ws) => {
             target.word_spacing = ws;
@@ -16317,6 +16323,17 @@ mod tests {
         let r = cascade(&doc, &tree).expect("cascade Ok");
         assert_eq!(r.computed[p].word_spacing_ch_factor, Some(1.0));
         assert_eq!(r.computed[span].word_spacing_ch_factor, Some(1.0));
+    }
+
+    #[test]
+    fn letter_spacing_ch_provenance_survives_inheritance() {
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("letter-spacing: 1ch"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].letter_spacing_ch_factor, Some(1.0));
+        assert_eq!(r.computed[span].letter_spacing_ch_factor, Some(1.0));
     }
 
     #[test]

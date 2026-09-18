@@ -945,6 +945,9 @@ pub struct ComputedValues {
     /// `normal`") is a CSSOM serialization detail this crate has no surface
     /// for.
     pub letter_spacing: ComputedLength,
+    /// Authored `ch` factor for `letter-spacing`, retained so the text-layout
+    /// sink can replace the style fallback with the shaping font's `0` advance.
+    pub letter_spacing_ch_factor: Option<f32>,
     /// `word-spacing`. **inherited**, initial: [`ComputedLength::ZERO`] (CSS
     /// Text Module Level 3 §7.1 "Word Spacing: the word-spacing property"
     /// <https://www.w3.org/TR/css-text-3/#word-spacing-property>, "Initial:
@@ -1667,6 +1670,7 @@ impl ComputedValues {
             // CSS Text 3 §7.2 / §7.1: letter-spacing / word-spacing の
             // initial `normal` は computed 層で `0` (`ComputedLength::ZERO`)。
             letter_spacing: ComputedLength::ZERO,
+            letter_spacing_ch_factor: None,
             word_spacing: ComputedLength::ZERO,
             word_spacing_ch_factor: None,
             // CSS Text Module Level 3 §4.2: tab-size initial は `8`.
@@ -2231,6 +2235,7 @@ mod tests {
             // value) と異なる値 (non_initial_parent の趣旨どおり全 field を
             // 非 initial に)。
             letter_spacing: ComputedLength(2.0),
+            letter_spacing_ch_factor: None,
             word_spacing: ComputedLength(4.0),
             word_spacing_ch_factor: None,
             // CSS Text Module Level 3 §4.2: initial (`8`) と異なる値

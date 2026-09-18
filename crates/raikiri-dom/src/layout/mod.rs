@@ -5546,6 +5546,9 @@ pub(crate) fn preshape_text(
         font_style: StyleFontStyle,
         line_height_raw: ComputedLineHeight,
         letter_spacing_raw: f32,
+        // Preserve authored `ch` so the shaping font's `0` advance can replace
+        // the style-layer fallback before Parley lays out the text.
+        letter_spacing_ch_factor: Option<f32>,
         // Style-layer fallback in CSS px; replaced with a measured `ch`
         // advance when the authored-unit marker below is present.
         word_spacing_raw: f32,
@@ -5807,6 +5810,7 @@ pub(crate) fn preshape_text(
             font_style: cv.font_style,
             line_height_raw: cv.line_height,
             letter_spacing_raw: cv.letter_spacing.px(),
+            letter_spacing_ch_factor: cv.letter_spacing_ch_factor,
             word_spacing_raw: cv.word_spacing.px(),
             word_spacing_ch_factor: cv.word_spacing_ch_factor,
             tab_size: cv.tab_size,
@@ -5849,7 +5853,7 @@ pub(crate) fn preshape_text(
     let mut ch_probes: std::collections::HashMap<(String, u32, u32, u8), f32> =
         std::collections::HashMap::new();
     for job in &jobs {
-        if job.word_spacing_ch_factor.is_none() {
+        if job.letter_spacing_ch_factor.is_none() && job.word_spacing_ch_factor.is_none() {
             continue;
         }
         let key = shape_font_key(job);
@@ -5872,6 +5876,11 @@ pub(crate) fn preshape_text(
         ) && let Some(&adv) = probes.get(&font_key(job))
         {
             job.text = expand_tabs(&job.text, job.tab_size, adv).into_owned();
+        }
+        if let Some(factor) = job.letter_spacing_ch_factor
+            && let Some(&adv) = ch_probes.get(&shape_font_key(job))
+        {
+            job.letter_spacing_raw = factor * adv;
         }
         if let Some(factor) = job.word_spacing_ch_factor
             && let Some(&adv) = ch_probes.get(&shape_font_key(job))
@@ -13864,6 +13873,98 @@ mod tests {
     }
 
     #[test]
+    fn probe_text_advance_distinguishes_ahem_and_proportional_wpt_fonts() {
+        use std::path::PathBuf;
+
+        let fonts_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("target")
+            .join("wpt")
+            .join("fonts");
+        if !fonts_dir.join("Ahem.ttf").exists() || !fonts_dir.join("Lato-Medium.ttf").exists() {
+            eprintln!(
+                "skipping WPT font probe: Ahem.ttf and Lato-Medium.ttf are required under {}",
+                fonts_dir.display()
+            );
+            return;
+        }
+
+        let mut fonts = crate::fonts::build_wpt_font_ctx(&fonts_dir)
+            .expect("bundled WPT fonts should register");
+        let mut layout_cx = LayoutContext::<()>::new();
+        let ahem = probe_text_advance(
+            &mut fonts,
+            &mut layout_cx,
+            "0",
+            "Ahem",
+            16.0,
+            400.0,
+            StyleFontStyle::Normal,
+        );
+        let lato = probe_text_advance(
+            &mut fonts,
+            &mut layout_cx,
+            "0",
+            "Lato",
+            16.0,
+            400.0,
+            StyleFontStyle::Normal,
+        );
+        assert!((ahem - 16.0).abs() < 0.1, "Ahem zero advance={ahem}");
+        assert!(lato.is_finite() && lato > 0.0, "Lato zero advance={lato}");
+        assert!(
+            (ahem - lato).abs() > 0.5,
+            "Ahem and proportional Lato should have different zero advances: Ahem={ahem}, Lato={lato}"
+        );
+
+        fn shaped_width(
+            fonts_dir: &std::path::Path,
+            font_family: &str,
+            letter_spacing: &str,
+        ) -> f32 {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let style =
+                format!("font-family:{font_family};font-size:16px;letter-spacing:{letter_spacing}");
+            let p = doc.append_element(Some(body), "p", Style::default(), Some(&style));
+            let text = doc.append_text(p, "AB");
+            let rules = raikiri_style::build_rule_tree(&doc);
+            let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
+            let mut fonts = crate::fonts::build_wpt_font_ctx(fonts_dir)
+                .expect("bundled WPT fonts should register");
+            let mut layout_cx = LayoutContext::<()>::new();
+            preshape_text(
+                &mut doc,
+                &cascade,
+                &mut fonts,
+                &mut layout_cx,
+                PageBox::A4.width,
+                PageBox::A4.width,
+            );
+            doc.nodes[text]
+                .text_layout()
+                .expect("text should be shaped")
+                .full_width()
+        }
+
+        let ahem_normal = shaped_width(&fonts_dir, "Ahem", "0px");
+        let ahem_spaced = shaped_width(&fonts_dir, "Ahem", "1ch");
+        assert!(
+            (ahem_spaced - ahem_normal - 2.0 * ahem).abs() < 0.1,
+            "letter-spacing:1ch must use Ahem's measured zero advance: normal={ahem_normal}, spaced={ahem_spaced}, ch={ahem} (two glyphs)"
+        );
+
+        let lato_normal = shaped_width(&fonts_dir, "Lato", "0px");
+        let lato_spaced = shaped_width(&fonts_dir, "Lato", "1ch");
+        assert!(
+            (lato_spaced - lato_normal - 2.0 * lato).abs() < 0.1,
+            "letter-spacing:1ch must use Lato's measured zero advance: normal={lato_normal}, spaced={lato_spaced}, ch={lato} (two glyphs)"
+        );
+    }
+
+    #[test]
     fn preshape_text_applies_computed_letter_spacing_to_advance() {
         use parley::{FontContext, LayoutContext};
         use raikiri_style::{build_rule_tree, cascade};
@@ -13897,6 +13998,43 @@ mod tests {
         assert!(
             spaced > normal + 12.0,
             "letter spacing should increase the shaped advance: normal={normal}, spaced={spaced}"
+        );
+    }
+
+    #[test]
+    fn preshape_text_applies_computed_letter_spacing_ch_to_advance() {
+        use parley::{FontContext, LayoutContext};
+        use raikiri_style::{build_rule_tree, cascade};
+
+        fn shaped_width(inline_style: &str) -> f32 {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let p = doc.append_element(Some(body), "p", Style::default(), Some(inline_style));
+            let text = doc.append_text(p, "AB");
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            let mut fonts = FontContext::new();
+            let mut layout_cx = LayoutContext::<()>::new();
+            preshape_text(
+                &mut doc,
+                &cr,
+                &mut fonts,
+                &mut layout_cx,
+                PageBox::A4.width,
+                PageBox::A4.width,
+            );
+            doc.nodes[text]
+                .text_layout()
+                .expect("text should be shaped")
+                .full_width()
+        }
+
+        let normal = shaped_width("letter-spacing: 0px");
+        let spaced = shaped_width("letter-spacing: 1ch");
+        assert!(
+            spaced > normal + 1.0,
+            "ch letter spacing should increase the shaped advance: normal={normal}, spaced={spaced}"
         );
     }
 
