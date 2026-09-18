@@ -951,6 +951,11 @@ pub struct ComputedValues {
     /// normal" / "Inherited: yes"). Same computed-value shape as
     /// [`Self::letter_spacing`] — see that field's doc.
     pub word_spacing: ComputedLength,
+    /// Authored `ch` factor for `word-spacing`, when the winning declaration
+    /// used that font-metric-relative unit. The factor is retained through
+    /// inheritance so the text-layout sink can replace the style-layer
+    /// fallback with the shaping font's `0` glyph advance.
+    pub word_spacing_ch_factor: Option<f32>,
     /// `tab-size`. **inherited**, initial: [`ComputedTabSize::Number`]`(8.0)`
     /// (CSS Text Module Level 3 §4.2 "Tab Character Size: the tab-size
     /// property" <https://www.w3.org/TR/css-text-3/#tab-size-property>,
@@ -1663,6 +1668,7 @@ impl ComputedValues {
             // initial `normal` は computed 層で `0` (`ComputedLength::ZERO`)。
             letter_spacing: ComputedLength::ZERO,
             word_spacing: ComputedLength::ZERO,
+            word_spacing_ch_factor: None,
             // CSS Text Module Level 3 §4.2: tab-size initial は `8`.
             tab_size: ComputedTabSize::Number(8.0),
             // CSS Fragmentation Module Level 3 §3.1 / §3.2: break-before /
@@ -2226,6 +2232,7 @@ mod tests {
             // 非 initial に)。
             letter_spacing: ComputedLength(2.0),
             word_spacing: ComputedLength(4.0),
+            word_spacing_ch_factor: None,
             // CSS Text Module Level 3 §4.2: initial (`8`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             tab_size: ComputedTabSize::Number(3.0),
