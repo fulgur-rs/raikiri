@@ -15,15 +15,16 @@ use crate::document::Document;
 use crate::node::NodeFlags;
 use parley::{
     Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, IndentOptions,
-    Layout, LayoutContext, LineHeight, StyleProperty,
+    Layout, LayoutContext, LineHeight, OverflowWrap as ParleyOverflowWrap, StyleProperty,
+    TextWrapMode as ParleyTextWrapMode, WordBreak as ParleyWordBreak,
 };
 use raikiri_style::property::{
     AlignSelfValue, BackgroundImage, BoxSizing as StyleBoxSizing, BreakBetween,
     CalcLengthPercentage, ClearValue, ContentAlignmentValue, Direction, DisplayValue,
     FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle as StyleFontStyle, GridAutoFlowValue,
     GridLineValue, GridRepeatCount, GridTemplateAreasValue, Hyphens, Length, LengthOrAuto,
-    OverflowValue, PositionValue, PropertyKey, PropertyValue, SelfAlignmentValue, TextAlign,
-    TextJustify, TextTransform, TextWrapMode, WhiteSpace,
+    OverflowValue, OverflowWrap, PositionValue, PropertyKey, PropertyValue, SelfAlignmentValue,
+    TextAlign, TextJustify, TextTransform, TextWrapMode, WhiteSpace, WordBreak,
 };
 use raikiri_style::{
     CascadeResult, ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth,
@@ -2335,9 +2336,14 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
         // indent も同様に skip する — flex item の幅は taffy が indent 無し
         // layout から測っており、ここで indent を付けると box と run が乖離
         // する (bd raikiri-spike-5u1y の既知の限界として doc に残す)。
+        let needs_line_break_property = matches!(
+            cv.word_break,
+            WordBreak::BreakAll | WordBreak::KeepAll | WordBreak::BreakWord
+        ) || !matches!(cv.overflow_wrap, OverflowWrap::Normal);
         if doc.nodes[parent_idx]
             .flags
             .contains(NodeFlags::IS_INLINE_ROOT)
+            && !needs_line_break_property
         {
             continue;
         }
@@ -2358,7 +2364,10 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
         // width when the paged containing block carries a margin.  Preserve
         // the page-width shaping used by the paged bridge instead of
         // re-breaking a one-line run to the narrower body box.
-        if preserve_wide_body_run && layout.width() > containing_width + 0.01 {
+        if preserve_wide_body_run
+            && layout.width() > containing_width + 0.01
+            && !needs_line_break_property
+        {
             continue;
         }
         // No-wrap (`white-space: nowrap` or `text-wrap: nowrap`): preshape
@@ -5481,6 +5490,40 @@ fn is_leading_body_text(document: &Document, body_id: Option<usize>, node_id: us
     false
 }
 
+fn parley_word_break(value: WordBreak) -> ParleyWordBreak {
+    match value {
+        WordBreak::BreakAll => ParleyWordBreak::BreakAll,
+        WordBreak::KeepAll => ParleyWordBreak::KeepAll,
+        // `manual`, `auto-phrase`, and the deprecated `break-word` do not
+        // have a direct Parley word-break mode. `break-word` gets its
+        // emergency wrapping behavior from `parley_overflow_wrap` below.
+        WordBreak::Normal | WordBreak::Manual | WordBreak::AutoPhrase | WordBreak::BreakWord => {
+            ParleyWordBreak::Normal
+        }
+        _ => ParleyWordBreak::Normal,
+    }
+}
+
+fn parley_overflow_wrap(word_break: WordBreak, value: OverflowWrap) -> ParleyOverflowWrap {
+    if matches!(word_break, WordBreak::BreakWord) {
+        return ParleyOverflowWrap::BreakWord;
+    }
+    match value {
+        OverflowWrap::Normal => ParleyOverflowWrap::Normal,
+        OverflowWrap::Anywhere => ParleyOverflowWrap::Anywhere,
+        OverflowWrap::BreakWord => ParleyOverflowWrap::BreakWord,
+        _ => ParleyOverflowWrap::Normal,
+    }
+}
+
+fn parley_text_wrap_mode(value: TextWrapMode, nowrap: bool) -> ParleyTextWrapMode {
+    if nowrap || matches!(value, TextWrapMode::Nowrap) {
+        ParleyTextWrapMode::NoWrap
+    } else {
+        ParleyTextWrapMode::Wrap
+    }
+}
+
 pub(crate) fn preshape_text(
     doc: &mut Document,
     cascade: &CascadeResult,
@@ -5504,6 +5547,9 @@ pub(crate) fn preshape_text(
         letter_spacing_raw: f32,
         tab_size: ComputedTabSize,
         white_space: WhiteSpace,
+        word_break: WordBreak,
+        overflow_wrap: OverflowWrap,
+        text_wrap_mode: TextWrapMode,
         // Soft wrapping suppressed (`white-space: nowrap` or
         // `text-wrap: nowrap`, bd raikiri-spike-9q1p).
         nowrap: bool,
@@ -5742,6 +5788,9 @@ pub(crate) fn preshape_text(
             letter_spacing_raw: cv.letter_spacing.px(),
             tab_size: cv.tab_size,
             white_space: cv.white_space,
+            word_break: cv.word_break,
+            overflow_wrap: cv.overflow_wrap,
+            text_wrap_mode: cv.text_wrap,
             nowrap: cv.white_space == WhiteSpace::Nowrap || cv.text_wrap == TextWrapMode::Nowrap,
             max_advance: shape_advance,
             metrics_family: family_str_of(mcv),
@@ -5820,6 +5869,15 @@ pub(crate) fn preshape_text(
                 line_height,
             )));
             builder.push_default(StyleProperty::LetterSpacing(letter_spacing));
+            builder.push_default(StyleProperty::WordBreak(parley_word_break(job.word_break)));
+            builder.push_default(StyleProperty::OverflowWrap(parley_overflow_wrap(
+                job.word_break,
+                job.overflow_wrap,
+            )));
+            builder.push_default(StyleProperty::TextWrapMode(parley_text_wrap_mode(
+                job.text_wrap_mode,
+                job.nowrap,
+            )));
             let mut layout: Layout<()> = builder.build(&job.text);
             layout.break_all_lines(if job.nowrap {
                 None
@@ -5877,6 +5935,15 @@ pub(crate) fn preshape_text(
                     line_height,
                 )));
                 builder.push_default(StyleProperty::LetterSpacing(letter_spacing));
+                builder.push_default(StyleProperty::WordBreak(parley_word_break(job.word_break)));
+                builder.push_default(StyleProperty::OverflowWrap(parley_overflow_wrap(
+                    job.word_break,
+                    job.overflow_wrap,
+                )));
+                builder.push_default(StyleProperty::TextWrapMode(parley_text_wrap_mode(
+                    job.text_wrap_mode,
+                    job.nowrap,
+                )));
                 let mut layout: Layout<()> = builder.build(&job.text);
                 layout.break_all_lines(if job.nowrap {
                     None
@@ -8144,6 +8211,34 @@ mod tests {
             let o = indent_options_for_node(true, true, start).expect("combined applies");
             assert!(o.each_line && o.hanging);
         }
+    }
+
+    #[test]
+    fn word_break_break_all_rebreaks_narrow_container_text() {
+        // Text is initially shaped against the page width. `word-break` must
+        // still take effect when the containing block is narrower than that
+        // preshape width.
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let div = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display: block; width: 1px; word-break: break-all"),
+        );
+        let t = doc.append_text(div, "ab");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let layout = doc.nodes[t].text_layout().expect("text shaped");
+        assert_eq!(layout.len(), 2, "break-all text must wrap in a 1px block");
     }
 
     #[test]
