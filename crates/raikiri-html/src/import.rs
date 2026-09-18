@@ -25,6 +25,9 @@ const MAX_IMPORT_FETCHES: usize = 256;
 /// Bound the bytes introduced by successful import expansion. The original
 /// stylesheet is never truncated; imports beyond this budget stay opaque.
 const MAX_IMPORT_EXPANSION_BYTES: usize = 16 * 1024 * 1024;
+/// Bound cumulative response bytes before decoding or scanning them. This also
+/// limits work spent on responses that ultimately cannot be expanded.
+const MAX_IMPORT_RESPONSE_BYTES_TOTAL: usize = MAX_IMPORT_EXPANSION_BYTES;
 /// Avoid decoding one provider-controlled response before the expansion budget
 /// can reject it.
 const MAX_IMPORT_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
@@ -52,6 +55,8 @@ enum RuleEnd {
 pub(crate) struct ImportBudget {
     /// Total import fetches allowed for one parse operation, across all roots.
     fetches: usize,
+    /// Total provider response bytes admitted for import processing.
+    response_bytes: usize,
     /// Total bytes introduced by successful imports for one parse operation.
     expansion_bytes: usize,
 }
@@ -203,6 +208,8 @@ impl ImportExpander<'_> {
         }
         if self.chain.iter().any(|ancestor| ancestor == &requested_url)
             || self.budget.fetches >= MAX_IMPORT_FETCHES
+            || self.budget.response_bytes >= MAX_IMPORT_RESPONSE_BYTES_TOTAL
+            || self.budget.expansion_bytes >= MAX_IMPORT_EXPANSION_BYTES
         {
             return None;
         }
@@ -223,6 +230,16 @@ impl ImportExpander<'_> {
                 return None;
             }
         };
+        let Some(response_bytes) = self.budget.response_bytes.checked_add(fetched.bytes.len())
+        else {
+            self.budget.response_bytes = MAX_IMPORT_RESPONSE_BYTES_TOTAL;
+            return None;
+        };
+        if response_bytes > MAX_IMPORT_RESPONSE_BYTES_TOTAL {
+            self.budget.response_bytes = MAX_IMPORT_RESPONSE_BYTES_TOTAL;
+            return None;
+        }
+        self.budget.response_bytes = response_bytes;
         if fetched.bytes.len() > MAX_IMPORT_RESPONSE_BYTES {
             self.record_import_fallback(
                 requested_url,
@@ -1472,6 +1489,50 @@ mod tests {
             MAX_IMPORT_FETCHES,
             "independent stylesheet roots must share the document import budget"
         );
+    }
+
+    #[test]
+    fn shared_budget_stops_fetching_after_cumulative_response_limit() {
+        struct LargeProvider {
+            response: Bytes,
+            requests: Mutex<usize>,
+        }
+
+        impl NetworkProvider for LargeProvider {
+            fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+                *self.requests.lock().unwrap() += 1;
+                Ok(FetchedResource {
+                    bytes: self.response.clone(),
+                    content_type: Some("text/css".to_owned()),
+                    final_url: request.url,
+                    encoding: None,
+                })
+            }
+        }
+
+        let provider = LargeProvider {
+            response: Bytes::from(vec![b' '; MAX_IMPORT_RESPONSE_BYTES]),
+            requests: Mutex::new(0),
+        };
+        let mut warnings = Vec::new();
+        let mut budget = ImportBudget::default();
+        let source = r#"@import "a.css";"#;
+        let base = Url::parse("https://example.test/root.css").unwrap();
+
+        for _ in 0..3 {
+            let _ = expand_stylesheet_imports_with_budget(
+                source,
+                Some(&base),
+                None,
+                Some(&provider),
+                &mut warnings,
+                &mut budget,
+            );
+        }
+
+        assert_eq!(*provider.requests.lock().unwrap(), 2);
+        assert_eq!(budget.response_bytes, MAX_IMPORT_RESPONSE_BYTES_TOTAL);
+        assert_eq!(budget.expansion_bytes, MAX_IMPORT_EXPANSION_BYTES);
     }
 
     #[test]
