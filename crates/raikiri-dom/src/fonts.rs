@@ -19,6 +19,11 @@
 //! `crates/raikiri/tests/external_consumer.rs`.
 
 use parley::FontContext;
+use raikiri_style::{
+    Atom, ComputedValues, FontFaceRegistry, FontFaceRule, FontFaceSource, FontFaceStyle,
+    FontFaceWeight,
+};
+use smol_str::SmolStr;
 use std::path::{Path, PathBuf};
 
 /// [`build_wpt_font_ctx`] が個別 font file を読み込む際に許容する最大 byte 数。
@@ -1273,6 +1278,305 @@ fn collect_recursive(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// @font-face application — font selection integration.
+// ---------------------------------------------------------------------------
+
+/// Fetch one `src: url(...)` target for [`apply_font_faces`].
+///
+/// Returns the raw font bytes, or `None` when the URL is unavailable
+/// (network deny, missing file, policy rejection — the reason stays with the
+/// loader; [`apply_font_faces`] treats every `None` as "try the next
+/// source", fail-closed). Size capping is enforced by [`apply_font_faces`]
+/// itself ([`FONT_SIZE_CAP`]), not by implementations, so every loader gets
+/// the same bound.
+pub trait FontFaceLoader {
+    /// Load the bytes behind `url` (the raw `src: url(...)` string as
+    /// authored — server-absolute, relative, or `data:`; interpretation is
+    /// the implementation's job).
+    fn load(&self, url: &str) -> Option<Vec<u8>>;
+}
+
+/// What [`apply_font_faces`] did with one [`FontFaceRegistry`].
+///
+/// Family names are the `@font-face` `font-family` values as authored. A
+/// family lands in exactly one of the three lists — application is
+/// first-resolvable-source-wins per rule, so a family is never both applied
+/// and skipped.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FontFaceApplyReport {
+    /// Families whose bytes were registered into the `FontContext` under the
+    /// `@font-face` name (a `url(...)` source resolved and fontique
+    /// accepted it). Sorted for cross-process determinism (registry
+    /// iteration itself is `HashMap` order).
+    pub applied: Vec<String>,
+    /// `(face family, local target)` pairs whose alias was expanded into
+    /// computed `font-family` lists (a `local(...)` source named an
+    /// already-registered family). Sorted by face family, same determinism
+    /// rationale as [`Self::applied`].
+    pub aliased: Vec<(String, String)>,
+    /// Families with no resolvable source left (every source unavailable,
+    /// oversized, unsupported-container, or fontique-rejected). Sorted, same
+    /// rationale. These families keep their existing behavior — typically
+    /// the collection fallback — and never error.
+    pub skipped: Vec<String>,
+}
+
+/// `format(...)` hints that name a container this module cannot register
+/// (module doc scope: `.ttf` / `.otf` only, WOFF/WOFF2 deferred). A source
+/// carrying one of these is skipped without consulting the loader — the
+/// bytes would be unusable, so fetching them is pure cost. Matching is
+/// ASCII case-insensitive against the hint's first argument as parsed by
+/// `raikiri-style` (e.g. `format("woff2")`).
+const UNSUPPORTED_FONT_FORMATS: &[&str] = &["woff", "woff2"];
+
+/// Map a [`FontFaceWeight`] descriptor to the fontique
+/// override. `Range` keeps its lower bound — registration records one face,
+/// and the lower bound is the face's nominal weight (full range matching is
+/// the deferred matcher's job).
+fn font_face_weight_override(weight: FontFaceWeight) -> parley::fontique::FontWeight {
+    match weight {
+        FontFaceWeight::Normal => parley::fontique::FontWeight::NORMAL,
+        FontFaceWeight::Bold => parley::fontique::FontWeight::BOLD,
+        FontFaceWeight::Number(v) => parley::fontique::FontWeight::new(v),
+        FontFaceWeight::Range(lo, _) => parley::fontique::FontWeight::new(lo),
+        // Future descriptor variants (this enum is non-exhaustive) fall back
+        // to the spec initial — a registration override must always resolve
+        // to *some* weight, never error.
+        _ => parley::fontique::FontWeight::NORMAL,
+    }
+}
+
+/// Map a [`FontFaceStyle`] descriptor to the fontique
+/// override. `Oblique` drops its angles (the parser already did — see
+/// `raikiri-style`'s `font_face` module); `None` takes the engine default.
+fn font_face_style_override(style: FontFaceStyle) -> parley::fontique::FontStyle {
+    match style {
+        FontFaceStyle::Normal => parley::fontique::FontStyle::Normal,
+        FontFaceStyle::Italic => parley::fontique::FontStyle::Italic,
+        FontFaceStyle::Oblique => parley::fontique::FontStyle::Oblique(None),
+        // Same fail-closed rationale as the weight wildcard above.
+        _ => parley::fontique::FontStyle::Normal,
+    }
+}
+
+/// Seed `fonts` from an `@font-face` registry and prepare computed
+/// `font-family` lists for selection — the "resolved faces participate in
+/// font selection" half of `raikiri-spike-0vv.19.6` (parsing/registry is
+/// `raikiri-style`'s `font_face` module).
+///
+/// For each rule, sources are tried in author order (first resolvable wins,
+/// per CSS Fonts 4 §4.2's "user agent must ... using the first ... that it
+/// can successfully activate" — the download half; full cascade-time
+/// matching stays deferred):
+///
+/// - `url(...)`: skipped without loading when its `format(...)` hint names
+///   an [`UNSUPPORTED_FONT_FORMATS`] container; otherwise `loader.load(url)`
+///   bytes are size-capped ([`FONT_SIZE_CAP`]) and registered under the
+///   `@font-face` family name (with weight/style descriptor overrides).
+///   Bytes fontique rejects (`register_fonts` returns empty) fall through
+///   to the next source — a corrupt download never poisons the collection.
+/// - `local(name)`: when `name` already resolves in `fonts`, the face family
+///   is aliased by appending `name` to every computed `font-family` list
+///   that mentions the face family (after it, so an actually-registered
+///   face name still wins; idempotent — repeated application does not
+///   duplicate). Query-time fallback then finds the installed font through
+///   the ordinary family list, with no fontique alias API needed.
+///
+/// Fail-closed throughout: unavailable / oversized / rejected sources only
+/// land the family in [`FontFaceApplyReport::skipped`]; parsing, cascade,
+/// and layout never see an error. An empty registry is a no-op (returns an
+/// empty report without touching `fonts` or `computed`).
+///
+/// # Determinism
+///
+/// Registry iteration is `HashMap` order, so rules are applied in
+/// family-name-sorted order and every report list is sorted — two runs over
+/// the same registry produce the same collection state and the same report.
+/// Register the `url(...)` faces of one [`FontFaceRegistry`]
+/// into `fonts` — the download half of [`apply_font_faces`], split out so
+/// consumers that build several cascades from one document (the WPT harness
+/// builds one cascade per page) can register once and expand aliases per
+/// cascade via [`expand_font_face_aliases`].
+///
+/// Rules are visited in family-name-sorted order (registry iteration itself
+/// is `HashMap` order — see [`apply_font_faces`]'s "Determinism" section).
+/// Returns the applied family names, sorted. Everything [`apply_font_faces`]
+/// documents about `format(...)` filtering, size capping, and fail-closed
+/// fall-through applies here; `local(...)` sources are ignored by this
+/// function (they need no bytes — see [`expand_font_face_aliases`]).
+pub fn register_font_face_sources(
+    fonts: &mut FontContext,
+    faces: &FontFaceRegistry,
+    loader: &dyn FontFaceLoader,
+) -> Vec<String> {
+    use parley::fontique::{Blob, FontInfoOverride};
+    use std::sync::Arc;
+
+    let mut applied = Vec::new();
+    for (family, rule) in ordered_font_face_rules(faces) {
+        for source in &rule.src {
+            match source {
+                FontFaceSource::Local(_) => {}
+                FontFaceSource::Url { url, format } => {
+                    if format.as_ref().is_some_and(|f| {
+                        UNSUPPORTED_FONT_FORMATS
+                            .iter()
+                            .any(|u| f.eq_ignore_ascii_case(u))
+                    }) {
+                        continue;
+                    }
+                    let Some(bytes) = loader.load(url.as_str()) else {
+                        continue;
+                    };
+                    if bytes.len() as u64 > FONT_SIZE_CAP {
+                        continue;
+                    }
+                    let blob = Blob::new(Arc::new(bytes) as _);
+                    let registered = fonts.collection.register_fonts(
+                        blob,
+                        Some(FontInfoOverride {
+                            family_name: Some(family.as_str()),
+                            width: None,
+                            style: Some(font_face_style_override(rule.style)),
+                            weight: Some(font_face_weight_override(rule.weight)),
+                            axes: None,
+                        }),
+                    );
+                    if registered.is_empty() {
+                        continue;
+                    }
+                    applied.push(family.to_string());
+                    break;
+                }
+                // Future source kinds (this enum is non-exhaustive) are
+                // skipped — an unrecognized source never resolves, so the
+                // rule falls through to its next source.
+                _ => continue,
+            }
+        }
+    }
+    applied.sort();
+    applied
+}
+
+/// Expand the `local(...)` aliases of one [`FontFaceRegistry`]
+/// into computed `font-family` lists — the selection half of
+/// [`apply_font_faces`], split out for multi-cascade consumers (see
+/// [`register_font_face_sources`]).
+///
+/// For each rule, the first `local(...)` source that already resolves in
+/// `fonts` is appended (after the face family) to every computed list
+/// mentioning the face family, via the idempotent
+/// `expand_font_face_alias` helper below. Returns the applied
+/// `(face family, local target)` pairs, sorted by face family. `url(...)`
+/// sources are ignored by this function (they resolve through registration,
+/// not aliasing).
+pub fn expand_font_face_aliases(
+    computed: &mut [ComputedValues],
+    faces: &FontFaceRegistry,
+    fonts: &mut FontContext,
+) -> Vec<(String, String)> {
+    let mut aliased = Vec::new();
+    for (family, rule) in ordered_font_face_rules(faces) {
+        for source in &rule.src {
+            match source {
+                FontFaceSource::Local(name) => {
+                    if fonts.collection.family_id(name.as_str()).is_some() {
+                        expand_font_face_alias(computed, family.as_str(), name.as_str());
+                        aliased.push((family.to_string(), name.to_string()));
+                        break;
+                    }
+                }
+                FontFaceSource::Url { .. } => {}
+                // Same fail-closed rationale as the register wildcard: a
+                // future source kind never resolves here.
+                _ => continue,
+            }
+        }
+    }
+    aliased.sort();
+    aliased
+}
+
+/// Seed `fonts` from an `@font-face` registry and prepare computed
+/// `font-family` lists for selection — the "resolved faces participate in
+/// font selection" half of `raikiri-spike-0vv.19.6` (parsing/registry is
+/// `raikiri-style`'s `font_face` module).
+///
+/// This is [`register_font_face_sources`] + [`expand_font_face_aliases`] in
+/// one call for consumers with a single cascade. For each rule, sources are
+/// tried in author order (first resolvable wins, per CSS Fonts 4 §4.2's
+/// "user agent must ... using the first ... that it can successfully
+/// activate" — the download half; full cascade-time matching stays
+/// deferred). See the two split functions' docs for the per-kind semantics.
+///
+/// Fail-closed throughout: unavailable / oversized / rejected sources only
+/// land the family in [`FontFaceApplyReport::skipped`]; parsing, cascade,
+/// and layout never see an error. An empty registry is a no-op (returns an
+/// empty report without touching `fonts` or `computed`).
+///
+/// # Determinism
+///
+/// Registry iteration is `HashMap` order, so rules are applied in
+/// family-name-sorted order and every report list is sorted — two runs over
+/// the same registry produce the same collection state and the same report.
+pub fn apply_font_faces(
+    fonts: &mut FontContext,
+    computed: &mut [ComputedValues],
+    faces: &FontFaceRegistry,
+    loader: &dyn FontFaceLoader,
+) -> FontFaceApplyReport {
+    let mut report = FontFaceApplyReport::default();
+    if faces.is_empty() {
+        return report;
+    }
+    report.applied = register_font_face_sources(fonts, faces, loader);
+    report.aliased = expand_font_face_aliases(computed, faces, fonts);
+    let mut ordered: Vec<String> = ordered_font_face_rules(faces)
+        .iter()
+        .map(|(family, _)| family.to_string())
+        .collect();
+    ordered.sort();
+    for family in ordered {
+        if !report.applied.contains(&family)
+            && !report.aliased.iter().any(|(face, _)| face == &family)
+        {
+            report.skipped.push(family);
+        }
+    }
+    report.skipped.sort();
+    report
+}
+
+/// Registry rules in family-name-sorted order — the shared deterministic
+/// visit order for [`register_font_face_sources`],
+/// [`expand_font_face_aliases`], and [`apply_font_faces`]'s skipped
+/// computation.
+fn ordered_font_face_rules(faces: &FontFaceRegistry) -> Vec<(&SmolStr, &FontFaceRule)> {
+    let mut ordered: Vec<(&SmolStr, &FontFaceRule)> = faces.iter().collect();
+    ordered.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+    ordered
+}
+
+/// Append `target` to every computed `font-family` list mentioning `face`
+/// (after it — a natively-registered `face` keeps precedence; skips lists
+/// that already contain `target`, so repeated application is idempotent).
+fn expand_font_face_alias(computed: &mut [ComputedValues], face: &str, target: &str) {
+    use std::sync::Arc;
+    for cv in computed.iter_mut() {
+        if !cv.font_family.iter().any(|a| a.0.as_str() == face) {
+            continue;
+        }
+        if cv.font_family.iter().any(|a| a.0.as_str() == target) {
+            continue;
+        }
+        let mut expanded = cv.font_family.as_ref().clone();
+        expanded.push(Atom(SmolStr::new(target)));
+        cv.font_family = Arc::new(expanded);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2452,5 +2756,219 @@ mod tests {
             format!("{}", FontWarn::RegisterEmpty { path: p }),
             "skipping /tmp/fake.ttf: no family registered"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // apply_font_faces — @font-face selection integration.
+    // ------------------------------------------------------------------
+
+    /// Loader that serves fixed bytes for any URL (records what it saw).
+    struct MapLoader {
+        bytes: Vec<u8>,
+        seen: std::cell::RefCell<Vec<String>>,
+    }
+
+    impl MapLoader {
+        fn refusing() -> Self {
+            Self {
+                bytes: Vec::new(),
+                seen: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+        fn serving(bytes: Vec<u8>) -> Self {
+            Self {
+                bytes,
+                seen: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl super::FontFaceLoader for MapLoader {
+        fn load(&self, url: &str) -> Option<Vec<u8>> {
+            self.seen.borrow_mut().push(url.to_string());
+            if self.bytes.is_empty() {
+                return None;
+            }
+            Some(self.bytes.clone())
+        }
+    }
+
+    /// Real WPT font bytes (target/wpt/fonts/Ahem.ttf) for the positive
+    /// registration paths. fontique rejects synthetic headers, so only real
+    /// bytes prove `applied`/`aliased`. scripts/wpt/fetch.sh 未実行時は
+    /// skip (early return — `build_wpt_font_ctx_registers_generic_serif`
+    /// と同じ規約; CI は fetch なしで走るため hard-require 禁止).
+    fn wpt_ahem_bytes() -> Option<Vec<u8>> {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok()?;
+        let path = std::path::PathBuf::from(&manifest_dir)
+            .join("..")
+            .join("..")
+            .join("target")
+            .join("wpt")
+            .join("fonts")
+            .join("Ahem.ttf");
+        match std::fs::read(&path) {
+            Ok(bytes) => Some(bytes),
+            Err(_) => {
+                eprintln!(
+                    "skipping @font-face positive-path test: Ahem.ttf not found under {}                      (run scripts/wpt/fetch.sh first)",
+                    path.display()
+                );
+                None
+            }
+        }
+    }
+
+    fn computed_with_family(family: &str) -> ComputedValues {
+        let mut cv = ComputedValues::initial();
+        cv.font_family = std::sync::Arc::new(vec![Atom(SmolStr::new(family))]);
+        cv
+    }
+
+    #[test]
+    fn apply_font_faces_empty_registry_is_noop() {
+        let mut fonts = FontContext::new();
+        let mut computed = vec![computed_with_family("serif")];
+        let before = computed.clone();
+        let faces = FontFaceRegistry::new();
+        let report =
+            super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
+        assert_eq!(report, super::FontFaceApplyReport::default());
+        assert_eq!(computed, before, "empty registry must not touch computed");
+    }
+
+    #[test]
+    fn apply_font_faces_unavailable_url_is_skipped_fail_closed() {
+        let mut fonts = FontContext::new();
+        let mut computed = vec![computed_with_family("Custom")];
+        let before = computed.clone();
+        let faces = FontFaceRegistry::from_source(
+            "@font-face { font-family: Custom; src: url(missing.ttf); }",
+        );
+        assert_eq!(faces.len(), 1);
+        let report =
+            super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
+        assert!(report.applied.is_empty());
+        assert!(report.aliased.is_empty());
+        assert_eq!(report.skipped, vec!["Custom".to_string()]);
+        assert_eq!(computed, before, "fail-closed: computed untouched");
+    }
+
+    #[test]
+    fn apply_font_faces_garbage_bytes_are_rejected_fail_closed() {
+        let mut fonts = FontContext::new();
+        let mut computed = vec![computed_with_family("Custom")];
+        let before = computed.clone();
+        let faces =
+            FontFaceRegistry::from_source("@font-face { font-family: Custom; src: url(bad.ttf); }");
+        // Not a font at all — fontique must accept zero families from it.
+        let loader = MapLoader::serving(b"definitely not a font".to_vec());
+        let report = super::apply_font_faces(&mut fonts, &mut computed, &faces, &loader);
+        assert_eq!(report.skipped, vec!["Custom".to_string()]);
+        assert_eq!(computed, before);
+    }
+
+    #[test]
+    fn apply_font_faces_registers_url_bytes_under_face_name() {
+        let Some(ahem) = wpt_ahem_bytes() else {
+            return;
+        };
+        let mut fonts = FontContext::new();
+        let mut computed = vec![computed_with_family("Custom")];
+        let faces = FontFaceRegistry::from_source(
+            "@font-face { font-family: Custom; src: url(custom.ttf); }",
+        );
+        let loader = MapLoader::serving(ahem);
+        let report = super::apply_font_faces(&mut fonts, &mut computed, &faces, &loader);
+        assert_eq!(report.applied, vec!["Custom".to_string()]);
+        assert!(report.skipped.is_empty());
+        assert!(
+            fonts.collection.family_id("Custom").is_some(),
+            "registered bytes must resolve under the @font-face name"
+        );
+        // url-registered faces need no alias expansion.
+        assert!(report.aliased.is_empty());
+        assert_eq!(computed.len(), 1);
+    }
+
+    #[test]
+    fn apply_font_faces_woff2_format_skips_without_loading() {
+        let mut fonts = FontContext::new();
+        let mut computed = vec![computed_with_family("Custom")];
+        let faces = FontFaceRegistry::from_source(
+            "@font-face { font-family: Custom; src: url(custom.woff2) format(\"woff2\"); }",
+        );
+        let loader = MapLoader::serving(b"unread".to_vec());
+        let report = super::apply_font_faces(&mut fonts, &mut computed, &faces, &loader);
+        assert_eq!(report.skipped, vec!["Custom".to_string()]);
+        assert!(
+            loader.seen.borrow().is_empty(),
+            "unsupported containers must not even be fetched"
+        );
+    }
+
+    #[test]
+    fn apply_font_faces_local_alias_expands_computed_lists() {
+        let Some(ahem) = wpt_ahem_bytes() else {
+            return;
+        };
+        let mut fonts = FontContext::new();
+        // Seed a resolvable family first (standalone registration, no
+        // @font-face involved).
+        {
+            use parley::fontique::{Blob, FontInfoOverride};
+            let blob = Blob::new(std::sync::Arc::new(ahem) as _);
+            let registered = fonts.collection.register_fonts(
+                blob,
+                Some(FontInfoOverride {
+                    family_name: Some("RealFam"),
+                    width: None,
+                    style: None,
+                    weight: None,
+                    axes: None,
+                }),
+            );
+            assert!(!registered.is_empty());
+        }
+        let mut computed = vec![computed_with_family("AliasFam")];
+        let faces = FontFaceRegistry::from_source(
+            "@font-face { font-family: AliasFam; src: local(RealFam); }",
+        );
+        let report =
+            super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
+        assert_eq!(
+            report.aliased,
+            vec![("AliasFam".to_string(), "RealFam".to_string())]
+        );
+        let names: Vec<&str> = computed[0]
+            .font_family
+            .iter()
+            .map(|a| a.0.as_str())
+            .collect();
+        assert_eq!(names, vec!["AliasFam", "RealFam"]);
+        // Idempotent — a second application must not duplicate.
+        let again =
+            super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
+        let names: Vec<&str> = computed[0]
+            .font_family
+            .iter()
+            .map(|a| a.0.as_str())
+            .collect();
+        assert_eq!(names, vec!["AliasFam", "RealFam"]);
+        assert_eq!(again.aliased.len(), 1);
+    }
+
+    #[test]
+    fn apply_font_faces_unknown_local_is_skipped() {
+        let mut fonts = FontContext::new();
+        let mut computed = vec![computed_with_family("AliasFam")];
+        let before = computed.clone();
+        let faces = FontFaceRegistry::from_source(
+            "@font-face { font-family: AliasFam; src: local(NoSuchFamilyAnywhere); }",
+        );
+        let report =
+            super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
+        assert_eq!(report.skipped, vec!["AliasFam".to_string()]);
+        assert_eq!(computed, before);
     }
 }

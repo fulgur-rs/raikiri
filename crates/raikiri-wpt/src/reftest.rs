@@ -1478,12 +1478,30 @@ fn render_raikiri_pages_inner(
         authored_page_viewport(&html, width as f32, height as f32);
     let html = expand_viewport_units(&html, viewport_width, viewport_height);
     let mut uncascaded = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
+    // @font-face preparation (raikiri-spike-0vv.19.6): register `url(...)`
+    // faces into the font context once, then expand `local(...)` aliases
+    // into every cascade built below. Without @font-face rules both calls
+    // are no-ops (empty registry early-returns).
+    let font_face_tree = raikiri::build_rule_tree(&uncascaded);
+    let mut font_ctx = resolve_font_ctx();
+    if let Some(loader) = WptFontLoader::discover() {
+        raikiri_dom::register_font_face_sources(
+            &mut font_ctx,
+            font_face_tree.font_faces(),
+            &loader,
+        );
+    }
     let mut first_query = PageContextQuery::default();
     first_query.is_first = true;
     first_query.is_right = true;
     first_query.is_left = false;
-    let default_cascade =
+    let mut default_cascade =
         build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &first_query);
+    raikiri_dom::expand_font_face_aliases(
+        &mut default_cascade.computed,
+        font_face_tree.font_faces(),
+        &mut font_ctx,
+    );
     // Page progression follows the root direction: in RTL the first page is
     // the left/verso page, while LTR starts on the right/recto page.
     let direction_node = {
@@ -1526,8 +1544,13 @@ fn render_raikiri_pages_inner(
     // `:left` page cascade during the initial layout pass.  Reusing the
     // provisional default cascade would leave the first page on `:right`
     // margins whenever the two selectors differ.
-    let first_cascade =
+    let mut first_cascade =
         build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &first_query);
+    raikiri_dom::expand_font_face_aliases(
+        &mut first_cascade.computed,
+        font_face_tree.font_faces(),
+        &mut font_ctx,
+    );
 
     // Keep the established 800×600 (or caller-supplied) harness dimensions as
     // the fallback.  Only an authored page size changes the paper box.
@@ -1536,11 +1559,15 @@ fn render_raikiri_pages_inner(
     } else {
         fallback_page_box
     };
+    // `font_ctx` is still needed below (fresh-cascade expansion, per-slice
+    // expansion, relayout), so the layout passes get clones — cheaper than
+    // the fresh `resolve_font_ctx()` builds these replaced (no file re-read,
+    // no re-registration).
     let provisional_slices = layout_pages(
         &mut uncascaded.dom,
         &first_cascade,
         first_page_box,
-        resolve_font_ctx(),
+        font_ctx.clone(),
     )
     .map_err(|e| format!("layout: {e:?}"))?;
     // A first-page-only layout cannot know that a later `@page` context has a
@@ -1598,13 +1625,18 @@ fn render_raikiri_pages_inner(
     // parse/layout pass.
     let (mut uncascaded, slices) = if geometry_varies {
         let mut fresh = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
-        let fresh_cascade =
+        let mut fresh_cascade =
             build_cascaded_with_media_context_for_page(&fresh, &media_context, &first_query);
+        raikiri_dom::expand_font_face_aliases(
+            &mut fresh_cascade.computed,
+            font_face_tree.font_faces(),
+            &mut font_ctx,
+        );
         let fresh_slices = layout_pages_with_page_geometry(
             &mut fresh.dom,
             &fresh_cascade,
             first_page_box,
-            resolve_font_ctx(),
+            font_ctx.clone(),
             &page_steps,
             &page_widths,
         )
@@ -1629,8 +1661,13 @@ fn render_raikiri_pages_inner(
             slice.page_index % 2 == 1
         };
         query.is_right = !query.is_left;
-        let cascade =
+        let mut cascade =
             build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &query);
+        raikiri_dom::expand_font_face_aliases(
+            &mut cascade.computed,
+            font_face_tree.font_faces(),
+            &mut font_ctx,
+        );
         let paired_page_increment = if query.is_right {
             let mut paired_query = query.clone();
             paired_query.is_first = false;
@@ -1671,7 +1708,7 @@ fn render_raikiri_pages_inner(
                 &cascade,
                 page_width,
                 page_box.width,
-                resolve_font_ctx(),
+                font_ctx.clone(),
             );
         }
         let active_page_name = slice.page_name.clone();
@@ -1713,6 +1750,67 @@ fn render_raikiri_pages_inner(
     }
     Ok(RenderedDocument { pages })
 }
+/// Load `@font-face` `src: url(...)` bytes from the WPT tree.
+///
+/// Only server-absolute URLs (`/fonts/Ahem.ttf`) resolve: relative URLs
+/// need the test file's base URL, which the `render_*` entry points don't
+/// carry, and `data:` URLs need a decoder this harness doesn't have — both
+/// stay `None` (fail-closed, recorded as `skipped` by the caller). Reads
+/// are containment-checked (canonical path must stay under `root`) and
+/// size-gated; the final cap is enforced again by
+/// `raikiri_dom::apply_font_faces`' caller contract.
+struct WptFontLoader {
+    root: PathBuf,
+}
+
+impl WptFontLoader {
+    /// Find the WPT root: first candidate containing `fonts/Ahem.ttf`.
+    /// The manifest-based `target/wpt` candidate comes first (same anchor
+    /// `hello_world_vrt` uses); CWD-relative candidates cover ad-hoc runs.
+    /// `None` when no candidate resolves — the caller then skips
+    /// registration entirely (today's behavior, unchanged).
+    fn discover() -> Option<Self> {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let candidates = [
+            manifest.join("../../target/wpt"),
+            PathBuf::from("target/wpt"),
+            PathBuf::from("wpt"),
+            PathBuf::from("../wpt"),
+            PathBuf::from("../../wpt"),
+            manifest.join("../../wpt"),
+        ];
+        candidates.into_iter().find_map(|root| {
+            if root.join("fonts").join("Ahem.ttf").is_file() {
+                Some(Self { root })
+            } else {
+                None
+            }
+        })
+    }
+}
+
+impl raikiri_dom::FontFaceLoader for WptFontLoader {
+    fn load(&self, url: &str) -> Option<Vec<u8>> {
+        /// Mirror of `raikiri_dom::fonts`' internal size cap (that module
+        /// enforces it again post-load; this pre-check avoids allocating a
+        /// huge buffer for a file that would be rejected anyway).
+        const LOADER_SIZE_CAP: u64 = 100 * 1024 * 1024;
+        let rel = url.strip_prefix('/')?;
+        if rel.is_empty() {
+            return None;
+        }
+        let root = std::fs::canonicalize(&self.root).ok()?;
+        let path = std::fs::canonicalize(self.root.join(rel)).ok()?;
+        if !path.starts_with(&root) {
+            return None;
+        }
+        if path.metadata().ok()?.len() > LOADER_SIZE_CAP {
+            return None;
+        }
+        std::fs::read(&path).ok()
+    }
+}
+
 fn resolve_font_ctx() -> raikiri::FontContext {
     // Try WPT bundled fonts: `<workspace>/wpt/fonts` or `<workspace>/../wpt/fonts`
     // Fallback to system fonts.

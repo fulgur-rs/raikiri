@@ -12,6 +12,7 @@ use cssparser::{Parser, ParserInput, StyleSheetParser, Token};
 use selectors::parser::{ParseRelative, Selector, SelectorList};
 
 use crate::counter_style::{CounterStyleRegistry, parse_counter_style_rules};
+use crate::font_face::{FontFaceRegistry, parse_font_face_rules};
 use crate::media::{MediaCondition, MediaRule, parse_media_condition};
 use crate::page::{
     PageBlockBody, PageRule, PageSelector, parse_page_declaration_block, parse_page_prelude,
@@ -476,6 +477,23 @@ pub struct RuleTree {
     /// 「同じ source 文字列を追加でもう一度 `counter_style` 側の entry point に
     /// 渡す」配線のみを担い、2 つの parser を 1 pass に融合する話ではない。
     pub(crate) counter_styles: CounterStyleRegistry,
+    /// `@font-face` at-rule の family-name → rule registry。
+    ///
+    /// [`RuleTree::add_stylesheet`] が呼ばれるたび (origin を問わず)、同じ
+    /// 文字列に対して [`crate::font_face::parse_font_face_rules`] を
+    /// 独立にもう一度走らせ、得られた各 [`crate::font_face::FontFaceRule`]
+    /// を呼び出し時の `origin` と一緒に
+    /// [`FontFaceRegistry::insert_with_origin`] へ渡す。同名 rule 間の
+    /// 勝敗は `FontFaceRegistry` 自体が origin ごとに追跡して解決する
+    /// ([`FontFaceRegistry`] 型 doc の解決表参照) — standard cascade
+    /// (origin が第一基準、同一 origin 内は source order) を
+    /// [`crate::cascade::cascade_rank`] ベースの rank
+    /// 比較でそのまま実装しており、呼び出し側
+    /// (`add_stylesheet`) は origin でフィルタする必要がない。
+    ///
+    /// `style_rules` 用の parser とは意図的に別 pass ([`crate::font_face`] module doc
+    /// の "RuleTree wiring" 節参照 — [`crate::counter_style`] と同じ設計)。
+    pub(crate) font_faces: FontFaceRegistry,
     /// Generic records for at-rules that do not use the `@page` compatibility
     /// view.
     ///
@@ -548,6 +566,31 @@ impl RuleTree {
         &self.counter_styles
     }
 
+    /// `@font-face` registry への read-only accessor。
+    ///
+    /// [`RuleTree::add_stylesheet`] が呼ばれるたびに (origin を問わず) populate
+    /// される — 同名 rule 間の origin 優先順位の解決は `FontFaceRegistry`
+    /// 自体が担う (field doc 参照)。空の `RuleTree` ([`RuleTree::empty`]) では
+    /// [`FontFaceRegistry::is_empty`] が `true`。`src: url(...)` の fetch と
+    /// face 選択 (matching) はこの registry を読む consumer 側の責務。
+    ///
+    /// # `font_faces` field 自体への到達不能性
+    ///
+    /// `style_rules`/[`RuleTree::style_rules`] と同じ
+    /// pin — `font_faces` field は `pub(crate)` で、external crate から
+    /// 届くのはこの accessor だけである。以下は field 名そのものが private で
+    /// あることの compile-fail pin — `pub` に戻れば compile が通るようになる:
+    ///
+    /// ```compile_fail
+    /// use raikiri_style::RuleTree;
+    ///
+    /// let tree = RuleTree::empty();
+    /// let _ = &tree.font_faces;
+    /// ```
+    pub fn font_faces(&self) -> &FontFaceRegistry {
+        &self.font_faces
+    }
+
     /// Generic retained records for at-rules outside the `@page`
     /// compatibility view.
     ///
@@ -581,6 +624,7 @@ impl RuleTree {
             style_rules: Vec::new(),
             page_rules: Vec::new(),
             counter_styles: CounterStyleRegistry::new(),
+            font_faces: FontFaceRegistry::new(),
             opaque_at_rules: Vec::new(),
             media_rules: Vec::new(),
             next_style_order: 0,
@@ -726,6 +770,9 @@ impl RuleTree {
         }
         for rule in parse_counter_style_rules(source) {
             self.counter_styles.insert_with_origin(rule, origin);
+        }
+        for rule in parse_font_face_rules(source) {
+            self.font_faces.insert_with_origin(rule, origin);
         }
         self.next_style_order = style_order;
     }
