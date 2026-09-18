@@ -1,29 +1,29 @@
-# scripts/lib/doc_pointer_lint_baseline.txt — pinned ratchet baseline for
-# scripts/doc-pointer-lint.sh (bd raikiri-spike-luxp).
+# scripts/lib/doc_pointer_lint_baseline.txt — pinned maximum-count baseline for
+# scripts/doc-pointer-lint.sh (the earlier change).
 #
 # Count = doc-comment (`///` / `//!`) bare (non-intra-doc-link) `crate::…`
 # pointer occurrences across crates/*/src/**/*.rs, AFTER excluding:
-#   - opt-out 1: `(removed)` marker on the same line
-#   - opt-out 2: pointer path contains a `tests::` segment
+#   - explicit exemption 1: `(removed)` marker on the same line
+#   - explicit exemption 2: pointer path contains a `tests::` segment
 #   - an explicit `doc-pointer-lint:ignore: <reason>` marker
 # This is the exact set scripts/lib/doc_pointer_lint.py calls
 # `doc_bare_crate_ratchet`. New occurrences must not push the count above
 # this baseline (drift-prevention, not a target to reach — see AGENTS.md's
-# `crate::…` pointer 節 and bd raikiri-spike-luxp for why "何もしない" was
-# rejected: this exact count grew from 11 (bd raikiri-spike-ulzv's landing
+# `crate::…` pointer 節 and the earlier change for why "何もしない" was
+# rejected: this exact count grew from 11 (the earlier change's merge
 # commit f1cb197) to 36 across the ~2 weeks/dozens of merges before this
 # baseline was pinned).
 #
 # Regenerate the current value with:
 #   python3 scripts/lib/doc_pointer_lint.py --repo-root "$(git rev-parse --show-toplevel)" --print-count
 # Only lower this file's value as a deliberate baseline-lowering sweep
-# (file a bd issue for that work — see bd raikiri-spike-luxp's "existing分
-# の一括変換は... 別途 follow-up task"). Do not raise it to make a
+# (file a design note for that work and record the planned bulk conversion
+# separately). Do not raise it to make a
 # regression pass; fix the regression or mark it, per the roles this
 # script prints.
 #
 # This branch's own count can drift out from under you: this repo runs
-# many parallel worktree-per-task sessions, and a foreign merge landing on
+# many parallel worktree-per-task sessions, and a merge from another branch on
 # the base branch after this baseline was pinned can add bare `crate::…`
 # doc pointers this branch never touched. If a rebase/merge onto a newer
 # base makes role 2 fail, re-run --print-count first — if the new count's
@@ -31,51 +31,51 @@
 # `doc-pointer-lint:ignore:` those specific lines (or escalate) rather
 # than raising this number to make the failure disappear.
 #
-# 2026-08-10 deliberate lowering sweep (bd raikiri-spike-hrau, 36 -> 22):
+# 2026-08-10 deliberate lowering sweep (the earlier change, 36 -> 22):
 # at re-measurement time the count had already drifted to 37 (untouched
-# foreign-merge drift, tracked separately as bd raikiri-spike-u4uu, not
+# changes from merges on another branch, tracked separately as the earlier change, not
 # addressed here) — this sweep's own -15 delta is against that 37, not the
 # stale 36 this file previously recorded, so the new pinned value (22)
 # does not equal 36-15. Of the 37, 15 sites (~40%) were confirmed
 # (`わざと壊して確かめる` — deliberately broke an intra-doc link at one
 # #[test]-item-doc site and one fn-body-local-item-doc site, both inside
 # #[cfg(test)] mod tests, and RUSTDOCFLAGS="-D warnings" cargo doc stayed
-# silent both times) to be opt-out 3 (rustdoc-blind position): all 15 sit
+# silent both times) to be explicit exemption 3 (not checked by rustdoc position): all 15 sit
 # inside a `#[cfg(test)] mod tests` block, 14 attached directly to a
 # `#[test]` fn and 1 nested inside another fn's body. All 15 are now
 # marked `doc-pointer-lint:ignore:` at the site itself rather than
-# excluded here — this shrinks the ratchet to debt not identified as
-# rustdoc-blind by this sweep's predicate (walk from doc block to the
+# excluded here — this shrinks the maximum-count guard to debt not identified as
+# not checked by rustdoc by this sweep's predicate (walk from doc block to the
 # item it attaches to, via #[test] and fn-body-local only), closing the
-# risk that a future contributor "reduces the ratchet count" by
+# risk that a future contributor "reduces the maximum-count value" by
 # converting one of these bare pointers to a bracket link, which would
 # look verified but never actually be checked by rustdoc at that position
-# (the same hazard bd raikiri-spike-vyse's role 1 exists to close for
+# (the same hazard the earlier change's role 1 exists to close for
 # plain `//` comments, reproduced here at a different position).
 #
-# 2026-08-10 block-wide re-scan (bd raikiri-spike-csmj, 22 -> 21): hrau's
-# sweep above classified opt-out 3 by walking from each doc block to the
+# 2026-08-10 block-wide re-scan (the earlier change, 22 -> 21): baseline cleanup's
+# sweep above classified explicit exemption 3 by walking from each doc block to the
 # item it directly attaches to (via #[test] or fn-body-local only) — not
-# the true rustdoc-blind boundary, which is the *whole* `#[cfg(test)] mod
+# the true not checked by rustdoc boundary, which is the *whole* `#[cfg(test)] mod
 # tests` block (a non-#[test] mod-level helper inside such a mod, e.g. a
 # private fn used only by tests in that mod, is equally invisible to a
 # normal `cargo doc` build, since `#[cfg(test)]` excludes the whole module
-# unless built with `--cfg test`). csmj re-scanned every `#[cfg(test)]
+# unless built with `--cfg test`). block-wide scan re-scanned every `#[cfg(test)]
 # mod …` block in `crates/*/src/**/*.rs` — every such block found (named
 # `tests` plus several dozen differently-named ones, e.g. `flags_tests`,
 # `stylesheets_tests`, `pagebox_px_baseline_tests`; a precise block/name
 # count isn't recorded here since ad hoc re-counts by different methods
-# disagreed by a few, and the census total isn't load-bearing for the
+# disagreed by a few, and the scan total isn't load-bearing for the
 # conclusion below — the line-position argument is);
 # confirmed no same-line `#[cfg(test)] mod x {}` or `cfg(all(test, …))` /
 # `cfg(any(test, …))` form exists in this tree) — against every *bare*
-# `crate::…` doc pointer this script currently reports as ratchet-relevant
+# `crate::…` doc pointer this script currently reports as guard-relevant
 # (unexcluded) — result: *0* additional sites. Every one of that day's
-# 21 ratchet-relevant occurrences sits on a line strictly before the
+# 21 guard-relevant occurrences sits on a line strictly before the
 # start of the (only, or first) `#[cfg(test)] mod` block in its file, so
 # none are inside any test module at all — this is a plain line-number
 # comparison, not dependent on any brace-matching. The block-wide
-# rustdoc-blindness premise itself was independently re-confirmed
+# not checked by rustdocness premise itself was independently re-confirmed
 # (not just assumed): breaking the intra-doc link on a non-#[test]
 # mod-level helper already inside `#[cfg(test)] mod tests`
 # (`crates/raikiri-style/src/page.rs`'s `margin_px`, ~L4456) left
@@ -83,61 +83,61 @@
 # silent, while breaking a same-crate production-code intra-doc link as a
 # control (`page.rs`'s `StyleRule` doc, L169, outside any `#[cfg(test)]`)
 # reliably produced `error: unresolved link to ...` — both reverted
-# before commit, neither landed. So hrau's item-local predicate, though
+# before commit, neither landed. So baseline cleanup's item-local predicate, though
 # narrower than the true boundary in principle, empirically already
-# covered every *bare* pointer opt-out-3 site that exists in this tree;
+# covered every *bare* pointer explicit exemption-3 site that exists in this tree;
 # there is currently no known-but-unmarked bare-pointer debt of this
 # kind. (This does not mean the block-wide boundary is moot in general —
-# see bd raikiri-spike-csmj's follow-up bd raikiri-spike-gq7x: two
+# see the earlier follow-up note: two
 # already-*linked* `crate::…` pointers on non-#[test] mod-level helpers
 # inside this exact `page.rs` `#[cfg(test)] mod tests` block
 # — `specified_layer_residue` ~L3669 and `margin_px` ~L4456 itself — are
-# just as rustdoc-blind as any bare pointer would be there, but role 2
+# just as not checked by rustdoc as any bare pointer would be there, but role 2
 # only ever counts *bare* spans, so a pointer that was already written as
-# a link is neither counted against this ratchet nor markable via
+# a link is neither counted against this maximum-count guard nor markable via
 # `doc-pointer-lint:ignore:` — a different, currently-uncounted hazard
-# csmj found but did not fix, being out of this script's role-2 shape.)
+# block-wide scan found but did not fix, being out of this script's role-2 shape.)
 #
-# The 22 -> 21 single-count drop pinned below is NOT from csmj marking
-# anything (it marked zero new sites) — it is ordinary foreign-merge
+# The 22 -> 21 single-count drop pinned below is NOT from block-wide scan marking
+# anything (it marked zero new sites) — it is ordinary changes from another branch
 # drift of the kind this file's "can drift out from under you" section
-# above already describes: bd raikiri-spike-f7vg (commit 78fe255, merged
-# a8aa927), landed after hrau's 22-pin, rewrote a doc comment in
+# above already describes: the earlier change (commit 78fe255, merged
+# a8aa927), landed after baseline cleanup's 22-pin, rewrote a doc comment in
 # `crates/raikiri-style/src/counter_style.rs` and in doing so deleted a
 # bare `crate::ruletree` doc-comment line outright (not converted to a
-# link — just removed) — unrelated to opt-out-3 debt either way. csmj
+# link — just removed) — unrelated to explicit exemption-3 debt either way. block-wide scan
 # re-measured via `--print-count` and re-pinned to that measured value
-# rather than assuming hrau's 22 still held, per this file's own
+# rather than assuming baseline cleanup's 22 still held, per this file's own
 # "Regenerate the current value with --print-count" guidance above.
 #
-# 2026-08-10 gq7x: the "currently-uncounted hazard" the csmj paragraph
+# 2026-08-10 role 4: the "currently-uncounted hazard" the block-wide scan paragraph
 # above describes (already-*linked* crate:: pointers on non-#[test]
 # mod-level helpers inside a #[cfg(test)] mod tests block) is resolved as
-# of this entry — NOT via this ratchet (this pin is unchanged at 21; see
+# of this entry — NOT via this maximum-count guard (this pin is unchanged at 21; see
 # below for why), via two independent, concurrently-worked fixes that
-# landed on top of each other (same base commit ba5fb5d, two separate
+# were applied on top of each other (same base commit ba5fb5d, two separate
 # worktrees, rebased together rather than one seeing the other's work
-# live): bd raikiri-spike-o9h6 demoted 7 sites of this shape
+# live): the earlier change demoted 7 sites of this shape
 # (cascade.rs x4, page.rs x1, property.rs x1, specified.rs x1 — all
 # #[test]-item docs referencing production code, the exact position
-# class bd raikiri-spike-hrau already confirmed rustdoc-blind) to bare
-# code spans with `doc-pointer-lint:ignore:` markers; gq7x independently
+# class the earlier change already confirmed not checked by rustdoc) to bare
+# code spans with `doc-pointer-lint:ignore:` markers; role 4 independently
 # found and fixed the same 7 via its own new detector (role 4, below)
-# plus the *2 sites this bd issue actually names*
+# plus the *2 sites this design note actually names*
 # (`specified_layer_residue` page.rs~L3669, `margin_px` page.rs~L4456,
-# re-confirmed rustdoc-blind here via わざと壊して確かめる on the
+# re-confirmed not checked by rustdoc here via わざと壊して確かめる on the
 # specified.rs site of the 7 before the rebase deduped them against
-# o9h6). Post-rebase, o9h6's 7 sites are attributed to o9h6 (its markers
-# say so); gq7x's commit carries only the 2 it was actually scoped to,
-# same remedy hrau's original 15 sites used — this is why this ratchet's
-# pinned value did not move either way: every demoted span (o9h6's 7,
-# gq7x's 2) lands in `doc_bare_crate_excluded`, not
+# link cleanup). Post-rebase, link cleanup's 7 sites are attributed to link cleanup (its markers
+# say so); role 4's commit carries only the 2 it was actually scoped to,
+# same remedy baseline cleanup's original 15 sites used — this is why this maximum-count guard's
+# pinned value did not move either way: every demoted span (link cleanup's 7,
+# role 4's 2) lands in `doc_bare_crate_excluded`, not
 # `doc_bare_crate_ratchet`. Separately, `scripts/lib/doc_pointer_lint.py`
 # gained a new role 4 (informational only, no baseline, no
 # `doc-pointer-lint:ignore:` interaction — see that file's module
 # docstring for the full structural argument for why not) that surfaces
 # any *future* recurrence of this exact hazard shape: linked crate::
 # pointers at/after the first `#[cfg(test)] mod` block in a file. As of
-# this pin (o9h6 + gq7x both landed), role 4 reports 0 occurrences
+# this pin (link cleanup + role 4 both landed), role 4 reports 0 occurrences
 # repo-wide.
 21

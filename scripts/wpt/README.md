@@ -21,11 +21,11 @@ The pin is initially borrowed from fulgur (`fulgur/scripts/wpt/pinned_sha.txt`)
 for cross-project consistency. Bump raikiri's pin only when:
 
 1. fulgur bumps and raikiri should follow (default), OR
-2. raikiri 専有 regression requires a fresh WPT font asset (rare)
+2. raikiri project-specific regression requires a fresh WPT font asset (rare)
 
 Steps:
 
-1. Inspect upstream WPT `main` (or fulgur's next pin) and pick a green commit
+1. Inspect upstream WPT `main` (or fulgur's next pin) and pick a passing commit
 2. Replace the SHA line in `pinned_sha.txt`
 3. Re-run `scripts/wpt/fetch.sh`
 4. Re-run `cargo test -p raikiri --test hello_world_vrt -- --ignored`
@@ -36,7 +36,7 @@ Steps:
 
 ## Relation to `raikiri-wpt`
 
-`raikiri-wpt` (WPT test runner harness) does not currently discover the
+`raikiri-wpt` (WPT test runner) does not currently discover the
 whole `target/wpt/` tree. The css-page subset is used as a focused source pin;
 its equivalent reftest is covered by the `raikiri-wpt` unit suite. When the
 runner starts consuming the full WPT tree, extend `subset.txt` and update this

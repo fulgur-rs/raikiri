@@ -1,6 +1,6 @@
-# WPT subset needed for raikiri VRT tests. Keep minimal — M1 scope only
+# WPT subset needed for raikiri VRT tests. Keep minimal — current implementation scope only
 # needs bundled fonts for cross-machine determinism.
-# Future test subsets (css/css-page, etc.) added under separate issues.
+# Future test subsets (css/css-page, etc.) added under separate changes.
 fonts
 css/selectors/parsing
 css/css-text/parsing
@@ -48,14 +48,14 @@ css/css-grid
 css/css-tables
 css/reference
 
-# <img> replaced-element sizing reftests (2026-09-17, raikiri-spike-a8zd).
+# <img> replaced-element sizing reftests (2026-09-17, the earlier change).
 # All 9 files use .svg fixtures for precise intrinsic-size/ratio control;
 # quarantined in expectations/known-issues.txt (PNG-only scope). Fetched
 # anyway so the runner sees and correctly skips them rather than silently
 # missing the whole category.
 css/CSS2/visudet
 
-# css-fonts reftest sweep (@font-face goal raikiri-spike-0vv.19.6).
+# css-fonts reftest sweep (@font-face goal the earlier change).
 # expectations/tracked-wpt.txt already lists css/css-fonts/ as P1; the fetch
 # subset was lagging behind (only css/css-fonts/support/ was present via the
 # `fonts` entry's surroundings). The runner filters to files with reftest

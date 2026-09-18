@@ -6,7 +6,7 @@ Run with:
     python3 -m unittest discover -s scripts/lib -p 'test_*.py' -v
 
 Focused on `structurally_unreported_paths()` / `is_structurally_unreported()`
-(bd raikiri-spike-0gk8): the prior implementation classified a changed line
+(the earlier change): the prior implementation classified a changed line
 as non-gating "unreported" via a bare path-shape regex
 (`(^|/)(tests|examples)/`), which fires on *any* path containing a `tests/`
 or `examples/` directory component at *any* depth — including an ordinary
@@ -123,7 +123,7 @@ class StructurallyUnreportedPathsTests(unittest.TestCase):
         )
         paths = structurally_unreported_paths(metadata, REPO_ROOT)
         self.assertNotIn("crates/raikiri/tests/perf_smoke.rs", paths)
-        # Sanity: the real test target from the same fixture is still
+        # Check: the real test target from the same fixture is still
         # included, so the exclusion above is about kind, not a bug that
         # dropped everything.
         self.assertIn("crates/raikiri/tests/external_consumer.rs", paths)
@@ -155,7 +155,7 @@ class StructurallyUnreportedPathsTests(unittest.TestCase):
         self.assertIn("/elsewhere/tests/outside.rs", paths)
 
     def test_prefix_mismatch_emits_diagnostic(self) -> None:
-        # bd raikiri-spike-0gk8 debt-lens fix 2: repo_root (git's
+        # the earlier coverage fix 2: repo_root (git's
         # toplevel, uncanonicalized) and a target's src_path (from `cargo
         # metadata`, canonicalized) disagreeing on prefix — e.g. a
         # symlinked checkout or container bind-mount — would otherwise
@@ -260,7 +260,7 @@ class ClassifyNoLcovRecordLinesTests(unittest.TestCase):
     None`) branch's `if ln not in da_map: continue` pre-filter that
     already lets comment/blank lines through there. A diff that only
     touched doc-comment prose was therefore reported 100% uncovered, and
-    `// cov:ignore:` provided no escape hatch — it only ever exempts the
+    `// cov:ignore:` provided no exemption mechanism — it only ever exempts the
     *code* block following a marker, never the marker's own comment lines
     or unrelated comment lines elsewhere in the file.
 
@@ -320,7 +320,7 @@ class ClassifyNoLcovRecordLinesTests(unittest.TestCase):
         # if the whole branch were changed to route every line to "not
         # uncovered" regardless of content — this pins that the fix
         # discriminates rather than blanket-passing. This is also the
-        # case that keeps bd raikiri-spike-iebo's bench-file behavior
+        # case that keeps the earlier change's bench-file behavior
         # intact: a genuine added code line in a file with no lcov
         # records (bench or otherwise) is still a real gap.
         uncovered, exempted = classify_no_lcov_record_lines(
@@ -401,7 +401,7 @@ class CodeOnlyLifetimeTests(unittest.TestCase):
         self.assertEqual(code_only("'a'..='z' => true,")[0], "..= => true,")
 
     def test_double_quoted_string_is_unaffected(self) -> None:
-        # Sanity: this fix only changes `'` handling; `"..."` string
+        # Check: this fix only changes `'` handling; `"..."` string
         # stripping must be untouched.
         self.assertEqual(code_only('let s = "contains { and } braces";')[0], "let s = ;")
 
@@ -442,7 +442,7 @@ class ComputeExemptLinesLifetimeTests(unittest.TestCase):
 
 class CodeOnlyTests(unittest.TestCase):
     """Unit tests for `code_only()`'s cross-line string-literal state
-    (bd raikiri-spike-q5xj).
+    (the earlier change).
 
     `code_only()` strips string/char literal contents so callers can do
     brace-depth bookkeeping without being confused by punctuation inside a
@@ -492,7 +492,7 @@ class CodeOnlyTests(unittest.TestCase):
         # Documents exactly what went wrong before this fix: calling
         # code_only() on a continuation line with the *default* (fresh,
         # "not in a string") state — i.e. what every call site did before
-        # bd raikiri-spike-q5xj — misreads the still-open string's `"` as
+        # the earlier change — misreads the still-open string's `"` as
         # an opening quote instead of a close, so the `)` that precedes it
         # in the prose is treated as real code syntax.
         code, in_str, quote = code_only(
@@ -514,7 +514,7 @@ class CodeOnlyTests(unittest.TestCase):
 
 class ComputeExemptLinesTests(unittest.TestCase):
     """Integration tests for `compute_exempt_lines()`'s block-scoping
-    (bd raikiri-spike-q5xj).
+    (the earlier change).
 
     Focused on the interaction between a `// cov:ignore:`-scoped block and
     a Rust string literal inside it: the block-depth scan must not let a

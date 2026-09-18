@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # scripts/patch-coverage.sh — gate.md §8.1.1 patch coverage, measured.
 #
-# bd raikiri-spike-wvch: §8.1.1 has required "100% of changed lines covered
+# the earlier change: §8.1.1 has required "100% of changed lines covered
 # or escalated" since it was written, but nothing in this repo could measure
 # it — cargo-llvm-cov was not installed and this script did not exist, so
-# every task degraded to manual enumeration + lens spot-check (documented
-# across 4 consecutive sprint retros, style-12 through style-14).
+# every task degraded to manual listing + reviewer spot-check (documented
+# across 4 consecutive successive review cycles, style-12 through style-14).
 #
 # Approach (workspace lcov → merge-base diff → gated-crate judgment, per
 # gate.md §8.1.1, modeled on flpdf's patch-coverage.sh):
@@ -15,19 +15,19 @@
 #   2. Diff merge-base(<base>, HEAD)..HEAD for *.rs, in -U0 form, to get the
 #      exact added-line set per file (git.md §8.1.4's canonical merge-base
 #      handling: base is resolved once via `git merge-base`, not a bare
-#      ref, so a concurrent landing on <base> after this branch forked
+#      ref, so a concurrent merge on <base> after this branch forked
 #      cannot change what counts as "this diff's lines").
 #   3. For each added line: covered (lcov hit>0) / cov:ignore-exempted /
 #      uncovered. See scripts/lib/patch_coverage.py's module docstring for
 #      the exact `cov:ignore:` scoping rule.
 #
-# "gated crate 判定" (gate.md §51): every file this script considers comes
+# "in-scope crate decision" (gate.md §51): every file this script considers comes
 # from `git diff`, which only ever names paths inside this repo — there is
 # no separate crate allowlist to apply. All *.rs files under crates/ are in
 # scope, including bench/test/example files: a benches/*.rs diff showing
 # 0% coverage is not a bug in this script, it is the literal fact that a
 # plain `cargo test --workspace` (and therefore `cargo llvm-cov --workspace`)
-# never builds bench targets — see bd raikiri-spike-iebo's gate history,
+# never builds bench targets — see the earlier change's gate history,
 # where exactly this happened to crates/raikiri-style/benches/cascade.rs and
 # was escalated rather than silently passed.
 #
@@ -47,7 +47,7 @@
 #
 # Exit status: 0 if every changed line is covered or cov:ignore-exempted,
 # 1 if any changed line is uncovered (gate.md §8.1.1: fix in-scope, or
-# escalate to a bd issue out-of-scope, then re-run), 2 if coverage
+# escalate to a follow-up item out-of-scope, then re-run), 2 if coverage
 # measurement could not complete — a dirty tree, cargo-llvm-cov not
 # installed, or a `cargo metadata` failure (see lib/patch_coverage.py's
 # load_cargo_metadata) — which is an infra problem, not a coverage

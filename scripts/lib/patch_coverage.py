@@ -7,7 +7,7 @@ report. This module owns the two pieces of logic that don't belong in shell:
   1. Parsing a `-U0` unified diff to get the exact set of *added* line
      numbers per file (gate.md §8.1.1's "merge-base 差分抽出").
   2. Deciding whether an uncovered added line is exempted by a
-     `// cov:ignore: <reason>` annotation (the "escape hatch").
+     `// cov:ignore: <reason>` annotation (the "exemption mechanism").
 
 # The `cov:ignore` scoping rule this script implements
 
@@ -27,7 +27,7 @@ with nothing following it does not match. It is either:
     this stripping carries open-string-literal state across physical
     lines, so a backslash-continued multi-line string literal doesn't
     leak its prose's punctuation into the depth count either — bd
-    raikiri-spike-q5xj):
+    the earlier change):
     starting at the first non-comment, non-attribute, non-blank line after
     the marker, keep including lines while cumulative depth > 0; stop
     (inclusive) once depth returns to <= 0. A single-line statement (net
@@ -65,7 +65,7 @@ this workspace's `cargo-llvm-cov 0.8.7` output rather than assumed:
     `crates/raikiri-html/src/types.rs` (there was simply never anything
     for cargo-llvm-cov to instrument, not "ran but wasn't measured").
     Every added *code* line is reported **uncovered** for the bench case
-    (intentional, not a bug: see bd raikiri-spike-iebo's gate history for
+    (intentional, not a bug: see the earlier change's gate history for
     why a bench-file diff hitting this is expected and needs either a
     `--benches`-style follow-up or a per-diff escalation) — and vacuously
     never triggered for a genuine pure-declaration file, since by
@@ -104,7 +104,7 @@ this workspace's `cargo-llvm-cov 0.8.7` output rather than assumed:
     named `tests` (e.g. an ordinary `src/tests/fixtures.rs` module,
     `mod tests;` declared from its parent) is not a Cargo target and must
     not be exempted — that would mask a real coverage gap in production
-    code. bd raikiri-spike-0gk8 fixed exactly this false-negative risk in
+    code. the earlier fix addressed this false-negative risk in
     the prior path-regex-only implementation.
 """
 
@@ -125,7 +125,7 @@ ATTRIBUTE_LINE_RE = re.compile(r"^\s*#!?\[.*\]\s*$")
 # form of this regex) would (a) fire on a string literal that merely
 # *contains* the text `cov:ignore:`, since it never checked the match was
 # inside a real comment, and (b) accept `// cov:ignore:` with nothing after
-# the colon as a valid exemption. Codex §8.3 review finding.
+# the colon as a valid exemption. review finding.
 COV_IGNORE_RE = re.compile(r"^//\s*cov:ignore:\s*(\S.*)$")
 HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
@@ -190,8 +190,8 @@ def comment_part(line: str) -> str | None:
     to result — considered acceptable risk for this repo's actual content
     (no raw string in this codebase contains that exact substring, per a
     repo-wide grep at review time) rather than implementing a full Rust
-    raw-string lexer here. Codex §8.3 review finding (bd raikiri-spike-wvch
-    consolidated gate-wave2 landing); tracked as a known limitation rather
+    raw-string lexer here. review finding (the earlier change
+    consolidated gate update); tracked as a known limitation rather
     than fixed in this pass.
     """
     in_str = False
@@ -259,7 +259,7 @@ def code_only(line: str, in_str: bool = False, quote: str = "") -> tuple[str, bo
     panic message), and if the caller re-parses each line from a fresh
     "not in a string" state, that punctuation is miscounted as real code
     syntax. Resetting per line was exactly this function's bug before
-    `in_str`/`quote` became threadable (bd raikiri-spike-q5xj).
+    `in_str`/`quote` became threadable (the earlier change).
 
     Best-effort: does not handle raw strings (`r"..."`) or byte-string
     prefixes specially, which can misparse in rare cases. Good enough for
@@ -373,7 +373,7 @@ def compute_exempt_lines(lines: list[str]) -> set[int]:
             # still open at the end of line j must not have its state reset
             # before line j+1 is parsed, or punctuation in the continuation
             # line's prose gets miscounted as real brace/paren/bracket
-            # syntax and truncates the block early (bd raikiri-spike-q5xj).
+            # syntax and truncates the block early (the earlier change).
             in_str = False
             quote = ""
             while True:
@@ -512,7 +512,7 @@ def structurally_unreported_paths(metadata: dict, repo_root: str) -> set[str]:
     appears here. `"bench"` is deliberately excluded — absence there means
     "never ran", a real gap (see module docstring), not "never reported".
 
-    Known limitation, unmeasured, fail-closed by choice: this only covers
+    Known limitation, unmeasured; uncertain cases are counted by default: this only covers
     a target's *entry* file (the one `cargo metadata` names as
     `src_path`). A shared helper module compiled into a test binary but
     included from it (e.g. a hypothetical `tests/common/mod.rs` pulled in
@@ -527,7 +527,7 @@ def structurally_unreported_paths(metadata: dict, repo_root: str) -> set[str]:
     string prefix, but nothing guarantees it — a symlinked checkout or a
     container bind-mount path could make every `src_path.startswith(prefix)`
     fail simultaneously. If that happens the raw (unstripped) `src_path` is
-    kept rather than dropped (bd raikiri-spike-0gk8 §debt-lens fix 2:
+    kept rather than dropped (the earlier coverage fix 2:
     silent-but-diagnosed, not silent-but-invisible), which can never match
     a diff-relative path — every Cargo test/example target would revert to
     gate-failing `uncovered`, repo-wide, with a confusing "add a covering
@@ -784,7 +784,7 @@ def main() -> int:
             print(f"  {r.path}:{ln}{note}")
     print()
     print("Per gate.md §8.1.1: either add a covering test (task scope) or")
-    print("escalate to a bd issue (out-of-scope) for each line above, or add")
+    print("escalate to a follow-up item (out-of-scope) for each line above, or add")
     print("`// cov:ignore: <reason>` if it is a defensible untestable branch.")
     return 1
 

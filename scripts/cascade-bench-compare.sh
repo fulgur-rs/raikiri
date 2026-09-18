@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # scripts/cascade-bench-compare.sh — interleaved min-of-N cascade benchmark
-# comparison (bd raikiri-spike-iebo).
+# comparison (the related change).
 #
-# bd raikiri-spike-zpui landed crates/raikiri-style/benches/cascade.rs (a
-# criterion regression guard for the cascade hot loop's per-declaration
+# the related change landed crates/raikiri-style/benches/cascade.rs (a
+# criterion regression guard for the cascade frequently executed loop's per-declaration
 # constant) but deliberately did not wire it into anything that runs it:
 # `cargo test --workspace` never builds bench targets and `cargo clippy
-# --all-targets` only compiles, never executes, them. bd raikiri-spike-iebo
+# --all-targets` only compiles, never executes, them. the related change
 # is the follow-up that makes it runnable — as an explicit, opt-in script,
 # not an automatic gate step (see the header of scripts/gate.sh's
-# --with-bench flag and the "NOT wired into CI" note below).
+# --with-bench flag and the "NOT connected to CI" note below).
 #
 # ── Why this is NOT a naive before/after comparison ────────────────────────
 #
-# iebo's own gate history (see the comments on bd raikiri-spike-iebo, and
+# benchmark change's own gate history (see the comments on the related change, and
 # the "Measurement noise" section of benches/cascade.rs's module doc)
 # measured that a single criterion `--baseline`/`--save-baseline` comparison
 # is dominated by build contention from concurrent worktree sessions on
@@ -23,16 +23,16 @@
 # the same distribution, and contention changes the distribution just as a
 # real regression would.
 #
-# The validated fix (iebo's own experiment, reproduced the known +22.1%/
-# +10.7% regression from bd raikiri-spike-nqkj) is **interleaved min-of-N**:
+# The validated fix (benchmark change's own experiment, reproduced the known +22.1%/
+# +10.7% regression from the related change) is **interleaved min-of-N**:
 # alternate N runs of the "good" (merge-base) and "bad" (HEAD) bench
 # binaries and compare the *minimum* per-benchmark time across the N runs
 # for each side, not the mean and not criterion's own verdict. Contention
 # only ever *adds* latency, so the minimum converges toward the true cost
 # while the mean does not. Interleaving (not just repetition) matters too:
-# it keeps a slow stretch of machine from landing entirely on one side.
+# it keeps a slow stretch of machine from appearing entirely on one side.
 #
-# ── Threshold: 7%, chosen from the noise floor and the weakest known signal ─
+# ── Threshold: 7%, chosen from the residual measurement variation and the weakest known signal ─
 #
 # Do NOT use the +18.8%/+11.5%/+157% figures above to justify a threshold —
 # those are exactly what the min-of-N protocol exists to filter out; reusing
@@ -58,7 +58,7 @@
 #
 # ── Invocation is pinned, not just the threshold ───────────────────────────
 #
-# bd raikiri-spike-iebo's gate history also found that criterion's
+# the related change's gate history also found that criterion's
 # `iter_batched`-family `batch_size = ceil(iters / 10)` changes the
 # memory-reuse regime depending on `--sample-size`/`--measurement-time`
 # (module doc: batch ≤5 under this script's flags vs batch ≤10 under plain
@@ -80,8 +80,8 @@
 #   RAIKIRI_CASCADE_THRESHOLD_PCT  Override the threshold (default: 7).
 #   RAIKIRI_GATE_TMPDIR            See scripts/lib/tmpdir.sh.
 #
-# NOT wired into CI, a cargo profile, or scripts/gate.sh's default run —
-# bd raikiri-spike-iebo's own filing flags that path as a walls.md 壁 7
+# NOT connected to CI, a cargo profile, or scripts/gate.sh's default run —
+# the related change's own filing flags that path as a package-boundary rule
 # (shared build prerequisites) crossing requiring escalation this script is
 # not authorized to make. scripts/gate.sh only invokes this when given the
 # explicit --with-bench flag.
@@ -89,7 +89,7 @@
 # Exit status: 0 = every benchmark's min-of-N delta is within threshold (or
 # the bench target doesn't exist at the merge-base, in which case the
 # comparison is skipped, not failed). 1 = at least one benchmark exceeded
-# the threshold, or a mechanical error occurred (a build failure surfaces
+# the threshold, or a automated-check error occurred (a build failure surfaces
 # cargo's own exit status via `set -e`; a missing benchmark report from
 # scripts/lib/cascade_compare.py surfaces its own exit code, 1 or 2 — see
 # that file for specifics). Either way, non-zero means "do not treat this
@@ -113,7 +113,7 @@ BASE_SHA="$(git merge-base "$BASE_REF" HEAD)"
 N="${RAIKIRI_CASCADE_N:-8}"
 THRESHOLD_PCT="${RAIKIRI_CASCADE_THRESHOLD_PCT:-7}"
 
-# Bounds validation (Codex §8.3 review finding): these overrides previously
+# Bounds validation (review finding): these overrides previously
 # had none. An unbounded N has no cap on runtime or disk usage proportional
 # to whatever a caller sets. An unbounded/unvalidated threshold is worse:
 # Python's `float()` happily parses "nan" and "inf", and since
@@ -130,7 +130,7 @@ THRESHOLD_PCT="${RAIKIRI_CASCADE_THRESHOLD_PCT:-7}"
 # `[0-9]*`) can overflow that arithmetic and wrap around, potentially
 # passing the `-gt 50` check it was meant to fail. Bounding the digit count
 # in the regex itself means the arithmetic comparison only ever sees a
-# value in [1, 99], where overflow cannot occur. Codex §8.3 review finding.
+# value in [1, 99], where overflow cannot occur. review finding.
 if ! [[ "$N" =~ ^[1-9][0-9]?$ ]] || [[ "$N" -gt 50 ]]; then
   echo "cascade-bench-compare.sh: RAIKIRI_CASCADE_N must be a positive integer <= 50 (got: '$N')" >&2
   exit 2
@@ -173,7 +173,7 @@ echo
 
 if ! git cat-file -e "$BASE_SHA:$BENCH_FILE" 2>/dev/null; then
   echo "SKIP: $BENCH_FILE does not exist at $BASE_SHA — nothing to compare"
-  echo "      against (this base predates bd raikiri-spike-zpui landing"
+  echo "      against (this base predates the benchmark implementation merge"
   echo "      the bench). Not a failure."
   exit 0
 fi

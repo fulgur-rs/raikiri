@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# scripts/safe_merge.sh — refuse `git merge` unless the Merge 直前 checklist
+# scripts/safe_merge.sh — refuse `git merge` unless the pre-merge checklist
 # (rules/gate.md §Gate 通過条件 (合成)) is already recorded, before the merge
 # runs.
 #
-# gate.md's checklist (accepted via bd raikiri-spike-j2p6) asks whoever runs
+# gate.md's checklist (accepted via the earlier change) asks whoever runs
 # the merge to recall, immediately before running `git merge`, 4 dedicated
 # lines covering §8.1 / §8.2 / §8.3 / §8.1.1 evidence. Measured across
-# several sprints after that text landed, the exact 4-line form appeared in
+# several review cycles after that text was added, the exact 4-line form appeared in
 # 1 of 22+ merges checked (the rest either had none of the 4 lines, or folded
 # §8.1.1's patch-coverage disposition into the §8.1 line's own text instead
 # of itemizing it separately) — a prose reminder to "remember to write 4
@@ -19,7 +19,7 @@
 # This script does NOT re-run the §8.1 checks themselves (that is
 # scripts/gate.sh's job, already covering §8.1 (a)(b)(c) plus the §8.1.4
 # applicability predicate) — it only verifies that the checklist recording
-# gate.md requires exists and is non-vacuous. Composing the two: run
+# gate.md requires that it exist and contain required content. Composing the two: run
 # scripts/gate.sh first to actually pass §8.1, then use this script's
 # validated message to record that (and §8.2/§8.3/§8.1.1) and perform the
 # merge in one step.
@@ -39,7 +39,7 @@
 #
 #                         `-F -` (stdin, e.g. via a heredoc) and `-m` are the
 #                         forms that avoid ever staging a gate-evidence
-#                         commit message through a scratchpad file first —
+#                         commit message through a temporary file first —
 #                         `-F <path>` is provided for callers that already
 #                         have the message in a file for another reason, not
 #                         as an invitation to write one out first.
@@ -75,7 +75,7 @@
 # contain, each as its own dedicated line, all 4 checklist markers below —
 # not folded into another item's line (this exact failure mode — patch-
 # coverage detail present in the §8.1 line's own text but never itemized on
-# its own §8.1.1 line — is what the sprints after j2p6 landed actually did).
+# its own §8.1.1 line — is what the sprints after merge checklist landed actually did).
 # A marker may appear on exactly one line; if it appears on more than one,
 # the item is invalid rather than picking one arbitrarily (checking two
 # candidate lines independently and accepting a pass on either would let a
@@ -91,7 +91,7 @@
 #   - §8.2:   a convergence mode marker ("(i)" / "(ii)") or "skip" (the
 #             lens-matrix.md §発火 skip exception), immediately after the
 #             marker
-#   - §8.3:   a Codex job id (task-<id>-<id>) and a GATE PASS verdict
+#   - §8.3:   a review job id (task-<id>-<id>) and a GATE PASS verdict
 #             specifically, adjacent to each other in either order
 #             immediately after the marker — a recorded GATE FAIL means
 #             §8.3 is not yet satisfied (it is not accepted, the same way
@@ -157,8 +157,8 @@
 # added on convenience — and routing around this script instead of
 # extending it is never the answer.
 #
-# This is a floor, not the full record: it verifies the checklist's 4 lines
-# exist and are non-vacuous, not that every sub-clause gate.md's §Gate 通過
+# This is a minimum check, not the full record: it verifies the checklist's 4 lines
+# exist and contain required content, not that every sub-clause gate.md's §Gate 通過
 # 条件 (合成) requires is satisfied in full detail (per-remit citations,
 # convergence-mode rationale for case (ii), etc. remain a human/coordinator
 # judgment call, same as before this script existed — the same limitation
@@ -382,7 +382,7 @@ check_item "§8.2" \
 # passing verdict.
 check_item "§8.3" \
   '^[[:space:]]*- §8\.3: ?' \
-  "expected a Codex job id (task-<id>-<id>) and a GATE PASS verdict adjacent to each other, immediately after the marker" \
+  "expected a review job id (task-<id>-<id>) and a GATE PASS verdict adjacent to each other, immediately after the marker" \
   '(task-[a-z0-9]+-[a-z0-9]+[[:space:]]+gate[[:space:]]+pass\b|gate[[:space:]]+pass[[:space:]]+task-[a-z0-9]+-[a-z0-9]+\b)'
 check_item "§8.1.1" \
   '^[[:space:]]*- §8\.1\.1: ?' \
