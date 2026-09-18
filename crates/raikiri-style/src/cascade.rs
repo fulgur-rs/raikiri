@@ -49,7 +49,7 @@ use crate::property::{
     CalcLengthPercentage, CustomProperty, DeferredValue, FontWeightValue, GridAutoFlowValue,
     GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto, MAX_DEFERRED_VALUE_NESTING_DEPTH,
     MAX_SUBSTITUTED_VALUE_BYTES, PositionValue, PropertyValue, RelativeFontSize, Sides,
-    initial_grid_auto_track_list, is_custom_property_name, parse_value,
+    WritingMode, initial_grid_auto_track_list, is_custom_property_name, parse_value,
     resolve_text_align_match_parent,
 };
 use crate::resolve::{ComputedLength, ResolveContext, used_line_height_length};
@@ -83,6 +83,11 @@ pub struct CascadeResult {
     /// page root.  The side order is [`Sides`] top/right/bottom/left and the
     /// vector follows the same node-index contract as [`Self::computed`].
     pub non_ua_margin_sides: Vec<Sides<bool>>,
+    /// Authored `writing-mode` winners before the computed-value normalization
+    /// that currently collapses vertical modes to `horizontal-tb`.  This keeps
+    /// paged consumers able to apply physical page-context mapping without
+    /// changing ordinary element layout semantics.
+    pub authored_writing_modes: Vec<Option<WritingMode>>,
     /// The `@page` cascade for the page query supplied to the cascade entry
     /// point. The compatibility entry point uses the unnamed/default query;
     /// paged consumers should use [`cascade_with_media_context_for_page`].
@@ -224,6 +229,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
     // 上書きする実装。
     let mut computed: Vec<ComputedValues> = vec![ComputedValues::initial(); dom.node_count()];
     let mut non_ua_margin_sides = vec![Sides::all(false); dom.node_count()];
+    let mut authored_writing_modes = vec![None; dom.node_count()];
     let mut page_values = vec![crate::property::PageValue::Auto; dom.node_count()];
     let mut pseudo: HashMap<(StyleNodeId, PseudoElem), ComputedValues> = HashMap::new();
     resolve_inheritance(
@@ -233,6 +239,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
         &cascaded,
         &mut computed,
         &mut non_ua_margin_sides,
+        &mut authored_writing_modes,
         &mut page_values,
         &mut pseudo,
     );
@@ -247,6 +254,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
     Ok(CascadeResult {
         computed,
         non_ua_margin_sides,
+        authored_writing_modes,
         page,
         page_values,
         pseudo,
@@ -5325,6 +5333,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
     cascaded: &CascadedArena,
     out: &mut Vec<ComputedValues>,
     non_ua_margin_sides: &mut Vec<Sides<bool>>,
+    authored_writing_modes: &mut Vec<Option<WritingMode>>,
     page_values: &mut [crate::property::PageValue],
     pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
 ) {
@@ -5368,6 +5377,9 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // 適用対象は staging 表現なので winner の適用順に依存しない。
         let mut specified = SpecifiedValues::inherit_from(&parent_computed);
         let mut node_non_ua_margin = Sides::all(false);
+        if authored_writing_modes.len() <= id.0 as usize {
+            authored_writing_modes.resize(id.0 as usize + 1, None);
+        }
         if let Some(candidates) = cascaded.candidates(id) {
             apply_winners(
                 candidates,
@@ -5376,6 +5388,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
                 &custom_properties,
                 Some(&mut page_values[id.0 as usize]),
                 Some(&mut node_non_ua_margin),
+                Some(&mut authored_writing_modes[id.0 as usize]),
             );
         }
 
@@ -5477,6 +5490,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
                         &mut winners,
                         &mut pseudo_specified,
                         &pseudo_custom_properties,
+                        None,
                         None,
                         None,
                     );
@@ -6551,6 +6565,7 @@ fn apply_winners(
     custom_properties: &CustomPropertyEnvironment,
     mut page_value: Option<&mut crate::property::PageValue>,
     mut non_ua_margin_sides: Option<&mut Sides<bool>>,
+    mut authored_writing_mode: Option<&mut Option<WritingMode>>,
 ) {
     pick_winners(candidates, winners);
     for slot in winners.iter_mut() {
@@ -6581,6 +6596,11 @@ fn apply_winners(
                 _ => Some(value.clone()),
             };
             if let Some(value) = value {
+                if let PropertyValue::WritingMode(mode) = &value
+                    && let Some(slot) = authored_writing_mode.as_deref_mut()
+                {
+                    *slot = Some(*mode);
+                }
                 if let crate::property::PropertyValue::Page(page) = &value
                     && let Some(page_slot) = page_value.as_deref_mut()
                 {
@@ -16820,6 +16840,23 @@ mod tests {
 
     // ── background-repeat/attachment/clip/origin/size/position wire-through
     // (CSS Backgrounds and Borders 3 §2.4-§2.9) ──
+
+    #[test]
+    fn authored_writing_mode_is_retained_before_computed_normalization() {
+        use crate::property::WritingMode;
+        let mut doc = TestDoc::new();
+        let root = doc.push_element(0, "html", Some("writing-mode: vertical-rl"));
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            result.authored_writing_modes[root],
+            Some(WritingMode::VerticalRl)
+        );
+        assert_eq!(
+            result.computed[root].writing_mode,
+            WritingMode::HorizontalTb
+        );
+    }
 
     #[test]
     fn background_repeat_attachment_clip_origin_wired_through_cascade_from_inline_style() {
