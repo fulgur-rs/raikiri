@@ -2233,8 +2233,18 @@ fn paint_document_impl(
     let page_bottom = content_origin_y + content_height;
     // The walker keeps source coordinates in the stack.  Only the paint sites
     // receive the page translation, which makes page membership testable even
-    // when an ancestor spans a page boundary.
-    let page_offset_x = margins.left + insets.left;
+    // when an ancestor spans a page boundary.  The cascade retains the raw
+    // root writing-mode winner because vertical-rl currently normalizes to
+    // horizontal-tb for ordinary layout; in that page context the physical
+    // left page margin is on the opposite inline edge.
+    let root_vertical_rl = find_html(document)
+        .and_then(|html_id| cascade.authored_writing_modes.get(html_id))
+        .is_some_and(|mode| matches!(mode, Some(WritingMode::VerticalRl)));
+    let page_offset_x = if root_vertical_rl {
+        insets.left
+    } else {
+        margins.left + insets.left
+    };
     let page_offset_y = margins.top + insets.top - content_origin_y;
     // The synthetic body root keeps the historical inline width, so normal
     // element backgrounds can extend past the page content box when a page
