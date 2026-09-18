@@ -315,6 +315,19 @@ pub enum ComputedLengthPercentage {
     Percent(f32),
 }
 
+/// Computed `<length-percentage>` plus authored `ch` provenance.
+///
+/// The absolute fallback remains available to consumers that do not have a
+/// shaping context; text layout can replace it with the selected face's
+/// U+0030 advance when `ch_factor` is present.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ComputedLengthPercentageWithCh {
+    /// Style-layer computed fallback.
+    pub value: ComputedLengthPercentage,
+    /// Authored `ch` multiplier, when the specified value used `ch`.
+    pub ch_factor: Option<f32>,
+}
+
 /// Computed `<length-percentage> | auto`。
 ///
 /// `margin-*` / `width` / `height` の computed value に使う。
@@ -1989,6 +2002,23 @@ pub fn resolve_length_percentage(
     }
 }
 
+/// Resolve a length-percentage while retaining authored `ch` provenance.
+pub fn resolve_length_percentage_with_ch(
+    specified: Length,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedLengthPercentageWithCh {
+    let ch_factor = match specified {
+        Length::Ch(factor) if factor.is_finite() => Some(factor),
+        _ => None,
+    };
+    ComputedLengthPercentageWithCh {
+        value: resolve_length_percentage(specified, font_size, own_line_height, ctx),
+        ch_factor,
+    }
+}
+
 /// `<length-percentage> | auto` を取る property (**`width` / `height` /
 /// `flex-basis`** — `margin-*` は [`resolve_margin_length_or_auto`] を
 /// 使うこと、下記 "Finding A" 節参照) の specified value を絶対化する
@@ -3323,6 +3353,23 @@ mod tests {
         );
         assert_eq!(normal.value, ComputedLength::ZERO);
         assert_eq!(normal.ch_factor, None);
+    }
+
+    #[test]
+    fn length_percentage_with_ch_retains_authored_factor() {
+        let resolved =
+            resolve_length_percentage_with_ch(Length::Ch(2.0), ComputedLength(20.0), None, &CTX);
+        assert_eq!(resolved.value, ComputedLengthPercentage::Px(20.0),);
+        assert_eq!(resolved.ch_factor, Some(2.0));
+
+        let percentage = resolve_length_percentage_with_ch(
+            Length::Percent(25.0),
+            ComputedLength(20.0),
+            None,
+            &CTX,
+        );
+        assert_eq!(percentage.value, ComputedLengthPercentage::Percent(25.0),);
+        assert_eq!(percentage.ch_factor, None);
     }
 
     #[test]

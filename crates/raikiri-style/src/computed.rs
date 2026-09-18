@@ -222,6 +222,23 @@ pub struct RunningTemplate {
     pub name: SmolStr,
 }
 
+/// Font selection data captured when an inherited `ch` value is computed.
+///
+/// `text-indent` inherits its computed absolute length. Keeping the source
+/// face here prevents a descendant with a different font from re-measuring an
+/// inherited `ch` value against the wrong glyph advance.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChFontKey {
+    /// Font family list used by the shaping resolver.
+    pub family: Arc<Vec<Atom>>,
+    /// Computed font size in CSS px.
+    pub size: ComputedLength,
+    /// Computed numeric font weight.
+    pub weight: f32,
+    /// Computed font style.
+    pub style: FontStyle,
+}
+
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
 /// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / writing_mode / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows、
 /// non-inherited: background-color / display / counter-* / content / string-set /
@@ -538,6 +555,10 @@ pub struct ComputedValues {
     /// ([`crate::specified::SpecifiedValues::inherit_from`]'s
     /// `lift_length_percentage` seed), not reset to the initial `0`.
     pub text_indent: ComputedLengthPercentage,
+    /// Authored `ch` factor retained for the font-metric-aware layout sink.
+    pub text_indent_ch_factor: Option<f32>,
+    /// Source font for an inherited `ch` value.
+    pub text_indent_ch_font: Option<ChFontKey>,
     /// `text-indent`'s `hanging` flag. Inherited, initial `false`.
     pub text_indent_hanging: bool,
     /// `text-indent`'s `each-line` flag. Inherited, initial `false`.
@@ -1588,6 +1609,8 @@ impl ComputedValues {
             writing_mode: WritingMode::HorizontalTb,
             // CSS Text 3 §8.1: text-indent initial is `0`。
             text_indent: ComputedLengthPercentage::Px(0.0),
+            text_indent_ch_factor: None,
+            text_indent_ch_font: None,
             text_indent_hanging: false,
             text_indent_each_line: false,
             // CSS Box 3 §4.1: padding initial = 0 (all 4 sides)。
@@ -2150,6 +2173,8 @@ mod tests {
             // CSS Text 3 §8.1: initial (`0`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             text_indent: ComputedLengthPercentage::Px(9.0),
+            text_indent_ch_factor: None,
+            text_indent_ch_font: None,
             text_indent_hanging: false,
             text_indent_each_line: false,
             padding: Sides::all(ComputedLengthPercentage::Px(7.0)),

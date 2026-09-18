@@ -27,7 +27,7 @@ use std::sync::Arc;
 use smol_str::SmolStr;
 
 use crate::Atom;
-use crate::computed::{ComputedValues, RunningTemplate};
+use crate::computed::{ChFontKey, ComputedValues, RunningTemplate};
 use crate::property::{
     AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage,
     BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, Border, BorderCollapseValue,
@@ -57,9 +57,9 @@ use crate::resolve::{
     resolve_flex_basis, resolve_font_size, resolve_grid_auto_track_list,
     resolve_grid_template_tracks, resolve_length, resolve_length_or_normal_with_ch,
     resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
-    resolve_outline, resolve_tab_size, resolve_text_shadow_item, resolve_transform_function,
-    resolve_vertical_align, used_line_height_length,
+    resolve_length_percentage_or_normal, resolve_length_percentage_with_ch, resolve_line_height,
+    resolve_margin_length_or_auto, resolve_outline, resolve_tab_size, resolve_text_shadow_item,
+    resolve_transform_function, resolve_vertical_align, used_line_height_length,
 };
 
 /// Cascade winner を適用し終えたが、まだ絶対化していない per-node の値。
@@ -222,6 +222,10 @@ pub struct SpecifiedValues {
     /// で lift して seed する。CSS Text 3 §8.1
     /// <https://www.w3.org/TR/css-text-3/#text-indent-property>。
     pub text_indent: Length,
+    /// Authored `ch` factor retained through inheritance for the layout sink.
+    pub text_indent_ch_factor: Option<f32>,
+    /// Source font for an inherited `ch` value.
+    pub text_indent_ch_font: Option<ChFontKey>,
     /// `text-indent`'s `hanging` flag staging. Inherited, initial `false`.
     pub text_indent_hanging: bool,
     /// `text-indent`'s `each-line` flag staging. Inherited, initial `false`.
@@ -611,6 +615,8 @@ impl SpecifiedValues {
             writing_mode: WritingMode::HorizontalTb,
             // CSS Text 3 §8.1: text-indent initial は `0`。
             text_indent: Length::Px(0.0),
+            text_indent_ch_factor: None,
+            text_indent_ch_font: None,
             text_indent_hanging: false,
             text_indent_each_line: false,
             padding: Sides::all(Length::Px(0.0)),
@@ -908,6 +914,8 @@ impl SpecifiedValues {
             // `Px` / `Percent` どちらも不動点、`lift_length_percentage` doc
             // 参照)。
             text_indent: lift_length_percentage(parent.text_indent),
+            text_indent_ch_factor: parent.text_indent_ch_factor,
+            text_indent_ch_font: parent.text_indent_ch_font.clone(),
             text_indent_hanging: parent.text_indent_hanging,
             text_indent_each_line: parent.text_indent_each_line,
             // CSS Fonts 4 §2.4: font-style は inherited。
@@ -1400,6 +1408,22 @@ impl SpecifiedValues {
             resolve_length_or_normal_with_ch(self.letter_spacing, font_size, own_line_height, ctx);
         let word_spacing =
             resolve_length_or_normal_with_ch(self.word_spacing, font_size, own_line_height, ctx);
+        let text_indent =
+            resolve_length_percentage_with_ch(self.text_indent, font_size, own_line_height, ctx);
+        let text_indent_ch_factor = self.text_indent_ch_factor.or(text_indent.ch_factor);
+        let own_text_indent_ch_font = || ChFontKey {
+            family: self.font_family.clone(),
+            size: font_size,
+            weight: self.font_weight,
+            style: self.font_style,
+        };
+        let text_indent_ch_font = if text_indent.ch_factor.is_some() {
+            Some(own_text_indent_ch_font())
+        } else if self.text_indent_ch_factor.is_some() {
+            self.text_indent_ch_font.clone()
+        } else {
+            None
+        };
         ComputedValues {
             color: self.color,
             background_color: self.background_color,
@@ -1444,12 +1468,9 @@ impl SpecifiedValues {
             // resetting to the initial `0` (`Self::padding` is
             // non-inherited and always resets, `Self::text_align` sibling
             // comment above shows the inherited counterpart pattern).
-            text_indent: resolve_length_percentage(
-                self.text_indent,
-                font_size,
-                own_line_height,
-                ctx,
-            ),
+            text_indent: text_indent.value,
+            text_indent_ch_factor,
+            text_indent_ch_font,
             // Flags pass through untouched (no absolutization needed).
             text_indent_hanging: self.text_indent_hanging,
             text_indent_each_line: self.text_indent_each_line,
@@ -2088,6 +2109,8 @@ mod tests {
             // `WritingMode` doc's Non-goal section.
             writing_mode: WritingMode::VerticalRl,
             text_indent: ComputedLengthPercentage::Px(9.0),
+            text_indent_ch_factor: None,
+            text_indent_ch_font: None,
             text_indent_hanging: true,
             text_indent_each_line: false,
             padding: Sides::all(ComputedLengthPercentage::Px(7.0)),
