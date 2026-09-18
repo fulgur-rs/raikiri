@@ -206,6 +206,14 @@ pub struct TextData {
     /// - Brush type `()` は意図的な choice: color / decoration は持たせない
     /// - Invalidation: `layout_single_page` 呼び出し毎に全 None にクリア + 再走
     pub text_layout: Option<parley::Layout<()>>,
+    /// Font-metric `text-indent: ch` used value prepared before Taffy layout.
+    pub(crate) text_indent_px: Option<f32>,
+    /// Effective hanging flag for the pre-Taffy indent measurement.
+    pub(crate) text_indent_hanging: bool,
+    /// Effective each-line flag for the pre-Taffy indent measurement.
+    pub(crate) text_indent_each_line: bool,
+    /// Whether Taffy width probes may rebreak this text layout.
+    pub(crate) text_indent_rebreak: bool,
 }
 
 /// Arena node (NodeData tagged union として実装)。
@@ -345,6 +353,10 @@ impl Node {
             data: NodeData::Text(TextData {
                 text_content: text,
                 text_layout: None,
+                text_indent_px: None,
+                text_indent_hanging: false,
+                text_indent_each_line: false,
+                text_indent_rebreak: false,
             }),
         }
     }
@@ -465,6 +477,39 @@ impl Node {
             NodeData::Text(t) => t.text_layout.as_ref(),
             _ => None,
         }
+    }
+
+    /// Rebreak a text layout with its prepared indent for a Taffy width probe.
+    ///
+    /// The font metric is resolved before Taffy enters the tree walk. Taffy can
+    /// still ask the leaf for a narrower available width, so the existing
+    /// Parley layout is rebroken here rather than relying on the page-width
+    /// preshape result.
+    pub(crate) fn text_layout_size_for_width(&mut self, width: Option<f32>) -> Option<(f32, f32)> {
+        let NodeData::Text(text) = &mut self.data else {
+            return None;
+        };
+        let layout = text.text_layout.as_mut()?;
+        if let Some(indent) = text.text_indent_px {
+            layout.set_text_indent(
+                indent,
+                parley::IndentOptions {
+                    hanging: text.text_indent_hanging,
+                    each_line: text.text_indent_each_line,
+                },
+            );
+            if text.text_indent_rebreak
+                && let Some(width) = width.filter(|width| width.is_finite() && *width > 0.0)
+            {
+                layout.break_all_lines(Some(width));
+            }
+        }
+        Some((layout.width(), layout.height()))
+    }
+
+    /// Whether this text node carries a font-metric indent prepared before Taffy.
+    pub(crate) fn has_pre_taffy_text_indent(&self) -> bool {
+        matches!(&self.data, NodeData::Text(text) if text.text_indent_px.is_some())
     }
 
     /// Resolved intrinsic size (px) for a replaced element, if

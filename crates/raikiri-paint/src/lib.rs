@@ -438,6 +438,80 @@ mod tests {
     }
 
     #[test]
+    fn paint_body_origin_fallbacks_cover_auto_and_computed_margins() {
+        fn paint_body(style: Option<&str>, force_auto_computed_margin: bool) -> Scene {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), style);
+            doc.append_text(body, "direct body text");
+            let rules = build_rule_tree(&doc);
+            let mut cascade = cascade(&doc, &rules).expect("cascade Ok");
+            if force_auto_computed_margin {
+                cascade.computed[body].margin.left =
+                    raikiri_style::resolve::ComputedLengthPercentageOrAuto::Auto;
+            }
+            layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new())
+                .expect("layout Ok");
+            let mut scene = Scene::new();
+            paint_single_page(&mut scene, &doc, &cascade, PageBox::A4);
+            scene
+        }
+
+        // An authored `auto` margin takes the non-UA branch but has no finite
+        // used value, exercising its zero fallback.
+        let auto_scene = paint_body(Some("margin-left:auto;background-color:red"), false);
+        assert!(
+            auto_scene
+                .commands
+                .iter()
+                .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
+        );
+
+        // With no authored margin, direct text plus a body canvas background
+        // takes the computed-value fallback branch.
+        let computed_scene = paint_body(Some("background-color:red"), true);
+        assert!(
+            computed_scene
+                .commands
+                .iter()
+                .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
+        );
+        let computed_px_scene = paint_body(Some("background-color:red"), false);
+        assert!(
+            computed_px_scene
+                .commands
+                .iter()
+                .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
+        );
+    }
+
+    #[test]
+    fn paint_img_filename_color_uses_padding_aware_background_path() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let img = doc.append_element(
+            Some(body),
+            "img",
+            Style::default(),
+            Some("width:20px;height:10px;padding:2px"),
+        );
+        doc.set_element_attributes(img, vec![("src".into(), "red.png".into())]);
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cascade, PageBox::A4);
+        assert!(scene.commands.iter().any(|command| {
+            matches!(
+                command,
+                RenderCommand::Fill(fill)
+                    if fill.brush == anyrender::Paint::Solid(peniko::Color::from_rgba8(255, 0, 0, 255))
+            )
+        }));
+    }
+
+    #[test]
     fn paint_single_page_without_body_returns_early() {
         // fragment (Document → <p> 直子、no <body>) → paint_document は早期 return するが
         // canvas background (white) は依然として emit される。
@@ -1787,6 +1861,79 @@ mod tests {
             coeffs[5],
             expected_content_y
         );
+    }
+
+    #[test]
+    fn img_ch_padding_uses_the_pre_taffy_used_value() {
+        use raikiri_traits::{DecodedImage, ImagePixelSource};
+        use std::path::PathBuf;
+        use std::sync::Arc;
+
+        struct OneImageSource(url::Url, Arc<DecodedImage>);
+        impl ImagePixelSource for OneImageSource {
+            fn get_decoded(&self, url: &url::Url) -> Option<Arc<DecodedImage>> {
+                (*url == self.0).then(|| self.1.clone())
+            }
+        }
+
+        let fonts_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("target")
+            .join("wpt")
+            .join("fonts");
+        // cov:ignore: this integration fixture is intentionally skippable when shared WPT assets are absent.
+        if !fonts_dir.join("Ahem.ttf").exists() {
+            eprintln!(
+                "skipping ch padding paint regression: Ahem.ttf is required under {}",
+                fonts_dir.display()
+            );
+            return;
+        }
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let img = doc.append_element(
+            Some(body),
+            "img",
+            Style::default(),
+            Some(
+                "width:100px;height:50px;font-family:Ahem;font-size:16px;padding-top:1ch;                 padding-right:0px;padding-bottom:0px;padding-left:0px;                 background-color:rgb(255,0,0);background-clip:content-box",
+            ),
+        );
+        doc.set_element_attributes(img, vec![("src".into(), "file:///ch-pad.png".into())]);
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let fonts = raikiri_dom::fonts::build_wpt_font_ctx(&fonts_dir)
+            .expect("bundled WPT fonts should register");
+        layout_single_page(&mut doc, &cr, PageBox::A4, fonts).expect("layout Ok");
+
+        let url = url::Url::parse("file:///ch-pad.png").unwrap();
+        let decoded = Arc::new(DecodedImage {
+            width: 1,
+            height: 1,
+            rgba: vec![0, 255, 0, 255],
+        });
+        let pixel_source = OneImageSource(url, decoded);
+        let mut scene = Scene::new();
+        paint_single_page_with_images(&mut scene, &doc, &cr, PageBox::A4, &pixel_source);
+        let fill = scene
+            .commands
+            .iter()
+            .find_map(|cmd| match cmd {
+                RenderCommand::Fill(fill)
+                    if matches!(fill.brush, anyrender::types::Paint::Image(_)) =>
+                {
+                    Some(fill)
+                }
+                _ => None,
+            })
+            .expect("expected an image fill command in the recorded scene");
+        let body_loc = doc.get_node(body).unwrap().unrounded_layout.location;
+        let img_loc = doc.get_node(img).unwrap().unrounded_layout.location;
+        let expected_content_y = (body_loc.y + img_loc.y + 16.0) as f64;
+        let coeffs = fill.transform.as_coeffs();
+        assert!((coeffs[5] - expected_content_y).abs() < 1e-4);
     }
 }
 

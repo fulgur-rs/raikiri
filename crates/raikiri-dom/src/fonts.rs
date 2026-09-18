@@ -20,7 +20,7 @@
 
 use parley::FontContext;
 use raikiri_style::{
-    Atom, ComputedValues, FontFaceRegistry, FontFaceRule, FontFaceSource, FontFaceStyle,
+    Atom, ChFontKey, ComputedValues, FontFaceRegistry, FontFaceRule, FontFaceSource, FontFaceStyle,
     FontFaceWeight,
 };
 use smol_str::SmolStr;
@@ -1479,6 +1479,30 @@ pub fn expand_font_face_aliases(
 ) -> Vec<(String, String)> {
     let mut aliased = Vec::new();
     for (family, rule) in ordered_font_face_rules(faces) {
+        if !rule.unicode_range.is_empty() {
+            let covers_ch_glyphs = |codepoint| {
+                rule.unicode_range
+                    .iter()
+                    .any(|(start, end)| *start <= codepoint && codepoint <= *end)
+            };
+            if !covers_ch_glyphs(0x20) || !covers_ch_glyphs(0x30) {
+                let family_registered = fonts.collection.family_id(family.as_str()).is_some();
+                let local_target_registered = rule.src.iter().any(|source| match source {
+                    FontFaceSource::Local(name) => {
+                        fonts.collection.family_id(name.as_str()).is_some()
+                    }
+                    _ => false,
+                });
+                // If a URL face was not activated, leave its name in the
+                // authored list so Parley can apply its ordinary fallback
+                // behavior. A registered face or a resolvable local alias is
+                // authoritative and must be removed when either required glyph
+                // is excluded.
+                if family_registered || local_target_registered {
+                    remove_unavailable_ch_family(computed, family.as_str());
+                }
+            } // cov:ignore: this closing edge has no executable mapping on the pinned compiler.
+        }
         for source in &rule.src {
             match source {
                 FontFaceSource::Local(name) => {
@@ -1559,27 +1583,120 @@ fn ordered_font_face_rules(faces: &FontFaceRegistry) -> Vec<(&SmolStr, &FontFace
     ordered
 }
 
-/// Append `target` to every computed `font-family` list mentioning `face`
-/// (after it — a natively-registered `face` keeps precedence; skips lists
-/// that already contain `target`, so repeated application is idempotent).
+/// Remove a font-face family from `ch` provenance when its unicode range does
+/// not cover the space and zero glyphs required by first-available `ch`
+/// selection. U+0030 supplies the advance.
+fn remove_unavailable_ch_family(computed: &mut [ComputedValues], family: &str) {
+    fn remove_from_key(key: &mut ChFontKey, family: &str) {
+        let mut families = key.family.as_ref().clone();
+        families.retain(|candidate| !candidate.0.as_str().eq_ignore_ascii_case(family));
+        key.family = std::sync::Arc::new(families);
+    }
+    for cv in computed {
+        if let Some(key) = cv.text_indent_ch_font.as_mut() {
+            remove_from_key(key, family);
+        }
+        if let Some(provenance) = cv.width_ch.as_mut() {
+            remove_from_key(&mut provenance.font, family);
+        }
+        if let Some(provenance) = cv.height_ch.as_mut() {
+            remove_from_key(&mut provenance.font, family);
+        }
+        for provenance in [
+            cv.padding_ch.top.as_mut(),
+            cv.padding_ch.right.as_mut(),
+            cv.padding_ch.bottom.as_mut(),
+            cv.padding_ch.left.as_mut(),
+            cv.margin_ch.top.as_mut(),
+            cv.margin_ch.right.as_mut(),
+            cv.margin_ch.bottom.as_mut(),
+            cv.margin_ch.left.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            remove_from_key(&mut provenance.font, family);
+        }
+    }
+}
+
+/// Insert `target` immediately after every computed `font-family` list entry
+/// mentioning `face`; a target that already precedes the face keeps precedence,
+/// while later duplicates are removed so repeated application is idempotent.
+/// Authored `ch` provenance is expanded in parallel because it is deliberately
+/// retained separately from the ordinary computed family list.
 fn expand_font_face_alias(computed: &mut [ComputedValues], face: &str, target: &str) {
     use std::sync::Arc;
+
+    fn alias_family_list(families: &[Atom], face: &str, target: &str) -> Option<Vec<Atom>> {
+        let face_index = families
+            .iter()
+            .position(|a| a.0.as_str().eq_ignore_ascii_case(face))?;
+        if face.eq_ignore_ascii_case(target) {
+            return None;
+        }
+        if families
+            .iter()
+            .position(|a| a.0.as_str().eq_ignore_ascii_case(target))
+            .is_some_and(|target_index| target_index < face_index)
+        {
+            // An explicitly earlier target already wins over the alias.
+            return None;
+        }
+        let mut expanded = Vec::with_capacity(families.len() + 1);
+        for (index, family) in families.iter().enumerate() {
+            if family.0.as_str().eq_ignore_ascii_case(target) {
+                continue;
+            }
+            expanded.push(family.clone());
+            if index == face_index {
+                expanded.push(Atom(SmolStr::new(target)));
+            }
+        }
+        Some(expanded)
+    }
+
+    fn update_key(key: &mut ChFontKey, face: &str, target: &str) {
+        if let Some(expanded) = alias_family_list(&key.family, face, target) {
+            key.family = Arc::new(expanded);
+        }
+    }
+
     for cv in computed.iter_mut() {
-        if !cv.font_family.iter().any(|a| a.0.as_str() == face) {
-            continue;
+        if let Some(expanded) = alias_family_list(&cv.font_family, face, target) {
+            cv.font_family = Arc::new(expanded);
         }
-        if cv.font_family.iter().any(|a| a.0.as_str() == target) {
-            continue;
+        if let Some(key) = cv.text_indent_ch_font.as_mut() {
+            update_key(key, face, target);
         }
-        let mut expanded = cv.font_family.as_ref().clone();
-        expanded.push(Atom(SmolStr::new(target)));
-        cv.font_family = Arc::new(expanded);
+        if let Some(provenance) = cv.width_ch.as_mut() {
+            update_key(&mut provenance.font, face, target);
+        }
+        if let Some(provenance) = cv.height_ch.as_mut() {
+            update_key(&mut provenance.font, face, target);
+        }
+        for provenance in [
+            cv.padding_ch.top.as_mut(),
+            cv.padding_ch.right.as_mut(),
+            cv.padding_ch.bottom.as_mut(),
+            cv.padding_ch.left.as_mut(),
+            cv.margin_ch.top.as_mut(),
+            cv.margin_ch.right.as_mut(),
+            cv.margin_ch.bottom.as_mut(),
+            cv.margin_ch.left.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            update_key(&mut provenance.font, face, target);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use raikiri_style::ChLengthProvenance;
     use std::io::Write;
     use std::path::Path;
 
@@ -2908,6 +3025,20 @@ mod tests {
     }
 
     #[test]
+    fn expand_font_face_unicode_range_ignores_unregistered_url_faces() {
+        let mut fonts = FontContext::new();
+        let mut computed = vec![computed_with_family("Unloaded")];
+        let faces = FontFaceRegistry::from_source(
+            "@font-face { font-family: Unloaded; src: url(unloaded.ttf); unicode-range: U+0041-0042; }",
+        );
+        let report =
+            super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
+        assert!(report.applied.is_empty());
+        assert!(report.aliased.is_empty());
+        assert_eq!(computed[0].font_family[0].0.as_str(), "Unloaded");
+    }
+
+    #[test]
     fn apply_font_faces_local_alias_expands_computed_lists() {
         let Some(ahem) = wpt_ahem_bytes() else {
             return;
@@ -2930,7 +3061,35 @@ mod tests {
             );
             assert!(!registered.is_empty());
         }
-        let mut computed = vec![computed_with_family("AliasFam")];
+        let mut aliased_cv = computed_with_family("AliasFam");
+        aliased_cv.font_family = std::sync::Arc::new(vec![
+            Atom(SmolStr::new("AliasFam")),
+            Atom(SmolStr::new("Fallback")),
+        ]);
+        let source_key = ChFontKey {
+            family: aliased_cv.font_family.clone(),
+            size: aliased_cv.font_size,
+            weight: aliased_cv.font_weight,
+            style: aliased_cv.font_style,
+        };
+        aliased_cv.text_indent_ch_font = Some(source_key.clone());
+        aliased_cv.width_ch = Some(ChLengthProvenance {
+            factor: 1.0,
+            font: source_key.clone(),
+        });
+        aliased_cv.height_ch = Some(ChLengthProvenance {
+            factor: 1.0,
+            font: source_key.clone(),
+        });
+        aliased_cv.padding_ch.top = Some(ChLengthProvenance {
+            factor: 1.0,
+            font: source_key.clone(),
+        });
+        aliased_cv.margin_ch.left = Some(ChLengthProvenance {
+            factor: 1.0,
+            font: source_key,
+        });
+        let mut computed = vec![aliased_cv];
         let faces = FontFaceRegistry::from_source(
             "@font-face { font-family: AliasFam; src: local(RealFam); }",
         );
@@ -2945,7 +3104,50 @@ mod tests {
             .iter()
             .map(|a| a.0.as_str())
             .collect();
-        assert_eq!(names, vec!["AliasFam", "RealFam"]);
+        assert_eq!(names, vec!["AliasFam", "RealFam", "Fallback"]);
+        let key_names = |key: &ChFontKey| -> Vec<String> {
+            key.family.iter().map(|a| a.0.to_string()).collect()
+        };
+        assert_eq!(
+            key_names(computed[0].text_indent_ch_font.as_ref().unwrap()),
+            vec![
+                "AliasFam".to_string(),
+                "RealFam".to_string(),
+                "Fallback".to_string()
+            ]
+        );
+        assert_eq!(
+            key_names(&computed[0].width_ch.as_ref().unwrap().font),
+            vec![
+                "AliasFam".to_string(),
+                "RealFam".to_string(),
+                "Fallback".to_string()
+            ]
+        );
+        assert_eq!(
+            key_names(&computed[0].padding_ch.top.as_ref().unwrap().font),
+            vec![
+                "AliasFam".to_string(),
+                "RealFam".to_string(),
+                "Fallback".to_string()
+            ]
+        );
+        assert_eq!(
+            key_names(&computed[0].height_ch.as_ref().unwrap().font),
+            vec![
+                "AliasFam".to_string(),
+                "RealFam".to_string(),
+                "Fallback".to_string()
+            ]
+        );
+        assert_eq!(
+            key_names(&computed[0].margin_ch.left.as_ref().unwrap().font),
+            vec![
+                "AliasFam".to_string(),
+                "RealFam".to_string(),
+                "Fallback".to_string()
+            ]
+        );
         // Idempotent — a second application must not duplicate.
         let again =
             super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
@@ -2954,8 +3156,131 @@ mod tests {
             .iter()
             .map(|a| a.0.as_str())
             .collect();
-        assert_eq!(names, vec!["AliasFam", "RealFam"]);
+        assert_eq!(names, vec!["AliasFam", "RealFam", "Fallback"]);
         assert_eq!(again.aliased.len(), 1);
+    }
+
+    #[test]
+    fn apply_font_faces_unicode_range_removes_ch_provenance_only() {
+        // cov:ignore: this positive-path test is intentionally skippable when the shared WPT checkout is absent.
+        let Some(ahem) = wpt_ahem_bytes() else {
+            return;
+        };
+        let mut fonts = FontContext::new();
+        {
+            use parley::fontique::FontInfoOverride;
+            let registered = fonts.collection.register_fonts(
+                parley::fontique::Blob::new(std::sync::Arc::new(ahem) as _),
+                Some(FontInfoOverride {
+                    family_name: Some("RealFam"),
+                    width: None,
+                    style: None,
+                    weight: None,
+                    axes: None,
+                }),
+            );
+            assert!(!registered.is_empty());
+        }
+
+        let mut cv = computed_with_family("AliasFam");
+        cv.font_family = std::sync::Arc::new(vec![
+            Atom(SmolStr::new("AliasFam")),
+            Atom(SmolStr::new("Fallback")),
+        ]);
+        let source_key = ChFontKey {
+            family: cv.font_family.clone(),
+            size: cv.font_size,
+            weight: cv.font_weight,
+            style: cv.font_style,
+        };
+        let provenance = || ChLengthProvenance {
+            factor: 1.0,
+            font: source_key.clone(),
+        };
+        cv.text_indent_ch_font = Some(source_key.clone());
+        cv.width_ch = Some(provenance());
+        cv.height_ch = Some(provenance());
+        cv.padding_ch.top = Some(provenance());
+        cv.padding_ch.right = Some(provenance());
+        cv.padding_ch.bottom = Some(provenance());
+        cv.padding_ch.left = Some(provenance());
+        cv.margin_ch.top = Some(provenance());
+        cv.margin_ch.right = Some(provenance());
+        cv.margin_ch.bottom = Some(provenance());
+        cv.margin_ch.left = Some(provenance());
+        let mut computed = vec![cv];
+        let faces = FontFaceRegistry::from_source(
+            "@font-face { font-family: AliasFam; src: local(RealFam); unicode-range: U+0041-005A; }",
+        );
+        let report =
+            super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
+        assert_eq!(
+            report.aliased,
+            vec![("AliasFam".to_string(), "RealFam".to_string())]
+        );
+        let names: Vec<&str> = computed[0]
+            .font_family
+            .iter()
+            .map(|atom| atom.0.as_str())
+            .collect();
+        assert_eq!(names, vec!["AliasFam", "RealFam", "Fallback"]);
+        let provenance_names = |key: &ChFontKey| -> Vec<String> {
+            key.family.iter().map(|atom| atom.0.to_string()).collect()
+        };
+        let expected = vec!["Fallback".to_string()];
+        assert_eq!(
+            provenance_names(computed[0].text_indent_ch_font.as_ref().unwrap()),
+            expected
+        );
+        assert_eq!(
+            provenance_names(&computed[0].width_ch.as_ref().unwrap().font),
+            vec!["Fallback".to_string()]
+        );
+        assert_eq!(
+            provenance_names(&computed[0].height_ch.as_ref().unwrap().font),
+            vec!["Fallback".to_string()]
+        );
+        for provenance in [
+            computed[0].padding_ch.top.as_ref().unwrap(),
+            computed[0].padding_ch.right.as_ref().unwrap(),
+            computed[0].padding_ch.bottom.as_ref().unwrap(),
+            computed[0].padding_ch.left.as_ref().unwrap(),
+            computed[0].margin_ch.top.as_ref().unwrap(),
+            computed[0].margin_ch.right.as_ref().unwrap(),
+            computed[0].margin_ch.bottom.as_ref().unwrap(),
+            computed[0].margin_ch.left.as_ref().unwrap(),
+        ] {
+            assert_eq!(
+                provenance_names(&provenance.font),
+                vec!["Fallback".to_string()]
+            );
+        }
+    }
+
+    #[test]
+    fn expand_font_face_alias_keeps_existing_precedence() {
+        let mut same = computed_with_family("AliasFam");
+        super::expand_font_face_alias(std::slice::from_mut(&mut same), "AliasFam", "AliasFam");
+        assert_eq!(same.font_family[0].0.as_str(), "AliasFam");
+
+        let mut earlier = computed_with_family("RealFam");
+        earlier.font_family = std::sync::Arc::new(vec![
+            Atom(SmolStr::new("RealFam")),
+            Atom(SmolStr::new("AliasFam")),
+        ]);
+        super::expand_font_face_alias(std::slice::from_mut(&mut earlier), "AliasFam", "RealFam");
+        assert_eq!(
+            earlier
+                .font_family
+                .iter()
+                .map(|atom| atom.0.as_str())
+                .collect::<Vec<_>>(),
+            vec!["RealFam", "AliasFam"]
+        );
+
+        let mut computed = vec![computed_with_family("AliasFam")];
+        super::expand_font_face_alias(&mut computed, "AliasFam", "RealFam");
+        assert_eq!(computed[0].font_family[1].0.as_str(), "RealFam");
     }
 
     #[test]
