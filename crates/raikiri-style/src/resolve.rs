@@ -253,6 +253,19 @@ impl ComputedLength {
     }
 }
 
+/// Computed absolute length plus authored `ch` provenance.
+///
+/// The computed value remains an absolute fallback for consumers that do not
+/// have a shaping context. The optional factor lets a font-aware consumer
+/// replace that fallback with the selected face's `0` glyph advance.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ComputedLengthWithCh {
+    /// Style-layer computed fallback in CSS px.
+    pub value: ComputedLength,
+    /// Authored `ch` multiplier, when the specified value used `ch`.
+    pub ch_factor: Option<f32>,
+}
+
 /// Computed `<length-percentage>` — px か percentage。
 ///
 /// `padding-*` のように grammar が `<length-percentage>` を取り、percentage の
@@ -1766,6 +1779,28 @@ pub fn resolve_length_or_normal(
     }
 }
 
+/// Resolve a spacing length while retaining authored `ch` provenance.
+///
+/// The ordinary [`resolve_length_or_normal`] API intentionally returns only
+/// the computed absolute length. Text layout additionally needs to know that
+/// the source was `Nch`, because the actual `0` advance is only available once
+/// a font/shaping context is present.
+pub fn resolve_length_or_normal_with_ch(
+    specified: LengthOrNormal,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedLengthWithCh {
+    let ch_factor = match specified {
+        LengthOrNormal::Length(Length::Ch(factor)) if factor.is_finite() => Some(factor),
+        _ => None,
+    };
+    ComputedLengthWithCh {
+        value: resolve_length_or_normal(specified, font_size, own_line_height, ctx),
+        ch_factor,
+    }
+}
+
 /// `tab-size` の specified value を絶対化する (**phase 3** — 自 node 基準)。
 ///
 /// CSS Text Module Level 3 §4.2 propdef: "Computed value: the specified
@@ -3267,6 +3302,27 @@ mod tests {
             resolve_length(Length::Ic(2.0), ComputedLength(20.0), None, &CTX),
             ComputedLength(40.0),
         );
+    }
+
+    #[test]
+    fn length_or_normal_with_ch_retains_authored_factor() {
+        let resolved = resolve_length_or_normal_with_ch(
+            LengthOrNormal::Length(Length::Ch(2.0)),
+            ComputedLength(20.0),
+            None,
+            &CTX,
+        );
+        assert_eq!(resolved.value, ComputedLength(20.0));
+        assert_eq!(resolved.ch_factor, Some(2.0));
+
+        let normal = resolve_length_or_normal_with_ch(
+            LengthOrNormal::Normal,
+            ComputedLength(20.0),
+            None,
+            &CTX,
+        );
+        assert_eq!(normal.value, ComputedLength::ZERO);
+        assert_eq!(normal.ch_factor, None);
     }
 
     #[test]

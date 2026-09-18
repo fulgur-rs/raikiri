@@ -55,7 +55,7 @@ use crate::resolve::{
     lift_text_shadow_item, resolve_background_image, resolve_background_size, resolve_border,
     resolve_border_radius, resolve_border_spacing, resolve_box_shadow_item, resolve_css_position,
     resolve_flex_basis, resolve_font_size, resolve_grid_auto_track_list,
-    resolve_grid_template_tracks, resolve_length, resolve_length_or_normal,
+    resolve_grid_template_tracks, resolve_length, resolve_length_or_normal_with_ch,
     resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
     resolve_outline, resolve_tab_size, resolve_text_shadow_item, resolve_transform_function,
@@ -318,11 +318,14 @@ pub struct SpecifiedValues {
     /// 同じ field に落ちる ([`ComputedValues::overflow_wrap`] doc 参照)。
     pub overflow_wrap: OverflowWrap,
     /// `letter-spacing` の **specified** value。phase 3
-    /// ([`resolve_length_or_normal`]) で絶対化される — `padding`/`margin` と
+    /// ([`crate::resolve::resolve_length_or_normal`]) で絶対化される — `padding`/`margin` と
     /// 同じ「specified 層のまま留まる」分類 (`Normal` variant が `em`/`rem`
     /// を含む `Length` と disjoint ではないため、`font_style` 等の
     /// computed-equivalent 分類には入らない)。
     pub letter_spacing: LengthOrNormal,
+    /// Authored `ch` factor retained through inheritance so the text-layout
+    /// sink can replace the style fallback with a font metric.
+    pub letter_spacing_ch_factor: Option<f32>,
     /// `word-spacing` の **specified** value。[`Self::letter_spacing`] と
     /// 同じ絶対化 phase・同じ分類理由 ([`LengthOrNormal`] を共有する
     /// sibling property、両者の spec 根拠は同 type の doc 参照)。
@@ -673,6 +676,7 @@ impl SpecifiedValues {
             // CSS Text 3 §7.2 / §7.1: letter-spacing / word-spacing の
             // initial は共に `normal`。
             letter_spacing: LengthOrNormal::Normal,
+            letter_spacing_ch_factor: None,
             word_spacing: LengthOrNormal::Normal,
             word_spacing_ch_factor: None,
             // CSS Text Module Level 3 §4.2: tab-size initial は `8`。
@@ -923,6 +927,7 @@ impl SpecifiedValues {
             // (`lift_font_size` と同じ lossless / 不動点性、
             // `lift_length_or_normal` doc 参照)。
             letter_spacing: lift_length_or_normal(parent.letter_spacing),
+            letter_spacing_ch_factor: parent.letter_spacing_ch_factor,
             word_spacing: lift_length_or_normal(parent.word_spacing),
             word_spacing_ch_factor: parent.word_spacing_ch_factor,
             // CSS Text Module Level 3 §4.2: tab-size は inherited。computed
@@ -1391,6 +1396,10 @@ impl SpecifiedValues {
         // — `rlh` は `ctx.root_line_height` (tree-global)
         // を使うので、本 local はここでしか要らない。
         let own_line_height = used_line_height_length(line_height, font_size);
+        let letter_spacing =
+            resolve_length_or_normal_with_ch(self.letter_spacing, font_size, own_line_height, ctx);
+        let word_spacing =
+            resolve_length_or_normal_with_ch(self.word_spacing, font_size, own_line_height, ctx);
         ComputedValues {
             color: self.color,
             background_color: self.background_color,
@@ -1606,21 +1615,12 @@ impl SpecifiedValues {
             // `letter-spacing` / `word-spacing` の `1lh` 解決基準も他の box
             // property と同じ `own_line_height` (CSS Text 3 §7.2 / §7.1 は
             // `normal` を `0` に潰す以外 line-height 基準の特別扱いを持たない)。
-            letter_spacing: resolve_length_or_normal(
-                self.letter_spacing,
-                font_size,
-                own_line_height,
-                ctx,
-            ),
-            word_spacing: resolve_length_or_normal(
-                self.word_spacing,
-                font_size,
-                own_line_height,
-                ctx,
-            ),
+            letter_spacing: letter_spacing.value,
             // Preserve the `ch` provenance through inheritance for the
             // font-metric-aware text-layout consumer.
-            word_spacing_ch_factor: self.word_spacing_ch_factor,
+            letter_spacing_ch_factor: self.letter_spacing_ch_factor.or(letter_spacing.ch_factor),
+            word_spacing: word_spacing.value,
+            word_spacing_ch_factor: self.word_spacing_ch_factor.or(word_spacing.ch_factor),
             // `tab-size` の `1lh` 解決基準も他の box property と同じ
             // `own_line_height` (CSS Text Module Level 3 §4.2 は line-height
             // 基準の特別扱いを持たない)。
@@ -2145,6 +2145,7 @@ mod tests {
             word_break: WordBreak::KeepAll,
             overflow_wrap: OverflowWrap::Anywhere,
             letter_spacing: ComputedLength(2.0),
+            letter_spacing_ch_factor: None,
             word_spacing: ComputedLength(4.0),
             word_spacing_ch_factor: None,
             tab_size: ComputedTabSize::Length(ComputedLength(11.0)),
