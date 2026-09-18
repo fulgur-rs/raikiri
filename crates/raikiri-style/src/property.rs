@@ -6935,15 +6935,27 @@ pub enum PropertyValue {
     /// `margin-top: <length-percentage> | auto` — non-inherited、initial: 0
     /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>)。
     MarginTop(LengthOrAuto),
+    /// Page-context-only marker for `margin-top: inherit`. The page parser
+    /// resolves this against the root element before exposing declarations.
+    MarginTopInherit,
     /// `margin-right: <length-percentage> | auto` — non-inherited、initial: 0
     /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>)。
     MarginRight(LengthOrAuto),
+    /// Page-context-only marker for `margin-right: inherit`.
+    MarginRightInherit,
     /// `margin-bottom: <length-percentage> | auto` — non-inherited、initial: 0
     /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>)。
     MarginBottom(LengthOrAuto),
+    /// Page-context-only marker for `margin-bottom: inherit`.
+    MarginBottomInherit,
     /// `margin-left: <length-percentage> | auto` — non-inherited、initial: 0
     /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>)。
     MarginLeft(LengthOrAuto),
+    /// Page-context-only marker for `margin-left: inherit`.
+    MarginLeftInherit,
+    /// Page-context-only marker for the `margin: inherit` shorthand. It is
+    /// expanded into four side markers before page-context cascade.
+    MarginInherit,
     /// `margin: <'margin-top'>{1,4}` shorthand — 4-side quad の一括指定
     /// (CSS Box 3 §3.2 <https://www.w3.org/TR/css-box-3/#margin-shorthand>)。
     ///
@@ -8395,11 +8407,17 @@ impl PropertyValue {
             PropertyValue::Padding(_) => PropertyKey::Padding,
             PropertyValue::PaddingInline(_) => PropertyKey::PaddingInline,
             PropertyValue::PaddingBlock(_) => PropertyKey::PaddingBlock,
-            PropertyValue::MarginTop(_) => PropertyKey::MarginTop,
-            PropertyValue::MarginRight(_) => PropertyKey::MarginRight,
-            PropertyValue::MarginBottom(_) => PropertyKey::MarginBottom,
-            PropertyValue::MarginLeft(_) => PropertyKey::MarginLeft,
-            PropertyValue::Margin(_) => PropertyKey::Margin,
+            PropertyValue::MarginTop(_) | PropertyValue::MarginTopInherit => PropertyKey::MarginTop,
+            PropertyValue::MarginRight(_) | PropertyValue::MarginRightInherit => {
+                PropertyKey::MarginRight
+            }
+            PropertyValue::MarginBottom(_) | PropertyValue::MarginBottomInherit => {
+                PropertyKey::MarginBottom
+            }
+            PropertyValue::MarginLeft(_) | PropertyValue::MarginLeftInherit => {
+                PropertyKey::MarginLeft
+            }
+            PropertyValue::Margin(_) | PropertyValue::MarginInherit => PropertyKey::Margin,
             PropertyValue::MarginInline(_) => PropertyKey::MarginInline,
             PropertyValue::MarginBlock(_) => PropertyKey::MarginBlock,
             PropertyValue::BorderTopWidth(_) => PropertyKey::BorderTopWidth,

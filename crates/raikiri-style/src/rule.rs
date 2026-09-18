@@ -455,6 +455,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaration)) {
     match d.value {
         PropertyValue::Margin(sides) => expand_margin(sides, d.important, push),
+        PropertyValue::MarginInherit => expand_margin_inherit(d.important, push),
         PropertyValue::Padding(sides) => expand_padding(sides, d.important, push),
         PropertyValue::MarginInline(pair) => expand_margin_inline(pair, d.important, push),
         PropertyValue::MarginBlock(pair) => expand_margin_block(pair, d.important, push),
@@ -505,9 +506,13 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::PaddingBottom(_)
         | PropertyValue::PaddingLeft(_)
         | PropertyValue::MarginTop(_)
+        | PropertyValue::MarginTopInherit
         | PropertyValue::MarginRight(_)
+        | PropertyValue::MarginRightInherit
         | PropertyValue::MarginBottom(_)
+        | PropertyValue::MarginBottomInherit
         | PropertyValue::MarginLeft(_)
+        | PropertyValue::MarginLeftInherit
         | PropertyValue::BorderTopWidth(_)
         | PropertyValue::BorderRightWidth(_)
         | PropertyValue::BorderBottomWidth(_)
@@ -833,6 +838,27 @@ fn expand_margin(sides: Sides<LengthOrAuto>, important: bool, mut push: impl FnM
     });
     push(Declaration {
         value: PropertyValue::MarginLeft(sides.left),
+        important,
+    });
+}
+
+/// Page-context `margin: inherit` shorthand marker expansion.
+#[inline(never)]
+fn expand_margin_inherit(important: bool, mut push: impl FnMut(Declaration)) {
+    push(Declaration {
+        value: PropertyValue::MarginTopInherit,
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::MarginRightInherit,
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::MarginBottomInherit,
+        important,
+    });
+    push(Declaration {
+        value: PropertyValue::MarginLeftInherit,
         important,
     });
 }

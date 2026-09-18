@@ -52,7 +52,9 @@ use crate::property::{
     WritingMode, initial_grid_auto_track_list, is_custom_property_name, parse_value,
     resolve_text_align_match_parent,
 };
-use crate::resolve::{ComputedLength, ResolveContext, used_line_height_length};
+use crate::resolve::{
+    ComputedLength, ComputedLengthPercentageOrAuto, ResolveContext, used_line_height_length,
+};
 use crate::rule::{expand_shorthand_into, parse_declaration_block};
 use crate::ruletree::Origin;
 use crate::ruletree::RuleTree;
@@ -244,11 +246,20 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
         &mut pseudo,
     );
 
-    let root_computed = computed[dom.root_id().0 as usize].clone();
+    // `StyleDom::root_id()` is the Document node.  Page properties inherit
+    // from the first direct element child (the root element), not from that
+    // Document node's initial values.
+    let root_element_id = dom.child_ids(dom.root_id()).find(|id| {
+        dom.node(*id)
+            .is_some_and(|node| node.kind() == StyleNodeKind::Element)
+    });
+    let root_computed = root_element_id
+        .and_then(|id| computed.get(id.0 as usize))
+        .unwrap_or(&computed[dom.root_id().0 as usize]);
     let page = cascade_page(
         rule_tree,
         page_query,
-        PageInheritance::FromRoot(&root_computed),
+        PageInheritance::FromRoot(root_computed),
     );
 
     Ok(CascadeResult {
@@ -7369,12 +7380,41 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// 一度だけ構築し、本関数と phase 3 ([`crate::page`] の `absolutize_in_page_context`)
 /// の両方に使い回す (`inherited` は関数全体で不変なので、二重に計算しても
 /// 同じ値になる — 呼び手の doc 参照)。
+fn inherited_margin_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
+    match value {
+        ComputedLengthPercentageOrAuto::Px(px) => LengthOrAuto::Length(Length::Px(px)),
+        ComputedLengthPercentageOrAuto::Percent(percent) => {
+            LengthOrAuto::Length(Length::Percent(percent))
+        }
+        ComputedLengthPercentageOrAuto::Calc(calc) => LengthOrAuto::Calc(calc),
+        ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
+    }
+}
+
 pub(crate) fn resolve_against_inherited(
     value: PropertyValue,
     inherited: &ComputedValues,
     ctx: &ResolveContext,
 ) -> ResolvedAgainstInherited {
     ResolvedAgainstInherited(match value {
+        PropertyValue::MarginTopInherit => {
+            PropertyValue::MarginTop(inherited_margin_length(inherited.margin.top))
+        }
+        PropertyValue::MarginRightInherit => {
+            PropertyValue::MarginRight(inherited_margin_length(inherited.margin.right))
+        }
+        PropertyValue::MarginBottomInherit => {
+            PropertyValue::MarginBottom(inherited_margin_length(inherited.margin.bottom))
+        }
+        PropertyValue::MarginLeftInherit => {
+            PropertyValue::MarginLeft(inherited_margin_length(inherited.margin.left))
+        }
+        PropertyValue::MarginInherit => PropertyValue::Margin(Sides {
+            top: inherited_margin_length(inherited.margin.top),
+            right: inherited_margin_length(inherited.margin.right),
+            bottom: inherited_margin_length(inherited.margin.bottom),
+            left: inherited_margin_length(inherited.margin.left),
+        }),
         // CSS Fonts 4 §2.2.1 "Relative Weights"
         // <https://www.w3.org/TR/css-fonts-4/#relative-weights>: `bolder` /
         // `lighter` は継承元の computed weight に対して解決される。ここで
@@ -8178,6 +8218,13 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // cascade 段に届く declaration
         // は per-side longhand のみ = winner の適用順に依存しない per-key
         // determinism が成立する (詳細は `crate::rule::expand_shorthand_into` doc)。
+        // Page-only inherit markers are never produced by the element parser;
+        // keep the staging path panic-free if an internal caller supplies one.
+        PropertyValue::MarginTopInherit
+        | PropertyValue::MarginRightInherit
+        | PropertyValue::MarginBottomInherit
+        | PropertyValue::MarginLeftInherit
+        | PropertyValue::MarginInherit => {}
         PropertyValue::MarginTop(v) => target.margin.top = v,
         PropertyValue::MarginRight(v) => target.margin.right = v,
         PropertyValue::MarginBottom(v) => target.margin.bottom = v,
@@ -8736,9 +8783,10 @@ mod tests {
     use crate::property::CssColor;
     use crate::property::DisplayValue;
     use crate::property::{
-        Border, BorderColor, BorderStyle, Length, LengthOrAuto, OutlineColor, OutlineStyle,
-        OverflowValue, OverflowXY, PropertyKey, Sides, TextDecorationColor, TextDecorationLine,
-        TextDecorationShorthand, TextDecorationStyle, TextDecorationThickness, TextShadowColor,
+        Border, BorderColor, BorderStyle, CalcLengthPercentage, Length, LengthOrAuto, OutlineColor,
+        OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides,
+        TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
+        TextDecorationThickness, TextShadowColor,
     };
     use crate::resolve::{
         ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedLength,
@@ -16855,6 +16903,100 @@ mod tests {
         assert_eq!(
             result.computed[root].writing_mode,
             WritingMode::HorizontalTb
+        );
+    }
+
+    #[test]
+    fn page_margin_inherit_uses_the_html_root_element() {
+        let mut doc = TestDoc::new();
+        let html = doc.push_element(0, "html", Some("margin: 0.5in"));
+        let style = doc.push_element(html, "style", None);
+        doc.push_text(style, "@page { margin: 13px; margin: inherit }");
+        let tree = build_rule_tree(&doc);
+        let result = cascade_with_media_context_for_page(
+            &doc,
+            &tree,
+            &MediaContext::default(),
+            &crate::page::PageContextQuery::default(),
+        )
+        .expect("page cascade Ok");
+        assert_eq!(
+            result.page.declarations().get(&PropertyKey::MarginTop),
+            Some(&PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
+                48.0
+            ))))
+        );
+        assert_eq!(
+            result.page.declarations().get(&PropertyKey::MarginRight),
+            Some(&PropertyValue::MarginRight(LengthOrAuto::Length(
+                Length::Px(48.0)
+            )))
+        );
+        assert_eq!(
+            result.page.declarations().get(&PropertyKey::MarginBottom),
+            Some(&PropertyValue::MarginBottom(LengthOrAuto::Length(
+                Length::Px(48.0)
+            )))
+        );
+        assert_eq!(
+            result.page.declarations().get(&PropertyKey::MarginLeft),
+            Some(&PropertyValue::MarginLeft(LengthOrAuto::Length(
+                Length::Px(48.0)
+            )))
+        );
+    }
+
+    #[test]
+    fn page_margin_inherit_preserves_computed_margin_value_shapes() {
+        let mut root = ComputedValues::initial();
+        root.margin = Sides {
+            top: ComputedLengthPercentageOrAuto::Auto,
+            right: ComputedLengthPercentageOrAuto::Px(12.0),
+            bottom: ComputedLengthPercentageOrAuto::Percent(25.0),
+            left: ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+                percent: 10.0,
+                px: 2.0,
+            }),
+        };
+        let ctx = ResolveContext::new(root.font_size);
+        let cases = [
+            (
+                PropertyValue::MarginTopInherit,
+                PropertyValue::MarginTop(LengthOrAuto::Auto),
+            ),
+            (
+                PropertyValue::MarginRightInherit,
+                PropertyValue::MarginRight(LengthOrAuto::Length(Length::Px(12.0))),
+            ),
+            (
+                PropertyValue::MarginBottomInherit,
+                PropertyValue::MarginBottom(LengthOrAuto::Length(Length::Percent(25.0))),
+            ),
+            (
+                PropertyValue::MarginLeftInherit,
+                PropertyValue::MarginLeft(LengthOrAuto::Calc(CalcLengthPercentage {
+                    percent: 10.0,
+                    px: 2.0,
+                })),
+            ),
+        ];
+        for (marker, expected) in cases {
+            assert_eq!(
+                resolve_against_inherited(marker, &root, &ctx).into_property_value(),
+                expected
+            );
+        }
+        assert_eq!(
+            resolve_against_inherited(PropertyValue::MarginInherit, &root, &ctx)
+                .into_property_value(),
+            PropertyValue::Margin(root.margin.map(|value| match value {
+                ComputedLengthPercentageOrAuto::Px(px) => LengthOrAuto::Length(Length::Px(px)),
+                ComputedLengthPercentageOrAuto::Percent(percent) => {
+                    LengthOrAuto::Length(Length::Percent(percent))
+                }
+                ComputedLengthPercentageOrAuto::Calc(calc) => LengthOrAuto::Calc(calc),
+                ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
+            }))
         );
     }
 
