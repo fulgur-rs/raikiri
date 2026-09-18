@@ -2339,7 +2339,8 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
         let needs_line_break_property = matches!(
             cv.word_break,
             WordBreak::BreakAll | WordBreak::KeepAll | WordBreak::BreakWord
-        ) || !matches!(cv.overflow_wrap, OverflowWrap::Normal);
+        ) || !matches!(cv.overflow_wrap, OverflowWrap::Normal)
+            || matches!(cv.white_space, WhiteSpace::BreakSpaces);
         if doc.nodes[parent_idx]
             .flags
             .contains(NodeFlags::IS_INLINE_ROOT)
@@ -8239,6 +8240,37 @@ mod tests {
 
         let layout = doc.nodes[t].text_layout().expect("text shaped");
         assert_eq!(layout.len(), 2, "break-all text must wrap in a 1px block");
+    }
+
+    #[test]
+    fn break_spaces_rebreaks_narrow_container_text() {
+        // `break-spaces` preserves spaces but still needs the containing block
+        // width during the post-layout rebreak (the initial shape uses page width).
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let div = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display: block; width: 1px; white-space: break-spaces"),
+        );
+        let t = doc.append_text(div, "a b");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let layout = doc.nodes[t].text_layout().expect("text shaped");
+        assert_eq!(
+            layout.len(),
+            2,
+            "break-spaces text must wrap in a 1px block"
+        );
     }
 
     #[test]

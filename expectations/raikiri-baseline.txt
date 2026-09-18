@@ -798,6 +798,8 @@ css/css-text/white-space/text-wrap-balance-before-after-001.html
 css/css-text/white-space/text-wrap-balance-float-006.html
 css/css-text/white-space/text-wrap-balance-line-clamp-001.html
 css/css-text/white-space/textarea-always-preserves-spaces-001.tentative.html
+css/css-text/white-space/trailing-ideographic-space-break-spaces-001.html
+css/css-text/white-space/trailing-ideographic-space-break-spaces-003.html
 css/css-text/white-space/trailing-space-rtl-001.html
 css/css-text/white-space/white-space-pre-wrap-justify-001.html
 css/css-text/white-space/white-space-vs-joiners-001.html
