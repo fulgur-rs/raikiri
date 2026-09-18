@@ -1131,10 +1131,16 @@ css/css-text/text-indent/anonymous-flex-item-001.html
 css/css-text/text-indent/anonymous-grid-item-001.html
 css/css-text/text-indent/text-indent-text-align-end.html
 css/css-text/white-space/full-width-leading-spaces-001.html
+css/css-text/white-space/lone-cr-001.tentative.html
 css/css-text/white-space/text-wrap-balance-004.html
 css/css-text/white-space/text-wrap-nowrap-001.html
 css/css-text/white-space/trailing-ideographic-space-break-spaces-008.html
+css/css-text/white-space/white-space-applies-to-text-001.html
+css/css-text/white-space/white-space-nowrap-011.html
+css/css-text/white-space/white-space-pre-011.html
+css/css-text/white-space/white-space-pre-wrap-justify-002.html
 css/css-text/white-space/white-space-pre-wrap-trailing-spaces-013.html
+css/css-text/white-space/white-space-pre-wrap-trailing-spaces-021.html
 css/css-text/white-space/white-space-zero-fontsize-002.html
 css/css-text/white-space/ws-break-spaces-applies-to-012.html
 css/css-text/white-space/ws-break-spaces-applies-to-013.html
