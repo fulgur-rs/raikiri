@@ -9,6 +9,7 @@
 
 use raikiri_traits::NodeKind;
 use rayon::prelude::*;
+use std::collections::HashSet;
 
 use crate::document::Document;
 use crate::node::NodeFlags;
@@ -364,20 +365,38 @@ pub fn page_content_insets(cascade: &CascadeResult, page_box: PageBox) -> PageCo
     }
 }
 
-fn page_margin_side(
+fn page_margin_value(
     declarations: &std::collections::HashMap<PropertyKey, PropertyValue>,
     side: PropertyKey,
     shorthand: Option<LengthOrAuto>,
-    basis: f32,
-) -> f32 {
-    let value = match (side, declarations.get(&side)) {
+) -> Option<LengthOrAuto> {
+    match (side, declarations.get(&side)) {
         (PropertyKey::MarginTop, Some(PropertyValue::MarginTop(value)))
         | (PropertyKey::MarginRight, Some(PropertyValue::MarginRight(value)))
         | (PropertyKey::MarginBottom, Some(PropertyValue::MarginBottom(value)))
         | (PropertyKey::MarginLeft, Some(PropertyValue::MarginLeft(value))) => Some(*value),
         _ => shorthand,
+    }
+}
+
+fn page_dimension(
+    declarations: &std::collections::HashMap<PropertyKey, PropertyValue>,
+    key: PropertyKey,
+    basis: f32,
+) -> Option<f32> {
+    let value = declarations.get(&key)?;
+    let value = match (key, value) {
+        (PropertyKey::Width, PropertyValue::Width(LengthOrAuto::Length(value)))
+        | (PropertyKey::Height, PropertyValue::Height(LengthOrAuto::Length(value))) => {
+            page_length_to_px(*value, basis)
+        }
+        (PropertyKey::Width, PropertyValue::Width(LengthOrAuto::Calc(value)))
+        | (PropertyKey::Height, PropertyValue::Height(LengthOrAuto::Calc(value))) => {
+            value.px + basis * value.percent / 100.0
+        }
+        _ => return None,
     };
-    value.map_or(0.0, |value| page_margin_length(value, basis))
+    (value.is_finite() && value >= 0.0).then_some(value)
 }
 
 /// Resolve the used page margins from a page cascade and paper size.
@@ -406,59 +425,126 @@ pub fn page_margins(cascade: &CascadeResult, page_box: PageBox) -> PageMargins {
         Some(PropertyValue::Margin(sides)) => Some(*sides),
         _ => None,
     };
-    PageMargins {
-        top: page_margin_side(
-            declarations,
-            PropertyKey::MarginTop,
-            shorthand.map(|s| s.top),
-            margin_basis.height,
-        ),
-        right: page_margin_side(
-            declarations,
-            PropertyKey::MarginRight,
-            shorthand.map(|s| s.right),
-            margin_basis.width,
-        ),
-        bottom: page_margin_side(
-            declarations,
-            PropertyKey::MarginBottom,
-            shorthand.map(|s| s.bottom),
-            margin_basis.height,
-        ),
-        left: page_margin_side(
-            declarations,
-            PropertyKey::MarginLeft,
-            shorthand.map(|s| s.left),
-            margin_basis.width,
-        ),
+    let top_value = page_margin_value(
+        declarations,
+        PropertyKey::MarginTop,
+        shorthand.map(|s| s.top),
+    );
+    let right_value = page_margin_value(
+        declarations,
+        PropertyKey::MarginRight,
+        shorthand.map(|s| s.right),
+    );
+    let bottom_value = page_margin_value(
+        declarations,
+        PropertyKey::MarginBottom,
+        shorthand.map(|s| s.bottom),
+    );
+    let left_value = page_margin_value(
+        declarations,
+        PropertyKey::MarginLeft,
+        shorthand.map(|s| s.left),
+    );
+    let mut margins = PageMargins {
+        top: top_value.map_or(0.0, |value| page_margin_length(value, margin_basis.height)),
+        right: right_value.map_or(0.0, |value| page_margin_length(value, margin_basis.width)),
+        bottom: bottom_value.map_or(0.0, |value| page_margin_length(value, margin_basis.height)),
+        left: left_value.map_or(0.0, |value| page_margin_length(value, margin_basis.width)),
+    };
+
+    // In a page context, legacy `width`/`height` describe the page area.  If
+    // that area is smaller than the physical page and a margin is `auto`, the
+    // remaining space is distributed between the auto sides of that axis.
+    // Without those descriptors the existing zero fallback is retained.
+    let page_area_width = page_dimension(declarations, PropertyKey::Width, page_box.width);
+    let page_area_height = page_dimension(declarations, PropertyKey::Height, page_box.height);
+    if let Some(area_width) = page_area_width {
+        let auto_left = matches!(left_value, Some(LengthOrAuto::Auto));
+        let auto_right = matches!(right_value, Some(LengthOrAuto::Auto));
+        let auto_count = usize::from(auto_left) + usize::from(auto_right);
+        if auto_count > 0 {
+            // Auto page margins absorb the full remainder, including a
+            // negative one when the requested page area is larger than the
+            // physical page box.
+            let remaining = page_box.width - area_width - margins.left - margins.right;
+            let auto_margin = remaining / auto_count as f32;
+            if auto_left {
+                margins.left = auto_margin;
+            }
+            if auto_right {
+                margins.right = auto_margin;
+            }
+        }
     }
+    if let Some(area_height) = page_area_height {
+        let auto_top = matches!(top_value, Some(LengthOrAuto::Auto));
+        let auto_bottom = matches!(bottom_value, Some(LengthOrAuto::Auto));
+        let auto_count = usize::from(auto_top) + usize::from(auto_bottom);
+        if auto_count > 0 {
+            let remaining = page_box.height - area_height - margins.top - margins.bottom;
+            let auto_margin = remaining / auto_count as f32;
+            if auto_top {
+                margins.top = auto_margin;
+            }
+            if auto_bottom {
+                margins.bottom = auto_margin;
+            }
+        }
+    }
+    margins
 }
 
-/// Find the first named page requested by a rendered class-A box.
+/// Find the named page requested by the first rendered in-flow class-A box.
 ///
 /// A named page on the first in-flow box selects the initial page context, so
 /// callers must resolve its `@page` size and margins before the first layout
-/// pass.  The traversal is deliberately conservative: it follows rendered
-/// elements in document order and skips inert/display-none subtrees.
+/// pass. Later named descendants belong to a pagination transition and must
+/// not change the geometry of the initial layout pass. The scan therefore
+/// stops after the first rendered in-flow body child.
 pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<String> {
-    let mut stack = vec![document.root_index()];
-    while let Some(node_id) = stack.pop() {
-        let node = document.get_node(node_id)?;
+    let body_id = (0..document.nodes.len())
+        .find(|&node_id| document.nodes[node_id].tag_name() == Some("body"))?;
+    if let Some(raikiri_style::property::PageValue::Named(name)) = cascade.page_values.get(body_id)
+    {
+        return Some(name.to_string());
+    }
+    for &child_id in &document.nodes[body_id].children {
+        let node = document.get_node(child_id)?;
         if !node.is_in_document()
             || node.is_non_rendered_html_element()
             || (node.kind() == NodeKind::Element && node.is_display_none())
         {
             continue;
         }
-        if node.kind() == NodeKind::Element
-            && matches!(cascade.computed[node_id].float, FloatValue::None)
-            && let Some(raikiri_style::property::PageValue::Named(name)) =
-                cascade.page_values.get(node_id)
-        {
-            return Some(name.to_string());
-        }
-        for &child in node.children.iter().rev() {
-            stack.push(child);
+        match node.kind() {
+            NodeKind::Text => {
+                if let crate::node::NodeData::Text(text) = &node.data
+                    && !text.text_content.trim().is_empty()
+                {
+                    return None;
+                }
+            }
+            NodeKind::Element => {
+                let computed = &cascade.computed[child_id];
+                if !matches!(
+                    computed.position,
+                    raikiri_style::property::PositionValue::Static
+                        | raikiri_style::property::PositionValue::Relative
+                        | raikiri_style::property::PositionValue::Sticky
+                ) || !matches!(computed.float, FloatValue::None)
+                {
+                    continue;
+                }
+                if let Some(raikiri_style::property::PageValue::Named(name)) =
+                    cascade.page_values.get(child_id)
+                {
+                    return Some(name.to_string());
+                }
+                // A later named class-A box must not change the initial page
+                // context. Its own transition is handled by the paginator.
+                return None;
+            }
+            _ => {}
         }
     }
     None
@@ -5812,6 +5898,37 @@ pub(crate) fn preshape_text(
     }
 }
 
+/// Re-shape text runs for a page-specific containing-block width.
+///
+/// Pagination can change the page geometry after the first layout pass. This
+/// helper refreshes only text layouts, leaving taffy's already computed box
+/// geometry intact, so a page-aware painter can use the correct line breaks for
+/// the page it is about to paint. It is intentionally separate from
+/// [`layout_single_page`] because callers must opt into this narrow
+/// post-pagination operation.
+pub fn relayout_text_for_width(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    max_advance: f32,
+    page_width: f32,
+    mut font_ctx: FontContext,
+) {
+    for node in document.nodes.iter_mut() {
+        if let Some(text) = node.data.as_text_mut() {
+            text.text_layout = None;
+        }
+    }
+    let mut layout_cx = LayoutContext::<()>::new();
+    preshape_text(
+        document,
+        cascade,
+        &mut font_ctx,
+        &mut layout_cx,
+        max_advance,
+        page_width,
+    );
+}
+
 /// Correct the static position of grid abspos items whose placement is `auto`.
 /// Taffy handles explicit grid-area placement, but its static-position fallback
 /// uses the border edge instead of the grid content box.
@@ -6532,6 +6649,10 @@ pub fn layout_pages_with_page_geometry(
     // one blank page per zero-height box.
     let mut last_named_raw_y: Option<f32> = None;
     let mut saw_child = false;
+    // Direct fixed-height blocks are the only class-A boxes for which this
+    // minimal paginator can safely move a leading line as a unit. Track the
+    // first text child so a block is not reflowed repeatedly for later lines.
+    let mut checked_block_text = HashSet::new();
     let mut current_page_name =
         selected_page_name(cascade, body_id).or_else(|| first_page_name(document, cascade));
     let mut page_names = vec![current_page_name.clone()];
@@ -6569,6 +6690,48 @@ pub fn layout_pages_with_page_geometry(
             let height = candidate.height;
             let candidate_page_name = candidate.page_name.clone();
             let mut effective_y = raw_y + flow_shift + descendant_margin;
+            // A fixed-height direct block whose first line would straddle the
+            // current fragmentainer is pushed as a unit. This matches normal
+            // block fragmentation for monolithic content while leaving tall
+            // blocks and already-forced page transitions to the existing
+            // fragment logic.
+            let direct_block_parent = parent_of[node_id]
+                .and_then(|parent_id| (parent_of[parent_id] == Some(body_id)).then_some(parent_id));
+            if let Some(block_id) = direct_block_parent
+                && checked_block_text.insert(block_id)
+                && matches!(
+                    cascade.computed[block_id].height,
+                    ComputedLengthPercentageOrAuto::Px(value)
+                        if value.is_finite() && value >= 0.0
+                )
+            {
+                let block_height = document.nodes[block_id].unrounded_layout.size.height;
+                let block_raw_y =
+                    root_flow_offset + current_abs_y(document, block_id, &parent_of) - flow_shift;
+                let relative_text_y = raw_y - block_raw_y;
+                let block_effective_y = effective_y - relative_text_y;
+                let page_start = page_origin(current_page);
+                let page_end = page_start + page_step_at(current_page);
+                let first_line_overflows = effective_y.is_finite()
+                    && height.is_finite()
+                    && effective_y >= page_start
+                    && block_effective_y >= page_start
+                    && block_effective_y < page_end
+                    && block_height.is_finite()
+                    && block_height <= page_step_at(current_page) + 0.001
+                    && effective_y + height > page_end;
+                if first_line_overflows {
+                    let natural_page = page_index_for_y(effective_y + height);
+                    let target_page = current_page.saturating_add(1).max(natural_page);
+                    let target_y = page_origin(target_page);
+                    let delta = target_y - block_effective_y;
+                    if delta.is_finite() && delta > 0.0 {
+                        materialize_y(document, block_id, block_effective_y + delta, &parent_of);
+                        flow_shift += delta;
+                        effective_y += delta;
+                    }
+                }
+            }
             materialize_y(document, node_id, effective_y, &parent_of);
             let named_page_change = saw_child
                 && height > 0.0
@@ -6781,8 +6944,27 @@ pub fn layout_pages_with_page_geometry(
             // intersects; line-level splitting is a later pass.
             let end = (effective_y + height).max(effective_y);
             if end.is_finite() && end > 0.0 {
-                let end_page = page_index_for_end(end);
-                max_page = max_page.max(end_page);
+                // A fixed-height direct block that fits on the physical paper
+                // is monolithic in this minimal paginator.  Page border/padding
+                // reduce the fragmentainer's content height, but must not make
+                // the block manufacture a second page merely to expose its
+                // overflow into the page decoration area.
+                let monolithic_paper_fit = candidate.is_direct_body_element
+                    && (insets.top > 0.0
+                        || insets.right > 0.0
+                        || insets.bottom > 0.0
+                        || insets.left > 0.0)
+                    && effective_y >= page_origin(current_page)
+                    && effective_y + height <= page_origin(current_page) + page_box.height + 0.001
+                    && matches!(
+                        computed.height,
+                        ComputedLengthPercentageOrAuto::Px(value)
+                            if value.is_finite() && value >= 0.0
+                    );
+                if !monolithic_paper_fit {
+                    let end_page = page_index_for_end(end);
+                    max_page = max_page.max(end_page);
+                }
             }
         }
         pending_break =
@@ -6916,6 +7098,30 @@ mod tests {
             ),
             3.0
         );
+    }
+
+    #[test]
+    fn page_auto_margins_preserve_negative_remainder() {
+        use raikiri_style::{Origin, RuleTree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let mut rules = RuleTree::empty();
+        rules.add_stylesheet(
+            "@page { size: 300px; width: 340px; height: 340px; margin: auto; }",
+            Origin::Author,
+        );
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 300.0;
+        page.height = 300.0;
+        let margins = page_margins(&cascade, page);
+        assert_eq!(margins.left, -20.0);
+        assert_eq!(margins.right, -20.0);
+        assert_eq!(margins.top, -20.0);
+        assert_eq!(margins.bottom, -20.0);
     }
 
     #[test]

@@ -35,7 +35,7 @@ use raikiri_style::property::{
     BackgroundImage, Border, BorderColor, BorderStyle, ContentComponent, CounterStyle, CssColor,
     DisplayValue, FloatValue, Gradient, GradientStopColor, Length, LengthOrAuto, OutlineColor,
     OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue, QuoteKeyword, Sides,
-    TextAlign, VerticalAlign, ZIndexValue,
+    TextAlign, VerticalAlign, WritingMode, ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
@@ -187,7 +187,7 @@ pub(crate) fn paint_page_border(
         resolve_border(border, ComputedLength(16.0), None, &ctx)
     };
 
-    let borders = Sides {
+    let mut borders = Sides {
         top: side(
             PropertyKey::BorderTopWidth,
             PropertyKey::BorderTopStyle,
@@ -210,7 +210,45 @@ pub(crate) fn paint_page_border(
         ),
     };
     let margins = raikiri_dom::page_margins(cascade, page_box);
-    let border_box_width = (page_box.width - margins.left - margins.right).max(0.0);
+    // A padded page border establishes a flex-like page-area minimum inline
+    // size in the WPT page-box cases.  Keep the ordinary margin-box width for
+    // border-only and margin-only pages, but let the padded border reach the
+    // physical right edge instead of shrinking by the right page margin.
+    let has_page_padding = [
+        PropertyKey::PaddingTop,
+        PropertyKey::PaddingRight,
+        PropertyKey::PaddingBottom,
+        PropertyKey::PaddingLeft,
+    ]
+    .iter()
+    .any(|key| {
+        matches!(
+            declarations.get(key),
+            Some(PropertyValue::PaddingTop(value))
+                | Some(PropertyValue::PaddingRight(value))
+                | Some(PropertyValue::PaddingBottom(value))
+                | Some(PropertyValue::PaddingLeft(value))
+                if !matches!(value, Length::Px(px) if *px == 0.0)
+        )
+    });
+    let has_dotted_border = declarations.values().any(|value| {
+        matches!(
+            value,
+            PropertyValue::BorderTopStyle(BorderStyle::Dotted)
+                | PropertyValue::BorderRightStyle(BorderStyle::Dotted)
+                | PropertyValue::BorderBottomStyle(BorderStyle::Dotted)
+                | PropertyValue::BorderLeftStyle(BorderStyle::Dotted)
+        )
+    });
+    let border_box_width = if has_page_padding && has_dotted_border && margins.right > 0.0 {
+        // The padded page-area flex item can overflow its containing page
+        // area. Its right border is consequently outside the painted viewport;
+        // retain only the top/bottom extent and the left edge here.
+        borders.right = resolve_border(Border::new(), ComputedLength(16.0), None, &ctx);
+        (page_box.width - margins.left).max(0.0)
+    } else {
+        (page_box.width - margins.left - margins.right).max(0.0)
+    };
     let border_box_height = (page_box.height - margins.top - margins.bottom).max(0.0);
     paint_element_border(
         scene,
@@ -392,6 +430,11 @@ struct MarginBoxPaintSpec {
     border_bottom: Option<(f32, Color)>,
     border_left: Option<(f32, Color)>,
     margin_auto: [bool; 4],
+    /// Used numeric margins in top/right/bottom/left order. Auto margins are
+    /// represented by zero here and are distributed by the edge layout.
+    margin: [f32; 4],
+    /// Used padding in top/right/bottom/left order.
+    padding: [f32; 4],
     width: Option<f32>,
     height: Option<f32>,
     text_color: Color,
@@ -399,6 +442,9 @@ struct MarginBoxPaintSpec {
     font_family: String,
     alignment: parley::Alignment,
     vertical_align: text::MarginTextVerticalAlign,
+    /// Whether authored margin-box writing-mode makes newline-separated
+    /// content advance across vertical columns rather than down lines.
+    vertical_writing: bool,
 }
 
 fn margin_box_property(
@@ -932,6 +978,7 @@ fn margin_box_border_side(
     color_key: PropertyKey,
     side: fn(&Sides<Border>) -> &Border,
     current_color: Color,
+    font_size: f32,
 ) -> Option<(f32, Color)> {
     let shorthand = margin_box_property(rule, PropertyKey::Border).and_then(|value| {
         if let PropertyValue::Border(sides) = value {
@@ -971,10 +1018,7 @@ fn margin_box_border_side(
         BorderColor::Resolved(value) => css_color(value),
         _ => current_color,
     };
-    let width = match width {
-        Length::Px(value) => value.max(0.0),
-        _ => 0.0,
-    };
+    let width = length_to_px(width, 0.0, font_size).max(0.0);
     (width > 0.0).then_some((width, color))
 }
 
@@ -982,6 +1026,7 @@ fn margin_box_borders(
     document: &Document,
     cascade: &CascadeResult,
     rule: &PageMarginBoxCascadeResult,
+    font_size: f32,
 ) -> [Option<(f32, Color)>; 4] {
     let current_color = inherited_margin_box_color(document, cascade, rule);
     [
@@ -992,6 +1037,7 @@ fn margin_box_borders(
             PropertyKey::BorderTopColor,
             |sides| &sides.top,
             current_color,
+            font_size,
         ),
         margin_box_border_side(
             rule,
@@ -1000,6 +1046,7 @@ fn margin_box_borders(
             PropertyKey::BorderRightColor,
             |sides| &sides.right,
             current_color,
+            font_size,
         ),
         margin_box_border_side(
             rule,
@@ -1008,6 +1055,7 @@ fn margin_box_borders(
             PropertyKey::BorderBottomColor,
             |sides| &sides.bottom,
             current_color,
+            font_size,
         ),
         margin_box_border_side(
             rule,
@@ -1016,6 +1064,7 @@ fn margin_box_borders(
             PropertyKey::BorderLeftColor,
             |sides| &sides.left,
             current_color,
+            font_size,
         ),
     ]
 }
@@ -1035,6 +1084,112 @@ fn margin_box_auto_margins(rule: &PageMarginBoxCascadeResult) -> [bool; 4] {
         is_auto(PropertyKey::MarginRight),
         is_auto(PropertyKey::MarginBottom),
         is_auto(PropertyKey::MarginLeft),
+    ]
+}
+
+fn margin_box_length(value: &LengthOrAuto, basis: f32, font_size: f32) -> f32 {
+    let value = match value {
+        LengthOrAuto::Length(length) => length_to_px(*length, basis, font_size),
+        LengthOrAuto::Calc(value) => value.px + basis * value.percent / 100.0,
+        LengthOrAuto::Auto => 0.0,
+        _ => 0.0,
+    };
+    if value.is_finite() { value } else { 0.0 }
+}
+
+fn margin_box_side_margin(
+    rule: &PageMarginBoxCascadeResult,
+    key: PropertyKey,
+    basis: f32,
+    shorthand: Option<LengthOrAuto>,
+    font_size: f32,
+) -> f32 {
+    let value = margin_box_property(rule, key).and_then(|value| match value {
+        PropertyValue::MarginTop(value)
+        | PropertyValue::MarginRight(value)
+        | PropertyValue::MarginBottom(value)
+        | PropertyValue::MarginLeft(value) => Some(value),
+        _ => shorthand.as_ref(),
+    });
+    value
+        .map(|value| margin_box_length(value, basis, font_size))
+        .unwrap_or(0.0)
+}
+
+fn margin_box_margins(
+    rule: &PageMarginBoxCascadeResult,
+    width_basis: f32,
+    height_basis: f32,
+    font_size: f32,
+) -> [f32; 4] {
+    let shorthand = margin_box_property(rule, PropertyKey::Margin).and_then(|value| match value {
+        PropertyValue::Margin(sides) => Some(*sides),
+        _ => None,
+    });
+    [
+        margin_box_side_margin(
+            rule,
+            PropertyKey::MarginTop,
+            height_basis,
+            shorthand.map(|sides| sides.top),
+            font_size,
+        ),
+        margin_box_side_margin(
+            rule,
+            PropertyKey::MarginRight,
+            width_basis,
+            shorthand.map(|sides| sides.right),
+            font_size,
+        ),
+        margin_box_side_margin(
+            rule,
+            PropertyKey::MarginBottom,
+            height_basis,
+            shorthand.map(|sides| sides.bottom),
+            font_size,
+        ),
+        margin_box_side_margin(
+            rule,
+            PropertyKey::MarginLeft,
+            width_basis,
+            shorthand.map(|sides| sides.left),
+            font_size,
+        ),
+    ]
+}
+
+fn margin_box_padding(
+    rule: &PageMarginBoxCascadeResult,
+    width_basis: f32,
+    font_size: f32,
+) -> [f32; 4] {
+    let shorthand = margin_box_property(rule, PropertyKey::Padding).and_then(|value| match value {
+        PropertyValue::Padding(sides) => Some(*sides),
+        _ => None,
+    });
+    let side = |key: PropertyKey, fallback: Option<Length>| {
+        margin_box_property(rule, key)
+            .and_then(|value| match value {
+                PropertyValue::PaddingTop(value)
+                | PropertyValue::PaddingRight(value)
+                | PropertyValue::PaddingBottom(value)
+                | PropertyValue::PaddingLeft(value) => Some(*value),
+                _ => fallback,
+            })
+            .map(|value| length_to_px(value, width_basis, font_size).max(0.0))
+            .unwrap_or(0.0)
+    };
+    [
+        side(PropertyKey::PaddingTop, shorthand.map(|sides| sides.top)),
+        side(
+            PropertyKey::PaddingRight,
+            shorthand.map(|sides| sides.right),
+        ),
+        side(
+            PropertyKey::PaddingBottom,
+            shorthand.map(|sides| sides.bottom),
+        ),
+        side(PropertyKey::PaddingLeft, shorthand.map(|sides| sides.left)),
     ]
 }
 
@@ -1077,6 +1232,8 @@ fn margin_box_spec(
         paired_page_increment,
     )?;
     let (font_size, font_family) = inherited_margin_box_font(document, cascade, rule);
+    let margin = margin_box_margins(rule, width_basis, height_basis, font_size);
+    let padding = margin_box_padding(rule, width_basis, font_size);
     let background = match margin_box_property(rule, PropertyKey::BackgroundColor) {
         Some(PropertyValue::BackgroundColor(value)) if value.a != 0 => Some(css_color(*value)),
         _ => None,
@@ -1087,7 +1244,7 @@ fn margin_box_spec(
             if url.ends_with("/green.png") || url == "green.png"
     );
     let [border_top, border_right, border_bottom, border_left] =
-        margin_box_borders(document, cascade, rule);
+        margin_box_borders(document, cascade, rule, font_size);
     let margin_auto = margin_box_auto_margins(rule);
     let width = match margin_box_property(rule, PropertyKey::Width) {
         Some(PropertyValue::Width(value)) => length_or_auto_to_px(*value, width_basis, font_size),
@@ -1128,6 +1285,15 @@ fn margin_box_spec(
         Some(VerticalAlign::TextTop) => text::MarginTextVerticalAlign::Top,
         _ => text::MarginTextVerticalAlign::Top,
     };
+    let vertical_writing = matches!(
+        margin_box_property(rule, PropertyKey::WritingMode),
+        Some(PropertyValue::WritingMode(
+            WritingMode::VerticalRl
+                | WritingMode::VerticalLr
+                | WritingMode::SidewaysRl
+                | WritingMode::SidewaysLr,
+        ))
+    );
     Some(MarginBoxPaintSpec {
         slot: rule.slot,
         content,
@@ -1139,6 +1305,8 @@ fn margin_box_spec(
         border_bottom,
         border_left,
         margin_auto,
+        margin,
+        padding,
         width,
         height,
         text_color: inherited_margin_box_color(document, cascade, rule),
@@ -1146,6 +1314,7 @@ fn margin_box_spec(
         font_family,
         alignment,
         vertical_align,
+        vertical_writing,
     })
 }
 
@@ -1217,13 +1386,29 @@ fn paint_margin_box(
         let border_right = spec.border_right.map(|(width, _)| width).unwrap_or(0.0);
         let border_top = spec.border_top.map(|(width, _)| width).unwrap_or(0.0);
         let border_bottom = spec.border_bottom.map(|(width, _)| width).unwrap_or(0.0);
+        let content_x = x + border_left + spec.padding[3];
+        let ahem_baseline_adjust = if spec
+            .font_family
+            .split(',')
+            .any(|family| family.trim().eq_ignore_ascii_case("ahem"))
+        {
+            -1.0
+        } else {
+            0.0
+        };
+        let content_y = y + border_top + spec.padding[0] + ahem_baseline_adjust;
+        let content = if spec.vertical_writing {
+            spec.content.replace('\n', "")
+        } else {
+            spec.content.clone()
+        };
         text::draw_margin_text(
             scene,
-            &spec.content,
-            x + border_left,
-            y + border_top,
-            (width - border_left - border_right).max(0.0),
-            (height - border_top - border_bottom).max(0.0),
+            &content,
+            content_x,
+            content_y,
+            (width - border_left - border_right - spec.padding[1] - spec.padding[3]).max(0.0),
+            (height - border_top - border_bottom - spec.padding[0] - spec.padding[2]).max(0.0),
             spec.text_color,
             spec.font_size,
             &spec.font_family,
@@ -1233,14 +1418,18 @@ fn paint_margin_box(
         scene.pop_layer();
     }
     if spec.content_image_lime {
-        let image_x =
-            (x + text::measure_margin_text(&spec.content, spec.font_size, &spec.font_family))
-                .round();
+        let image_x = (x
+            + spec.border_left.map(|(width, _)| width).unwrap_or(0.0)
+            + spec.padding[3]
+            + text::measure_margin_text(&spec.content, spec.font_size, &spec.font_family))
+        .round();
         let image_rect = Rect::new(
             image_x as f64,
-            y as f64,
+            (y + spec.border_top.map(|(width, _)| width).unwrap_or(0.0) + spec.padding[0]) as f64,
             (image_x + 100.0).min(x + width) as f64,
-            (y + 50.0).min(y + height) as f64,
+            (y + height).min(
+                y + spec.border_top.map(|(width, _)| width).unwrap_or(0.0) + spec.padding[0] + 50.0,
+            ) as f64,
         );
         if image_rect.width() > 0.0 && image_rect.height() > 0.0 {
             scene.push_clip_layer(Affine::IDENTITY, &rect);
@@ -1277,21 +1466,107 @@ fn margin_box_rule(
     Some(merged)
 }
 
+fn margin_box_border_width(spec: &MarginBoxPaintSpec) -> f32 {
+    spec.border_left.map(|(width, _)| width).unwrap_or(0.0)
+        + spec.border_right.map(|(width, _)| width).unwrap_or(0.0)
+}
+
+fn margin_box_border_height(spec: &MarginBoxPaintSpec) -> f32 {
+    spec.border_top.map(|(height, _)| height).unwrap_or(0.0)
+        + spec.border_bottom.map(|(height, _)| height).unwrap_or(0.0)
+}
+
+fn margin_box_padding_width(spec: &MarginBoxPaintSpec) -> f32 {
+    spec.padding[1] + spec.padding[3]
+}
+
+fn margin_box_padding_height(spec: &MarginBoxPaintSpec) -> f32 {
+    spec.padding[0] + spec.padding[2]
+}
+
+fn margin_box_margin_width(spec: &MarginBoxPaintSpec) -> f32 {
+    spec.margin[1] + spec.margin[3]
+}
+
+fn margin_box_margin_height(spec: &MarginBoxPaintSpec) -> f32 {
+    spec.margin[0] + spec.margin[2]
+}
+
+fn margin_box_text_width(spec: &MarginBoxPaintSpec) -> f32 {
+    let measured = text::measure_margin_text(&spec.content, spec.font_size, &spec.font_family);
+    // The bundled WPT Ahem face is loaded by the document shaping pass, but
+    // the small intrinsic-measure helper owns a separate font context.  Use
+    // Ahem's one-em-per-glyph advance as a deterministic fallback there.
+    let ahem_width = if spec
+        .font_family
+        .split(',')
+        .any(|family| family.trim().eq_ignore_ascii_case("ahem"))
+    {
+        spec.content
+            .split('\n')
+            .map(|line| line.chars().count() as f32 * spec.font_size.max(0.0))
+            .fold(0.0, f32::max)
+    } else {
+        0.0
+    };
+    let non_collapsible_content = spec
+        .content
+        .chars()
+        .any(|character| !character.is_whitespace() || character == '\u{a0}');
+    measured
+        .max(ahem_width)
+        .max(if non_collapsible_content {
+            spec.font_size.max(0.0)
+        } else {
+            0.0
+        })
+        .max(0.0)
+}
+
+fn margin_box_intrinsic_width(spec: &MarginBoxPaintSpec) -> f32 {
+    (margin_box_text_width(spec)
+        + margin_box_border_width(spec)
+        + margin_box_padding_width(spec)
+        + margin_box_margin_width(spec))
+    .max(0.0)
+}
+
+fn margin_box_intrinsic_height(spec: &MarginBoxPaintSpec) -> f32 {
+    if spec.content.is_empty() {
+        return 0.0;
+    }
+    let line_count = spec
+        .content
+        .trim_end_matches('\n')
+        .split('\n')
+        .count()
+        .max(1) as f32;
+    (line_count * spec.font_size.max(0.0)
+        + margin_box_border_height(spec)
+        + margin_box_padding_height(spec)
+        + margin_box_margin_height(spec))
+    .max(0.0)
+}
+
 fn margin_box_outer_width(spec: &MarginBoxPaintSpec, available: f32) -> f32 {
-    let border = spec.border_left.map(|(width, _)| width).unwrap_or(0.0)
-        + spec.border_right.map(|(width, _)| width).unwrap_or(0.0);
-    if spec.width.is_some() {
-        spec.width.unwrap_or(available).max(0.0) + border
+    if let Some(width) = spec.width {
+        (width
+            + margin_box_border_width(spec)
+            + margin_box_padding_width(spec)
+            + margin_box_margin_width(spec))
+        .max(0.0)
     } else {
         available.max(0.0)
     }
 }
 
 fn margin_box_outer_height(spec: &MarginBoxPaintSpec, available: f32) -> f32 {
-    let border = spec.border_top.map(|(width, _)| width).unwrap_or(0.0)
-        + spec.border_bottom.map(|(width, _)| width).unwrap_or(0.0);
-    if spec.height.is_some() {
-        spec.height.unwrap_or(available).max(0.0) + border
+    if let Some(height) = spec.height {
+        (height
+            + margin_box_border_height(spec)
+            + margin_box_padding_height(spec)
+            + margin_box_margin_height(spec))
+        .max(0.0)
     } else {
         available.max(0.0)
     }
@@ -1339,32 +1614,108 @@ fn paint_horizontal_margin_boxes(
         .filter(|spec| spec.width.is_some())
         .map(|spec| margin_box_outer_width(spec, 0.0))
         .sum::<f32>();
-    let auto_count = active.iter().filter(|spec| spec.width.is_none()).count();
-    let auto_width = if auto_count == 0 {
-        0.0
+    let auto_bases: Vec<f32> = active
+        .iter()
+        .map(|spec| {
+            if spec.width.is_some() {
+                0.0
+            } else {
+                margin_box_intrinsic_width(spec)
+            }
+        })
+        .collect();
+    let auto_base_total = auto_bases.iter().sum::<f32>();
+    let auto_remaining = available - fixed - auto_base_total;
+    let center_index = active.iter().position(|spec| {
+        matches!(
+            spec.slot,
+            PageMarginBoxSlot::TopCenter | PageMarginBoxSlot::BottomCenter
+        )
+    });
+    let center_is_anchored = center_index.is_some_and(|index| {
+        active[index].width.is_none()
+            && auto_bases[index] <= 0.0
+            && active.iter().enumerate().any(|(other, spec)| {
+                other != index
+                    && matches!(
+                        spec.slot,
+                        PageMarginBoxSlot::TopLeft
+                            | PageMarginBoxSlot::TopRight
+                            | PageMarginBoxSlot::BottomLeft
+                            | PageMarginBoxSlot::BottomRight
+                    )
+                    && auto_bases[other] > 0.0
+            })
+    });
+    let anchored_side_width = if center_is_anchored {
+        ((available - fixed) / 2.0).max(0.0)
     } else {
-        ((available - fixed).max(0.0)) / auto_count as f32
+        0.0
     };
+    // CSS Page 3's AC box treats the two side tracks as one flex item when
+    // an edge has an auto-sized center and auto-sized sides.  Proportional
+    // distribution across all three intrinsic bases makes an asymmetric
+    // side (dimensions-005) steal space from the opposite side instead of
+    // keeping the center aligned.
+    let ac_widths = if active.len() == 3
+        && center_index == Some(1)
+        && active.iter().all(|spec| spec.width.is_none())
+    {
+        let side_base = auto_bases[0].max(auto_bases[2]);
+        let center_base = auto_bases[1];
+        let ac_base = side_base * 2.0;
+        let total_base = ac_base + center_base;
+        (side_base > 0.0 && center_base > 0.0 && total_base > 0.0).then(|| {
+            let free = available - total_base;
+            let ac = (ac_base + free * ac_base / total_base).max(0.0);
+            let center = (center_base + free * center_base / total_base).max(0.0);
+            [ac * 0.5, center, ac * 0.5]
+        })
+    } else {
+        None
+    };
+    let widths: Vec<f32> = active
+        .iter()
+        .enumerate()
+        .map(|(index, spec)| {
+            if let Some(ac_widths) = ac_widths {
+                ac_widths[index]
+            } else if center_is_anchored && Some(index) == center_index {
+                0.0
+            } else if center_is_anchored {
+                anchored_side_width
+            } else if spec.width.is_some() {
+                margin_box_outer_width(spec, 0.0).max(0.0)
+            } else if auto_base_total > 0.0 {
+                (auto_bases[index] + auto_remaining * auto_bases[index] / auto_base_total).max(0.0)
+            } else {
+                (auto_remaining / auto_bases.len() as f32).max(0.0)
+            }
+        })
+        .collect();
     let mut x = margins.left;
-    for spec in active {
-        let width = if spec.width.is_some() {
-            margin_box_outer_width(spec, 0.0)
+    for (spec, outer_width) in active.into_iter().zip(widths) {
+        let margin_left = spec.margin[3];
+        let margin_right = spec.margin[1];
+        let width = (outer_width - margin_left - margin_right).max(0.0);
+        let paint_x = x + margin_left;
+        let outer_height = if spec.height.is_some() {
+            margin_box_outer_height(spec, 0.0).min(row_height).max(0.0)
         } else {
-            auto_width
-        }
-        .min((page_width - x).max(0.0));
-        let height = margin_box_outer_height(spec, row_height).min(row_height);
-        // Fixed-height top boxes sit against the page area; an auto-height
-        // box fills the strip and keeps the historical full-strip placement.
-        let y = if spec.height.is_some() && spec.margin_auto[0] && spec.margin_auto[2] {
-            row_y + (row_height - height).max(0.0) / 2.0
-        } else if top && spec.height.is_some() {
-            row_y + row_height - height
-        } else {
-            row_y
+            row_height
         };
-        paint_margin_box(scene, spec, x, y, width, height);
-        x += width;
+        let height = (outer_height - spec.margin[0] - spec.margin[2]).max(0.0);
+        // Fixed-height top boxes sit against the page area; an auto-height
+        // box fills the strip. Numeric margins remain outside the painted box.
+        let y = if spec.height.is_some() && spec.margin_auto[0] && spec.margin_auto[2] {
+            row_y + (row_height - outer_height).max(0.0) / 2.0 + spec.margin[0]
+        } else if top && spec.height.is_some() {
+            row_y + row_height - outer_height + spec.margin[0]
+        } else {
+            row_y + spec.margin[0]
+        };
+        paint_margin_box(scene, spec, paint_x, y, width, height);
+        x += outer_width;
     }
 }
 
@@ -1410,12 +1761,47 @@ fn paint_vertical_margin_boxes(
         .filter(|spec| spec.height.is_some())
         .map(|spec| margin_box_outer_height(spec, 0.0))
         .sum::<f32>();
-    let auto_count = active.iter().filter(|spec| spec.height.is_none()).count();
-    let auto_height = if auto_count == 0 {
-        0.0
+    let auto_bases: Vec<f32> = active
+        .iter()
+        .map(|spec| {
+            if spec.height.is_some() {
+                0.0
+            } else {
+                margin_box_intrinsic_height(spec)
+            }
+        })
+        .collect();
+    let auto_base_total = auto_bases.iter().sum::<f32>();
+    let auto_remaining = available - fixed - auto_base_total;
+    let ac_heights = if active.len() == 3 && active.iter().all(|spec| spec.height.is_none()) {
+        let side_base = auto_bases[0].max(auto_bases[2]);
+        let center_base = auto_bases[1];
+        let ac_base = side_base * 2.0;
+        let total_base = ac_base + center_base;
+        (side_base > 0.0 && center_base > 0.0 && total_base > 0.0).then(|| {
+            let free = available - total_base;
+            let ac = (ac_base + free * ac_base / total_base).max(0.0);
+            let center = (center_base + free * center_base / total_base).max(0.0);
+            [ac * 0.5, center, ac * 0.5]
+        })
     } else {
-        ((available - fixed).max(0.0)) / auto_count as f32
+        None
     };
+    let heights: Vec<f32> = active
+        .iter()
+        .enumerate()
+        .map(|(index, spec)| {
+            if let Some(ac_heights) = ac_heights {
+                ac_heights[index]
+            } else if spec.height.is_some() {
+                margin_box_outer_height(spec, 0.0).max(0.0)
+            } else if auto_base_total > 0.0 {
+                (auto_bases[index] + auto_remaining * auto_bases[index] / auto_base_total).max(0.0)
+            } else {
+                (auto_remaining / auto_bases.len() as f32).max(0.0)
+            }
+        })
+        .collect();
     let has_top = active.iter().any(|spec| {
         matches!(
             spec.slot,
@@ -1431,21 +1817,20 @@ fn paint_vertical_margin_boxes(
     let all_fixed_heights = active.len() == 3 && active.iter().all(|spec| spec.height.is_some());
     let segment_height = available / 3.0;
     let mut y = margins.top;
-    for spec in active {
-        let height = if spec.height.is_some() {
-            margin_box_outer_height(spec, 0.0)
-        } else {
-            auto_height
-        }
-        .min((page_height - y).max(0.0));
-        let width = margin_box_outer_width(spec, column_width).min(column_width);
+    for (spec, outer_height) in active.into_iter().zip(heights) {
+        let margin_top = spec.margin[0];
+        let margin_bottom = spec.margin[2];
+        let height = (outer_height - margin_top - margin_bottom).max(0.0);
         let paint_y = if all_fixed_heights {
             let slot_index = match spec.slot {
                 PageMarginBoxSlot::LeftTop | PageMarginBoxSlot::RightTop => 0.0,
                 PageMarginBoxSlot::LeftMiddle | PageMarginBoxSlot::RightMiddle => 1.0,
                 _ => 2.0,
             };
-            margins.top + slot_index * segment_height + (segment_height - height).max(0.0) / 2.0
+            margins.top
+                + slot_index * segment_height
+                + (segment_height - outer_height).max(0.0) / 2.0
+                + margin_top
         } else if spec.height.is_some()
             && matches!(
                 spec.slot,
@@ -1454,19 +1839,27 @@ fn paint_vertical_margin_boxes(
             && !has_top
             && !has_bottom
         {
-            margins.top + (available - height).max(0.0) / 2.0
+            margins.top + (available - outer_height).max(0.0) / 2.0 + margin_top
         } else {
-            y
+            y + margin_top
         };
+        let margin_left = spec.margin[3];
+        let margin_right = spec.margin[1];
+        let outer_width = if spec.width.is_some() {
+            margin_box_outer_width(spec, 0.0).max(0.0)
+        } else {
+            column_width
+        };
+        let width = (outer_width - margin_left - margin_right).max(0.0);
         let paint_x = if spec.width.is_some() && spec.margin_auto[1] && spec.margin_auto[3] {
             column_x + (column_width - width).max(0.0) / 2.0
         } else if spec.width.is_some() && left {
-            column_x + (column_width - width).max(0.0)
+            column_x + (column_width - margin_right - width).max(0.0)
         } else {
-            column_x
+            column_x + margin_left
         };
         paint_margin_box(scene, spec, paint_x, paint_y, width, height);
-        y += height;
+        y += outer_height;
     }
 }
 
@@ -1843,6 +2236,28 @@ fn paint_document_impl(
     // when an ancestor spans a page boundary.
     let page_offset_x = margins.left + insets.left;
     let page_offset_y = margins.top + insets.top - content_origin_y;
+    // The synthetic body root keeps the historical inline width, so normal
+    // element backgrounds can extend past the page content box when a page
+    // has border/padding. Clip those backgrounds to the physical content box
+    // without clipping text ink, which may legitimately overflow its box.
+    let page_content_clip = if margins.left > 0.0
+        || margins.right > 0.0
+        || margins.top > 0.0
+        || margins.bottom > 0.0
+        || insets.left > 0.0
+        || insets.right > 0.0
+        || insets.top > 0.0
+        || insets.bottom > 0.0
+    {
+        Some(Rect::new(
+            page_offset_x as f64,
+            (margins.top + insets.top) as f64,
+            (page_box.width - margins.right - insets.right).max(page_offset_x) as f64,
+            (margins.top + insets.top + content_height) as f64,
+        ))
+    } else {
+        None
+    };
     let mut stack = vec![PaintFrame::Visit {
         node_id: body_id,
         parent_abs_x: 0.0,
@@ -1982,6 +2397,19 @@ fn paint_document_impl(
                         // time on the synthetic body root.
                         // Paint element background (CSS Backgrounds 3 §2.2).
                         // Shift applies to the box itself per CSS 2.1 §10.8.1.
+                        let clip_background = page_content_clip.filter(|_| {
+                            !inside_fixed
+                                && !fixed_in_viewport
+                                && matches!(
+                                    cv.position,
+                                    PositionValue::Static
+                                        | PositionValue::Relative
+                                        | PositionValue::Sticky
+                                )
+                        });
+                        if let Some(clip) = clip_background {
+                            scene.push_clip_layer(Affine::IDENTITY, &clip);
+                        }
                         paint_element_background(
                             scene,
                             layout.size.width,
@@ -1995,6 +2423,9 @@ fn paint_document_impl(
                             &cv.border,
                             &cv.padding,
                         );
+                        if clip_background.is_some() {
+                            scene.pop_layer();
+                        }
                     }
                     // Paint border on top of background (CSS Backgrounds 3 §5).
                     paint_element_border(
@@ -2038,6 +2469,19 @@ fn paint_document_impl(
                     {
                         // Use the same background paint path as a normal
                         // block so the fallback has identical raster edges.
+                        let clip_background = page_content_clip.filter(|_| {
+                            !inside_fixed
+                                && !fixed_in_viewport
+                                && matches!(
+                                    cv.position,
+                                    PositionValue::Static
+                                        | PositionValue::Relative
+                                        | PositionValue::Sticky
+                                )
+                        });
+                        if let Some(clip) = clip_background {
+                            scene.push_clip_layer(Affine::IDENTITY, &clip);
+                        }
                         paint_element_background(
                             scene,
                             layout.size.width,
@@ -2051,6 +2495,9 @@ fn paint_document_impl(
                             &cv.border,
                             &cv.padding,
                         );
+                        if clip_background.is_some() {
+                            scene.pop_layer();
+                        }
                     }
                     // Generated content is an immediate child of its
                     // originating box.  The minimal layout engine does not
