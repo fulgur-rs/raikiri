@@ -510,6 +510,8 @@ pub struct RuleTree {
     /// Cross-kind source-order index. The individual compatibility views keep
     /// their historical counters; this vector records their retained order.
     pub(crate) rules: Vec<CssRule>,
+    /// Remaining budget for overlapping bodies retained by nested opaque rules.
+    opaque_body_budget: usize,
 }
 
 impl RuleTree {
@@ -629,6 +631,7 @@ impl RuleTree {
             media_rules: Vec::new(),
             next_style_order: 0,
             rules: Vec::new(),
+            opaque_body_budget: MAX_CUMULATIVE_NESTED_OPAQUE_BODY_BYTES,
         }
     }
 
@@ -671,7 +674,10 @@ impl RuleTree {
     fn add_stylesheet_chunk(&mut self, source: &str, origin: Origin, layer_order: u32) {
         let mut input = ParserInput::new(source);
         let mut parser = Parser::new(&mut input);
-        let mut rule_parser = StyleRuleParser { source };
+        let mut rule_parser = StyleRuleParser {
+            source,
+            opaque_body_budget: &mut self.opaque_body_budget,
+        };
         let mut style_order = self.next_style_order;
         let mut page_order = self.page_rules.len() as u32;
         let mut rule_order = self.rules.len() as u32;
@@ -1137,6 +1143,8 @@ enum NestedParsedRule {
 }
 
 const MAX_OPAQUE_RULE_NESTING_DEPTH: usize = 128;
+// Descendant bodies overlap their ancestors, so cap their aggregate owned copies.
+const MAX_CUMULATIVE_NESTED_OPAQUE_BODY_BYTES: usize = 8 * 1024 * 1024;
 
 fn nested_block_has_closing_brace(source: &str, input: &Parser<'_, '_>) -> bool {
     let position = input.position().byte_index();
@@ -1156,12 +1164,13 @@ fn nested_block_has_closing_brace(source: &str, input: &Parser<'_, '_>) -> bool 
     }
 }
 
-struct RawRuleParser<'s> {
+struct RawRuleParser<'s, 'b> {
     depth: usize,
     source: &'s str,
+    remaining_body_bytes: &'b mut usize,
 }
 
-impl<'i, 's> cssparser::AtRuleParser<'i> for RawRuleParser<'s> {
+impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for RawRuleParser<'s, 'b> {
     type Prelude = (String, String);
     type AtRule = NestedParsedRule;
     type Error = ();
@@ -1199,8 +1208,12 @@ impl<'i, 's> cssparser::AtRuleParser<'i> for RawRuleParser<'s> {
         if !nested_block_has_closing_brace(self.source, input) {
             return Err(input.new_custom_error(()));
         }
+        if body.len() > *self.remaining_body_bytes {
+            return Err(input.new_custom_error(()));
+        }
+        *self.remaining_body_bytes -= body.len();
         let children = if self.depth < MAX_OPAQUE_RULE_NESTING_DEPTH {
-            parse_nested_rule_nodes_at_depth(&body, self.depth + 1)
+            parse_nested_rule_nodes_at_depth(&body, self.depth + 1, self.remaining_body_bytes)
         } else {
             Vec::new()
         };
@@ -1215,7 +1228,7 @@ impl<'i, 's> cssparser::AtRuleParser<'i> for RawRuleParser<'s> {
     }
 }
 
-impl<'i, 's> cssparser::QualifiedRuleParser<'i> for RawRuleParser<'s> {
+impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for RawRuleParser<'s, 'b> {
     type Prelude = String;
     type QualifiedRule = NestedParsedRule;
     type Error = ();
@@ -1237,6 +1250,10 @@ impl<'i, 's> cssparser::QualifiedRuleParser<'i> for RawRuleParser<'s> {
         if !nested_block_has_closing_brace(self.source, input) {
             return Err(input.new_custom_error(()));
         }
+        if body.len() > *self.remaining_body_bytes {
+            return Err(input.new_custom_error(()));
+        }
+        *self.remaining_body_bytes -= body.len();
         Ok(NestedParsedRule::Qualified(QualifiedRuleRecord {
             prelude,
             body,
@@ -1246,14 +1263,22 @@ impl<'i, 's> cssparser::QualifiedRuleParser<'i> for RawRuleParser<'s> {
     }
 }
 
-fn parse_nested_rule_nodes(source: &str) -> Vec<RuleNode> {
-    parse_nested_rule_nodes_at_depth(source, 0)
+fn parse_nested_rule_nodes(source: &str, remaining_body_bytes: &mut usize) -> Vec<RuleNode> {
+    parse_nested_rule_nodes_at_depth(source, 0, remaining_body_bytes)
 }
 
-fn parse_nested_rule_nodes_at_depth(source: &str, depth: usize) -> Vec<RuleNode> {
+fn parse_nested_rule_nodes_at_depth(
+    source: &str,
+    depth: usize,
+    remaining_body_bytes: &mut usize,
+) -> Vec<RuleNode> {
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
-    let mut rule_parser = RawRuleParser { depth, source };
+    let mut rule_parser = RawRuleParser {
+        depth,
+        source,
+        remaining_body_bytes,
+    };
     let mut nodes = Vec::new();
     for (source_order, rule) in StyleSheetParser::new(&mut parser, &mut rule_parser)
         .flatten()
@@ -1364,11 +1389,12 @@ enum ParsedRule {
 
 /// StyleSheetParser 実装。qualified rule + `@page` を受理し、その他の at-rule
 /// は意味論を実行せず opaque record として保持する。
-struct StyleRuleParser<'s> {
+struct StyleRuleParser<'s, 'b> {
     source: &'s str,
+    opaque_body_budget: &'b mut usize,
 }
 
-impl<'i, 's> cssparser::AtRuleParser<'i> for StyleRuleParser<'s> {
+impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
     type Prelude = ParsedAtRulePrelude;
     type AtRule = ParsedRule;
     type Error = ();
@@ -1437,7 +1463,7 @@ impl<'i, 's> cssparser::AtRuleParser<'i> for StyleRuleParser<'s> {
                 if !nested_block_has_closing_brace(self.source, input) {
                     return Err(input.new_custom_error(()));
                 }
-                let children = parse_nested_rule_nodes(&body);
+                let children = parse_nested_rule_nodes(&body, self.opaque_body_budget);
                 Ok(ParsedRule::OpaqueAtRule(AtRuleRecord {
                     name,
                     prelude,
@@ -1451,7 +1477,7 @@ impl<'i, 's> cssparser::AtRuleParser<'i> for StyleRuleParser<'s> {
     }
 }
 
-impl<'i, 's> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s> {
+impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> {
     type Prelude = SelectorList<RaikiriSelectorImpl>;
     type QualifiedRule = ParsedRule;
     type Error = ();
@@ -3639,6 +3665,72 @@ mod tests {
             tree.add_stylesheet(source, Origin::Author);
             assert_eq!(tree.opaque_at_rules().len(), 1, "source: {source:?}");
         }
+    }
+
+    #[test]
+    fn nested_opaque_at_rule_bodies_respect_cumulative_byte_budget() {
+        let mut css = "payload".repeat(32);
+        for _ in 0..16 {
+            css = format!("@future {{{css}}}");
+        }
+
+        let budget = css.len() * 2;
+        let mut remaining = budget;
+        let nodes = parse_nested_rule_nodes(&css, &mut remaining);
+
+        assert!(!nodes.is_empty());
+        assert!(remaining < budget);
+        fn retained_body_bytes(nodes: &[RuleNode]) -> usize {
+            nodes
+                .iter()
+                .map(|node| match node {
+                    RuleNode::AtRule(record) => {
+                        record.body.as_block().map_or(0, str::len)
+                            + retained_body_bytes(record.children())
+                    }
+                    RuleNode::Qualified(record) => record.body.len(),
+                })
+                .sum()
+        }
+        assert_eq!(retained_body_bytes(&nodes), budget - remaining);
+
+        let mut depth = 0;
+        let mut node = nodes.first();
+        while let Some(RuleNode::AtRule(record)) = node {
+            depth += 1;
+            node = record.children().first();
+        }
+        assert!(depth < 16, "the byte budget must truncate the owned chain");
+    }
+
+    #[test]
+    fn rule_tree_caps_nested_opaque_body_retention() {
+        let mut css = "x".repeat(512 * 1024);
+        for _ in 0..20 {
+            css = format!("@future {{{css}}}");
+        }
+
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(&css, Origin::Author);
+        let record = &tree.opaque_at_rules()[0];
+
+        fn retained_nested_body_bytes(nodes: &[RuleNode]) -> usize {
+            nodes
+                .iter()
+                .map(|node| match node {
+                    RuleNode::AtRule(record) => {
+                        record.body.as_block().map_or(0, str::len)
+                            + retained_nested_body_bytes(record.children())
+                    }
+                    RuleNode::Qualified(record) => record.body.len(),
+                })
+                .sum()
+        }
+
+        let retained = retained_nested_body_bytes(record.children());
+        assert!(retained > 0);
+        assert!(retained <= MAX_CUMULATIVE_NESTED_OPAQUE_BODY_BYTES);
+        assert_eq!(record.children().len(), 1);
     }
 
     #[test]
