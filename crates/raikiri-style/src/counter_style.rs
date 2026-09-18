@@ -54,7 +54,7 @@
 //!
 //! - `speak-as` (see above).
 //!
-//! # RuleTree wiring (origin-aware)
+//! # RuleTree integration (origin-aware)
 //!
 //! [`crate::ruletree::RuleTree`] now owns a `counter_styles`
 //! [`CounterStyleRegistry`], populated by every call to
@@ -177,7 +177,7 @@ pub enum CounterStyleSystem {
     /// inherits the extended style's algorithm and any unspecified
     /// descriptors.
     ///
-    /// **Composition is not implemented** (scope-cut, following the general
+    /// **Composition is not implemented** (scope-limited, following the general
     /// guidance to "start with whatever subset … widen from there"). A rule using
     /// `extends` parses successfully (round-trips through
     /// [`CounterStyleRegistry`] with the extended name stored here) but
@@ -226,7 +226,7 @@ fn parse_system(input: &mut Parser<'_, '_>) -> Option<CounterStyleSystem> {
 ///
 /// The `extends` clause is moot here: [`generate_counter`] never reaches
 /// this function's result for an `Extends` system in the first place (its
-/// step 3 dispatch returns `None` unconditionally, per the scope-cut on
+/// step 3 dispatch returns `None` unconditionally, per the scope-limited on
 /// [`CounterStyleSystem::Extends`]) — `false` is a safe placeholder that is
 /// never observed.
 fn system_uses_negative_sign(system: &CounterStyleSystem) -> bool {
@@ -576,7 +576,7 @@ fn parse_range(input: &mut Parser<'_, '_>) -> Option<CounterRange> {
 ///   [`generate_counter`] never depends on this function's answer for it.
 ///   `Infinite..Infinite` is returned so that, if it *were* consulted, step 2
 ///   of the algorithm (the range check) would never itself trigger the
-///   fallback for an `extends` rule — the scope-cut fallback is always
+///   fallback for an `extends` rule — the scope-limited fallback is always
 ///   attributed to step 3 instead, keeping "which step handled it" legible
 ///   in [`generate_counter`].
 fn auto_range(system: &CounterStyleSystem) -> RangeEntry {
@@ -787,7 +787,7 @@ fn parse_descriptor_value(name: &str, input: &mut Parser<'_, '_>) -> Option<Pars
 
 /// Per-declaration parser for the `@counter-style` block's `<declaration-list>`
 /// — mirrors [`mod@crate::rule`]'s `DeclParser` shape exactly (same
-/// `RuleBodyItemParser` wiring, same "unsupported name / invalid value →
+/// `RuleBodyItemParser` integration, same "unsupported name / invalid value →
 /// `Err` → whole declaration silently dropped by `RuleBodyParser`'s error
 /// recovery" behavior), specialized to counter-style descriptor names
 /// instead of CSS property names.
@@ -1176,7 +1176,7 @@ impl CounterStyleRegistry {
 /// [`generate_counter`] already treats a `None` result — whether the
 /// initial representation ([`symbolic_repr`]/[`additive_repr`]) or the
 /// padded one ([`apply_pad`]) — as "use the fallback counter style" (see
-/// its own doc); no separate fallback plumbing is needed.
+/// its own doc); no separate fallback integration logic is needed.
 ///
 /// # Why bytes, not repetition count
 ///
@@ -1507,7 +1507,7 @@ fn additive_repr(tuples: &[(i32, CounterSymbol)], value: i64) -> Option<String> 
 /// function's honest boundary: it is `raikiri-traits::format_counter`
 /// (today unconditionally decimal-formatting any `CounterStyle::Named` it
 /// doesn't itself recognize) that is expected to treat `None` from this
-/// function the same way. Actually wiring that call is a deferred design
+/// function the same way. Actually integration that call is a deferred design
 /// question — not this function's job.
 pub fn resolve_custom_counter(
     registry: &CounterStyleRegistry,
@@ -2755,7 +2755,7 @@ mod tests {
         );
     }
 
-    // ── resolve_custom_counter: extends scope-cut ─────────────────────
+    // ── resolve_custom_counter: extends scope-limited ─────────────────────
 
     #[test]
     fn resolve_extends_is_unimplemented_and_falls_through() {

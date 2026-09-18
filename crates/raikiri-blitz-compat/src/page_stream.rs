@@ -1,9 +1,9 @@
-//! fulgur PageStream migration PoC — raikiri PageScene based replacement for blitz_adapter.
+//! fulgur PageStream migration implementation — raikiri PageScene based replacement for blitz_adapter.
 //!
 //! `blitz_adapter::parse_and_layout` (screen-first blitz pipeline: parse → style → layout → paint)
 //! を raikiri の streaming pipeline (`plan` / `render_streaming` / `render_batch`) 相当へ
-//! 段階的に置換するための最小 PoC。現時点の raikiri は single-page `layout_single_page`
-//! + `PageScene` まで実装済みで `plan`/`render_streaming` は stub のため、本モジュールは
+//! 段階的に置換するための最小実装。現時点の raikiri は single-page `layout_single_page`
+//! + `PageScene` まで実装済みで `plan`/`render_streaming` は 未実装のため、本モジュールは
 //!   その single-page path を `PageFragment`/`PageStream` の将来 shape に見立ててラップする。
 //!
 //! # Architecture
@@ -29,10 +29,10 @@ use raikiri_traits::RenderError;
 
 use crate::shell::Viewport;
 
-/// Single-page `PageStream` shim — `Vec<PageScene>` を streaming iterator 風にラップする.
+/// Single-page `PageStream` compatibility wrapper — `Vec<PageScene>` を streaming iterator 風にラップする.
 ///
 /// 将来の `PageStream` は `PageFragment` を逐次 `RenderSink::accept_page` へ流す
-/// streaming state machine だが、現時点の PoC は single-pass で全ページを先に確定して
+/// streaming state machine だが、現時点の実装 は single-pass で全ページを先に確定して
 /// `Vec` に保持する ( single page のみをサポートする `layout_single_page` の制約に由来 )。
 /// Consumer は `pages()` / `into_pages()` / `Iterator` 経由で page を取得できる。
 #[derive(Debug, Default)]
@@ -67,7 +67,7 @@ impl RaikiriPageStream {
         self.pages
     }
 
-    /// Number of pages ( currently always 0 or 1 for single-page PoC ).
+    /// Number of pages ( currently always 0 or 1 for single-page implementation ).
     pub fn len(&self) -> usize {
         self.pages.len()
     }
@@ -82,7 +82,7 @@ impl Iterator for RaikiriPageStream {
     type Item = PageScene;
     fn next(&mut self) -> Option<Self::Item> {
         if self.cursor < self.pages.len() {
-            // Clone because PageScene is cheap to clone for single-page PoC.
+            // Clone because PageScene is cheap to clone for single-page implementation.
             // Streaming impl will yield owned PageFragment without cloning.
             let page = self.pages[self.cursor].clone();
             self.cursor += 1;
@@ -182,17 +182,17 @@ pub fn html_to_page_scenes(html: &str, page_box: PageBox) -> Result<Vec<PageScen
     Ok(pages)
 }
 
-/// `blitz_adapter::parse_and_layout` 相当を raikiri で置換する PoC 関数。
+/// `blitz_adapter::parse_and_layout` 相当を raikiri で置換する 実装関数。
 ///
 /// `html` と `viewport` から `Vec<PageScene>` を得る最短経路。fulgur 側は
 /// 本関数を `blitz_adapter::parse_and_layout` の代替として呼び出せる
 /// ( 戻り値型のみ `Vec<Document>` / `blitz_dom::Document` から `Vec<PageScene>`
-/// へ変わるが、viewport からの PageBox 導出・フォント解決等の plumbing は
+/// へ変わるが、viewport からの PageBox 導出・フォント解決等の integration logic は
 /// 本関数内で完結するため call-site の変更は最小 )。
 ///
 /// 将来 `PageFragment` ( `raikiri_traits::PageFragment` ) が populate された際、
 /// 本関数は `Vec<PageScene>` から `Vec<PageFragment>` への thin map に
-/// 昇格する。現時点の `PageFragment` は empty placeholder のため、
+/// 昇格する。現時点の `PageFragment` は empty value のため、
 /// PageScene を直接返す方が visual verification に有用である。
 ///
 /// # Example
@@ -260,10 +260,11 @@ mod tests {
     #[test]
     fn receipt_html_to_page_scenes_produces_one_page() {
         let scenes = html_to_page_scenes(RECEIPT_HTML, PageBox::A4).expect("layout ok");
+        // cov:ignore: assertion text is only evaluated when this test fails
         assert_eq!(
             scenes.len(),
             1,
-            "single-page PoC must produce exactly 1 PageScene"
+            "single-page implementation must produce exactly 1 PageScene"
         );
         let scene = &scenes[0];
         assert!(scene.root_id.is_some(), "root_id must be <html>");
@@ -366,7 +367,7 @@ mod tests {
 
     #[test]
     fn simple_h1_p_table_html_succeeds() {
-        // Task requirement: h1 + p + table PoC
+        // Task requirement: h1 + p + table implementation
         let html = "<h1>Title</h1><p>Hello</p><table><tr><td>cell</td></tr></table>";
         let pages = parse_and_layout_with_raikiri(html, None).expect("h1+p+table layout ok");
         assert_eq!(pages.len(), 1);

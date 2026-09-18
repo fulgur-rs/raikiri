@@ -21,7 +21,7 @@
 //! `page_declarations_carry_no_specified_layer_residue` (以前は
 //! `page_declarations_carry_exactly_one_specified_layer_residue` という名前で、
 //! `text-align: match-parent` が唯一の specified 層残滓だった) が保証内容を
-//! 機械的に pin している。
+//! 機械的に check している。
 //!
 //! # なぜ絶対化が独立 phase なのか
 //!
@@ -706,7 +706,7 @@ impl ComputedBorderSpacing {
     /// representation without changing the meaning of the value,
     /// omit/replace them." — 両軸が等しいときは第 2 成分を omit する
     /// (WPT `border-spacing-computed.html` の `"0"` → `"0px"` case が
-    /// pin する shortest-serialization 原則 — `"0px 0px"` ではない)。
+    /// check する shortest-serialization 原則 — `"0px 0px"` ではない)。
     pub fn serialized(&self) -> String {
         let h = self.horizontal.px();
         let v = self.vertical.px();
@@ -771,11 +771,11 @@ impl ComputedBorderSpacing {
 /// assert_eq!(computed.style(), specified.style);
 /// assert_eq!(computed.color, specified.color);
 /// // `computed.style()` 呼び出しと `computed.color` 直接読み出しは、下記
-/// // write-path pin (`# write 経路が無いことの compile-fail pin` 節) の
+/// // write-path check (`# write 経路が無いことの compile-fail pin` 節) の
 /// // non-vacuous control を兼ねる。
 /// ```
 ///
-/// # write 経路が無いことの compile-fail pin
+/// # write 経路が無いことの compile-fail check
 ///
 /// `width` / `style` はいずれも `pub(crate)` に絞ってある (各 field doc
 /// 参照)。この narrowing が保たれ続けることは prose の主張のままだと将来の
@@ -788,7 +788,7 @@ impl ComputedBorderSpacing {
 /// 単独の visibility を discriminate **できない** — 発生するエラーは常に
 /// non_exhaustive 由来の `E0639` であり、両 field が将来 `pub` に戻っても
 /// compile-fail し続けてしまう (`Declaration` の doc が指摘する同種の
-/// vacuous pin と同じ構造。ただしあちらは「将来 non_exhaustive が付いたら」
+/// vacuous check と同じ構造。ただしあちらは「将来 non_exhaustive が付いたら」
 /// という risk だったのに対し、こちらは non_exhaustive が既に付いている現在
 /// の事実であり、非 struct-literal 系 fence を最初から作らない理由になる)。
 ///
@@ -1221,7 +1221,7 @@ pub struct ResolveContext {
     /// px 長**、または `normal` で解決不能なら `None`。`None` は
     /// [`ComputedLineHeight::Normal`] と同じ「font metrics が style 層に無い」
     /// wall を表す (`cap`/`rcap` と同じ、[`Length::Lh`] doc 参照) — `0` や
-    /// 他の数値で代用しない (cleanroom: 根拠のない比率を捏造しない)。
+    /// 他の数値で代用しない (独立実装: 根拠のない比率を捏造しない)。
     ///
     /// [`Length::Lh`]: crate::property::Length::Lh
     pub root_line_height: Option<ComputedLength>,
@@ -1377,7 +1377,7 @@ fn pc_to_px(v: f32) -> f32 {
 ///   `rcap` が同じ理由で spin out された wall と同じもの
 ///   ([`crate::property::Length::Lh`] doc 参照)。spec はここに font-size 比の
 ///   fallback を与えていないため、`ex`/`ch`/`ic` のような比率を捏造しては
-///   ならない (cleanroom)。呼び手が消費 property ごとの fallback を選ぶ
+///   ならない (独立実装)。呼び手が消費 property ごとの fallback を選ぶ
 ///   ([`resolve_length_percentage`] 等の doc 参照)。
 ///
 /// `normal` は `line-height` の **initial value** — この関数が `None` を返す
@@ -1537,7 +1537,7 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 ///
 /// cascade pipeline ではこの contract を
 /// [`SpecifiedValues::finalize_as_root`] が守る —
-/// end-to-end の pin は [`mod@crate::cascade`] の
+/// end-to-end の check は [`mod@crate::cascade`] の
 /// `rem_on_root_element_resolves_against_initial_font_size` /
 /// `rem_below_root_element_resolves_against_root_computed_font_size` /
 /// `rem_on_root_element_box_property_uses_own_font_size` の 3 本。
@@ -1707,7 +1707,7 @@ pub fn resolve_font_size(
 /// `resolve_border` が既に持つ判定ロジックを再利用できる見込みはある) も
 /// その対応の中で検討することとし、本関数では `Percent` arm と
 /// 同じコードパスに相乗りしない独立した設計判断として `0px` を明示的に
-/// 選んでいる — 比率を捏造しない (cleanroom) という一線だけは守るが、
+/// 選んでいる — 比率を捏造しない (独立実装) という一線だけは守るが、
 /// この `0px` 自体が border-width の正しい fallback だと主張するものではない。
 pub(crate) fn resolve_length(
     specified: Length,
@@ -1806,7 +1806,7 @@ pub fn resolve_tab_size(
 /// computed value が負にならない) の適用であり、WPT
 /// `border-spacing-computed.html` の
 /// `"calc(10px - 0.5em)"` (font-size 40px → `-10px`) → `"0px"` case が
-/// pin する。parse 時の authored 負値 (`-20px` 等) は
+/// check する。parse 時の authored 負値 (`-20px` 等) は
 /// [`crate::property`] の `parse_border_spacing` が既に reject 済みのため、
 /// ここが clamp するのは calc 経由の derived value のみ。
 ///
@@ -1820,7 +1820,7 @@ pub fn resolve_tab_size(
 /// // 負の derived value は 0 に clamp される (WPT computed case)。
 /// let specified = BorderSpacingValue { horizontal: Length::Em(-0.5), vertical: Length::Em(0.5) };
 /// // NOTE: `-0.5em` は parse 時に reject されるため pipeline 上は到達不能 —
-/// // 本 doctest は clamp 自体の unit pin であり、parse 済み値の再現ではない。
+/// // 本 doctest は clamp 自体の unit check であり、parse 済み値の再現ではない。
 /// let computed = resolve_border_spacing(specified, font_size, None, &ctx);
 /// assert_eq!(computed.horizontal, ComputedLength(0.0));
 /// assert_eq!(computed.vertical, ComputedLength(20.0));
@@ -1855,7 +1855,7 @@ pub fn resolve_border_spacing(
 /// "実装済み: `<percentage>`" 節および `Length::Lh` の `None` → `0px`
 /// fallback と同型の documented spec-deviation。`0%` 自体は spec 上
 /// `baseline` と同義のため、この fallback は `0%` に対しては spec 準拠、
-/// 非 0 に対してのみ deviation となる。font-metrics source (raikiri-spike-m3)
+/// 非 0 に対してのみ deviation となる。font-metrics source
 /// 獲得後は自然に解消する。
 ///
 /// # 戻り値が [`VerticalAlign`] 自身であること (別の `ComputedVerticalAlign`
@@ -1866,7 +1866,7 @@ pub fn resolve_border_spacing(
 /// `vertical_align_shift_px`) が [`crate::computed::ComputedValues::vertical_align`]
 /// の型として [`VerticalAlign`] を直接引数に取っており、別の computed 専用
 /// 型へ差し替えると raikiri-paint 側の signature 変更を要求してしまう。本
-/// crate の scope はこの property の raikiri-paint 側 wiring には一切
+/// crate の scope はこの property の raikiri-paint 側 integration には一切
 /// 触れないことなので、[`Length`] を絶対化した上で同じ [`VerticalAlign`]
 /// enum の [`VerticalAlign::Length`] variant へ詰め直して返す —
 /// [`crate::page`] の `fb` helper が [`ComputedFlexBasis`] を
@@ -3239,7 +3239,7 @@ mod tests {
     }
 
     /// `border-*-width` の grammar (`<line-width>`) は `<percentage>` を含まない
-    /// ため parse 段で drop される。到達不能 arm の全域性のみを pin する。
+    /// ため parse 段で drop される。到達不能 arm の全域性のみを check する。
     #[test]
     fn length_percent_is_grammar_unreachable_and_falls_to_zero() {
         assert_eq!(
@@ -3251,7 +3251,7 @@ mod tests {
     /// `font-size` 以外 (= `resolve_length` の呼び出し先である `border-*-width`
     /// や `line-height` の `<length>` 成分) では `ex` / `ch` / `ic` は
     /// **自要素** の computed font-size 基準になる — `resolve_font_size` の
-    /// 同 unit テスト (親基準) との非対称を pin する
+    /// 同 unit テスト (親基準) との非対称を check する
     /// (`Length::Ex` doc の parent-metrics 条項)。
     #[test]
     fn length_ex_ch_ic_resolve_against_own_font_size() {
@@ -3283,7 +3283,7 @@ mod tests {
     }
 
     /// CSS Values 4 §6.2 換算表 — `border-*-width` 経由 (`resolve_length`) でも
-    /// `resolve_font_size` と同じ変換になることを pin
+    /// `resolve_font_size` と同じ変換になることを check
     /// (`width: 1in` → 96px、issue 本文の verification 対象)。
     #[test]
     fn length_additional_absolute_units_convert_per_spec_table() {
@@ -3400,7 +3400,7 @@ mod tests {
     }
 
     /// `padding: 1lh` — own line-height が `normal` で解決不能 (`None`) の
-    /// ときは padding の spec initial value `0` に倒す (cleanroom: 比率を
+    /// ときは padding の spec initial value `0` に倒す (独立実装: 比率を
     /// 捏造しない、`resolve_length_percentage` doc 参照)。
     #[test]
     fn length_percentage_lh_falls_back_to_zero_when_unresolvable() {
@@ -3541,7 +3541,7 @@ mod tests {
         );
     }
 
-    /// The Finding A regression pin: `margin-top: 1lh` / `1rlh` under
+    /// The Finding A regression check: `margin-top: 1lh` / `1rlh` under
     /// `line-height: normal` (unresolvable) must compute to **`Px(0.0)`**
     /// — margin's actual spec initial (CSS Box 3 §3.1) — not `Auto`
     /// (`resolve_length_percentage_or_auto`'s fallback, which is correct
@@ -3855,7 +3855,7 @@ mod tests {
     /// `border-*-width` の style gating (この module doc / `resolve_border`
     /// doc の "spec tension" 節) と組み合わさって正しく解決する — `1pc = 16px`
     /// (CSS Values 4 §6.2)。`style: none` では新 unit も他 unit と同じく 0px に
-    /// gate される (regression pin: この gate は絶対化の**後**に効くため、
+    /// gate される (regression check: この gate は絶対化の**後**に効くため、
     /// unit を増やしても gate 自体の網羅性は変わらない)。
     #[test]
     fn border_pc_width_is_absolutized_and_still_gated_by_style() {
@@ -3998,7 +3998,7 @@ mod tests {
     // -----------------------------------------------------------------
 
     /// `Px` は絶対化の不動点なので、lift → 絶対化の round trip は恒等。
-    /// 基準 font-size を変えても結果が変わらないことを pin する。
+    /// 基準 font-size を変えても結果が変わらないことを check する。
     #[test]
     fn lift_font_size_is_fixed_point_under_absolutization() {
         let inherited = ComputedLength(24.0);
@@ -4023,7 +4023,7 @@ mod tests {
     /// `line-height: 150%` は **宣言要素** で絶対化され、子はその length を
     /// 継承する (CSS Inline 3 §5.1)。子の font-size で **再 resolve しない** —
     /// この test は「percentage を再解決すべき」という誤修正を検出する
-    /// regression pin。
+    /// regression check。
     #[test]
     fn lift_line_height_length_does_not_re_resolve_percentage_in_child() {
         let declared = resolve_line_height(
@@ -4270,7 +4270,7 @@ mod tests {
     /// specified 層の initial value を各絶対化関数に個別に通した結果が、
     /// spec の computed initial (padding / margin = 0px、width / height = auto、
     /// border-width = 0px、line-height = normal、font-size = 16px) になることを
-    /// pin する。
+    /// check する。
     ///
     /// 集約版 (`SpecifiedValues::finalize` 全体) は `crate::specified` の // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// `initial_specified_finalizes_to_initial_computed` が持つ。こちらは

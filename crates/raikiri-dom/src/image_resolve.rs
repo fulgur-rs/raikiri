@@ -3,7 +3,7 @@
 //! Mirrors [`crate::layout::preshape_text`]'s role: runs once before taffy
 //! layout, writes results onto [`crate::node::Node`], so the taffy
 //! leaf-measure closures (`crate::taffy_impl`) stay synchronous flat reads
-//! with no new plumbing into taffy's own trait surface. Like
+//! with no new integration logic into taffy's own trait surface. Like
 //! `preshape_text`'s Step-0 `text_layout` clear (see
 //! [`crate::layout::layout_single_page`]), every `<img>` node this pass
 //! visits has `image_intrinsic_size` reset to `None` before being
@@ -131,7 +131,7 @@ mod tests {
         }
     }
 
-    /// Counts calls and fails every one, so a test can pin *how far* the
+    /// Counts calls and fails every one, so a test can check *how far* the
     /// walk got before the terminal error stopped it.
     #[derive(Default)]
     struct CountingErrResolver {
@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn re_resolving_after_src_becomes_unresolvable_clears_stale_value() {
-        // Regression pin for the re-entrance reset: a node that previously
+        // Regression check for the re-entrance reset: a node that previously
         // resolved to `Some` must not keep that value once its `src` is
         // mutated to something unresolvable and `resolve_images` runs again
         // (mirrors `preshape_text`'s Step-0 `text_layout = None` clear).

@@ -199,8 +199,8 @@ mod tests {
             s.contains("external stylesheet"),
             "display must include kind via ResourceKind::Display: got {s:?}"
         );
-        // Regression pin: Debug format must not leak (auto-derived Debug can
-        // silently change when variant fields are added; new tests below pin
+        // Regression check: Debug format must not leak (auto-derived Debug can
+        // silently change when variant fields are added; new tests below check
         // every ResourceKind variant's Display string).
         assert!(
             !s.contains("ExternalStylesheet"),

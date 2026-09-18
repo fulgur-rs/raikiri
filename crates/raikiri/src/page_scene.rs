@@ -78,7 +78,7 @@ use std::collections::BTreeMap;
 ///
 /// 後続の [`crate::entries`] 群 (`BlockEntry` の
 /// `layout_size` / `border_widths` 等) も同じ `Pt` alias を再利用し、同じ
-/// CSS-px-in-Pt debt を意図的に踏襲する (新たな別種の unit debt を作らない
+/// CSS-px-in-Pt debt を意図的に踏襲する (新たな別種の known unit mismatch を作らない
 /// ための選択、[`crate::entries`] module doc参照)。
 pub type Pt = f32;
 
@@ -302,7 +302,7 @@ impl PageScene {
 /// Post-layout Document から metadata + fragments + drawables を抽出し
 /// [`PageScene`] を construct する。
 ///
-/// Internal wiring — `html_to_png_impl` から
+/// Internal integration — `html_to_png_impl` から
 /// `layout_single_page` 完了後に呼ばれる。`cascade` param が live 化し
 /// (旧 `_cascade`)、DFS walk 中に Element node を
 /// [`BlockEntry`]、Text node を [`ParagraphEntry`] として `drawables` へ
@@ -613,7 +613,7 @@ mod tests {
     }
 
     /// build_page_scene が Element node → `BlockEntry` / Text node →
-    /// `ParagraphEntry` を `drawables` へ populate する (regression pin —
+    /// `ParagraphEntry` を `drawables` へ populate する (regression check —
     /// `TrackedMap::insert` の非-test call site がこの production path
     /// 経由で exercise されることも同時に確認する)。
     #[test]
@@ -703,7 +703,7 @@ mod tests {
     }
 
     /// PageScene::rasterize が html_to_png と同じ PNG bytes を返す
-    /// (byte-identical triple の verbatim reuse pin — primary regression
+    /// (byte-identical triple の verbatim reuse check — primary regression
     /// signal を module scope でも local に固定する)。
     #[test]
     fn rasterize_matches_html_to_png_bytes() {

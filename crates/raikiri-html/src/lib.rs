@@ -61,7 +61,7 @@ mod tests {
         // html > body > p > "Hello" の tree を assert。
         // 注意: html5ever tokenizer は text を複数 AppendText に分割する可能性
         // があるため、Text children を concat して assert する (現状 adjacent
-        // Text の auto-merge は未実装、spike 範囲の上限)。
+        // Text の auto-merge は未実装、現在の実装範囲の上限)。
         let p_id = find_first_by_tag(&uncascaded.dom, "p").expect("p element exists");
         let mut collected = String::new();
         for c in uncascaded.dom.child_ids(p_id) {
@@ -129,7 +129,7 @@ mod tests {
     }
 
     /// `<link rel="stylesheet">` fetch → CSS text →
-    /// `UncascadedDocument.stylesheet_sources` の wiring を、mock
+    /// `UncascadedDocument.stylesheet_sources` の integration を、mock
     /// `NetworkProvider` を使って end-to-end で検証する (実 CSS parsing /
     /// cascade 統合は raikiri-style / raikiri umbrella crate 側、ここでは
     /// raikiri-html の責務である「検出 → fetch → doc.stylesheet_sources
@@ -1402,7 +1402,7 @@ mod tests {
         //     is_in_document() filter (raikiri-dom/src/taffy_impl.rs) を
         //     経由するため、body の taffy child_count = 1 (`<p>` only)。
         //     この behaviour は既に `taffy_child_ids_and_count_filter_out_template_descendants`
-        //     で pin されているが、Comment/PI 経路の独立 regression として
+        //     で check されているが、Comment/PI 経路の独立 regression として
         //     ここでも assert する。
         use taffy::TraversePartialTree;
         let body_taffy_id = taffy::NodeId::from(body_id.0 as usize);
@@ -1534,9 +1534,9 @@ mod tests {
     /// to `StyleDom::quirks_mode`'s `NoQuirks` default and happened to
     /// agree" — both bugs would incorrectly produce this document's Quirks
     /// counterpart matching case-sensitively too, but only a real bug (not
-    /// wiring `Document::quirks_mode` at all) would make *this* document's
+    /// integration `Document::quirks_mode` at all) would make *this* document's
     /// case stay unmatched by coincidence, so the pair of tests together
-    /// is what actually pins the wiring.
+    /// is what actually pins the integration.
     #[test]
     fn parse_wires_no_quirks_through_document_to_cascade_case_sensitive() {
         use raikiri_style::property::CssColor;
@@ -1677,7 +1677,7 @@ mod tests {
     fn parse_marks_template_descendants_out_of_document() {
         // <template> element 自身は flat tree の一員なので
         // is_in_document()=true、その descendants (子孫の element / text) は
-        // false であることを parse 経路の bit populate で pin する。
+        // false であることを parse 経路の bit populate で check する。
         //
         // 現在の sink には mark_in_document_flags phase が無いため、default
         // true が clear されず descendant も true になる → 失敗する failing test。
@@ -1735,7 +1735,7 @@ mod tests {
     #[test]
     fn parse_marks_body_children_in_document() {
         // normal HTML (template 無し) を parse すると全 node が
-        // is_in_document()=true。default true が保たれる regression pin。
+        // is_in_document()=true。default true が保たれる regression check。
         let html = b"<html><head></head><body><p>hi</p></body></html>";
         let opts = empty_options();
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
@@ -1760,7 +1760,7 @@ mod tests {
         // `get_template_contents(template_handle)` の戻り値を append parent と
         // して使うため、template contents は fragment root の子として積まれ
         // (template element 自身の children は空)、Document root からは
-        // reachable でなくなる。この smoke test は次を pin する:
+        // reachable でなくなる。この smoke test は次を check する:
         //
         // 1. template_contents は Some(idx) を返し、idx != template arena index
         //    (別 arena slot に fragment root が実在する)
@@ -1909,17 +1909,17 @@ mod tests {
     #[test]
     fn parse_then_cascade_skips_template_descendants() {
         // cascade が template subtree を skip する silent bug fix
-        // regression pin。詳細な cascaded map の shape reflection は raikiri-style
+        // regression check。詳細な cascaded map の shape reflection は raikiri-style
         // 内部の unit test で担保するのが正道 (未存在なら別途追加)、この
         // integration test は "parse → cascade の chain が template 内 element を
         // 触っても error / panic しない" ことと、bit populate が cascade 呼び出し
-        // 前後で保たれることを pin する。
+        // 前後で保たれることを check する。
         //
-        // 追加 pin: resolve_inheritance の
+        // 追加 check: resolve_inheritance の
         // is_in_document() gate 実装ミスは `cascade.computed.len() ==
         // dom.node_count()` という contract (raikiri/src/lib.rs
         // `html_document_cascade_populated_after_construct` が非-template
-        // document でのみ pin していた) を template を含む document で破り得る
+        // document でのみ check していた) を template を含む document で破り得る
         // — raikiri-dom::layout::preshape_text / raikiri-paint::text::draw_text_node
         // は node_id で `cascade.computed[idx]` に直接 index するため、破れると
         // OOB panic に繋がる。TestDoc 経由の raikiri-style 内部 unit test は
@@ -1954,7 +1954,7 @@ mod tests {
         // が適用され CssColor { r:255, g:0, b:0 } となり、inner には rule が適用
         // されず initial (CssColor::BLACK = { r:0, g:0, b:0 }) が残る。もし cascade
         // gate を両方削除したら inner にも red rule が届き BLACK ではなくなるため、
-        // この assert 対で gate 動作が本当に発火していることを pin する。
+        // この assert 対で gate 動作が本当に発火していることを check する。
         use raikiri_style::property::CssColor;
         const RED: CssColor = CssColor {
             r: 255,
@@ -2014,7 +2014,7 @@ mod tests {
         // explicitly skips asserting `overflow` because `OverflowValue`/
         // `OverflowXY` aren't re-exported at the umbrella root yet
         // (`wall/umbrella`, correctly deferred) — but `raikiri-html` depends
-        // on `raikiri-style` directly, so this crate can pin it today
+        // on `raikiri-style` directly, so this crate can check it today
         // without crossing that wall.
         use raikiri_style::Origin;
         use raikiri_style::property::OverflowValue;
@@ -3083,7 +3083,7 @@ mod tests {
 
     #[test]
     fn parse_ignores_body_style_in_m1_scope() {
-        // 設計仕様書 §6 MVP: <head> 内 <style> のみ登録。<body> 内 <style> は
+        // 設計仕様書 §6 initial implementation: <head> 内 <style> のみ登録。<body> 内 <style> は
         // position-aware semantics を要するため defer。
         let html = b"<html><head><style>p{color:red}</style></head>\
                      <body><style>p{color:blue}</style><p>x</p></body></html>";
@@ -3096,7 +3096,7 @@ mod tests {
         );
     }
 
-    // ── Attribute / namespace wiring ────────
+    // ── Attribute / namespace integration ────────
 
     #[test]
     fn parse_wires_style_attribute_to_inline_style_source() {
@@ -3138,7 +3138,7 @@ mod tests {
         let p_id = find_first_by_tag(&uncascaded.dom, "p").expect("p exists");
         let p_node = uncascaded.dom.node(p_id).expect("p node exists");
         let p = p_node.as_element().expect("p is element");
-        // HTML default namespace は fast path として None を返す。
+        // HTML default namespace は optimized path として None を返す。
         assert_eq!(p.namespace_uri(), None);
     }
 
@@ -3188,7 +3188,7 @@ mod tests {
         // duplicate を含む可能性を排除しない (external consumer が TreeSink を
         // wrap して重複 attr を注入する scenario も含む)。この test は sink
         // 単体を driver に見立てて "style を 2 回渡すと最初 (color:red) が勝つ"
-        // 挙動を pin する。
+        // 挙動を check する。
         use html5ever::interface::{Attribute, ElementFlags, QualName, TreeSink};
         use html5ever::tendril::StrTendril;
         use markup5ever::{LocalName, Namespace};
@@ -3217,7 +3217,7 @@ mod tests {
         let p_id = find_first_by_tag(&uncascaded.dom, "p").expect("p exists");
         let p_node = uncascaded.dom.node(p_id).expect("p node exists");
         let p = p_node.as_element().expect("p is element");
-        // first-wins (regression pin for wire_side_tables)。
+        // first-wins (regression check for wire_side_tables)。
         assert_eq!(p.inline_style_source(), Some("color:red"));
     }
 
@@ -3347,7 +3347,7 @@ mod tests {
         // HTML §13.2.5.32 duplicate attribute → ignore later occurrences。
         // sink_first_wins_on_duplicate_style_attribute と同じ first-wins 契約を
         // integration point 判定でも守る (later match が earlier non-match を
-        // 上書きしないことを pin する)。
+        // 上書きしないことを check する)。
         use html5ever::interface::{Attribute, ElementFlags, QualName, TreeSink};
         use html5ever::tendril::StrTendril;
         use markup5ever::{LocalName, Namespace};
@@ -3402,7 +3402,7 @@ mod tests {
     // construction algorithm の branch を切り替えるので、parse 経由でも
     // "子要素の namespace が予想通りか" で観測できる。
     // - encoding=text/html → HTML integration point 発動 → 子は HTML namespace
-    //   (raikiri-dom fast path で namespace_uri() = None)
+    //   (raikiri-dom optimized path で namespace_uri() = None)
     // - encoding 不在 → 通常の MathML foreign content → 子は MathML namespace
 
     #[test]
@@ -3416,10 +3416,11 @@ mod tests {
         let foo_id = find_first_by_tag(&uncascaded.dom, "foo").expect("foo exists");
         let foo_node = uncascaded.dom.node(foo_id).expect("foo node exists");
         let foo = foo_node.as_element().expect("foo is element");
+        // cov:ignore: assertion text is only evaluated when this test fails
         assert_eq!(
             foo.namespace_uri(),
             None,
-            "child inside HTML integration point should be HTML (None fast path)"
+            "child inside HTML integration point should be HTML (None optimized path)"
         );
     }
 
@@ -3446,7 +3447,7 @@ mod tests {
         // Element が strip されるか、を "#comment" tag の非存在で確認)。
         // 現在は Comment kind node が 100 個 arena に存在し、taffy child_count
         // からは 100 個すべて filter され、body の taffy child は <p> の 1 個のみ、
-        // という bulk invariant を positive に pin する。旧 form は Comment が
+        // という bulk invariant を positive に check する。旧 form は Comment が
         // Element でないため as_element() == None → scan は空振り → vacuously
         // pass するため content 保証にならない。
         use raikiri_traits::{Dom, Node};
@@ -3624,7 +3625,7 @@ mod tests {
             has_selector_rule("[dir]:dir(rtl)"),
             "MINIMAL_UA_CSS is missing selector rule `[dir]:dir(rtl) {{ … }}`",
         );
-        // spec 参照コメントが含まれていること (CSS 2.1 App.D 由来の cleanroom 印)
+        // spec 参照コメントが含まれていること (CSS 2.1 App.D 由来の 独立実装の印)
         assert!(
             MINIMAL_UA_CSS.contains("CSS 2.1 App.D"),
             "MINIMAL_UA_CSS should contain spec reference comments",

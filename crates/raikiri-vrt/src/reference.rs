@@ -1,4 +1,4 @@
-//! raikiri-vrt::reference — reference-fixture harness for VRT tests.
+//! raikiri-vrt::reference — reference-fixture test setup for VRT tests.
 //!
 //! Loads `tests/reference/<name>/` fixtures, invokes a caller-supplied
 //! rendering pipeline, and compares the produced PNG bytes against
@@ -98,7 +98,7 @@ const MAX_EXPECTED_PAGES: usize = 1_024;
 /// `2 * FIXTURE_SIZE_CAP + FIXTURE_AGGREGATE_BYTES_CAP` ≈ 456 MiB
 /// (Codex gate final review round 3 doc-precision note).
 ///
-/// Legitimate fixtures approaching this cap should raise a bd request
+/// Legitimate fixtures approaching this cap should raise a follow-up request
 /// rather than bypass — the number is deliberately tight against attack.
 const FIXTURE_AGGREGATE_BYTES_CAP: u64 = 256 * 1024 * 1024;
 
@@ -471,7 +471,7 @@ pub fn compare_png(
     let a = actual.data();
     let e = expected.data();
 
-    // EXACT fast path: byte equality skips per-pixel iteration.
+    // EXACT optimized path: byte equality skips per-pixel iteration.
     if tolerance == Tolerance::EXACT && a == e {
         return Ok(());
     }
@@ -882,7 +882,7 @@ fn read_bounded_fixture_file(path: &Path, canonical_root: &Path) -> Result<Vec<u
 /// containment check, and a bounded read that catches TOCTOU-grow.  Symlinks anywhere in the fixture tree — including
 /// the fixture-directory anchor itself — are refused even when they'd
 /// resolve inside the intended root; this is a deliberate blanket policy
-/// (no real reference fixture currently uses symlinks) and tests pin the
+/// (no real reference fixture currently uses symlinks) and tests check the
 /// behavior.
 pub fn load_fixture(fixture_dir: &Path) -> Result<Fixture, FixtureError> {
     // Root-symlink pre-check: `canonicalize` follows symlinks silently, so
@@ -1808,11 +1808,11 @@ mod defense_tests {
         }
     }
 
-    /// End-to-end pin: read_bounded_fixture_file rejects a symlink at the
+    /// End-to-end check: read_bounded_fixture_file rejects a symlink at the
     /// pre-open `symlink_metadata` check.  This test does NOT exercise the
     /// `O_NOFOLLOW` path (the open never runs because the pre-open check
     /// short-circuits) — that unit is covered by `raikiri_traits::io`'s own
-    /// `safe_open_rejects_symlink_at_open_time` test.  Kept to pin the
+    /// `safe_open_rejects_symlink_at_open_time` test.  Kept to check the
     /// full-path behavior against future refactors that might reorder the
     /// checks.
     #[cfg(unix)]
@@ -1836,7 +1836,7 @@ mod defense_tests {
         }
     }
 
-    /// Regression pin: O_NOFOLLOW on the internal open path does not reject a
+    /// Regression check: O_NOFOLLOW on the internal open path does not reject a
     /// legitimate regular file.  Without this test, an implementation that
     /// broke the safe_open fallback (e.g. accidentally always returning
     /// ELOOP) would be missed by the symlink-only tests.
@@ -1859,7 +1859,7 @@ mod defense_tests {
     /// variant to its `FixtureError` counterpart, attaching `path`.
     /// `NotRegularFilePostOpen` and `Oversized { phase: DuringRead }` are
     /// only reachable through `read_bounded_fixture_file` via a genuine
-    /// TOCTOU race, so this is the sole deterministic pin that a future
+    /// TOCTOU race, so this is the sole deterministic check that a future
     /// match reorder can't silently reroute a race-detected reject into the
     /// wildcard `IoError` arm (every `FixtureError` this crate produces is
     /// `?`-propagated — there is no warn+skip path to fall back to).
@@ -1934,7 +1934,7 @@ mod defense_tests {
     // against a `File` handle that already represents the "swapped" state.
 
     /// `check_open_handle_containment` accepts a file whose fd resolves
-    /// under the given `canonical_root` — the happy-path regression pin
+    /// under the given `canonical_root` — the happy-path regression check
     /// that the `/proc/self/fd/<fd>` readlink does not spuriously reject
     /// files that are, in fact, inside the root. Mirrors
     /// `raikiri_dom::fonts::check_open_handle_containment_accepts_file_within_root`.
@@ -1956,7 +1956,7 @@ mod defense_tests {
     }
 
     /// `check_open_handle_containment` rejects a file whose fd resolves
-    /// outside the given `canonical_root`. This is the primitive-level pin
+    /// outside the given `canonical_root`. This is the primitive-level check
     /// of the actual defense: even though the open succeeded on the file
     /// successfully (it is a perfectly regular file, just not under the
     /// expected root), the fd-derived `/proc/self/fd/<fd>` path fails
@@ -2017,7 +2017,7 @@ mod defense_tests {
 
     /// `check_open_handle_containment` (Apple-platform arm) accepts a file
     /// whose fd resolves under the given `canonical_root` — the happy-path
-    /// regression pin that `fcntl(fd, F_GETPATH, ..)` does not spuriously
+    /// regression check that `fcntl(fd, F_GETPATH, ..)` does not spuriously
     /// reject files that are, in fact, inside the root. Mirrors
     /// `raikiri_dom::fonts::check_open_handle_containment_accepts_file_within_root`.
     #[cfg(any(
@@ -2045,7 +2045,7 @@ mod defense_tests {
 
     /// `check_open_handle_containment` (Apple-platform arm) rejects a file
     /// whose fd resolves outside the given `canonical_root`. Mirrors the
-    /// Linux primitive-level pin: even though the open succeeded on the file
+    /// Linux primitive-level check: even though the open succeeded on the file
     /// successfully (it is a perfectly regular file, just not under the
     /// expected root), the fd-derived `F_GETPATH` path fails
     /// `starts_with(canonical_root)` and the recheck rejects — proving the
@@ -2118,7 +2118,7 @@ mod defense_tests {
     /// check), and this test would pass even with the
     /// `O_NOFOLLOW` defense removed — zero detection power. Keeping
     /// `evil.bin` in-root routes execution through `safe_open`, the one
-    /// line this test exists to pin. **Do not relocate `evil.bin` outside
+    /// line this test exists to check. **Do not relocate `evil.bin` outside
     /// the tmp root** — that silently neuters the test.
     ///
     /// ## Assertion

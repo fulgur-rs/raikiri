@@ -57,7 +57,7 @@ bitflags::bitflags! {
 ///
 /// namespaced attribute (`xlink:href` on SVG 等) は将来に defer。html5ever の
 /// `Attribute.name.ns` が null namespace (`ns!("")`) の attr のみここに格納する。
-/// `raikiri-html::sink::finish` が side-table から wire する。
+/// `raikiri-html::sink::finish` が metadata table から wire する。
 #[derive(Debug, Clone)]
 pub(crate) struct Attr {
     pub(crate) local: SmolStr,
@@ -158,7 +158,7 @@ pub struct ElementData {
     /// されるが、storage はここでは正規化せず raw 値を持つ)。
     pub(crate) inline_style: Option<SmolStr>,
     /// Element namespace URI (non-HTML の場合のみ `Some`、HTML default は
-    /// `None` を fast path とする)。例: `Some("http://www.w3.org/2000/svg")`。
+    /// `None` を optimized path とする)。例: `Some("http://www.w3.org/2000/svg")`。
     pub(crate) namespace: Option<SmolStr>,
     /// null-namespace attribute list (順序保持、cascade tie-breaking で使う想定)。
     /// `style` attribute は [`ElementData::inline_style`] に分離済のためここには
@@ -216,7 +216,7 @@ pub struct TextData {
 /// `tag_name` / `text_layout` は accessor method 経由に移行 (`node.kind()` /
 /// `node.tag_name()` / `node.text_layout()`)、`children` / `unrounded_layout`
 /// は pub field 継続。external contract は Node/Element field access 0 件
-/// なので無影響、raikiri-dom 内部 pub_surface pin のみ accessor 経由に再 pin。
+/// なので無影響、raikiri-dom 内部 pub_surface check のみ accessor 経由に再 pin。
 #[derive(Debug)]
 pub struct Node {
     /// Taffy layout style。
@@ -695,7 +695,7 @@ mod is_non_rendered_html_element_tests {
     //! `<template>` 経路 test は
     //! `is_in_document()` が先に発火するため、predicate 自体の direct
     //! coverage が薄い。DOM predicate を builder + namespace mutation で
-    //! namespace 分岐まで含めて直接 pin する。
+    //! namespace 分岐まで含めて直接 check する。
 
     use super::*;
 

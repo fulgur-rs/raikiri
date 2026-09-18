@@ -2577,7 +2577,7 @@ fn paint_document_impl(
                     // added. When no real decoded pixels are available, fall
                     // back to the pre-existing filename-color heuristic so an
                     // `<img>` still renders an approximation in the no-resolver
-                    // (e.g. plain WPT sweep) path.
+                    // (e.g. plain WPT range) path.
                     if let Some(pixel_source) = pixel_source
                         && let Some(src_url) = img_src_url(document, node_id)
                         && let Some(decoded) = pixel_source.get_decoded(&src_url)

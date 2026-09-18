@@ -3,7 +3,7 @@
 //! Discovers `<link rel=match|mismatch href=...>` pairs, renders both sides
 //! via raikiri and blitz (oracle), and compares pixels under a tolerance.
 //!
-//! The default viewport is 800×600 CSS px (WPT reftest harness default).
+//! The default viewport is 800×600 CSS px (WPT reftest test setup default).
 //! Callers may supply a custom size via [`ReftestConfig`].
 
 use std::collections::BTreeSet;
@@ -546,7 +546,7 @@ pub fn discover_all_pairs(wpt_root: &Path) -> Vec<ReftestPair> {
 }
 
 /// Walk `walk_root` like [`discover_all_pairs`], resolving server-absolute
-/// hrefs against `docroot` (the WPT tree root). Needed when sweeping a
+/// hrefs against `docroot` (the WPT tree root). Needed when rangeing a
 /// subtree (e.g. `css/css-tables`) whose tests link `/css/reference/...`.
 pub fn discover_all_pairs_with_docroot(walk_root: &Path, docroot: &Path) -> Vec<ReftestPair> {
     let mut out = Vec::new();
@@ -934,7 +934,7 @@ fn inject_default_page_margin(input: &str) -> String {
     } else {
         // Preserve the historical behavior for documents that define only a
         // named/pseudo page rule: its default margin is local to that rule, so
-        // an unselected page keeps the harness fallback geometry.
+        // an unselected page keeps the test setup fallback geometry.
         let has_authored_page_edge = page_rules
             .iter()
             .any(|(_, _, margins, has_border)| margins.iter().any(|value| *value) || *has_border);
@@ -1062,7 +1062,7 @@ fn authored_page_viewport(input: &str, fallback_width: f32, fallback_height: f32
         return (fallback_width, fallback_height);
     };
     // WPT print reftests resolve page-context `vw`/`vh` against the
-    // 5×3-inch default page box (480×288 CSS px), not the harness fallback
+    // 5×3-inch default page box (480×288 CSS px), not the test setup fallback
     // image size.  Keep the legacy fallback for pages without viewport units.
     let block_lower = block.to_ascii_lowercase();
     let has_page_viewport_units = block_lower.contains("vw") || block_lower.contains("vh");
@@ -1158,7 +1158,7 @@ fn authored_page_viewport(input: &str, fallback_width: f32, fallback_height: f32
 /// Expand viewport-relative lengths before the style cascade.
 ///
 /// The style layer stores only resolved absolute lengths and intentionally has
-/// no viewport object.  The WPT adapter does have the harness viewport, so it
+/// no viewport object.  The WPT adapter does have the test setup viewport, so it
 /// resolves the viewport units here while preserving other CSS tokens.  This
 /// is also useful for reference documents that express one printed page as
 /// `height: 100vh`.
@@ -1401,7 +1401,7 @@ fn page_box_from_cascade(
     let base = match cascade.page.size() {
         // An orientation-only `size` keeps the user-agent's default paper
         // dimensions and changes only its orientation.  The WPT adapter's
-        // fallback is the harness page box, not the style crate's A4 default.
+        // fallback is the test setup page box, not the style crate's A4 default.
         Some(raikiri_style::PageSize::Named {
             keyword: None,
             orientation,
@@ -1478,7 +1478,7 @@ fn render_raikiri_pages_inner(
         authored_page_viewport(&html, width as f32, height as f32);
     let html = expand_viewport_units(&html, viewport_width, viewport_height);
     let mut uncascaded = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
-    // @font-face preparation (raikiri-spike-0vv.19.6): register `url(...)`
+    // @font-face preparation: register `url(...)`
     // faces into the font context once, then expand `local(...)` aliases
     // into every cascade built below. Without @font-face rules both calls
     // are no-ops (empty registry early-returns).
@@ -1552,7 +1552,7 @@ fn render_raikiri_pages_inner(
         &mut font_ctx,
     );
 
-    // Keep the established 800×600 (or caller-supplied) harness dimensions as
+    // Keep the established 800×600 (or caller-supplied) test setup dimensions as
     // the fallback.  Only an authored page size changes the paper box.
     let first_page_box = if page_has_explicit_dimensions(&first_cascade) {
         page_box_from_cascade(&first_cascade, fallback_page_box)
@@ -1754,7 +1754,7 @@ fn render_raikiri_pages_inner(
 ///
 /// Only server-absolute URLs (`/fonts/Ahem.ttf`) resolve: relative URLs
 /// need the test file's base URL, which the `render_*` entry points don't
-/// carry, and `data:` URLs need a decoder this harness doesn't have — both
+/// carry, and `data:` URLs need a decoder this test setup doesn't have — both
 /// stay `None` (fail-closed, recorded as `skipped` by the caller). Reads
 /// are containment-checked (canonical path must stay under `root`) and
 /// size-gated; the final cap is enforced again by

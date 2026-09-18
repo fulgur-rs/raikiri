@@ -36,7 +36,7 @@ pub(crate) struct TestNode {
     /// `crates/raikiri-dom/src/dom_impl.rs`.
     pub(crate) attrs: Vec<(String, String)>,
     /// Namespace URI; `None` = HTML default namespace (matches
-    /// `StyleElement::namespace_uri`'s "fast path" doc). Needed to
+    /// `StyleElement::namespace_uri`'s "optimized path" doc). Needed to
     /// exercise the HTML-namespace gate on foreign-namespace elements that
     /// happen to share a local name with an HTML element, and to exercise
     /// `resolve_case_sensitivity`'s non-HTML-namespace branch (via the
@@ -304,7 +304,7 @@ impl<'a> StyleElement for TestElementRef<'a> {
     /// empty-value attribute presence (`[foo]` / `[foo=""]` against
     /// `foo=""`) must be exercised against the real DOM to be meaningful —
     /// `cascade::tests::attribute_exists_selector_does_not_match_empty_value_attr`
-    /// and its `[foo=""]` counterpart pin this mock's own (narrower)
+    /// and its `[foo=""]` counterpart check this mock's own (narrower)
     /// behavior specifically, not the real DOM's.
     fn attr(&self, local: &str) -> Option<&str> {
         if local == "style" {

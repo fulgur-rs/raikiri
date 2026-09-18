@@ -18,8 +18,8 @@ use crate::types::UncascadedDocument;
 
 /// html5ever `TreeSink` の raikiri 実装。Handle は raikiri-dom arena の
 /// index (`usize`)、Output は [`UncascadedDocument`]。QualName / Attribute
-/// の side-table を RefCell 内 FxHashMap で保持し、raikiri-dom::Node に
-/// html5ever 固有型を漏らさない (cleanroom)。
+/// の metadata table を RefCell 内 FxHashMap で保持し、raikiri-dom::Node に
+/// html5ever 固有型を漏らさない (独立実装)。
 pub struct RaikiriTreeSink {
     document: RefCell<Document>,
     /// Handle → 完全な QualName (namespace + local)。`elem_name()` の
@@ -62,13 +62,13 @@ impl RaikiriTreeSink {
         }
     }
 
-    /// Element 用の detached node を construct し、side-table に QualName /
+    /// Element 用の detached node を construct し、metadata table に QualName /
     /// attrs を登録する。
     ///
-    /// `Node.inline_style` / `Node.namespace` / `Node.attributes` の wiring は
-    /// [`RaikiriTreeSink::finish`] で side-table から一括 populate する
+    /// `Node.inline_style` / `Node.namespace` / `Node.attributes` の integration は
+    /// [`RaikiriTreeSink::finish`] で metadata table から一括 populate する
     /// ここでは Document への tag + default Style 登録と
-    /// side-table への full-fidelity 保存のみ行う。
+    /// metadata table への full-fidelity 保存のみ行う。
     fn make_element(&self, name: QualName, attrs: Vec<Attribute>) -> usize {
         let tag: SmolStr = name.local.as_ref().into();
         let idx =
@@ -109,7 +109,7 @@ impl TreeSink for RaikiriTreeSink {
         let qual_names = self.qual_names.into_inner();
         let attributes = self.attributes.into_inner();
 
-        // side-table を raikiri-dom::Node に wire。
+        // metadata table を raikiri-dom::Node にコピー。
         // qual_names → Node.namespace (non-HTML のみ)。
         // attributes → Node.attributes (null-ns、style を除く) + Node.inline_style。
         wire_side_tables(&mut document, &qual_names, &attributes);
@@ -385,7 +385,7 @@ impl TreeSink for RaikiriTreeSink {
         // HTML5 §13.2.5 Tree construction: MathML `annotation-xml` element is
         // an HTML integration point iff its `encoding` attribute value is an
         // ASCII case-insensitive match for `text/html` or `application/xhtml+xml`.
-        // side-table (qual_names + attributes) から直接判定する。
+        // metadata table (qual_names + attributes) から直接判定する。
         let qual_names = self.qual_names.borrow();
         let Some(name) = qual_names.get(handle) else {
             return false;
@@ -399,7 +399,7 @@ impl TreeSink for RaikiriTreeSink {
         };
         // HTML spec §13.2.5.32: duplicate attribute → ignore later occurrences
         // (first-wins)。`wire_side_tables` / `sink_first_wins_on_duplicate_style_attribute`
-        // で pin されている契約と整合させるため、any() ではなく find() で最初の
+        // で check されている契約と整合させるため、any() ではなく find() で最初の
         // null-ns encoding attr を取り、その value のみで判定する。
         let Some(encoding) = attrs
             .iter()
@@ -729,15 +729,15 @@ fn is_stylesheet_link(rel: Option<&str>, type_attr: Option<&str>, title: Option<
     })
 }
 
-/// side-table (`qual_names` / `attributes`) の内容を raikiri-dom::Node に写す。
+/// metadata table (`qual_names` / `attributes`) の内容を raikiri-dom::Node に写す。
 ///
 /// - `qual_names`: element の namespace URI が HTML default (`ns!(html)`) 以外
-///   なら `Node.namespace` に格納 (HTML default は `None` fast path のまま)。
+///   なら `Node.namespace` に格納 (HTML default は `None` optimized path のまま)。
 /// - `attributes`: null-namespace attr のみ raikiri-dom に運ぶ (namespaced attr
 ///   = `xlink:href` on SVG 等は将来に defer)。`style` attr は `Node.inline_style`
 ///   に分離、それ以外は `Node.attributes` の順序保持 Vec に格納。
 ///
-/// `finish()` 時に一度だけ呼ばれる single-pass 変換。parse 中は side-table
+/// `finish()` 時に一度だけ呼ばれる single-pass 変換。parse 中は metadata table
 /// (RefCell) のみ更新し Node は無変更、finish で bulk populate することで
 /// html5ever が add_attrs_if_missing / create_element の順序で attr を差し込む
 /// 呼び出しパターンを気にせず済む。
@@ -747,7 +747,7 @@ fn wire_side_tables(
     attributes: &FxHashMap<usize, Vec<Attribute>>,
 ) {
     for (idx, name) in qual_names {
-        // HTML default namespace は Node.namespace = None のまま (fast path)。
+        // HTML default namespace は Node.namespace = None のまま (optimized path)。
         // それ以外の svg / mathml / xml / ... は URI string を SmolStr で格納。
         if name.ns != ns!(html) {
             doc.set_element_namespace(*idx, Some(SmolStr::new(name.ns.as_ref())));
@@ -788,7 +788,7 @@ fn wire_side_tables(
 }
 
 /// html5ever `QuirksMode` を raikiri-native `QuirksMode` へ変換する
-/// (cleanroom boundary: html5ever 型を raikiri-traits に持ち込まない)。
+/// (implementation boundary: html5ever 型を raikiri-traits に持ち込まない)。
 fn convert_quirks(mode: QuirksMode) -> raikiri_traits::QuirksMode {
     match mode {
         QuirksMode::Quirks => raikiri_traits::QuirksMode::Quirks,

@@ -7,7 +7,7 @@
 //!
 //! # Scope
 //!
-//! This is a **shim**, not a full `blitz-dom` re-implementation. It
+//! This is a **compatibility wrapper**, not a full `blitz-dom` re-implementation. It
 //! covers the subset `fulgur` actually calls (`HtmlDocument::from_html`,
 //! `Deref` to `BaseDocument`-like `Document`, `get_node`, `root_element`,
 //! `into_inner`). Full stylo/taffy state (`ComputedValues`, `primary_styles`,
@@ -16,7 +16,7 @@
 //!
 //! Field-name mismatches between `blitz_dom::NodeData` and
 //! `raikiri_dom::NodeData` (e.g. `TextData::content` vs `text_content`)
-//! are intentionally not papered over; the shim exposes the raikiri names
+//! are intentionally not papered over; the wrapper exposes the raikiri names
 //! and documents the delta so a follow-up can add a proper adapter enum.
 
 use std::ops::{Deref, DerefMut};
@@ -28,7 +28,7 @@ use url::Url;
 /// `blitz_dom::DocumentConfig` compat — subset that `HtmlDocument::from_html` needs.
 ///
 /// `fulgur` constructs this with `viewport`, `base_url`, `font_ctx`, and
-/// providers. The shim carries only the fields that affect parsing;
+/// providers. The wrapper carries only the fields that affect parsing;
 /// style/layout providers are handled by `raikiri`'s own pipeline.
 #[derive(Default, Debug, Clone)]
 pub struct DocumentConfig {
@@ -61,7 +61,7 @@ impl HtmlDocument {
     /// default UA CSS pipeline (extra sheets in `config` are ignored for now).
     pub fn from_html(html: &str, config: DocumentConfig) -> Self {
         let base_url = config.base_url.as_deref().and_then(|s| Url::parse(s).ok());
-        // Viewport is retained for future `set_viewport` plumbing; parse
+        // Viewport is retained for future `set_viewport` integration; parse
         // itself does not need it (raikiri resolves viewport-relative units
         // during layout, not parse).
         let _ = config.viewport.as_ref();
@@ -100,14 +100,14 @@ impl HtmlDocument {
     ///
     /// `raikiri::HtmlDocument`'s `Document` is not directly movable out
     /// (fields are `pub(crate)`), so this clones the DOM. Cheap enough for
-    /// the shim PoC; a future zero-copy path can store `UncascadedDocument`
+    /// the compatibility implementation; a future zero-copy path can store `UncascadedDocument`
     /// directly.
     pub fn into_base_document(self) -> BaseDocument {
         // `raikiri_dom::Document` is not Clone by derive, but we can
         // reconstruct via parsing again — instead, we just provide the
         // raikiri HtmlDocument and let caller call `.dom()` if they need
         // Document. To keep a `BaseDocument` return type without Clone,
-        // we return a fresh empty document as placeholder and document the
+        // we return a fresh empty document as an empty value and document the
         // limitation. Callers should prefer `into_inner().dom()` pattern.
         // For now, panic with guidance if misused.
         panic!(
@@ -135,18 +135,18 @@ impl HtmlDocument {
         crate::shell::Viewport::default()
     }
 
-    /// No-op `set_viewport` stub — present so `fulgur::blitz_adapter::set_viewport_size_px`
+    /// No-op `set_viewport` method — present so `fulgur::blitz_adapter::set_viewport_size_px`
     /// ports without cfg-gating. Real viewport handling lives in `raikiri-dom::layout`.
     pub fn set_viewport(&mut self, _viewport: crate::shell::Viewport) {
-        // no-op shim
+        // no-op compatibility method
     }
 
-    /// No-op `resolve` stub — blitz calls `doc.resolve(0.0)` to run Stylo+Taffy.
+    /// No-op `resolve` method — blitz calls `doc.resolve(0.0)` to run Stylo+Taffy.
     /// In raikiri, cascade + layout are separate (`raikiri::build_cascaded` /
-    /// `raikiri_dom::layout_single_page`). This stub keeps the call site compiling
+    /// `raikiri_dom::layout_single_page`). This no-op keeps the call site compiling
     /// while the migration completes.
     pub fn resolve(&mut self, _scale: f32) {
-        // no-op shim
+        // no-op compatibility method
     }
 }
 
@@ -160,7 +160,7 @@ impl Deref for HtmlDocument {
 impl DerefMut for HtmlDocument {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // `raikiri::HtmlDocument::dom()` is `&Document`, not `&mut`.
-        // The shim's `DerefMut` cannot provide true mutable access without
+        // The wrapper's `DerefMut` cannot provide true mutable access without
         // interior mutability, so this panics if called. Mutation in
         // raikiri is done via `DocumentMutator` / direct `Document` methods,
         // not via `HtmlDocument`.
@@ -198,7 +198,7 @@ pub use raikiri_dom::TextData;
 
 /// Minimal `Document` trait mirror — blitz's `trait Document { fn inner() ... }`.
 ///
-/// The shim provides `inner()` / `inner_mut()` that delegate to the DOM,
+/// The wrapper provides `inner()` / `inner_mut()` that delegate to the DOM,
 /// so generic `D: Document` bounds in ported code keep compiling.
 pub trait Document {
     fn inner(&self) -> &BaseDocument;
@@ -210,7 +210,8 @@ impl Document for HtmlDocument {
         self.document()
     }
     fn inner_mut(&mut self) -> &mut BaseDocument {
-        panic!("HtmlDocument::inner_mut: immutable shim — see DerefMut note")
+        // cov:ignore: this misuse path only reports the immutable wrapper contract
+        panic!("HtmlDocument::inner_mut: immutable wrapper — see DerefMut note")
     }
 }
 

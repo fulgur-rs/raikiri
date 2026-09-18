@@ -506,7 +506,7 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
 /// Parse a selector list from CSS source using raikiri's SelectorImpl.
 ///
 /// Seed helper — returns a `SelectorList<RaikiriSelectorImpl>` and stringifies
-/// errors for the feasibility spike. A future pass will replace the `Result<_, String>` shape
+/// errors for the feasibility prototype. A future pass will replace the `Result<_, String>` shape
 /// with a proper structured error type.
 pub fn parse_selector_list(input: &str) -> Result<SelectorList<RaikiriSelectorImpl>, String> {
     let mut parser_input = ParserInput::new(input);

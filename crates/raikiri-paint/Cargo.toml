@@ -31,7 +31,7 @@ criterion            = { workspace = true }
 # anyrender-backend-agnostic via the `PaintScene` trait, per this crate's
 # module doc).
 #
-# 原則 5 Pure Rust / WASM check (walls.md 壁 7): this is not a new package in
+# 原則 5 Pure Rust / WASM check (package-boundary rule): this is not a new package in
 # the dependency graph. `anyrender_vello_cpu` is already a workspace
 # dependency consumed by `raikiri-vrt`, `raikiri`, and `raikiri-wpt`
 # (`grep -rl anyrender_vello_cpu crates/*/Cargo.toml`), so adding this edge

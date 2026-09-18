@@ -1223,17 +1223,17 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
             );
         }
 
-        // baseline populated via chore(wpt): pin PASS file-level parsing tests + goal G (79) + selectors (14) (WPT 97ea26e)
+        // baseline populated via chore(wpt): check PASS file-level parsing tests + goal G (79) + selectors (14) (WPT 97ea26e)
         // + grid reftest H (+20) + text reftest retry2 J2 (+176) + flexbox reftest retry2 I2 (+191)
-        // + css-tables reftest sweep (+29) + table-layout/border-collapse parsing-valid (+2)
+        // + css-tables reftest range (+29) + table-layout/border-collapse parsing-valid (+2)
         // + css-tables parsing-8 (+7: border-spacing/caption-side/empty-cells valid + caption-side/empty-cells/table-layout/border-collapse computed)
-        // + css-tables reftest tables-sweep (+4: zero-rowspan-001, row-group-order, percent-height-replaced-in-percent-cell.tentative, table-cell-baseline-static-position).
+        // + css-tables reftest tables-range (+4: zero-rowspan-001, row-group-order, percent-height-replaced-in-percent-cell.tentative, table-cell-baseline-static-position).
         // + css-text-decor parsing jqg8 (+10)
         // + page-valid + flex-basis-valid + flex-invalid parsing tgag (+3).
         // + segment-break removable/ignorable exact reftests (+5).
         // + text-transform capitalize whitespace/abspos exact reftest (+1).
         // - hyphens-punctuation-001 (-1, 9q1p: container-width re-break exposed
-        //   a false pass; genuine pass needs hyphenation dictionaries, bd u94v).
+        //   a false pass; genuine pass needs hyphenation dictionaries).
         // + text-align end-001..008 (sans 009/010) + start-001..008 + start-010
         //   (+17, dir-attribute UA rules: explicit-direction and dir=ltr/rtl/auto
         //   cases now resolve; 009/010 need zero-width RLM handling, follow-up).
@@ -1244,14 +1244,14 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         //   non-element children carry no grid structure).
         // + segment-break-transformation-ignorable/removable x5 + text-transform-capitalize-034
         //   (+6, css-text-whitespace #10: multi-node runs, ignorable neighbors, abspos inline).
-        // + CSS Text PASS-only WPT sweeps (+25: white-space/text-wrap,
+        // + CSS Text PASS-only WPT ranges (+25: white-space/text-wrap,
         //   word-break/overflow-wrap, text-indent, tab-size).
         // + text-align-last paint-time final-line alignment (+16).
-        // + letter-spacing bridge and hyphens PASS-only sweep (+6).
+        // + letter-spacing bridge and hyphens PASS-only range (+6).
         // + text-transform combinations, full-size-kana, and language tailoring
-        //   PASS-only sweep (+54).
+        //   PASS-only range (+54).
         // + css-color invalid parsing probe (9 files, WPT 97ea26e).
-        // + css-backgrounds reftest sweep (30 new current passes, 8 stale inherited
+        // + css-backgrounds reftest range (30 new current passes, 8 stale inherited
         //   pins removed; 400x300 EXACT, WPT 97ea26e, net +22).
         // quarantine and deprecated stay empty until a developer PR adds a flake or crasher.
 
@@ -1261,7 +1261,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + grid item-sizing slice (+2, exact 800x600 pass).
         // + table flex percentage width (+1, exact 800x600 pass).
         // + abspos static-position slice (+9, exact 800x600 pass).
-        // - inline-flex percentage sizing: one flex-item pin restored after
+        // - inline-flex percentage sizing: one flex-item check restored after
         //   the Taffy calc resolver was connected; one remains deferred.
         // + white-space break-spaces narrow-container slice (+2, exact 800x600 pass).
         assert_eq!(set.baseline.entries.len(), 1031);

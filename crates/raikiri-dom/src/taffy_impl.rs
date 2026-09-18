@@ -1,7 +1,7 @@
 //! Taffy layout trait implementations on Document.
 //!
 //! 初期スパイク実装 (`taffy-layout-modes`) の SpikeTree pattern を production
-//! 化したもの。実装内容は spike と等価:
+//! 化したもの。実装内容は prototype と同等:
 //! - `TraversePartialTree`: children iterator
 //! - `CacheTree`: per-node cache getter / setter
 //! - `LayoutPartialTree`: display に応じて block / flexbox / grid をdispatch

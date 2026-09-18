@@ -32,7 +32,7 @@ fn opts() -> ParseOptions<'static> {
 }
 
 /// `RenderLimits::default().max_input_bytes` は SEC-HIGH の旧 stopgap
-/// と一致する 32 MiB を継承していることを pin (promotion
+/// と一致する 32 MiB を継承していることを check (promotion
 /// が behavior 不変であることの regression guard)。
 #[test]
 fn render_limits_default_input_cap_matches_d9y3_stopgap() {
@@ -59,7 +59,7 @@ fn parse_html_accepts_input_well_below_cap() {
 /// `parse_html_with_limits` も同じく small input を parse する。
 ///
 /// `RenderLimits::default()` を渡した場合の behavior が `parse_html` と
-/// 完全に一致することを pin (parse_html は with_limits の thin wrapper なので、
+/// 完全に一致することを check (parse_html は with_limits の thin wrapper なので、
 /// この test が失敗すると wrapper 契約が壊れている)。
 #[test]
 fn parse_html_with_limits_default_matches_parse_html_for_small_input() {
@@ -76,7 +76,7 @@ fn parse_html_with_limits_default_matches_parse_html_for_small_input() {
 
 /// Input が **正確に** cap = 32 MiB のとき、cap 内 accept される。
 ///
-/// "+1 probe" が exactly-at-cap を誤って reject しないことを pin
+/// "+1 probe" が exactly-at-cap を誤って reject しないことを check
 /// (境界条件、buf.len() == cap の場合は accept)。
 ///
 /// NB: 32 MiB alloc + parse は memory / time 的に重いが、境界検証は SEC-HIGH
@@ -140,7 +140,7 @@ fn parse_html_rejects_input_one_byte_over_cap() {
     }
 }
 
-/// Custom cap の enforcement pin: `Some(N)` を渡すと N byte で reject される
+/// Custom cap の enforcement check: `Some(N)` を渡すと N byte で reject される
 /// (`limits.max_input_bytes` が実際に consult されている
 /// ことを cheap な small input で証明)。
 ///
@@ -170,7 +170,7 @@ fn parse_html_with_limits_custom_cap_rejects_over_cap() {
     }
 }
 
-/// Custom cap の accept 側 pin: cap = 200, input = 101 byte → accept
+/// Custom cap の accept 側 check: cap = 200, input = 101 byte → accept
 /// (contrast: 同じ 101 byte input が cap=100 では reject、cap=200 では accept、
 /// これで cap field が actually consulted であることを確定させる)。
 #[test]
@@ -194,7 +194,7 @@ fn parse_html_with_limits_custom_cap_accepts_under_cap() {
 ///
 /// Contrast test: 同じ 101 byte input が cap=100 では reject、cap=None では
 /// accept。default (32 MiB) では 101 byte は無関係に accept されるので、
-/// この test が pin するのは "None field が実際に unbounded 経路を選ぶ"
+/// この test が check するのは "None field が実際に unbounded 経路を選ぶ"
 /// ことである (cap=100 rejection と対比してのみ意味を持つ)。
 #[test]
 fn parse_html_with_limits_none_disables_cap() {

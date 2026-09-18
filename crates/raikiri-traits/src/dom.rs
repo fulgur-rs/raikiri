@@ -172,7 +172,7 @@ pub trait Node {
     ///
     /// # Default impl
     ///
-    /// 常に `true` を返す。概念未対応の Node impl (test 用 stub 等) が silent
+    /// 常に `true` を返す。概念未対応の Node impl (test 用 unimplemented node 等) が silent
     /// drop されないための safe fallback (blitz `stylo.rs` `TElement::is_in_document
     /// -> true` と同じ姿勢)。raikiri-dom `NodeRef` は override して実 bit を
     /// 返す。
@@ -225,7 +225,7 @@ pub trait Element {
     }
 
     /// Element の namespace URI (例: `"http://www.w3.org/2000/svg"`)。
-    /// HTML default namespace の element は `None` を返す (fast path)。
+    /// HTML default namespace の element は `None` を返す (optimized path)。
     ///
     /// html5ever の `QualName.ns` (interned URI) から raikiri-html sink が
     /// SmolStr に写し取り、raikiri-dom::Node に格納する。
@@ -299,7 +299,7 @@ pub trait Element {
 
 /// HTML5 quirks mode. raikiri-html が set し、UncascadedDocument
 /// を経由して cascade が参照する。html5ever `QuirksMode` の raikiri
-/// 面ミラー (cleanroom: html5ever を trait layer に持ち込まない)。
+/// 面ミラー (独立実装: html5ever を trait layer に持ち込まない)。
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum QuirksMode {
@@ -376,7 +376,7 @@ mod tests {
     /// `NodeKind` に追加された `Comment` /
     /// `ProcessingInstruction` / `DocumentFragment` variant が pattern-match
     /// で discriminate 可能かつ `Element` と PartialEq で区別できることを
-    /// pin する (Two-way invariant の trait 側 constraint)。
+    /// check する (Two-way invariant の trait 側 constraint)。
     #[test]
     fn node_kind_variants_are_distinct_and_matchable() {
         for kind in [

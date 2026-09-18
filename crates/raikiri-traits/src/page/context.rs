@@ -29,7 +29,7 @@
 //! from raikiri-dom's own dom-local mirror, matching the `super::target`
 //! precedent (`TargetRegistry` / `TargetInfo` canonical impl lives in
 //! raikiri-traits, raikiri-dom only hosts producers). That dom-local mirror
-//! was initially left in place after this promotion landed, since wiring a
+//! was initially left in place after this promotion landed, since integration a
 //! real DOM-tree-walking driver against it — `CounterStack::pop_scope` /
 //! `NamedStringState` page-boundary call sites — was out of this
 //! promotion's scope. raikiri-dom's `crate::phase_b` driver has since been
@@ -59,7 +59,7 @@
 //! the dom-local mirror's documented no-op (it never owned
 //! `TargetRegistry` at all). See [`PageContext::apply_directive`]'s doc for
 //! what it can and cannot populate from a bare directive, and
-//! [`PageContext::set_targets`] for the complementary bulk-wiring path the
+//! [`PageContext::set_targets`] for the complementary bulk-integration path the
 //! register-site walker uses.
 
 use std::collections::HashMap;
@@ -700,7 +700,7 @@ impl PageContext {
     }
 
     /// Replace `targets` wholesale with a pre-built [`TargetRegistry`] — the
-    /// bulk-wiring path for
+    /// bulk-integration path for
     /// `raikiri_dom::target::build_target_registry`'s register-site walker,
     /// which produces a complete registry (counters *and* descendant text)
     /// from a dedicated DOM walk rather than from a `GcpmDirective` stream
@@ -808,7 +808,7 @@ mod tests {
 
         #[test]
         fn increment_saturates_instead_of_panicking_or_wrapping_on_overflow() {
-            // Regression pin: `counter-reset: c 2147483647;
+            // Regression check: `counter-reset: c 2147483647;
             // counter-increment: c 1` is spec-legal CSS. Must saturate at
             // i32::MAX, not panic (debug builds) or wrap to i32::MIN
             // (release builds).
@@ -972,7 +972,7 @@ mod tests {
 
         #[test]
         fn counter_item_named_style_reaches_format_counter() {
-            // Regression pin for the format_counter/join_counter_stack
+            // Regression check for the format_counter/join_counter_stack
             // pub(crate) visibility widening: CounterStyle::Decimal alone
             // would exercise only
             // format_decimal, never touching the widened-visibility path. A
@@ -1178,7 +1178,7 @@ mod tests {
 
         #[test]
         fn string_set_with_unresolvable_item_leaves_no_tracked_state() {
-            // Regression pin for the "skip, don't fabricate Some(\"\")"
+            // Regression check for the "skip, don't fabricate Some(\"\")"
             // fix — see resolve_content_source's doc "Skipping, not
             // fabricating" for why Some("") would be observably wrong
             // (CSS GCPM 3 §1.1.2 string() keyword fallback rules).
@@ -1256,7 +1256,7 @@ mod tests {
 
         #[test]
         fn register_target_unlike_pre_promotion_dom_local_no_op_really_mutates_targets() {
-            // Regression pin against the pre-promotion dom-local behavior
+            // Regression check against the pre-promotion dom-local behavior
             // (the deleted raikiri_dom::gcpm::PhaseBWalkState treated
             // RegisterTarget as a documented no-op) — this promoted
             // apply_directive must NOT preserve that no-op; it owns
@@ -1507,7 +1507,7 @@ mod tests {
 
         #[test]
         fn set_targets_after_register_target_wipes_the_earlier_registration() {
-            // Regression pin: the apply_directive RegisterTarget arm's doc
+            // Regression check: the apply_directive RegisterTarget arm's doc
             // documents that
             // set_targets called AFTER a prior RegisterTarget directive is a
             // wholesale wipe, not an order-independent merge — only the

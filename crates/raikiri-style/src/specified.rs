@@ -87,7 +87,7 @@ use crate::resolve::{
 /// 片方だけを更新すると drift して silent な継承 bug になる。新しい inherited
 /// property を追加する際は両方の doc を同時に更新すること。将来的には単一の
 /// const 配列 / 生成マクロから両方の doc と実装を駆動できれば drift を機械的に
-/// 防げるが、現状は手動同期である (bd `raikiri-spike-eawr`)。
+/// 防げるが、現状は手動同期である。
 ///
 /// \* `background_image` は `None`/`Url(String)` の 2 variant では文字通り
 /// この行の分類通りだが、`Gradient(..)` variant (CSS Images 4 §3) は
@@ -125,7 +125,7 @@ use crate::resolve::{
 /// `bolder` / `lighter` を解決する。[`Self::initial`] から seed すると
 /// `bolder` が常に 400 起点になり、**compile error にも既存 test の失敗にも
 /// ならずに**壊れる。
-/// pin: `bolder_resolves_against_parent_computed_weight_through_staging`。
+/// check: `bolder_resolves_against_parent_computed_weight_through_staging`。
 ///
 /// `font_size` も同じ invariant に依拠する (`FontSizeRelative` arm が
 /// 加わった) — [`Self::inherit_from`] は
@@ -569,7 +569,7 @@ impl SpecifiedValues {
     /// 各値の spec 根拠は [`ComputedValues::initial`] の field 単位 comment と
     /// [`ComputedValues`] の field doc を canonical source として参照する
     /// (本関数はその **specified 表現**であり、絶対化を通すと
-    /// [`ComputedValues::initial`] に一致する — pin:
+    /// [`ComputedValues::initial`] に一致する — check:
     /// `initial_specified_finalizes_to_initial_computed`)。
     ///
     /// 親を持たない node (Document root / detached subtree の起点) の seed に
@@ -714,7 +714,7 @@ impl SpecifiedValues {
             row_gap: LengthOrNormal::Normal,
             column_gap: LengthOrNormal::Normal,
             // CSS Content 3 §2.4.1: quotes の spec initial は "depends on
-            // user agent"、本 impl は cleanroom 方針によりそれを空 list で
+            // user agent"、本 impl は 独立実装方針によりそれを空 list で
             // 表現する (`ComputedValues::quotes` doc 参照)。
             quotes: empty_quotes_entries(),
             quotes_auto: true,
@@ -942,7 +942,7 @@ impl SpecifiedValues {
             empty_cells: parent.empty_cells,
             // CSS Text 3 §5.3: hyphens は inherited。
             hyphens: parent.hyphens,
-            // CSS Content 3 §2.4.1: quotes は inherited。Arc bump のみ
+            // CSS Content 3 §2.4.1: quotes は inherited。Arc reference-count increment のみ
             // (`ComputedValues::font_family` と同じ shape)。
             quotes: parent.quotes.clone(),
             quotes_auto: parent.quotes_auto,
@@ -1247,7 +1247,7 @@ impl SpecifiedValues {
     ///
     /// この非対称は `html { font-size: 20px; padding: 2rem }` で観測できる —
     /// `font-size` は 20px、`padding` は 40px (16px × 2 = 32px では**ない**)。
-    /// pin: [`mod@crate::cascade`] の
+    /// check: [`mod@crate::cascade`] の
     /// `rem_on_root_element_box_property_uses_own_font_size`。
     ///
     /// `line-height` **自身の値**に現れる font-relative unit も同じ非対称を
@@ -1289,7 +1289,7 @@ impl SpecifiedValues {
     /// 本関数を使わない」ことが前提**である — 親の computed font-size を捨てて
     /// initial に固定するのが正しいのは §6.1.1 の "if the element has no parent"
     /// が成立するときだけ。[`crate::cascade::resolve_inheritance`] はその invariant
-    /// を `debug_assert` で pin している (同関数の `None` arm の comment 参照)。
+    /// を `debug_assert` で check している (同関数の `None` arm の comment 参照)。
     /// 同じ「親を持たない」前提が `text-align: match-parent` → `start` にも
     /// 適用される — raikiri のモデルでは「element 祖先が無い」ことを
     /// `root_ctx == None` で判定しており (合成 DOM では複数 element が
@@ -1349,7 +1349,7 @@ impl SpecifiedValues {
         // doc 節)。`used_line_height_length` は
         // `crate::cascade::resolve_inheritance` が子へ配る `child_ctx` と
         // 同じ導出 — 両者の一致は `mod@crate::cascade` の
-        // `rlh_on_root_element_matches_child_root_line_height_basis` が pin する。
+        // `rlh_on_root_element_matches_child_root_line_height_basis` が check する。
         let own_line_height = used_line_height_length(line_height, font_size);
         let ctx = ResolveContext::with_root_line_height(font_size, own_line_height);
         self.absolutize_with(font_size, line_height, text_align, &ctx)
@@ -1952,7 +1952,7 @@ mod tests {
     /// ([`SpecifiedValues::finalize`]) で `[0, 1]` に clamp される —
     /// `border` の style gating (直上の test) と同型の「specified 層では
     /// 保持、computed 層で変換」pattern。end-to-end (実 cascade 経由) の
-    /// 同じ主張は `mod@crate::cascade` の `opacity_*` test が pin する。
+    /// 同じ主張は `mod@crate::cascade` の `opacity_*` test が check する。
     #[test]
     fn opacity_out_of_range_specified_clamps_at_finalize() {
         let over = SpecifiedValues {
@@ -2290,7 +2290,7 @@ mod tests {
         let child = SpecifiedValues::inherit_from(&parent);
         assert_eq!(child.color, parent.color);
         assert_eq!(child.font_family, parent.font_family);
-        // `inherit_from` の `parent.font_family.clone()` は Arc bump —
+        // `inherit_from` の `parent.font_family.clone()` は Arc reference-count increment —
         // deep-clone regression なら ptr_eq が false になる (`Arc::ptr_eq`
         // behavioral-proxy methodology、`mod@crate::cascade` test 群と同型)。
         assert!(Arc::ptr_eq(&child.font_family, &parent.font_family));
@@ -2343,7 +2343,7 @@ mod tests {
         // `lift_font_size` と同型)。
         assert_eq!(child.tab_size, TabSize::Length(Length::Px(11.0)));
         // CSS Content 3 §2.4.1: quotes は inherited。`inherit_from` の
-        // `parent.quotes.clone()` は Arc bump —
+        // `parent.quotes.clone()` は Arc reference-count increment —
         // deep-clone regression なら ptr_eq が false になる (`font_family`
         // 同 assertion と同じ methodology)。
         assert_eq!(child.quotes, parent.quotes);
@@ -2631,7 +2631,7 @@ mod tests {
 
     /// When the own line-height is unresolvable (`normal`, the initial value
     /// — the common case, not an edge case), `1lh` falls back to padding's
-    /// own spec initial `0` rather than a fabricated length (cleanroom: see
+    /// own spec initial `0` rather than a fabricated length (独立実装: see
     /// `crate::resolve::resolve_length_percentage` doc for why). // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     #[test]
     fn finalize_resolves_lh_falls_back_to_zero_when_line_height_normal() {
@@ -2794,7 +2794,7 @@ mod tests {
     /// This is the element-path pin; the page-path equivalent is
     /// `crate::page::tests::absolutize_in_page_context_collapses_writing_mode_to_horizontal_tb`.
     ///
-    /// Debt (`raikiri-spike-zhmp`): vertical writing-mode 実装時に本 collapse を
+    /// Future work: vertical writing-mode 実装時に本 collapse を
     /// 削除し、本 test を revert/rewrite すること。
     #[test]
     fn finalize_collapses_all_non_horizontal_writing_modes() {
@@ -2825,7 +2825,7 @@ mod tests {
     /// comment for why this same invariant is exercised there with a
     /// synthetic (real-cascade-unreachable) `ComputedValues` literal.
     ///
-    /// Debt (`raikiri-spike-zhmp`): vertical writing-mode 実装時に本 collapse を
+    /// Future work: vertical writing-mode 実装時に本 collapse を
     /// 削除し、本 test を revert/rewrite すること。
     #[test]
     fn inherit_from_then_finalize_still_collapses_writing_mode() {
@@ -2872,7 +2872,7 @@ mod tests {
     /// `line-height` 自身の値だけで、`padding` はその対象外)。
     /// `finalize_as_root` は own line-height を phase 2.5 で確定させてから
     /// `ResolveContext::with_root_line_height` を組み立てる — この test は
-    /// その配線がここまで届くことを直接 pin する。
+    /// その配線がここまで届くことを直接 check する。
     #[test]
     fn finalize_as_root_resolves_rlh_using_own_line_height_basis() {
         let mut sv = SpecifiedValues::initial();

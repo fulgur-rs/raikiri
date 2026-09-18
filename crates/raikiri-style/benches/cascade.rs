@@ -613,7 +613,7 @@ fn stylesheet(n_rules: usize) -> (String, Winners) {
         // Vary the red channel so `color` also identifies the winning rule.
         // The `% 256` wrap means a config with more than 256 rules could give
         // the winner the same colour as rule `n - 257`; `font-size` and the box
-        // longhands would still pin it, and both current configs are far below
+        // longhands would still check it, and both current configs are far below
         // that, but a future large-`n_rules` config should not rely on colour
         // alone.
         let red = (i % 256) as u8;

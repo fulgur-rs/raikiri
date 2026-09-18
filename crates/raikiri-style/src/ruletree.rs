@@ -277,7 +277,7 @@ fn matching_brace(source: &str, open: usize) -> Option<usize> {
 /// consumer 提供の `extra_stylesheets` はこの origin へ route される —
 /// raikiri-traits 側の `StylesheetKind::User` variant + raikiri-html 側の
 /// retag + umbrella 側の `stylesheet_kind_to_origin` 拡張という 3-crate の
-/// wiring を経て、`extra_stylesheets` は実際に [`Origin::User`] へ届く。
+/// integration を経て、`extra_stylesheets` は実際に [`Origin::User`] へ届く。
 ///
 /// `StylesheetKind` (dom-level tag) との対応は raikiri umbrella crate が
 /// cascade orchestration の一部として map する。
@@ -492,7 +492,7 @@ pub struct RuleTree {
     /// (`add_stylesheet`) は origin でフィルタする必要がない。
     ///
     /// `style_rules` 用の parser とは意図的に別 pass ([`crate::font_face`] module doc
-    /// の "RuleTree wiring" 節参照 — [`crate::counter_style`] と同じ設計)。
+    /// の "RuleTree integration" 節参照 — [`crate::counter_style`] と同じ設計)。
     pub(crate) font_faces: FontFaceRegistry,
     /// Generic records for at-rules that do not use the `@page` compatibility
     /// view.
@@ -525,7 +525,7 @@ impl RuleTree {
     /// この accessor だけである。`RuleTree` は `#[non_exhaustive]` かつ
     /// `Clone` を derive していないので、struct literal / functional-update
     /// による構築も、所有値としての複製も external crate からはできない。
-    /// 以下は field 名そのものが private であることの compile-fail pin —
+    /// 以下は field 名そのものが private であることの compile-fail check —
     /// `pub` に戻れば compile が通るようになる:
     ///
     /// ```compile_fail
@@ -552,9 +552,9 @@ impl RuleTree {
     /// # `counter_styles` field 自体への到達不能性
     ///
     /// `style_rules`/[`RuleTree::style_rules`] と同じ
-    /// pin — `counter_styles` field は `pub(crate)` で、external crate から
+    /// check — `counter_styles` field は `pub(crate)` で、external crate から
     /// 届くのはこの accessor だけである。以下は field 名そのものが private で
-    /// あることの compile-fail pin — `pub` に戻れば compile が通るようになる:
+    /// あることの compile-fail check — `pub` に戻れば compile が通るようになる:
     ///
     /// ```compile_fail
     /// use raikiri_style::RuleTree;
@@ -577,9 +577,9 @@ impl RuleTree {
     /// # `font_faces` field 自体への到達不能性
     ///
     /// `style_rules`/[`RuleTree::style_rules`] と同じ
-    /// pin — `font_faces` field は `pub(crate)` で、external crate から
+    /// check — `font_faces` field は `pub(crate)` で、external crate から
     /// 届くのはこの accessor だけである。以下は field 名そのものが private で
-    /// あることの compile-fail pin — `pub` に戻れば compile が通るようになる:
+    /// あることの compile-fail check — `pub` に戻れば compile が通るようになる:
     ///
     /// ```compile_fail
     /// use raikiri_style::RuleTree;
@@ -1580,7 +1580,7 @@ impl<'i, 's> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s> {
 /// <https://www.w3.org/TR/selectors-4/#the-nth-child-pseudo> /
 /// §13.3.2 <https://www.w3.org/TR/selectors-4/#the-nth-last-child-pseudo>)
 /// が、これは本実装が意図的に狭める bounded-support boundary
-/// (追跡: `raikiri-spike-flln.7`) である。cascade matcher は `S` を各兄弟
+/// 既知の制約である。cascade matcher は `S` を各兄弟
 /// について評価するため、nested nth component を許可すると sibling scan
 /// が再帰的に増幅する。`is_supported_selector` は外側 selector の nth
 /// component だけを許可し、`S` を検査するときは nested nth component を
@@ -2172,7 +2172,7 @@ mod tests {
     /// ```
     ///
     /// (A and B intentionally use different properties — `color` vs.
-    /// `background-color` — so the `build_rule_tree` half below can pin
+    /// `background-color` — so the `build_rule_tree` half below can check
     /// *which* rule landed at which `source_order`, not just that 2 rules
     /// exist.)
     ///
@@ -2202,7 +2202,7 @@ mod tests {
         let mid = doc.push_element(section, "mid", None);
         let style_a = doc.push_element(mid, "style", None);
         // A uses `color` — distinguishable from B's `background-color` below
-        // so the build_rule_tree assertions can pin *which* rule landed at
+        // so the build_rule_tree assertions can check *which* rule landed at
         // which source_order, not just that 2 rules exist.
         doc.push_text(style_a, "p { color: red }");
 
@@ -2218,7 +2218,7 @@ mod tests {
         assert_eq!(collected[1], "div { background-color: blue }");
 
         // Entry point 2: `source_order` assigned via `build_rule_tree`, which
-        // is the value that actually feeds the cascade tie-break — pin it
+        // is the value that actually feeds the cascade tie-break — check it
         // too so a regression here is caught even if a future change routes
         // rule extraction through `build_rule_tree` without going through
         // the raw-text collection path in the same way. Distinguish A vs B
@@ -2790,7 +2790,7 @@ mod tests {
     fn page_source_order_independent_from_style_rules() {
         // page_rules の source_order は style_rules と独立の counter。
         // 全 rule が同一 add_stylesheet call の origin (Author) を継承する
-        // ことも同時に pin する (`PageRule.origin`、cascade 適用の pre-work)。
+        // ことも同時に check する (`PageRule.origin`、cascade 適用の pre-work)。
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(
             "p { color: red } \
@@ -2865,7 +2865,7 @@ mod tests {
     fn page_source_order_monotonic_across_add_stylesheet_calls() {
         // 複数 add_stylesheet 呼び出し間で page_order は継続する。
         // 各 rule の origin は当該 add_stylesheet call の引数に一致することを
-        // pin する (`PageRule.origin` は per-call の origin を保持し、cascade
+        // check する (`PageRule.origin` は per-call の origin を保持し、cascade
         // 側で re-index せず per-origin cascade を組めるようにするための
         // pre-work — CSS Cascading L4
         // <https://www.w3.org/TR/css-cascade-4/#cascade-origin>)。
@@ -3109,12 +3109,12 @@ mod tests {
     }
 
     // Runs the `value()` accessor body: doctests aren't covered by this
-    // repo's coverage toolchain, so the compile-fail pin on
+    // repo's coverage toolchain, so the compile-fail check on
     // `PageSizeDeclaration`'s struct doc doesn't exercise it. Every other
     // test above reaches into the same-crate `pub(crate)` field directly,
     // which never calls the accessor at all. Asserted against a concrete
     // expected value (not `decl.value`) so this can't degrade into a
-    // tautological "the accessor returns the field" pin.
+    // tautological "the accessor returns the field" check.
     #[test]
     fn page_size_declaration_value_accessor_matches_the_field() {
         let rules = page_rules("@page { size: A4 landscape }");
@@ -3788,7 +3788,7 @@ mod tests {
     //
     // Companion to the list-boundary banner above, which pinned the 3
     // list-boundary cases (trailing / leading / empty-middle commas) of
-    // `<page-selector>#`; the tests below pin the 3 compound-internal cases
+    // `<page-selector>#`; the tests below check the 3 compound-internal cases
     // against the CSS Paged Media L3 §4.3 (anchor `#syntax-page-selector`)
     // compound grammar `<page-selector> = [ <ident-token>? <pseudo-page>* ]!`
     // with `<pseudo-page> = ':' [ left | right | first | blank ]`. Together
@@ -3840,7 +3840,7 @@ mod tests {
         assert_eq!(tree.style_rules.len(), 1);
     }
 
-    // ── counter_styles wiring (origin-aware) ──
+    // ── counter_styles integration (origin-aware) ──
 
     #[test]
     fn empty_rule_tree_has_empty_counter_styles() {
@@ -3940,7 +3940,7 @@ mod tests {
         // doesn't (previously named *_does_not_populate_counter_styles and
         // asserted the opposite). style_rules 側が origin を問わず populate
         // される ことは既存の add_stylesheet_ua_and_author_populate_rule_tree
-        // が別途 pin 済み。
+        // が別途 check 済み。
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(
             r#"@counter-style thumbs { system: cyclic; symbols: "*"; }"#,
@@ -3964,7 +3964,7 @@ mod tests {
         // drop) ではなく、CounterStyleRegistry::insert_with_origin が同名
         // entry の origin を個別に追跡して行う origin-precedence 解決 (型
         // doc の解決表) が担う — 「flat call-order last-wins だと UA が後から
-        // Author を上書きし得る」spec 違反の regression pin は変わらず有効。
+        // Author を上書きし得る」spec 違反の regression check は変わらず有効。
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(
             r#"@counter-style thumbs { system: cyclic; symbols: "*"; }"#,

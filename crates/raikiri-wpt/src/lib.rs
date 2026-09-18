@@ -1,4 +1,4 @@
-//! raikiri-wpt — WPT harness with blitz oracle.
+//! raikiri-wpt — WPT test setup with blitz oracle.
 //!
 //! Provides expectations parsers, reftest discovery/render/diff, runner
 //! dispatch, and the blitz oracle delta. See `reftest`, `runner`, and

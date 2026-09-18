@@ -30,7 +30,7 @@
 //!   transient な detached node
 //!
 //! 維持: raikiri-html sink `finish()` が
-//! [`Document::mark_in_document_flags`] を single pass で呼ぶ。現状の spike
+//! [`Document::mark_in_document_flags`] を single pass で呼ぶ。現状の prototype
 //! 実装は parse-only なので finish 後は固定。将来 runtime mutation を導入する
 //! 時に blitz `process_added_subtree` / `process_removed_subtree` 相当を
 //! 追加する予定。
@@ -260,7 +260,7 @@ mod tests {
 
         let p_node = doc.node(NodeId::new(html_p as u64)).expect("p exists");
         let p_elem = p_node.as_element().expect("p is element");
-        // HTML default は None を fast path として返す (setter を呼ばなくてよい契約)。
+        // HTML default は None を optimized path として返す (setter を呼ばなくてよい契約)。
         assert_eq!(p_elem.namespace_uri(), None);
 
         let g_node = doc.node(NodeId::new(svg_g as u64)).expect("g exists");
@@ -360,7 +360,7 @@ mod tests {
     fn set_element_attributes_panics_on_non_element_in_debug() {
         // Document root (index 0) は Document kind、Text node は Text kind。
         // どちらも attribute-family setter の対象外なので debug_assert が
-        // 発火することを regression pin する。
+        // 発火することを regression check する。
         use smol_str::SmolStr;
         let mut doc = Document::new();
         // arena index 0 = Document root
@@ -604,7 +604,7 @@ mod tests {
     fn taffy_leaf_measure_reads_pre_populated_text_layout() {
         // Node.text_layout に手動で parley Layout をセットして、taffy leaf closure が
         // その intrinsic size を返すことを直接検証する (layout_single_page 経由
-        // ではなく leaf closure の pin として)。
+        // ではなく leaf closure の check として)。
         use parley::{Alignment, AlignmentOptions, FontContext, LayoutContext};
         use taffy::{AvailableSpace, NodeId as TaffyNodeId, Size};
 
@@ -699,7 +699,7 @@ mod tests {
         // Node が NodeData tagged union に refactor された
         // 後の pub_surface pin。旧 pub field (kind / tag_name / text_layout)
         // が accessor method 化されたことを super::* から見えることで regression
-        // pin する。external consumer 契約は無影響
+        // check する。external consumer 契約は無影響
         // (crates/raikiri/tests/external_consumer.rs は Node/Element field
         // access 0 件、こちらは raikiri-dom 内部 pub_surface)。
         let mut doc = Document::new();
@@ -756,7 +756,7 @@ mod tests {
     /// percentage) — and it isn't a silently-skipped no-op either, since the
     /// child's `unrounded_layout` is asserted below to be both non-default
     /// and (per the output-side guard) finite. This is consistent with —
-    /// and now formalizes as an automated regression pin, rather than leaving
+    /// and now formalizes as an automated regression check, rather than leaving
     /// it as prose — the manual observation already recorded on
     /// `MAX_FONT_SIZE_PX` in `crates/raikiri-dom/src/layout.rs`: "site 1-4 の
     /// taffy 側 test は即座に assert 失敗する (値が壊れるだけ)". This test

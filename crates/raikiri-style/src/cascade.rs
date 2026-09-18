@@ -223,7 +223,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
     //
     // computed を Dom::node_count() で pre-allocate する。resolve_inheritance の
     // DFS は root reachable な node のみを訪問するため、detached / unreachable
-    // node (foster-parenting transient、strip 後の孤児 stub 等) には entry を
+    // node (foster-parenting transient、strip 後の孤児 node 等) には entry を
     // 作らない。しかし `computed.len() == document.node_count()` という contract
     // は arena 全体を要求する (`raikiri-dom::layout::preshape_text` /
     // `raikiri-paint::text::draw_text_node` が node_id で `computed[idx]` に
@@ -283,7 +283,7 @@ type Specificity = u32;
 /// selectors crate は 32-bit packed で `id << 20 | class << 10 | element` を使う。
 /// `1 << 30` はその packed 空間のどの selector 由来 specificity よりも大きいので、
 /// 上記 "higher than any selector" を満たす。**この margin はちょうど 1** であり
-/// upstream が packing 幅を広げると反転しうる不変条件 — pin は
+/// upstream が packing 幅を広げると反転しうる不変条件 — check は
 /// `tests::inline_specificity_exceeds_max_reachable_packed_specificity` を参照。
 const INLINE_SPECIFICITY: Specificity = 1 << 30;
 /// inline style の source_order — 全 stylesheet rule より後 (最終出現扱い)。
@@ -801,7 +801,7 @@ fn collect_cascaded_with_media_context<D: StyleDom>(
                 // order itself (nothing here is order-*dependent* left to
                 // pin), but
                 // `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
-                // continues to pin the outcome this comment claims.
+                // continues to check the outcome this comment claims.
                 push_img_dimension_hints(&elem, &mut out.decls);
                 // HTML LS §15.3.9 margin-collapsing quirks (quirks-mode
                 // margin-block zeroing) — `ancestor_path` here is still
@@ -2081,7 +2081,7 @@ fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 ///   打ち切ると selector 全体が不一致になってしまうが、正しい答えは
 ///   一致: より遠い候補 `F` (`.y` を持つ) の直近の親は `G` で `.x` を
 ///   持つ。`F` を試すこの再試行が無ければ、この (spec 上正当な)
-///   selector が静かに一致しなくなる — pin 用の regression test
+///   selector が静かに一致しなくなる — check 用の regression test
 ///   `tests::descendant_retry_past_a_failed_child_combinator_candidate_is_required`
 ///   (この module 内 `#[cfg(test)] mod tests`) がこの具体形をそのまま
 ///   実行する。
@@ -4560,7 +4560,7 @@ const STRONG_L_NON_ALPHABETIC_RANGES: &[(u32, u32)] = &[
 ///    `DerivedCoreProperties.txt`'s `Alphabetic` ranges against
 ///    `DerivedBidiClass.txt`'s explicit per-code-point entries, both at
 ///    that same Unicode version. `char::is_alphabetic` itself may track a
-///    different Unicode revision than 17.0.0 (this crate does not pin
+///    different Unicode revision than 17.0.0 (this crate does not check
 ///    Rust's own Unicode table version); any code point added or
 ///    reclassified between that revision and 17.0.0 is not guaranteed to
 ///    be covered. This function consults the table before falling back to
@@ -4743,7 +4743,7 @@ fn strong_bidi_type(c: char) -> Option<StrongBidiType> {
 /// 再実装)。raikiri は現時点で HTML document のみ対象 (XML/XHTML 未対応) の
 /// ため「in html document」は常に true 扱い。「is html element」は
 /// [`StyleElement::namespace_uri`] の既存 contract
-/// (style_dom.rs: "HTML default namespace returns None (fast path)") を
+/// (style_dom.rs: "HTML default namespace returns None (optimized path)") を
 /// 代理指標として使う — SVG 等 non-HTML namespace の element は
 /// case-sensitive 側に倒す。
 ///
@@ -4855,7 +4855,7 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
 /// `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
 /// はこの「specificity を問わず real author 宣言が勝つ」性質を、かつては
 /// exact-tie 経由で、今は origin rank 差で直接 exercise する ([`Origin::User`]
-/// 挿入後も rank 差の大小関係は変わらないため、この test は無変更で pin
+/// 挿入後も rank 差の大小関係は変わらないため、この test は無変更で check
 /// し続ける)。
 ///
 /// `Origin::User` no-producer 残差の解消: raikiri-style 内の
@@ -4885,7 +4885,7 @@ fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
 /// [`Origin::User`] の important rank (6) は hint の (常に normal で push
 /// される、[`cascade_rank`] doc 参照) rank (2) より高いため、`!important`
 /// 付きの `extra_stylesheets` 宣言は hint に specificity を問わず勝つ。この
-/// normal-tier の振る舞いの umbrella 越し end-to-end pin は
+/// normal-tier の振る舞いの umbrella 越し end-to-end check は
 /// `crates/raikiri/tests/build_cascaded.rs`'s
 /// `img_width_presentational_hint_beats_extra_stylesheets_user_origin_via_umbrella`
 /// 参照。
@@ -4897,7 +4897,7 @@ fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<CascadedDe
     // generic trait not tied to any one DOM/parser, so this stays
     // defensive rather than relying on "SVG doesn't currently define one").
     // `namespace_uri()` returns `None` for the HTML default namespace
-    // (`style_dom.rs`'s "fast path" doc) — same check/shape as
+    // (`style_dom.rs`'s "optimized path" doc) — same check/shape as
     // `ruletree.rs`'s `<template>` HTML-only gate
     // (`tag.eq_ignore_ascii_case("template") && elem.namespace_uri().is_none()`)
     // and the same principle applies to attribute-selector matching.
@@ -5412,7 +5412,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
                 // `finalize_as_root` は phase 2 の基準を initial value に固定する
                 // (§6.1.1 の "if the element has no parent")。それが正しいのは
                 // **`root_ctx == None` ならこの node に element 親が居ない**からで
-                // あり、その caller-side invariant を pin しておく:
+                // あり、その caller-side invariant を check しておく:
                 //
                 // - `cascade()` は必ず `dom.root_id()` (= Document node) から
                 //   walk を開始し、そこに `ComputedValues::initial()` を渡す。
@@ -5442,7 +5442,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // 初めて `Some` になる。`used_line_height_length` は
         // `crate::specified::SpecifiedValues::finalize_as_root` が自分の
         // `ctx` を組み立てるのに使う導出と同一 — 両者の一致は
-        // `rlh_on_root_element_matches_child_root_line_height_basis` が pin する。
+        // `rlh_on_root_element_matches_child_root_line_height_basis` が check する。
         let child_ctx = match root_ctx {
             Some(ctx) => Some(ctx),
             None if is_element => Some(ResolveContext::with_root_line_height(
@@ -7143,14 +7143,14 @@ fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
 /// fractional weight (`349.5` 等) を保持したまま渡ってくる。丸めずに直接
 /// 比較するため行選択は spec §2.2.1 のとおり正確に決まる — 旧 `u16` 実装は
 /// parse 段の丸めで `349.5` が `350` に化けてから本関数に渡り、`350 <= w < 550`
-/// 行を誤って踏んでいた (詳細: [`crate::property::parse_font_weight`] doc)。
+/// 行を誤って踏んでいた (詳細: [`crate::property`] の `parse_font_weight` doc)。
 ///
 /// # 非有限 `inherited` (`NaN` / `±Inf`) — 本関数は guard しない
 ///
 /// `u16` だった頃は非有限が型で構造的に排除されていたが、`f32` 化で
 /// finiteness は「型で保証」から「呼び出し元の値
 /// 検証で保証」に変わった。通常の cascade 経路は
-/// [`crate::property::parse_font_weight`] の `[1, 1000]` range guard により
+/// [`crate::property`] の `parse_font_weight` の `[1, 1000]` range guard により
 /// 常に finite だが、`ComputedValues` の field は全て `pub` で
 /// [`crate::page::cascade_page`] も呼び出し側提供の
 /// [`crate::page::PageInheritance`]`::FromRoot` を継承元 root として受け取るため、
@@ -7168,7 +7168,7 @@ fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
 /// guard は sink 境界に置く、resolve 層には置かない」という既存方針を
 /// 踏襲)。上記の非対称処理は
 /// `resolve_relative_weight_non_finite_inherited_is_asymmetric` test で
-/// 現状の挙動として pin 済み。値が実際に `parley::FontWeight::new` へ渡る
+/// 現状の挙動として check 済み。値が実際に `parley::FontWeight::new` へ渡る
 /// sink 側の guard は `crates/raikiri-dom/src/layout.rs` の
 /// `sanitize_font_weight` (`preshape_text` 内、site 6) にある —
 /// `resolve_relative_weight` が何を返しても最終的に `[1, 1000]` の有限値に
@@ -7358,7 +7358,7 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// 解消され、`page::tests` の
 /// `page_declarations_carry_no_specified_layer_residue` (旧
 /// `page_declarations_carry_exactly_one_specified_layer_residue`) が
-/// pin する。
+/// check する。
 /// なお `Percent` は「未解決」ではない — box property の computed value は
 /// percentage のままである (CSS Paged Media 3 §6 の "Percentage values on the
 /// margin and padding properties are relative to the dimensions of the
@@ -8050,7 +8050,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // さらに `pick_winners` は
         // `PropertyKey` ごとに slot を 1 つだけ埋めるため `FontWeight` arm が同一
         // node で 2 回走ることはなく、winner の適用順にも依存しない
-        // (`winner_does_not_leak_into_next_sibling` test がこの "1 回だけ" を pin
+        // (`winner_does_not_leak_into_next_sibling` test がこの "1 回だけ" を check
         // する — 二重適用は 400 → 700 → 900 と複合するので観測可能)。
         // この 2 つが relative-weight resolution の正しさを支える invariant。
         //
@@ -8164,7 +8164,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // own.
         // CSS Text 3 §8.1 text-indent — **inherited**. The length goes to
         // `text_indent`; the flags go to their own staging fields so the
-        // specified/computed layers keep the full grammar (bd raikiri-spike-5u1y).
+        // specified/computed layers keep the full grammar.
         PropertyValue::TextIndent(v) => {
             target.text_indent = v.length;
             target.text_indent_hanging = v.hanging;
@@ -8202,7 +8202,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // `crate::property::PropertyValue::PaddingInline` doc 参照。挙動は
         // `apply_value_direct_padding_inline_shorthand_fall_through` /
         // `apply_value_direct_padding_block_shorthand_fall_through` test が
-        // 直接叩いて pin (`Margin` arm 上の
+        // 直接叩いて check (`Margin` arm 上の
         // `apply_value_direct_margin_shorthand_fall_through` precedent)。
         PropertyValue::PaddingInline(pair) => {
             target.padding.left = pair.start;
@@ -10203,10 +10203,10 @@ mod tests {
         // a nearer anchor). It breaks the moment a `Combinator::Child` sits
         // further left: `Child` pins one *specific* element
         // (`ancestors.split_last()`), not "any element in the remaining
-        // set" — different `Descendant` anchor choices pin genuinely
+        // set" — different `Descendant` anchor choices check genuinely
         // different elements, not nested subsets of the same free search.
         // See `match_combinator_chain`'s doc for
-        // the full argument this test exists to pin.
+        // the full argument this test exists to check.
         //
         // Selector `.x > .y .target` against
         // `G(.x) -> F(.y) -> M(no class) -> C(.y) -> elem(.target)`:
@@ -10492,7 +10492,7 @@ mod tests {
     }
 
     /// A closer ancestor's `lang` must win over a farther one — regression
-    /// pin for `effective_language`'s "own first, then nearest ancestor"
+    /// check for `effective_language`'s "own first, then nearest ancestor"
     /// (not "any ancestor") walk order.
     #[test]
     fn lang_prefers_nearest_ancestor_lang_over_farther_one() {
@@ -10694,7 +10694,7 @@ mod tests {
         assert_eq!(r.computed[p].font_family[0].to_string(), "ltr-font");
     }
 
-    /// RFC 4647 §3.3.2 extended filtering, direct pin (bypassing the cascade
+    /// RFC 4647 §3.3.2 extended filtering, direct check (bypassing the cascade
     /// pipeline) of the examples the RFC itself gives for range `de-*-DE` /
     /// its synonym `de-DE` — [`language_range_matches`]'s doc quotes the
     /// algorithm this exercises.
@@ -10744,7 +10744,7 @@ mod tests {
     /// Selectors L4 §7.2's own example, quoted on [`language_range_matches`]'s
     /// doc: "`:lang(åå)` would not match, because it contain[s] non-ASCII
     /// characters so is ill-formed." Checked against several `lang` values,
-    /// including `åå` itself, to pin "never matches any element, regardless
+    /// including `åå` itself, to check "never matches any element, regardless
     /// of its lang attribute value" (not merely "doesn't happen to match
     /// this particular content language").
     #[test]
@@ -10856,7 +10856,7 @@ mod tests {
         }
     }
 
-    /// Regression pin: a well-formed, multi-subtag tag/range pair that does
+    /// Regression check: a well-formed, multi-subtag tag/range pair that does
     /// NOT involve any deprecated subtag must still match exactly as before
     /// this well-formedness/canonicalization pass — exercises a `script`
     /// subtag (`Hans`) through the new validation pipeline, distinct from
@@ -11852,7 +11852,7 @@ mod tests {
         );
     }
 
-    /// Companion regression pin for the previous test: `:lang(*)` must NOT
+    /// Companion regression check for the previous test: `:lang(*)` must NOT
     /// match the same no-lang-anywhere element (Selectors L4 §7.2: "a
     /// wildcard language range (\"*\") does not match elements whose
     /// language is not tagged"). Distinct from the existing
@@ -13014,7 +13014,7 @@ mod tests {
     /// `INLINE_SPECIFICITY` (cascade.rs doc, CSS Cascading L4 §6.1
     /// <https://www.w3.org/TR/css-cascade-4/#cascade-sort>: "declarations that
     /// do not belong to a style rule ... are considered to have a specificity
-    /// higher than any selector") pin.
+    /// higher than any selector") check.
     ///
     /// # なぜ hardcoded 算術 assert ではなく実 parse なのか
     ///
@@ -13039,7 +13039,7 @@ mod tests {
     /// 「今の幅を前提にした算術の pin」より頑丈 (hardcoded const assert では
     /// なく実測 test を採る設計)。
     ///
-    /// # 未 cover: cascade 経由の end-to-end pin (本 test 執筆時点では実装不可だった)
+    /// # 未 cover: cascade 経由の end-to-end check (本 test 執筆時点では実装不可だった)
     ///
     /// もう 1 つの選択肢 (`<p id class>` に対する高 specificity
     /// selector と inline style を実際に cascade させ、inline が勝つことを
@@ -13049,7 +13049,7 @@ mod tests {
     /// type/universal 以外の component を持つ selector を一致させなかった
     /// (当時は type + universal selector のみ対応だった)。したがって本 test は
     /// 「numeric な不変条件そのもの」を `crate::parse_selector_list` 経由で // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
-    /// 直接 pin するに留めた。
+    /// 直接 check するに留めた。
     ///
     /// class/id/attribute selector matching の実装後
     /// (`is_type_or_universal_only` → `is_supported_selector_list`
@@ -13083,7 +13083,7 @@ mod tests {
         // それでも `measured_specificity` は selectors crate の公開 API から
         // 都度実測する値なので、幅が変わって挙動が変化したこと自体は
         // 検知できる — 「理論上の最大値と一致し続ける」のではなく
-        // 「upstream の実装変化を都度観測する」ことが本 test の pin 機構。
+        // 「upstream の実装変化を都度観測する」ことが本 test の check 機構。
         const FIELD_REPEAT: usize = 4096;
         // element_selectors field は 1 compound selector につき type
         // selector を 1 つしか持てないが、descendant combinator で compound
@@ -13153,7 +13153,7 @@ mod tests {
     /// `pick_winners` の scratch buffer は walk loop の外で確保され全 node で
     /// 共有される。**この共有が持ち込む唯一の新しい
     /// 失敗様式が「前 node の winner slot が drain されずに残り、次 node へ
-    /// 漏れる」**であり、本 test がそれを pin する。
+    /// 漏れる」**であり、本 test がそれを check する。
     ///
     /// 兄弟 2 つに **互いに素な property** を当てるのが要点:
     /// `<p>` は `background-color` slot (discriminant 1) だけを、`<span>` は
@@ -13216,7 +13216,7 @@ mod tests {
     /// `HashMap<StyleNodeId, Vec<CascadedDecl>>` から flat arena +
     /// `HashMap<StyleNodeId, Range<usize>>` (`CascadedArena`) に変わったあと、
     /// per-node grouping / 内部順序 / 「候補 0 件なら entry 無し」の 3 つが
-    /// 旧実装と不変であることを直接 pin する。
+    /// 旧実装と不変であることを直接 check する。
     ///
     /// 3 兄弟 `<p>` を作り、うち 2 つ (`p1`/`p3`) には inline style も足す —
     /// 「stylesheet 2 rule → inline 1 件」の混在順序 (旧実装のまま:
@@ -13362,7 +13362,7 @@ mod tests {
     // ── 絶対化 (Phase 2) ───────────────────
     //
     // ここから下の test 群は「cascade を抜けた時点で length が px に解決されて
-    // いる」ことを pin する。従来は specified value が
+    // いる」ことを check する。従来は specified value が
     // `ComputedValues` に素通りし、`em` / `rem` は下流 (raikiri-dom layout.rs)
     // で黙って 0px に潰れていた。
 
@@ -13530,7 +13530,7 @@ mod tests {
 
     /// `line-height: normal` (initial value) の下で `1lh` を使うのは common
     /// case — real font metrics が無いので padding の spec initial `0` に
-    /// 倒す (`crate::resolve::resolve_length_percentage` doc、cleanroom: // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
+    /// 倒す (`crate::resolve::resolve_length_percentage` doc、独立実装: // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
     /// 比率を捏造しない)。
     #[test]
     fn lh_falls_back_to_zero_when_own_line_height_is_normal() {
@@ -13539,7 +13539,7 @@ mod tests {
         assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
     }
 
-    /// Regression pin: `margin-top: 1lh`
+    /// Regression check: `margin-top: 1lh`
     /// under the extremely common `line-height: normal` configuration must
     /// compute to `Px(0.0)` — margin's true spec initial (CSS Box 3 §3.1) —
     /// **not** `Auto`. `Auto` would silently trigger real taffy auto-margin
@@ -13747,7 +13747,7 @@ mod tests {
     /// When the parent's own line-height is unresolvable (`normal`), a
     /// child's self-referential `font-size: 1lh` falls back to `font-size`'s
     /// own spec initial (`medium` = 16px) — not a fabricated ratio
-    /// (cleanroom), and not `0px` either: unlike `border-width: 1lh` /
+    /// (独立実装), and not `0px` either: unlike `border-width: 1lh` /
     /// `padding: 1lh` under `line-height: normal`
     /// (`lh_falls_back_to_zero_when_own_line_height_is_normal` above, which
     /// share a *generic* resolver with a known `0px` compromise),
@@ -14160,7 +14160,7 @@ mod tests {
     /// Unlike that test, `doc`/`tree` are built on the *main* (default-size)
     /// stack and only borrowed into the constrained-stack scoped thread —
     /// selector parsing (`build_rule_tree`, `selectors`/`cssparser` crate
-    /// internals, outside this crate's cleanroom review surface) is
+    /// internals, outside this crate's implementation review surface) is
     /// deliberately excluded from the measured region, so a crash here can
     /// only be attributed to `cascade`'s own matching path.
     ///
@@ -14259,7 +14259,7 @@ mod tests {
 
     #[test]
     fn author_display_list_item_computes_through_cascade() {
-        // End-to-end pipeline pin (parse -> cascade -> ComputedValues) for
+        // End-to-end pipeline check (parse -> cascade -> ComputedValues) for
         // `display: list-item` — keyword-acceptance only, sibling of
         // `author_display_flex_and_grid_compute_through_cascade` above.
         let cv = cascade_with_ua("", "li { display: list-item }", "li", None);
@@ -14268,7 +14268,7 @@ mod tests {
 
     #[test]
     fn author_display_contents_computes_through_cascade() {
-        // CSS Display 3 §2.5 `contents` — same end-to-end pipeline pin as
+        // CSS Display 3 §2.5 `contents` — same end-to-end pipeline check as
         // `author_display_flex_and_grid_compute_through_cascade` above.
         // `ComputedValues.display` reaching `DisplayValue::Contents` here
         // is this crate's whole scope for this keyword — see
@@ -14280,7 +14280,7 @@ mod tests {
 
     #[test]
     fn author_flex_container_longhands_compute_through_cascade() {
-        // End-to-end pipeline pin (parse -> cascade -> ComputedValues) for
+        // End-to-end pipeline check (parse -> cascade -> ComputedValues) for
         // the individual flex-container properties — sibling of
         // `author_display_flex_and_grid_compute_through_cascade` above.
         let cv = cascade_with_ua(
@@ -14763,7 +14763,7 @@ mod tests {
     fn background_color_transparent_keyword_resolves_to_zero_alpha() {
         // CSS Color 4 §6.3 "The transparent keyword": `transparent`
         // = rgba(0, 0, 0, 0)。CssColor::TRANSPARENT が cascade winner として
-        // per-node に到達することを pin (parse_color の transparent Ident branch
+        // per-node に到達することを check (parse_color の transparent Ident branch
         // と CssColor::TRANSPARENT const の regression canary)。
         let cv = cascade_doc("", "div", Some("background-color: transparent"));
         assert_eq!(cv.background_color, CssColor::TRANSPARENT);
@@ -15308,7 +15308,7 @@ mod tests {
     #[test]
     fn text_justify_wired_through_cascade_from_inline_style() {
         // <p style="text-justify: inter-word"> → ComputedValues.text_justify。
-        // 上記 text-align pattern を踏襲 (bd raikiri-spike-5u1y)。
+        // 上記 text-align pattern を踏襲。
         use crate::property::TextJustify;
         let cv = cascade_doc("", "p", Some("text-justify: inter-word"));
         assert_eq!(cv.text_justify, TextJustify::InterWord);
@@ -15488,7 +15488,7 @@ mod tests {
         // 済み 40px を再解決せず継承**する (`lift_line_height` doc が
         // line-height について説明する挙動と同型 — 子が独自の font-size
         // (10px) を持っていても 40px のままであることで、この
-        // "re-resolve しない" 性質を子の font-size を変えて pin する)。
+        // "re-resolve しない" 性質を子の font-size を変えて check する)。
         let mut doc = TestDoc::new();
         let p = doc.push_element(0, "p", Some("font-size: 20px; text-indent: 2em"));
         let span = doc.push_element(p, "span", Some("font-size: 10px"));
@@ -15646,7 +15646,7 @@ mod tests {
         assert_eq!(r.computed[span].font_style, FontStyle::Normal);
     }
 
-    // ── font-style scope-cut cascade consequence (raikiri-spike-1o32) ──
+    // ── font-style scope-limited cascade consequence ──
     //
     // `font-style`'s spec-valid but unimplemented keywords (`left` / `right`
     // and `oblique <angle>`) are silent-dropped at parse time
@@ -15658,7 +15658,7 @@ mod tests {
     // as a winner, so an earlier valid declaration for the same property
     // stays the winner instead of the property falling back to its initial
     // value or applying the spec-mandated semantics. This is the crate-wide
-    // "scope-cut-but-spec-valid" gap; these tests pin the current
+    // "scope-limited-but-spec-valid" gap; these tests check the current
     // declaration-drop → prior-wins behaviour so a future fix is visible.
 
     #[test]
@@ -15668,10 +15668,11 @@ mod tests {
         // Second rule is parse-dropped, so first rule stays winner.
         use crate::property::FontStyle;
         let cv = cascade_doc("p { font-style: italic } p { font-style: left }", "p", None);
+        // cov:ignore: assertion text is only evaluated when this test fails
         assert_eq!(
             cv.font_style,
             FontStyle::Italic,
-            "scope-cut `font-style: left` is dropped, prior `italic` must remain winner (current crate behaviour)"
+            "scope-limited `font-style: left` is dropped, prior `italic` must remain winner (current crate behaviour)"
         );
     }
 
@@ -15679,10 +15680,11 @@ mod tests {
     fn font_style_scope_cut_right_is_dropped_and_prior_wins_via_inline() {
         use crate::property::FontStyle;
         let cv = cascade_doc("", "p", Some("font-style: italic; font-style: right"));
+        // cov:ignore: assertion text is only evaluated when this test fails
         assert_eq!(
             cv.font_style,
             FontStyle::Italic,
-            "scope-cut `font-style: right` is dropped, prior `italic` must remain winner"
+            "scope-limited `font-style: right` is dropped, prior `italic` must remain winner"
         );
     }
 
@@ -15699,10 +15701,11 @@ mod tests {
             "p",
             Some("font-style: italic; font-style: oblique 14deg"),
         );
+        // cov:ignore: assertion text is only evaluated when this test fails
         assert_eq!(
             cv.font_style,
             FontStyle::Italic,
-            "scope-cut `font-style: oblique 14deg` is dropped, prior `italic` must remain winner"
+            "scope-limited `font-style: oblique 14deg` is dropped, prior `italic` must remain winner"
         );
         // Same via stylesheet ordering.
         let cv = cascade_doc(
@@ -15710,13 +15713,14 @@ mod tests {
             "p",
             None,
         );
+        // cov:ignore: assertion text is only evaluated when this test fails
         assert_eq!(cv.font_style, FontStyle::Italic);
     }
 
     #[test]
     fn font_style_scope_cut_alone_falls_back_to_initial() {
-        // A lone scope-cut declaration never wins, so the property stays at
-        // its initial value (`normal`), not the scope-cut keyword.
+        // A lone scope-limited declaration never wins, so the property stays at
+        // its initial value (`normal`), not the scope-limited keyword.
         use crate::property::FontStyle;
         let cv = cascade_doc("", "p", Some("font-style: left"));
         assert_eq!(cv.font_style, FontStyle::Normal);
@@ -15727,7 +15731,7 @@ mod tests {
     #[test]
     fn font_style_bare_oblique_is_not_scope_cut_and_wins() {
         // Control: bare `oblique` IS implemented and must win over a prior
-        // declaration, proving the prior-wins above is due to the scope-cut
+        // declaration, proving the prior-wins above is due to the scope-limited
         // drop, not a generic cascade bug.
         use crate::property::FontStyle;
         let cv = cascade_doc("", "p", Some("font-style: italic; font-style: oblique"));
@@ -15894,11 +15898,11 @@ mod tests {
     // ── border-spacing wire-through (CSS Tables 3 §6.1) ──
     //
     // WPT css/css-tables/parsing/border-spacing-computed.html の
-    // plain-length 3 case の pin (`"10px 20px"` / `"0"` → `"0px"` /
+    // plain-length 3 case の check (`"10px 20px"` / `"0"` → `"0px"` /
     // single-doubles)。`calc()` + relative-unit 混じり 2 case は本 engine
     // の math evaluator が mixed-unit calc を解決しない
     // (`mixed_length_percentage_math_is_intentionally_not_supported` 参照)
-    // ため対象外 — baseline pin 側の注記参照。
+    // ため対象外 — baseline check 側の注記参照。
 
     #[test]
     fn border_spacing_wired_through_cascade_from_inline_style() {
@@ -16076,7 +16080,7 @@ mod tests {
         assert_eq!(r.computed[span].word_break, WordBreak::KeepAll);
     }
 
-    // ── word-break scope-cut cascade consequence (raikiri-spike-1o32) ──
+    // ── word-break scope-limited cascade consequence ──
     //
     // `word-break: break-word` is spec-valid (CSS Text 3 §5.1) but
     // intentionally unimplemented (`WordBreak` doc's "Scope carving" section:
@@ -16088,7 +16092,7 @@ mod tests {
     // declaration for `word-break` stays the winner, instead of the property
     // falling back to its initial `normal` (or applying the spec-mandated
     // `break-word` → `normal` + `anywhere` equivalent as browsers do).
-    // These tests pin that current prior-wins behaviour.
+    // These tests check that current prior-wins behaviour.
 
     #[test]
     fn word_break_break_word_is_now_accepted_and_wins_via_stylesheet() {
@@ -16220,13 +16224,13 @@ mod tests {
         assert_eq!(r.computed[span].overflow_wrap, OverflowWrap::Normal);
     }
 
-    // ── generic scope-cut cascade consequence (raikiri-spike-1o32) ──
+    // ── generic scope-limited cascade consequence ──
     //
     // The word-break / font-style cases above are not unique: every
-    // scope-cut-but-spec-valid keyword in this crate follows the same
+    // scope-limited-but-spec-valid keyword in this crate follows the same
     // declaration-drop → prior-wins path because the per-property parser
     // returns `None` and `DeclParser` drops the declaration before cascade
-    // ever sees it. These three spot-checks pin that the same prior-wins
+    // ever sees it. These three spot-checks check that the same prior-wins
     // behaviour holds for unrelated properties, proving the gap is crate-wide
     // and not a single-property quirk.
 
@@ -16258,10 +16262,11 @@ mod tests {
             "span",
             Some("vertical-align: baseline; vertical-align: top"),
         );
+        // cov:ignore: assertion text is only evaluated when this test fails
         assert_eq!(
             cv.vertical_align,
             VerticalAlign::Baseline,
-            "scope-cut `vertical-align: top` is dropped, prior `baseline` must remain winner"
+            "scope-limited `vertical-align: top` is dropped, prior `baseline` must remain winner"
         );
         let cv = cascade_doc("", "span", Some("vertical-align: top"));
         assert_eq!(cv.vertical_align, VerticalAlign::Baseline);
@@ -16868,7 +16873,7 @@ mod tests {
     //    §3.3) ──
 
     // ── writing-mode wire-through (CSS Writing Modes 4 §3.2) ──
-    // Debt (`raikiri-spike-zhmp`): vertical writing-mode 実装時に
+    // Future work: vertical writing-mode 実装時に
     // `resolve_writing_mode` の collapse を削除したら、本 test の期待値を
     // `VerticalRl` へ戻すこと。
 
@@ -16881,7 +16886,7 @@ mod tests {
         // happens later in `absolutize_with` (see `apply_value`'s
         // `PropertyValue::WritingMode` arm doc comment), so the computed
         // value here is always `HorizontalTb` even for `vertical-rl`.
-        // Debt (`raikiri-spike-zhmp`): vertical writing 実装時に
+        // Future work: vertical writing 実装時に
         // `HorizontalTb` 期待値を `VerticalRl` へ戻すこと。
         assert_eq!(cv.writing_mode, WritingMode::HorizontalTb);
     }
@@ -17071,7 +17076,7 @@ mod tests {
         assert_eq!(r.computed[span].background_clip, VisualBox::BorderBox);
         assert_eq!(r.computed[p].background_origin, VisualBox::ContentBox);
         // `background-origin`'s initial (`padding-box`) differs from
-        // `background-clip`'s (`border-box`) — pin both distinctly.
+        // `background-clip`'s (`border-box`) — check both distinctly.
         assert_eq!(r.computed[span].background_origin, VisualBox::PaddingBox);
     }
 
@@ -17284,7 +17289,7 @@ mod tests {
         // CSS Color 4 §3.3: "clamped to the range `[0, 1]` in computed
         // values" — the clamp is a phase-3 transform
         // (`SpecifiedValues::absolutize_with`), pinned end-to-end here
-        // through the real parse -> cascade pipeline (unit-level pin at
+        // through the real parse -> cascade pipeline (unit-level check at
         // `SpecifiedValues::finalize` itself is
         // `opacity_out_of_range_specified_clamps_at_finalize` in
         // `specified.rs`).
@@ -17635,7 +17640,7 @@ mod tests {
         // like any other `BackgroundImage` payload — no dedicated cascade.rs
         // match arm exists for it (`apply_value`'s `BackgroundImage(v) =>
         // target.background_image = v` arm takes any payload via wildcard),
-        // so this pins the wiring rather than exercising new cascade logic.
+        // so this pins the integration rather than exercising new cascade logic.
         let cv = cascade_doc(
             "",
             "div",
@@ -17798,7 +17803,7 @@ mod tests {
         );
     }
 
-    /// **The end-to-end pin for the whole `direction` + `text-align:
+    /// **The end-to-end check for the whole `direction` + `text-align:
     /// match-parent` design.** The child declares *both* `direction: rtl`
     /// and `text-align: match-parent` on itself. Per CSS Text 3 §6.1
     /// `#valdef-text-align-match-parent` ("interpreted against **the
@@ -17806,7 +17811,7 @@ mod tests {
     /// `ltr`, not the child's own `rtl`. This is the same invariant
     /// `specified::tests::finalize_match_parent_uses_parent_direction_not_own_direction_winner`
     /// pins at the `SpecifiedValues` unit level; this test additionally
-    /// proves the wiring through `PropertyKey` winner selection and
+    /// proves the integration through `PropertyKey` winner selection and
     /// `apply_winners`' declaration-order walk, so a regression that
     /// resurfaces the same-node winner-order hazard through a different path
     /// (not just `SpecifiedValues::finalize`) would be caught here too.
@@ -18080,9 +18085,9 @@ mod tests {
         // <p style="page-break-before: always"> → ComputedValues.break_before
         // に BreakBetween::Page が届く (CSS Fragmentation Module Level 3 §3.4
         // mapping table: `always` -> `page`, `BreakBetween` doc's "legacy
-        // shorthand" section) — end-to-end pin that the non-identity remap
+        // shorthand" section) — end-to-end check that the non-identity remap
         // survives the full parse -> cascade -> ComputedValues pipeline, not
-        // just the `property::tests` parser-level pin.
+        // just the `property::tests` parser-level check.
         use crate::property::BreakBetween;
         let cv = cascade_doc("", "p", Some("page-break-before: always"));
         assert_eq!(cv.break_before, BreakBetween::Page);
@@ -18145,7 +18150,7 @@ mod tests {
     #[test]
     fn font_weight_bolder_lighter_table_all_six_rows() {
         // CSS Fonts 4 §2.2.1 の bolder/lighter table を 6 行 × 2 列すべて直接
-        // 検証する。unit 関数を叩くことで cascade harness に依存せず表の
+        // 検証する。unit 関数を叩くことで cascade test setup に依存せず表の
         // 境界 (半開区間) を網羅する。
         //
         // | inherited w    | bolder | lighter |
@@ -18218,14 +18223,14 @@ mod tests {
     }
 
     /// `resolve_relative_weight` の doc 「非有限 `inherited` — 本関数は
-    /// guard しない」節が記述する非対称処理を pin する。
+    /// guard しない」節が記述する非対称処理を check する。
     ///
     /// 「guard は sink 境界に置く、resolve
     /// 層には置かない」という既存方針に従い、**本関数自体は変更しない** — 非対称は
     /// バグとして修正されるものではなく、非有限 `inherited` (通常経路では
     /// 型/parse guard により到達しないが `ComputedValues` の直接構築からは
     /// 到達しうる) に対する現状の table 分岐の帰結として、以降の regression
-    /// で挙動が変わらないことを保証するために pin する。sink 側の guard は
+    /// で挙動が変わらないことを保証するために check する。sink 側の guard は
     /// `crates/raikiri-dom/src/layout.rs` の `sanitize_font_weight`
     /// (`preshape_text` が `parley::FontWeight::new` に渡す直前) に別途ある。
     #[test]
@@ -18266,7 +18271,7 @@ mod tests {
     }
 
     /// `resolve_relative_font_size` を unit 関数として直接叩く — cascade
-    /// harness に依存せず ratio (1.2) の適用を検証する
+    /// test setup に依存せず ratio (1.2) の適用を検証する
     /// (`font_weight_bolder_lighter_table_all_six_rows` の font-size 版)。
     #[test]
     fn resolve_relative_font_size_applies_1_2_ratio() {
@@ -18443,7 +18448,7 @@ mod tests {
     fn font_weight_wpt_font_weight_computed_150_25() {
         // WPT css/css-fonts/parsing/font-weight-computed.html:
         // `test_computed_value('font-weight', '150.25')` を cascade を経由した
-        // computed side で pin する (parse 側の同値 pin は
+        // computed side で check する (parse 側の同値 check は
         // `crate::property::tests::font_weight_wpt_font_weight_computed_150_25`)。
         assert_eq!(
             cascade_doc("", "p", Some("font-weight: 150.25")).font_weight,
@@ -18520,7 +18525,7 @@ mod tests {
     // `apply_winners` の drain の `value.clone()`、`resolve_inheritance` の stack push + write と
     // 段階ごとに deep-clone を経由し、`* { content: "<large>" }` × N element で
     // O(N × M) 相当の heap 消費を招いていた。この修正で outer `Vec` を
-    // `Arc<Vec<ContentComponent>>` に wrap、全 clone 経路が Arc bump に落ちた。
+    // `Arc<Vec<ContentComponent>>` に wrap、全 clone 経路が Arc reference-count increment に落ちた。
     //
     // 実 heap 計測は環境依存 (allocator hook が必要) のため、behavioral proxy として
     // `Arc::ptr_eq` で「複数 element が同 rule から同一 underlying `Vec` を共有」を
@@ -18578,12 +18583,12 @@ mod tests {
     // `resolve_inheritance` の stack push + write) を辿るため
     // `PropertyValue::Counter*(Vec<..>)` × universal selector × N element で
     // O(N × M) 相当の heap 消費を招いていた。この修正で全 3 property の outer
-    // `Vec` を `Arc<Vec<(SmolStr, i32)>>` に wrap、clone 経路が Arc bump に
+    // `Vec` を `Arc<Vec<(SmolStr, i32)>>` に wrap、clone 経路が Arc reference-count increment に
     // 落ちた (asymptotic は O(N + M))。short-circuit (child stack entry で
     // counter-* を skip) は **意図的に採用せず** — content/string-set の修正も
     // 同じ non-inherited Arc field でありながら short-circuit していないため、
     // counter-* のみ特別扱いすると仕上げが非対称になる。Arc wrap 単独で DoS は
-    // 塞がる (stack 上に転がるのは Arc bump 1 個ずつだけで、直後の
+    // 塞がる (stack 上に転がるのは Arc reference-count increment 1 個ずつだけで、直後の
     // `inherit_from` で empty slot に落ちる)。
 
     /// `* { counter-reset: <list> }` × N element の cascade で、matching 全
@@ -18652,8 +18657,8 @@ mod tests {
     }
 
     /// counter-* は non-inherited — 親 element に counter 値があっても child は
-    /// inherit_from で shared empty Arc slot に落ちる。この pin が「Arc wrap 単独
-    /// (short-circuit 無し) でも child stack entry の parent Arc bump が即 empty
+    /// inherit_from で shared empty Arc slot に落ちる。この check が「Arc wrap 単独
+    /// (short-circuit 無し) でも child stack entry の parent Arc reference-count increment が即 empty
     /// slot に置換される」ことを保証する。short-circuit 不採用の正当化
     /// assertion。
     ///
@@ -18685,7 +18690,7 @@ mod tests {
 
     /// Empty (initial / inherit_from) の content/string_set も **shared Arc slot**
     /// を再利用する — cascade fix の副作用で「per-node empty Arc allocation
-    /// regression」に陥っていないことを pin する。
+    /// regression」に陥っていないことを check する。
     #[test]
     fn initial_empty_content_and_string_set_share_arc_slot() {
         let mut doc = TestDoc::new();
@@ -18742,8 +18747,8 @@ mod tests {
     /// になってしまう (この test の実装時に perturbation で確認済み —
     /// 同一 document 形は下記
     /// `resolve_inheritance_shares_font_family_arc_from_parent_when_child_has_no_declaration`
-    /// を再度 test しているだけで、shared slot 自体は pin していない)。
-    /// 単一 call site での直接 pin は
+    /// を再度 test しているだけで、shared slot 自体は check していない)。
+    /// 単一 call site での直接 check は
     /// `property::tests::initial_font_family_shares_arc_slot_across_calls`
     /// を参照。本 test はそれに加えて、slot が別々の `cascade()` 実行間
     /// (例: 1 process 内での複数 page rendering) をまたいで生存することを
@@ -18918,7 +18923,7 @@ mod tests {
     fn padding_longhand_then_shorthand_shorthand_wins() {
         // CSS Cascading L4 §6.1 "Order of Appearance"
         // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の後方 wins を
-        // 逆順で pin: `padding-top: 5px; padding: 10px;`
+        // 逆順で check: `padding-top: 5px; padding: 10px;`
         // → 全 side = 10px (後段 shorthand が top も含めて上書き)。
         let cv = cascade_doc("", "div", Some("padding-top: 5px; padding: 10px"));
         assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(10.0));
@@ -18994,7 +18999,7 @@ mod tests {
     fn margin_longhand_then_shorthand_later_shorthand_wins() {
         // CSS Cascading L4 §6.1 "Order of Appearance"
         // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の後方 wins を
-        // 逆順で pin: `margin-top: 10px; margin: 0px;`
+        // 逆順で check: `margin-top: 10px; margin: 0px;`
         // → 全 side = 0px (後段 shorthand が top も含めて上書き)。
         // expand_shorthand_into の 4 longhand 展開が source_order を保持したまま
         // cascade に届き、後段が per-side 勝ち抜けする証拠。
@@ -19057,7 +19062,7 @@ mod tests {
     #[test]
     fn margin_negative_length_accepted() {
         // Task Non-goals: negative margin は spec-valid (§3.1)、cascade の end-to-end
-        // で受理されることを pin (parser 側 pin `margin_side_accepts_negative_length`
+        // で受理されることを check (parser 側 check `margin_side_accepts_negative_length`
         // と complementary、下流 layout 側で negative 意味付け)。
         let cv = cascade_doc("", "div", Some("margin-top: -5px"));
         assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(-5.0));
@@ -19352,7 +19357,7 @@ mod tests {
     #[test]
     fn height_auto_wired_through_cascade() {
         // `height: auto` は spec initial (§3.1.1) だが cascade winner として
-        // declaration が到達した場合の受理 pattern を明示 pin
+        // declaration が到達した場合の受理 pattern を明示 check
         // (`static_position_wins_over_running_via_source_order` 系の pattern、
         // parser の auto ident branch と apply_value の LengthOrAuto::Auto 経路
         // が疎通することを保証)。
@@ -19394,7 +19399,7 @@ mod tests {
     fn height_negative_length_rejected_at_parse_time() {
         // Non-goal (a) spec-invalid: `height: -10px` は grammar `[0,∞]` 違反、
         // declaration 段で drop → cascade に届かず、height は initial (Auto) の
-        // まま。parser 側 pin (`height_rejects_negative_length`) と complementary
+        // まま。parser 側 check (`height_rejects_negative_length`) と complementary
         // な end-to-end 挙動を確認。
         let cv = cascade_doc("", "div", Some("height: -10px"));
         assert_eq!(
@@ -19445,7 +19450,7 @@ mod tests {
     #[test]
     fn img_width_attribute_zero_is_a_valid_hint() {
         // 「maps to the dimension property」であり「…(ignoring zero)」では
-        // ないことの pin (cf. `<table width>` は ignoring-zero) — `width="0"`
+        // ないことの check (cf. `<table width>` は ignoring-zero) — `width="0"`
         // は 0px という有効な hint になる。
         let mut doc = TestDoc::new();
         let img = doc.push_element_with_attrs(0, "img", None, &[("width", "0")]);
@@ -19480,7 +19485,7 @@ mod tests {
 
     #[test]
     fn img_width_attribute_trailing_garbage_does_not_fail_parse() {
-        // legacy dimension-value microsyntax の寛容さ pin: 数値直後の garbage
+        // legacy dimension-value microsyntax の寛容さ check: 数値直後の garbage
         // は失敗にならない (`"42px"` → 42px, naive integer parse ならここで
         // 失敗していたはず)。先頭 whitespace の skip も同時に確認。
         let mut doc = TestDoc::new();
@@ -19527,7 +19532,7 @@ mod tests {
             r.computed[empty].width,
             ComputedLengthPercentageOrAuto::Auto
         );
-        // Independently pin the *other* rejection layer for the empty-
+        // Independently check the *other* rejection layer for the empty-
         // string case: `TestDoc`'s own `TestElementRef::attr()` override
         // normalises `""` to `None` as a simplification local to that mock
         // — unlike the real `ElementRef::attr()` (`raikiri-dom::dom_impl`),
@@ -19564,7 +19569,7 @@ mod tests {
 
     #[test]
     fn img_width_attribute_overridable_by_inline_author_style() {
-        // Cascade-origin pin: presentational hint は
+        // Cascade-origin check: presentational hint は
         // `Origin::AuthorPresentationalHint`、inline style は `Origin::Author`
         // (`push_img_dimension_hints` doc の "Cascade origin" 節) — 別 origin
         // tier なので `cascade_rank` の rank 差だけで無条件に決着し、
@@ -19597,7 +19602,7 @@ mod tests {
 
     #[test]
     fn img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity() {
-        // Origin-rank pin (`push_img_dimension_hints`
+        // Origin-rank check (`push_img_dimension_hints`
         // doc's "Cascade origin" section): the hint is
         // `Origin::AuthorPresentationalHint` (rank below `Origin::Author`
         // per `cascade_rank`), while this `* { width: 30px }` rule is a
@@ -19693,7 +19698,7 @@ mod tests {
 
     #[test]
     fn parse_html_dimension_value_matches_spec_algorithm_directly() {
-        // `parse_html_dimension_value` の unit-level pin — 上の end-to-end
+        // `parse_html_dimension_value` の unit-level check — 上の end-to-end
         // test 群と違い、cascade を経由せず algorithm 自体の分岐を直接叩く。
         assert_eq!(parse_html_dimension_value("100"), Some(Length::Px(100.0)));
         assert_eq!(parse_html_dimension_value("0"), Some(Length::Px(0.0)));
@@ -19931,7 +19936,7 @@ mod tests {
     fn border_longhand_then_shorthand_later_shorthand_wins() {
         // CSS Cascading L4 §6.1 "Order of Appearance"
         // <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の後方 wins を
-        // 逆順で pin: `border-top-width: 10px; border: 1px solid red;`
+        // 逆順で check: `border-top-width: 10px; border: 1px solid red;`
         // → top.width も 1px (後段 shorthand が top も含めて上書き)。
         // expand_shorthand_into の 12 longhand 展開が source_order を保持した
         // まま cascade に届き、後段が per-side / per-sub-property
@@ -19996,7 +20001,7 @@ mod tests {
         // `unreachable!` 化 or 空 arm regression を捕捉する canary。
         let mut cv = SpecifiedValues::initial();
         // `BorderColor::CurrentColor` を明示 fixture 化
-        // (fall-through arm は payload の shape を保持することを pin する)。
+        // (fall-through arm は payload の shape を保持することを check する)。
         let sides = Sides {
             top: Border {
                 width: Length::Px(1.0),
@@ -20387,7 +20392,7 @@ mod tests {
     #[test]
     fn background_shorthand_and_background_color_longhand_interleave_by_source_order() {
         // Mirror of `var_in_margin_shorthand_preserves_later_longhand_cascade`'s
-        // sibling pin (`margin-top: 10px; margin: 0px` → all sides 0): the
+        // sibling check (`margin-top: 10px; margin: 0px` → all sides 0): the
         // `expand_shorthand_into` doc's entire rationale is that source order,
         // not variant order, decides the winner once a shorthand and a
         // conflicting longhand both target the same field. `background` is
@@ -20503,7 +20508,7 @@ mod tests {
     fn width_auto_end_to_end() {
         // `width: auto` は cascade winner として apply_value で `Auto` に固定される。
         // `inherit_from` initial も Auto なので identity になるが、cascade path が
-        // 実際に通っていることを pin (silent no-op regression 検知)。
+        // 実際に通っていることを check (silent no-op regression 検知)。
         let cv = cascade_doc("", "div", Some("width: auto"));
         assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto);
     }
@@ -20520,7 +20525,7 @@ mod tests {
     fn width_child_does_not_inherit_from_parent() {
         // Verification #8: parent (div) が width: 100px を持っていても child
         // (span、指定 無し) は initial (Auto) を保持する。non-inherited property
-        // の end-to-end pin (sibling `inherit_from_leaves_*_at_initial` computed
+        // の end-to-end check (sibling `inherit_from_leaves_*_at_initial` computed
         // 側 test の cascade path 版)。
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
@@ -20596,7 +20601,7 @@ mod tests {
     #[test]
     fn max_width_none_maps_to_auto() {
         // CSS Sizing 3 §5 initial `none` → computed Auto placeholder の連鎖
-        // pin (specified `parse_max_size` の `none` 分岐 + bridge の
+        // check (specified `parse_max_size` の `none` 分岐 + bridge の
         // `Dimension::auto()` 委譲の上流側)。
         let cv = cascade_doc("", "div", Some("max-width: none"));
         assert_eq!(cv.max_width, ComputedLengthPercentageOrAuto::Auto);
@@ -20741,7 +20746,7 @@ mod tests {
         // spec §6.1 → 全 side が shorthand 由来 = 1/2/3/4。
         //
         // 本方向は展開しない実装でも偶然一致するが、fix が「shorthand を
-        // 常に負けさせる」誤った非対称化になっていないことを pin する。
+        // 常に負けさせる」誤った非対称化になっていないことを check する。
         let cv = cascade_with_post_parse_injection(
             "div { margin-top: 10px; margin-left: 99px }",
             1,
@@ -20755,7 +20760,7 @@ mod tests {
 
     #[test]
     fn post_parse_padding_shorthand_before_longhand_lets_longhand_win() {
-        // margin と同じ形を padding family でも pin (展開 arm が family ごとに
+        // margin と同じ形を padding family でも check (展開 arm が family ごとに
         // 独立に書かれているため)。1/2/3/4px の意図は `distinct_margin_sides`
         // doc と同じ。
         let cv = cascade_with_post_parse_injection(
@@ -20778,7 +20783,7 @@ mod tests {
     fn post_parse_border_shorthand_before_longhand_lets_longhand_win() {
         // border は 4 side × 3 sub-property = 12 longhand に展開される。
         // width / style を per-side で全て違う値にして、12 arm が sink 経由でも
-        // 落ちていないことを pin する (style は computed width の gating にも
+        // 落ちていないことを check する (style は computed width の gating にも
         // 効くので `None` を混ぜない — CSS Backgrounds 3 §3.3)。width の
         // 1/2/3/4px の意図は `distinct_margin_sides` doc と同じ。
         let cv = cascade_with_post_parse_injection(

@@ -115,7 +115,7 @@
 //! [`build_running_template_store`] walks the arena
 //! in document order, so this assumption holds automatically; if it is ever
 //! violated, per-page pool selection (any selector-keyword variant) would
-//! emit the wrong element and visible layout would drift. Regression pin:
+//! emit the wrong element and visible layout would drift. Regression check:
 //! the `pool_preserves_registration_order` unit test (store-level) and
 //! `build_running_template_store_registers_siblings_in_document_order`
 //! (walker-level).
@@ -126,7 +126,7 @@
 //! carries a single `position: running(<name>)` computed value; the store
 //! reconciles same-id-different-name re-registration by moving the id
 //! between name pools to keep the index self-consistent (see
-//! [`RunningTemplateStore::register`]). Regression pin: the
+//! [`RunningTemplateStore::register`]). Regression check: the
 //! `re_register_same_id_under_different_name_transfers_pool_entry` unit test.
 //!
 //! **Divergence from [`raikiri_traits::TargetRegistry`]'s register policy** —
@@ -368,7 +368,7 @@ impl RunningTemplateStore {
     ///   (the caller invariant is one name per element, since
     ///   `position: running(<name>)` is a single computed value on the
     ///   element), but the transfer keeps the store self-consistent under
-    ///   repeated cascade or an unforeseen recursive walker. Regression pin:
+    ///   repeated cascade or an unforeseen recursive walker. Regression check:
     ///   `re_register_same_id_under_different_name_transfers_pool_entry`.
     pub(crate) fn register(
         &mut self,
@@ -1119,7 +1119,7 @@ fn is_css_document_white_space(c: char) -> bool {
 ///
 /// Explicit-stack iterative DFS (reverse-push children so the `Vec` pops
 /// them in original, i.e. document, order) — same shape as
-/// [`crate::target::collect_descendant_text`] — rather than recursion, so a
+/// [`mod@crate::target`] の `collect_descendant_text` — rather than recursion, so a
 /// deeply nested DOM cannot exhaust the call stack.
 #[allow(
     dead_code,
@@ -1146,7 +1146,7 @@ fn collect_descendant_text(doc: &Document, root_idx: usize, out: &mut String) {
 ///
 /// Design doc §7.3 line 2008: `(page_name, effective_width, effective_height,
 /// page_context)` is confirmed by PageStream from the §9.1 page-name
-/// transitions. This struct is the dom-internal shape; PageContext plumbing
+/// transitions. This struct is the dom-internal shape; PageContext integration logic
 /// itself is a paint/dom-paint concern and stays out of this task's scope
 /// (wall/dom-paint would trigger if this struct grew into a paint-observable
 /// contract).
@@ -1169,7 +1169,7 @@ pub(crate) struct MarginBoxGeometry {
 /// Result of a per-page running-template layout — the shape `MarginBoxFragment`
 /// (paint-side) will eventually consume.
 ///
-/// **Deliberate stub** — the paint-observable `MarginBoxFragment` lives on
+/// **Not yet implemented** — the paint-observable `MarginBoxFragment` lives on
 /// the paint side, and populating it now would cross wall/dom-paint. This
 /// dom-internal placeholder carries the id and geometry the paint side
 /// already knows how to fetch; the actual fragment tree lands with the paint
@@ -1200,7 +1200,7 @@ pub(crate) struct MarginBoxLayoutResult {
 /// a future caller can decide whether to memoize; this function itself does
 /// no caching.
 ///
-/// **Stub for this task** — the return type is
+/// **Not implemented for this path** — the return type is
 /// [`MarginBoxLayoutResult`] rather than a paint fragment tree so the shape
 /// stays dom-internal (see [`MarginBoxLayoutResult`] doc). Wiring to the
 /// actual taffy/parley layout of the template subtree lands with the paint
@@ -1248,7 +1248,7 @@ mod tests {
 
     #[test]
     fn parsed_running_template_shape_matches_design_7_3() {
-        // Canonical-shape pin (design §7.3 lines 1982-1987):
+        // Canonical-shape check (design §7.3 lines 1982-1987):
         //   subtree_root: NodeId
         //   computed_styles: Arc<CascadeSubset>
         //   directives: Vec<GcpmDirective>
@@ -1281,7 +1281,7 @@ mod tests {
 
     #[test]
     fn dynamic_flags_is_fully_static_flips_on_any_axis() {
-        // Regression pin: is_fully_static must be `all four false`, not just
+        // Regression check: is_fully_static must be `all four false`, not just
         // "any" false — sloppy `!self.has_X || ...` would let a single-axis
         // template mis-qualify for a future static cache.
         assert!(DynamicFlags::default().is_fully_static());
@@ -1365,7 +1365,7 @@ mod tests {
         // the full pool; a name-keyed store with insert-replace semantics
         // would collapse to only the last registered element and foreclose
         // per-page selection under every selector-keyword variant
-        // (regression pin against that bug — called out by advisor pre-amend).
+        // (regression check against that bug — called out by advisor pre-amend).
         let mut store = RunningTemplateStore::default();
         // Three chapter headers, registered in document order.
         let id_a = store.register(
@@ -1403,7 +1403,7 @@ mod tests {
 
     #[test]
     fn pool_preserves_registration_order() {
-        // Explicit regression pin: the register-site walker
+        // Explicit regression check: the register-site walker
         // (build_running_template_store) calls register in document order,
         // and the pool must faithfully preserve that order — CSS GCPM 3
         // §1.2.2 selector-keyword semantics (first/start/last/first-except)
@@ -1421,7 +1421,7 @@ mod tests {
     #[test]
     fn pool_scopes_by_name_no_cross_leak() {
         // Distinct names ("header" vs "footer") must not collide in the
-        // name_pool index. Regression pin against a bug where a shared
+        // name_pool index. Regression check against a bug where a shared
         // vec would accumulate ids across names.
         let mut store = RunningTemplateStore::default();
         let hdr = store.register(
@@ -1487,7 +1487,7 @@ mod tests {
         // walker walks each element once, and position: running(<name>) is
         // a single computed value per element), but the transfer keeps the
         // store robust under repeated cascade / unforeseen recursive walks
-        // — regression pin against the pre-amend `is_new_id` gate that
+        // — regression check against the pre-amend `is_new_id` gate that
         // skipped the pool update and left the pool stale.
         let mut store = RunningTemplateStore::default();
         let id_first = store.register(
@@ -1688,7 +1688,7 @@ mod tests {
         // per running element; a future layout cache keyed on template_id
         // naturally misses across distinct elements. content(first-letter)
         // is derived from text and follows the same static classification.
-        // Regression pin — previously the arm blanket-flipped for any Content
+        // Regression check — previously the arm blanket-flipped for any Content
         // variant (over-mark) and this test's assertion was inverted.
         for kw in [ContentTextKeyword::Text, ContentTextKeyword::FirstLetter] {
             let cs = vec![ContentComponent::Content { keyword: kw }];
@@ -1708,7 +1708,7 @@ mod tests {
     fn detect_dynamic_flags_image_contents_quote_leader_are_static() {
         // The `Image` / `Contents` / `Quote` / `Leader` variants (CSS
         // Content 3 §2.2 / §2.3 / §2.4.2 / §2.5.1) each get an explicit
-        // no-op arm now — pin that none of them flip a dynamic flag. Spec
+        // no-op arm now — check that none of them flip a dynamic flag. Spec
         // confirmation is still pending on this "no dynamic flag"
         // classification; this test pins current behavior, not a
         // spec-confirmed final answer.
@@ -1852,7 +1852,7 @@ mod tests {
 
     #[test]
     fn build_running_template_store_registers_siblings_in_document_order() {
-        // Regression pin referenced by the module-level "Registration order
+        // Regression check referenced by the module-level "Registration order
         // == document order" note: three sibling running(hdr) elements must
         // land in the pool in document order.
         let mut doc = Document::new();
@@ -2184,7 +2184,7 @@ mod tests {
         // unrelated declarations (CSS Lists 3 §4.1's last-occurrence-wins
         // rule applies *within* one declaration, not across elements) and
         // must each still produce their own `GcpmDirective::CounterReset` —
-        // pin that here so a future refactor that accidentally hoists the
+        // check that here so a future refactor that accidentally hoists the
         // dedup state out of the per-node loop (collapsing sibling resets
         // into one directive) fails a test instead of shipping silently;
         // every other dedup test in this module uses a single element.
@@ -2242,7 +2242,7 @@ mod tests {
 
     #[test]
     fn collect_running_template_counter_reset_dedup_closes_gap_through_page_context() {
-        // Integration-level pin (module doc's producer/consumer split):
+        // Integration-level check (module doc's producer/consumer split):
         // `PageContext::apply_directive`'s `CounterReset` arm unconditionally
         // pushes a new `CounterStack` frame per directive it receives, with
         // no cross-directive name tracking of its own — so this only stays
@@ -2291,7 +2291,7 @@ mod tests {
 
     #[test]
     fn collect_running_template_folds_dynamic_flags_across_subtree_nodes() {
-        // Walker-level cross-node OR-fold pin (module doc's "multiple
+        // Walker-level cross-node OR-fold check (module doc's "multiple
         // content lists — one per node in the subtree — are folded via
         // repeated calls" contract): child A contributes has_counter, child
         // B (a different node) contributes has_string. Neither node alone
@@ -2336,7 +2336,7 @@ mod tests {
         // / contents / <quote> at parse time, so this failure path is
         // unreachable via a real `string-set:` CSS declaration today — see
         // convert_string_set_source's doc comment. This test bypasses the
-        // parser and calls the helper directly to pin the
+        // parser and calls the helper directly to check the
         // skip-whole-entry policy as defense-in-depth.
         let content = [ContentComponent::TargetCounter {
             url: "#c".to_owned(), // relative URL: Url::parse rejects it
@@ -2437,7 +2437,7 @@ mod tests {
     fn resolve_string_set_component_content_text_preserves_no_break_space() {
         // CSS Text 3 §4.1 scopes white-space:normal collapsing to space /
         // tab / segment-break, explicitly excluding U+00A0 NO-BREAK SPACE —
-        // regression pin against using str::split_whitespace (Unicode
+        // regression check against using str::split_whitespace (Unicode
         // White_Space, which would wrongly collapse/trim it too).
         let mut doc = Document::new();
         let h1 = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
@@ -2487,7 +2487,7 @@ mod tests {
         // CSS Text 3 §4 <https://www.w3.org/TR/css-text-3/#white-space-processing>:
         // control characters other than tab/LF/CR/segment-break — form feed
         // (U+000C) included — must render as a visible glyph, not collapse
-        // or trim away. Regression pin against str::split_ascii_whitespace,
+        // or trim away. Regression check against str::split_ascii_whitespace,
         // whose Rust-defined ASCII whitespace set wrongly includes U+000C.
         let mut doc = Document::new();
         let h1 = doc.append_element(Some(0), "h1", Style::default(), None::<&str>);
@@ -2543,7 +2543,7 @@ mod tests {
         // overflow the default ~2 MiB test-thread stack for this specific
         // function — its per-frame state is small (an index, two
         // references) compared to those other walkers' recursive frames —
-        // so it would not have caught the bug this test exists to pin.
+        // so it would not have caught the bug this test exists to check.
         // 200_000 was measured to reliably overflow the old recursive
         // form under the same default stack, giving roughly a 10x margin
         // over the empirically observed ~15_000-20_000 overflow threshold.
@@ -2770,7 +2770,7 @@ mod tests {
 
     #[test]
     fn collect_running_template_still_resolves_string_set_literal_strings() {
-        // Regression pin: the plain <string> literal case (unaffected by
+        // Regression check: the plain <string> literal case (unaffected by
         // this fix) must keep working exactly as before.
         let mut doc = Document::new();
         let root = doc.append_element(
@@ -2825,12 +2825,12 @@ mod tests {
         );
     }
 
-    // ── layout_running_template (per-page re-layout stub) ──────────
+    // ── layout_running_template (per-page re-layout is not implemented) ──────────
 
     #[test]
     fn layout_running_template_returns_geometry_and_id_verbatim() {
-        // Shape pin: the return threads through the input id/geometry unchanged.
-        // Real per-page layout wiring lands with the paint integration; the
+        // Shape check: the return threads through the input id/geometry unchanged.
+        // Real per-page layout integration lands with the paint integration; the
         // test verifies the invocation shape the design flow
         // (§7.3 lines 2007-2012) calls out.
         let parsed = make_parsed(11, DynamicFlags::default());
@@ -2865,7 +2865,7 @@ mod tests {
 
     #[test]
     fn layout_running_template_reports_source_was_static_false_for_dynamic() {
-        // Any dynamic axis → source_was_static = false. Regression pin
+        // Any dynamic axis → source_was_static = false. Regression check
         // against a mis-fold in is_fully_static (a broken || / && would let a
         // dynamic template mis-qualify for a future static cache).
         let flags = DynamicFlags {

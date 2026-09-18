@@ -62,12 +62,12 @@ pub enum RenderError {
     /// その他 `std::io::Error` 系。
     Io(std::io::Error),
 
-    /// stub 段階の API に対する call。実装完了時にこの variant は
+    /// 利用できない API への call。実装完了時にこの variant は
     /// **削除される** (breaking change として release notes に明記)。Consumer
-    /// は stub 期間中のみ pattern match し、実装完了時に arm 削除でよい。
-    /// `feature` は呼ばれた stub API の識別 (`"plan"`, `"render_streaming"` 等)。
+    /// は API が未実装の期間のみ pattern match し、実装完了時に arm 削除でよい。
+    /// `feature` は呼ばれた unimplemented API の識別 (`"plan"`, `"render_streaming"` 等)。
     Unimplemented {
-        /// stub の API 名。
+        /// unimplemented API の名前。
         feature: &'static str,
         /// Consumer 向け migration hint。
         migration_hint: &'static str,
@@ -169,7 +169,7 @@ pub enum LimitKind {
     /// `max_input_bytes` 超過。
     ///
     /// [`AggregateBytes`](Self::AggregateBytes) との semantic 分離: `InputBytes`
-    /// は **parse-time** の raw input byte stream を pin する fail-closed 早期
+    /// は **parse-time** の raw input byte stream を check する fail-closed 早期
     /// 返却用 (`parse_html_with_limits` が read 段階で enforce)。`AggregateBytes`
     /// は **post-parse** の approximate memory footprint。ゆえに attacker が
     /// 巨大 HTML を送りつけて OOM を誘発する DoS 対策としては `InputBytes` の

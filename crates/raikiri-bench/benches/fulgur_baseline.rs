@@ -26,13 +26,13 @@
 //!
 //! - `git show v0.12.0:Cargo.lock | grep -c '^name = "criterion"'` → `0`, and
 //!   `git ls-tree -r v0.12.0 --name-only | grep -i bench` → no matches — this
-//!   is the exact tag the bd issue's baseline names, not just current `main`.
+//!   is the exact tag the benchmark specification's baseline names, not just current `main`.
 //!   `git log --all --diff-filter=D -- '**/benches/**' '*bench*'` across the
 //!   whole history is also empty, so no such harness existed and was later
 //!   deleted either. **fulgur v0.12 (and every version, as far as this
 //!   history shows) has no committed benchmark harness to port** — the
 //!   100-pages-×-100-tables scenario is not in-repo code at any point, only
-//!   an external-article claim quoted by the bd issue. So nothing here is a
+//!   an external-article claim quoted by the benchmark specification. So nothing here is a
 //!   port; it is a from-scratch construction aimed at the same axis fulgur's
 //!   number names.
 //! - `crates/fulgur/src/drawables.rs:1-60` (real content, read directly) *is*
@@ -77,7 +77,7 @@
 //!    fulgur's page axis is **not represented in this file at all**; only
 //!    the table-count axis is measured, at single-page granularity. A future
 //!    file that actually wants a page-count axis would need raikiri to grow
-//!    real pagination first (see the stub point above) — there is no way
+//!    real pagination first (see the unimplemented entry point above) — there is no way
 //!    to approximate one honestly against the current entry point.
 //!
 //! 2. **No `<table>` layout.** `crates/raikiri-style/src/property.rs`'s own
@@ -115,7 +115,7 @@
 //! Per this benchmark's own initial-landing framing, none of the
 //! following are attempted here — they are follow-up work:
 //!
-//! - CI integration / nightly cron wiring (fulgur `wpt-nightly.yml` pattern)
+//! - CI integration / nightly cron integration (fulgur `wpt-nightly.yml` pattern)
 //! - `regressions.json` aggregation → GitHub issue auto-filing
 //! - The full 5-axis measurement table (memory/RSS, time-to-first-page,
 //!   allocation count, WPT run time) — this file covers only the "rendering
@@ -192,7 +192,7 @@ const COLS: usize = 4;
 /// The inline `<style>` block is registered by raikiri-html's head-`<style>`
 /// support (`crates/raikiri-html/src/sink.rs`), the same mechanism
 /// `minimal.css`-style UA rules use — no `ParseOptions::extra_stylesheets`
-/// plumbing is needed, so this stays reachable through the public
+/// integration logic is needed, so this stays reachable through the public
 /// `html_to_png`/`html_to_png_with_fonts` entry points as-is.
 ///
 /// `table, tr, td { display: block; }` is **not** load-bearing for the layout

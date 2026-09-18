@@ -88,7 +88,7 @@ pub fn html_to_png<R: std::io::Read>(input: R) -> Result<Vec<u8>, RenderError> {
 /// Font-aware 版。渡された `FontContext` がそのまま layout に使われる。
 ///
 /// cross-machine 決定性が必要な VRT test 向け。
-/// `font_ctx` が pin 済み (`build_wpt_font_ctx` 経由) の場合、system font
+/// `font_ctx` が check 済み (`build_wpt_font_ctx` 経由) の場合、system font
 /// resolver は完全 bypass される。
 ///
 /// # Scope
@@ -157,7 +157,7 @@ mod tests {
     const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'];
 
     /// `html_to_png_with_fonts` が `html_to_png` と同じ output を返す
-    /// (`FontContext::new()` を渡した場合)。DRY delegate 経路の regression pin。
+    /// (`FontContext::new()` を渡した場合)。DRY delegate 経路の regression check。
     #[test]
     fn html_to_png_with_fonts_delegates_to_impl() {
         let input = br#"<p>x</p>"#;

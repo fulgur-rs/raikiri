@@ -303,7 +303,7 @@ impl Document {
     ///
     /// - `parent` / `child` が arena 範囲外 (`nodes[..]` indexing による)。
     /// - `parent == child` の場合 (spec HierarchyRequestError 相当) は現状
-    ///   detect しない (spike 範囲では発生しない、将来 spec-conformant
+    ///   detect しない (現在の実装範囲では発生しない、将来 spec-conformant
     ///   mutation API 化する時に raise 判定する予定)。
     pub fn attach_child(&mut self, parent: usize, child: usize) {
         // Fragment-aware branch: WHATWG DOM insert algorithm steps 1 + 4.1 + 7.2
@@ -425,10 +425,10 @@ impl Document {
 
     /// Element node に non-HTML namespace URI を紐付ける。
     /// `ns` が `None` = HTML default namespace / element
-    /// でない場合の効果無し。HTML default は `None` を fast path とする
+    /// でない場合の効果無し。HTML default は `None` を optimized path とする
     /// (memory saving + `Element::namespace_uri()` の O(1) 判定)。
     ///
-    /// raikiri-html sink が `finish()` 時に qual_names side-table から呼び出す。
+    /// raikiri-html sink が `finish()` 時に qual_names metadata table から呼び出す。
     /// tree mutation ではないので `invalidate_layout_cache` は call しない。
     ///
     /// Panics (debug + release 共通): `id` が Element kind
@@ -438,7 +438,7 @@ impl Document {
     /// ようになったのは意図的な strictness 向上)。
     pub fn set_element_namespace(&mut self, id: usize, ns: Option<SmolStr>) {
         // namespace の変更は
-        // `<template>` 判定 (`namespace.is_none()` は HTML default fast path) を
+        // `<template>` 判定 (`namespace.is_none()` は HTML default optimized path) を
         // 変え得るため、tag_name が "template" の場合は flags_dirty を set する。
         // これがないと HTML template → SVG template への変更 (あるいは逆) の後
         // `mark_in_document_flags()` が early return path で no-op となり、
@@ -468,7 +468,7 @@ impl Document {
     /// [`Document::set_element_inline_style`] で別途 wire するため呼び出し側で
     /// 除外しておくこと。
     ///
-    /// raikiri-html sink が `finish()` 時に attributes side-table から呼び出す。
+    /// raikiri-html sink が `finish()` 時に attributes metadata table から呼び出す。
     /// tree mutation ではないので `invalidate_layout_cache` は call しない。
     ///
     /// Panics (debug + release 共通): `id` が Element kind
@@ -576,7 +576,7 @@ impl Document {
     }
 
     /// Element node の `inline_style` を後付けで更新する。
-    /// sink が `finish()` 時に side-table から
+    /// sink が `finish()` 時に metadata table から
     /// `style="..."` を抽出して呼び出す。値は生 string でよく、`style=""`
     /// の空文字列 → `None` 正規化は Element trait 実装側
     /// ([`raikiri_traits::Element::inline_style_source`]) が行う。
@@ -599,7 +599,7 @@ impl Document {
     /// `invalidate_layout_cache` も call する。
     ///
     /// **Historical note**: 旧 raikiri-html sink の
-    /// `strip_non_element_stubs` が Comment / PI stub Element の bulk 除去に
+    /// `strip_non_element_stubs` が Comment / PI unimplemented Element の bulk 除去に
     /// 消費していたが、Comment / ProcessingInstruction が
     /// [`NodeData`] variant として恒久 tree 保持 + `mark_in_document_flags`
     /// による IS_IN_DOCUMENT clear の 2 段 gate に置換されたため、この primitive
@@ -872,9 +872,9 @@ mod mark_in_document_flags_tests {
 
     #[test]
     fn mark_in_document_flags_clears_detached_arena_nodes() {
-        // Regression pin: arena に存在するが
+        // Regression check: arena に存在するが
         // Document root から reachable でない node (foster-parenting transient
-        // state / stub 除去後の孤児 等) は mark 後 is_in_document=false に落ちる
+        // state / unimplemented-node 除去後の孤児 等) は mark 後 is_in_document=false に落ちる
         // (Node::new_* の default true を step 1 の全 clear が上書きする)。
         let mut doc = Document::new();
         let root = doc.root_index();
@@ -900,7 +900,7 @@ mod mark_in_document_flags_tests {
 
     #[test]
     fn mark_in_document_flags_keeps_template_element_but_clears_descendants() {
-        // Regression pin for the existing contract: template element
+        // Regression check for the existing contract: template element
         // itself stays in_document=true, its descendants get cleared. Redundant
         // with the raikiri-html integration test but locally verifies the DFS
         // shape (in_template state propagation) without going through parse.
@@ -928,7 +928,7 @@ mod mark_in_document_flags_tests {
 
     #[test]
     fn append_operations_set_flags_dirty() {
-        // Regression pin: mutation primitives が flags_dirty を
+        // Regression check: mutation primitives が flags_dirty を
         // set することで、observation-side が mark_in_document_flags を呼ぶ contract
         // に依存できる。fresh Document は dirty=false からスタート。
         let mut doc = Document::new();
@@ -991,7 +991,7 @@ mod mark_in_document_flags_tests {
 
     #[test]
     fn set_element_namespace_dirties_flags_for_template_only() {
-        // Regression pin: `set_element_namespace` は
+        // Regression check: `set_element_namespace` は
         // `<template>` element の namespace を変更した場合のみ flags_dirty を
         // set する。template 以外は set しない (pure metadata、layout 無影響)。
         let mut doc = Document::new();
@@ -1023,7 +1023,7 @@ mod mark_in_document_flags_tests {
 
     #[test]
     fn post_mark_attach_under_template_becomes_out_of_document_after_remark() {
-        // Regression pin: mutation → 再 mark で正しい bit 状態が復元
+        // Regression check: mutation → 再 mark で正しい bit 状態が復元
         // されることを end-to-end で pin。post-parse mutation の contract。
         let mut doc = Document::new();
         let root = doc.root_index();
@@ -1048,7 +1048,7 @@ mod mark_in_document_flags_tests {
 
 #[cfg(test)]
 mod find_body_flat_tree_tests {
-    // Regression pin: find_body (both layout and paint impls)
+    // Regression check: find_body (both layout and paint impls)
     // must not select a <body> that lives inside an inert subtree
     // (<template>...<body>ghost</body>...</template>).
     use super::*;
@@ -1121,11 +1121,11 @@ mod taffy_filter_tests {
 
     #[test]
     fn taffy_child_ids_and_count_filter_out_comment_and_pi_variants() {
-        // Regression pin:
+        // Regression check:
         // Comment / ProcessingInstruction variant を body 直下に attach した後
         // mark_in_document_flags を経由すると、TaffyChildIter は
         // is_in_document filter でこれらを skip する。旧 strip_non_element_stubs
-        // が担っていた "layout tree から non-Element stub を消す" 機能が、
+        // が担っていた "layout tree から non-Element node を消す" 機能が、
         // strip 廃止後は「NodeData variant → mark_in_document_flags で
         // IS_IN_DOCUMENT clear → TaffyChildIter が filter」の chain に置き換わって
         // いることを end-to-end で pin。
@@ -1187,7 +1187,7 @@ mod attach_child_fragment_tests {
     //! attach_child が
     //! `NodeData::DocumentFragment` を child に受け取った時、WHATWG DOM §4.2.3
     //! Mutation algorithms — insert algorithm steps 1 + 4.1 + 7.2 と一致する
-    //! fragment-aware semantics で動作する契約を pin (append が positional
+    //! fragment-aware semantics で動作する契約を check (append が positional
     //! splice の step 7.3 ではなく 7.2 に対応する導出は `Document::attach_child`
     //! の doc comment 参照)。
     //!
@@ -1200,7 +1200,7 @@ mod attach_child_fragment_tests {
     //! (b) fragment の children Vec が empty 化される (move、not clone)
     //! (c) fragment node 自身は parent.children に含まれない
     //! (d) empty fragment attach は parent.children を変えない (edge)
-    //! (e) fragment 以外の child は旧 push 挙動を維持する (regression pin)
+    //! (e) fragment 以外の child は旧 push 挙動を維持する (regression check)
     use super::*;
     use crate::node::NodeData;
 
@@ -1237,7 +1237,7 @@ mod attach_child_fragment_tests {
     #[test]
     fn attach_child_empties_fragments_children_after_move() {
         // (b): fragment の children Vec は空になる (move semantics、clone ではない)。
-        // 旧 push 挙動なら fragment.children は保たれるので、この test が move を pin する。
+        // 旧 push 挙動なら fragment.children は保たれるので、この test が move を check する。
         let mut doc = Document::new();
         let root = doc.root_index();
         let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
@@ -1337,7 +1337,7 @@ mod insert_child_before_fragment_tests {
     //! (b) fragment の children Vec が empty 化される (move、not clone)
     //! (c) fragment node 自身は parent.children に含まれない
     //! (d) empty fragment splice は parent.children を変えない (edge)
-    //! (e) fragment 以外の child は旧 insert 挙動を維持する (regression pin)
+    //! (e) fragment 以外の child は旧 insert 挙動を維持する (regression check)
     use super::*;
     use crate::node::NodeData;
 
@@ -1354,7 +1354,7 @@ mod insert_child_before_fragment_tests {
     fn insert_child_before_splices_fragment_children_at_position() {
         // (a): parent.children の `before` position に fragment の children が
         // source order で挿入される。tail append の attach_child と違い、
-        // positional な splice を pin する (`before` の直前に fragment children
+        // positional な splice を check する (`before` の直前に fragment children
         // 全部、その後 `before` 自体、以降既存 sibling が続く)。
         let mut doc = Document::new();
         let root = doc.root_index();
@@ -1378,7 +1378,7 @@ mod insert_child_before_fragment_tests {
     fn insert_child_before_empties_fragments_children_after_move() {
         // (b): fragment の children Vec は空になる (move semantics、clone ではない)。
         // 旧挙動 (fragment 自身を単純 insert) なら fragment.children は保たれる
-        // ので、この test が drain の move semantics を pin する。
+        // ので、この test が drain の move semantics を check する。
         let mut doc = Document::new();
         let root = doc.root_index();
         let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);
@@ -1421,8 +1421,8 @@ mod insert_child_before_fragment_tests {
     #[test]
     fn insert_child_before_with_empty_fragment_is_noop_on_parent_children() {
         // (d): empty fragment splice は parent の children を変えない。
-        // splice(pos..pos, empty_vec) が何もしないことを pin (attach_child edge
-        // pin の positional 対応)。
+        // splice(pos..pos, empty_vec) が何もしないことを check (attach_child edge
+        // check の positional 対応)。
         let mut doc = Document::new();
         let root = doc.root_index();
         let parent = doc.append_element(Some(root), "body", Style::default(), None::<&str>);

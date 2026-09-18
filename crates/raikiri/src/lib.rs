@@ -49,7 +49,7 @@ pub use entries::{
     ParagraphEntry, SemanticEntry, SvgEntry, TableEntry, TransformEntry,
 };
 
-// ── VRT font pin API ────────────────────────────────────────────────────
+// ── VRT font check API ────────────────────────────────────────────────────
 // External consumer が `raikiri` 単独 dep で pinned `FontContext` を build
 // できるように、`html_to_png_with_fonts` の依存型を umbrella 経由で公開。
 // これが無いと consumer は raikiri-dom / parley を direct dep しなければ
@@ -540,7 +540,7 @@ mod parse_html_tests {
             network: None,
             base_url: None,
         };
-        // 2 経路の cascade が同じ結果を出すことを pin (parse_html は
+        // 2 経路の cascade が同じ結果を出すことを check (parse_html は
         // build_cascaded を内部で呼んでいる契約)
         let via_parse_html = parse_html(&b"<p>Hi</p>"[..], &opts).expect("parse_html");
         let via_manual = {
@@ -595,7 +595,7 @@ mod parse_html_tests {
 
         // Contrast: 同じ input を default cap (1024) で parse すると 5 件より
         // 多く記録される — cap 値が実際に RenderLimits から読まれていること
-        // (固定の小さい値に偶然収まっただけではないこと) を pin する。
+        // (固定の小さい値に偶然収まっただけではないこと) を check する。
         let default_doc =
             parse_html_with_limits(malformed.as_slice(), &opts, RenderLimits::default())
                 .expect("malformed input still recovers");
@@ -680,20 +680,22 @@ mod stub_tests {
         }
     }
 
-    /// sink stub。accept_page / finish_render は No-op。stub は sink を呼ばない前提。
+    /// unimplemented sink。accept_page / finish_render は No-op。unimplemented API は sink を呼ばない前提。
     struct NoopSink;
     impl RenderSink for NoopSink {
         fn accept_page(
             &mut self,
             _fragment: raikiri_traits::PageFragment,
         ) -> Result<(), std::io::Error> {
-            unreachable!("render_streaming stub must not call sink")
+            // cov:ignore: this branch is unreachable unless the API violates its contract
+            unreachable!("unimplemented render_streaming API must not call sink")
         }
         fn finish_render(
             &mut self,
             _summary: raikiri_traits::RenderSummary,
         ) -> Result<(), std::io::Error> {
-            unreachable!("render_streaming stub must not call sink")
+            // cov:ignore: this branch is unreachable unless the API violates its contract
+            unreachable!("unimplemented render_streaming API must not call sink")
         }
     }
 
@@ -706,7 +708,7 @@ mod stub_tests {
             &NoopResolver,
             PlanConfig::default(),
         )
-        .expect_err("plan stub must return Err");
+        .expect_err("unimplemented plan API must return Err");
         match err {
             RenderError::Unimplemented { feature, .. } => {
                 assert_eq!(feature, "plan", "feature must identify plan API");
@@ -726,7 +728,7 @@ mod stub_tests {
             StreamingConfig::default(),
             &mut sink,
         )
-        .expect_err("render_streaming stub must return Err");
+        .expect_err("unimplemented render_streaming API must return Err");
         match err {
             RenderError::Unimplemented {
                 feature,

@@ -26,7 +26,7 @@ use crate::Atom;
 /// N-node document あたり 2N の small heap allocation regression になる。
 /// `OnceLock` で **process 全体で 1 個** の empty Arc を保持し、
 /// [`empty_content_list`] / [`empty_string_set_entries`] が各 initial spot で
-/// clone (Arc bump only) する。
+/// clone (Arc reference-count increment only) する。
 ///
 /// 空 `Vec::new()` は allocation 0 だが `Vec` struct 自体の 24 bytes が per-node
 /// に生まれる — Arc 化により 8-byte pointer に置き換わり、指す先は shared。
@@ -68,7 +68,7 @@ pub(crate) fn empty_counter_entries() -> Arc<Vec<(SmolStr, i32)>> {
 /// ([`empty_counter_entries`] と同じ `OnceLock` 保持の shared-slot pattern)。
 ///
 /// spec 上 `quotes` の initial value は "depends on user agent" (CSS2 §12.3.1)
-/// — 具体的な引用符文字列を規定しない。本実装は cleanroom 方針 (他実装の UA
+/// — 具体的な引用符文字列を規定しない。本実装は 独立実装方針 (他実装の UA
 /// 既定値を持ち込まない) により、宣言が無い場合もこの空 list を initial 値として
 /// 採る ([`PropertyValue::Quotes`] doc 参照)。
 pub(crate) fn empty_quotes_entries() -> Arc<Vec<(SmolStr, SmolStr)>> {
@@ -288,7 +288,7 @@ fn expand_hex_nibble(n: u8) -> u8 {
 /// の doc が canonical であり、その内容は `page::tests` の
 /// `page_declarations_carry_no_specified_layer_residue` (以前の名前は
 /// `page_declarations_carry_exactly_one_specified_layer_residue`)
-/// が機械的に pin している。**ここに保証の中身を書き足して重複させないこと**
+/// が機械的に check している。**ここに保証の中身を書き足して重複させないこと**
 /// — 手で 2 site を揃える運用は既に 2 度 drift した。
 ///
 /// Downstream match は必ず wildcard arm を持つこと (`#[non_exhaustive]` 属性、
@@ -459,7 +459,7 @@ pub enum Length {
     /// instance が要る点は [`crate::resolve::used_line_height_length`] doc
     /// (cap/rcap と同じ wall) を参照。`ex`/`ch`/`ic` と違い spec は
     /// font-size 比のフォールバックを与えない (根拠なく比率を捏造しない、
-    /// cleanroom 方針) ため、resolve 側は「解決不能 → 消費 property の
+    /// 独立実装方針) ため、resolve 側は「解決不能 → 消費 property の
     /// initial 相当」という per-property fallback を取る
     /// ([`crate::resolve`] の各 `resolve_*` 関数 doc 参照)。
     ///
@@ -742,7 +742,7 @@ impl<T> StartEnd<T> {
 /// groove | ridge | inset | outset` を表す。initial value は `none`、not
 /// inherited (§3.2)。
 ///
-/// UA stylesheet 差はあるが本 crate は cleanroom scope (`walls.md` §1) のため
+/// UA stylesheet 差はあるが本 crate は implementation boundary のため
 /// spec-defined 10 alternative のみ受理する。ASCII case-insensitive で
 /// `parse_border_style_side` が ident と照合する (CSS Values 3 §3.1 "Pre-defined
 /// Keywords" <https://www.w3.org/TR/css-values-3/#keywords>)。
@@ -862,7 +862,7 @@ pub enum OutlineStyle {
 /// border-color 省略 (initial 直行) の hazard case では、border-color が
 /// `apply_value` を一切通らないため cascade 段で node 自 color を捕捉できない
 /// (parent の color のみが inherit_from の入力になる)。Option B (cascade 段で
-/// 事前 baked-in) は post-cascade resolution pass + sentinel 判別を要求し、
+/// 事前 stored directly) は post-cascade resolution pass + sentinel 判別を要求し、
 /// sentinel 自体が本 enum と等価になる — 本 crate の "per-longhand cascade は
 /// declaration 順非依存" invariant (margin / padding precedent、`apply_value`
 /// arm doc 群参照) も同時に破ることになる。Option A は specified value を
@@ -971,7 +971,7 @@ impl Border {
     /// 全 field が `pub` なので、initial 以外の値が要る呼び手は
     /// `let mut b = Border::new(); b.width = Length::Px(5.0);` の mutation
     /// pattern で組み立てる (`external_consumer_can_mutate_pub_fields_via_default_shorthand`
-    /// が umbrella 経由でこの経路を pin する)。
+    /// が umbrella 経由でこの経路を check する)。
     pub fn new() -> Self {
         Self::default()
     }
@@ -994,7 +994,7 @@ impl Default for Border {
     /// 述べている。これは **`#[derive(Default)]`** (呼ばれない Default を
     /// タダだから足す) の話であり、本 impl はそれとは逆で「呼ばれるから
     /// 手書きで足す」— 内部からは [`Border::new`]、外部からは umbrella
-    /// (`raikiri` crate) の pattern-1/pattern-2 construction pin
+    /// (`raikiri` crate) の pattern-1/pattern-2 construction check
     /// (`external_consumer_can_construct_all_non_exhaustive_types` /
     /// `external_consumer_can_mutate_pub_fields_via_default_shorthand`) が
     /// 実際に呼ぶ。手書き `impl Default` を `#[non_exhaustive]` struct に
@@ -2875,7 +2875,7 @@ pub enum BoxSizing {
 ///   computed `direction` ([`Direction`]、CSS Writing Modes 4 §2.1) を要する。
 ///   [`crate::computed::ComputedValues::text_align`] に残る値は常に解決済 —
 ///   `MatchParent` が computed 値として観測されることは無い
-///   (`resolve_text_align_match_parent` の debug_assert が pin する不変条件)。
+///   (`resolve_text_align_match_parent` の debug_assert が check する不変条件)。
 /// - **(a) spec-invalid**: CSS Text 3 §6.1 grammar は上記 8 keyword のみ。それ以外
 ///   の ident (`middle`, `baseline` 等、および CSS Text 4 draft 相当の `<string>`
 ///   character alignment は本 crate が引用する CSS Text 3 では未定義) は silent
@@ -2956,7 +2956,7 @@ pub enum TextAlign {
 /// - **Non-goal**: HTML `dir` attribute → UA-level `direction` mapping
 ///   (spec が "we recommend HTML authors to use the HTML dir attribute" と述べる
 ///   presentational hint) は本 crate の parse/cascade scope に無い — UA CSS
-///   default 値の持ち込みは cleanroom 対象外の別 task。
+///   default 値の持ち込みは 独立実装 対象外の別 task。
 ///
 /// [`DisplayValue`] / [`TextAlign`] と同じ convention で `Default` を derive
 /// しない — 初期化側 [`crate::computed::ComputedValues::initial`] が
@@ -3031,7 +3031,7 @@ pub enum Direction {
 ///   `vertical-rl` / `vertical-lr` / `sideways-rl` / `sideways-lr` は spec
 ///   grammar どおり **構文としては受理する** (`None` を返さない、CSS 2.1 の
 ///   「受理するが視覚効果は未実装」established pattern — sibling
-///   [`WordBreak`] doc の deprecated `break-word` scope-cut と同じ精神)。ただし
+///   [`WordBreak`] doc の deprecated `break-word` scope-limited と同じ精神)。ただし
 ///   raikiri は縦書きレンダリングパイプラインを持たないため、この 4 keyword の
 ///   **computed value はすべて [`HorizontalTb`](Self::HorizontalTb) と同じ表現に
 ///   正規化する** — [`resolve_writing_mode`] が実装する。これは spec の
@@ -3040,7 +3040,7 @@ pub enum Direction {
 ///   ない — 縦書き非対応という scope cut を正直に表現したもの。
 ///   将来 vertical writing-mode レンダリングを実装する際は、この collapse と
 ///   [`resolve_writing_mode`] を削除し、spec どおり "specified value" を保持
-///   する computed value へ戻すこと — 棚卸しは `raikiri-spike-zhmp` が追跡する。
+///   する computed value へ戻すこと — 将来の縦書き対応時に棚卸しする。
 ///
 /// [`DisplayValue`] / [`TextAlign`] / [`Direction`] と同じ convention で
 /// `Default` を derive しない — 初期化側
@@ -3226,7 +3226,7 @@ pub(crate) fn resolve_overflow(specified: OverflowXY) -> OverflowXY {
 /// 引数の keyword に関わらず戻り値は固定 (`self` すら実質不要だが、他の
 /// `resolve_*` 関数と同じ signature shape を保つため受け取る)。
 ///
-/// # Debt — vertical writing-mode 実装時の棚卸し (`raikiri-spike-zhmp`)
+/// # Future work — vertical writing-mode 実装時の棚卸し
 ///
 /// 本関数は CSS Writing Modes 4 "Computed value: specified value" からの
 /// 意図的な divergence である。将来 vertical writing を実装する際は、本関数
@@ -3901,7 +3901,7 @@ pub enum PageValue {
 ///   `bottom` に揃える box が "tall enough" な場合 line box height を
 ///   最小化する解が複数存在し、"CSS 2.1 does not define the position
 ///   of the line box's baseline" と明言する (spec verbatim)。つまり
-///   `top`/`bottom` の完全な実装は、上記 3 点の plumbing を超えて、
+///   `top`/`bottom` の完全な実装は、上記 3 点の integration logic を超えて、
 ///   この未定義ケースをどう扱うかという設計判断も要する。
 ///   `middle`/`text-top`/`text-bottom` に適用した
 ///   「parse を通し、raikiri-paint 側の実装待ちは 0px shift の暫定値で
@@ -3923,9 +3923,9 @@ pub enum PageValue {
 ///   real font metrics を style 層に持たないため "normal" を絶対長化できない
 ///   (同関数 doc の "normal" wall が canonical)。本来は used line-height
 ///   が font metrics 由来の絶対長を持つため percentage も自然に解決するが、
-///   本 crate が font-metrics source を持つまで (raikiri-spike-m3 / parley
+///   本 crate が font-metrics source を持つまで (parley
 ///   統合 milestone) は `0px` (= `baseline` 相当) に倒す — これは比率を
-///   捏造しない cleanroom fallback であり、`padding` / `margin` が
+///   捏造しない independent fallback であり、`padding` / `margin` が
 ///   `<percentage>` に対して採る「絶対化せず computed 層まで素通しし、
 ///   使用先で解決する」staging とは異なり、素通し先の consumer
 ///   (raikiri-dom / raikiri-paint) が今日時点で
@@ -3974,7 +3974,7 @@ pub enum PageValue {
 /// `line-height: normal` fallback を伴い実装済み — `top`/`bottom` とは異なり
 /// raikiri-style 内部で完結して絶対化できるため、cascade-regression risk
 /// (未実装 keyword が cascade 上で実装済み値を押しのける) とは無関係な
-/// 別種の gap だったが、本対応で fallback を pin して解消した。
+/// 別種の gap だったが、本対応で fallback を check して解消した。
 ///
 /// `Default` は derive しない — sibling [`TextDecorationShorthand`] と
 /// 同じ convention (spec default は初期化側
@@ -4570,7 +4570,7 @@ pub enum ClearValue {
 /// element」ではない (page box 自体を float させる CSS 機構は存在しない)
 /// ため、[`crate::page::cascade_page`] の phase 3 はこの解決を行わず、
 /// `Float` / `Clear` を [`ZIndexValue`] と同じ opaque pass-through として
-/// 扱う ([`crate::page::absolutize_in_page_context`] の該当 arm 参照)。
+/// 扱う ([`crate::page`] の `absolutize_in_page_context` の該当 arm 参照)。
 ///
 /// `pub(crate)` — 呼び手は `specified` module のみ。
 pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue) -> DisplayValue {
@@ -4681,7 +4681,7 @@ pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue
 /// `text-wrap` shorthand (wrap-style `auto | balance | pretty | stable`)
 /// is deferred. Inherited, initial `wrap`, computed value = specified
 /// keyword. `nowrap` suppresses soft wrapping in raikiri-dom preshape and
-/// realign (bd raikiri-spike-9q1p).
+/// realign.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextWrapMode {
@@ -5456,7 +5456,7 @@ pub enum Gradient {
 ///
 /// Grammar: `<linear-gradient-syntax> = [ [ <angle> | <zero> | to
 /// <side-or-corner> ] || <color-interpolation-method> ]? , <color-stop-list>`。
-/// `direction`/`interpolation` は共に省略時 default を baked-in する
+/// `direction`/`interpolation` は共に省略時 default を stored directly する
 /// (省略時は "defaults to to bottom" / [`GradientColorInterpolation`] の
 /// spec-mandated default) — [`CssPosition`] の "center" default 等、他の
 /// keyword default と同じ「省略パターンを型に残さず即座に解決する」方針。
@@ -5529,7 +5529,7 @@ pub enum VerticalSide {
 ///
 /// Grammar: `<radial-gradient-syntax> = [ [ [ <radial-shape> ||
 /// <radial-size> ]? [ at <position> ]? ] || <color-interpolation-method> ]?
-/// , <color-stop-list>`。`shape`/`size` は共に省略時 default を baked-in
+/// , <color-stop-list>`。`shape`/`size` は共に省略時 default を stored directly
 /// する (CSS Images 3 §3.2.1 の shape-inference 規則 — [`LinearGradient`]
 /// doc と同じ方針)。
 #[non_exhaustive]
@@ -6578,7 +6578,7 @@ pub enum PropertyValue {
     /// [`Arc<Vec<..>>`] wrap (同種の DoS 対策 fix の pattern 踏襲):
     /// cascade winner move (`apply_value`) と inheritance walk clone
     /// (`SpecifiedValues::inherit_from` の `parent.font_family.clone()`) が
-    /// **shallow (Arc bump)** になる。`font-family` は inherited property なので
+    /// **shallow (Arc reference-count increment)** になる。`font-family` は inherited property なので
     /// non-inherited な counter-* / content / string-set とはコストの形が違う —
     /// 「毎 node で initial にリセットする」コストではなく「inheritance walk が
     /// 毎 node で親の値を運ぶ」コストで、N-node document あたり O(N) の
@@ -6617,7 +6617,7 @@ pub enum PropertyValue {
     /// が `PropertyValue::FontSize(Length::Px(12.0))` の construction を
     /// **意図的に compile-time pin** している (umbrella re-export list の
     /// rationale、`crates/raikiri/src/lib.rs` 該当 comment 参照)。
-    /// `FontSize` の payload 型を変えるとこの pin が割れ、
+    /// `FontSize` の payload 型を変えるとこの check が割れ、
     /// `crates/raikiri` 側の修正を要求する = umbrella crate に対する破壊的変更に
     /// なる (`Content`/`StringSet` payload 変更が同種の前例)。
     ///
@@ -6684,7 +6684,7 @@ pub enum PropertyValue {
     /// [`Arc<Vec<..>>`] wrap: cascade winner clone (`apply_winners` の drain での
     /// `value.clone()`) + inheritance walk clone (`resolve_inheritance` の
     /// `stack.push((child, computed.clone()))` + `out[idx] = computed.clone()`)
-    /// が **shallow (Arc bump only)** になる。counter-* は non-inherited のため
+    /// が **shallow (Arc reference-count increment only)** になる。counter-* は non-inherited のため
     /// child は inherit_from で shared empty slot に落ちるが、winner までの経路
     /// (parent stack entry + cascaded candidates 蓄積) は deep-clone 経由だった。
     /// `* { counter-reset: c0 c1 ... cN }` × M element で O(N × M) → O(N + M)
@@ -6714,7 +6714,7 @@ pub enum PropertyValue {
     /// <https://www.w3.org/TR/css-content-3/#content-property>。
     ///
     /// [`Arc<Vec<..>>`] wrap: cascade winner clone + inheritance walk stack
-    /// entry clone + per-node write が **shallow (Arc bump only)** になる。
+    /// entry clone + per-node write が **shallow (Arc reference-count increment only)** になる。
     /// `* { content: "<large>" }` × N element の O(N × M) memory blow-up を
     /// 単一 heap slot 共有で塞ぐ (cascade memory DoS 対策)。
     ///
@@ -6794,7 +6794,7 @@ pub enum PropertyValue {
     /// payload は [`TextIndentValue`] (length + hanging/each-line flags)。
     /// cascade 層は length を `text_indent` へ、flags を `text_indent_hanging` /
     /// `text_indent_each_line` へ分配する。consumer (raikiri-dom realign) は
-    /// parley の `IndentOptions` へ写像する (bd raikiri-spike-5u1y)。
+    /// parley の `IndentOptions` へ写像する。
     TextIndent(TextIndentValue),
     /// `padding-top: <length-percentage [0,∞]>` — non-inherited、initial: `0`。
     /// CSS Box 3 §4.1 <https://www.w3.org/TR/css-box-3/#padding-physical>。
@@ -7528,7 +7528,7 @@ pub enum PropertyValue {
     /// は downstream 責務」節と同じ分担)。
     ///
     /// spec 上 initial value は "depends on user agent" (CSS2 §12.3.1) —
-    /// 具体的な引用符文字列を規定しない。本実装は cleanroom 方針 (他実装の UA
+    /// 具体的な引用符文字列を規定しない。本実装は 独立実装方針 (他実装の UA
     /// 既定値を持ち込まない) により、宣言が無い場合の初期値も `none` と同じ
     /// 空 list で表現する ([`empty_quotes_entries`] 参照)。
     ///
@@ -7540,7 +7540,7 @@ pub enum PropertyValue {
     ///
     /// [`Arc<Vec<..>>`] wrap は [`Self::CounterReset`] と同 rationale
     /// (`* { quotes: "«" "»" }` × N element の cascade winner clone /
-    /// inheritance walk clone を shallow Arc bump にする、DoS 対策)。
+    /// inheritance walk clone を shallow Arc reference-count increment にする、DoS 対策)。
     Quotes(Arc<Vec<(SmolStr, SmolStr)>>),
     /// `text-shadow: none | <shadow>#` — **inherited**、initial: `none`
     /// (CSS Text Decoration Module Level 3 §4
@@ -10573,11 +10573,11 @@ fn contains_function_in_source(input: &str, wanted: &str) -> bool {
 ///
 /// cssparser 0.37 は (0.36 までと異なり) 汎用 `Color` enum / `Color::parse` を
 /// 提供しない — それは別 crate `cssparser-color` 側に移った。ここでは
-/// 各 form の parse を自前 (cleanroom) で組み立て、hex / named / rgb() /
+/// 各 form の parse を自前 (独立実装) で組み立て、hex / named / rgb() /
 /// color() / lab() / lch() / oklab() / oklch() / color-mix() をカバーする:
 ///
 /// - **Hex** (`#rgb` / `#rgba` / `#rrggbb` / `#rrggbbaa`) は
-///   [`CssColor::from_hex`] を呼び出す — CSS Color 4 §5.2 準拠の cleanroom 実装。
+///   [`CssColor::from_hex`] を呼び出す — CSS Color 4 §5.2 準拠の 独立実装 実装。
 ///   `Token::Hash` / `Token::IDHash` の payload は leading `#` を含まないため
 ///   そのまま渡す。
 /// - **Named color** は `parse_named_color` (140+ CSS Color L3 keyword table を
@@ -14002,7 +14002,7 @@ fn parse_padding_side_res<'i>(input: &mut Parser<'i, '_>) -> Result<Length, Pars
 /// (`rule.rs::DeclParser`) の `expect_exhausted` がその leftover を検知して
 /// declaration ごと drop する ([`parse_padding_shorthand`] の "Robustness"
 /// 節と同型 — `padding_shorthand_rejects_any_negative_value` test の doc が
-/// 同じ shape を pin する)。
+/// 同じ shape を check する)。
 fn parse_padding_logical_shorthand(input: &mut Parser<'_, '_>) -> Option<StartEnd<Length>> {
     let start = parse_padding_side(input)?;
     let end = input.try_parse(parse_padding_side_res).ok();
@@ -14031,7 +14031,7 @@ fn parse_padding_logical_shorthand(input: &mut Parser<'_, '_>) -> Option<StartEn
 /// `use crate::property::{..}` で本 module の型を import している。逆方向の
 /// edge を作らないこと)。
 ///
-/// 一方「initial の border-width が **3px そのものである**」ことの pin は
+/// 一方「initial の border-width が **3px そのものである**」ことの check は
 /// test 側が literal で持つ。**これらを「一貫性のため」本 const への参照に
 /// 書き換えてはならない** — 全体が自己参照になり、const の誤編集を何も
 /// 検出できなくなる ([`INITIAL_FONT_SIZE_PX`](crate::computed::INITIAL_FONT_SIZE_PX)
@@ -14064,7 +14064,7 @@ pub(crate) const BORDER_WIDTH_MEDIUM_PX: f32 = 3.0;
 /// - `medium` → `Length::Px(3.0)` (initial value)
 /// - `thick`  → `Length::Px(5.0)`
 ///
-/// UA 裁量ではなく spec 規定の equivalence なので、cleanroom 制約下でも
+/// UA 裁量ではなく spec 規定の equivalence なので、独立実装の制約下でも
 /// そのまま採用できる (Chromium / Firefox / WebKit の実装とも一致)。
 ///
 /// # Sign / range
@@ -16004,7 +16004,7 @@ fn parse_place_self_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceSelfSho
 /// <https://www.w3.org/TR/css-fonts-4/#missing-weights> は "Fractional weights
 /// are valid" と明言する。WPT `css/css-fonts/parsing/font-weight-computed.html`
 /// の `test_computed_value('font-weight', '150.25')` (2-arg 形 = computed ==
-/// specified) がこれを直接 pin している。
+/// specified) がこれを直接 check している。
 ///
 /// payload ([`FontWeightValue::Absolute`]) と
 /// [`crate::computed::ComputedValues::font_weight`] は共に `f32` (以前は
@@ -16014,7 +16014,7 @@ fn parse_place_self_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceSelfSho
 /// §2.2.1 "Relative Weights" relative-weight table の*行選択*を変える 2 次被害
 /// があった (親 `font-weight: 349.5` + 子 `bolder` が旧実装では 350 への丸め後
 /// `350 <= w < 550` 行 → 700 に化け、spec の `100 <= w < 350` 行 → 400
-/// と食い違う。`549.5` + `bolder`、`749.5` + `lighter` も同型 — pin:
+/// と食い違う。`549.5` + `bolder`、`749.5` + `lighter` も同型 — check:
 /// `crate::cascade::tests::bolder_lighter_resolve_against_unrounded_fractional_parent_weight`)。
 /// `f32` 格上げにより丸めそのものが不要になったため、この 2 次被害も解消される。
 fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeightValue> {
@@ -22657,7 +22657,7 @@ mod tests {
     // ── rgb() / rgba() function form ──
     //
     // CSS Color 4 §5.1 legacy comma syntax の追加 form covers。
-    // 1 sample あたり CssColor 値まで pin (loose `Some(_)` は mix reject 系
+    // 1 sample あたり CssColor 値まで check (loose `Some(_)` は mix reject 系
     // regression が silent pass するため避ける、既存 background_color assert
     // pattern に揃える)。
 
@@ -22753,7 +22753,7 @@ mod tests {
     #[test]
     fn color_parse_rgb_modern_syntax_returns_none() {
         // §5.1 modern (space + slash) syntax `rgb(R G B / A)` は本 task
-        // で対応。legacy comma からの移行を pin.
+        // で対応。legacy comma からの移行を check.
         assert_eq!(
             parse("rgb(255 0 0)", "color"),
             Some(PropertyValue::Color(CssColor {
@@ -22834,7 +22834,7 @@ mod tests {
         // CSS Color 4 §6.3 "The transparent keyword": `transparent`
         // = rgba(0, 0, 0, 0)。Ident arm hardcodes a=255、明示 branch が無ければ
         // transparent が到達しても opaque black (`{0,0,0,255}`) になる bug の
-        // regression pin。
+        // regression check。
         assert_eq!(
             parse("transparent", "color"),
             Some(PropertyValue::Color(CssColor::TRANSPARENT))
@@ -22844,7 +22844,7 @@ mod tests {
     // ── CssColor::from_hex direct helper contract ──
     //
     // parse_color 経由の integration test は上で網羅済み。以下は helper 自体の
-    // API contract を pin する direct call test — rgb() function form
+    // API contract を check する direct call test — rgb() function form
     // や future property (border-*-color 等) が同じ primitive を消費するため、
     // 内部形状の regression を早く捕まえる目的。
 
@@ -22917,14 +22917,14 @@ mod tests {
 
     // ── background-color (CSS Backgrounds 3 §2.2) ──
     //
-    // 5-sample accept pin (task description Verification #4):
+    // 5-sample accept check (task description Verification #4):
     // named / hex / rgb() / rgba() / transparent が
     // `Some(PropertyValue::BackgroundColor(<exact RGBA>))` を返す。
     //
     // exact RGBA assert が必要な理由: `Some(_)` の loose form だと
     // `parse_color` の Ident arm が transparent に a=255 を返す regression
     // (opaque black に落ちる bug) を silent pass してしまうため、
-    // 5 sample 全て CssColor 値まで pin する。
+    // 5 sample 全て CssColor 値まで check する。
 
     #[test]
     fn background_color_parse_named() {
@@ -23238,7 +23238,7 @@ mod tests {
     /// **同一** underlying `Vec` allocation を指す (`Arc::ptr_eq` = true) —
     /// `OnceLock` 経由の shared slot であることの直接 pin。
     ///
-    /// この pin は cascade level の test (`mod@crate::cascade` の
+    /// この check は cascade level の test (`mod@crate::cascade` の
     /// `initial_font_family_shares_arc_slot_across_independent_cascade_runs`
     /// 等) では**代替できない** — `font-family` は inherited なので、単一
     /// document 内の兄弟 element は `SpecifiedValues::inherit_from` の
@@ -23357,7 +23357,7 @@ mod tests {
         // これは spec 沈黙点の選択ではなく表現上の制約による既知 divergence
         // だった。payload / `ComputedValues.font_weight`
         // を `f32` に格上げしたことで丸め自体が不要になり、本 test はその
-        // 解消を pin する — もはや丸めていないことの regression guard。
+        // 解消を check する — もはや丸めていないことの regression guard。
         // 全て 2 進数で厳密表現可能な小数 (`.5` / `.25`) — parse 側と期待値の
         // 独立な文字列→f32 変換が bit-for-bit 一致することを保証でき、
         // 丸め誤差を懸念せず `assert_eq!` で直接比較できる。
@@ -23371,9 +23371,9 @@ mod tests {
     fn font_weight_wpt_font_weight_computed_150_25() {
         // WPT css/css-fonts/parsing/font-weight-computed.html:
         // `test_computed_value('font-weight', '150.25')` — 2-arg 形は
-        // computed === specified を pin する。parse 結果 (specified-equivalent
+        // computed === specified を check する。parse 結果 (specified-equivalent
         // な `PropertyValue`) がそのまま `150.25` を保持することを確認する。
-        // cascade を経由した computed 側の同値 pin は
+        // cascade を経由した computed 側の同値 check は
         // `crate::cascade::tests::font_weight_wpt_font_weight_computed_150_25`。
         assert_eq!(parse("150.25", "font-weight"), fw(150.25));
     }
@@ -24018,7 +24018,7 @@ mod tests {
 
     #[test]
     fn content_bare_string_is_still_literal_not_image() {
-        // Regression pin: `<image>` production は `<url> | <gradient>` のみで
+        // Regression check: `<image>` production は `<url> | <gradient>` のみで
         // bare `<string>` を含まない (target-* の `[<string>|<url>]` とは別
         // grammar)。`expect_url` は quoted string 単体を受理しないため
         // `content: "cat.png"` は Literal のまま — Image への誤変換防止。
@@ -24135,7 +24135,7 @@ mod tests {
         // 経由しないため、本 helper 経由では 1-item 到達で観測できる — leftover
         // 自体の drop 挙動は既存 `content_rejects_unknown_function` /
         // `string_set_accepts_missing_comma_single_leftover_entry` と同じ
-        // break-then-leftover pattern の non-regression pin。
+        // break-then-leftover pattern の non-regression check。
         let items = content_items("counter(chapter) bogus");
         assert_eq!(
             items,
@@ -24174,7 +24174,7 @@ mod tests {
     // GCPM 3 §1.1.1 narrow list には `<image>` / `contents` / `<quote>` /
     // `leader()` のいずれも含まれない (既存の string_set_rejects_* group と
     // 同じ rationale — sibling test 群と揃えて 1 declaration = 1 rejection の
-    // pin にする)。
+    // check にする)。
 
     #[test]
     fn string_set_rejects_image_url() {
@@ -24312,7 +24312,7 @@ mod tests {
     // (`counter(chapter,)` 等) は spec-invalid → declaration ごと drop すべき。
     // sibling `parse_string_fetch` / `parse_content_part` は既に strict `?`
     // propagation、`parse_optional_counter_style` のみ silent Decimal fallback
-    // していた regression を pin する。
+    // していた regression を check する。
 
     #[test]
     fn content_counter_rejects_trailing_comma() {
@@ -24554,7 +24554,7 @@ mod tests {
         // 経由なし) では drop されず 1 entry の Some として観測される。
         // 実 caller (rule.rs) は expect_exhausted で declaration drop する
         // — 本 test は parse_string_set の break exit が Some (`.ok()?`
-        // 経路と混同しない) であることを pin する目的、trailing-comma fix の
+        // 経路と混同しない) であることを check する目的、trailing-comma fix の
         // non-regression coverage。
         let entries = string_set_entries(r#"a "x" b "y""#);
         assert_eq!(entries.len(), 1);
@@ -24578,7 +24578,7 @@ mod tests {
     // 挙動 = .hi rule drop → parser layer で確認)。
     //
     // 一方 content property (CssContent3 mode) はこれら全てを引き続き受理する
-    // (下の content_parse_* 系 pin test 群で non-regression 検証)。
+    // (下の content_parse_* 系 check test 群で non-regression 検証)。
 
     #[test]
     fn string_set_rejects_string_fn() {
@@ -24643,7 +24643,7 @@ mod tests {
     // pre-fix reproduction: `string-set: title content(text)` は
     // silent drop していた (parse_content_function match arm 欠如 →
     // parse_content_list_items break → 0 items → parse_string_set None →
-    // declaration drop)。arm 追加で Some を返すことを pin する。
+    // declaration drop)。arm 追加で Some を返すことを check する。
 
     #[test]
     fn string_set_content_text_reproduces_pre_fix_drop() {
@@ -24737,7 +24737,7 @@ mod tests {
         // (parse_content_fn の doc comment 参照)、`marker` reject は意図した
         // 挙動であって未解決の問題ではない。
         // 本 test は現状の GCPM3-scoped 実装の挙動を
-        // pin するものであり、`marker` が spec に一切存在しないという主張では
+        // check するものであり、`marker` が spec に一切存在しないという主張では
         // ない。
         assert_eq!(parse("content(marker)", "content"), None);
         assert_eq!(parse("content(bogus)", "content"), None);
@@ -24747,7 +24747,7 @@ mod tests {
     fn content_content_fn_rejects_target_text_keyword() {
         // §1.1.1.1 は `text` alternative を持つ (target-text() §2.6.3 は `content`)。
         // spec spelling divergence — `content(content)` は spec-invalid、reject。
-        // 混同 (sibling ContentPart 再利用) を防ぐ regression pin。
+        // 混同 (sibling ContentPart 再利用) を防ぐ regression check。
         assert_eq!(parse("content(content)", "content"), None);
     }
 
@@ -24997,9 +24997,9 @@ mod tests {
         // "When a value cannot be explicitly supported due to
         // range/precision limitations, it must be converted to the closest
         // value supported by the implementation" — 非有限は許容されないため、
-        // 符号を保持しつつ f32::MAX に寄った有限値を pin する。
+        // 符号を保持しつつ f32::MAX に寄った有限値を check する。
         assert_eq!(parse_length("1e40%", true), Some(Length::Percent(f32::MAX)));
-        // 符号保持も合わせて pin (負の overflow は -f32::MAX へ)。
+        // 符号保持も合わせて check (負の overflow は -f32::MAX へ)。
         assert_eq!(
             parse_length("-1e40%", true),
             Some(Length::Percent(-f32::MAX))
@@ -25102,7 +25102,7 @@ mod tests {
         assert_eq!(parse_length("10vw", false), None);
         assert_eq!(parse_length("1cap", true), None);
         // container-query unit (CSS Contain 3 §6) — `_` arm 直前 comment が
-        // 挙げる `cq*` 一覧をこの assertion で pin する。comment のみで
+        // 挙げる `cq*` 一覧をこの assertion で check する。comment のみで
         // test 未網羅だと、将来 `cq*` 対応 arm が誤って追加されても
         // どの test も落ちず canonical comment が silent に stale 化する
         // (spec-lens follow-up として追加)。
@@ -25376,13 +25376,13 @@ mod tests {
 
     #[test]
     fn padding_top_rejects_negative_rem() {
-        // 全 Length variant 経路の non-negative check pin (rem)。
+        // 全 Length variant 経路の non-negative check check (rem)。
         assert_eq!(parse("-0.5rem", "padding-top"), None);
     }
 
     #[test]
     fn padding_top_rejects_negative_pt() {
-        // 全 Length variant 経路の non-negative check pin (pt)。
+        // 全 Length variant 経路の non-negative check check (pt)。
         assert_eq!(parse("-3pt", "padding-top"), None);
     }
 
@@ -25408,7 +25408,7 @@ mod tests {
         // `[0,∞]` 制約違反で fail、try_parse rewind で 1-value form の Some を
         // parse_padding_shorthand が返す。ここで DeclParser の expect_exhausted
         // が leftover `-5px` を検知して declaration ごと drop する — 実 caller
-        // 経路として rule.rs 経由で drop を pin (parse_value 単体では
+        // 経路として rule.rs 経由で drop を check (parse_value 単体では
         // Some(all(10px)) が観測されるが、それは leftover 込みで invalid)。
         let decls_2 = crate::rule::parse_declaration_block(&mut Parser::new(
             &mut ParserInput::new("padding: 10px -5px;"),
@@ -25448,7 +25448,7 @@ mod tests {
         // 1-value form の Some を parse_padding_shorthand が返す。ここまでは
         // parse_value 単体で観測可能だが、DeclParser の expect_exhausted が
         // leftover `auto` を検知して declaration drop する — 実 caller 経路の
-        // pin として rule.rs 経由でも drop することを確認。
+        // check として rule.rs 経由でも drop することを確認。
         let decls = crate::rule::parse_declaration_block(&mut Parser::new(&mut ParserInput::new(
             "padding: 10px auto;",
         )));
@@ -25500,19 +25500,19 @@ mod tests {
 
     #[test]
     fn padding_top_rejects_negative_cm() {
-        // 全 Length variant 経路の non-negative check pin (cm、新規 absolute unit)。
+        // 全 Length variant 経路の non-negative check check (cm、新規 absolute unit)。
         assert_eq!(parse("-1cm", "padding-top"), None);
     }
 
     #[test]
     fn padding_top_rejects_negative_ex() {
-        // 全 Length variant 経路の non-negative check pin (ex、新規 font-relative unit)。
+        // 全 Length variant 経路の non-negative check check (ex、新規 font-relative unit)。
         assert_eq!(parse("-1ex", "padding-top"), None);
     }
 
     #[test]
     fn padding_top_rejects_negative_lh() {
-        // 全 Length variant 経路の non-negative check pin (`lh`/`rlh`、
+        // 全 Length variant 経路の non-negative check check (`lh`/`rlh`、
         // `length_payload` の OR-pattern に `Lh`/`Rlh`
         // を足し忘れていないことの直接 pin)。
         assert_eq!(parse("-1lh", "padding-top"), None);
@@ -25583,7 +25583,7 @@ mod tests {
     //
     // Verification 5/6/7 の spec-derived: grammar `normal |
     // <number [0,∞]> | <length-percentage [0,∞]>` — 4 accept branch + negative
-    // reject + Number vs Length variant distinction を pin する。
+    // reject + Number vs Length variant distinction を check する。
     //
     // sibling: parse_display (keyword accept)、parse_font_size (Length
     // post-filter for non-negative)、parse_length_value (unit dispatch)。
@@ -25656,7 +25656,7 @@ mod tests {
     #[test]
     fn line_height_accepts_length_em_rem_pt() {
         // 5 unit sample の length-percentage branch smoke — parse_length_value
-        // helper との integration を pin (em/rem/pt helper 経由)。
+        // helper との integration を check (em/rem/pt helper 経由)。
         assert_eq!(
             parse("1.2em", "line-height"),
             Some(PropertyValue::LineHeight(LineHeight::Length(Length::Em(
@@ -26297,7 +26297,7 @@ mod tests {
     /// pinned so a future refactor can't "fix" this into a no-op passthrough
     /// without a test noticing).
     ///
-    /// Debt (`raikiri-spike-zhmp`): vertical writing-mode 実装時に本 collapse を
+    /// Future work: vertical writing-mode 実装時に本 collapse を
     /// 削除し、本 test を revert/rewrite すること。
     #[test]
     fn resolve_writing_mode_collapses_all_five_keywords_to_horizontal_tb() {
@@ -28419,7 +28419,7 @@ mod tests {
     fn page_break_before_after_legacy_shorthand_remaps_always_to_page() {
         // CSS Fragmentation Module Level 3 §3.4 mapping table verbatim:
         // `always` (page-break-*) -> `page` (break-*). Non-identity remap —
-        // pin the exact equality with the longhand spelling, mirroring
+        // check the exact equality with the longhand spelling, mirroring
         // `word_wrap_legacy_alias_parses_identically_to_overflow_wrap`'s
         // shape (there the two spellings are identical; here they are not,
         // which is exactly what this test must catch).
@@ -29356,7 +29356,7 @@ mod tests {
 
     #[test]
     fn margin_side_case_insensitive_auto() {
-        // CSS spec: ident keyword は ASCII case-insensitive。`AUTO` 受理を pin
+        // CSS spec: ident keyword は ASCII case-insensitive。`AUTO` 受理を check
         // (expect_ident_matching が case-insensitive の証拠、helper 変更で
         // regression した際の canary)。
         assert_eq!(
@@ -29526,7 +29526,7 @@ mod tests {
         // return。DeclParser::parse_value の expect_exhausted で最終的に
         // declaration drop されるので、rule.rs 側 test
         // (`margin_shorthand_five_values_declaration_dropped`) で end-to-end
-        // 挙動を pin する。本 test は parse_value 単体 (caller expect_exhausted
+        // 挙動を check する。本 test は parse_value 単体 (caller expect_exhausted
         // 経由なし) では 4 value までは Some が返る shape の pin。
         let want = Sides {
             top: LengthOrAuto::Length(Length::Px(10.0)),
@@ -29825,7 +29825,7 @@ mod tests {
         // `property_key_for_name` — the deferred (`var()`) path's key
         // lookup (`parse_value`'s deferred-detection branch) must agree with
         // `parse_value`'s own non-deferred arm for every logical longhand,
-        // or `resolve_deferred_value`'s `value.key() == key` fast path
+        // or `resolve_deferred_value`'s `value.key() == key` optimized path
         // (`cascade::project_deferred_value` doc) silently breaks.
         assert_eq!(
             property_key_for_name("margin-inline-start"),
@@ -29926,7 +29926,7 @@ mod tests {
     fn width_parse_length_px() {
         // Verification #2: `width: 100px` → Width(Length(Px(100)))。
         // 従来 `unknown_property_returns_none` canary で `None` だった箇所が
-        // 実 variant を返すようになった transition pin (canary はその後
+        // 実 variant を返すようになった transition check (canary はその後
         // `float` を経て `cursor` に移設済み)。
         assert_eq!(
             parse("100px", "width"),
@@ -29939,7 +29939,7 @@ mod tests {
     #[test]
     fn border_width_thin_thick_keywords_map_to_1px_5px() {
         // spec §3.3 規定値: thin=1px、thick=5px。
-        // 4 side 各 arm の smoke — arm cross-copy regression pin (`top` arm を
+        // 4 side 各 arm の smoke — arm cross-copy regression check (`top` arm を
         // `right` arm に誤 wire しても本 test で fail する)。
         assert_eq!(
             parse("thin", "border-right-width"),
@@ -30037,7 +30037,7 @@ mod tests {
     fn border_width_accepts_absolute_unit() {
         // `<line-width>` の `<length [0,∞]>` half は `<percentage>` を含まないが
         // 他 absolute unit は含む — 追加した `pc` を
-        // border-width 経路 (`allow_percentage=false`) でも pin する。
+        // border-width 経路 (`allow_percentage=false`) でも check する。
         assert_eq!(
             parse("1pc", "border-top-width"),
             Some(PropertyValue::BorderTopWidth(Length::Pc(1.0)))
@@ -30046,7 +30046,7 @@ mod tests {
 
     #[test]
     fn border_width_rejects_negative_absolute_unit() {
-        // 全 unit-bearing variant の non-negative check pin (cm、新規 absolute unit)。
+        // 全 unit-bearing variant の non-negative check check (cm、新規 absolute unit)。
         assert_eq!(parse("-1cm", "border-top-width"), None);
     }
 
@@ -30145,7 +30145,7 @@ mod tests {
 
     #[test]
     fn width_parse_length_em() {
-        // font-relative unit 経路 pin — parse_length_value 経由で em を受理。
+        // font-relative unit 経路 check — parse_length_value 経由で em を受理。
         assert_eq!(
             parse("2em", "width"),
             Some(PropertyValue::Width(LengthOrAuto::Length(Length::Em(2.0))))
@@ -30203,13 +30203,13 @@ mod tests {
 
     #[test]
     fn width_rejects_negative_percentage() {
-        // 全 Length variant OR-pattern check の pin (Percent 分岐)。
+        // 全 Length variant OR-pattern check の check (Percent 分岐)。
         assert_eq!(parse("-50%", "width"), None);
     }
 
     #[test]
     fn width_rejects_negative_em() {
-        // 全 Length variant OR-pattern check の pin (Em 分岐)。
+        // 全 Length variant OR-pattern check の check (Em 分岐)。
         assert_eq!(parse("-2em", "width"), None);
     }
 
@@ -30313,7 +30313,7 @@ mod tests {
     #[test]
     fn width_accepts_absolute_unit() {
         // `1in` = 96px 相当 (specified 層は authored unit をそのまま保持、
-        // 絶対化は resolve.rs の責務 — pin: `resolve::tests::length_additional_absolute_units_convert_per_spec_table`)。
+        // 絶対化は resolve.rs の責務 — check: `resolve::tests::length_additional_absolute_units_convert_per_spec_table`)。
         assert_eq!(
             parse("1in", "width"),
             Some(PropertyValue::Width(LengthOrAuto::Length(Length::In(1.0))))
@@ -30322,7 +30322,7 @@ mod tests {
 
     #[test]
     fn width_case_insensitive_auto() {
-        // CSS spec: ident keyword は ASCII case-insensitive。`AUTO` 受理を pin
+        // CSS spec: ident keyword は ASCII case-insensitive。`AUTO` 受理を check
         // (sibling `margin_side_case_insensitive_auto` と同 pattern)。
         assert_eq!(
             parse("AUTO", "width"),
@@ -30387,7 +30387,7 @@ mod tests {
     fn border_top_color_parse_currentcolor() {
         // CSS Backgrounds 3 §3.1 <https://www.w3.org/TR/css-backgrounds-3/#border-color>
         // "Initial: currentcolor" — author 明示 `border-*-color: currentcolor` が
-        // `BorderColor::CurrentColor` variant として保持されることを pin する
+        // `BorderColor::CurrentColor` variant として保持されることを check する
         // (hazard case 1 の cascade-side coverage、used-value resolution は
         // paint scope 責務)。
         assert_eq!(
@@ -30428,7 +30428,7 @@ mod tests {
 
     #[test]
     fn border_shorthand_any_order() {
-        // spec §3.4 grammar は `||` (any-order)。全 6 permutation を pin する
+        // spec §3.4 grammar は `||` (any-order)。全 6 permutation を check する
         // 代わりに 3 order (color-first / style-first / mixed) を smoke。
         let expected = Border {
             width: Length::Px(2.0),
@@ -30500,7 +30500,7 @@ mod tests {
         // drifting silently. The sibling tests
         // `border_top_width_parse_medium_keyword` and
         // `border_shorthand_omitted_components_use_initial` independently
-        // pin the *absolute* value (`3.0`) as a literal — do not fold those
+        // check the *absolute* value (`3.0`) as a literal — do not fold those
         // into a reference to the const, or nothing catches an accidental
         // edit to the const itself (see the const's doc).
         let via_keyword = parse("medium", "border-top-width");
@@ -30532,7 +30532,7 @@ mod tests {
     fn border_default_matches_initial_border() {
         // `Border::default()` (public, umbrella-facing
         // constructor) and `crate::specified::INITIAL_BORDER` (`pub(crate)`,
-        // cascade-internal fast path) encode the same CSS Backgrounds 3
+        // cascade-internal optimized path) encode the same CSS Backgrounds 3
         // initial value. Precision on what this actually catches (the sibling
         // test just above, `border_width_medium_is_consistent_across_its_independent_call_sites`,
         // warns explicitly against a "vacuous pin" of this shape):
@@ -30549,7 +30549,7 @@ mod tests {
         //   `border_top_width_parse_medium_keyword`'s absolute-value literal
         //   pin) already covers. This test's width leg is a
         //   both-must-reference-the-same-const structural check, not an
-        //   independent value pin — do not treat it as one.
+        //   independent value check — do not treat it as one.
         assert_eq!(Border::default(), crate::specified::INITIAL_BORDER);
     }
 
@@ -30557,7 +30557,7 @@ mod tests {
     fn border_new_is_default() {
         // `Border::new()` is documented as a thin
         // `Self::default()` wrapper (same shape as
-        // `raikiri_traits::page::PageBox::new`) — pin that the two stay
+        // `raikiri_traits::page::PageBox::new`) — check that the two stay
         // equivalent.
         assert_eq!(Border::new(), Border::default());
     }
@@ -30603,7 +30603,7 @@ mod tests {
         // width slot 満了、`2px` は他 slot (style/color) に match しないため
         // fall-through break。leftover は caller の `expect_exhausted` 責務。
         // 本 helper 単体としては 1st を確保して Some を返す (parse_value 経路
-        // では end-to-end で declaration drop する — rule.rs test で pin 予定)。
+        // では end-to-end で declaration drop する — rule.rs test で check 予定)。
         let expected = Border {
             width: Length::Px(1.0),
             style: BorderStyle::None,
@@ -30797,7 +30797,7 @@ mod tests {
 
     #[test]
     fn height_rejects_negative_percentage() {
-        // 非負フィルタが Percent variant にも効く pin (parse_padding_side の
+        // 非負フィルタが Percent variant にも効く check (parse_padding_side の
         // 同 pattern、Verification 4 の姉妹)。
         assert_eq!(parse("-10%", "height"), None);
     }
@@ -33860,7 +33860,7 @@ mod tests {
     // (<https://www.w3.org/TR/css-values-4/#urls>) の共通 helper を property
     // dispatcher (`parse_value`) を経由せず直接叩く — `background-image` の
     // 呼び出し経路とは独立に helper 自体の grammar 境界 (unquoted/quoted
-    // form、`<url-modifier>` reject 等) を pin する
+    // form、`<url-modifier>` reject 等) を check する
     // (`parse_length_value` helper 単体 test と同じ fixture pattern)。
 
     fn parse_url(source: &str) -> Option<String> {
@@ -35323,7 +35323,7 @@ mod tests {
     fn background_image_rejects_bare_string_without_url_wrapper() {
         // `<image>` は `<url> | <gradient>` のみで bare `<string>` を含まない
         // — `parse_url_value` doc の同節参照 (`content_bare_string_is_still_literal_not_image`
-        // と同型の regression pin)。
+        // と同型の regression check)。
         assert_eq!(parse("\"foo.png\"", "background-image"), None);
     }
 
@@ -35345,7 +35345,7 @@ mod tests {
         assert_eq!(v.key(), PropertyKey::BackgroundImage);
     }
 
-    // ── background-* comma-list (multi-layer) rejection (raikiri-spike-nh7f) ──
+    // ── background-* comma-list (multi-layer) rejection ──
 
     #[test]
     fn background_longhands_reject_comma_separated_multi_layer() {
@@ -35606,7 +35606,7 @@ mod tests {
     /// second sets `background-clip` (spec §2.10 verbatim, [`BackgroundShorthand`]
     /// doc). Neither of the spec's own worked examples exercises 2
     /// *different* values (its only 2-occurrence-adjacent example still
-    /// repeats the same keyword), so this is a crate-authored regression pin
+    /// repeats the same keyword), so this is a crate-authored regression check
     /// for the origin-then-clip assignment order specifically.
     #[test]
     fn background_shorthand_two_distinct_visual_boxes_assign_origin_then_clip() {
@@ -36006,7 +36006,7 @@ mod tests {
     // `parse_bg_position` (`CssPosition` doc's Grammar section) — its Value
     // is plain `<position>` (CSS Values 4 §8.3), not `<bg-position>`
     // (`<bg-position>` is `background-position`'s own extension, CSS
-    // Backgrounds 3 §2.6). The `background_position_*` tests above pin
+    // Backgrounds 3 §2.6). The `background_position_*` tests above check
     // `<bg-position>` coverage (they exercise `parse_bg_position`, which
     // *does* accept the 3-value edge-offset form `<bg-position>` adds on top
     // of `<position>`) — that is NOT full `<position>` coverage, since the
@@ -36414,7 +36414,7 @@ mod tests {
 
     #[test]
     fn mask_image_parse_gradient_reuses_the_shared_gradient_parser() {
-        // grammar-shape reuse pin (`parse_mask_image` doc) — the gradient
+        // grammar-shape reuse check (`parse_mask_image` doc) — the gradient
         // internals themselves are already exhaustively covered by
         // `background-image`'s own gradient tests, so this only confirms
         // the `<gradient>` alternative is reachable through `mask-image`.
@@ -37304,7 +37304,7 @@ mod tests {
     // ── table-layout (CSS Tables 3 §4) ────────────────────────────────────
     //
     // WPT css/css-tables/parsing/table-layout-{valid,invalid}.html の
-    // grammar (`auto | fixed`) を pin する。invalid 側 2 case
+    // grammar (`auto | fixed`) を check する。invalid 側 2 case
     // (`none` / `auto fixed`) は caller の `expect_exhausted`
     // (rule.rs::DeclParser) が落とす — ここでは `parse_entire` で同条件を
     // 再現する。
@@ -37342,7 +37342,7 @@ mod tests {
     // ── border-collapse (CSS Tables 3 §6) ─────────────────────────────────
     //
     // WPT css/css-tables/parsing/border-collapse-{valid,invalid}.html の
-    // grammar (`collapse | separate`) を pin する (同上の構成)。
+    // grammar (`collapse | separate`) を check する (同上の構成)。
 
     #[test]
     fn border_collapse_accepts_collapse_and_separate() {

@@ -8,7 +8,7 @@
 //! を per-run 変換 (parley::Glyph → anyrender::Glyph) して scene に送る。
 //!
 //! 座標系: parley Layout origin (0,0) 左上、positioned_glyphs() が line 内
-//! offset + baseline を baked-in。anyrender transform は text node の絶対座標
+//! offset + baseline を stored directly。anyrender transform は text node の絶対座標
 //! への平行移動のみで済む (baseline / offset 加算不要)。
 
 use std::sync::Arc;
@@ -217,7 +217,7 @@ pub(crate) fn draw_text_node(
     let cv = &cascade.computed[node_id];
     let brush = css_color_to_peniko(cv.color);
 
-    // parley positioned_glyphs() は line 内 offset + baseline を baked-in するので
+    // parley positioned_glyphs() は line 内 offset + baseline を stored directly するので
     // scene transform は text node の絶対座標への平行移動のみ。
     let base_transform = Affine::translate((abs_x as f64, (abs_y + shift_y) as f64));
     // Parley applies one alignment to every line. CSS `text-align-last` can

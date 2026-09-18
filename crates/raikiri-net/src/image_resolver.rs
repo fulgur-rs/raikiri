@@ -86,7 +86,7 @@ impl<N: NetworkProvider> ImagePixelSource for ImageResolver<N> {
 /// (normalizing all to RGBA8); anything else (16-bit depth, sub-byte
 /// (1/2/4-bit) depth, indexed/palette) is a decode error. Interlaced PNGs
 /// decode fine — `png::Reader::next_frame` de-interlaces into the output
-/// buffer before this function ever sees it. This MVP only needs to decode
+/// buffer before this function ever sees it. This initial implementation only needs to decode
 /// images this same pipeline or common tools produce, not the full PNG
 /// format matrix.
 fn decode_png(bytes: &[u8]) -> Result<DecodedImage, String> {
