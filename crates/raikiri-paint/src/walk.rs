@@ -1104,13 +1104,15 @@ fn margin_box_side_margin(
     shorthand: Option<LengthOrAuto>,
     font_size: f32,
 ) -> f32 {
-    let value = margin_box_property(rule, key).and_then(|value| match value {
-        PropertyValue::MarginTop(value)
-        | PropertyValue::MarginRight(value)
-        | PropertyValue::MarginBottom(value)
-        | PropertyValue::MarginLeft(value) => Some(value),
-        _ => shorthand.as_ref(),
-    });
+    let value = margin_box_property(rule, key)
+        .and_then(|value| match value {
+            PropertyValue::MarginTop(value)
+            | PropertyValue::MarginRight(value)
+            | PropertyValue::MarginBottom(value)
+            | PropertyValue::MarginLeft(value) => Some(value),
+            _ => None,
+        })
+        .or(shorthand.as_ref());
     value
         .map(|value| margin_box_length(value, basis, font_size))
         .unwrap_or(0.0)
