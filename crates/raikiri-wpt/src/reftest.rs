@@ -6,6 +6,7 @@
 //! The default viewport is 800×600 CSS px (WPT reftest harness default).
 //! Callers may supply a custom size via [`ReftestConfig`].
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::runner::{TestOutcome, Tolerance};
@@ -16,7 +17,6 @@ use crate::runner::{TestOutcome, Tolerance};
 pub const DEFAULT_REFTTEST_WIDTH: u32 = 800;
 /// Default reftest viewport height (CSS px).
 pub const DEFAULT_REFTTEST_HEIGHT: u32 = 600;
-
 // ── ReftestKind ────────────────────────────────────────────────────────
 
 /// Whether a reftest requires visual match or explicit mismatch.
@@ -85,6 +85,36 @@ pub struct RenderedImage {
 pub struct RenderedDocument {
     /// Pages in document order.
     pub pages: Vec<RenderedImage>,
+}
+
+/// One inclusive, one-based page range from `reftest-pages` metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PageRange {
+    start: Option<usize>,
+    end: Option<usize>,
+}
+
+/// Selected pages for a print reftest.  The stored endpoints remain open until
+/// the rendered document supplies its page count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PageSelection {
+    ranges: Vec<PageRange>,
+}
+
+impl PageSelection {
+    fn indices(&self, total_pages: usize) -> Vec<usize> {
+        let mut indices = BTreeSet::new();
+        for range in &self.ranges {
+            let start = range.start.unwrap_or(1);
+            let end = range.end.unwrap_or(total_pages);
+            if start == 0 || start > end || start > total_pages {
+                continue;
+            }
+            let end = end.min(total_pages);
+            indices.extend((start..=end).map(|page| page - 1));
+        }
+        indices.into_iter().collect()
+    }
 }
 
 // ── Tolerance re-use ───────────────────────────────────────────────────
@@ -283,6 +313,144 @@ fn extract_attr<'a>(tag: &'a str, tag_lower: &'a str, name: &str) -> Option<Stri
         }
     }
     None
+}
+
+fn parse_page_number(token: &str) -> Option<usize> {
+    let number = token.trim().parse::<usize>().ok()?;
+    (number > 0).then_some(number)
+}
+
+fn parse_page_selection(spec: &str) -> Option<PageSelection> {
+    let mut ranges = Vec::new();
+    for item in spec.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        let range = if let Some((start, end)) = item.split_once('-') {
+            if end.contains('-') {
+                return None;
+            }
+            let start = if start.trim().is_empty() {
+                None
+            } else {
+                Some(parse_page_number(start)?)
+            };
+            let end = if end.trim().is_empty() {
+                None
+            } else {
+                Some(parse_page_number(end)?)
+            };
+            PageRange { start, end }
+        } else {
+            let page = parse_page_number(item)?;
+            PageRange {
+                start: Some(page),
+                end: Some(page),
+            }
+        };
+        ranges.push(range);
+    }
+    (!ranges.is_empty()).then_some(PageSelection { ranges })
+}
+
+fn parse_reftest_pages_meta(html: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let mut search = 0;
+    while let Some(relative) = lower[search..].find("<meta") {
+        let start = search + relative;
+        let after_name = start + "<meta".len();
+        if lower
+            .as_bytes()
+            .get(after_name)
+            .is_some_and(|byte| !byte.is_ascii_whitespace() && *byte != b'>')
+        {
+            search = after_name;
+            continue;
+        }
+        let Some(end_rel) = lower[start..].find('>') else {
+            break;
+        };
+        let end = start + end_rel;
+        let tag = &html[start..=end];
+        let tag_lower = &lower[start..=end];
+        if extract_attr(tag, tag_lower, "name")
+            .is_some_and(|name| name.trim().eq_ignore_ascii_case("reftest-pages"))
+        {
+            return extract_attr(tag, tag_lower, "content")
+                .map(|content| content.trim().to_owned())
+                .filter(|content| !content.is_empty());
+        }
+        search = end + 1;
+    }
+    None
+}
+
+fn target_matches_reference(target: &str, reference: &Path) -> bool {
+    let target = target
+        .trim()
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .replace('\\', "/");
+    if target.is_empty() {
+        return false;
+    }
+    let target = target.strip_prefix("./").unwrap_or(&target);
+    let target = target.strip_prefix('/').unwrap_or(target);
+    let reference_path = reference.to_string_lossy().replace('\\', "/");
+    let file_name = reference
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    target == file_name
+        || target == reference_path
+        || reference_path.ends_with(&format!("/{target}"))
+}
+
+fn split_page_selection_spec(
+    spec: &str,
+    reference: &Path,
+) -> (Option<PageSelection>, Option<PageSelection>) {
+    let mut shared = Vec::new();
+    let mut targeted = Vec::new();
+    for item in spec.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        if let Some((target, range)) = item.split_once(':') {
+            if target_matches_reference(target, reference) {
+                targeted.push(range.trim());
+            }
+        } else {
+            shared.push(item);
+        }
+    }
+    (
+        parse_page_selection(&shared.join(",")),
+        parse_page_selection(&targeted.join(",")),
+    )
+}
+
+fn page_selections_for_pair(
+    test_html: &str,
+    reference: &Path,
+) -> (Option<PageSelection>, Option<PageSelection>) {
+    // WPT attaches `page_ranges` to the root test manifest item. Reference
+    // files are support nodes, so an unkeyed meta tag in a reference file does
+    // not participate in the root test's screenshot filtering. A keyed item
+    // in the test is retained for the explicit-reference form used by WPT.
+    let mut test_selection = None;
+    let mut reference_selection = None;
+    if let Some(spec) = parse_reftest_pages_meta(test_html) {
+        let (shared, targeted) = split_page_selection_spec(&spec, reference);
+        test_selection = shared;
+        if let Some(targeted) = targeted {
+            reference_selection = Some(targeted);
+        }
+    }
+    (test_selection, reference_selection)
 }
 
 /// Discover all `ReftestPair`s declared by one test file.
@@ -564,57 +732,325 @@ fn first_authored_page_name(input: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
-fn inject_default_page_margin(input: &str) -> String {
-    let lower = input.to_ascii_lowercase();
-    let Some(page_start) = lower.find("@page") else {
-        return input.to_string();
-    };
-    let Some(relative_open) = lower[page_start..].find('{') else {
-        return input.to_string();
-    };
-    let open = page_start + relative_open;
-    let content_start = open + 1;
-    let mut nested_start = input.len();
+fn css_block_end(input: &str, open: usize) -> Option<usize> {
+    let bytes = input.as_bytes();
     let mut depth = 0_u32;
     let mut quote = None;
-    for index in content_start..input.len() {
-        let byte = input.as_bytes()[index];
+    let mut index = open;
+    while index < bytes.len() {
+        let byte = bytes[index];
         if let Some(delimiter) = quote {
+            if byte == b'\\' {
+                index = (index + 2).min(bytes.len());
+                continue;
+            }
             if byte == delimiter {
                 quote = None;
             }
+            index += 1;
             continue;
         }
         if byte == b'"' || byte == b'\'' {
             quote = Some(byte);
-        } else if (byte == b'{' || byte == b'}') && depth == 0 {
-            nested_start = index;
-            break;
-        } else if byte == b'{' {
-            depth += 1;
+            index += 1;
+            continue;
         }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            index += 2;
+            while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/') {
+                index += 1;
+            }
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+        index += 1;
     }
-    let top_level = &input[content_start..nested_start];
-    let has_authored_page_edge = top_level.split(';').any(|declaration| {
-        declaration
-            .split_once(':')
-            .and_then(|(key, _)| key.split_whitespace().last())
-            .is_some_and(|key| {
-                let key = key.to_ascii_lowercase();
-                key == "margin"
-                    || key.starts_with("margin-")
-                    || key == "border"
-                    || key.starts_with("border-")
+    None
+}
+
+fn top_level_css_block_end(input: &str, open: usize, close: usize) -> usize {
+    let bytes = input.as_bytes();
+    let mut depth = 0_u32;
+    let mut quote = None;
+    let mut index = open + 1;
+    while index < close {
+        let byte = bytes[index];
+        if let Some(delimiter) = quote {
+            if byte == b'\\' {
+                index = (index + 2).min(close);
+                continue;
+            }
+            if byte == delimiter {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'"' || byte == b'\'' {
+            quote = Some(byte);
+            index += 1;
+            continue;
+        }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            index += 2;
+            while index + 1 < close && !(bytes[index] == b'*' && bytes[index + 1] == b'/') {
+                index += 1;
+            }
+            index = (index + 2).min(close);
+            continue;
+        }
+        match byte {
+            b'{' => {
+                if depth == 0 {
+                    return index;
+                }
+                depth += 1;
+            }
+            b'}' if depth > 0 => depth -= 1,
+            _ => {}
+        }
+        index += 1;
+    }
+    close
+}
+
+fn strip_css_comments(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(start) = rest.find("/*") {
+        output.push_str(&rest[..start]);
+        let after_start = &rest[start + 2..];
+        let Some(end) = after_start.find("*/") else {
+            return output;
+        };
+        rest = &after_start[end + 2..];
+    }
+    output.push_str(rest);
+    output
+}
+
+fn inject_default_page_margin(input: &str) -> String {
+    let lower = input.to_ascii_lowercase();
+    let mut page_rules = Vec::new();
+    let mut search = 0;
+    while let Some(relative) = lower[search..].find("@page") {
+        let page_start = search + relative;
+        let before_ok = page_start == 0
+            || !lower.as_bytes()[page_start - 1].is_ascii_alphanumeric()
+                && lower.as_bytes()[page_start - 1] != b'-'
+                && lower.as_bytes()[page_start - 1] != b'_';
+        let after_name = page_start + "@page".len();
+        let after_ok = lower
+            .as_bytes()
+            .get(after_name)
+            .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'-' && *byte != b'_');
+        if !before_ok || !after_ok {
+            search = after_name;
+            continue;
+        }
+        let Some(open_rel) = lower[page_start..].find('{') else {
+            break;
+        };
+        let open = page_start + open_rel;
+        let Some(close) = css_block_end(input, open) else {
+            break;
+        };
+        let top_level_end = top_level_css_block_end(input, open, close);
+        let top_level = &input[open + 1..top_level_end];
+        let mut margin_sides = [false; 4];
+        let mut has_authored_border = false;
+        for declaration in top_level.split(';') {
+            let Some((key, _)) = declaration.split_once(':') else {
+                continue;
+            };
+            let key = key
+                .rsplit("*/")
+                .next()
+                .unwrap_or(key)
+                .trim()
+                .to_ascii_lowercase();
+            match key.as_str() {
+                "margin" => margin_sides = [true; 4],
+                "margin-top" => margin_sides[0] = true,
+                "margin-right" => margin_sides[1] = true,
+                "margin-bottom" => margin_sides[2] = true,
+                "margin-left" => margin_sides[3] = true,
+                "border" | "border-top" | "border-right" | "border-bottom" | "border-left"
+                | "border-width" | "border-style" | "border-color" => {
+                    has_authored_border = true;
+                }
+                _ if key.starts_with("border-") => has_authored_border = true,
+                _ => {}
+            }
+        }
+        // A selector-less @page rule is the only rule that can establish the
+        // low-specificity baseline for all page contexts.  Strip comments so
+        // that a formatting comment between `@page` and `{` does not make a
+        // default rule look like a named or pseudo page.
+        let selector = strip_css_comments(&input[after_name..open]);
+        let selector = selector.trim();
+        let is_unqualified = selector.is_empty();
+        page_rules.push((open + 1, is_unqualified, margin_sides, has_authored_border));
+        search = close + 1;
+    }
+
+    let has_unqualified_rule = page_rules.iter().any(|(_, unqualified, _, _)| *unqualified);
+    let insertions: Vec<(usize, String)> = if has_unqualified_rule {
+        // Fill only the omitted physical sides of an unqualified rule.  This
+        // keeps the fallback lower-specificity than named/pseudo rules and
+        // lets an authored `margin: 0` (or individual side) win normally.
+        page_rules
+            .iter()
+            .filter_map(|(position, unqualified, margins, has_border)| {
+                if !*unqualified || *has_border {
+                    return None;
+                }
+                let names = [
+                    ("margin-top", 0),
+                    ("margin-right", 1),
+                    ("margin-bottom", 2),
+                    ("margin-left", 3),
+                ];
+                let mut declarations = String::new();
+                for (name, index) in names {
+                    if !margins[index] {
+                        declarations.push_str(name);
+                        declarations.push_str(": 48px;");
+                    }
+                }
+                (!declarations.is_empty()).then_some((*position, declarations))
             })
-    });
-    if has_authored_page_edge {
+            .collect()
+    } else {
+        // Preserve the historical behavior for documents that define only a
+        // named/pseudo page rule: its default margin is local to that rule, so
+        // an unselected page keeps the harness fallback geometry.
+        let has_authored_page_edge = page_rules
+            .iter()
+            .any(|(_, _, margins, has_border)| margins.iter().any(|value| *value) || *has_border);
+        if has_authored_page_edge {
+            page_rules
+                .first()
+                .filter(|(_, _, margins, has_border)| {
+                    !margins.iter().any(|value| *value) && !*has_border
+                })
+                .map(|(position, _, _, _)| vec![(*position, "margin: 48px;".to_owned())])
+                .unwrap_or_default()
+        } else {
+            page_rules
+                .iter()
+                .map(|(position, _, _, _)| (*position, "margin: 48px;".to_owned()))
+                .collect()
+        }
+    };
+    if insertions.is_empty() {
         return input.to_string();
     }
-    let mut output = String::with_capacity(input.len() + 16);
-    output.push_str(&input[..content_start]);
-    output.push_str("margin: 48px;");
-    output.push_str(&input[content_start..]);
+    let added = insertions
+        .iter()
+        .map(|(_, declarations)| declarations.len())
+        .sum::<usize>();
+    let mut output = String::with_capacity(input.len() + added);
+    let mut copied_until = 0;
+    for (insertion, declarations) in insertions {
+        output.push_str(&input[copied_until..insertion]);
+        output.push_str(&declarations);
+        copied_until = insertion;
+    }
+    output.push_str(&input[copied_until..]);
     output
+}
+
+fn page_rule_edge_summaries(input: &str) -> Vec<([bool; 4], bool, bool)> {
+    let lower = input.to_ascii_lowercase();
+    let mut summaries = Vec::new();
+    let mut search = 0;
+    while let Some(relative) = lower[search..].find("@page") {
+        let page_start = search + relative;
+        let before_ok = page_start == 0
+            || !lower.as_bytes()[page_start - 1].is_ascii_alphanumeric()
+                && lower.as_bytes()[page_start - 1] != b'-'
+                && lower.as_bytes()[page_start - 1] != b'_';
+        let after_name = page_start + "@page".len();
+        let after_ok = lower
+            .as_bytes()
+            .get(after_name)
+            .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'-' && *byte != b'_');
+        if !before_ok || !after_ok {
+            search = after_name;
+            continue;
+        }
+        let Some(open_rel) = lower[page_start..].find('{') else {
+            break;
+        };
+        let open = page_start + open_rel;
+        let Some(close) = css_block_end(input, open) else {
+            break;
+        };
+        let top_level_end = top_level_css_block_end(input, open, close);
+        let top_level = &input[open + 1..top_level_end];
+        let mut margins = [false; 4];
+        let mut border = false;
+        for declaration in top_level.split(';') {
+            let Some((key, _)) = declaration.split_once(':') else {
+                continue;
+            };
+            let key = key
+                .rsplit("*/")
+                .next()
+                .unwrap_or(key)
+                .trim()
+                .to_ascii_lowercase();
+            match key.as_str() {
+                "margin" => margins = [true; 4],
+                "margin-top" => margins[0] = true,
+                "margin-right" => margins[1] = true,
+                "margin-bottom" => margins[2] = true,
+                "margin-left" => margins[3] = true,
+                "border" | "border-top" | "border-right" | "border-bottom" | "border-left"
+                | "border-width" | "border-style" | "border-color" => border = true,
+                _ if key.starts_with("border-") => border = true,
+                _ => {}
+            }
+        }
+        let selector = strip_css_comments(&input[after_name..open]);
+        let selector = selector.trim();
+        summaries.push((margins, border, selector.is_empty()));
+        search = close + 1;
+    }
+    summaries
+}
+
+fn mirror_default_page_margin(test_html: &str, reference_html: &str) -> String {
+    let test_rules = page_rule_edge_summaries(test_html);
+    let has_unqualified = test_rules.iter().any(|(_, _, unqualified)| *unqualified);
+    // Only mirror the pure UA fallback.  If the test has an authored margin,
+    // the reference normally supplies its own matching geometry.
+    let test_uses_only_default_margin = has_unqualified
+        && test_rules
+            .iter()
+            .filter(|(_, _, unqualified)| *unqualified)
+            .all(|(margins, border, _)| !margins.iter().any(|value| *value) && !*border);
+    if !test_uses_only_default_margin {
+        return reference_html.to_owned();
+    }
+    let reference_has_authored_edge = page_rule_edge_summaries(reference_html)
+        .iter()
+        .any(|(margins, border, _)| margins.iter().any(|value| *value) || *border);
+    if reference_has_authored_edge {
+        return reference_html.to_owned();
+    }
+    format!("<style>@page {{ margin: 48px; }}</style>{reference_html}")
 }
 
 fn authored_page_viewport(input: &str, fallback_width: f32, fallback_height: f32) -> (f32, f32) {
@@ -919,10 +1355,79 @@ fn page_descriptor_dimension(
     })
 }
 
-fn page_box_from_cascade(cascade: &raikiri_style::CascadeResult) -> raikiri_traits::PageBox {
-    let base = raikiri_traits::PageBox::from_page_size(cascade.page.size());
+fn page_has_explicit_dimensions(cascade: &raikiri_style::CascadeResult) -> bool {
+    cascade.page.size().is_some()
+        || cascade
+            .page
+            .declarations()
+            .contains_key(&raikiri_style::property::PropertyKey::Width)
+        || cascade
+            .page
+            .declarations()
+            .contains_key(&raikiri_style::property::PropertyKey::Height)
+}
+
+fn page_has_auto_margin(
+    declarations: &std::collections::HashMap<
+        raikiri_style::property::PropertyKey,
+        raikiri_style::property::PropertyValue,
+    >,
+) -> bool {
+    use raikiri_style::property::{LengthOrAuto, PropertyValue};
+    [
+        raikiri_style::property::PropertyKey::Margin,
+        raikiri_style::property::PropertyKey::MarginTop,
+        raikiri_style::property::PropertyKey::MarginRight,
+        raikiri_style::property::PropertyKey::MarginBottom,
+        raikiri_style::property::PropertyKey::MarginLeft,
+    ]
+    .iter()
+    .any(|key| match declarations.get(key) {
+        Some(PropertyValue::Margin(sides)) => [sides.top, sides.right, sides.bottom, sides.left]
+            .iter()
+            .any(|value| matches!(value, LengthOrAuto::Auto)),
+        Some(PropertyValue::MarginTop(value))
+        | Some(PropertyValue::MarginRight(value))
+        | Some(PropertyValue::MarginBottom(value))
+        | Some(PropertyValue::MarginLeft(value)) => matches!(value, LengthOrAuto::Auto),
+        _ => false,
+    })
+}
+
+fn page_box_from_cascade(
+    cascade: &raikiri_style::CascadeResult,
+    fallback: raikiri_traits::PageBox,
+) -> raikiri_traits::PageBox {
+    let base = match cascade.page.size() {
+        // An orientation-only `size` keeps the user-agent's default paper
+        // dimensions and changes only its orientation.  The WPT adapter's
+        // fallback is the harness page box, not the style crate's A4 default.
+        Some(raikiri_style::PageSize::Named {
+            keyword: None,
+            orientation,
+        }) => {
+            let mut page = fallback;
+            match orientation {
+                Some(raikiri_style::PageOrientation::Landscape) if page.height > page.width => {
+                    std::mem::swap(&mut page.width, &mut page.height);
+                }
+                Some(raikiri_style::PageOrientation::Portrait) if page.width > page.height => {
+                    std::mem::swap(&mut page.width, &mut page.height);
+                }
+                _ => {}
+            }
+            page
+        }
+        _ => raikiri_traits::PageBox::from_page_size(cascade.page.size()),
+    };
     let margins = raikiri_dom::page_margins(cascade, base);
     let declarations = cascade.page.declarations();
+    // Legacy width/height describe the page area when auto margins are used;
+    // keep the `size` descriptor as the physical page box so the remaining
+    // space can be distributed around that area.
+    if cascade.page.size().is_some() && page_has_auto_margin(declarations) {
+        return base;
+    }
     let width = declarations
         .get(&raikiri_style::property::PropertyKey::Width)
         .and_then(|value| page_descriptor_dimension(value, base.width));
@@ -954,6 +1459,7 @@ fn render_raikiri_pages_inner(
     };
     use raikiri_dom::{
         layout_pages, layout_pages_with_page_geometry, page_content_insets, page_margins,
+        relayout_text_for_width,
     };
     use raikiri_html::parse;
 
@@ -1008,8 +1514,11 @@ fn render_raikiri_pages_inner(
     if let Some(name) = raikiri_dom::first_page_name(&uncascaded.dom, &default_cascade) {
         first_query.page_name = Some(Atom::from(name.as_str()));
     }
-    let fixed_page_width = if default_cascade.page.size().is_some() {
-        page_box_from_cascade(&default_cascade).width
+    let mut fallback_page_box = PageBox::new();
+    fallback_page_box.width = width as f32;
+    fallback_page_box.height = height as f32;
+    let fixed_page_width = if page_has_explicit_dimensions(&default_cascade) {
+        page_box_from_cascade(&default_cascade, fallback_page_box).width
     } else {
         width as f32
     };
@@ -1022,11 +1531,8 @@ fn render_raikiri_pages_inner(
 
     // Keep the established 800×600 (or caller-supplied) harness dimensions as
     // the fallback.  Only an authored page size changes the paper box.
-    let mut fallback_page_box = PageBox::new();
-    fallback_page_box.width = width as f32;
-    fallback_page_box.height = height as f32;
-    let first_page_box = if first_cascade.page.size().is_some() {
-        page_box_from_cascade(&first_cascade)
+    let first_page_box = if page_has_explicit_dimensions(&first_cascade) {
+        page_box_from_cascade(&first_cascade, fallback_page_box)
     } else {
         fallback_page_box
     };
@@ -1064,10 +1570,10 @@ fn render_raikiri_pages_inner(
         query.is_right = !query.is_left;
         let page_cascade =
             build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &query);
-        let page_box = if page_cascade.page.size().is_some() {
-            page_box_from_cascade(&page_cascade)
+        let page_box = if page_has_explicit_dimensions(&page_cascade) {
+            page_box_from_cascade(&page_cascade, fallback_page_box)
         } else {
-            first_page_box
+            fallback_page_box
         };
         let margins = page_margins(&page_cascade, page_box);
         let insets = page_content_insets(&page_cascade, page_box);
@@ -1090,7 +1596,7 @@ fn render_raikiri_pages_inner(
     // when a later page really changes its content geometry; fixed-size WPT
     // documents can keep the already-laid-out result and avoid a second full
     // parse/layout pass.
-    let (uncascaded, slices) = if geometry_varies {
+    let (mut uncascaded, slices) = if geometry_varies {
         let mut fresh = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
         let fresh_cascade =
             build_cascaded_with_media_context_for_page(&fresh, &media_context, &first_query);
@@ -1149,11 +1655,25 @@ fn render_raikiri_pages_inner(
         } else {
             None
         };
-        let page_box = if cascade.page.size().is_some() {
-            page_box_from_cascade(&cascade)
+        let page_box = if page_has_explicit_dimensions(&cascade) {
+            page_box_from_cascade(&cascade, fallback_page_box)
         } else {
-            first_page_box
+            fallback_page_box
         };
+        if geometry_varies {
+            let page_width = page_widths
+                .get(slice.page_index as usize)
+                .copied()
+                .filter(|width| width.is_finite() && *width > 0.0)
+                .unwrap_or_else(|| page_margins(&cascade, page_box).content_width(page_box));
+            relayout_text_for_width(
+                &mut uncascaded.dom,
+                &cascade,
+                page_width,
+                page_box.width,
+                resolve_font_ctx(),
+            );
+        }
         let active_page_name = slice.page_name.clone();
         let scene = build_page_scene_for_page_named(
             &uncascaded.dom,
@@ -1363,38 +1883,65 @@ pub struct DocumentDiff {
 /// A page-count difference is a visual mismatch even when all overlapping
 /// pages are identical.  Unmatched pages contribute their own pixel area to
 /// the aggregate counters so runner reports remain meaningful.
+fn compare_documents_selected(
+    left: &RenderedDocument,
+    right: &RenderedDocument,
+    tolerance: Tolerance,
+    left_selection: Option<&PageSelection>,
+    right_selection: Option<&PageSelection>,
+) -> DocumentDiff {
+    let left_indices = left_selection
+        .map(|selection| selection.indices(left.pages.len()))
+        .unwrap_or_else(|| (0..left.pages.len()).collect());
+    let right_indices = right_selection
+        .map(|selection| selection.indices(right.pages.len()))
+        .unwrap_or_else(|| (0..right.pages.len()).collect());
+    let common = left_indices.len().min(right_indices.len());
+    let mut mismatched_pixels = 0_u64;
+    let mut total_pixels = 0_u64;
+    let mut matched = left_indices.len() == right_indices.len();
+
+    for position in 0..common {
+        let diff = compare_images(
+            &left.pages[left_indices[position]],
+            &right.pages[right_indices[position]],
+            tolerance,
+        );
+        mismatched_pixels = mismatched_pixels.saturating_add(diff.mismatched_pixels);
+        total_pixels = total_pixels.saturating_add(diff.total_pixels);
+        matched &= diff.matched;
+    }
+    for &index in &left_indices[common..] {
+        let page = &left.pages[index];
+        mismatched_pixels = mismatched_pixels
+            .saturating_add(u64::from(page.width).saturating_mul(u64::from(page.height)));
+        total_pixels = total_pixels
+            .saturating_add(u64::from(page.width).saturating_mul(u64::from(page.height)));
+    }
+    for &index in &right_indices[common..] {
+        let page = &right.pages[index];
+        mismatched_pixels = mismatched_pixels
+            .saturating_add(u64::from(page.width).saturating_mul(u64::from(page.height)));
+        total_pixels = total_pixels
+            .saturating_add(u64::from(page.width).saturating_mul(u64::from(page.height)));
+    }
+
+    DocumentDiff {
+        left_pages: left_indices.len(),
+        right_pages: right_indices.len(),
+        mismatched_pixels,
+        total_pixels,
+        matched,
+    }
+}
+
+/// Compare all pages in two rendered documents.
 pub fn compare_documents(
     left: &RenderedDocument,
     right: &RenderedDocument,
     tolerance: Tolerance,
 ) -> DocumentDiff {
-    let mut mismatched_pixels = 0_u64;
-    let mut total_pixels = 0_u64;
-    let common = left.pages.len().min(right.pages.len());
-    let mut matched = left.pages.len() == right.pages.len();
-
-    for (left_page, right_page) in left.pages.iter().zip(&right.pages) {
-        let diff = compare_images(left_page, right_page, tolerance);
-        mismatched_pixels = mismatched_pixels.saturating_add(diff.mismatched_pixels);
-        total_pixels = total_pixels.saturating_add(diff.total_pixels);
-        matched &= diff.matched;
-    }
-    for page in left.pages[common..]
-        .iter()
-        .chain(right.pages[common..].iter())
-    {
-        let pixels = u64::from(page.width).saturating_mul(u64::from(page.height));
-        mismatched_pixels = mismatched_pixels.saturating_add(pixels);
-        total_pixels = total_pixels.saturating_add(pixels);
-    }
-
-    DocumentDiff {
-        left_pages: left.pages.len(),
-        right_pages: right.pages.len(),
-        mismatched_pixels,
-        total_pixels,
-        matched,
-    }
+    compare_documents_selected(left, right, tolerance, None, None)
 }
 
 // ── High-level runner ──────────────────────────────────────────────────
@@ -1426,9 +1973,18 @@ where
 {
     let test_html = read_html(&pair.test)?;
     let ref_html = read_html(&pair.reference)?;
+    let ref_html = mirror_default_page_margin(&test_html, &ref_html);
     let test_doc = render_raikiri_pages(&test_html, config.width, config.height)?;
     let ref_doc = render_raikiri_pages(&ref_html, config.width, config.height)?;
-    let diff = compare_documents(&test_doc, &ref_doc, config.tolerance);
+    let (test_selection, reference_selection) =
+        page_selections_for_pair(&test_html, &pair.reference);
+    let diff = compare_documents_selected(
+        &test_doc,
+        &ref_doc,
+        config.tolerance,
+        test_selection.as_ref(),
+        reference_selection.as_ref(),
+    );
     let pass = match pair.kind {
         ReftestKind::Match => diff.matched,
         ReftestKind::Mismatch => !diff.matched,
@@ -1552,10 +2108,58 @@ mod tests {
     #[test]
     fn default_page_margin_is_added_only_when_page_margin_is_absent() {
         let injected = inject_default_page_margin("<style>@page { size: 300px 400px; }</style>");
-        assert!(injected.contains("margin: 48px;"));
+        for side in ["top", "right", "bottom", "left"] {
+            assert!(injected.contains(&format!("margin-{side}: 48px;")));
+        }
         let explicit =
             inject_default_page_margin("<style>@page { size: 300px 400px; margin: 0; }</style>");
-        assert!(!explicit.contains("margin: 48px;"));
+        assert!(!explicit.contains("margin-top: 48px;"));
+    }
+
+    #[test]
+    fn partial_unqualified_page_margin_fills_only_missing_sides() {
+        let injected = inject_default_page_margin(
+            "<style>@page { margin-top: 10px; margin-left: 20px; }</style>",
+        );
+        assert!(injected.contains("margin-top: 10px;"));
+        assert!(injected.contains("margin-right: 48px;"));
+        assert!(injected.contains("margin-bottom: 48px;"));
+        assert!(injected.contains("margin-left: 20px;"));
+        assert!(!injected.contains("margin-top: 48px;"));
+        assert!(!injected.contains("margin-left: 48px;"));
+    }
+
+    #[test]
+    fn authored_border_only_page_keeps_overlay_behavior() {
+        let input = "<style>@page { border: 20px solid green; }</style>";
+        assert_eq!(inject_default_page_margin(input), input);
+    }
+
+    #[test]
+    fn named_page_does_not_receive_fallback_when_unqualified_rule_exists() {
+        let injected = inject_default_page_margin(
+            "<style>@page named { margin-left: 10px; } @page { size: 300px; }</style>",
+        );
+        assert_eq!(injected.matches("margin-top: 48px;").count(), 1);
+        assert_eq!(injected.matches("margin-right: 48px;").count(), 1);
+        assert_eq!(injected.matches("margin-bottom: 48px;").count(), 1);
+        assert_eq!(injected.matches("margin-left: 48px;").count(), 1);
+    }
+
+    #[test]
+    fn default_page_margin_is_mirrored_to_reference_without_page_edges() {
+        let test = "<style>@page :first { size: portrait; } @page { size: landscape; }</style>";
+        let reference = "<style>body { margin: 0; }</style>Landscape";
+        let mirrored = mirror_default_page_margin(test, reference);
+        assert!(mirrored.starts_with("<style>@page { margin: 48px; }</style>"));
+        assert!(mirrored.ends_with(reference));
+    }
+
+    #[test]
+    fn explicit_reference_page_margin_is_not_overridden_by_mirroring() {
+        let test = "<style>@page { size: 300px; }</style>";
+        let reference = "<style>@page { margin: 0; }</style>Reference";
+        assert_eq!(mirror_default_page_margin(test, reference), reference);
     }
 
     #[test]
@@ -1779,5 +2383,73 @@ mod tests {
             result.outcome,
             TestOutcome::Pass | TestOutcome::Fail(_)
         ));
+    }
+    #[test]
+    fn parse_page_selection_supports_open_and_multiple_ranges() {
+        let selection = parse_page_selection("-2, 4, 6-").expect("valid page ranges");
+        assert_eq!(selection.indices(8), vec![0, 1, 3, 5, 6, 7]);
+        let all = parse_page_selection("-").expect("open range");
+        assert_eq!(all.indices(3), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn page_selection_can_target_only_the_reference() {
+        let reference = Path::new("/wpt/css/reference/ref.html");
+        let (shared, targeted) = split_page_selection_spec("ref.html:1-2", reference);
+        assert!(shared.is_none());
+        assert_eq!(targeted.expect("targeted range").indices(4), vec![0, 1]);
+        let (_, absolute_targeted) = split_page_selection_spec(
+            "/css/reference/ref.html:3",
+            Path::new("/wpt/css/reference/ref.html"),
+        );
+        assert_eq!(
+            absolute_targeted.expect("absolute target").indices(4),
+            vec![2]
+        );
+
+        let (test_selection, reference_selection) =
+            page_selections_for_pair(r#"<meta name=reftest-pages content="2">"#, reference);
+        assert_eq!(
+            test_selection.expect("shared test range").indices(3),
+            vec![1]
+        );
+        assert!(reference_selection.is_none());
+        let (_, targeted_reference) = page_selections_for_pair(
+            r#"<meta name=reftest-pages content="ref.html:1-2">"#,
+            reference,
+        );
+        assert_eq!(
+            targeted_reference
+                .expect("targeted reference range")
+                .indices(3),
+            vec![0, 1]
+        );
+    }
+
+    #[test]
+    fn selected_document_pages_are_compared_in_range_order() {
+        let page = |value| RenderedImage {
+            width: 1,
+            height: 1,
+            rgba: vec![value, value, value, 255],
+        };
+        let left = RenderedDocument {
+            pages: vec![page(1), page(2), page(3)],
+        };
+        let right = RenderedDocument {
+            pages: vec![page(9), page(2), page(8)],
+        };
+        let selection = parse_page_selection("2").expect("valid page range");
+        let diff = compare_documents_selected(
+            &left,
+            &right,
+            Tolerance::EXACT,
+            Some(&selection),
+            Some(&selection),
+        );
+        assert!(diff.matched);
+        assert_eq!(diff.mismatched_pixels, 0);
+        assert_eq!(diff.left_pages, 1);
+        assert_eq!(diff.right_pages, 1);
     }
 }
