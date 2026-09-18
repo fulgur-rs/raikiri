@@ -27,14 +27,15 @@ use raikiri_style::property::DisplayValue;
 /// ([`crate::node::NodeData`]), so at most one of
 /// [`crate::node::Node::image_intrinsic_size`] /
 /// [`crate::node::Node::text_layout`] ever returns `Some` here.
-fn leaf_intrinsic_size(node: &crate::node::Node) -> Option<Size<f32>> {
+fn leaf_intrinsic_size(
+    node: &mut crate::node::Node,
+    available_width: Option<f32>,
+) -> Option<Size<f32>> {
     node.image_intrinsic_size()
         .map(|(width, height)| Size { width, height })
         .or_else(|| {
-            node.text_layout().map(|l| Size {
-                width: l.width(),
-                height: l.height(),
-            })
+            node.text_layout_size_for_width(available_width)
+                .map(|(width, height)| Size { width, height })
         })
 }
 
@@ -268,27 +269,55 @@ impl Document {
             let is_leaf = tree.nodes[idx].children.is_empty();
             if is_leaf {
                 let style = tree.nodes[idx].style.clone();
-                let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]);
-                compute_leaf_layout(
-                    inputs,
-                    &style,
-                    |_val, _basis| 0.0,
-                    |known, _avail| {
-                        // taffy が style から算出した known.width / .height が Some なら
-                        // それを優先 (explicit size)、None なら parley intrinsic / 画像
-                        // intrinsic を使う、両方無ければ 0。
-                        Size {
-                            width: known
-                                .width
-                                .or(leaf_intrinsic.map(|s| s.width))
-                                .unwrap_or(0.0),
-                            height: known
-                                .height
-                                .or(leaf_intrinsic.map(|s| s.height))
-                                .unwrap_or(0.0),
-                        }
-                    },
-                )
+                if tree.nodes[idx].has_pre_taffy_text_indent() {
+                    compute_leaf_layout(
+                        inputs,
+                        &style,
+                        |_val, _basis| 0.0,
+                        |known, available| {
+                            // Rebreak ch-aware text at the width Taffy
+                            // passes to this measure callback, so its
+                            // intrinsic height participates in the current
+                            // pass.
+                            let leaf_intrinsic = leaf_intrinsic_size(
+                                &mut tree.nodes[idx],
+                                available.width.into_option(),
+                            );
+                            Size {
+                                width: known
+                                    .width
+                                    .or(leaf_intrinsic.map(|s| s.width))
+                                    .unwrap_or(0.0),
+                                height: known
+                                    .height
+                                    .or(leaf_intrinsic.map(|s| s.height))
+                                    .unwrap_or(0.0),
+                            }
+                        },
+                    )
+                } else {
+                    let leaf_intrinsic = leaf_intrinsic_size(&mut tree.nodes[idx], None);
+                    compute_leaf_layout(
+                        inputs,
+                        &style,
+                        |_val, _basis| 0.0,
+                        |known, _available| {
+                            // taffy が style から算出した known.width / .height が Some なら
+                            // それを優先 (explicit size)、None なら parley intrinsic / 画像
+                            // intrinsic を使う、両方無ければ 0。
+                            Size {
+                                width: known
+                                    .width
+                                    .or(leaf_intrinsic.map(|s| s.width))
+                                    .unwrap_or(0.0),
+                                height: known
+                                    .height
+                                    .or(leaf_intrinsic.map(|s| s.height))
+                                    .unwrap_or(0.0),
+                            }
+                        },
+                    )
+                }
             } else {
                 match display {
                     Display::Block | Display::FlowRoot => {
@@ -337,7 +366,7 @@ fn compute_inline_block_shrink_wrap(
     let is_leaf = tree.nodes[idx].children.is_empty();
     // Clone what the leaf path needs before any exclusive tree use below.
     let leaf_style = tree.nodes[idx].style.clone();
-    let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]);
+    let leaf_intrinsic = leaf_intrinsic_size(&mut tree.nodes[idx], None);
     // Scalar copies so the measure closure below captures no large state.
     let sizing_mode = inputs.sizing_mode;
     let known_height = inputs.known_dimensions.height;

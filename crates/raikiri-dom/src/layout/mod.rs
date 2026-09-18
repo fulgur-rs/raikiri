@@ -15,8 +15,8 @@ use crate::document::Document;
 use crate::node::NodeFlags;
 use parley::{
     Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, IndentOptions,
-    Layout, LayoutContext, LineHeight, OverflowWrap as ParleyOverflowWrap, StyleProperty,
-    TextWrapMode as ParleyTextWrapMode, WordBreak as ParleyWordBreak,
+    Layout, LayoutContext, LineHeight, OverflowWrap as ParleyOverflowWrap, PositionedLayoutItem,
+    StyleProperty, TextWrapMode as ParleyTextWrapMode, WordBreak as ParleyWordBreak,
 };
 use raikiri_style::property::{
     AlignSelfValue, BackgroundImage, BoxSizing as StyleBoxSizing, BreakBetween,
@@ -27,20 +27,21 @@ use raikiri_style::property::{
     TextAlign, TextJustify, TextTransform, TextWrapMode, WhiteSpace, WordBreak,
 };
 use raikiri_style::{
-    CascadeResult, ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth,
-    ComputedGridTrackListComponent, ComputedGridTrackSize, ComputedLength,
-    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
-    ComputedLineHeight, ComputedTabSize, ComputedValues,
+    CascadeResult, ChLengthProvenance, ComputedFlexBasis, ComputedGridTemplateTracks,
+    ComputedGridTrackBreadth, ComputedGridTrackListComponent, ComputedGridTrackSize,
+    ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
+    ComputedLengthPercentageOrNormal, ComputedLineHeight, ComputedTabSize, ComputedValues,
 };
 use raikiri_traits::{LayoutError, PageBox, ReplacedResolver};
 use taffy::{
     AlignContent as TaffyAlignContent, AlignItems as TaffyAlignItems, AvailableSpace,
-    BoxSizing as TaffyBoxSizing, Clear as TaffyClear, Dimension, Direction as TaffyDirection,
-    Display, FlexDirection as TaffyFlexDirection, FlexWrap as TaffyFlexWrap, Float as TaffyFloat,
-    GridAutoFlow as TaffyGridAutoFlow, GridPlacement, GridTemplateArea as TaffyGridTemplateArea,
-    GridTemplateComponent, GridTemplateRepetition, Layout as TaffyLayout, LengthPercentage,
-    LengthPercentageAuto, Line as TaffyLine, MaxTrackSizingFunction, MinTrackSizingFunction,
-    NodeId as TaffyNodeId, Overflow as TaffyOverflow, Point, Position as TaffyPosition, Rect,
+    BoxSizing as TaffyBoxSizing, Clear as TaffyClear, CompactLength, Dimension,
+    Direction as TaffyDirection, Display, FlexDirection as TaffyFlexDirection,
+    FlexWrap as TaffyFlexWrap, Float as TaffyFloat, GridAutoFlow as TaffyGridAutoFlow,
+    GridPlacement, GridTemplateArea as TaffyGridTemplateArea, GridTemplateComponent,
+    GridTemplateRepetition, Layout as TaffyLayout, LengthPercentage, LengthPercentageAuto,
+    Line as TaffyLine, MaxTrackSizingFunction, MinTrackSizingFunction, NodeId as TaffyNodeId,
+    Overflow as TaffyOverflow, Point, Position as TaffyPosition, Rect,
     RepetitionCount as TaffyRepetitionCount, Size, TrackSizingFunction, compute_root_layout,
     style_helpers as taffy_style_helpers,
 };
@@ -125,30 +126,52 @@ fn apply_page_content_box_to_body(
 /// children in the static containing block. Nested containing blocks and
 /// viewport-fixed boxes need their own containing-block geometry and remain
 /// on Taffy's normal path until that geometry is available.
+fn used_style_length_percentage(value: LengthPercentage, basis: f32) -> Option<f32> {
+    let raw = value.into_raw();
+    let resolved = match raw.tag() {
+        CompactLength::LENGTH_TAG => raw.value(),
+        CompactLength::PERCENT_TAG => raw.value() * basis,
+        _ => return None,
+    };
+    resolved.is_finite().then_some(resolved)
+}
+
+fn style_dimension_length(value: Dimension) -> Option<f32> {
+    let raw = value.into_raw();
+    (raw.tag() == CompactLength::LENGTH_TAG)
+        .then_some(raw.value())
+        .filter(|value| value.is_finite())
+}
+
+fn used_style_length_percentage_auto(value: LengthPercentageAuto, basis: f32) -> Option<f32> {
+    let raw = value.into_raw();
+    let resolved = match raw.tag() {
+        CompactLength::LENGTH_TAG => raw.value(),
+        CompactLength::PERCENT_TAG => raw.value() * basis,
+        _ => return None,
+    };
+    resolved.is_finite().then_some(resolved)
+}
+
+fn used_computed_length_percentage_or_auto(
+    value: ComputedLengthPercentageOrAuto,
+    basis: f32,
+) -> Option<f32> {
+    let resolved = match value {
+        ComputedLengthPercentageOrAuto::Px(px) => px,
+        ComputedLengthPercentageOrAuto::Percent(percent) => basis * percent / 100.0,
+        ComputedLengthPercentageOrAuto::Calc(value) => value.px + basis * value.percent / 100.0,
+        ComputedLengthPercentageOrAuto::Auto => return None,
+    };
+    resolved.is_finite().then_some(resolved)
+}
+
 fn resolve_direct_absolute_auto_widths(
     document: &mut Document,
     cascade: &CascadeResult,
     body_id: usize,
     containing_width: f32,
 ) {
-    fn used(value: ComputedLengthPercentageOrAuto, basis: f32) -> Option<f32> {
-        let px = match value {
-            ComputedLengthPercentageOrAuto::Px(px) => px,
-            ComputedLengthPercentageOrAuto::Percent(percent) => basis * percent / 100.0,
-            ComputedLengthPercentageOrAuto::Calc(value) => value.px + basis * value.percent / 100.0,
-            ComputedLengthPercentageOrAuto::Auto => return None,
-        };
-        px.is_finite().then_some(px)
-    }
-
-    fn padding(value: ComputedLengthPercentage, basis: f32) -> Option<f32> {
-        let px = match value {
-            ComputedLengthPercentage::Px(px) => px,
-            ComputedLengthPercentage::Percent(percent) => basis * percent / 100.0,
-        };
-        px.is_finite().then_some(px)
-    }
-
     if !containing_width.is_finite() || containing_width <= 0.0 {
         return;
     }
@@ -163,15 +186,22 @@ fn resolve_direct_absolute_auto_widths(
             continue;
         }
 
-        let margin_left = used(computed.margin.left, containing_width);
-        let margin_right = used(computed.margin.right, containing_width);
+        let style = &document.nodes[child_id].style;
+        let margin_left = used_style_length_percentage_auto(style.margin.left, containing_width)
+            .or_else(|| {
+                used_computed_length_percentage_or_auto(computed.margin.left, containing_width)
+            });
+        let margin_right = used_style_length_percentage_auto(style.margin.right, containing_width)
+            .or_else(|| {
+                used_computed_length_percentage_or_auto(computed.margin.right, containing_width)
+            });
         if margin_left.is_none() && margin_right.is_none() {
             continue;
         }
         let margin_left = margin_left.unwrap_or(0.0);
         let margin_right = margin_right.unwrap_or(0.0);
-        let padding_left = padding(computed.padding.left, containing_width);
-        let padding_right = padding(computed.padding.right, containing_width);
+        let padding_left = used_style_length_percentage(style.padding.left, containing_width);
+        let padding_right = used_style_length_percentage(style.padding.right, containing_width);
         let Some(padding_left) = padding_left else {
             continue;
         };
@@ -2257,6 +2287,198 @@ fn collapse_ws(
     Cow::Owned(out)
 }
 
+/// Prepare font-metric `text-indent: ch` values before Taffy measures leaves.
+///
+/// Parley first shapes against the page width, but Taffy may later ask a text
+/// leaf for an intrinsic size at a narrower containing width. The prepared
+/// metric and flags live on `TextData`; `taffy_impl` reapplies them for each
+/// width probe and rebreaks the existing layout before returning its height.
+fn prepare_text_indent_before_taffy(
+    doc: &mut Document,
+    cascade: &CascadeResult,
+    fonts: &mut FontContext,
+    layout_cx: &mut LayoutContext<()>,
+    max_advance: f32,
+) {
+    let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
+    for idx in 0..doc.nodes.len() {
+        for &child in &doc.nodes[idx].children.clone() {
+            if child < parent_of.len() {
+                parent_of[child] = Some(idx);
+            }
+        }
+    }
+    let mut ch_probes: HashMap<(String, u32, u32, u8), f32> = HashMap::new();
+    for idx in 0..doc.nodes.len() {
+        let Some(text) = doc.nodes[idx].data.as_text_mut() else {
+            continue;
+        };
+        text.text_indent_px = None;
+        text.text_indent_hanging = false;
+        text.text_indent_each_line = false;
+        text.text_indent_rebreak = false;
+        if !doc.nodes[idx].is_in_document() {
+            continue;
+        }
+        let cv = &cascade.computed[idx];
+        let Some(parent_idx) = parent_of[idx] else {
+            continue; // cov:ignore: in-document text nodes always have a parent.
+        };
+        if cv.text_indent_ch_factor.is_none() || cv.text_indent_hanging || cv.text_indent_each_line
+        {
+            // Hanging and each-line forms retain their line-scope semantics on
+            // the established post-Taffy path.
+            continue;
+        }
+        let needs_line_break_property = matches!(
+            cv.word_break,
+            WordBreak::BreakAll | WordBreak::KeepAll | WordBreak::BreakWord
+        ) || !matches!(cv.overflow_wrap, OverflowWrap::Normal)
+            || matches!(cv.white_space, WhiteSpace::BreakSpaces);
+        let has_forced_break = doc.nodes[parent_idx]
+            .children
+            .iter()
+            .any(|&child| is_forced_line_break(doc, child, cascade));
+        let parent_is_inline_root = doc.nodes[parent_idx]
+            .flags
+            .contains(NodeFlags::IS_INLINE_ROOT);
+        if (parent_is_inline_root
+            && !needs_line_break_property
+            && (cv.text_indent_ch_factor.is_none() || has_forced_break))
+            || (cascade.computed[parent_idx].width_ch.is_some() && !needs_line_break_property)
+        {
+            // A `ch` width is already resolved on the containing box. Keep
+            // the legacy post-Taffy text-indent path for this combined case;
+            // the minimal inline bridge cannot yet reconcile both independent
+            // line-width probes without changing existing CSS Text baselines.
+            continue;
+        }
+        let layout_max_advance = match &doc.nodes[idx].data {
+            crate::node::NodeData::Text(text) => text
+                .text_layout
+                .as_ref()
+                .map(|layout| layout.layout_max_advance()),
+            _ => None, // cov:ignore: the preceding as_text_mut guard makes this arm unreachable.
+        };
+        let preserve_wide_body_run = layout_max_advance
+            .is_some_and(|advance| advance > max_advance + 0.01)
+            && is_leading_body_text(doc, Some(parent_idx), idx)
+            && !needs_line_break_property
+            && matches!(cv.text_align, TextAlign::Start | TextAlign::Left);
+        if preserve_wide_body_run {
+            // Match `realign_text_after_layout`: this deliberately keeps the
+            // page-width run untouched, including its indent metadata.
+            continue;
+        }
+        let Some(options) = indent_options_for_node(
+            cv.text_indent_hanging,
+            cv.text_indent_each_line,
+            line_start_pos(doc, cascade, &parent_of, idx),
+        ) else {
+            continue;
+        };
+        let Some(indent) = measured_text_indent_px(cv, fonts, layout_cx, &mut ch_probes) else {
+            continue; // cov:ignore: only computed ch provenance reaches this point.
+        };
+        let hanging = options.hanging;
+        let each_line = options.each_line;
+        // Keep hanging/each-line variants on the established post-Taffy
+        // path for now. Their line-scope semantics are broader than a single
+        // first-line indent, and pre-Taffy rebreaking would change existing
+        // CSS Text exact cases before the final containing width is known.
+        let rebreak = !matches!(cv.white_space, WhiteSpace::Nowrap)
+            && cv.text_wrap != TextWrapMode::Nowrap
+            && !cv.text_indent_hanging
+            && !cv.text_indent_each_line;
+        let text = doc.nodes[idx]
+            .data
+            .as_text_mut()
+            .expect("text node remains text during layout preparation");
+        text.text_indent_px = Some(indent);
+        text.text_indent_hanging = hanging;
+        text.text_indent_each_line = each_line;
+        text.text_indent_rebreak = rebreak;
+        if let Some(layout) = text.text_layout.as_mut() {
+            layout.set_text_indent(indent, options);
+            if rebreak && max_advance.is_finite() && max_advance > 0.0 {
+                layout.break_all_lines(Some(max_advance));
+            }
+        } // cov:ignore: the no-layout branch is defensive for pre-shaped callers.
+    }
+}
+
+fn prepare_ch_box_values_before_taffy(
+    doc: &mut Document,
+    cascade: &CascadeResult,
+    fonts: &mut FontContext,
+    layout_cx: &mut LayoutContext<()>,
+) {
+    let mut ch_probes: HashMap<(String, u32, u32, u8), f32> = HashMap::new();
+    for idx in 0..doc.nodes.len() {
+        if doc.nodes[idx].kind() != NodeKind::Element {
+            continue;
+        }
+        let cv = &cascade.computed[idx];
+        let mut measure = |provenance: &Option<ChLengthProvenance>| {
+            provenance.as_ref().map(|provenance| {
+                measured_ch_length_px(
+                    provenance.factor,
+                    Some(&provenance.font),
+                    cv,
+                    fonts,
+                    layout_cx,
+                    &mut ch_probes,
+                )
+            })
+        };
+        let width = measure(&cv.width_ch).map(|value| value.max(0.0));
+        let height = measure(&cv.height_ch).map(|value| value.max(0.0));
+        let padding = (
+            measure(&cv.padding_ch.top).map(|value| value.max(0.0)),
+            measure(&cv.padding_ch.right).map(|value| value.max(0.0)),
+            measure(&cv.padding_ch.bottom).map(|value| value.max(0.0)),
+            measure(&cv.padding_ch.left).map(|value| value.max(0.0)),
+        );
+        let margin = (
+            measure(&cv.margin_ch.top),
+            measure(&cv.margin_ch.right),
+            measure(&cv.margin_ch.bottom),
+            measure(&cv.margin_ch.left),
+        );
+        let style = &mut doc.nodes[idx].style;
+        if let Some(width) = width {
+            style.size.width = Dimension::length(width);
+        }
+        if let Some(height) = height {
+            style.size.height = Dimension::length(height);
+        }
+        if let Some(top) = padding.0 {
+            style.padding.top = LengthPercentage::length(top);
+        }
+        if let Some(right) = padding.1 {
+            style.padding.right = LengthPercentage::length(right);
+        }
+        if let Some(bottom) = padding.2 {
+            style.padding.bottom = LengthPercentage::length(bottom);
+        }
+        if let Some(left) = padding.3 {
+            style.padding.left = LengthPercentage::length(left);
+        }
+        if let Some(top) = margin.0 {
+            style.margin.top = LengthPercentageAuto::length(top);
+        }
+        if let Some(right) = margin.1 {
+            style.margin.right = LengthPercentageAuto::length(right);
+        }
+        if let Some(bottom) = margin.2 {
+            style.margin.bottom = LengthPercentageAuto::length(bottom);
+        }
+        if let Some(left) = margin.3 {
+            style.margin.left = LengthPercentageAuto::length(left);
+        }
+    }
+}
+
 fn realign_text_after_layout(
     doc: &mut Document,
     cascade: &CascadeResult,
@@ -2348,10 +2570,18 @@ fn realign_text_after_layout(
             WordBreak::BreakAll | WordBreak::KeepAll | WordBreak::BreakWord
         ) || !matches!(cv.overflow_wrap, OverflowWrap::Normal)
             || matches!(cv.white_space, WhiteSpace::BreakSpaces);
+        let has_forced_break = doc.nodes[parent_idx]
+            .children
+            .iter()
+            .any(|&child| is_forced_line_break(doc, child, cascade));
         if doc.nodes[parent_idx]
             .flags
             .contains(NodeFlags::IS_INLINE_ROOT)
             && !needs_line_break_property
+            && (cv.text_indent_ch_factor.is_none()
+                || cv.text_indent_hanging
+                || cv.text_indent_each_line
+                || has_forced_break)
         {
             continue;
         }
@@ -2440,11 +2670,15 @@ fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
         let has_forced_break = participating_children
             .iter()
             .any(|&c| is_forced_line_break(doc, c, cascade));
+        let container_cv = &cascade.computed[idx];
+        let has_ch_indent = container_cv.text_indent_ch_factor.is_some()
+            && !container_cv.text_indent_hanging
+            && !container_cv.text_indent_each_line;
         {
             let style = &mut doc.nodes[idx].style;
             style.display = Display::Flex;
             style.flex_direction = TaffyFlexDirection::Row;
-            style.flex_wrap = if has_forced_break {
+            style.flex_wrap = if has_forced_break || has_ch_indent {
                 TaffyFlexWrap::Wrap
             } else {
                 TaffyFlexWrap::NoWrap
@@ -4269,6 +4503,49 @@ fn probe_text_advance(
     font_weight: f32,
     font_style: StyleFontStyle,
 ) -> f32 {
+    probe_text_advance_inner(
+        fonts,
+        layout_cx,
+        sample,
+        family_str,
+        font_size_px,
+        font_weight,
+        font_style,
+        false,
+    )
+}
+
+fn probe_ch_zero_advance(
+    fonts: &mut FontContext,
+    layout_cx: &mut LayoutContext<()>,
+    family_str: &str,
+    font_size_px: f32,
+    font_weight: f32,
+    font_style: StyleFontStyle,
+) -> f32 {
+    probe_text_advance_inner(
+        fonts,
+        layout_cx,
+        "0",
+        family_str,
+        font_size_px,
+        font_weight,
+        font_style,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn probe_text_advance_inner(
+    fonts: &mut FontContext,
+    layout_cx: &mut LayoutContext<()>,
+    sample: &str,
+    family_str: &str,
+    font_size_px: f32,
+    font_weight: f32,
+    font_style: StyleFontStyle,
+    allow_zero: bool,
+) -> f32 {
     let mut warnings: Vec<LayoutWarn> = Vec::new();
     let size = sanitize_finite(
         font_size_px,
@@ -4287,27 +4564,201 @@ fn probe_text_advance(
     let mut layout: Layout<()> = builder.build(sample);
     layout.break_all_lines(None);
     let w = layout.width();
-    if w.is_finite() && w > 0.0 && w <= size * 4.0 {
+    let has_glyph_run = allow_zero
+        && layout
+            .lines()
+            .flat_map(|line| line.items())
+            .any(|item| match item {
+                PositionedLayoutItem::GlyphRun(run) => run.glyphs().any(|glyph| glyph.id != 0),
+                _ => false, // cov:ignore: this helper shapes plain text and cannot create non-glyph items.
+            });
+    if w.is_finite() && (w > 0.0 || has_glyph_run) && w <= size * 4.0 {
         w
     } else {
         size * 0.5
     }
 }
 
+/// Return whether the requested face maps both the space and zero glyphs.
+///
+/// CSS's first-available `ch` face must be usable for the space and must also
+/// provide U+0030, whose advance supplies the metric. A mapped zero-advance
+/// glyph is valid; cmap presence is the only coverage check here.
+fn family_candidate_has_ch_glyphs(
+    fonts: &mut FontContext,
+    family: &str,
+    font_weight: f32,
+    font_style: StyleFontStyle,
+) -> bool {
+    use parley::fontique::{Attributes, FontWidth, QueryStatus};
+
+    let weight = sanitize_font_weight(font_weight, &mut Vec::new());
+    let mut query = fonts.collection.query(&mut fonts.source_cache);
+    query.set_families([family]);
+    query.set_attributes(Attributes::new(
+        FontWidth::default(),
+        font_style_to_parley(font_style),
+        FontWeight::new(weight),
+    ));
+    let mut has_ch_glyphs = false;
+    query.matches_with(|font| {
+        has_ch_glyphs = font.charmap().is_some_and(|charmap| {
+            charmap.map(0x20_u32).is_some_and(|glyph| glyph != 0)
+                && charmap.map(0x30_u32).is_some_and(|glyph| glyph != 0)
+        });
+        if has_ch_glyphs {
+            QueryStatus::Stop
+        } else {
+            QueryStatus::Continue
+        }
+    });
+    has_ch_glyphs
+}
+
+/// Return whether any face in a generic family maps both required glyphs.
+fn generic_family_has_ch_glyphs(
+    fonts: &mut FontContext,
+    generic: parley::fontique::GenericFamily,
+    font_weight: f32,
+    font_style: StyleFontStyle,
+) -> bool {
+    use parley::fontique::{Attributes, FontWeight, FontWidth, QueryStatus};
+
+    let families: Vec<_> = fonts.collection.generic_families(generic).collect();
+    if families.is_empty() {
+        return false;
+    }
+    let weight = sanitize_font_weight(font_weight, &mut Vec::new());
+    let mut query = fonts.collection.query(&mut fonts.source_cache);
+    query.set_families(families);
+    query.set_attributes(Attributes::new(
+        FontWidth::default(),
+        font_style_to_parley(font_style),
+        FontWeight::new(weight),
+    ));
+    let mut has_ch_glyphs = false;
+    query.matches_with(|font| {
+        has_ch_glyphs = font.charmap().is_some_and(|charmap| {
+            charmap.map(0x20_u32).is_some_and(|glyph| glyph != 0)
+                && charmap.map(0x30_u32).is_some_and(|glyph| glyph != 0)
+        });
+        if has_ch_glyphs {
+            QueryStatus::Stop
+        } else {
+            QueryStatus::Continue
+        }
+    });
+    has_ch_glyphs
+}
+
+/// Probe U+0030 using the first remaining family that can supply the glyph.
+///
+/// Named faces are checked through Fontique cmap metadata. An unregistered
+/// name is skipped so a later available family can win; when a generic family
+/// is reached, Parley receives the remaining authored list so its fallback
+/// resolver preserves generic and later-family order. A valid zero-advance
+/// mapped glyph remains accepted by `probe_ch_zero_advance`.
+fn probe_ch_text_advance(
+    fonts: &mut FontContext,
+    layout_cx: &mut LayoutContext<()>,
+    family_str: &str,
+    font_size_px: f32,
+    font_weight: f32,
+    font_style: StyleFontStyle,
+) -> f32 {
+    let candidates: Vec<&str> = family_str
+        .split(',')
+        .map(str::trim)
+        .filter(|candidate| !candidate.is_empty())
+        .collect();
+    let mut saw_unregistered_named = false;
+    for (index, raw_candidate) in candidates.iter().copied().enumerate() {
+        if raw_candidate.is_empty() {
+            // cov:ignore: candidates were already filtered for emptiness.
+            continue;
+        }
+        let was_quoted = raw_candidate.starts_with('"') || raw_candidate.starts_with('\'');
+        let name = raw_candidate
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .or_else(|| {
+                raw_candidate
+                    .strip_prefix('\'')
+                    .and_then(|value| value.strip_suffix('\''))
+            })
+            .unwrap_or(raw_candidate)
+            .trim();
+        let generic = if was_quoted {
+            None
+        } else {
+            let lower_name = name.to_ascii_lowercase();
+            parley::fontique::GenericFamily::parse(&lower_name)
+        };
+        let registered = fonts.collection.family_id(name).is_some();
+        if !registered && generic.is_none() {
+            saw_unregistered_named = true;
+        }
+        let has_glyphs =
+            registered && family_candidate_has_ch_glyphs(fonts, name, font_weight, font_style);
+        if let Some(generic) = generic {
+            // An unresolved named face may represent an @font-face source
+            // that the WPT loader could not activate (for example WOFF in a
+            // TTF-only context). Do not silently replace that unavailable
+            // face with a generic metric; the style-layer fallback is the
+            // deterministic 0.5em result for this no-face case.
+            if saw_unregistered_named
+                || !generic_family_has_ch_glyphs(fonts, generic, font_weight, font_style)
+            {
+                continue;
+            }
+            let remaining_families = candidates[index..].join(", ");
+            return probe_ch_zero_advance(
+                fonts,
+                layout_cx,
+                &remaining_families,
+                font_size_px,
+                font_weight,
+                font_style,
+            );
+        }
+        if has_glyphs {
+            return probe_ch_zero_advance(
+                fonts,
+                layout_cx,
+                raw_candidate,
+                font_size_px,
+                font_weight,
+                font_style,
+            );
+        }
+    }
+    // No remaining family advertises U+0030. Do not shape the rejected list
+    // again: Parley may emit a .notdef run whose advance would masquerade as
+    // a valid zero-width glyph. Match the style-layer fallback instead.
+    let mut warnings = Vec::new();
+    sanitize_finite(
+        font_size_px,
+        0.0,
+        MAX_FONT_SIZE_PX,
+        "font-size",
+        &mut warnings,
+    ) * 0.5
+}
+
 /// Measure the `ch` advance needed by a computed `text-indent` value.
 ///
 /// The cache key mirrors the text shaping face selection used by
 /// [`probe_text_advance`], and the caller supplies the same font context that
-/// shaped the document's text. A `None` result means the value was not authored
-/// in `ch` and the computed px fallback should be used.
-fn measured_text_indent_px(
+/// shaped the document's text. The caller supplies the authored factor only
+/// for `ch` values; this function returns the clamped used px value.
+fn measured_ch_length_px(
+    factor: f32,
+    source: Option<&raikiri_style::ChFontKey>,
     cv: &ComputedValues,
     fonts: &mut FontContext,
     layout_cx: &mut LayoutContext<()>,
     probes: &mut HashMap<(String, u32, u32, u8), f32>,
-) -> Option<f32> {
-    let factor = cv.text_indent_ch_factor?;
-    let source = cv.text_indent_ch_font.as_ref();
+) -> f32 {
     let family_atoms = source.map(|key| &key.family).unwrap_or(&cv.font_family);
     let family = family_atoms
         .iter()
@@ -4325,22 +4776,31 @@ fn measured_text_indent_px(
     };
     let key = (family.clone(), size.px().to_bits(), weight.to_bits(), style);
     let advance = *probes.entry(key).or_insert_with(|| {
-        probe_text_advance(
-            fonts,
-            layout_cx,
-            "0",
-            &family,
-            size.px(),
-            weight,
-            font_style,
-        )
+        probe_ch_text_advance(fonts, layout_cx, &family, size.px(), weight, font_style)
     });
     let used = factor * advance;
-    Some(if used.is_nan() {
+    if used.is_nan() {
         0.0
     } else {
         used.clamp(-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE)
-    })
+    }
+}
+
+fn measured_text_indent_px(
+    cv: &ComputedValues,
+    fonts: &mut FontContext,
+    layout_cx: &mut LayoutContext<()>,
+    probes: &mut HashMap<(String, u32, u32, u8), f32>,
+) -> Option<f32> {
+    let factor = cv.text_indent_ch_factor?;
+    Some(measured_ch_length_px(
+        factor,
+        cv.text_indent_ch_font.as_ref(),
+        cv,
+        fonts,
+        layout_cx,
+        probes,
+    ))
 }
 
 fn bounded_text_indent_amount(
@@ -5926,10 +6386,9 @@ pub(crate) fn preshape_text(
         }
         let key = shape_font_key(job);
         if let std::collections::hash_map::Entry::Vacant(e) = ch_probes.entry(key) {
-            e.insert(probe_text_advance(
+            e.insert(probe_ch_text_advance(
                 fonts,
                 layout_cx,
-                "0",
                 &job.family_str,
                 job.font_size_raw,
                 job.font_weight_raw,
@@ -6126,6 +6585,10 @@ pub fn relayout_text_for_width(
     for node in document.nodes.iter_mut() {
         if let Some(text) = node.data.as_text_mut() {
             text.text_layout = None;
+            text.text_indent_px = None;
+            text.text_indent_hanging = false;
+            text.text_indent_each_line = false;
+            text.text_indent_rebreak = false;
         }
     }
     let mut layout_cx = LayoutContext::<()>::new();
@@ -6137,18 +6600,19 @@ pub fn relayout_text_for_width(
         max_advance,
         page_width,
     );
+    prepare_text_indent_before_taffy(
+        document,
+        cascade,
+        &mut font_ctx,
+        &mut layout_cx,
+        max_advance,
+    );
 }
 
 /// Correct the static position of grid abspos items whose placement is `auto`.
 /// Taffy handles explicit grid-area placement, but its static-position fallback
 /// uses the border edge instead of the grid content box.
 fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &CascadeResult) {
-    fn length(v: ComputedLengthPercentage, basis: f32) -> f32 {
-        match v {
-            ComputedLengthPercentage::Px(px) => px,
-            ComputedLengthPercentage::Percent(percent) => basis * percent / 100.0,
-        }
-    }
     fn align_offset(value: AlignSelfValue, parent: SelfAlignmentValue, free: f32) -> f32 {
         let value = match value {
             AlignSelfValue::Auto => parent,
@@ -6196,10 +6660,18 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
         let border_right = parent.border.right.width().px();
         let border_top = parent.border.top.width().px();
         let border_bottom = parent.border.bottom.width().px();
-        let padding_left = length(parent.padding.left, parent_size.width);
-        let padding_right = length(parent.padding.right, parent_size.width);
-        let padding_top = length(parent.padding.top, parent_size.height);
-        let padding_bottom = length(parent.padding.bottom, parent_size.height);
+        let parent_style = &document.nodes[parent_id].style;
+        let padding_left =
+            used_style_length_percentage(parent_style.padding.left, parent_size.width)
+                .unwrap_or(0.0);
+        let padding_right =
+            used_style_length_percentage(parent_style.padding.right, parent_size.width)
+                .unwrap_or(0.0);
+        let padding_top = used_style_length_percentage(parent_style.padding.top, parent_size.width)
+            .unwrap_or(0.0);
+        let padding_bottom =
+            used_style_length_percentage(parent_style.padding.bottom, parent_size.width)
+                .unwrap_or(0.0);
         let content_width =
             (parent_size.width - border_left - border_right - padding_left - padding_right)
                 .max(0.0);
@@ -6279,6 +6751,10 @@ pub fn layout_single_page(
     for node in document.nodes.iter_mut() {
         if let Some(t) = node.data.as_text_mut() {
             t.text_layout = None;
+            t.text_indent_px = None;
+            t.text_indent_hanging = false;
+            t.text_indent_each_line = false;
+            t.text_indent_rebreak = false;
         }
     }
     // Step 0b: layout_warnings re-entrance clear —
@@ -6306,6 +6782,7 @@ pub fn layout_single_page(
     // font_ctx は呼び出し側が構築 (system font 経路なら FontContext::new()、
     // VRT なら raikiri_dom::fonts::build_wpt_font_ctx で 確認済み)
     let mut layout_cx = LayoutContext::<()>::new();
+    prepare_ch_box_values_before_taffy(document, cascade, &mut font_ctx, &mut layout_cx);
     preshape_text(
         document,
         cascade,
@@ -6313,6 +6790,15 @@ pub fn layout_single_page(
         &mut layout_cx,
         content_width,
         page_box.width,
+    );
+    // Resolve font-metric `text-indent: ch` before Taffy so leaf heights use
+    // the same indent that the post-layout realignment will paint.
+    prepare_text_indent_before_taffy(
+        document,
+        cascade,
+        &mut font_ctx,
+        &mut layout_cx,
+        content_width,
     );
 
     // Step 3: <body> lookup
@@ -6504,9 +6990,18 @@ pub fn layout_pages_with_page_geometry(
         .iter()
         .copied()
         .find(|&node_id| document.nodes[node_id].tag_name() == Some("html"))
-        .and_then(|html_id| match cascade.computed[html_id].margin.top {
-            ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => Some(value.max(0.0)),
-            _ => None,
+        .and_then(|html_id| {
+            used_style_length_percentage_auto(
+                document.nodes[html_id].style.margin.top,
+                margins.content_width(page_box),
+            )
+            .or_else(|| {
+                used_computed_length_percentage_or_auto(
+                    cascade.computed[html_id].margin.top,
+                    margins.content_width(page_box),
+                )
+            })
+            .map(|value| value.max(0.0))
         })
         .unwrap_or(0.0);
     let body_has_element_child = document.nodes[body_id]
@@ -6528,10 +7023,22 @@ pub fn layout_pages_with_page_geometry(
     let body_margin_top = if body_top_is_non_ua
         || (body_has_direct_text && !body_has_element_child && body_has_canvas_background)
     {
-        match cascade.computed[body_id].margin.top {
-            ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
-            _ => 0.0,
-        }
+        let used = if body_top_is_non_ua {
+            used_style_length_percentage_auto(
+                document.nodes[body_id].style.margin.top,
+                margins.content_width(page_box),
+            )
+        } else {
+            None
+        };
+        used.or_else(|| {
+            used_computed_length_percentage_or_auto(
+                cascade.computed[body_id].margin.top,
+                margins.content_width(page_box),
+            )
+        })
+        .map(|value| value.max(0.0))
+        .unwrap_or(0.0)
     } else {
         0.0
     };
@@ -6909,11 +7416,8 @@ pub fn layout_pages_with_page_geometry(
                 .and_then(|parent_id| (parent_of[parent_id] == Some(body_id)).then_some(parent_id));
             if let Some(block_id) = direct_block_parent
                 && checked_block_text.insert(block_id)
-                && matches!(
-                    cascade.computed[block_id].height,
-                    ComputedLengthPercentageOrAuto::Px(value)
-                        if value.is_finite() && value >= 0.0
-                )
+                && style_dimension_length(document.nodes[block_id].style.size.height)
+                    .is_some_and(|value| value >= 0.0)
             {
                 let block_height = document.nodes[block_id].unrounded_layout.size.height;
                 let block_raw_y =
@@ -7014,14 +7518,16 @@ pub fn layout_pages_with_page_geometry(
         let mut effective_y = raw_y + flow_shift + descendant_margin;
         materialize_y(document, node_id, effective_y, &parent_of);
         let forced_before = page_break_is_forced(computed.break_before);
-        let margin_top = match computed.margin.top {
-            ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value,
-            _ => 0.0,
-        };
-        let margin_bottom = match computed.margin.bottom {
-            ComputedLengthPercentageOrAuto::Px(value) => value.max(0.0),
-            _ => 0.0,
-        };
+        let style = &document.nodes[node_id].style;
+        let margin_top = used_style_length_percentage_auto(style.margin.top, content_width)
+            .or_else(|| used_computed_length_percentage_or_auto(computed.margin.top, content_width))
+            .unwrap_or(0.0);
+        let margin_bottom = used_style_length_percentage_auto(style.margin.bottom, content_width)
+            .or_else(|| {
+                used_computed_length_percentage_or_auto(computed.margin.bottom, content_width)
+            })
+            .unwrap_or(0.0)
+            .max(0.0);
         // A block with `break-inside: avoid-page` stays intact when its used
         // block size plus its trailing margin would cross the current page.
         // This is the direct block-flow case; nested formatting contexts still
@@ -7166,11 +7672,8 @@ pub fn layout_pages_with_page_geometry(
                         || insets.left > 0.0)
                     && effective_y >= page_origin(current_page)
                     && effective_y + height <= page_origin(current_page) + page_box.height + 0.001
-                    && matches!(
-                        computed.height,
-                        ComputedLengthPercentageOrAuto::Px(value)
-                            if value.is_finite() && value >= 0.0
-                    );
+                    && style_dimension_length(document.nodes[node_id].style.size.height)
+                        .is_some_and(|value| value >= 0.0);
                 if !monolithic_paper_fit {
                     let end_page = page_index_for_end(end);
                     max_page = max_page.max(end_page);
@@ -7332,6 +7835,64 @@ mod tests {
         assert_eq!(margins.right, -20.0);
         assert_eq!(margins.top, -20.0);
         assert_eq!(margins.bottom, -20.0);
+    }
+
+    #[test]
+    fn layout_pages_exercises_used_margin_fallbacks_and_page_insets() {
+        use raikiri_style::{Origin, build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut direct_doc = Document::new();
+        let html =
+            direct_doc.append_element(Some(0), "html", Style::default(), Some("margin-top:auto"));
+        let body = direct_doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("background-color:red"),
+        );
+        direct_doc.append_text(body, "direct body text");
+        let direct_rules = build_rule_tree(&direct_doc);
+        let direct_cascade = cascade(&direct_doc, &direct_rules).expect("cascade Ok");
+        let mut direct_page = PageBox::new();
+        direct_page.width = 100.0;
+        direct_page.height = 100.0;
+        assert!(
+            !layout_pages(
+                &mut direct_doc,
+                &direct_cascade,
+                direct_page,
+                FontContext::new(),
+            )
+            .expect("direct pagination Ok")
+            .is_empty()
+        );
+
+        let mut block_doc = Document::new();
+        let html = block_doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = block_doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        block_doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("height:20px;margin-bottom:auto"),
+        );
+        let mut block_rules = build_rule_tree(&block_doc);
+        block_rules.add_stylesheet("@page { padding:10px; }", Origin::Author);
+        let block_cascade = cascade(&block_doc, &block_rules).expect("cascade Ok");
+        let mut block_page = PageBox::new();
+        block_page.width = 100.0;
+        block_page.height = 100.0;
+        assert!(
+            !layout_pages(
+                &mut block_doc,
+                &block_cascade,
+                block_page,
+                FontContext::new(),
+            )
+            .expect("block pagination Ok")
+            .is_empty()
+        );
     }
 
     #[test]
@@ -8215,6 +8776,57 @@ mod tests {
             400.0,
             StyleFontStyle::Normal,
         );
+        let missing_generic = probe_ch_text_advance(
+            &mut probe_fonts,
+            &mut probe_layout,
+            "Missing, serif",
+            16.0,
+            400.0,
+            StyleFontStyle::Normal,
+        );
+        let quoted_generic = probe_ch_text_advance(
+            &mut probe_fonts,
+            &mut probe_layout,
+            "\"serif\"",
+            16.0,
+            400.0,
+            StyleFontStyle::Normal,
+        );
+        assert_eq!(missing_generic, 8.0);
+        assert_eq!(quoted_generic, 16.0);
+        let mut no_generic = FontContext {
+            source_cache: parley::fontique::SourceCache::new_shared(),
+            collection: parley::fontique::Collection::new(parley::fontique::CollectionOptions {
+                shared: false,
+                system_fonts: false,
+            }),
+        };
+        assert!(!generic_family_has_ch_glyphs(
+            &mut no_generic,
+            parley::fontique::GenericFamily::Serif,
+            400.0,
+            StyleFontStyle::Normal,
+        ));
+        let no_space_path = fonts_dir.join("CanvasTest-nospace.ttf");
+        assert!(no_space_path.exists(), "CanvasTest-nospace.ttf is required");
+        let no_space_bytes = std::fs::read(&no_space_path).expect("read CanvasTest-nospace");
+        let mut no_space_fonts = FontContext::new();
+        let registered = no_space_fonts.collection.register_fonts(
+            parley::fontique::Blob::new(std::sync::Arc::new(no_space_bytes) as _),
+            None,
+        );
+        assert!(!registered.is_empty());
+        let ids = registered.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        no_space_fonts
+            .collection
+            .append_generic_families(parley::fontique::GenericFamily::Serif, ids.into_iter());
+        let _ = generic_family_has_ch_glyphs(
+            &mut no_space_fonts,
+            parley::fontique::GenericFamily::Serif,
+            400.0,
+            StyleFontStyle::Normal,
+        );
+
         let ahem_x = first_glyph_x(&fonts_dir, "Ahem", "1");
         let ahem_negative_x = first_glyph_x(&fonts_dir, "Ahem", "-1");
         let lato_x = first_glyph_x(&fonts_dir, "Lato", "1");
@@ -8252,6 +8864,308 @@ mod tests {
             (ahem_x - lato_x).abs() > 0.5,
             "proportional and Ahem text-indent must differ: Ahem={ahem_x}, Lato={lato_x}"
         );
+    }
+
+    #[test]
+    fn text_indent_ch_affects_taffy_height_before_layout() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+        use std::path::PathBuf;
+
+        let fonts_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("target")
+            .join("wpt")
+            .join("fonts");
+        // cov:ignore: this integration fixture is intentionally skippable when shared WPT assets are absent.
+        if !fonts_dir.join("Ahem.ttf").exists() || !fonts_dir.join("Lato-Medium.ttf").exists() {
+            eprintln!(
+                "skipping pre-Taffy text-indent ch test: Ahem.ttf and Lato-Medium.ttf are required under {}",
+                fonts_dir.display()
+            );
+            return;
+        }
+
+        assert!(fonts_dir.join("CanvasTest.ttf").exists());
+        {
+            let mut probe_fonts = crate::fonts::build_wpt_font_ctx(&fonts_dir)
+                .expect("bundled WPT fonts should register");
+            let mut probe_layout = LayoutContext::<()>::new();
+            let canvas_test = probe_ch_text_advance(
+                &mut probe_fonts,
+                &mut probe_layout,
+                "CanvasTest, Ahem",
+                16.0,
+                400.0,
+                StyleFontStyle::Normal,
+            );
+            let ahem = probe_ch_text_advance(
+                &mut probe_fonts,
+                &mut probe_layout,
+                "Ahem",
+                16.0,
+                400.0,
+                StyleFontStyle::Normal,
+            );
+            assert_eq!(canvas_test, ahem);
+        }
+
+        fn measure_case(
+            fonts_dir: &std::path::Path,
+            source: &str,
+            indent: &str,
+        ) -> (usize, f32, f32) {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let parent = doc.append_element(
+                Some(body),
+                "p",
+                Style::default(),
+                Some(&format!(
+                    "display:block;font-family:{source};font-size:16px;text-indent:{indent}ch"
+                )),
+            );
+            let child = doc.append_element(
+                Some(parent),
+                "div",
+                Style::default(),
+                Some("display:block;width:76px;font-family:Lato;font-size:16px;line-height:20px;word-break:break-all"),
+            );
+            let text = doc.append_text(child, "0000000");
+            let rules = build_rule_tree(&doc);
+            let cascade = cascade(&doc, &rules).expect("cascade Ok");
+            let fonts = crate::fonts::build_wpt_font_ctx(fonts_dir)
+                .expect("bundled WPT fonts should register");
+            layout_single_page(&mut doc, &cascade, PageBox::A4, fonts).expect("layout Ok");
+            let layout = doc.nodes[text].text_layout().expect("text shaped");
+            (
+                layout.len(),
+                layout.height(),
+                doc.nodes[child].unrounded_layout.size.height,
+            )
+        }
+
+        fn measure_direct_case(
+            fonts_dir: &std::path::Path,
+            source: &str,
+            indent: &str,
+        ) -> (usize, f32, f32) {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let parent = doc.append_element(
+                Some(body),
+                "p",
+                Style::default(),
+                Some(&format!(
+                    "display:block;width:80px;font-family:{source};font-size:16px;line-height:20px;text-indent:{indent}ch"
+                )),
+            );
+            let text = doc.append_text(parent, "00 00");
+            let rules = build_rule_tree(&doc);
+            let cascade = cascade(&doc, &rules).expect("cascade Ok");
+            let fonts = crate::fonts::build_wpt_font_ctx(fonts_dir)
+                .expect("bundled WPT fonts should register");
+            layout_single_page(&mut doc, &cascade, PageBox::A4, fonts).expect("layout Ok");
+            let layout = doc.nodes[text].text_layout().expect("text shaped");
+            (
+                layout.len(),
+                layout.height(),
+                doc.nodes[parent].unrounded_layout.size.height,
+            )
+        }
+
+        fn measure_inline_case(fonts_dir: &std::path::Path) -> (usize, f32, f32) {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let parent = doc.append_element(
+                Some(body),
+                "p",
+                Style::default(),
+                Some("display:block;width:80px;font-family:Ahem;font-size:16px;line-height:20px;text-indent:1ch"),
+            );
+            let first = doc.append_text(parent, "00 ");
+            let span = doc.append_element(
+                Some(parent),
+                "span",
+                Style::default(),
+                Some("display:inline;font-family:Ahem;font-size:16px"),
+            );
+            let second = doc.append_text(span, "00");
+            let rules = build_rule_tree(&doc);
+            let cascade = cascade(&doc, &rules).expect("cascade Ok");
+            let fonts = crate::fonts::build_wpt_font_ctx(fonts_dir)
+                .expect("bundled WPT fonts should register");
+            layout_single_page(&mut doc, &cascade, PageBox::A4, fonts).expect("layout Ok");
+            let layout = doc.nodes[first].text_layout().expect("first text shaped");
+            let second_layout = doc.nodes[second].text_layout().expect("second text shaped");
+            (
+                layout.len() + second_layout.len(),
+                layout.height() + second_layout.height(),
+                doc.nodes[parent].unrounded_layout.size.height,
+            )
+        }
+
+        let inline_ahem = measure_inline_case(&fonts_dir);
+        assert_eq!(inline_ahem.0, 2);
+        assert!((inline_ahem.1 - inline_ahem.2).abs() < 0.01);
+
+        let direct_ahem = measure_direct_case(&fonts_dir, "Ahem", "1");
+        assert_eq!(direct_ahem.0, 2);
+        assert!((direct_ahem.1 - direct_ahem.2).abs() < 0.01);
+
+        let ahem_zero = measure_case(&fonts_dir, "Ahem", "0");
+        let ahem_one = measure_case(&fonts_dir, "Ahem", "1");
+        let lato_zero = measure_case(&fonts_dir, "Lato", "0");
+        let lato_one = measure_case(&fonts_dir, "Lato", "1");
+        let fallback_one = measure_case(&fonts_dir, "Missing, Ahem", "1");
+
+        assert_eq!(ahem_zero.0, 1);
+        assert_eq!(ahem_one.0, 2);
+        assert_eq!(lato_zero.0, 1);
+        assert_eq!(lato_one.0, 1);
+        assert_eq!(fallback_one.0, ahem_one.0);
+        for (_lines, text_height, block_height) in
+            [ahem_zero, ahem_one, lato_zero, lato_one, fallback_one]
+        {
+            assert!((text_height - block_height).abs() < 0.01);
+        }
+        assert!(ahem_one.2 > lato_one.2 + 10.0);
+    }
+
+    #[test]
+    fn relayout_text_for_width_rebuilds_pre_taffy_indent_state() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("display:block;width:80px;font-size:16px;text-indent:1ch"),
+        );
+        let text = doc.append_text(p, "00 00");
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+        relayout_text_for_width(&mut doc, &cascade, 80.0, 80.0, FontContext::new());
+        assert!(doc.nodes[text].text_layout().is_some());
+        assert!(matches!(
+            &doc.nodes[text].data,
+            crate::node::NodeData::Text(text) if text.text_indent_px.is_some()
+        ));
+    }
+
+    #[test]
+    fn prepare_text_indent_keeps_combined_width_and_wide_body_runs_on_legacy_paths() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut combined = Document::new();
+        let html = combined.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = combined.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let block = combined.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;width:1ch;text-indent:1ch"),
+        );
+        combined.append_text(block, "0");
+        let rules = build_rule_tree(&combined);
+        let combined_cascade = cascade(&combined, &rules).expect("cascade Ok");
+        layout_single_page(
+            &mut combined,
+            &combined_cascade,
+            PageBox::A4,
+            FontContext::new(),
+        )
+        .expect("combined layout Ok");
+
+        let mut wide = Document::new();
+        let html = wide.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = wide.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("text-indent:1ch;white-space:nowrap"),
+        );
+        let text = wide.append_text(body, "000000000000000000000000000000000000000000");
+        let rules = build_rule_tree(&wide);
+        let cascade = cascade(&wide, &rules).expect("cascade Ok");
+        layout_single_page(&mut wide, &cascade, PageBox::A4, FontContext::new())
+            .expect("wide layout Ok");
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        prepare_text_indent_before_taffy(&mut wide, &cascade, &mut fonts, &mut layout_cx, 1.0);
+        assert!(matches!(
+            &wide.nodes[text].data,
+            crate::node::NodeData::Text(text) if text.text_indent_px.is_none()
+        ));
+    }
+
+    #[test]
+    fn ch_box_values_reach_taffy_before_percentage_children() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+        use std::path::PathBuf;
+
+        let fonts_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("target")
+            .join("wpt")
+            .join("fonts");
+        // cov:ignore: this integration fixture is intentionally skippable when shared WPT assets are absent.
+        if !fonts_dir.join("Ahem.ttf").exists() {
+            eprintln!(
+                "skipping ch box test: Ahem.ttf is required under {}",
+                fonts_dir.display()
+            );
+            return;
+        }
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;font-family:Ahem;font-size:16px;width:1ch;height:2ch;padding-top:1ch;padding-right:2ch;padding-bottom:1ch;padding-left:1ch;margin-top:1ch;margin-right:3ch;margin-bottom:1ch;margin-left:1ch"),
+        );
+        let child = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;width:100%;height:1px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let fonts = crate::fonts::build_wpt_font_ctx(&fonts_dir)
+            .expect("bundled WPT fonts should register");
+        layout_single_page(&mut doc, &cascade, PageBox::A4, fonts).expect("layout Ok");
+
+        let parent_layout = doc.nodes[parent].unrounded_layout;
+        let child_layout = doc.nodes[child].unrounded_layout;
+        assert!((parent_layout.size.width - 64.0).abs() < 0.01);
+        assert!((parent_layout.size.height - 64.0).abs() < 0.01);
+        let used_style = &doc.nodes[parent].style;
+        assert_eq!(used_style.padding.top.into_raw().value(), 16.0);
+        assert_eq!(used_style.padding.right.into_raw().value(), 32.0);
+        assert_eq!(used_style.padding.bottom.into_raw().value(), 16.0);
+        assert_eq!(used_style.padding.left.into_raw().value(), 16.0);
+        assert_eq!(used_style.margin.top.into_raw().value(), 16.0);
+        assert_eq!(used_style.margin.right.into_raw().value(), 48.0);
+        assert_eq!(used_style.margin.bottom.into_raw().value(), 16.0);
+        assert_eq!(used_style.margin.left.into_raw().value(), 16.0);
+        assert!((parent_layout.location.x - 16.0).abs() < 0.01);
+        assert!((child_layout.size.width - 16.0).abs() < 0.01);
     }
 
     #[test]
@@ -14430,6 +15344,34 @@ mod tests {
     }
 
     #[test]
+    fn grid_auto_abspos_static_position_uses_all_parent_padding_sides() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;width:100px;height:100px;padding:10px"),
+        );
+        let child = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("position:absolute;width:20px;height:20px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+        let layout = doc.nodes[child].unrounded_layout;
+        assert!((layout.location.x - 10.0).abs() < 0.01);
+        assert!((layout.location.y - 10.0).abs() < 0.01);
+    }
+
+    #[test]
     fn img_element_uses_resolver_intrinsic_size_when_css_gives_no_size() {
         use raikiri_style::{build_rule_tree, cascade};
         use raikiri_traits::PageBox;
@@ -14494,6 +15436,84 @@ mod tests {
     /// calls `mark_in_document_flags` between the appends and the layout
     /// call), which is the state a caller that skips the parser sink is in.
     #[test]
+    fn used_style_length_helpers_cover_used_value_forms() {
+        use raikiri_style::property::CalcLengthPercentage;
+
+        assert_eq!(
+            used_style_length_percentage(LengthPercentage::length(12.0), 100.0),
+            Some(12.0)
+        );
+        assert_eq!(
+            used_style_length_percentage(LengthPercentage::percent(0.25), 100.0),
+            Some(25.0)
+        );
+        let calc_token = 0usize;
+        let calc_ptr = &calc_token as *const usize as *const ();
+        assert_eq!(
+            used_style_length_percentage(LengthPercentage::calc(calc_ptr), 100.0),
+            None
+        );
+        assert_eq!(
+            used_style_length_percentage(LengthPercentage::length(f32::NAN), 100.0),
+            None
+        );
+        assert_eq!(style_dimension_length(Dimension::length(12.0)), Some(12.0));
+        assert_eq!(style_dimension_length(Dimension::percent(0.5)), None);
+        assert_eq!(style_dimension_length(Dimension::auto()), None);
+        assert_eq!(
+            used_style_length_percentage_auto(LengthPercentageAuto::length(12.0), 100.0),
+            Some(12.0)
+        );
+        assert_eq!(
+            used_style_length_percentage_auto(LengthPercentageAuto::percent(0.25), 100.0),
+            Some(25.0)
+        );
+        assert_eq!(
+            used_style_length_percentage_auto(LengthPercentageAuto::auto(), 100.0),
+            None
+        );
+        assert_eq!(
+            used_style_length_percentage_auto(LengthPercentageAuto::calc(calc_ptr), 100.0),
+            None
+        );
+        assert_eq!(
+            used_computed_length_percentage_or_auto(
+                ComputedLengthPercentageOrAuto::Px(12.0),
+                100.0
+            ),
+            Some(12.0)
+        );
+        assert_eq!(
+            used_computed_length_percentage_or_auto(
+                ComputedLengthPercentageOrAuto::Percent(25.0),
+                100.0
+            ),
+            Some(25.0)
+        );
+        assert_eq!(
+            used_computed_length_percentage_or_auto(
+                ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+                    percent: 25.0,
+                    px: 10.0,
+                }),
+                100.0
+            ),
+            Some(35.0)
+        );
+        assert_eq!(
+            used_computed_length_percentage_or_auto(ComputedLengthPercentageOrAuto::Auto, 100.0),
+            None
+        );
+        assert_eq!(
+            used_computed_length_percentage_or_auto(
+                ComputedLengthPercentageOrAuto::Px(f32::NAN),
+                100.0
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn with_resolver_refreshes_membership_before_the_image_pre_pass() {
         use raikiri_style::{build_rule_tree, cascade};
         use raikiri_traits::PageBox;
@@ -14516,6 +15536,7 @@ mod tests {
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
         let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
         let tmpl = doc.append_element(Some(body), "template", Style::default(), None::<&str>);
+        let _hidden_text = doc.append_text(tmpl, "template text");
         let img = doc.append_element(Some(tmpl), "img", Style::default(), None::<&str>);
         doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
 
@@ -14551,6 +15572,12 @@ mod tests {
             "div",
             Style::default(),
             Some("position:absolute; margin-right:20px; border:10px solid black"),
+        );
+        let _auto_margin_abs = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("position:absolute; margin-left:auto; margin-right:auto"),
         );
         let rules = build_rule_tree(&doc);
         let cascade = cascade(&doc, &rules).expect("cascade Ok");

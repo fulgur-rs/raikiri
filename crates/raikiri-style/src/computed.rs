@@ -222,11 +222,14 @@ pub struct RunningTemplate {
     pub name: SmolStr,
 }
 
-/// Font selection data captured when an inherited `ch` value is computed.
+/// Font matching data captured when an authored `ch` value is computed.
 ///
-/// `text-indent` inherits its computed absolute length. Keeping the source
-/// face here prevents a descendant with a different font from re-measuring an
-/// inherited `ch` value against the wrong glyph advance.
+/// Inherited values retain the ancestor's key, so a descendant with a different
+/// font does not re-measure the inherited value against the wrong glyph
+/// advance. Non-inherited box values use the declaring node's own key. The
+/// key currently covers family, size, weight, and style; variation axes and
+/// vertical text orientation remain outside this layout's horizontal metric
+/// scope.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChFontKey {
     /// Font family list used by the shaping resolver.
@@ -237,6 +240,17 @@ pub struct ChFontKey {
     pub weight: f32,
     /// Computed font style.
     pub style: FontStyle,
+}
+
+/// Authored `ch` provenance retained until the layout sink can probe the
+/// declaring font's U+0030 advance.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChLengthProvenance {
+    /// Authored multiplier, for example `2` in `width: 2ch`.
+    pub factor: f32,
+    /// Font matching data from the declaring node for this value; inherited
+    /// values keep the ancestor's key.
+    pub font: ChFontKey,
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
@@ -559,6 +573,8 @@ pub struct ComputedValues {
     pub text_indent_ch_factor: Option<f32>,
     /// Source font for an inherited `ch` value.
     pub text_indent_ch_font: Option<ChFontKey>,
+    /// Whether the `ch` value was inherited from an ancestor.
+    pub text_indent_ch_inherited: bool,
     /// `text-indent`'s `hanging` flag. Inherited, initial `false`.
     pub text_indent_hanging: bool,
     /// `text-indent`'s `each-line` flag. Inherited, initial `false`.
@@ -579,6 +595,8 @@ pub struct ComputedValues {
     /// が used value 層でしか決まらないため (CSS Cascade 5 §4.5
     /// <https://www.w3.org/TR/css-cascade-5/#used>、raikiri では taffy 委譲)。
     pub padding: Sides<ComputedLengthPercentage>,
+    /// Authored `ch` provenance for each padding side.
+    pub padding_ch: Sides<Option<ChLengthProvenance>>,
     /// `margin` 4-side quad (top / right / bottom / left)。**non-inherited**、
     /// initial: `0` on each side (`Sides::all(ComputedLengthPercentageOrAuto::Px(0.0))`).
     ///
@@ -598,6 +616,8 @@ pub struct ComputedValues {
     ///   [`margin`](https://www.w3.org/TR/css-box-3/#margin-shorthand) —
     ///   "Value: `<'margin-top'>{1,4}`", 1/2/3/4 value expansion rules.
     pub margin: Sides<ComputedLengthPercentageOrAuto>,
+    /// Authored `ch` provenance for each margin side.
+    pub margin_ch: Sides<Option<ChLengthProvenance>>,
     /// `border` — 4-side box-model border (width / style / color × 4 side)。
     /// **non-inherited**、initial: 各 side が `width` =
     /// [`ComputedLength::ZERO`] / `style` = [`BorderStyle::None`] / `color` =
@@ -685,6 +705,8 @@ pub struct ComputedValues {
     /// margin/border/padding を差し引いた値を used-value に採る) として下流
     /// layout で解決する — margin `auto` の余白分配とは意味が異なる。
     pub width: ComputedLengthPercentageOrAuto,
+    /// Authored `ch` provenance for the preferred width.
+    pub width_ch: Option<ChLengthProvenance>,
     /// `height` — preferred vertical size。**non-inherited**、initial:
     /// `ComputedLengthPercentageOrAuto::Auto` (CSS Sizing 3 §3.1.1 "Preferred Size Properties"
     /// <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>、
@@ -709,6 +731,8 @@ pub struct ComputedValues {
     ///   "Initial: auto", "Applies to: all elements except non-replaced
     ///   inlines", "Inherited: no", "Percentages: relative to containing block".
     pub height: ComputedLengthPercentageOrAuto,
+    /// Authored `ch` provenance for the preferred height.
+    pub height_ch: Option<ChLengthProvenance>,
     /// `max-width` — **non-inherited**, initial `none` (mapped to Auto as placeholder).
     pub max_width: ComputedLengthPercentageOrAuto,
     /// `max-height` — **non-inherited**, initial `none` (mapped to Auto as placeholder).
@@ -1611,13 +1635,16 @@ impl ComputedValues {
             text_indent: ComputedLengthPercentage::Px(0.0),
             text_indent_ch_factor: None,
             text_indent_ch_font: None,
+            text_indent_ch_inherited: false,
             text_indent_hanging: false,
             text_indent_each_line: false,
             // CSS Box 3 §4.1: padding initial = 0 (all 4 sides)。
             padding: Sides::all(ComputedLengthPercentage::Px(0.0)),
+            padding_ch: Sides::all(None),
             // CSS Box 3 §3.1: margin-* physical の initial は `0` (`Sides::all(0)`
             // で全 4 side に spread)。
             margin: Sides::all(ComputedLengthPercentageOrAuto::Px(0.0)),
+            margin_ch: Sides::all(None),
             // CSS Backgrounds 3 §3.3/§3.2/§3.1: border initial は各 side で
             // style=none、color=`currentcolor` keyword
             // (`BorderColor::CurrentColor`、`CssColor::BLACK` placeholder から
@@ -1652,8 +1679,10 @@ impl ComputedValues {
             outline_offset: ComputedLength::ZERO,
             // CSS Sizing 3 §3.1.1: width initial は `auto`。
             width: ComputedLengthPercentageOrAuto::Auto,
+            width_ch: None,
             // CSS Sizing 3 §3.1.1: height initial は `auto`。
             height: ComputedLengthPercentageOrAuto::Auto,
+            height_ch: None,
             max_width: ComputedLengthPercentageOrAuto::Auto,
             max_height: ComputedLengthPercentageOrAuto::Auto,
             min_width: ComputedLengthPercentageOrAuto::Auto,
@@ -2175,10 +2204,13 @@ mod tests {
             text_indent: ComputedLengthPercentage::Px(9.0),
             text_indent_ch_factor: None,
             text_indent_ch_font: None,
+            text_indent_ch_inherited: false,
             text_indent_hanging: false,
             text_indent_each_line: false,
             padding: Sides::all(ComputedLengthPercentage::Px(7.0)),
+            padding_ch: Sides::all(None),
             margin: Sides::all(ComputedLengthPercentageOrAuto::Px(12.0)),
+            margin_ch: Sides::all(None),
             border: Sides::all(ComputedBorder {
                 width: ComputedLength(5.0),
                 style: BorderStyle::Solid,
@@ -2205,7 +2237,9 @@ mod tests {
             },
             outline_offset: ComputedLength(5.0),
             width: ComputedLengthPercentageOrAuto::Px(200.0),
+            width_ch: None,
             height: ComputedLengthPercentageOrAuto::Px(200.0),
+            height_ch: None,
             max_width: ComputedLengthPercentageOrAuto::Px(200.0),
             max_height: ComputedLengthPercentageOrAuto::Px(200.0),
             min_width: ComputedLengthPercentageOrAuto::Px(200.0),

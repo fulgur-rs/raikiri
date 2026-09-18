@@ -8172,6 +8172,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
                 _ => None,
             };
             target.text_indent_ch_font = None;
+            target.text_indent_ch_inherited = false;
             target.text_indent_hanging = v.hanging;
             target.text_indent_each_line = v.each_line;
         }

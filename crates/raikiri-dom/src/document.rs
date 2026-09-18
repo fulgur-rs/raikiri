@@ -736,6 +736,15 @@ impl Document {
         self.nodes.get(id)
     }
 
+    /// Return the post-computed Taffy style for a node.
+    ///
+    /// Layout mutates this style with finite used `ch` lengths before Taffy
+    /// runs. Paint-side consumers can therefore observe the same used values
+    /// without re-probing fonts or falling back to `ComputedValues`.
+    pub fn layout_style(&self, id: usize) -> Option<&Style> {
+        self.nodes.get(id).map(|node| &node.style)
+    }
+
     /// arena 内の総 node 数 (Document root を含む)。
     ///
     /// raikiri-paint / caller が `cascade.computed.len() == doc.node_count()`

@@ -27,7 +27,7 @@ use std::sync::Arc;
 use smol_str::SmolStr;
 
 use crate::Atom;
-use crate::computed::{ChFontKey, ComputedValues, RunningTemplate};
+use crate::computed::{ChFontKey, ChLengthProvenance, ComputedValues, RunningTemplate};
 use crate::property::{
     AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage,
     BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, Border, BorderCollapseValue,
@@ -226,6 +226,8 @@ pub struct SpecifiedValues {
     pub text_indent_ch_factor: Option<f32>,
     /// Source font for an inherited `ch` value.
     pub text_indent_ch_font: Option<ChFontKey>,
+    /// Whether this value was inherited from an ancestor's `text-indent: ch`.
+    pub text_indent_ch_inherited: bool,
     /// `text-indent`'s `hanging` flag staging. Inherited, initial `false`.
     pub text_indent_hanging: bool,
     /// `text-indent`'s `each-line` flag staging. Inherited, initial `false`.
@@ -617,6 +619,7 @@ impl SpecifiedValues {
             text_indent: Length::Px(0.0),
             text_indent_ch_factor: None,
             text_indent_ch_font: None,
+            text_indent_ch_inherited: false,
             text_indent_hanging: false,
             text_indent_each_line: false,
             padding: Sides::all(Length::Px(0.0)),
@@ -916,6 +919,8 @@ impl SpecifiedValues {
             text_indent: lift_length_percentage(parent.text_indent),
             text_indent_ch_factor: parent.text_indent_ch_factor,
             text_indent_ch_font: parent.text_indent_ch_font.clone(),
+            text_indent_ch_inherited: parent.text_indent_ch_inherited
+                || parent.text_indent_ch_factor.is_some(),
             text_indent_hanging: parent.text_indent_hanging,
             text_indent_each_line: parent.text_indent_each_line,
             // CSS Fonts 4 §2.4: font-style は inherited。
@@ -1424,6 +1429,26 @@ impl SpecifiedValues {
         } else {
             None
         };
+        let ch_provenance = |length: Length| match length {
+            Length::Ch(factor) if factor.is_finite() => Some(ChLengthProvenance {
+                factor,
+                font: own_text_indent_ch_font(),
+            }),
+            _ => None,
+        };
+        let width_ch = match self.width {
+            LengthOrAuto::Length(length) => ch_provenance(length),
+            _ => None,
+        };
+        let height_ch = match self.height {
+            LengthOrAuto::Length(length) => ch_provenance(length),
+            _ => None,
+        };
+        let padding_ch = self.padding.map(ch_provenance);
+        let margin_ch = self.margin.map(|value| match value {
+            LengthOrAuto::Length(length) => ch_provenance(length),
+            _ => None,
+        });
         ComputedValues {
             color: self.color,
             background_color: self.background_color,
@@ -1471,18 +1496,21 @@ impl SpecifiedValues {
             text_indent: text_indent.value,
             text_indent_ch_factor,
             text_indent_ch_font,
+            text_indent_ch_inherited: self.text_indent_ch_inherited,
             // Flags pass through untouched (no absolutization needed).
             text_indent_hanging: self.text_indent_hanging,
             text_indent_each_line: self.text_indent_each_line,
             padding: self
                 .padding
                 .map(|l| resolve_length_percentage(l, font_size, own_line_height, ctx)),
+            padding_ch,
             // `margin` は `width`/`height` と型を共有するが、`Lh`/`Rlh`
             // 解決不能時の fallback は違う (`resolve_margin_length_or_auto`
             // doc 参照 — Finding A)。
             margin: self
                 .margin
                 .map(|l| resolve_margin_length_or_auto(l, font_size, own_line_height, ctx)),
+            margin_ch,
             border: self
                 .border
                 .map(|b| resolve_border(b, font_size, own_line_height, ctx)),
@@ -1505,7 +1533,9 @@ impl SpecifiedValues {
             outline: resolve_outline(self.outline, font_size, own_line_height, ctx),
             outline_offset: resolve_length(self.outline_offset, font_size, own_line_height, ctx),
             width: resolve_length_percentage_or_auto(self.width, font_size, own_line_height, ctx),
+            width_ch,
             height: resolve_length_percentage_or_auto(self.height, font_size, own_line_height, ctx),
+            height_ch,
             max_width: resolve_length_percentage_or_auto(
                 self.max_width,
                 font_size,
@@ -1964,6 +1994,47 @@ mod tests {
         );
     }
 
+    #[test]
+    fn box_ch_provenance_keeps_authored_factor_and_font() {
+        let mut specified = SpecifiedValues::initial();
+        specified.width = LengthOrAuto::Length(Length::Ch(2.0));
+        specified.height = LengthOrAuto::Length(Length::Ch(3.0));
+        specified.padding = Sides::all(Length::Ch(1.0));
+        specified.margin = Sides::all(LengthOrAuto::Length(Length::Ch(4.0)));
+        let computed = specified.clone().finalize(&ComputedValues::initial(), &CTX);
+
+        assert_eq!(
+            computed.width_ch.as_ref().map(|value| value.factor),
+            Some(2.0)
+        );
+        assert_eq!(
+            computed.height_ch.as_ref().map(|value| value.factor),
+            Some(3.0)
+        );
+        assert_eq!(
+            computed.padding_ch.top.as_ref().map(|value| value.factor),
+            Some(1.0)
+        );
+        assert_eq!(
+            computed.margin_ch.left.as_ref().map(|value| value.factor),
+            Some(4.0)
+        );
+        let width_font = &computed.width_ch.as_ref().expect("width marker").font;
+        assert_eq!(width_font.family, computed.font_family);
+        assert_eq!(width_font.size, computed.font_size);
+        assert_eq!(computed.width, ComputedLengthPercentageOrAuto::Px(16.0));
+
+        specified.width = LengthOrAuto::Length(Length::Percent(25.0));
+        specified.height = LengthOrAuto::Auto;
+        specified.padding = Sides::all(Length::Px(2.0));
+        specified.margin = Sides::all(LengthOrAuto::Auto);
+        let ordinary = specified.finalize(&ComputedValues::initial(), &CTX);
+        assert!(ordinary.width_ch.is_none());
+        assert!(ordinary.height_ch.is_none());
+        assert!(ordinary.padding_ch.top.is_none());
+        assert!(ordinary.margin_ch.top.is_none());
+    }
+
     /// specified の border initial は `medium` (3px) / `none` / `currentcolor` で、
     /// computed 層では style gating により width が 0px に潰れる
     /// (CSS Backgrounds 3 §3.3 "Computed value: … zero if the border style is
@@ -2111,10 +2182,13 @@ mod tests {
             text_indent: ComputedLengthPercentage::Px(9.0),
             text_indent_ch_factor: None,
             text_indent_ch_font: None,
+            text_indent_ch_inherited: false,
             text_indent_hanging: true,
             text_indent_each_line: false,
             padding: Sides::all(ComputedLengthPercentage::Px(7.0)),
+            padding_ch: Sides::all(None),
             margin: Sides::all(ComputedLengthPercentageOrAuto::Px(12.0)),
+            margin_ch: Sides::all(None),
             border: Sides::all(ComputedBorder {
                 width: ComputedLength(5.0),
                 style: BorderStyle::Solid,
@@ -2141,7 +2215,9 @@ mod tests {
             },
             outline_offset: ComputedLength(5.0),
             width: ComputedLengthPercentageOrAuto::Px(200.0),
+            width_ch: None,
             height: ComputedLengthPercentageOrAuto::Px(200.0),
+            height_ch: None,
             max_width: ComputedLengthPercentageOrAuto::Auto,
             max_height: ComputedLengthPercentageOrAuto::Auto,
             min_width: ComputedLengthPercentageOrAuto::Auto,

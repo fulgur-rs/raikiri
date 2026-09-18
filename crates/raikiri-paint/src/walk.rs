@@ -43,6 +43,7 @@ use raikiri_style::{
     resolve_border,
 };
 use raikiri_traits::{ImagePixelSource, NodeKind, PageBox};
+use taffy::CompactLength;
 
 use crate::text;
 
@@ -2186,9 +2187,21 @@ fn paint_document_impl(
     let body_margin_left = if body_has_non_ua_margin
         || (body_has_direct_text && !body_has_element_child && body_has_canvas_background)
     {
-        match cascade.computed[body_id].margin.left {
-            ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
-            _ => 0.0,
+        if body_has_non_ua_margin {
+            match document
+                .layout_style(body_id)
+                .map(|style| style.margin.left.into_raw())
+            {
+                Some(raw) if raw.tag() == CompactLength::LENGTH_TAG && raw.value().is_finite() => {
+                    raw.value().max(0.0)
+                }
+                _ => 0.0,
+            }
+        } else {
+            match cascade.computed[body_id].margin.left {
+                ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
+                _ => 0.0,
+            }
         }
     } else {
         0.0
@@ -2353,6 +2366,7 @@ fn paint_document_impl(
                 let abs_x = parent_abs_x + layout.location.x;
                 let abs_y = parent_abs_y + layout.location.y;
                 let cv = &cascade.computed[node_id];
+                let paint_padding = used_padding_for_paint(cv, &layout);
                 let own_shift =
                     vertical_align_shift_px(cv.vertical_align, cv.display, parent_font_size);
                 let child_shift_y = shift_y + own_shift;
@@ -2537,7 +2551,7 @@ fn paint_document_impl(
                             cv.color,
                             cv.background_clip,
                             &cv.border,
-                            &cv.padding,
+                            &paint_padding,
                         );
                         if clip_background.is_some() {
                             scene.pop_layer();
@@ -2590,7 +2604,7 @@ fn paint_document_impl(
                             paint_x,
                             paint_y,
                             &cv.border,
-                            &cv.padding,
+                            &paint_padding,
                         );
                     } else if node.tag_name() == Some("img")
                         && let Some(src) = node.attribute("src")
@@ -2622,7 +2636,7 @@ fn paint_document_impl(
                             cv.color,
                             cv.background_clip,
                             &cv.border,
-                            &cv.padding,
+                            &paint_padding,
                         );
                         if clip_background.is_some() {
                             scene.pop_layer();
@@ -2788,6 +2802,51 @@ fn img_src_url(document: &Document, node_id: usize) -> Option<url::Url> {
     url::Url::parse(element.attr("src")?).ok()
 }
 
+/// Return the padding values used by paint for this laid-out box.
+///
+/// Taffy owns the used-value resolution for the layout pass. Ordinary
+/// percentage/px padding keeps the painter's historical containing-width
+/// calculation, while a side authored in `ch` takes the exact used value that
+/// was measured before Taffy. This avoids re-probing fonts in the paint crate
+/// and keeps backgrounds/images aligned with the geometry.
+fn used_padding_for_paint(
+    cv: &raikiri_style::ComputedValues,
+    layout: &taffy::Layout,
+) -> taffy::Rect<f32> {
+    fn computed_padding_px(
+        value: raikiri_style::resolve::ComputedLengthPercentage,
+        reference: f32,
+    ) -> f32 {
+        match value {
+            raikiri_style::resolve::ComputedLengthPercentage::Px(px) => px,
+            raikiri_style::resolve::ComputedLengthPercentage::Percent(percent) => {
+                reference * percent / 100.0
+            }
+        }
+    }
+
+    let reference = layout.size.width;
+    let choose = |value: raikiri_style::resolve::ComputedLengthPercentage,
+                  ch: &Option<raikiri_style::ChLengthProvenance>,
+                  used: f32| {
+        if ch.is_some() {
+            used
+        } else {
+            computed_padding_px(value, reference)
+        }
+    };
+    taffy::Rect {
+        top: choose(cv.padding.top, &cv.padding_ch.top, layout.padding.top),
+        right: choose(cv.padding.right, &cv.padding_ch.right, layout.padding.right),
+        bottom: choose(
+            cv.padding.bottom,
+            &cv.padding_ch.bottom,
+            layout.padding.bottom,
+        ),
+        left: choose(cv.padding.left, &cv.padding_ch.left, layout.padding.left),
+    }
+}
+
 /// Draws `decoded`'s pixels stretched to exactly fill the element's content
 /// box (CSS Images 3 §4.3 `object-fit: fill`, the only value this scope
 /// implements — no aspect-ratio preservation, no letterboxing).
@@ -2800,27 +2859,19 @@ fn paint_image(
     abs_x: f32,
     abs_y: f32,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
-    padding: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedLengthPercentage>,
+    padding: &taffy::Rect<f32>,
 ) {
-    fn padding_px(v: raikiri_style::resolve::ComputedLengthPercentage, reference: f32) -> f32 {
-        match v {
-            raikiri_style::resolve::ComputedLengthPercentage::Px(px) => px,
-            raikiri_style::resolve::ComputedLengthPercentage::Percent(p) => reference * p / 100.0,
-        }
-    }
     let bl = border.left.width().px();
     let bt = border.top.width().px();
     let br = border.right.width().px();
     let bb = border.bottom.width().px();
-    // CSS 2.1 §8.4 <https://www.w3.org/TR/CSS21/box.html#propdef-padding-top>:
-    // all four `padding-*` percentages resolve against the containing
-    // block's inline size (width) — top/bottom included, never against the
-    // element's own height. Matches `paint_element_background`'s identical
-    // (unmodified) `padding_px(padding.top/.bottom, width)` calls below.
-    let pl = padding_px(padding.left, border_box_width);
-    let pr = padding_px(padding.right, border_box_width);
-    let pt = padding_px(padding.top, border_box_width);
-    let pb = padding_px(padding.bottom, border_box_width);
+    // `layout.padding` contains Taffy's finite used values. This keeps
+    // percentage and font-relative padding consistent with the geometry that
+    // Taffy laid out, including pre-Taffy `ch` resolution.
+    let pl = padding.left;
+    let pr = padding.right;
+    let pt = padding.top;
+    let pb = padding.bottom;
     let content_x = (abs_x + bl + pl) as f64;
     let content_y = (abs_y + bt + pt) as f64;
     let content_w = (border_box_width - bl - br - pl - pr).max(0.0) as f64;
@@ -2932,7 +2983,7 @@ fn paint_element_background(
     current_color: CssColor,
     clip: raikiri_style::property::VisualBox,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
-    padding: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedLengthPercentage>,
+    padding: &taffy::Rect<f32>,
 ) {
     if width <= 0.0 || height <= 0.0 {
         return;
@@ -2960,13 +3011,6 @@ fn paint_element_background(
         ((abs_x + width) as f64).round(),
         ((abs_y + height) as f64).round(),
     );
-    // Helper to get padding px: for Px use directly, for Percent approximate as percent of width
-    fn padding_px(v: raikiri_style::resolve::ComputedLengthPercentage, reference: f32) -> f32 {
-        match v {
-            raikiri_style::resolve::ComputedLengthPercentage::Px(px) => px,
-            raikiri_style::resolve::ComputedLengthPercentage::Percent(p) => reference * p / 100.0,
-        }
-    }
     let color = Color::from_rgba8(effective.r, effective.g, effective.b, effective.a);
     match clip {
         raikiri_style::property::VisualBox::BorderArea => {
@@ -3039,11 +3083,11 @@ fn paint_element_background(
             let bt = border.top.width().px() as f64;
             let br = border.right.width().px() as f64;
             let bb = border.bottom.width().px() as f64;
-            // padding inset (handle Px/Percent)
-            let pl = padding_px(padding.left, width) as f64;
-            let pt = padding_px(padding.top, width) as f64;
-            let pr = padding_px(padding.right, width) as f64;
-            let pb = padding_px(padding.bottom, width) as f64;
+            // padding inset from Taffy's used box geometry.
+            let pl = padding.left as f64;
+            let pt = padding.top as f64;
+            let pr = padding.right as f64;
+            let pb = padding.bottom as f64;
             x0 = (x0 + bl + pl).round();
             y0 = (y0 + bt + pt).round();
             x1 = (x1 - br - pr).round();
