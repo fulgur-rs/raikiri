@@ -826,6 +826,7 @@ css/css-text/word-break/word-break-keep-all-u002d.html
 css/css-text/word-break/word-break-min-content-002.html
 css/css-text/word-break/word-break-min-content-005.html
 css/css-text/word-break/word-break-min-content-006.html
+css/css-text/word-spacing/word-spacing-003.html
 css/css-text/word-spacing/word-spacing-animating-word-spacing.html
 css/css-text/word-spacing/word-spacing-percent-001.html
 # --- css-flexbox reftest pin 2026-09-14 (retry2, goal I2: 191/602 pair PASS at 400x300 EXACT, order + flex-flow impl, WPT 97ea26e) ---

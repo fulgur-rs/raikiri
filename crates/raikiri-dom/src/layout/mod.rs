@@ -4250,17 +4250,17 @@ fn expand_tabs(
     Cow::Owned(out)
 }
 
-/// 当該 font の U+0020 advance (px) を parley probe で測る。
+/// Measure one probe glyph/character advance (px) with Parley.
 ///
-/// [`expand_tabs`] の `<length>` 換算専用。probe text `" "` 1 文字を shape し
-/// [`Layout::width`] を読む。非有限・0・異常に大きい値の場合は
-/// `font_size * 0.5` (monospace 慣行近似) に倒す — caller の range を壊さない
-/// ための fail-safe であり、正確性の主張ではない。
+/// The caller chooses the sample because tabs use U+0020 while `ch` uses the
+/// U+0030 zero glyph. Non-finite, zero, or implausibly large results fall back
+/// to `font_size * 0.5` as a fail-safe.
 ///
 /// [`Layout::width`]: parley::Layout::width
-fn probe_space_advance(
+fn probe_text_advance(
     fonts: &mut FontContext,
     layout_cx: &mut LayoutContext<()>,
+    sample: &str,
     family_str: &str,
     font_size_px: f32,
     font_weight: f32,
@@ -4276,12 +4276,12 @@ fn probe_space_advance(
     );
     let weight = sanitize_font_weight(font_weight, &mut warnings);
     let family = FontFamily::from(family_str);
-    let mut builder = layout_cx.ranged_builder(fonts, " ", 1.0, true);
+    let mut builder = layout_cx.ranged_builder(fonts, sample, 1.0, true);
     builder.push_default(StyleProperty::FontFamily(family));
     builder.push_default(StyleProperty::FontSize(size));
     builder.push_default(StyleProperty::FontWeight(FontWeight::new(weight)));
     builder.push_default(StyleProperty::FontStyle(font_style_to_parley(font_style)));
-    let mut layout: Layout<()> = builder.build(" ");
+    let mut layout: Layout<()> = builder.build(sample);
     layout.break_all_lines(None);
     let w = layout.width();
     if w.is_finite() && w > 0.0 && w <= size * 4.0 {
@@ -5546,6 +5546,11 @@ pub(crate) fn preshape_text(
         font_style: StyleFontStyle,
         line_height_raw: ComputedLineHeight,
         letter_spacing_raw: f32,
+        // Style-layer fallback in CSS px; replaced with a measured `ch`
+        // advance when the authored-unit marker below is present.
+        word_spacing_raw: f32,
+        // Preserve the authored unit because `ComputedLength` alone loses it.
+        word_spacing_ch_factor: Option<f32>,
         tab_size: ComputedTabSize,
         white_space: WhiteSpace,
         word_break: WordBreak,
@@ -5577,6 +5582,21 @@ pub(crate) fn preshape_text(
             job.metrics_family.clone(),
             job.metrics_size.to_bits(),
             job.metrics_weight.to_bits(),
+            style,
+        )
+    }
+
+    fn shape_font_key(job: &Job) -> (String, u32, u32, u8) {
+        let style = match job.font_style {
+            StyleFontStyle::Normal => 0,
+            StyleFontStyle::Italic => 1,
+            StyleFontStyle::Oblique => 2,
+            _ => 0,
+        };
+        (
+            job.family_str.clone(),
+            job.font_size_raw.to_bits(),
+            job.font_weight_raw.to_bits(),
             style,
         )
     }
@@ -5787,6 +5807,8 @@ pub(crate) fn preshape_text(
             font_style: cv.font_style,
             line_height_raw: cv.line_height,
             letter_spacing_raw: cv.letter_spacing.px(),
+            word_spacing_raw: cv.word_spacing.px(),
+            word_spacing_ch_factor: cv.word_spacing_ch_factor,
             tab_size: cv.tab_size,
             white_space: cv.white_space,
             word_break: cv.word_break,
@@ -5813,9 +5835,10 @@ pub(crate) fn preshape_text(
     for job in &jobs {
         let key = font_key(job);
         if let std::collections::hash_map::Entry::Vacant(e) = probes.entry(key) {
-            e.insert(probe_space_advance(
+            e.insert(probe_text_advance(
                 fonts,
                 layout_cx,
+                " ",
                 &job.metrics_family,
                 job.metrics_size,
                 job.metrics_weight,
@@ -5823,15 +5846,37 @@ pub(crate) fn preshape_text(
             ));
         }
     }
-    for job in &mut jobs {
-        if !matches!(
-            job.white_space,
-            WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::BreakSpaces
-        ) {
+    let mut ch_probes: std::collections::HashMap<(String, u32, u32, u8), f32> =
+        std::collections::HashMap::new();
+    for job in &jobs {
+        if job.word_spacing_ch_factor.is_none() {
             continue;
         }
-        if let Some(&adv) = probes.get(&font_key(job)) {
+        let key = shape_font_key(job);
+        if let std::collections::hash_map::Entry::Vacant(e) = ch_probes.entry(key) {
+            e.insert(probe_text_advance(
+                fonts,
+                layout_cx,
+                "0",
+                &job.family_str,
+                job.font_size_raw,
+                job.font_weight_raw,
+                job.font_style,
+            ));
+        }
+    }
+    for job in &mut jobs {
+        if matches!(
+            job.white_space,
+            WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::BreakSpaces
+        ) && let Some(&adv) = probes.get(&font_key(job))
+        {
             job.text = expand_tabs(&job.text, job.tab_size, adv).into_owned();
+        }
+        if let Some(factor) = job.word_spacing_ch_factor
+            && let Some(&adv) = ch_probes.get(&shape_font_key(job))
+        {
+            job.word_spacing_raw = factor * adv;
         }
     }
 
@@ -5858,6 +5903,13 @@ pub(crate) fn preshape_text(
                 "letter-spacing",
                 &mut warnings,
             );
+            let word_spacing = sanitize_finite(
+                job.word_spacing_raw,
+                -MAX_TAFFY_MAGNITUDE,
+                MAX_TAFFY_MAGNITUDE,
+                "word-spacing",
+                &mut warnings,
+            );
             let font_family = FontFamily::from(job.family_str.as_str());
             let mut builder = layout_cx.ranged_builder(fonts, &job.text, 1.0, true);
             builder.push_default(StyleProperty::FontFamily(font_family));
@@ -5870,6 +5922,9 @@ pub(crate) fn preshape_text(
                 line_height,
             )));
             builder.push_default(StyleProperty::LetterSpacing(letter_spacing));
+            if job.word_spacing_ch_factor.is_some() {
+                builder.push_default(StyleProperty::WordSpacing(word_spacing));
+            }
             builder.push_default(StyleProperty::WordBreak(parley_word_break(job.word_break)));
             builder.push_default(StyleProperty::OverflowWrap(parley_overflow_wrap(
                 job.word_break,
@@ -5924,6 +5979,13 @@ pub(crate) fn preshape_text(
                     "letter-spacing",
                     &mut warnings,
                 );
+                let word_spacing = sanitize_finite(
+                    job.word_spacing_raw,
+                    -MAX_TAFFY_MAGNITUDE,
+                    MAX_TAFFY_MAGNITUDE,
+                    "word-spacing",
+                    &mut warnings,
+                );
                 let font_family = FontFamily::from(job.family_str.as_str());
                 let mut builder = lcx.ranged_builder(&mut fonts_thread, &job.text, 1.0, true);
                 builder.push_default(StyleProperty::FontFamily(font_family));
@@ -5936,6 +5998,9 @@ pub(crate) fn preshape_text(
                     line_height,
                 )));
                 builder.push_default(StyleProperty::LetterSpacing(letter_spacing));
+                if job.word_spacing_ch_factor.is_some() {
+                    builder.push_default(StyleProperty::WordSpacing(word_spacing));
+                }
                 builder.push_default(StyleProperty::WordBreak(parley_word_break(job.word_break)));
                 builder.push_default(StyleProperty::OverflowWrap(parley_overflow_wrap(
                     job.word_break,
@@ -13832,6 +13897,43 @@ mod tests {
         assert!(
             spaced > normal + 12.0,
             "letter spacing should increase the shaped advance: normal={normal}, spaced={spaced}"
+        );
+    }
+
+    #[test]
+    fn preshape_text_applies_computed_word_spacing_ch_to_advance() {
+        use parley::{FontContext, LayoutContext};
+        use raikiri_style::{build_rule_tree, cascade};
+
+        fn shaped_width(inline_style: &str) -> f32 {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let p = doc.append_element(Some(body), "p", Style::default(), Some(inline_style));
+            let text = doc.append_text(p, "A B");
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            let mut fonts = FontContext::new();
+            let mut layout_cx = LayoutContext::<()>::new();
+            preshape_text(
+                &mut doc,
+                &cr,
+                &mut fonts,
+                &mut layout_cx,
+                PageBox::A4.width,
+                PageBox::A4.width,
+            );
+            doc.nodes[text]
+                .text_layout()
+                .expect("text should be shaped")
+                .full_width()
+        }
+
+        let normal = shaped_width("word-spacing: 0px");
+        let spaced = shaped_width("word-spacing: 1ch");
+        assert!(
+            spaced > normal + 1.0,
+            "ch word spacing should increase the shaped advance: normal={normal}, spaced={spaced}"
         );
     }
 

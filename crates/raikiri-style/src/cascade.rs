@@ -47,10 +47,10 @@ use crate::media::MediaContext;
 use crate::page::{PageCascadeResult, PageContextQuery, PageInheritance, cascade_page};
 use crate::property::{
     CalcLengthPercentage, CustomProperty, DeferredValue, FontWeightValue, GridAutoFlowValue,
-    GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto, MAX_DEFERRED_VALUE_NESTING_DEPTH,
-    MAX_SUBSTITUTED_VALUE_BYTES, PositionValue, PropertyValue, RelativeFontSize, Sides,
-    WritingMode, initial_grid_auto_track_list, is_custom_property_name, parse_value,
-    resolve_text_align_match_parent,
+    GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto, LengthOrNormal,
+    MAX_DEFERRED_VALUE_NESTING_DEPTH, MAX_SUBSTITUTED_VALUE_BYTES, PositionValue, PropertyValue,
+    RelativeFontSize, Sides, WritingMode, initial_grid_auto_track_list, is_custom_property_name,
+    parse_value, resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentageOrAuto, ResolveContext, used_line_height_length,
@@ -8418,7 +8418,13 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // handling)。`LengthOrNormal` は Copy、by-value 代入で十分。
         PropertyValue::LetterSpacing(ls) => target.letter_spacing = ls,
         // CSS Text 3 §7.1。直上の LetterSpacing arm と同型。
-        PropertyValue::WordSpacing(ws) => target.word_spacing = ws,
+        PropertyValue::WordSpacing(ws) => {
+            target.word_spacing = ws;
+            target.word_spacing_ch_factor = match ws {
+                LengthOrNormal::Length(Length::Ch(factor)) if factor.is_finite() => Some(factor),
+                _ => None,
+            };
+        }
         // CSS Text Module Level 3 §4.2。specified 表現 (`TabSize`) のまま
         // 格納 — `<length>` 側の絶対化は phase 3 に委ねる (`LetterSpacing`
         // arm と同じ handling)。inherited property のため cascade winner が
@@ -16300,6 +16306,17 @@ mod tests {
     fn word_spacing_wired_through_cascade_from_inline_style() {
         let cv = cascade_doc("", "p", Some("word-spacing: 4px"));
         assert_eq!(cv.word_spacing, ComputedLength(4.0));
+    }
+
+    #[test]
+    fn word_spacing_ch_provenance_survives_inheritance() {
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("word-spacing: 1ch"));
+        let span = doc.push_element(p, "span", None);
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].word_spacing_ch_factor, Some(1.0));
+        assert_eq!(r.computed[span].word_spacing_ch_factor, Some(1.0));
     }
 
     #[test]

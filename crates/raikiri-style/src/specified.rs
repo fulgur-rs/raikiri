@@ -327,6 +327,9 @@ pub struct SpecifiedValues {
     /// 同じ絶対化 phase・同じ分類理由 ([`LengthOrNormal`] を共有する
     /// sibling property、両者の spec 根拠は同 type の doc 参照)。
     pub word_spacing: LengthOrNormal,
+    /// Authored `ch` factor retained through inheritance so the text-layout
+    /// sink can replace the style-layer fallback with a font metric.
+    pub word_spacing_ch_factor: Option<f32>,
     /// `tab-size` の **specified** value。phase 3 ([`resolve_tab_size`]) で
     /// 自 node の computed font-size を基準に絶対化される (`<length>` 側
     /// のみ — `<number>` は絶対化不要、[`Self::flex_grow`] と同じ扱い)。
@@ -671,6 +674,7 @@ impl SpecifiedValues {
             // initial は共に `normal`。
             letter_spacing: LengthOrNormal::Normal,
             word_spacing: LengthOrNormal::Normal,
+            word_spacing_ch_factor: None,
             // CSS Text Module Level 3 §4.2: tab-size initial は `8`。
             tab_size: TabSize::Number(8.0),
             // CSS Fragmentation Module Level 3 §3.1 / §3.2: break-before /
@@ -920,6 +924,7 @@ impl SpecifiedValues {
             // `lift_length_or_normal` doc 参照)。
             letter_spacing: lift_length_or_normal(parent.letter_spacing),
             word_spacing: lift_length_or_normal(parent.word_spacing),
+            word_spacing_ch_factor: parent.word_spacing_ch_factor,
             // CSS Text Module Level 3 §4.2: tab-size は inherited。computed
             // `<number>` / `<length>` → specified 表現の lift
             // (`lift_line_height` と同型)。
@@ -1613,6 +1618,9 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
+            // Preserve the `ch` provenance through inheritance for the
+            // font-metric-aware text-layout consumer.
+            word_spacing_ch_factor: self.word_spacing_ch_factor,
             // `tab-size` の `1lh` 解決基準も他の box property と同じ
             // `own_line_height` (CSS Text Module Level 3 §4.2 は line-height
             // 基準の特別扱いを持たない)。
@@ -2138,6 +2146,7 @@ mod tests {
             overflow_wrap: OverflowWrap::Anywhere,
             letter_spacing: ComputedLength(2.0),
             word_spacing: ComputedLength(4.0),
+            word_spacing_ch_factor: None,
             tab_size: ComputedTabSize::Length(ComputedLength(11.0)),
             break_before: BreakBetween::Page,
             break_after: BreakBetween::AvoidPage,
