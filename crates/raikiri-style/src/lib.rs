@@ -55,6 +55,12 @@ pub use counter_style::{
     resolve_custom_counter,
 };
 
+pub mod font_face;
+pub use font_face::{
+    FontFaceDisplay, FontFaceRegistry, FontFaceRule, FontFaceSource, FontFaceStretch,
+    FontFaceStyle, FontFaceWeight, parse_font_face_rules,
+};
+
 pub mod media;
 pub use media::{MediaContext, MediaType};
 

@@ -54,3 +54,10 @@ css/reference
 # anyway so the runner sees and correctly skips them rather than silently
 # missing the whole category.
 css/CSS2/visudet
+
+# css-fonts reftest sweep (@font-face goal raikiri-spike-0vv.19.6).
+# expectations/tracked-wpt.txt already lists css/css-fonts/ as P1; the fetch
+# subset was lagging behind (only css/css-fonts/support/ was present via the
+# `fonts` entry's surroundings). The runner filters to files with reftest
+# links, so non-reftest cases (parsing/, descriptors/) remain cheap to carry.
+css/css-fonts
