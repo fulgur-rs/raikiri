@@ -9,7 +9,7 @@
 
 use raikiri_traits::NodeKind;
 use rayon::prelude::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::document::Document;
 use crate::node::NodeFlags;
@@ -2257,7 +2257,12 @@ fn collapse_ws(
     Cow::Owned(out)
 }
 
-fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
+fn realign_text_after_layout(
+    doc: &mut Document,
+    cascade: &CascadeResult,
+    fonts: &mut FontContext,
+    layout_cx: &mut LayoutContext<()>,
+) {
     // parent map (arena に parent pointer が無いため children から逆引き)。
     let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
     for idx in 0..doc.nodes.len() {
@@ -2267,6 +2272,7 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
             }
         }
     }
+    let mut ch_probes: HashMap<(String, u32, u32, u8), f32> = HashMap::new();
     for (idx, parent) in parent_of.iter().enumerate() {
         if doc.nodes[idx].kind() != NodeKind::Text {
             continue;
@@ -2314,6 +2320,7 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
         } else {
             None
         };
+        let measured_indent = measured_text_indent_px(cv, fonts, layout_cx, &mut ch_probes);
         // preshape は page 幅で break するため、narrow container 内の text の
         // 折り返しは container 幅に整合しない (slice 1b で
         // 実測: length-001 の 3-line article が single-line のまま残る)。
@@ -2378,20 +2385,16 @@ fn realign_text_after_layout(doc: &mut Document, cascade: &CascadeResult) {
         // matches `text-align: justify` under nowrap.
         if cv.white_space == WhiteSpace::Nowrap || cv.text_wrap == TextWrapMode::Nowrap {
             if let Some(options) = indent_options {
-                let amount = match cv.text_indent {
-                    ComputedLengthPercentage::Px(px) => px,
-                    ComputedLengthPercentage::Percent(p) => containing_width * p / 100.0,
-                };
+                let amount =
+                    bounded_text_indent_amount(cv.text_indent, containing_width, measured_indent);
                 layout.set_text_indent(amount, options);
             }
             layout.align(align, AlignmentOptions::default());
             continue;
         }
         if let Some(options) = indent_options {
-            let amount = match cv.text_indent {
-                ComputedLengthPercentage::Px(px) => px,
-                ComputedLengthPercentage::Percent(p) => containing_width * p / 100.0,
-            };
+            let amount =
+                bounded_text_indent_amount(cv.text_indent, containing_width, measured_indent);
             layout.set_text_indent(amount, options);
         }
         layout.break_all_lines(Some(containing_width));
@@ -4288,6 +4291,71 @@ fn probe_text_advance(
         w
     } else {
         size * 0.5
+    }
+}
+
+/// Measure the `ch` advance needed by a computed `text-indent` value.
+///
+/// The cache key mirrors the text shaping face selection used by
+/// [`probe_text_advance`], and the caller supplies the same font context that
+/// shaped the document's text. A `None` result means the value was not authored
+/// in `ch` and the computed px fallback should be used.
+fn measured_text_indent_px(
+    cv: &ComputedValues,
+    fonts: &mut FontContext,
+    layout_cx: &mut LayoutContext<()>,
+    probes: &mut HashMap<(String, u32, u32, u8), f32>,
+) -> Option<f32> {
+    let factor = cv.text_indent_ch_factor?;
+    let source = cv.text_indent_ch_font.as_ref();
+    let family_atoms = source.map(|key| &key.family).unwrap_or(&cv.font_family);
+    let family = family_atoms
+        .iter()
+        .map(|a| a.0.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let size = source.map_or(cv.font_size, |key| key.size);
+    let weight = source.map_or(cv.font_weight, |key| key.weight);
+    let font_style = source.map_or(cv.font_style, |key| key.style);
+    let style = match font_style {
+        StyleFontStyle::Normal => 0,
+        StyleFontStyle::Italic => 1,
+        StyleFontStyle::Oblique => 2,
+        _ => 0,
+    };
+    let key = (family.clone(), size.px().to_bits(), weight.to_bits(), style);
+    let advance = *probes.entry(key).or_insert_with(|| {
+        probe_text_advance(
+            fonts,
+            layout_cx,
+            "0",
+            &family,
+            size.px(),
+            weight,
+            font_style,
+        )
+    });
+    let used = factor * advance;
+    Some(if used.is_nan() {
+        0.0
+    } else {
+        used.clamp(-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE)
+    })
+}
+
+fn bounded_text_indent_amount(
+    value: ComputedLengthPercentage,
+    containing_width: f32,
+    measured: Option<f32>,
+) -> f32 {
+    let raw = match value {
+        ComputedLengthPercentage::Px(px) => measured.unwrap_or(px),
+        ComputedLengthPercentage::Percent(percent) => containing_width * percent / 100.0,
+    };
+    if raw.is_nan() {
+        0.0
+    } else {
+        raw.clamp(-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE)
     }
 }
 
@@ -6300,7 +6368,7 @@ pub fn layout_single_page(
     // glyph offset のみを変え、box geometry は変えないため invariant 検査の前後
     // どちらでもよいが、確定幅を読む側として compute 直後に置く。
     realign_grid_abspos_static_positions(document, cascade);
-    realign_text_after_layout(document, cascade);
+    realign_text_after_layout(document, cascade, &mut font_ctx, &mut layout_cx);
 
     // Step 5b: 親子 geometry の意味的 invariant を検査し、破れている subtree
     // を決定的 fallback (ゼロ) に倒す。Step 5 の内部
@@ -8005,6 +8073,184 @@ mod tests {
             (first_x - 20.0).abs() < 2.0,
             "indented first glyph x={} must be near indent 20px",
             first_x
+        );
+    }
+
+    #[test]
+    fn text_indent_amount_bounds_nonfinite_values() {
+        assert_eq!(
+            bounded_text_indent_amount(ComputedLengthPercentage::Px(f32::INFINITY), 100.0, None,),
+            MAX_TAFFY_MAGNITUDE
+        );
+        assert_eq!(
+            bounded_text_indent_amount(
+                ComputedLengthPercentage::Px(f32::NEG_INFINITY),
+                100.0,
+                None,
+            ),
+            -MAX_TAFFY_MAGNITUDE
+        );
+        assert_eq!(
+            bounded_text_indent_amount(ComputedLengthPercentage::Px(f32::NAN), 100.0, None),
+            0.0
+        );
+        assert_eq!(
+            bounded_text_indent_amount(
+                ComputedLengthPercentage::Px(1.0),
+                100.0,
+                Some(MAX_TAFFY_MAGNITUDE * 2.0),
+            ),
+            MAX_TAFFY_MAGNITUDE
+        );
+    }
+
+    #[test]
+    fn text_indent_ch_uses_ahem_and_lato_zero_advances() {
+        use parley::PositionedLayoutItem;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+        use std::path::PathBuf;
+
+        let fonts_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("target")
+            .join("wpt")
+            .join("fonts");
+        if !fonts_dir.join("Ahem.ttf").exists() || !fonts_dir.join("Lato-Medium.ttf").exists() {
+            eprintln!(
+                "skipping text-indent ch font test: Ahem.ttf and Lato-Medium.ttf are required under {}",
+                fonts_dir.display()
+            );
+            return;
+        }
+
+        fn first_glyph_x(fonts_dir: &std::path::Path, family: &str, indent: &str) -> f32 {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let style =
+                format!("display:block;font-family:{family};font-size:16px;text-indent:{indent}ch");
+            let p = doc.append_element(Some(body), "p", Style::default(), Some(&style));
+            let text = doc.append_text(p, "AB");
+            let rules = build_rule_tree(&doc);
+            let cascade = cascade(&doc, &rules).expect("cascade Ok");
+            let fonts = crate::fonts::build_wpt_font_ctx(fonts_dir)
+                .expect("bundled WPT fonts should register");
+            layout_single_page(&mut doc, &cascade, PageBox::A4, fonts).expect("layout Ok");
+            doc.nodes[text]
+                .text_layout()
+                .expect("text shaped")
+                .lines()
+                .next()
+                .expect("one line")
+                .items()
+                .filter_map(|item| match item {
+                    PositionedLayoutItem::GlyphRun(run) => {
+                        run.positioned_glyphs().next().map(|g| g.x)
+                    }
+                    _ => None,
+                })
+                .next()
+                .expect("first glyph")
+        }
+
+        fn inherited_source_glyph_x(fonts_dir: &std::path::Path) -> f32 {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let parent = doc.append_element(
+                Some(body),
+                "p",
+                Style::default(),
+                Some("display:block;font-family:Ahem;font-size:16px;text-indent:1ch"),
+            );
+            let child = doc.append_element(
+                Some(parent),
+                "div",
+                Style::default(),
+                Some("display:block;font-family:Lato;font-size:32px"),
+            );
+            let text = doc.append_text(child, "AB");
+            let rules = build_rule_tree(&doc);
+            let cascade = cascade(&doc, &rules).expect("cascade Ok");
+            let fonts = crate::fonts::build_wpt_font_ctx(fonts_dir)
+                .expect("bundled WPT fonts should register");
+            layout_single_page(&mut doc, &cascade, PageBox::A4, fonts).expect("layout Ok");
+            doc.nodes[text]
+                .text_layout()
+                .expect("text shaped")
+                .lines()
+                .next()
+                .expect("one line")
+                .items()
+                .filter_map(|item| match item {
+                    PositionedLayoutItem::GlyphRun(run) => {
+                        run.positioned_glyphs().next().map(|g| g.x)
+                    }
+                    _ => None,
+                })
+                .next()
+                .expect("first glyph")
+        }
+
+        let mut probe_fonts = crate::fonts::build_wpt_font_ctx(&fonts_dir)
+            .expect("bundled WPT fonts should register");
+        let mut probe_layout = LayoutContext::<()>::new();
+        let ahem = probe_text_advance(
+            &mut probe_fonts,
+            &mut probe_layout,
+            "0",
+            "Ahem",
+            16.0,
+            400.0,
+            StyleFontStyle::Normal,
+        );
+        let lato = probe_text_advance(
+            &mut probe_fonts,
+            &mut probe_layout,
+            "0",
+            "Lato",
+            16.0,
+            400.0,
+            StyleFontStyle::Normal,
+        );
+        let ahem_x = first_glyph_x(&fonts_dir, "Ahem", "1");
+        let ahem_negative_x = first_glyph_x(&fonts_dir, "Ahem", "-1");
+        let lato_x = first_glyph_x(&fonts_dir, "Lato", "1");
+        let inherited_x = inherited_source_glyph_x(&fonts_dir);
+        assert!(
+            (ahem_x - ahem).abs() < 2.0,
+            "Ahem indent x={ahem_x}, ch={ahem}"
+        );
+        assert!(
+            (lato_x - lato).abs() < 2.0,
+            "Lato indent x={lato_x}, ch={lato}"
+        );
+        assert!(
+            (ahem_negative_x + ahem).abs() < 2.0,
+            "negative Ahem indent x={ahem_negative_x}, ch={ahem}"
+        );
+        let lato_32 = probe_text_advance(
+            &mut probe_fonts,
+            &mut probe_layout,
+            "0",
+            "Lato",
+            32.0,
+            400.0,
+            StyleFontStyle::Normal,
+        );
+        assert!(
+            (inherited_x - ahem).abs() < 2.0,
+            "inherited source x={inherited_x}, source ch={ahem}"
+        );
+        assert!(
+            (inherited_x - lato_32).abs() > 0.5,
+            "inherited indent must not use child font: x={inherited_x}, child ch={lato_32}"
+        );
+        assert!(
+            (ahem_x - lato_x).abs() > 0.5,
+            "proportional and Ahem text-indent must differ: Ahem={ahem_x}, Lato={lato_x}"
         );
     }
 

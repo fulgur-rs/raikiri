@@ -8167,6 +8167,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // specified/computed layers keep the full grammar.
         PropertyValue::TextIndent(v) => {
             target.text_indent = v.length;
+            target.text_indent_ch_factor = match v.length {
+                Length::Ch(factor) if factor.is_finite() => Some(factor),
+                _ => None,
+            };
+            target.text_indent_ch_font = None;
             target.text_indent_hanging = v.hanging;
             target.text_indent_each_line = v.each_line;
         }
@@ -15519,6 +15524,48 @@ mod tests {
              unchanged (CSS Text 3 §8.1 inherited property), not re-resolve \
              `2em` against its own 10px font-size"
         );
+    }
+
+    #[test]
+    fn text_indent_ch_preserves_source_font_through_inheritance_and_override() {
+        let mut doc = TestDoc::new();
+        let p = doc.push_element(0, "p", Some("font-size: 20px; text-indent: 1ch"));
+        let inherited = doc.push_element(p, "span", Some("font-size: 40px"));
+        let own = doc.push_element(p, "strong", Some("font-size: 40px; text-indent: 2ch"));
+        let own_child = doc.push_element(own, "i", Some("font-size: 10px"));
+        let cleared = doc.push_element(p, "em", Some("font-size: 40px; text-indent: 2em"));
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+
+        assert_eq!(r.computed[p].text_indent_ch_factor, Some(1.0));
+        assert_eq!(r.computed[inherited].text_indent_ch_factor, Some(1.0));
+        assert_eq!(
+            r.computed[inherited]
+                .text_indent_ch_font
+                .as_ref()
+                .expect("inherited source font")
+                .size,
+            ComputedLength(20.0)
+        );
+        assert_eq!(r.computed[own].text_indent_ch_factor, Some(2.0));
+        assert_eq!(
+            r.computed[own]
+                .text_indent_ch_font
+                .as_ref()
+                .expect("own source font")
+                .size,
+            ComputedLength(40.0)
+        );
+        assert_eq!(
+            r.computed[own_child]
+                .text_indent_ch_font
+                .as_ref()
+                .expect("inherited own source font")
+                .size,
+            ComputedLength(40.0)
+        );
+        assert_eq!(r.computed[cleared].text_indent_ch_factor, None);
+        assert_eq!(r.computed[cleared].text_indent_ch_font, None);
     }
 
     #[test]
