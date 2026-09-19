@@ -35,7 +35,7 @@ use raikiri_style::property::{
     BackgroundImage, Border, BorderColor, BorderStyle, ContentComponent, CounterStyle, CssColor,
     DisplayValue, FloatValue, Gradient, GradientStopColor, Length, LengthOrAuto, ListStyleType,
     OutlineColor, OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue,
-    QuoteKeyword, Sides, TextAlign, VerticalAlign, WritingMode, ZIndexValue,
+    QuoteKeyword, Sides, TextAlign, TextShadowColor, VerticalAlign, WritingMode, ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedBorderRadius, ComputedLength, ComputedLengthPercentage,
@@ -3139,6 +3139,16 @@ fn paint_document_impl(
                         if let Some(clip) = clip_background {
                             scene.push_clip_layer(Affine::IDENTITY, &clip);
                         }
+                        paint_element_box_shadows(
+                            scene,
+                            layout.size.width,
+                            paint_height,
+                            paint_x,
+                            paint_y,
+                            &paint_border_radius,
+                            &cv.box_shadow,
+                            cv.color,
+                        );
                         paint_element_background(
                             scene,
                             layout.size.width,
@@ -3950,6 +3960,69 @@ fn fill_rounded_background(
             color,
             None,
             &rounded,
+        );
+    }
+}
+
+/// Paint non-inset `box-shadow` entries behind an element's background.
+///
+/// The renderer's rounded-rectangle shadow primitive provides the exact
+/// geometry for the initial outer-shadow slice. Inset shadows and fully
+/// per-corner radii remain follow-up work.
+#[allow(clippy::too_many_arguments)]
+fn paint_element_box_shadows(
+    scene: &mut impl PaintScene,
+    width: f32,
+    height: f32,
+    abs_x: f32,
+    abs_y: f32,
+    border_radius: &ComputedBorderRadius,
+    shadows: &[raikiri_style::ComputedBoxShadowItem],
+    current_color: CssColor,
+) {
+    if width <= 0.0 || height <= 0.0 {
+        return;
+    }
+    let radius = [
+        used_border_radius(border_radius.top_left, width as f64),
+        used_border_radius(border_radius.top_right, width as f64),
+        used_border_radius(border_radius.bottom_right, width as f64),
+        used_border_radius(border_radius.bottom_left, width as f64),
+    ]
+    .into_iter()
+    .fold(0.0, f64::max);
+    for shadow in shadows.iter().filter(|shadow| !shadow.inset) {
+        let color = match shadow.color {
+            TextShadowColor::CurrentColor => current_color,
+            TextShadowColor::Resolved(color) => color,
+            _ => current_color, // cov:ignore: defensive fallback for future TextShadowColor variants
+        };
+        if color.a == 0 {
+            continue;
+        }
+        let offset_x = shadow.offset_x.px() as f64;
+        let offset_y = shadow.offset_y.px() as f64;
+        let spread = shadow.spread_radius.px() as f64;
+        let blur = shadow.blur_radius.px() as f64;
+        if !offset_x.is_finite()
+            || !offset_y.is_finite()
+            || !spread.is_finite()
+            || !blur.is_finite()
+        {
+            continue; // cov:ignore: non-finite computed lengths are rejected before painting
+        }
+        let rect = Rect::new(
+            abs_x as f64 + offset_x - spread,
+            abs_y as f64 + offset_y - spread,
+            abs_x as f64 + width as f64 + offset_x + spread,
+            abs_y as f64 + height as f64 + offset_y + spread,
+        );
+        scene.draw_box_shadow(
+            Affine::IDENTITY,
+            rect,
+            Color::from_rgba8(color.r, color.g, color.b, color.a),
+            (radius + spread).max(0.0),
+            blur.max(0.0),
         );
     }
 }

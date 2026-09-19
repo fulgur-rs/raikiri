@@ -33,7 +33,8 @@ mod walk;
 ///
 /// # Non-goals (current scope)
 /// - Multi-page pagination
-/// - Element box-shadow (background-color and border have minimal support)
+/// - Advanced element `box-shadow` painting (inset shadows and non-zero blur,
+///   spread, or radius interactions remain deferred follow-up work)
 /// - CSS Text Decoration Level 4 features (skip-ink / skip-spaces, thickness,
 ///   emphasis, text-shadow, and vertical writing)
 /// - Scrollbar painting for `overflow: scroll` / `auto` — descendants are
@@ -324,6 +325,7 @@ mod tests {
     use anyrender::Scene;
     use anyrender::recording::RenderCommand;
     use parley::FontContext;
+    use peniko::Color;
     use raikiri_dom::{Document, layout_single_page};
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
@@ -362,6 +364,71 @@ mod tests {
         let mut scene = Scene::new();
         paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
         scene
+    }
+
+    #[test]
+    fn paint_single_page_box_shadow_emits_basic_outer_shadow_command() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let _box = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("width: 100px; height: 100px; box-shadow: rgba(0,255,0,1) 10px 10px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+
+        let shadow = scene.commands.iter().find_map(|command| match command {
+            RenderCommand::BoxShadow(shadow) => Some(shadow),
+            _ => None,
+        });
+        let shadow = shadow.expect("basic outer box-shadow should reach the scene");
+        assert_eq!(shadow.rect.x0, 10.0);
+        assert_eq!(shadow.rect.y0, 10.0);
+        assert_eq!(shadow.rect.x1, 110.0);
+        assert_eq!(shadow.rect.y1, 110.0);
+        assert_eq!(shadow.radius, 0.0);
+        assert_eq!(shadow.std_dev, 0.0);
+        assert_eq!(shadow.brush, Color::from_rgba8(0, 255, 0, 255));
+    }
+
+    #[test]
+    fn paint_single_page_box_shadow_resolves_current_color_and_skips_inset_or_transparent() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let _box = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(
+                "width: 100px; height: 100px; color: #0a141e; box-shadow: currentcolor 4px 3px, transparent 8px 3px, inset black 12px 3px",
+            ),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+
+        let shadows: Vec<_> = scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::BoxShadow(shadow) => Some(shadow),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(shadows.len(), 1);
+        assert_eq!(shadows[0].rect, kurbo::Rect::new(4.0, 3.0, 104.0, 103.0));
+        assert_eq!(shadows[0].brush, Color::from_rgba8(10, 20, 30, 255));
     }
 
     #[test]
