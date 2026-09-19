@@ -2080,7 +2080,6 @@ mod tests {
 /// a non-goal for now, and the VRT/production backend is CPU-only per
 /// `raikiri::html_to_png`), so they're out of this probe's scope, not
 /// asserted safe.
-
 #[cfg(test)]
 mod nonfinite_rasterizer_probe {
     use std::panic::AssertUnwindSafe;
