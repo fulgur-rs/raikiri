@@ -29,7 +29,7 @@
 
 use anyrender::PaintScene;
 use kurbo::{Affine, Arc, BezPath, Point, Rect, RoundedRectRadii, Vec2};
-use peniko::{Color, Fill};
+use peniko::{Color, Fill, Mix};
 use raikiri_dom::{CounterSnapshot, Document};
 use raikiri_style::property::{
     BackgroundImage, Border, BorderColor, BorderStyle, ContentComponent, CounterStyle, CssColor,
@@ -2724,6 +2724,8 @@ fn paint_document_impl(
             decorations: text::DecorationContext,
         },
         PopClip,
+        /// Close an element opacity group after its complete subtree.
+        PopOpacity,
         /// Paint an originating element's `::after` pseudo after its real
         /// children, while still inside any overflow clip pushed for the
         /// originating element.
@@ -2815,7 +2817,7 @@ fn paint_document_impl(
             inside_fixed_containing_block,
             decorations,
         ) = match frame {
-            PaintFrame::PopClip => {
+            PaintFrame::PopClip | PaintFrame::PopOpacity => {
                 scene.pop_layer();
                 continue;
             }
@@ -3113,6 +3115,32 @@ fn paint_document_impl(
                             .max(0.0)
                     })
                     .fold(0.0, f32::max);
+                // CSS Color 4 §3.3: opacity applies to the complete
+                // element group, including its background, border, text,
+                // generated content, and descendants. Keep this layer open
+                // until the deferred `PaintAfter` and overflow clip frames
+                // have finished so overlapping descendants are composited as
+                // one group instead of being alpha-blended individually.
+                let has_opacity_layer = cv.opacity < 1.0;
+                if has_opacity_layer {
+                    let opacity_clip = Rect::new(
+                        0.0,
+                        0.0,
+                        page_box.width.max(0.0) as f64,
+                        page_box.height.max(0.0) as f64,
+                    );
+                    scene.push_layer(
+                        Mix::Normal,
+                        cv.opacity,
+                        Affine::IDENTITY,
+                        &opacity_clip,
+                        None,
+                        None,
+                    );
+                    // This frame is pushed first so it closes after the
+                    // optional overflow clip and generated `::after` paint.
+                    stack.push(PaintFrame::PopOpacity);
+                }
                 let mut before_advance = 0.0;
                 if paints_on_page {
                     // A body background is propagated to the page canvas.  For

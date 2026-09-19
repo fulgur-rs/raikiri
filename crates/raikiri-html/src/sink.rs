@@ -497,7 +497,21 @@ fn inline_stylesheet_text(doc: &Document, node_id: raikiri_traits::NodeId) -> St
             text.push_str(value);
         }
     }
-    text
+    strip_xhtml_cdata_wrapper(&text)
+}
+
+/// Remove the XML CDATA wrapper used by XHTML WPT inline stylesheets.
+///
+/// HTML's style-data state leaves the wrapper in the text node when an XHTML
+/// test is parsed through the HTML-compatible sink. CSS sees `<![CDATA[` as
+/// invalid leading tokens otherwise, so the whole stylesheet is silently
+/// dropped even though the same source is valid in an XML-aware browser.
+fn strip_xhtml_cdata_wrapper(text: &str) -> String {
+    let trimmed = text.trim();
+    trimmed
+        .strip_prefix("<![CDATA[")
+        .and_then(|inner| inner.strip_suffix("]]>"))
+        .map_or_else(|| text.to_owned(), ToOwned::to_owned)
 }
 
 fn inline_stylesheet_has_content(doc: &Document, node_id: raikiri_traits::NodeId) -> bool {
@@ -977,5 +991,22 @@ mod find_document_base_href_tests {
         // resolved and requested.
         let doc = Document::new();
         assert!(find_document_base_href(&doc).is_none());
+    }
+}
+
+#[cfg(test)]
+mod inline_stylesheet_text_tests {
+    use super::strip_xhtml_cdata_wrapper;
+
+    #[test]
+    fn strips_xhtml_cdata_wrapper_but_keeps_plain_css() {
+        assert_eq!(
+            strip_xhtml_cdata_wrapper("\n<![CDATA[\nbody { color: red }\n]]>\n"),
+            "\nbody { color: red }\n"
+        );
+        assert_eq!(
+            strip_xhtml_cdata_wrapper("body { color: red }"),
+            "body { color: red }"
+        );
     }
 }
