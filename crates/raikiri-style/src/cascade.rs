@@ -130,21 +130,23 @@ pub struct CascadeResult {
     /// (and any other property) overridden by its own `::before`/`::after`
     /// rule; whether a box is actually generated from the result (§4.1,
     /// conditioned on `content`) is left to the consumer, per this doc's own
-    /// `content.is_empty()` note below. See [`resolve_inheritance`]'s
+    /// content representation note below. See [`resolve_inheritance`]'s
     /// pseudo-element section for the derivation.
     ///
-    /// This crate represents both `content: normal` and `content: none` as
-    /// an empty `content` list ([`ComputedValues::content`] doc) — a present
+    /// This crate represents `content: normal` as an empty `content` list and
+    /// explicit `content: none` with [`crate::property::ContentComponent::None`] inside the
+    /// list ([`ComputedValues::content`] doc) — a present
     /// map entry with an empty `content` list means "a `::before`/`::after`
-    /// rule matched, but its (or the initial) `content` value is `normal`/
-    /// `none`". CSS Content Module Level 3
+    /// rule matched, but its (or the initial) `content` value is `normal`";
+    /// an explicit `none` carries the sentinel. CSS Content Module Level 3
     /// <https://www.w3.org/TR/css-content-3/#content-property> is the
     /// primary source for what a non-empty `content` value implies for box
     /// generation — this crate stops at exposing the computed value; the
-    /// consumer decides box generation from `content.is_empty()`, not from
+    /// consumer decides box generation from whether the list is empty or
+    /// carries [`crate::property::ContentComponent::None`], not from
     /// map presence (map presence only means "some `::before`/`::after`
     /// rule matched this element", independent of what that rule set
-    /// `content` to). This `content.is_empty()` ⇒ suppress-box reading is
+    /// `content` to). This content representation ⇒ suppress-box reading is
     /// scoped to **this** (`pseudo`) map's entries specifically — it does
     /// not carry over to [`Self::computed`] (real elements). CSS Content 3
     /// §1 <https://www.w3.org/TR/css-content-3/#content-property> draws
@@ -762,8 +764,10 @@ fn collect_cascaded_with_media_context<D: StyleDom>(
     // `winners` buffer.
     let mut pseudo_before_decls: Vec<CascadedDecl> = Vec::new();
     let mut pseudo_after_decls: Vec<CascadedDecl> = Vec::new();
+    let mut pseudo_marker_decls: Vec<CascadedDecl> = Vec::new();
     let mut pseudo_before_custom: Vec<CustomCascadedDecl> = Vec::new();
     let mut pseudo_after_custom: Vec<CustomCascadedDecl> = Vec::new();
+    let mut pseudo_marker_custom: Vec<CustomCascadedDecl> = Vec::new();
     while let Some((id, depth)) = stack.pop() {
         ancestor_path.truncate(depth);
         if let Some(node) = dom.node(id) {
@@ -884,6 +888,9 @@ fn collect_cascaded_with_media_context<D: StyleDom>(
                             PseudoElem::After => {
                                 (&mut pseudo_after_decls, &mut pseudo_after_custom)
                             }
+                            PseudoElem::Marker => {
+                                (&mut pseudo_marker_decls, &mut pseudo_marker_custom)
+                            }
                         };
                         for decl in &rule.declarations {
                             expand_shorthand_into(decl, |d| {
@@ -943,6 +950,11 @@ fn collect_cascaded_with_media_context<D: StyleDom>(
                         PseudoElem::After,
                         &mut pseudo_after_decls,
                         &mut pseudo_after_custom,
+                    ),
+                    (
+                        PseudoElem::Marker,
+                        &mut pseudo_marker_decls,
+                        &mut pseudo_marker_custom,
                     ),
                 ] {
                     let pseudo_start = out.pseudo_decls.len();
@@ -5484,7 +5496,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // element" — is a downstream (`raikiri-dom`) decision this crate
         // does not make; see `CascadeResult::pseudo`'s doc.
         if is_element {
-            for pseudo in [PseudoElem::Before, PseudoElem::After] {
+            for pseudo in [PseudoElem::Before, PseudoElem::After, PseudoElem::Marker] {
                 let candidates = cascaded.pseudo_candidates(id, pseudo);
                 let custom_candidates = cascaded.pseudo_custom_candidates(id, pseudo);
                 if candidates.is_none() && custom_candidates.is_none() {
@@ -5508,7 +5520,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
                 }
 
                 let ctx = child_ctx.expect(
-                    "a `::before`/`::after` candidate only exists for a \
+                    "a generated pseudo-element candidate only exists for a \
                      StyleNodeKind::Element (is_element == true here, since \
                      only elements are ever matched by a selector — \
                      `collect_cascaded`'s pseudo-element pass runs inside \
@@ -7506,6 +7518,8 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::FontFamily(_)
         | PropertyValue::LineHeight(_)
         | PropertyValue::Display(_)
+        | PropertyValue::ListStyleType(_)
+        | PropertyValue::ListStylePosition(_)
         | PropertyValue::CounterReset(_)
         | PropertyValue::CounterResetInherit
         | PropertyValue::CounterIncrement(_)
@@ -8087,6 +8101,8 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // distinction は下流 (paint) の resolve context で意味を持つ。
         PropertyValue::LineHeight(lh) => target.line_height = lh,
         PropertyValue::Display(d) => target.display = d,
+        PropertyValue::ListStyleType(v) => target.list_style_type = v,
+        PropertyValue::ListStylePosition(v) => target.list_style_position = v,
         // counter-* は将来の GCPM (paged media generated content) 対応に
         // 向けた足場 — parse 結果をそのまま computed value に格納。counter
         // tree の実際の resolve は将来の本実装で行う。
@@ -8801,10 +8817,10 @@ mod tests {
     use crate::property::CssColor;
     use crate::property::DisplayValue;
     use crate::property::{
-        Border, BorderColor, BorderStyle, CalcLengthPercentage, Length, LengthOrAuto, OutlineColor,
-        OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides,
-        TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
-        TextDecorationThickness, TextShadowColor,
+        Border, BorderColor, BorderStyle, CalcLengthPercentage, ContentComponent, Length,
+        LengthOrAuto, ListStylePosition, ListStyleType, OutlineColor, OutlineStyle, OverflowValue,
+        OverflowXY, PropertyKey, PropertyValue, Sides, TextDecorationColor, TextDecorationLine,
+        TextDecorationShorthand, TextDecorationStyle, TextDecorationThickness, TextShadowColor,
     };
     use crate::resolve::{
         ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedLength,
@@ -14950,6 +14966,70 @@ mod tests {
             r.computed[span].content.is_empty(),
             "child should not inherit content"
         );
+    }
+
+    #[test]
+    fn list_style_values_inherit_and_author_override() {
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(
+            0,
+            "ol",
+            Some("list-style-type: upper-roman; list-style-position: inside"),
+        );
+        let child = doc.push_element(parent, "li", None);
+        let override_child = doc.push_element(
+            parent,
+            "li",
+            Some("list-style-type: none; list-style-position: outside"),
+        );
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            r.computed[parent].list_style_type,
+            ListStyleType::Named("upper-roman".into())
+        );
+        assert_eq!(
+            r.computed[child].list_style_type,
+            ListStyleType::Named("upper-roman".into())
+        );
+        assert_eq!(
+            r.computed[child].list_style_position,
+            ListStylePosition::Inside
+        );
+        assert_eq!(
+            r.computed[override_child].list_style_type,
+            ListStyleType::None
+        );
+        assert_eq!(
+            r.computed[override_child].list_style_position,
+            ListStylePosition::Outside
+        );
+    }
+
+    #[test]
+    fn marker_selector_populates_pseudo_map_and_inherits_list_style() {
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(
+            s,
+            r##"li { display: list-item; list-style-type: decimal } li::marker { content: "#"; color: blue }"##,
+        );
+        let li = doc.push_element(0, "li", None);
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        let marker = r
+            .pseudo
+            .get(&(StyleNodeId(li as u64), PseudoElem::Marker))
+            .expect("::marker entry must exist");
+        assert_eq!(marker.color, BLUE);
+        assert_eq!(*marker.content, vec![ContentComponent::Literal("#".into())]);
+        assert_eq!(
+            marker.list_style_type,
+            ListStyleType::Named("decimal".into())
+        );
+        assert_eq!(marker.list_style_position, ListStylePosition::Outside);
     }
 
     // ── ::before/::after pseudo-element cascade (CSS Pseudo-Elements

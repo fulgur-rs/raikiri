@@ -40,9 +40,9 @@ pub use property::{
     BackgroundAttachment, BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, BasicShape,
     BorderRadius, BoxShadowItem, CircleShape, ClipPath, CssColor, CssPosition, CssPositionOffset,
     DisplayValue, EllipseShape, FillRule, GeometryBox, InsetBorderRadius, InsetShape, Length,
-    LengthOrAuto, LengthOrNormal, ObjectFit, Outline, OutlineColor, OutlineStyle, PathShape,
-    PolygonShape, PropertyKey, PropertyValue, ShapeRadius, Sides, TextShadowColor, TextShadowItem,
-    VisualBox,
+    LengthOrAuto, LengthOrNormal, ListStylePosition, ListStyleType, ObjectFit, Outline,
+    OutlineColor, OutlineStyle, PathShape, PolygonShape, PropertyKey, PropertyValue, ShapeRadius,
+    Sides, TextShadowColor, TextShadowItem, VisualBox,
 };
 
 pub mod rule;
@@ -310,11 +310,12 @@ impl NonTSPseudoClass for PseudoClass {
     }
 }
 
-/// `::before` / `::after` — CSS Pseudo-Elements Module Level 4 §4.1
-/// <https://drafts.csswg.org/css-pseudo-4/#generated-content> ("The
-/// `::before` and `::after` pseudo-elements..."). No other pseudo-element is
-/// modeled yet ([`RaikiriSelectorParser::parse_pseudo_element`] rejects
-/// everything else, fail-closed).
+/// Tree-abiding generated pseudo-elements used by the current layout.
+///
+/// `::before` / `::after` come from CSS Pseudo-Elements Module Level 4 §4.1;
+/// `::marker` comes from CSS Lists 3 §3. Generated list markers are resolved by
+/// the downstream layout/paint layer, while author `::marker` declarations are
+/// still cascaded here.
 ///
 /// Variant shape mirrors the `selectors` crate's own reference test
 /// implementation (`selectors` v0.39.0 `parser.rs`, its `#[cfg(test)]`
@@ -328,6 +329,8 @@ pub enum PseudoElem {
     Before,
     /// `::after` (also accepted as legacy `:after`).
     After,
+    /// `::marker` (CSS Lists 3 §3.7).
+    Marker,
 }
 
 impl ToCss for PseudoElem {
@@ -335,6 +338,7 @@ impl ToCss for PseudoElem {
         dest.write_str(match self {
             PseudoElem::Before => "::before",
             PseudoElem::After => "::after",
+            PseudoElem::Marker => "::marker",
         })
     }
 }
@@ -480,9 +484,9 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
         }
     }
 
-    /// `::before` / `::after` only (CSS Pseudo-Elements Module Level 4 §4.1,
-    /// see [`PseudoElem`] doc) — everything else (`::marker`,
-    /// `::details-content`, `::part()`, `::slotted()`, any unknown name)
+    /// `::before` / `::after` / `::marker` (CSS Pseudo-Elements Module Level 4
+    /// §4.1 and CSS Lists 3 §3.7, see [`PseudoElem`] doc) — everything else
+    /// (`::details-content`, `::part()`, `::slotted()`, any unknown name)
     /// stays a parse error, same fail-closed posture as
     /// [`Self::parse_non_ts_pseudo_class`] above.
     fn parse_pseudo_element(
@@ -494,6 +498,8 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
             Ok(PseudoElem::Before)
         } else if name.eq_ignore_ascii_case("after") {
             Ok(PseudoElem::After)
+        } else if name.eq_ignore_ascii_case("marker") {
+            Ok(PseudoElem::Marker)
         } else {
             Err(
                 location.new_custom_error(SelectorParseErrorKind::UnsupportedPseudoClassOrElement(
@@ -764,11 +770,11 @@ mod tests {
         assert!(parse_selector_list("p:nth-of-type(2 of .featured)").is_err());
     }
 
-    // ---- `::before`/`::after` pseudo-element selector parsing ----
+    // ---- tree-abiding pseudo-element selector parsing ----
     //
     // CSS Pseudo-Elements Module Level 4 §4.1
-    // <https://drafts.csswg.org/css-pseudo-4/#generated-content>, Selectors
-    // Level 4 (pseudo-element grammar). `cascade.rs`'s test module covers
+    // <https://drafts.csswg.org/css-pseudo-4/#generated-content> and CSS Lists
+    // 3 §3.7, Selectors Level 4 (pseudo-element grammar). `cascade.rs`'s test module covers
     // matching/cascade behavior once parsed; these tests cover parsing
     // (accept/reject shape) only.
 
@@ -777,6 +783,7 @@ mod tests {
         for (src, expected) in [
             (".foo::before", PseudoElem::Before),
             ("p::after", PseudoElem::After),
+            ("li::marker", PseudoElem::Marker),
         ] {
             let list = parse_selector_list(src).unwrap_or_else(|e| panic!("parse {src:?}: {e}"));
             let selector = &list.slice()[0];
@@ -798,11 +805,11 @@ mod tests {
 
     #[test]
     fn parse_pseudo_element_rejects_unknown_name() {
-        // Fail-closed posture: only `before`/`after` are recognized —
-        // `::marker`/`::details-content`/anything else stays a parse error
-        // (same posture `parse_non_ts_pseudo_class` already has for
+        // `::marker` is the one additional generated-content pseudo-element
+        // supported by the list-item pipeline. Other unsupported names remain
+        // fail-closed (same posture `parse_non_ts_pseudo_class` already has for
         // unrecognized pseudo-classes).
-        assert!(parse_selector_list("::marker").is_err());
+        assert!(parse_selector_list("::marker").is_ok());
         assert!(parse_selector_list("::details-content").is_err());
         assert!(parse_selector_list("::bogus").is_err());
     }

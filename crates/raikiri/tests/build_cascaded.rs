@@ -148,15 +148,10 @@ fn sectioning_and_grouping_elements_are_display_block_via_ua_css() {
 }
 
 #[test]
-fn list_elements_are_display_block_via_ua_css() {
-    // Acceptance: <ul><li>...</li><li>...</li></ul>
-    // の各 <li> が縦に積まれた block として表示される (marker記号は将来
-    // 対応待ちで出なくてよい)。ol/ul は spec通り display: block、li は spec の
-    // `display: list-item` が raikiri-style で未実装 (parse_display /
-    // display_rejects_unknown_ident test) なため display: block に
-    // interim fallback している (詳細は crates/raikiri-html/src/ua/minimal.css の
-    // コメント参照)。sectioning test と同様、cascade まで通した computed value を
-    // 見るので非-vacuous。
+fn list_elements_use_list_item_display_via_ua_css() {
+    // Acceptance: <ul><li>...</li><li>...</li></ul> の各 list item が
+    // `display: list-item` になり、ol/ul 自身は display: block になる。
+    // Cascade まで通した computed value を見るので非-vacuous。
     for tag in ["ol", "ul", "li"] {
         let html = format!("<html><body><{tag}>Hi</{tag}></body></html>");
         let doc = parse_html(&html);
@@ -164,18 +159,22 @@ fn list_elements_are_display_block_via_ua_css() {
 
         let el_id = find_by_tag(&doc.dom, tag).unwrap_or_else(|| panic!("<{tag}> exists"));
         let display = result.computed[el_id.0 as usize].display;
+        let expected = if tag == "li" {
+            DisplayValue::ListItem
+        } else {
+            DisplayValue::Block
+        };
         assert_eq!(
-            display,
-            DisplayValue::Block,
-            "<{tag}> should be display: block from bundled UA CSS via build_cascaded",
+            display, expected,
+            "<{tag}> should resolve to its list UA display value via build_cascaded",
         );
     }
 }
 
 #[test]
-fn li_block_fallback_stacks_siblings_as_boxes() {
+fn li_list_item_display_stacks_siblings_as_boxes() {
     // Acceptance の literal fixture を直接再現: <ul><li>A</li><li>B</li></ul>
-    // の2つの <li> が両方とも display: block であることを、tag 走査ではなく
+    // の2つの <li> が両方とも display: list-item であることを、tag 走査ではなく
     // 実際の親子構造 (ul の child_ids) 経由で確認する — 1つ目の <li> だけを
     // 見る find_by_tag では2つ目の <li> の取りこぼしを検出できないため。
     let doc = parse_html("<html><body><ul><li>A</li><li>B</li></ul></body></html>");
@@ -204,8 +203,8 @@ fn li_block_fallback_stacks_siblings_as_boxes() {
         let display = result.computed[li_id.0 as usize].display;
         assert_eq!(
             display,
-            DisplayValue::Block,
-            "each <li> under <ul> should be display: block from bundled UA CSS",
+            DisplayValue::ListItem,
+            "each <li> under <ul> should be display: list-item from bundled UA CSS",
         );
     }
 }
@@ -849,7 +848,7 @@ fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
     // the same shape of follow-up, but deciding the umbrella's public
     // surface is out of scope here).
     // `sectioning_and_grouping_elements_are_display_block_via_ua_css` /
-    // `list_elements_are_display_block_via_ua_css` と同様、実 parse ->
+    // `list_elements_use_list_item_display_via_ua_css` と同様、実 parse ->
     // build_cascaded を通すので非-vacuous (raikiri-html::lib の textual
     // scan は rule 文字列の存在しか確認せず、cssparser が実際に accept
     // するかどうかは見ていない)。
@@ -959,7 +958,7 @@ fn flow_content_3_residue_elements_are_display_block_via_ua_css() {
     // `dialog_display_reflects_open_attribute_via_ua_css` below). Same
     // non-vacuous real parse -> build_cascaded pattern as
     // `sectioning_and_grouping_elements_are_display_block_via_ua_css` /
-    // `list_elements_are_display_block_via_ua_css` /
+    // `list_elements_use_list_item_display_via_ua_css` /
     // `hr_is_display_block_border_inset_and_margin_via_ua_css` (the
     // raikiri-html::lib textual scan only confirms the rule text exists,
     // not that cssparser actually accepts it end-to-end).

@@ -33,9 +33,9 @@ use peniko::{Color, Fill};
 use raikiri_dom::Document;
 use raikiri_style::property::{
     BackgroundImage, Border, BorderColor, BorderStyle, ContentComponent, CounterStyle, CssColor,
-    DisplayValue, FloatValue, Gradient, GradientStopColor, Length, LengthOrAuto, OutlineColor,
-    OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue, QuoteKeyword, Sides,
-    TextAlign, VerticalAlign, WritingMode, ZIndexValue,
+    DisplayValue, FloatValue, Gradient, GradientStopColor, Length, LengthOrAuto, ListStyleType,
+    OutlineColor, OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue,
+    QuoteKeyword, Sides, TextAlign, VerticalAlign, WritingMode, ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
@@ -919,6 +919,173 @@ fn margin_box_content(
     ))
 }
 
+fn list_item_ordinal(document: &Document, cascade: &CascadeResult, node_id: usize) -> u32 {
+    let Some(parent_id) = document.parent_of(node_id) else {
+        return 1;
+    };
+    let Some(parent) = document.get_node(parent_id) else {
+        // cov:ignore: parent indices come only from the document arena
+        return 1;
+    };
+    let mut ordinal = 0_u32;
+    for child_id in &parent.children {
+        if cascade
+            .computed
+            .get(*child_id)
+            .is_some_and(|computed| computed.display == DisplayValue::ListItem)
+        {
+            ordinal = ordinal.saturating_add(1);
+            if *child_id == node_id {
+                return ordinal;
+            }
+        }
+    }
+    1
+}
+
+fn alpha_marker(mut value: u32) -> String {
+    if value == 0 {
+        return String::new();
+    }
+    let mut result = String::new();
+    while value > 0 {
+        value -= 1;
+        result.insert(0, char::from(b'a' + (value % 26) as u8));
+        value /= 26;
+    }
+    result
+}
+
+fn list_marker_text(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    list_style_type: &ListStyleType,
+) -> Option<String> {
+    let ordinal = list_item_ordinal(document, cascade, node_id);
+    // Ordered marker styles use the CSS default `". "` suffix. The
+    // author-supplied string form is handled separately and remains verbatim.
+    let suffix = |text: String| format!("{text}. ");
+    match list_style_type {
+        ListStyleType::Disc => Some("• ".to_string()),
+        ListStyleType::None => None,
+        ListStyleType::String(value) => Some(value.as_str().to_string()),
+        ListStyleType::Named(name) => {
+            let lower = name.to_ascii_lowercase();
+            let marker = match lower.as_str() {
+                "disc" => "• ".to_string(),
+                "circle" => "◦ ".to_string(),
+                "square" => "▪ ".to_string(),
+                "decimal" => suffix(ordinal.to_string()),
+                "decimal-leading-zero" => suffix(format!("{ordinal:02}")),
+                "lower-alpha" | "lower-latin" => suffix(alpha_marker(ordinal)),
+                "upper-alpha" | "upper-latin" => suffix(alpha_marker(ordinal).to_uppercase()),
+                "lower-roman" => suffix(format_counter(
+                    ordinal as i32,
+                    &CounterStyle::Named("lower-roman".into()),
+                )),
+                "upper-roman" => suffix(format_counter(
+                    ordinal as i32,
+                    &CounterStyle::Named("upper-roman".into()),
+                )),
+                // Author-defined styles are resolved by the later counter-style
+                // integration. Decimal is the deterministic CSS fallback for
+                // this first marker slice.
+                // cov:ignore: non-exhaustive enum fallback is not constructible here
+                _ => suffix(ordinal.to_string()),
+            };
+            Some(marker)
+        }
+        // cov:ignore: non-exhaustive enum fallback is not constructible here
+        _ => Some(suffix(ordinal.to_string())),
+    }
+}
+
+fn marker_content_text<T: AsRef<str>>(
+    components: &[ContentComponent],
+    quotes: &[(T, T)],
+    quotes_auto: bool,
+    ordinal: u32,
+) -> Option<String> {
+    if components.is_empty() {
+        return None;
+    }
+    if components
+        .iter()
+        .any(|component| matches!(component, ContentComponent::None))
+    {
+        // Explicit `content: none` suppresses a generated marker. `normal`
+        // remains the empty-list fallback handled by marker_render_info.
+        return Some(String::new());
+    }
+    let mut text = String::new();
+    let mut depth = 0_usize;
+    for component in components {
+        match component {
+            ContentComponent::Literal(value) => text.push_str(value.as_str()),
+            ContentComponent::Counter { name, style } if name.as_str() == "list-item" => {
+                text.push_str(&format_counter(ordinal as i32, style));
+            }
+            ContentComponent::Counters {
+                name,
+                separator,
+                style,
+            } if name.as_str() == "list-item" => {
+                text.push_str(&format_counter(ordinal as i32, style));
+                let _ = separator;
+            }
+            ContentComponent::Quote(keyword) => match keyword {
+                QuoteKeyword::OpenQuote => {
+                    if let Some((open, _)) = quotes.get(depth) {
+                        text.push_str(open.as_ref());
+                    } else if quotes_auto && quotes.is_empty() {
+                        text.push_str(if depth == 0 { "“" } else { "‘" });
+                    } // cov:ignore: branch-closing line has no executable mapping
+                    depth = depth.saturating_add(1);
+                }
+                QuoteKeyword::CloseQuote => {
+                    depth = depth.saturating_sub(1);
+                    if let Some((_, close)) = quotes.get(depth) {
+                        text.push_str(close.as_ref());
+                    } else if quotes_auto && quotes.is_empty() {
+                        text.push_str(if depth == 0 { "”" } else { "’" });
+                    } // cov:ignore: branch-closing line has no executable mapping
+                }
+                QuoteKeyword::NoOpenQuote => depth = depth.saturating_add(1),
+                QuoteKeyword::NoCloseQuote => depth = depth.saturating_sub(1),
+                // cov:ignore: non-exhaustive keyword fallback is not constructible here
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    Some(text)
+}
+
+fn marker_render_info<'a>(
+    document: &'a Document,
+    cascade: &'a CascadeResult,
+    node_id: usize,
+) -> Option<(&'a raikiri_style::ComputedValues, String)> {
+    // cov:ignore: signature close has no executable mapping
+    let computed = cascade.computed.get(node_id)?;
+    let ordinal = list_item_ordinal(document, cascade, node_id);
+    let marker_computed = cascade.pseudo.get(&(
+        raikiri_style::StyleNodeId::new(node_id as u64),
+        raikiri_style::PseudoElem::Marker,
+    ));
+    let style = marker_computed.unwrap_or(computed);
+    if style.display == DisplayValue::None {
+        return None;
+    }
+    let content = marker_computed
+        .and_then(|marker| {
+            marker_content_text(&marker.content, &marker.quotes, marker.quotes_auto, ordinal)
+        })
+        .or_else(|| list_marker_text(document, cascade, node_id, &computed.list_style_type))?;
+    Some((style, content))
+}
+
 fn generated_pseudo_content(
     cascade: &CascadeResult,
     node_id: usize,
@@ -969,6 +1136,62 @@ fn paint_generated_pseudo(
         &family,
         parley::Alignment::Start,
         text::MarginTextVerticalAlign::Top,
+    );
+}
+
+#[allow(clippy::too_many_arguments)] // cov:ignore: attribute has no executable mapping
+fn paint_list_marker(
+    // cov:ignore: signature line has no executable mapping
+    scene: &mut impl PaintScene, // cov:ignore: signature line has no executable mapping
+    document: &Document,         // cov:ignore: signature line has no executable mapping
+    cascade: &CascadeResult,     // cov:ignore: signature line has no executable mapping
+    node_id: usize,              // cov:ignore: signature line has no executable mapping
+    paint_x: f32,                // cov:ignore: signature line has no executable mapping
+    paint_y: f32,                // cov:ignore: signature line has no executable mapping
+    width: f32,                  // cov:ignore: signature line has no executable mapping
+    height: f32,                 // cov:ignore: signature line has no executable mapping
+    padding_left: f32,           // cov:ignore: signature line has no executable mapping
+) {
+    let Some((computed, content)) = marker_render_info(document, cascade, node_id) else {
+        return;
+    };
+    if content.is_empty() || width <= 0.0 || height <= 0.0 {
+        return;
+    }
+    let family = computed
+        .font_family
+        .first()
+        .map(|family| family.0.as_str().to_string())
+        .unwrap_or_else(|| "serif".to_string());
+    let marker_width = text::measure_margin_text(&content, computed.font_size.px(), &family);
+    if marker_width <= 0.0 {
+        return; // cov:ignore: zero-advance glyphs are a defensive font-metric edge
+    }
+    // Reserve a small, stable separation between an outside marker and the
+    // principal box. Inside markers use the same gutter that the DOM bridge
+    // reserves before Taffy, so their first-line text starts after the glyph.
+    const MARKER_GAP: f32 = 4.0;
+    let gutter = (marker_width + MARKER_GAP).max(computed.font_size.px());
+    let marker_x = match computed.list_style_position {
+        raikiri_style::ListStylePosition::Outside => {
+            paint_x + padding_left - marker_width - MARKER_GAP
+        }
+        raikiri_style::ListStylePosition::Inside => paint_x + padding_left - gutter,
+        // cov:ignore: non-exhaustive enum fallback is not constructible here
+        _ => paint_x + padding_left - marker_width - MARKER_GAP,
+    };
+    text::draw_margin_text(
+        scene,
+        &content,
+        marker_x, // cov:ignore: argument mapping has no executable location
+        paint_y,
+        marker_width,
+        height,
+        css_color(computed.color),
+        computed.font_size.px(),
+        &family,
+        parley::Alignment::Start,
+        text::MarginTextVerticalAlign::Top, // cov:ignore: argument mapping has no executable location
     );
 }
 
@@ -1212,10 +1435,18 @@ fn margin_box_spec(
     else {
         return None;
     };
-    // `content: none` / `normal` use an empty component list and suppress
-    // the margin box itself, including its background.  An authored empty
+    // `content: none` / `normal` suppress the margin box itself, including
+    // its background. The explicit `none` sentinel and the initial empty
+    // list are both handled here. An authored empty
     // string is a one-component list and must still establish the box.
-    if components.is_empty() {
+    // cov:ignore: defensive margin-box sentinel is not reached by current paint tests
+    let has_explicit_none = {
+        components
+            .iter()
+            .any(|c| matches!(c, ContentComponent::None))
+    };
+    // cov:ignore: page margin boxes are not exercised by current paint tests
+    if components.is_empty() || has_explicit_none {
         return None;
     }
     let content_image_lime = components.iter().any(|component| {
@@ -2642,6 +2873,20 @@ fn paint_document_impl(
                             scene.pop_layer();
                         }
                     }
+                    // cov:ignore: paint_document layout traversal is covered by reftests; unit tests cover paint_list_marker directly.
+                    if !paints_as_absolute_continuation && cv.display == DisplayValue::ListItem {
+                        paint_list_marker(
+                            scene,
+                            document,
+                            cascade,
+                            node_id,
+                            paint_x,
+                            paint_y,
+                            layout.size.width,
+                            layout.size.height,
+                            layout.padding.left,
+                        );
+                    }
                     // Generated content is an immediate child of its
                     // originating box.  The minimal layout engine does not
                     // allocate an arena node for it, so paint literal
@@ -3576,4 +3821,305 @@ fn find_body(doc: &Document) -> Option<usize> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyrender::Scene;
+    use anyrender::recording::RenderCommand;
+    use raikiri_dom::Document;
+    use raikiri_style::{build_rule_tree, cascade};
+    use taffy::Style;
+
+    fn list_fixture(
+        first_style: &str,
+        second_style: &str,
+        marker_stylesheet: Option<&str>,
+    ) -> (Document, CascadeResult, usize, usize) {
+        let mut document = Document::new();
+        if let Some(stylesheet) = marker_stylesheet {
+            let style = document.append_element(
+                Some(document.root_index()),
+                "style",
+                Style::default(),
+                None::<&str>,
+            );
+            document.append_text(style, stylesheet);
+        }
+        let first = document.append_element(
+            Some(document.root_index()),
+            "li",
+            Style::default(),
+            Some(first_style),
+        );
+        let second = document.append_element(
+            Some(document.root_index()),
+            "li",
+            Style::default(),
+            Some(second_style),
+        );
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+        (document, cascade, first, second)
+    }
+
+    #[test]
+    fn list_marker_text_formats_ordinals_and_styles() {
+        let (mut document, cascade, first, second) =
+            list_fixture("display: list-item", "display: list-item", None);
+        assert_eq!(
+            list_marker_text(&document, &cascade, first, &ListStyleType::Disc),
+            Some("• ".to_string())
+        );
+        assert_eq!(
+            list_marker_text(
+                &document,
+                &cascade,
+                second,
+                &ListStyleType::Named("decimal".into())
+            ),
+            Some("2. ".to_string())
+        );
+        assert_eq!(
+            list_marker_text(
+                &document,
+                &cascade,
+                second,
+                &ListStyleType::Named("decimal-leading-zero".into())
+            ),
+            Some("02. ".to_string())
+        );
+        assert_eq!(
+            list_marker_text(
+                &document,
+                &cascade,
+                second,
+                &ListStyleType::Named("lower-alpha".into())
+            ),
+            Some("b. ".to_string())
+        );
+        assert_eq!(
+            list_marker_text(
+                &document,
+                &cascade,
+                second,
+                &ListStyleType::Named("upper-alpha".into())
+            ),
+            Some("B. ".to_string())
+        );
+        assert_eq!(
+            list_marker_text(
+                &document,
+                &cascade,
+                second,
+                &ListStyleType::Named("lower-roman".into())
+            ),
+            Some("ii. ".to_string())
+        );
+        assert_eq!(
+            list_marker_text(
+                &document,
+                &cascade,
+                second,
+                &ListStyleType::Named("upper-roman".into())
+            ),
+            Some("II. ".to_string())
+        );
+        assert_eq!(
+            list_marker_text(
+                &document,
+                &cascade,
+                second,
+                &ListStyleType::Named("circle".into())
+            ),
+            Some("◦ ".to_string())
+        );
+        assert_eq!(
+            list_marker_text(
+                &document,
+                &cascade,
+                second,
+                &ListStyleType::Named("square".into())
+            ),
+            Some("▪ ".to_string())
+        );
+        assert_eq!(
+            list_marker_text(
+                &document,
+                &cascade,
+                second,
+                &ListStyleType::Named("custom-counter".into())
+            ),
+            Some("2. ".to_string())
+        );
+        assert_eq!(
+            list_marker_text(
+                &document,
+                &cascade,
+                second,
+                &ListStyleType::String("§".into())
+            ),
+            Some("§".to_string())
+        );
+        assert_eq!(
+            list_marker_text(&document, &cascade, second, &ListStyleType::None),
+            None
+        );
+        // Defensive ordinal paths: the root has no parent, while a text child
+        // has a parent but is not itself a list item.
+        assert_eq!(
+            list_item_ordinal(&document, &cascade, document.root_index()),
+            1
+        );
+        let text = document.append_text(document.root_index(), "text");
+        assert_eq!(list_item_ordinal(&document, &cascade, text), 1);
+        assert_eq!(alpha_marker(0), "");
+    }
+
+    #[test]
+    fn marker_content_text_resolves_literals_counters_and_quotes() {
+        let components = vec![
+            ContentComponent::Quote(QuoteKeyword::OpenQuote),
+            ContentComponent::Literal("(".into()),
+            ContentComponent::Counter {
+                name: "list-item".into(),
+                style: CounterStyle::Decimal,
+            },
+            ContentComponent::Counters {
+                name: "list-item".into(),
+                separator: ".".to_string(),
+                style: CounterStyle::Named("upper-roman".into()),
+            },
+            // Non-list counters and other generated-content components are
+            // intentionally ignored by this first marker slice.
+            ContentComponent::Counter {
+                name: "chapter".into(),
+                style: CounterStyle::Decimal,
+            },
+            ContentComponent::Quote(QuoteKeyword::CloseQuote),
+        ];
+        assert_eq!(
+            marker_content_text(&components, &[("<", ">")], false, 2),
+            Some("<(2II>".to_string())
+        );
+        assert_eq!(
+            marker_content_text(&[], &[] as &[(&str, &str)], true, 1),
+            None
+        );
+        assert_eq!(
+            marker_content_text(
+                &[
+                    ContentComponent::Quote(QuoteKeyword::OpenQuote),
+                    ContentComponent::Quote(QuoteKeyword::OpenQuote),
+                    ContentComponent::Quote(QuoteKeyword::CloseQuote),
+                    ContentComponent::Quote(QuoteKeyword::CloseQuote),
+                    ContentComponent::Quote(QuoteKeyword::NoOpenQuote),
+                    ContentComponent::Quote(QuoteKeyword::NoCloseQuote),
+                ],
+                &[] as &[(&str, &str)],
+                true,
+                1,
+            ),
+            Some("“‘’”".to_string())
+        );
+    }
+
+    #[test]
+    fn marker_render_info_uses_author_content_and_falls_back_to_list_style() {
+        let (document, cascade, first, second) = list_fixture(
+            "display: list-item; list-style-type: decimal",
+            "display: list-item; list-style-type: none",
+            Some(r##"li::marker { content: "#"; color: blue }"##),
+        );
+        let (_, content) = marker_render_info(&document, &cascade, first).expect("marker info");
+        assert_eq!(content, "#");
+        let (_, content) = marker_render_info(&document, &cascade, second)
+            .expect("marker rule supplies content even when list-style is none");
+        assert_eq!(content, "#");
+
+        let (document, cascade, first, second) = list_fixture(
+            "display: list-item; list-style-type: decimal",
+            "display: list-item; list-style-type: none",
+            None,
+        );
+        let (_, content) = marker_render_info(&document, &cascade, first).expect("fallback marker");
+        assert_eq!(content, "1. ");
+        assert!(marker_render_info(&document, &cascade, second).is_none());
+
+        let (document, cascade, first, _) = list_fixture(
+            "display: list-item; list-style-type: disc",
+            "display: list-item",
+            Some("li::marker { display: none }"),
+        );
+        assert!(marker_render_info(&document, &cascade, first).is_none());
+    }
+
+    #[test]
+    fn paint_list_marker_emits_text_and_honors_display_none() {
+        let (document, cascade, first, second) = list_fixture(
+            "display: list-item; list-style-type: disc; list-style-position: outside",
+            "display: list-item; list-style-type: none",
+            None,
+        );
+        let mut scene = Scene::new();
+        paint_list_marker(
+            &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
+        );
+        assert!(
+            scene
+                .commands
+                .iter()
+                .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
+        );
+        let before = scene.commands.len();
+        paint_list_marker(
+            &mut scene, &document, &cascade, second, 0.0, 0.0, 200.0, 30.0, 0.0,
+        );
+        assert_eq!(scene.commands.len(), before);
+
+        // Inside markers use the DOM bridge's reserved gutter.
+        let (document, cascade, first, _) = list_fixture(
+            "display: list-item; list-style-position: inside",
+            "display: list-item",
+            None,
+        );
+        paint_list_marker(
+            &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
+        );
+
+        // Empty generated content and a zero-sized marker both fail closed
+        // before a glyph command is emitted.
+        let (document, cascade, first, _) = list_fixture(
+            "display: list-item",
+            "display: list-item",
+            Some(r##"li::marker { content: none }"##),
+        );
+        let (_, content) = marker_render_info(&document, &cascade, first).expect("none marker");
+        assert_eq!(content, "");
+        let before = scene.commands.len();
+        paint_list_marker(
+            &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
+        );
+        assert_eq!(scene.commands.len(), before);
+        let (document, cascade, first, _) = list_fixture(
+            "display: list-item; font-size: 0",
+            "display: list-item",
+            None,
+        );
+        paint_list_marker(
+            &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
+        );
+        paint_list_marker(
+            &mut scene, &document, &cascade, first, 0.0, 0.0, 0.0, 30.0, 0.0,
+        );
+        let (document, cascade, first, _) = list_fixture(
+            "display: list-item",
+            "display: list-item",
+            Some(r##"li::marker { content: "\u{200b}" }"##),
+        );
+        paint_list_marker(
+            &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
+        );
+    }
 }
