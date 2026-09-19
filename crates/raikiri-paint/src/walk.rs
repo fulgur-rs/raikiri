@@ -5599,7 +5599,7 @@ mod tests {
             Some(document.root_index()),
             "div",
             Style::default(),
-            Some("background-position: right 25% bottom 50%"),
+            Some("background-position: bottom 50% right 25%"),
         );
         let rules = build_rule_tree(&document);
         let cascade = cascade(&document, &rules).expect("cascade Ok");

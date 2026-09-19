@@ -1700,7 +1700,7 @@ fn render_raikiri_pages_inner(
                 &page_steps,
                 &page_widths,
                 resolver,
-            )?
+            )? // cov:ignore: rustc maps this standalone success/error propagation token only to the unreachable resolver-error edge
         } else {
             layout_pages_with_page_geometry(
                 &mut fresh.dom,
@@ -2360,6 +2360,9 @@ mod tests {
             .expect("geometry-varying image document should render");
         assert!(rendered.pages.len() >= 2);
         assert_eq!(rendered.pages[0].width, 100);
+        let rendered_without_resolver = render_raikiri_pages_inner(html, 120, 120, None)
+            .expect("geometry-varying document without images should render");
+        assert!(rendered_without_resolver.pages.len() >= 2);
     }
 
     #[test]
