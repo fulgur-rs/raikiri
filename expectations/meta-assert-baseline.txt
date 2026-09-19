@@ -1,0 +1,2 @@
+# Agent-reviewed VRT baseline for meta-assert-only WPT tests.
+# Entries are added only through apply-meta-assert-review.py --apply.
