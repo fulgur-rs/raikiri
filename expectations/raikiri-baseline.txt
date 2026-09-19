@@ -1010,6 +1010,9 @@ css/css-flexbox/gap-005-lr.html
 css/css-flexbox/gap-005-ltr.html
 css/css-flexbox/gap-005-rl.html
 css/css-flexbox/gap-005-rtl.html
+# --- y0zo gap exact 800x600 PASS pins 2026-09-20 ---
+css/css-flexbox/gap-008-ltr.html
+css/css-flexbox/gap-009-ltr.html
 css/css-flexbox/gap-010-ltr.html
 css/css-flexbox/item-with-max-height-and-scrollbar.html
 css/css-flexbox/layout-algorithm_algo-cross-line-001.html
