@@ -228,3 +228,34 @@ fn parse_reftest_links_api_smoke() {
     let links = parse_reftest_links(html);
     assert_eq!(links.len(), 1);
 }
+
+#[test]
+fn reftest_12_orphans_matches_forced_page_reference() {
+    let test = r#"<html><head>
+        <link rel="match" href="ref.html">
+        <style>
+          @page { size: 100px 50px; margin: 0; }
+          body { margin: 0; }
+          #lead { height: 30px; }
+          p { margin: 0; font-size: 10px; line-height: 10px;
+              white-space: pre-line; orphans: 3; widows: 1; }
+        </style>
+      </head><body><div id="lead"></div><p>a
+b
+c</p><div style="height:10px"></div></body></html>"#;
+    let reference = r#"<html><head>
+        <style>
+          @page { size: 100px 50px; margin: 0; }
+          body { margin: 0; }
+          #lead { height: 30px; }
+          p { margin: 0; font-size: 10px; line-height: 10px;
+              white-space: pre-line; break-before: page; }
+        </style>
+      </head><body><div id="lead"></div><p>a
+b
+c</p><div style="height:10px"></div></body></html>"#;
+    assert!(
+        run_match_pair(test, reference),
+        "orphans:3 should move the fitting paragraph like a forced page break"
+    );
+}
