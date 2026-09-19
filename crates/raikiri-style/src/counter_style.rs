@@ -13,11 +13,12 @@
 //! # Scope
 //!
 //! This module implements `@counter-style` parsing, the registry, and the
-//! `generate a counter` algorithm. Wiring a formatted custom-counter string
-//! into `raikiri-traits::TargetRegistry`'s resolution flow is deferred;
-//! this module has **no dependency on raikiri-traits
-//! and is not wired into that crate**. See [`resolve_custom_counter`]'s doc
-//! for exactly what a caller gets back and why.
+//! `generate a counter` algorithm. Wiring formatted custom-counter strings
+//! into `raikiri-traits::TargetRegistry`'s target-resolution flow remains
+//! deferred; ordinary marker and generated-content paint consumes this module
+//! through the cascade result without adding a dependency on
+//! `raikiri-traits`. See [`resolve_custom_counter`]'s doc for the exact
+//! representation contract.
 //!
 //! What's implemented:
 //!
@@ -87,15 +88,12 @@
 //! irrespective of which was inserted first.
 //!
 //! This closes the "no production consumer" gap this module previously had
-//! for [`parse_counter_style_rules`] / [`CounterStyleRegistry`] (a registry
-//! now exists alongside every `RuleTree`, populated from both origins), but
-//! it is still one layer short of `counter()`/`counters()` actually
-//! resolving during layout/paint: routing a matched [`CounterStyleRegistry`]
-//! entry through [`resolve_custom_counter`] into
-//! `raikiri-traits::TargetRegistry`'s resolution flow remains out of
-//! scope, unchanged by this module (see the "Scope"
-//! section above) — [`resolve_custom_counter`] itself is still exercised by
-//! this module's own tests only.
+//! for [`parse_counter_style_rules`] / [`CounterStyleRegistry`]. The cascade
+//! result clones the populated registry, and `raikiri-paint` routes marker and
+//! generated-content `counter()`/`counters()` values through
+//! [`resolve_custom_counter`]. `raikiri-traits::TargetRegistry`'s separate
+//! `target-counter()` resolution flow remains out of scope (see the
+//! "Scope" section above).
 
 use std::collections::{HashMap, HashSet};
 
@@ -685,8 +683,9 @@ pub struct CounterStyleRule {
     /// are used." [`resolve_custom_counter`] implements the `counter()`
     /// -context `generate a counter` algorithm (§2), which has no
     /// prefix/suffix step at all — this is that omission's citation, not an
-    /// oversight. A future `::marker`-string consumer would read this field
-    /// directly and prepend it itself.
+    /// oversight. The `raikiri-paint` default-marker consumer reads this field
+    /// directly and applies it around the representation returned by
+    /// [`resolve_custom_counter`].
     pub prefix: CounterSymbol,
     /// See [`Self::prefix`] — §3.4
     /// <https://www.w3.org/TR/css-counter-styles-3/#counter-style-suffix>
@@ -1503,12 +1502,11 @@ fn additive_repr(tuples: &[(i32, CounterSymbol)], value: i64) -> Option<String> 
 /// it here would create exactly the kind
 /// of duplicated-source-of-truth drift this project has hit before (see
 /// e.g. [`crate::page::PageCascadeResult::declarations`]'s doc for a
-/// repeated instance of the same drift). `None` is this
-/// function's honest boundary: it is `raikiri-traits::format_counter`
-/// (today unconditionally decimal-formatting any `CounterStyle::Named` it
-/// doesn't itself recognize) that is expected to treat `None` from this
-/// function the same way. Actually integration that call is a deferred design
-/// question — not this function's job.
+/// repeated instance of the same drift). The paint consumer treats `None`
+/// from this function as the CSS decimal fallback, while a successful result
+/// is rendered as the custom style's representation. Prefix/suffix application
+/// for a default `::marker` stays at that consumer boundary because these
+/// descriptors do not apply to `counter()` / `counters()` themselves.
 pub fn resolve_custom_counter(
     registry: &CounterStyleRegistry,
     name: &str,
