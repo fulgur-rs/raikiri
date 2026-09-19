@@ -2324,10 +2324,7 @@ fn prepare_text_indent_before_taffy(
         let Some(parent_idx) = parent_of[idx] else {
             continue; // cov:ignore: in-document text nodes always have a parent.
         };
-        if cv.text_indent_ch_factor.is_none() || cv.text_indent_hanging || cv.text_indent_each_line
-        {
-            // Hanging and each-line forms retain their line-scope semantics on
-            // the established post-Taffy path.
+        if cv.text_indent_ch_factor.is_none() {
             continue;
         }
         let needs_line_break_property = matches!(
@@ -2342,15 +2339,26 @@ fn prepare_text_indent_before_taffy(
         let parent_is_inline_root = doc.nodes[parent_idx]
             .flags
             .contains(NodeFlags::IS_INLINE_ROOT);
-        if (parent_is_inline_root
-            && !needs_line_break_property
-            && (cv.text_indent_ch_factor.is_none() || has_forced_break))
-            || (cascade.computed[parent_idx].width_ch.is_some() && !needs_line_break_property)
+        let has_modifier = cv.text_indent_hanging || cv.text_indent_each_line;
+        let parent_is_block_container = matches!(
+            cascade.computed[parent_idx].display,
+            DisplayValue::Block | DisplayValue::InlineBlock
+        );
+        let has_other_in_document_child = has_modifier
+            && doc.nodes[parent_idx]
+                .children
+                .iter()
+                .any(|&child| child != idx && doc.nodes[child].is_in_document());
+        if (has_modifier && (!parent_is_block_container || has_other_in_document_child))
+            || (parent_is_inline_root
+                && (has_modifier || (!needs_line_break_property && has_forced_break)))
+            || (cascade.computed[parent_idx].width_ch.is_some()
+                && (has_modifier || !needs_line_break_property))
         {
-            // A `ch` width is already resolved on the containing box. Keep
-            // the legacy post-Taffy text-indent path for this combined case;
-            // the minimal inline bridge cannot yet reconcile both independent
-            // line-width probes without changing existing CSS Text baselines.
+            // Modifier line scope and a `ch` containing width still use the
+            // established post-Taffy path for inline roots and width-aware
+            // boxes. The pre-Taffy bridge is limited to direct, finite-width
+            // text runs where its measured line break is unambiguous.
             continue;
         }
         let layout_max_advance = match &doc.nodes[idx].data {
@@ -2382,14 +2390,11 @@ fn prepare_text_indent_before_taffy(
         };
         let hanging = options.hanging;
         let each_line = options.each_line;
-        // Keep hanging/each-line variants on the established post-Taffy
-        // path for now. Their line-scope semantics are broader than a single
-        // first-line indent, and pre-Taffy rebreaking would change existing
-        // CSS Text exact cases before the final containing width is known.
-        let rebreak = !matches!(cv.white_space, WhiteSpace::Nowrap)
-            && cv.text_wrap != TextWrapMode::Nowrap
-            && !cv.text_indent_hanging
-            && !cv.text_indent_each_line;
+        // Rebreak direct metric-backed runs before Taffy so their line count
+        // contributes to the leaf height. Guarded modifier and `width: ch`
+        // shapes remain on the post-Taffy path above.
+        let rebreak =
+            !matches!(cv.white_space, WhiteSpace::Nowrap) && cv.text_wrap != TextWrapMode::Nowrap;
         let text = doc.nodes[idx]
             .data
             .as_text_mut()
@@ -9034,6 +9039,128 @@ mod tests {
             assert!((text_height - block_height).abs() < 0.01);
         }
         assert!(ahem_one.2 > lato_one.2 + 10.0);
+    }
+
+    #[test]
+    fn modifier_text_indent_ch_changes_taffy_height_before_layout() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+        use std::path::PathBuf;
+
+        let fonts_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("target")
+            .join("wpt")
+            .join("fonts");
+        // cov:ignore: this integration fixture is intentionally skippable when shared WPT assets are absent.
+        if !fonts_dir.join("Ahem.ttf").exists() {
+            eprintln!(
+                "skipping modifier text-indent ch test: Ahem.ttf is required under {}",
+                fonts_dir.display()
+            );
+            return;
+        }
+
+        fn measure(
+            fonts_dir: &std::path::Path,
+            value: &str,
+        ) -> (usize, f32, f32, bool, bool, bool) {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let block = doc.append_element(
+                Some(body),
+                "p",
+                Style::default(),
+                Some(&format!(
+                    "display:block;width:80px;font-family:Ahem;font-size:16px;line-height:20px;word-break:break-all;text-indent:{value}"
+                )),
+            );
+            let text = doc.append_text(block, "0000000000");
+            let rules = build_rule_tree(&doc);
+            let cascade = cascade(&doc, &rules).expect("cascade Ok");
+            let fonts = crate::fonts::build_wpt_font_ctx(fonts_dir)
+                .expect("bundled WPT fonts should register");
+            layout_single_page(&mut doc, &cascade, PageBox::A4, fonts).expect("layout Ok");
+            let layout = doc.nodes[text].text_layout().expect("text shaped");
+            let crate::node::NodeData::Text(text_data) = &doc.nodes[text].data else {
+                unreachable!("text node remains text after layout"); // cov:ignore: layout preserves text nodes after shaping.
+            };
+            (
+                layout.len(),
+                layout.height(),
+                doc.nodes[block].unrounded_layout.size.height,
+                text_data.text_indent_hanging,
+                text_data.text_indent_each_line,
+                text_data.text_indent_rebreak,
+            )
+        }
+
+        let hanging = measure(&fonts_dir, "2ch hanging");
+        let each_line = measure(&fonts_dir, "2ch each-line");
+        // Parley's `each_line` option covers the first and hard-break lines;
+        // soft-wrap continuation lines still use its normal scope semantics.
+        assert_eq!(hanging.0, 3);
+        assert_eq!(each_line.0, 3);
+        assert!((hanging.1 - hanging.2).abs() < 0.01);
+        assert!((each_line.1 - each_line.2).abs() < 0.01);
+        assert!(hanging.2 > 20.0);
+        assert!(each_line.2 > 20.0);
+        assert!(hanging.3 && !hanging.4 && hanging.5);
+        assert!(!each_line.3 && each_line.4 && each_line.5);
+    }
+
+    #[test]
+    fn width_ch_and_text_indent_ch_change_taffy_height_before_layout() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+        use std::path::PathBuf;
+
+        let fonts_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("target")
+            .join("wpt")
+            .join("fonts");
+        // cov:ignore: this integration fixture is intentionally skippable when shared WPT assets are absent.
+        if !fonts_dir.join("Ahem.ttf").exists() {
+            eprintln!(
+                "skipping width/text-indent ch test: Ahem.ttf is required under {}",
+                fonts_dir.display()
+            );
+            return;
+        }
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let block = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some(
+                "display:block;width:2ch;font-family:Ahem;font-size:16px;line-height:20px;word-break:break-all;text-indent:1ch",
+            ),
+        );
+        let text = doc.append_text(block, "00");
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let fonts = crate::fonts::build_wpt_font_ctx(&fonts_dir)
+            .expect("bundled WPT fonts should register");
+        layout_single_page(&mut doc, &cascade, PageBox::A4, fonts).expect("layout Ok");
+
+        let layout = doc.nodes[text].text_layout().expect("text shaped");
+        assert_eq!(layout.len(), 2, "one ch of indent leaves one ch per line");
+        assert!((layout.height() - 40.0).abs() < 0.01);
+        let block_layout = doc.nodes[block].unrounded_layout;
+        assert!((block_layout.size.width - 32.0).abs() < 0.01);
+        assert!((block_layout.size.height - 40.0).abs() < 0.01);
+        assert!(matches!(
+            &doc.nodes[text].data,
+            crate::node::NodeData::Text(text)
+                if text.text_indent_px.is_some() && text.text_indent_rebreak
+        ));
     }
 
     #[test]
