@@ -3905,8 +3905,7 @@ fn absolutize_in_page_context(
             )
         }),
         // ── vertical-align ───────────────────────────────────────────────
-        // CSS 2.1 §10.8.1 — the 6 keywords (`baseline`/`sub`/`super`/
-        // `middle`/`text-top`/`text-bottom`) preserved as-is,
+        // CSS 2.1 §10.8.1 — the bare keywords are preserved as-is,
         // `<length>` / `<percentage>` absolutized (`<percentage>` is
         // `used_line_height_length` basis with `0px` fallback when
         // `line-height: normal` — `resolve_vertical_align` doc).
@@ -6629,7 +6628,7 @@ mod tests {
     }
 
     /// Direct exercise of `absolutize_in_page_context`'s `VerticalAlign`
-    /// arm — the 6 keywords stay as-is, `<length>` absolutizes against this
+    /// arm — the bare keywords stay as-is, `<length>` absolutizes against this
     /// page context's own font-size (same "worst case: `Em`" shape
     /// `page_corpus`'s `VerticalAlign` sample uses).
     #[test]
@@ -6643,6 +6642,8 @@ mod tests {
             (VerticalAlign::Middle, VerticalAlign::Middle),
             (VerticalAlign::TextTop, VerticalAlign::TextTop),
             (VerticalAlign::TextBottom, VerticalAlign::TextBottom),
+            (VerticalAlign::Top, VerticalAlign::Top),
+            (VerticalAlign::Bottom, VerticalAlign::Bottom),
             (
                 VerticalAlign::Length(Length::Em(2.0)),
                 VerticalAlign::Length(Length::Px(40.0)),
@@ -8426,8 +8427,7 @@ mod tests {
                 FlexBasisValue::Length(l) => length(l),
             }
         }
-        /// `vertical-align` の 6 keyword (`baseline`/`sub`/`super`/`middle`/
-        /// `text-top`/`text-bottom`) は常に無 residue (computed 層でも
+        /// `vertical-align` の bare keyword は常に無 residue (computed 層でも
         /// keyword のまま)、`<length>` / `<percentage>` は [`length`] に
         /// delegate — `flex_basis` と同じ shape (`<percentage>` は phase 3 で
         /// `Px` に絶対化済みのため residue 判定上は `Px` 扱い)。
@@ -8438,7 +8438,9 @@ mod tests {
                 | VerticalAlign::Super
                 | VerticalAlign::Middle
                 | VerticalAlign::TextTop
-                | VerticalAlign::TextBottom => None,
+                | VerticalAlign::TextBottom
+                | VerticalAlign::Top
+                | VerticalAlign::Bottom => None,
                 VerticalAlign::Length(l) => length(l),
             }
         }
@@ -9384,8 +9386,7 @@ mod tests {
         );
     }
 
-    /// `vertical-align` の 6 keyword (`baseline`/`sub`/`super`/`middle`/
-    /// `text-top`/`text-bottom`) は残滓ではない (computed 層でも keyword の
+    /// `vertical-align` の bare keyword は残滓ではない (computed 層でも keyword の
     /// まま) — sibling of
     /// `flex_basis_content_and_gap_normal_are_not_specified_layer_residue`
     /// above, same reason: `page_corpus`'s `VerticalAlign` worst-case
@@ -9400,6 +9401,8 @@ mod tests {
             VerticalAlign::Middle,
             VerticalAlign::TextTop,
             VerticalAlign::TextBottom,
+            VerticalAlign::Top,
+            VerticalAlign::Bottom,
         ] {
             assert_eq!(
                 specified_layer_residue(&PropertyValue::VerticalAlign(va)),
