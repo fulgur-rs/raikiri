@@ -3952,9 +3952,9 @@ fn position_offset(offset: ComputedCssPositionOffset, free_space: f64) -> f64 {
         },
         ComputedCssPositionOffset::End(value) => match value {
             ComputedLengthPercentage::Px(px) => free_space - px as f64,
+            // cov:ignore: CSS percentage end offsets normalize to Start before this used-value helper
             ComputedLengthPercentage::Percent(percent) => {
-                // cov:ignore: CSS percentage end offsets normalize to Start before this used-value helper
-                free_space * (1.0 - percent as f64 / 100.0) // cov:ignore: CSS percentage end offsets normalize to Start before this used-value helper
+                free_space * (1.0 - percent as f64 / 100.0)
             }
         },
         _ => free_space / 2.0, // cov:ignore: defensive fallback for future position variants
