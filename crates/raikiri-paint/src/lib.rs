@@ -1956,7 +1956,8 @@ mod tests {
             Style::default(),
             Some(
                 "width: 100px; height: 80px; color: green; background: red; \
-                 border: 4px solid currentcolor; border-radius: 12px",
+                 border: 4px solid currentcolor; border-radius: 12px; \
+                 background-clip: padding-box",
             ),
         );
         let _dashed = document.append_element(
@@ -1985,7 +1986,7 @@ mod tests {
                 .commands
                 .iter()
                 .any(|command| matches!(command, RenderCommand::Fill(_))),
-            "rounded border/background fixture should emit fill commands"
+            "rounded border/background fixture should emit fill commands", // cov:ignore: assertion message is evaluated only on failure
         );
     }
 }

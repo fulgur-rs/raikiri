@@ -4016,7 +4016,7 @@ fn paint_element_border_rounded(
     let uniform_color = colors[0].is_some() && colors.iter().all(|color| *color == colors[0]);
     let Some(color) = colors[0] else {
         paint_element_border(scene, width, height, abs_x, abs_y, border, current_color); // cov:ignore: BorderColor variants currently always produce Some
-        return;
+        return; // cov:ignore: all current BorderColor variants produce Some
     };
     if !(uniform_width && solid && uniform_color) {
         paint_element_border(scene, width, height, abs_x, abs_y, border, current_color);
