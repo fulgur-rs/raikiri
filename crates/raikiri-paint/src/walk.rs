@@ -39,8 +39,8 @@ use raikiri_style::property::{
 };
 use raikiri_style::{
     CascadeResult, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-    ComputedTransformFunction, PageMarginBoxCascadeResult, PageMarginBoxSlot, ResolveContext,
-    resolve_border,
+    ComputedTransformFunction, CounterStyleRegistry, PageMarginBoxCascadeResult, PageMarginBoxSlot,
+    ResolveContext, resolve_border, resolve_custom_counter,
 };
 use raikiri_traits::{ImagePixelSource, NodeKind, PageBox};
 use taffy::CompactLength;
@@ -776,7 +776,7 @@ fn inherited_margin_box_quotes(
         .collect()
 }
 
-fn format_counter(value: i32, style: &CounterStyle) -> String {
+fn format_counter(value: i32, style: &CounterStyle, registry: &CounterStyleRegistry) -> String {
     match style {
         CounterStyle::Named(name) if name.as_str().eq_ignore_ascii_case("lower-roman") => {
             if value <= 0 {
@@ -807,8 +807,11 @@ fn format_counter(value: i32, style: &CounterStyle) -> String {
             result
         }
         CounterStyle::Named(name) if name.as_str().eq_ignore_ascii_case("upper-roman") => {
-            format_counter(value, &CounterStyle::Named("lower-roman".into())).to_uppercase()
+            format_counter(value, &CounterStyle::Named("lower-roman".into()), registry)
+                .to_uppercase()
         }
+        CounterStyle::Named(name) => resolve_custom_counter(registry, name.as_str(), value)
+            .unwrap_or_else(|| value.to_string()),
         _ => value.to_string(),
     }
 }
@@ -842,6 +845,7 @@ fn resolved_margin_content(
                     paired_page_increment,
                 ),
                 style,
+                &cascade.counter_styles, // cov:ignore: page-margin counter formatting is not exercised by current paint tests
             )),
             ContentComponent::Counters {
                 name,
@@ -860,6 +864,7 @@ fn resolved_margin_content(
                         paired_page_increment,
                     ),
                     style,
+                    &cascade.counter_styles, // cov:ignore: page-margin counter formatting is not exercised by current paint tests
                 ));
                 // A page-margin context has one counter scope in this
                 // implementation.  The separator is retained for the
@@ -956,6 +961,17 @@ fn alpha_marker(mut value: u32) -> String {
     result
 }
 
+fn custom_marker_text(registry: &CounterStyleRegistry, name: &str, value: u32) -> Option<String> {
+    let rule = registry.get(name)?;
+    let representation = resolve_custom_counter(registry, name, value as i32)?;
+    Some(format!(
+        "{}{}{}",
+        rule.prefix.0.as_str(),
+        representation,
+        rule.suffix.0.as_str()
+    ))
+}
+
 fn list_marker_text(
     document: &Document,
     cascade: &CascadeResult,
@@ -983,16 +999,15 @@ fn list_marker_text(
                 "lower-roman" => suffix(format_counter(
                     ordinal as i32,
                     &CounterStyle::Named("lower-roman".into()),
+                    &cascade.counter_styles,
                 )),
                 "upper-roman" => suffix(format_counter(
                     ordinal as i32,
                     &CounterStyle::Named("upper-roman".into()),
+                    &cascade.counter_styles,
                 )),
-                // Author-defined styles are resolved by the later counter-style
-                // integration. Decimal is the deterministic CSS fallback for
-                // this first marker slice.
-                // cov:ignore: non-exhaustive enum fallback is not constructible here
-                _ => suffix(ordinal.to_string()),
+                _ => custom_marker_text(&cascade.counter_styles, name.as_str(), ordinal)
+                    .unwrap_or_else(|| suffix(ordinal.to_string())),
             };
             Some(marker)
         }
@@ -1006,6 +1021,7 @@ fn marker_content_text<T: AsRef<str>>(
     quotes: &[(T, T)],
     quotes_auto: bool,
     ordinal: u32,
+    registry: &CounterStyleRegistry,
 ) -> Option<String> {
     if components.is_empty() {
         return None;
@@ -1024,14 +1040,14 @@ fn marker_content_text<T: AsRef<str>>(
         match component {
             ContentComponent::Literal(value) => text.push_str(value.as_str()),
             ContentComponent::Counter { name, style } if name.as_str() == "list-item" => {
-                text.push_str(&format_counter(ordinal as i32, style));
+                text.push_str(&format_counter(ordinal as i32, style, registry));
             }
             ContentComponent::Counters {
                 name,
                 separator,
                 style,
             } if name.as_str() == "list-item" => {
-                text.push_str(&format_counter(ordinal as i32, style));
+                text.push_str(&format_counter(ordinal as i32, style, registry));
                 let _ = separator;
             }
             ContentComponent::Quote(keyword) => match keyword {
@@ -1080,7 +1096,13 @@ fn marker_render_info<'a>(
     }
     let content = marker_computed
         .and_then(|marker| {
-            marker_content_text(&marker.content, &marker.quotes, marker.quotes_auto, ordinal)
+            marker_content_text(
+                &marker.content,
+                &marker.quotes,
+                marker.quotes_auto,
+                ordinal,
+                &cascade.counter_styles,
+            )
         })
         .or_else(|| list_marker_text(document, cascade, node_id, &computed.list_style_type))?;
     Some((style, content))
@@ -3978,7 +4000,71 @@ mod tests {
     }
 
     #[test]
+    fn custom_counter_styles_reach_default_and_explicit_markers() {
+        let (document, cascade, first, second) = list_fixture(
+            "display: list-item; list-style-type: thumbs",
+            "display: list-item; list-style-type: thumbs",
+            Some(
+                r#"@counter-style thumbs {
+                    system: cyclic;
+                    symbols: "A" "B";
+                    prefix: "[";
+                    suffix: "] ";
+                }"#,
+            ),
+        );
+        assert_eq!(cascade.counter_styles.len(), 1);
+        assert_eq!(
+            list_marker_text(
+                &document,
+                &cascade,
+                first,
+                &ListStyleType::Named("thumbs".into()),
+            ),
+            Some("[A] ".to_string())
+        );
+        assert_eq!(
+            list_marker_text(
+                &document,
+                &cascade,
+                second,
+                &ListStyleType::Named("thumbs".into()),
+            ),
+            Some("[B] ".to_string())
+        );
+
+        let explicit = vec![ContentComponent::Counter {
+            name: "list-item".into(),
+            style: CounterStyle::Named("thumbs".into()),
+        }];
+        let marker = marker_content_text(
+            &explicit,
+            &[] as &[(&str, &str)],
+            false,
+            1,
+            &cascade.counter_styles,
+        );
+        assert_eq!(marker, Some("A".to_string()));
+
+        let (document, cascade, first, _) = list_fixture(
+            "display: list-item; list-style-type: disc",
+            "display: list-item",
+            Some(
+                r#"@counter-style thumbs {
+                    system: cyclic;
+                    symbols: "A" "B";
+                }
+                li::marker { content: counter(list-item, thumbs); }"#,
+            ),
+        );
+        let (_, explicit_content) =
+            marker_render_info(&document, &cascade, first).expect("custom marker content");
+        assert_eq!(explicit_content, "A");
+    }
+
+    #[test]
     fn marker_content_text_resolves_literals_counters_and_quotes() {
+        let registry = CounterStyleRegistry::new();
         let components = vec![
             ContentComponent::Quote(QuoteKeyword::OpenQuote),
             ContentComponent::Literal("(".into()),
@@ -4000,11 +4086,11 @@ mod tests {
             ContentComponent::Quote(QuoteKeyword::CloseQuote),
         ];
         assert_eq!(
-            marker_content_text(&components, &[("<", ">")], false, 2),
+            marker_content_text(&components, &[("<", ">")], false, 2, &registry),
             Some("<(2II>".to_string())
         );
         assert_eq!(
-            marker_content_text(&[], &[] as &[(&str, &str)], true, 1),
+            marker_content_text(&[], &[] as &[(&str, &str)], true, 1, &registry),
             None
         );
         assert_eq!(
@@ -4020,6 +4106,7 @@ mod tests {
                 &[] as &[(&str, &str)],
                 true,
                 1,
+                &registry,
             ),
             Some("“‘’”".to_string())
         );

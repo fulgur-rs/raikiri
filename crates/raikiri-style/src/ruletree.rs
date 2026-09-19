@@ -430,10 +430,9 @@ impl AtRuleRecord {
 ///
 /// `style_rules` を populate。`page_rules` は @page at-rule を追加 (parse
 /// のみ、cascade 適用は未実装)。`counter_styles`
-/// ([`CounterStyleRegistry`]) は `@counter-style` at-rule の registry 化の
-/// みで、`generate a counter` 算出
-/// ([`crate::counter_style::resolve_custom_counter`]) の呼び出しは consumer
-/// 側 (raikiri-traits) の責務のまま。`opaque_at_rules` は generic parse
+/// ([`CounterStyleRegistry`]) は `@counter-style` at-rule の registry 化を
+/// 担い、cascade が下流の marker / generated-content paint 用に snapshot
+/// する。`opaque_at_rules` は generic parse
 /// view として at-rule の raw data を保持する。`@media` の `all` / `print` /
 /// `screen` 条件に対応する qualified rules は、互換用 `style_rules` とは
 /// 別の内部 view にも展開され、cascade 前に評価される。将来 field
@@ -546,10 +545,10 @@ impl RuleTree {
     /// される — 同名 rule 間の origin 優先順位の解決は `CounterStyleRegistry`
     /// 自体が担う (field doc 参照)。空の `RuleTree` ([`RuleTree::empty`]) では
     /// [`CounterStyleRegistry::is_empty`] が `true`。`generate a counter` の実行
-    /// (`counter()`/`counters()` の値 resolve) はこの registry を読む consumer 側の
-    /// 責務 — [`crate::counter_style::resolve_custom_counter`] にこの registry から
-    /// [`CounterStyleRegistry::get`] した [`crate::counter_style::CounterStyleRule`]
-    /// を渡す配線は raikiri-traits 側が担う。
+    /// (`counter()`/`counters()` の値 resolve) は cascade result 経由で
+    /// `raikiri-paint` が担う — [`crate::counter_style::resolve_custom_counter`]
+    /// にこの registry を渡す marker / generated-content 配線がその consumer
+    /// 境界にある。
     ///
     /// # `counter_styles` field 自体への到達不能性
     ///

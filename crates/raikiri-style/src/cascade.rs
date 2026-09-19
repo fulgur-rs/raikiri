@@ -42,6 +42,7 @@ use smol_str::SmolStr;
 use crate::computed::{
     ComputedValues, CustomPropertyEnvironment, RunningTemplate, empty_custom_properties,
 };
+use crate::counter_style::CounterStyleRegistry;
 use crate::error::CascadeError;
 use crate::media::MediaContext;
 use crate::page::{PageCascadeResult, PageContextQuery, PageInheritance, cascade_page};
@@ -94,6 +95,14 @@ pub struct CascadeResult {
     /// point. The compatibility entry point uses the unnamed/default query;
     /// paged consumers should use [`cascade_with_media_context_for_page`].
     pub page: PageCascadeResult,
+    /// The winning `@counter-style` registry captured from the rule tree.
+    ///
+    /// Counter styles are stylesheet-level rules, not per-node computed
+    /// values, but marker and generated-content paint runs only receive the
+    /// cascade result. Cloning this small registry at cascade time keeps the
+    /// rule-tree ownership boundary while making custom counter formatting
+    /// available to those consumers.
+    pub counter_styles: CounterStyleRegistry,
     /// Per-node computed page type (`page: auto | <custom-ident>`).
     ///
     /// This is kept beside, rather than inside, `ComputedValues` because the
@@ -269,6 +278,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
         non_ua_margin_sides,
         authored_writing_modes,
         page,
+        counter_styles: rule_tree.counter_styles().clone(),
         page_values,
         pseudo,
     })
