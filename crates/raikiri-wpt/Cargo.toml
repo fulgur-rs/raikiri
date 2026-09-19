@@ -23,6 +23,7 @@ raikiri-traits      = { workspace = true }
 raikiri-style       = { workspace = true }
 raikiri-paint       = { workspace = true }
 time                = { workspace = true }
+png                 = { workspace = true }
 
 [dev-dependencies]
 insta               = { workspace = true }
@@ -39,3 +40,7 @@ path = "src/bin/generate-dashboard.rs"
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "prepare-meta-assert-review"
+path = "src/bin/prepare-meta-assert-review.rs"

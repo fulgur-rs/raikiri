@@ -63,3 +63,54 @@ supplied when it is available):
         --baseline expectations/raikiri-baseline.txt \
         --basic-reftest-count 12 \
         --output docs/wpt-dashboard.html
+
+
+## Reviewing meta-assert-only tests
+
+`prepare-meta-assert-review` prepares a fixed-cost review queue for HTML-like
+WPT tests that have `<meta name="assert">` but no reftest link. It does not
+call an AI API and does not modify the baseline. `parsing/` tests are excluded
+by default because they need a JavaScript engine; use `--include-parsing` only
+when that limitation is intentional.
+
+```bash
+cargo run --locked -p raikiri-wpt --bin prepare-meta-assert-review -- \
+    --wpt-root target/wpt \
+    --baseline expectations/meta-assert-baseline.txt \
+    --exclude-baseline expectations/raikiri-baseline.txt \
+    --output target/meta-assert-review \
+    --limit 20
+```
+
+Use `--path-prefix css/css-backgrounds/` (or another directory) to focus the
+queue on one WPT category. The output contains `manifest.jsonl`, copied source files under `html/`, and
+screenshots under `screenshots/`. It also writes `reviews.template.jsonl`;
+copy this file to `reviews.jsonl` and fill in each `decision` and `reason`.
+The reviewed entries belong to the separate
+`expectations/meta-assert-baseline.txt`; they are not added to the normal
+`expectations/raikiri-baseline.txt`. The suggested agent instructions are in
+`scripts/wpt/meta-assert-review-prompt.md`. An AI coding agent reviews each
+pending row and writes `reviews.jsonl`, for example:
+
+```json
+{"test_id":"css/CSS2/fonts/font-001.xht","decision":"pass","reason":"The rendered font size and family match the assertion."}
+```
+
+Allowed decisions are `pass`, `fail`, `needs-human`, and `not-renderable`.
+Apply accepted decisions only after review:
+
+```bash
+python3 scripts/wpt/apply-meta-assert-review.py \
+    --manifest target/meta-assert-review/manifest.jsonl \
+    --reviews target/meta-assert-review/reviews.jsonl \
+    --baseline expectations/meta-assert-baseline.txt
+python3 scripts/wpt/apply-meta-assert-review.py \
+    --manifest target/meta-assert-review/manifest.jsonl \
+    --reviews target/meta-assert-review/reviews.jsonl \
+    --baseline expectations/meta-assert-baseline.txt \
+    --apply
+```
+
+The first command is report-only. Only the second command changes the
+baseline. The manifest records the WPT SHA, viewport, renderer, and font
+source so the agent's decision is reproducible.

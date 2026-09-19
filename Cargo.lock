@@ -1867,6 +1867,7 @@ dependencies = [
  "blitz-traits",
  "insta",
  "parley",
+ "png 0.18.1",
  "raikiri",
  "raikiri-dom",
  "raikiri-html",
