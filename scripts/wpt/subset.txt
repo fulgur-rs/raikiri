@@ -67,3 +67,6 @@ css/css-display/display-flow-root-002-ref.html
 # CSS Inline foundation: direct top/bottom vertical-align in a minimal line box.
 css/CSS2/linebox/vertical-align-top-bottom-padding.html
 css/CSS2/linebox/vertical-align-top-bottom-padding-ref.html
+# CSS generated-content foundation: literal ::before/::after strings.
+css/CSS2/generated-content/before-after-002.xht
+css/CSS2/generated-content/content-003-ref.html

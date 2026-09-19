@@ -406,6 +406,65 @@ pub(crate) fn measure_margin_text(content: &str, font_size: f32, font_family: &s
     layout.width().max(0.0)
 }
 
+/// Measure one-line generated text including trailing whitespace.
+///
+/// [`measure_margin_text`] intentionally returns the ink/content width used by
+/// markers and margin boxes, where trailing whitespace must not move the box.
+/// A generated `::before` run is different: its trailing spaces are part of
+/// the inline advance consumed before `::after`, so use the line metrics'
+/// advance (which retains [`parley::LineMetrics::trailing_whitespace`]).
+pub(crate) fn measure_margin_text_advance(content: &str, font_size: f32, font_family: &str) -> f32 {
+    if content.is_empty() {
+        return 0.0;
+    }
+    let font_size = if font_size.is_finite() && font_size > 0.0 {
+        font_size
+    } else {
+        16.0
+    };
+    let mut fonts = FontContext::new();
+    let mut layout_cx = LayoutContext::<()>::new();
+    let mut builder = layout_cx.ranged_builder(&mut fonts, content, 1.0, true);
+    builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
+    builder.push_default(StyleProperty::FontSize(font_size));
+    builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
+    builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
+    builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
+    let mut layout = builder.build(content);
+    layout.break_all_lines(None);
+    layout
+        .lines()
+        .next()
+        .map(|line| line.metrics().advance.max(0.0))
+        .unwrap_or_else(|| layout.width().max(0.0))
+}
+
+/// Measure the line box height of generated text using the same shaping path as
+/// [`draw_margin_text`].  This is needed before an originating auto-height box
+/// is painted: generated content contributes to that box's used height even
+/// though the current arena has no synthetic child node for it.
+pub(crate) fn measure_margin_text_height(content: &str, font_size: f32, font_family: &str) -> f32 {
+    if content.is_empty() {
+        return 0.0;
+    }
+    let font_size = if font_size.is_finite() && font_size > 0.0 {
+        font_size
+    } else {
+        16.0
+    };
+    let mut fonts = FontContext::new();
+    let mut layout_cx = LayoutContext::<()>::new();
+    let mut builder = layout_cx.ranged_builder(&mut fonts, content, 1.0, true);
+    builder.push_default(StyleProperty::FontFamily(FontFamily::from(font_family)));
+    builder.push_default(StyleProperty::FontSize(font_size));
+    builder.push_default(StyleProperty::FontWeight(FontWeight::new(400.0)));
+    builder.push_default(StyleProperty::FontStyle(ParleyFontStyle::Normal));
+    builder.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
+    let mut layout = builder.build(content);
+    layout.break_all_lines(None);
+    layout.height().max(0.0)
+}
+
 fn leading_whitespace_advance(line: parley::Line<'_, ()>, rtl: bool) -> f32 {
     // Parley exposes trailing whitespace in LineMetrics but not leading
     // whitespace. Cluster source characters let the paint layer recover the
@@ -746,7 +805,8 @@ fn css_color_to_peniko(c: CssColor) -> Color {
 mod tests {
     use super::{
         DecorationContext, MAX_DECORATION_SEGMENTS, dashed_lengths, decoration_line_width,
-        decorations_for_element, paint_decoration_style, text_align_last_delta,
+        decorations_for_element, measure_margin_text_advance, measure_margin_text_height,
+        paint_decoration_style, text_align_last_delta,
     };
     use anyrender::{Scene, recording::RenderCommand};
     use parley::LineMetrics;
@@ -763,6 +823,14 @@ mod tests {
             inline_max_coord: 100.0,
             ..LineMetrics::default()
         }
+    }
+
+    #[test]
+    fn generated_text_measurements_handle_empty_and_nonfinite_inputs() {
+        assert_eq!(measure_margin_text_advance("", f32::NAN, "serif"), 0.0);
+        assert!(measure_margin_text_advance("A", f32::NAN, "serif") > 0.0);
+        assert_eq!(measure_margin_text_height("", f32::NAN, "serif"), 0.0);
+        assert!(measure_margin_text_height("A", f32::NAN, "serif") > 0.0);
     }
 
     #[test]

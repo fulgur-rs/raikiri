@@ -1301,6 +1301,28 @@ fn generated_pseudo_content_with_snapshots<'a>(
     Some((computed, content))
 }
 
+fn generated_pseudo_text_height(
+    cascade: &CascadeResult,
+    node_id: usize,
+    pseudo: raikiri_style::PseudoElem,
+    snapshots: &[CounterSnapshot],
+) -> f32 {
+    let Some((computed, content)) =
+        generated_pseudo_content_with_snapshots(cascade, node_id, pseudo, snapshots)
+    else {
+        return 0.0;
+    };
+    if computed.display == DisplayValue::None {
+        return 0.0;
+    }
+    let family = computed
+        .font_family
+        .first()
+        .map(|family| family.0.as_str().to_string())
+        .unwrap_or_else(|| "serif".to_string());
+    text::measure_margin_text_height(&content, computed.font_size.px(), &family)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn paint_generated_pseudo(
     scene: &mut impl PaintScene,
@@ -1312,20 +1334,21 @@ fn paint_generated_pseudo(
     width: f32,
     height: f32,
     snapshots: &[CounterSnapshot],
-) {
+) -> f32 {
     let Some((computed, content)) =
         generated_pseudo_content_with_snapshots(cascade, node_id, pseudo, snapshots)
     else {
-        return;
+        return 0.0;
     };
     if computed.display == DisplayValue::None {
-        return;
+        return 0.0;
     }
     let family = computed
         .font_family
         .first()
         .map(|family| family.0.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
+    let advance = text::measure_margin_text_advance(&content, computed.font_size.px(), &family);
     text::draw_margin_text(
         scene,
         &content,
@@ -1339,6 +1362,7 @@ fn paint_generated_pseudo(
         parley::Alignment::Start,
         text::MarginTextVerticalAlign::Top,
     );
+    advance
 }
 
 #[allow(dead_code)] // Kept as a small unit-test wrapper around the snapshot-aware helper.
@@ -2698,6 +2722,18 @@ fn paint_document_impl(
             decorations: text::DecorationContext,
         },
         PopClip,
+        /// Paint an originating element's `::after` pseudo after its real
+        /// children, while still inside any overflow clip pushed for the
+        /// originating element.
+        PaintAfter {
+            node_id: usize,
+            x: f32,
+            y: f32,
+            width: f32,
+            height: f32,
+            before_advance: f32,
+            content_advance: f32,
+        },
     }
 
     let margins = raikiri_dom::page_margins(cascade, page_box);
@@ -2779,6 +2815,28 @@ fn paint_document_impl(
         ) = match frame {
             PaintFrame::PopClip => {
                 scene.pop_layer();
+                continue;
+            }
+            PaintFrame::PaintAfter {
+                node_id,
+                x,
+                y,
+                width,
+                height,
+                before_advance,
+                content_advance,
+            } => {
+                let _ = paint_generated_pseudo(
+                    scene,
+                    cascade,
+                    node_id,
+                    raikiri_style::PseudoElem::After,
+                    x + before_advance + content_advance,
+                    y,
+                    (width - before_advance).max(0.0),
+                    height,
+                    &counter_snapshots,
+                );
                 continue;
             }
             PaintFrame::Visit {
@@ -2984,6 +3042,60 @@ fn paint_document_impl(
                     paint_background_height = (page_bottom - abs_y).max(0.0);
                 }
 
+                // The pseudo is not an arena child yet, so Taffy cannot
+                // include its line box in an auto-height originating box.
+                // Expand only the auto-height paint geometry; fixed-height
+                // elements retain their normal overflow behavior. This is a
+                // paint-side bridge: the arena/Taffy flow remains unchanged
+                // until generated inline boxes can participate in layout.
+                if !paints_as_absolute_continuation
+                    && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
+                {
+                    let pseudo_height = generated_pseudo_text_height(
+                        cascade,
+                        node_id,
+                        raikiri_style::PseudoElem::Before,
+                        &counter_snapshots,
+                    )
+                    .max(generated_pseudo_text_height(
+                        cascade,
+                        node_id,
+                        raikiri_style::PseudoElem::After,
+                        &counter_snapshots,
+                    ));
+                    let pseudo_border_height = cv.border.top.width().px()
+                        + paint_padding.top
+                        + pseudo_height
+                        + paint_padding.bottom
+                        + cv.border.bottom.width().px();
+                    if pseudo_border_height > paint_height {
+                        let was_intrinsic_height =
+                            (paint_background_height - layout.size.height).abs() <= f32::EPSILON;
+                        paint_height = pseudo_border_height;
+                        if was_intrinsic_height {
+                            paint_background_height = paint_height;
+                        }
+                    }
+                }
+                let generated_x = paint_x + cv.border.left.width().px() + paint_padding.left;
+                let generated_y = paint_y + cv.border.top.width().px() + paint_padding.top;
+                // Direct text children are the only inline descendants whose
+                // current minimal layout path has a reliable horizontal box.
+                // Use their right edge for `::after`; element children stay
+                // on the existing block-flow path until a full IFC lands.
+                let generated_content_advance = node
+                    .children
+                    .iter()
+                    .filter_map(|child_id| document.get_node(*child_id))
+                    .filter(|child| child.kind() == NodeKind::Text)
+                    .map(|child| {
+                        (child.unrounded_layout.location.x + child.unrounded_layout.size.width
+                            - cv.border.left.width().px()
+                            - paint_padding.left)
+                            .max(0.0)
+                    })
+                    .fold(0.0, f32::max);
+                let mut before_advance = 0.0;
                 if paints_on_page {
                     // A body background is propagated to the page canvas.  For
                     // a non-zero page margin, painting the body border box as
@@ -3129,20 +3241,25 @@ fn paint_document_impl(
                     // Generated content is an immediate child of its
                     // originating box.  The minimal layout engine does not
                     // allocate an arena node for it, so paint literal
-                    // `::before` content at the box's inline start.
-                    if !paints_as_absolute_continuation {
+                    // `::before` content at the content-box inline start.
+                    // The returned advance is used by the deferred `::after`
+                    // frame below to preserve source order for an empty or
+                    // otherwise unlaid-out originating box.
+                    before_advance = if !paints_as_absolute_continuation {
                         paint_generated_pseudo(
                             scene,
                             cascade,
                             node_id,
                             raikiri_style::PseudoElem::Before,
-                            paint_x,
-                            paint_y,
+                            generated_x,
+                            generated_y,
                             layout.size.width,
-                            layout.size.height,
+                            paint_height,
                             &counter_snapshots,
-                        );
-                    }
+                        )
+                    } else {
+                        0.0 // cov:ignore: absolute continuation intentionally omits first pseudo paint
+                    };
                 }
                 // CSS Overflow 3 §3.1: non-visible overflow clips descendants to
                 // the padding box. The current WPT coverage uses `overflow:hidden`
@@ -3157,10 +3274,26 @@ fn paint_document_impl(
                         (paint_x + layout.padding.left) as f64,
                         (paint_y + layout.padding.top) as f64,
                         (paint_x + layout.size.width - layout.padding.right) as f64,
-                        (paint_y + layout.size.height - layout.padding.bottom) as f64,
+                        (paint_y + paint_height - layout.padding.bottom) as f64,
                     );
                     scene.push_clip_layer(Affine::IDENTITY, &clip);
                     stack.push(PaintFrame::PopClip);
+                }
+                // Push this after the clip-pop frame and before children.
+                // Children therefore paint first, then `::after`, then the
+                // clip closes.  A full IFC would place the after run after
+                // laid-out inline descendants; this minimal path uses the
+                // generated-before advance as its only inline position.
+                if paints_on_page && !paints_as_absolute_continuation {
+                    stack.push(PaintFrame::PaintAfter {
+                        node_id,
+                        x: generated_x,
+                        y: generated_y,
+                        width: layout.size.width,
+                        height: paint_height,
+                        before_advance,
+                        content_advance: generated_content_advance,
+                    });
                 }
                 let child_font_size = cv.font_size.px();
                 // `text-decoration-line` is non-inherited at the computed-value
@@ -3181,10 +3314,11 @@ fn paint_document_impl(
                 let child_parent_x = abs_x + pos_dx + fixed_dx;
                 let child_parent_y = abs_y + pos_dy + fixed_dy;
                 for child in children.into_iter().rev() {
+                    let is_direct_text = document
+                        .get_node(child)
+                        .is_some_and(|node| node.kind() == NodeKind::Text);
                     let body_child_margin_offset = if node_id == body_id
-                        && (document
-                            .get_node(child)
-                            .is_some_and(|node| node.kind() == NodeKind::Text)
+                        && (is_direct_text
                             || matches!(
                                 cascade.computed[child].position,
                                 PositionValue::Static
@@ -3195,9 +3329,12 @@ fn paint_document_impl(
                     } else {
                         0.0
                     };
+                    let generated_text_shift = if is_direct_text { before_advance } else { 0.0 };
                     stack.push(PaintFrame::Visit {
                         node_id: child,
-                        parent_abs_x: child_parent_x + body_child_margin_offset,
+                        parent_abs_x: child_parent_x
+                            + body_child_margin_offset
+                            + generated_text_shift,
                         parent_abs_y: child_parent_y,
                         parent_font_size: child_font_size,
                         shift_y: child_shift_y,
@@ -4440,6 +4577,168 @@ mod tests {
             Some("li::marker { display: none }"),
         );
         assert!(marker_render_info(&document, &cascade, first).is_none());
+    }
+
+    #[test]
+    fn generated_pseudo_metrics_preserve_before_after_order() {
+        let (document, cascade, first, _) = list_fixture(
+            "display: list-item",
+            "display: list-item",
+            Some(r##"li::before { content: "A " } li::after { content: "B" }"##),
+        );
+        let snapshots = raikiri_dom::counter_snapshots(&document, &cascade);
+        assert!(
+            generated_pseudo_text_height(
+                &cascade,
+                first,
+                raikiri_style::PseudoElem::Before,
+                &snapshots
+            ) > 0.0
+        );
+        assert!(
+            generated_pseudo_text_height(
+                &cascade,
+                first,
+                raikiri_style::PseudoElem::After,
+                &snapshots
+            ) > 0.0
+        );
+
+        let mut scene = Scene::new();
+        let before_advance = paint_generated_pseudo(
+            &mut scene,
+            &cascade,
+            first,
+            raikiri_style::PseudoElem::Before,
+            0.0,
+            0.0,
+            200.0,
+            30.0,
+            &snapshots,
+        );
+        let after_start = scene.commands.len();
+        assert!(before_advance > 0.0);
+        let _ = paint_generated_pseudo(
+            &mut scene,
+            &cascade,
+            first,
+            raikiri_style::PseudoElem::After,
+            before_advance,
+            0.0,
+            200.0 - before_advance,
+            30.0,
+            &snapshots,
+        );
+        assert!(scene.commands.len() > after_start);
+
+        let (document, cascade, first, _) = list_fixture(
+            "display: list-item",
+            "display: list-item",
+            Some(r##"li::before { display: none; content: "hidden" }"##),
+        );
+        let snapshots = raikiri_dom::counter_snapshots(&document, &cascade);
+        assert_eq!(
+            generated_pseudo_text_height(
+                &cascade,
+                first,
+                raikiri_style::PseudoElem::Before,
+                &snapshots
+            ),
+            0.0
+        );
+        let mut hidden_scene = Scene::new();
+        assert_eq!(
+            paint_generated_pseudo(
+                &mut hidden_scene,
+                &cascade,
+                first,
+                raikiri_style::PseudoElem::Before,
+                0.0,
+                0.0,
+                200.0,
+                30.0,
+                &snapshots,
+            ),
+            0.0
+        );
+    }
+
+    #[test]
+    fn paint_document_orders_literal_pseudos_around_direct_text() {
+        let mut document = Document::new();
+        let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+        document.append_text(
+            style,
+            r##"div::before { content: "BEFORE " } div::after { content: " AFTER" }"##,
+        );
+        let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let div = document.append_element(Some(body), "div", Style::default(), None::<&str>);
+        document.append_text(div, "BODY");
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+        raikiri_dom::layout_single_page(
+            &mut document,
+            &cascade,
+            PageBox::A4,
+            parley::FontContext::new(),
+        )
+        .expect("layout Ok");
+
+        let mut scene = Scene::new();
+        crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
+        let glyph_x: Vec<_> = scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::GlyphRun(glyph_run) => Some(glyph_run.transform.as_coeffs()[4]),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            glyph_x.len() >= 3,
+            // cov:ignore: assert! diagnostic is only evaluated on failure
+            "expected before, text, and after glyph runs"
+        );
+        let last_three = &glyph_x[glyph_x.len() - 3..];
+        assert!(
+            last_three[0] < last_three[1] && last_three[1] < last_three[2],
+            // cov:ignore: assert! diagnostic is only evaluated on failure
+            "literal pseudo/text runs must advance in source order: {last_three:?}"
+        );
+    }
+
+    #[test]
+    fn paint_document_expands_auto_height_for_empty_pseudo_box() {
+        let mut document = Document::new();
+        let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+        document.append_text(
+            style,
+            r##"div { border: 2px solid black } div::before { content: "A" }"##,
+        );
+        let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+        document.append_element(Some(body), "div", Style::default(), None::<&str>);
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+        raikiri_dom::layout_single_page(
+            &mut document,
+            &cascade,
+            PageBox::A4,
+            parley::FontContext::new(),
+        )
+        .expect("layout Ok");
+
+        let mut scene = Scene::new();
+        crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
+        assert!(
+            scene
+                .commands
+                .iter()
+                .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
+        );
     }
 
     #[test]
