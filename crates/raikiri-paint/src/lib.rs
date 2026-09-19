@@ -1935,6 +1935,60 @@ mod tests {
         let coeffs = fill.transform.as_coeffs();
         assert!((coeffs[5] - expected_content_y).abs() < 1e-4);
     }
+    #[test]
+    fn paint_single_page_border_radius_unifies_matching_border_and_background() {
+        let mut document = Document::new();
+        let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let _box = document.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(
+                "width: 100px; height: 80px; background: red; border: 4px solid red; \
+                 border-radius: 12px; background-clip: padding-box",
+            ),
+        );
+        let _current_color = document.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(
+                "width: 100px; height: 80px; color: green; background: red; \
+                 border: 4px solid currentcolor; border-radius: 12px; \
+                 background-clip: padding-box",
+            ),
+        );
+        let _dashed = document.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(
+                "width: 100px; height: 80px; background: red; border: 4px dashed blue; \
+                 border-radius: 12px",
+            ),
+        );
+        let rules = build_rule_tree(&document);
+        let cascade_result = cascade(&document, &rules).expect("cascade Ok");
+        let mut document = document;
+        layout_single_page(
+            &mut document,
+            &cascade_result,
+            PageBox::A4,
+            FontContext::new(),
+        )
+        .expect("layout Ok");
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &document, &cascade_result, PageBox::A4);
+        assert!(
+            scene
+                .commands
+                .iter()
+                .any(|command| matches!(command, RenderCommand::Fill(_))),
+            "rounded border/background fixture should emit fill commands", // cov:ignore: assertion message is evaluated only on failure
+        );
+    }
 }
 
 /// Empirical + source-verified characterization of

@@ -3073,11 +3073,15 @@ fn absolutize_in_page_context(
         ctx: &ResolveContext,
     ) -> BorderRadius {
         let computed = resolve_border_radius(specified, font_size, own_line_height, ctx);
+        let length = |value: ComputedLengthPercentage| match value {
+            ComputedLengthPercentage::Px(px) => Length::Px(px),
+            ComputedLengthPercentage::Percent(percent) => Length::Percent(percent),
+        };
         BorderRadius {
-            top_left: Length::Px(computed.top_left.px()),
-            top_right: Length::Px(computed.top_right.px()),
-            bottom_right: Length::Px(computed.bottom_right.px()),
-            bottom_left: Length::Px(computed.bottom_left.px()),
+            top_left: length(computed.top_left),
+            top_right: length(computed.top_right),
+            bottom_right: length(computed.bottom_right),
+            bottom_left: length(computed.bottom_left),
         }
     }
 
@@ -3644,6 +3648,21 @@ fn absolutize_in_page_context(
             font_size,
             own_line_height,
             ctx,
+        )),
+        PropertyValue::BorderRadiusInherit => PropertyValue::BorderRadiusInherit,
+        PropertyValue::BorderRadiusTopLeft(v) => PropertyValue::BorderRadiusTopLeft(Length::Px(
+            resolve_length(v, font_size, own_line_height, ctx).px(),
+        )),
+        PropertyValue::BorderRadiusTopRight(v) => PropertyValue::BorderRadiusTopRight(Length::Px(
+            resolve_length(v, font_size, own_line_height, ctx).px(),
+        )),
+        PropertyValue::BorderRadiusBottomRight(v) => {
+            PropertyValue::BorderRadiusBottomRight(Length::Px(
+                resolve_length(v, font_size, own_line_height, ctx).px(),
+            ))
+        }
+        PropertyValue::BorderRadiusBottomLeft(v) => PropertyValue::BorderRadiusBottomLeft(Length::Px(
+            resolve_length(v, font_size, own_line_height, ctx).px(),
         )),
         PropertyValue::BoxShadow(items) => PropertyValue::BoxShadow(if items.is_empty() {
             items
@@ -6871,14 +6890,14 @@ mod tests {
     fn cascade_page_computes_border_radius_box_shadow_and_outline() {
         let root = root_with_font_size(20.0);
         let result = page(
-            "@page { border-radius: 1em 2em 3em 4em; box-shadow: red 0.5em -1em 0.25em 0.125em, 2px 3px; outline: solid 2em red }",
+            "@page { border-radius: 10% 2em 3em 4em; box-shadow: red 0.5em -1em 0.25em 0.125em, 2px 3px; outline: solid 2em red }",
             &root,
         );
 
         assert_eq!(
             result.declarations().get(&PropertyKey::BorderRadius),
             Some(&PropertyValue::BorderRadius(BorderRadius {
-                top_left: Length::Px(20.0),
+                top_left: Length::Percent(10.0),
                 top_right: Length::Px(40.0),
                 bottom_right: Length::Px(60.0),
                 bottom_left: Length::Px(80.0),
@@ -7222,7 +7241,7 @@ mod tests {
     /// この値は `page_corpus` の現在の identity/pass-through arms と同期する。
     // Includes the five page-only inherit markers, which phase 3 leaves
     // untouched as a defensive no-op after phase 2 has normally resolved them.
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 115;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 117;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -7772,15 +7791,19 @@ mod tests {
             name: "--sample".into(),
             value: "1px".into(),
         }),
-        // Font-relative lengths exercise the page phase-3 conversion for all
-        // three newly supported static-side properties. Percentages are not
-        // part of this task's parser contract.
+        // Font-relative lengths exercise the page phase-3 conversion for the
+        // supported static-side properties; percentage radii remain symbolic
+        // through this page conversion.
         BorderRadius => PropertyValue::BorderRadius(BorderRadius {
             top_left: Length::Em(0.5),
             top_right: Length::Rem(0.25),
             bottom_right: Length::Pt(6.0),
             bottom_left: Length::Px(1.0),
         }),
+        BorderRadiusTopLeft => PropertyValue::BorderRadiusTopLeft(Length::Em(0.5)),
+        BorderRadiusTopRight => PropertyValue::BorderRadiusTopRight(Length::Rem(0.25)),
+        BorderRadiusBottomRight => PropertyValue::BorderRadiusBottomRight(Length::Pt(6.0)),
+        BorderRadiusBottomLeft => PropertyValue::BorderRadiusBottomLeft(Length::Px(1.0)),
         BoxShadow => PropertyValue::BoxShadow(Arc::new(vec![BoxShadowItem {
             offset_x: Length::Em(0.5),
             offset_y: Length::Rem(0.25),
@@ -8009,6 +8032,7 @@ mod tests {
             PropertyValue::MarginBottomInherit,
             PropertyValue::MarginLeftInherit,
             PropertyValue::MarginInherit,
+            PropertyValue::BorderRadiusInherit,
             PropertyValue::Deferred(DeferredValue {
                 property: "width".into(),
                 value: "calc(1px + 1px)".into(),
@@ -8096,7 +8120,7 @@ mod tests {
             const PROPERTY_VALUE_VARIANT_COUNT: usize = [$(stringify!($variant)),+,
                 "CounterResetInherit", "MarginTopInherit", "MarginRightInherit",
                 "MarginBottomInherit", "MarginLeftInherit", "MarginInherit",
-                "CalcLengthPercentage", "GridArea", "Grid"].len();
+                "BorderRadiusInherit", "CalcLengthPercentage", "GridArea", "Grid"].len();
 
             fn property_value_variant_name(value: &PropertyValue) -> &'static str {
                 match value {
@@ -8106,6 +8130,7 @@ mod tests {
                     PropertyValue::MarginBottomInherit => "MarginBottomInherit",
                     PropertyValue::MarginLeftInherit => "MarginLeftInherit",
                     PropertyValue::MarginInherit => "MarginInherit",
+                    PropertyValue::BorderRadiusInherit => "BorderRadiusInherit",
                     PropertyValue::CalcLengthPercentage { .. } => "CalcLengthPercentage",
                     PropertyValue::GridArea(_) => "GridArea",
                     PropertyValue::Grid(_) => "Grid",
@@ -8229,6 +8254,10 @@ mod tests {
         Quotes,
         TextShadow,
         BorderRadius,
+        BorderRadiusTopLeft,
+        BorderRadiusTopRight,
+        BorderRadiusBottomRight,
+        BorderRadiusBottomLeft,
         BoxShadow,
         Outline,
         OutlineWidth,
@@ -8906,6 +8935,7 @@ mod tests {
             }),
             // `border-radius` stores four independent `<length>` corners;
             // every non-px unit is specified-layer residue until phase 3.
+            PropertyValue::BorderRadiusInherit => None,
             PropertyValue::BorderRadius(radius) => [
                 radius.top_left,
                 radius.top_right,
@@ -8914,6 +8944,10 @@ mod tests {
             ]
             .into_iter()
             .find_map(length),
+            PropertyValue::BorderRadiusTopLeft(radius)
+            | PropertyValue::BorderRadiusTopRight(radius)
+            | PropertyValue::BorderRadiusBottomRight(radius)
+            | PropertyValue::BorderRadiusBottomLeft(radius) => length(*radius),
             // `box-shadow` stores four length components per item. Colors do
             // not participate in the layer check.
             PropertyValue::BoxShadow(shadows) => shadows.iter().find_map(|s| {
