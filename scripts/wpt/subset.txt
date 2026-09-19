@@ -61,3 +61,6 @@ css/CSS2/visudet
 # `fonts` entry's surroundings). The runner filters to files with reftest
 # links, so non-reftest cases (parsing/, descriptors/) remain cheap to carry.
 css/css-fonts
+# CSS Display foundation: standalone flow-root reftest pair.
+css/css-display/display-flow-root-002.html
+css/css-display/display-flow-root-002-ref.html

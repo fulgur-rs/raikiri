@@ -1269,7 +1269,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + word-spacing `ch` shaping slice (+1, exact 800x600 pass).
         // + white-space follow-up slice (+6, exact 800x600 pass).
         // + CSS Lists marker-position foundation slice (+1, exact static reftest).
-        assert_eq!(set.baseline.entries.len(), 1044);
+        assert_eq!(set.baseline.entries.len(), 1045);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }

@@ -1858,8 +1858,8 @@ pub enum ContentComponent {
 /// / `none` / `flex` / `grid` / `list-item` / `contents` / `table`
 /// / `inline-table` / `table-row-group` / `table-header-group`
 /// / `table-footer-group` / `table-row` / `table-column-group`
-/// / `table-column` / `table-cell` / `table-caption` の 18 値。
-/// `flow-root` (standalone) 等残りの spec-valid だが未実装
+/// / `table-column` / `table-cell` / `table-caption` / `flow-root` の 19 値。
+/// `flow-root` は standalone の block formatting context として実装する。
 /// (将来対応) の keyword は `parse_display` が `None` を返し、
 /// declaration が silent drop される (rule.rs 側 invalid-value drop path)。
 ///
@@ -1895,6 +1895,10 @@ pub enum DisplayValue {
     /// の primary)。
     /// <https://www.w3.org/TR/css-display-3/#typedef-display-legacy>
     InlineBlock,
+    /// `flow-root` — CSS Display 3 §2.5, a block-level box that establishes
+    /// an independent block formatting context.
+    /// <https://www.w3.org/TR/css-display-3/#valdef-display-flow-root>
+    FlowRoot,
     /// `none` — CSS Display 3 §2 `<display-box>`: element (含 subtree) を
     /// box tree から omit する (hidden 相当)。
     /// <https://www.w3.org/TR/css-display-3/#typedef-display-box>
@@ -4644,14 +4648,15 @@ pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue
         | DisplayValue::TableCell
         | DisplayValue::TableCaption => DisplayValue::Block,
         // 残りは "others" — same as specified。`Block` / `Table` / `Flex` /
-        // `Grid` / `ListItem` を明示列挙し、将来 variant 追加時に非網羅で
+        // `Grid` / `ListItem` / `FlowRoot` を明示列挙し、将来 variant 追加時に非網羅で
         // compile error にする (`#[non_exhaustive]` は crate 外部向け、
         // 定義 crate 内部のこの match には適用されない)。
         same @ (DisplayValue::Block
         | DisplayValue::Table
         | DisplayValue::Flex
         | DisplayValue::Grid
-        | DisplayValue::ListItem) => same,
+        | DisplayValue::ListItem
+        | DisplayValue::FlowRoot) => same,
     }
 }
 
@@ -16586,6 +16591,7 @@ fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
         "block" => Some(DisplayValue::Block),
         "inline" => Some(DisplayValue::Inline),
         "inline-block" => Some(DisplayValue::InlineBlock),
+        "flow-root" => Some(DisplayValue::FlowRoot),
         "none" => Some(DisplayValue::None),
         // The current layout bridge models the outer display type as block,
         // so inline-flex/inline-grid share the corresponding formatting
@@ -23547,6 +23553,18 @@ mod tests {
     }
 
     #[test]
+    fn display_parse_flow_root() {
+        assert_eq!(
+            parse("flow-root", "display"),
+            Some(PropertyValue::Display(DisplayValue::FlowRoot))
+        );
+        assert_eq!(
+            parse("FLOW-ROOT", "display"),
+            Some(PropertyValue::Display(DisplayValue::FlowRoot))
+        );
+    }
+
+    #[test]
     fn display_parse_none() {
         // CSS Display 3 §2 <display-box>
         assert_eq!(
@@ -23661,8 +23679,8 @@ mod tests {
 
     #[test]
     fn display_rejects_unknown_ident() {
-        // inline-flex / inline-grid are accepted as their formatting contexts;
-        // flow-root remains outside the current bridge.
+        // inline-flex / inline-grid / flow-root are accepted as their
+        // corresponding formatting contexts.
         assert_eq!(
             parse("inline-flex", "display"),
             Some(PropertyValue::Display(DisplayValue::InlineFlex))
@@ -23671,7 +23689,12 @@ mod tests {
             parse("inline-grid", "display"),
             Some(PropertyValue::Display(DisplayValue::InlineGrid))
         );
-        assert_eq!(parse("flow-root", "display"), None);
+        assert_eq!(
+            parse_entire("flow-root extra", "display"),
+            None,
+            // cov:ignore: panic-message literal only executes on assertion failure.
+            "display accepts one standalone keyword in this slice"
+        );
     }
 
     #[test]
@@ -28166,6 +28189,7 @@ mod tests {
             DisplayValue::Flex,
             DisplayValue::Grid,
             DisplayValue::ListItem,
+            DisplayValue::FlowRoot,
             DisplayValue::Contents,
         ] {
             assert_eq!(
@@ -28209,6 +28233,10 @@ mod tests {
             assert_eq!(
                 resolve_display_for_float(DisplayValue::ListItem, float),
                 DisplayValue::ListItem
+            );
+            assert_eq!(
+                resolve_display_for_float(DisplayValue::FlowRoot, float),
+                DisplayValue::FlowRoot
             );
         }
     }

@@ -14302,6 +14302,14 @@ mod tests {
     }
 
     #[test]
+    fn author_display_flow_root_computes_through_cascade() {
+        // End-to-end pipeline check (parse -> cascade -> ComputedValues) for
+        // the standalone CSS Display 3 `flow-root` keyword.
+        let cv = cascade_with_ua("", "div { display: flow-root }", "div", None);
+        assert_eq!(cv.display, DisplayValue::FlowRoot);
+    }
+
+    #[test]
     fn author_display_list_item_computes_through_cascade() {
         // End-to-end pipeline check (parse -> cascade -> ComputedValues) for
         // `display: list-item` — keyword-acceptance only, sibling of
