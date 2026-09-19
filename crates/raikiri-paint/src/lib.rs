@@ -432,6 +432,42 @@ mod tests {
     }
 
     #[test]
+    fn paint_single_page_outline_emits_basic_solid_outline() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let _box = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("width: 60px; height: 60px; color: green; outline: 20px solid currentcolor"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+
+        let green_fills: Vec<_> = scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::Fill(fill) => match fill.brush {
+                    anyrender::Paint::Solid(color)
+                        if color == Color::from_rgba8(0, 128, 0, 255) =>
+                    {
+                        Some(fill)
+                    }
+                    _ => None,
+                },
+                _ => None, // cov:ignore: this collector intentionally ignores non-Fill scene commands
+            })
+            .collect();
+        assert_eq!(green_fills.len(), 4);
+    }
+
+    #[test]
     fn paint_single_page_compiles_and_returns_unit() {
         let doc = Document::new();
         let rules = build_rule_tree(&doc);
