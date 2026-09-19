@@ -492,6 +492,8 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::FontWeight(_)
         | PropertyValue::LineHeight(_)
         | PropertyValue::Display(_)
+        | PropertyValue::ListStyleType(_)
+        | PropertyValue::ListStylePosition(_)
         | PropertyValue::CounterReset(_)
         | PropertyValue::CounterResetInherit
         | PropertyValue::CounterIncrement(_)

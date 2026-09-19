@@ -37,16 +37,16 @@ use crate::property::{
     EmptyCellsValue, FilterFunction, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
     FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
     GridTemplateTracks, GridTrackSize, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal,
-    LineHeight, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle,
-    OverflowValue, OverflowWrap, OverflowXY, PageValue, PositionValue, SelfAlignmentValue, Sides,
-    TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine,
-    TextDecorationStyle, TextJustify, TextShadowItem, TextTransform, TextWrapMode,
-    TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode,
-    ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
-    empty_filter_list, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
-    empty_transform_list, initial_font_family, initial_grid_auto_track_list,
-    resolve_display_for_float, resolve_overflow, resolve_text_align_match_parent,
-    resolve_writing_mode,
+    LineHeight, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline,
+    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue, PositionValue,
+    SelfAlignmentValue, Sides, TabSize, TableLayoutValue, TextAlign, TextAlignLast,
+    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextJustify, TextShadowItem,
+    TextTransform, TextWrapMode, TransformFunction, VerticalAlign, Visibility, VisualBox,
+    WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_box_shadow_list, empty_content_list,
+    empty_counter_entries, empty_filter_list, empty_quotes_entries, empty_string_set_entries,
+    empty_text_shadow_list, empty_transform_list, initial_font_family,
+    initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
+    resolve_text_align_match_parent, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ResolveContext,
@@ -77,7 +77,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `border_radius` / `box_shadow` / `outline` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` / `background_size` / `background_position` / `object_position` / `border_spacing` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* / `object_fit` / `table_layout` / `border_collapse` / `caption_side` / `empty_cells` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `list_style_type` / `list_style_position` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* / `object_fit` / `table_layout` / `border_collapse` / `caption_side` / `empty_cells` |
 /// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
 ///
 /// **手動同期 — drift に注意**: 上の表の property 名列挙は手動で維持される
@@ -180,6 +180,10 @@ pub struct SpecifiedValues {
     pub line_height: LineHeight,
     /// [`ComputedValues::display`] の staging。層は computed-equivalent。
     pub display: DisplayValue,
+    /// [`ComputedValues::list_style_type`] の staging。inherited。
+    pub list_style_type: ListStyleType,
+    /// [`ComputedValues::list_style_position`] の staging。inherited。
+    pub list_style_position: ListStylePosition,
     /// [`ComputedValues::counter_reset`] の staging。層は computed-equivalent。
     pub counter_reset: Arc<Vec<(SmolStr, i32)>>,
     /// [`ComputedValues::counter_increment`] の staging。層は computed-equivalent。
@@ -598,6 +602,8 @@ impl SpecifiedValues {
             font_weight: 400.0,
             line_height: LineHeight::Normal,
             display: DisplayValue::Inline,
+            list_style_type: ListStyleType::Disc,
+            list_style_position: ListStylePosition::Outside,
             counter_reset: empty_counter_entries(),
             counter_increment: empty_counter_entries(),
             counter_set: empty_counter_entries(),
@@ -896,6 +902,9 @@ impl SpecifiedValues {
             // D5: `bolder` / `lighter` はこの値を基準に解決される。
             font_weight: parent.font_weight,
             line_height: lift_line_height(parent.line_height),
+            // CSS Lists 3 §3: both list-style longhands are inherited.
+            list_style_type: parent.list_style_type.clone(),
+            list_style_position: parent.list_style_position,
             // `match-parent` はここでは解決しない (素朴なコピー) — 解決は
             // `finalize` / `finalize_as_root` が全 winner 適用後に親の
             // `ComputedValues` を明示的に受け取って行う (`Self` doc の
@@ -1461,6 +1470,8 @@ impl SpecifiedValues {
             // (`resolve_display_for_float` doc 参照、`overflow`
             // cross-axis coupling と同じ phase 3 の位置)。
             display: resolve_display_for_float(self.display, self.float),
+            list_style_type: self.list_style_type,
+            list_style_position: self.list_style_position,
             counter_reset: self.counter_reset,
             counter_increment: self.counter_increment,
             counter_set: self.counter_set,
@@ -2160,6 +2171,8 @@ mod tests {
             font_weight: 700.0,
             line_height: ComputedLineHeight::Number(1.5),
             display: DisplayValue::Block,
+            list_style_type: ListStyleType::Named(SmolStr::new("upper-roman")),
+            list_style_position: ListStylePosition::Inside,
             counter_reset: Arc::new(vec![(SmolStr::new("chapter"), 3)]),
             counter_increment: Arc::new(vec![(SmolStr::new("section"), 2)]),
             counter_set: Arc::new(vec![(SmolStr::new("page"), 5)]),
@@ -2404,6 +2417,9 @@ mod tests {
         // behavioral-proxy methodology、`mod@crate::cascade` test 群と同型)。
         assert!(Arc::ptr_eq(&child.font_family, &parent.font_family));
         assert_eq!(child.font_weight, 700.0);
+        // CSS Lists 3 §3: both list-style longhands are inherited.
+        assert_eq!(child.list_style_type, parent.list_style_type);
+        assert_eq!(child.list_style_position, parent.list_style_position);
         // CSS Text 3 §6.1: text-align は inherited。
         assert_eq!(child.text_align, TextAlign::Center);
         // CSS Writing Modes 4 §2.1: direction は inherited。

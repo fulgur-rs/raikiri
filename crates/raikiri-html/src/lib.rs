@@ -3515,12 +3515,10 @@ mod tests {
         // grouping elements)。cascade まで通した非-vacuous な検証は
         // `crates/raikiri/tests/build_cascaded.rs`
         // `sectioning_and_grouping_elements_are_display_block_via_ua_css` 側。
-        // ol/ul/li 追加 (block-level list
-        // treatment、marker/list-style は将来 defer)。li は spec の
-        // `display: list-item` が raikiri-style で未実装のため display:
-        // block に fallback (詳細は minimal.css のコメント参照)。cascade
-        // まで通した非-vacuous な検証は `crates/raikiri/tests/build_cascaded.rs`
-        // `list_elements_are_display_block_via_ua_css` 側。
+        // ol/ul/li 追加 (block-level list treatment と
+        // `display: list-item`/marker foundation)。cascade まで通した
+        // 非-vacuous な検証は `crates/raikiri/tests/build_cascaded.rs` の
+        // `list_elements_use_list_item_display_via_ua_css` 側。
         // hr 追加 (display: block は §flow-content-3
         // (15.3.3) の flow-content グループ側の rule に相乗り。border/color/
         // margin の hr 固有 rule は別 group、詳細は minimal.css のコメント

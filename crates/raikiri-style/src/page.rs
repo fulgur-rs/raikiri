@@ -3166,6 +3166,8 @@ fn absolutize_in_page_context(
         | PropertyValue::FontSize(_)
         | PropertyValue::FontWeight(_)
         | PropertyValue::Display(_)
+        | PropertyValue::ListStyleType(_)
+        | PropertyValue::ListStylePosition(_)
         | PropertyValue::CounterReset(_)
         | PropertyValue::CounterResetInherit
         | PropertyValue::CounterIncrement(_)
@@ -4177,16 +4179,16 @@ mod tests {
         GridLineShorthand, GridLineValue, GridRepeatCount, GridShorthand, GridTemplateAreaEntry,
         GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth,
         GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize, Hyphens, Isolation,
-        Length, LengthOrAuto, LengthOrNormal, LineBreak, LineHeight, MaskImage, MixBlendMode,
-        ObjectFit, Outline, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue,
-        PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
-        RelativeFontSize, SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextAlignAll,
-        TextAlignLast, TextDecorationColor, TextDecorationInset, TextDecorationLine,
-        TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces,
-        TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge, TextEmphasisPosition,
-        TextEmphasisVEdge, TextJustify, TextShadowColor, TextTransform, TextUnderlinePosition,
-        TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak,
-        WritingMode, ZIndexValue,
+        Length, LengthOrAuto, LengthOrNormal, LineBreak, LineHeight, ListStylePosition,
+        ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineStyle, OverflowValue,
+        OverflowWrap, OverflowXY, PageValue, PlaceContentShorthand, PlaceItemsShorthand,
+        PlaceSelfShorthand, PositionValue, RelativeFontSize, SelfAlignmentValue, StartEnd, TabSize,
+        TextAlign, TextAlignAll, TextAlignLast, TextDecorationColor, TextDecorationInset,
+        TextDecorationLine, TextDecorationShorthand, TextDecorationSkipInk,
+        TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge,
+        TextEmphasisPosition, TextEmphasisVEdge, TextJustify, TextShadowColor, TextTransform,
+        TextUnderlinePosition, TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace,
+        WordBreak, WritingMode, ZIndexValue,
     };
     use crate::resolve::{ComputedLength, ComputedLineHeight};
     use crate::ruletree::build_rule_tree;
@@ -7219,7 +7221,7 @@ mod tests {
     /// この値は `page_corpus` の現在の identity/pass-through arms と同期する。
     // Includes the five page-only inherit markers, which phase 3 leaves
     // untouched as a defensive no-op after phase 2 has normally resolved them.
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 113;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 115;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -7970,6 +7972,8 @@ mod tests {
         // initial, same reasoning as `BackgroundAttachment`'s `Fixed`
         // sample above).
         Page => PropertyValue::Page(PageValue::Named(Atom::from("cover"))),
+        ListStyleType => PropertyValue::ListStyleType(ListStyleType::Named("decimal".into())),
+        ListStylePosition => PropertyValue::ListStylePosition(ListStylePosition::Inside),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -8124,6 +8128,8 @@ mod tests {
         FontWeight,
         LineHeight,
         Display,
+        ListStyleType,
+        ListStylePosition,
         CounterReset,
         CounterIncrement,
         CounterSet,
@@ -8680,6 +8686,8 @@ mod tests {
             | PropertyValue::BackgroundColor(_)
             | PropertyValue::FontFamily(_)
             | PropertyValue::Display(_)
+            | PropertyValue::ListStyleType(_)
+            | PropertyValue::ListStylePosition(_)
             | PropertyValue::CounterReset(_)
             | PropertyValue::CounterResetInherit
             | PropertyValue::CounterIncrement(_)

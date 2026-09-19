@@ -13,7 +13,7 @@
  * controls, <pre>'s display, and <table> presentation are deliberately
  * deferred. Margins are only partially landed (`hr` and the
  * `blockquote`/`figure`/`listing`/`p`/`plaintext`/`pre`/`xmp` group below)
- * — most other elements' margins (headings, lists, etc.) remain deferred.
+ * — most other elements' margins (headings and form controls, etc.) remain deferred.
  */
 
 /* CSS 2.1 App.D — html and body form the initial containing block */
@@ -152,20 +152,20 @@ dialog[open] { display: block; }
 
 /* HTML Living Standard "Rendering" §lists (15.3.7) — list-related elements
  * are block-level. The full spec selector also lists dir/dd/dl/dt/menu,
- * which have no rule yet (out of scope for this rule set). */
-ol { display: block; }
-ul { display: block; }
+ * which have no rule yet (out of scope for this rule set). The physical
+ * padding/margin forms below are equivalent to the horizontal-tb UA values
+ * (`margin-block: 1em; padding-inline-start: 40px`) in this engine's current
+ * writing-mode scope. */
+ol, ul { display: block; margin: 1em 0; padding-left: 40px; }
+ol { list-style-type: decimal; }
+ul { list-style-type: disc; }
 
-/* HTML Living Standard "Rendering" §lists (15.3.7) specifies
- * li { display: list-item; text-align: match-parent; }, but list-item is
- * not yet a valid display keyword in raikiri-style (property.rs
- * parse_display rejects it; display_rejects_unknown_ident test). Without
- * a rule li would fall back to CSS-initial display: inline, breaking
- * the requirement that li siblings stack as vertical blocks.
- * Interim fallback: display: block — replace with display: list-item
- * once that lands. text-align: match-parent and list-style-type/
- * ::marker generation are out of scope here. */
-li { display: block; }
+/* HTML Living Standard "Rendering" §lists (15.3.7) — list items generate a
+ * principal list-item box and a marker box. `display: list-item` is now
+ * accepted by raikiri-style; marker generation/placement is handled by the
+ * downstream list paint path. `text-align: match-parent` is inherited through
+ * the computed style as required by the same UA rule. */
+li { display: list-item; text-align: match-parent; }
 
 /* HTML Living Standard "Rendering" §the-hr-element-2 (15.3.11) specifies
  * hr { color: gray; border-style: inset; border-width: 1px;

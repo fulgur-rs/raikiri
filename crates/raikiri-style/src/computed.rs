@@ -19,13 +19,13 @@ use crate::property::{
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ContentAlignmentValue,
     ContentComponent, CssColor, Direction, DisplayValue, EmptyCellsValue, FilterFunction,
     FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue,
-    GridLineValue, GridTemplateAreasValue, Hyphens, Isolation, MaskImage, MixBlendMode, ObjectFit,
-    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
-    SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor,
-    TextDecorationLine, TextDecorationStyle, TextJustify, TextTransform, TextWrapMode,
-    VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue,
-    empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
-    empty_string_set_entries, initial_font_family,
+    GridLineValue, GridTemplateAreasValue, Hyphens, Isolation, ListStylePosition, ListStyleType,
+    MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
+    OverflowXY, PositionValue, SelfAlignmentValue, Sides, TableLayoutValue, TextAlign,
+    TextAlignLast, TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextJustify,
+    TextTransform, TextWrapMode, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak,
+    WritingMode, ZIndexValue, empty_content_list, empty_counter_entries, empty_filter_list,
+    empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
@@ -254,7 +254,7 @@ pub struct ChLengthProvenance {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / writing_mode / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / writing_mode / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows / list_style_type / list_style_position、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing /
 /// overflow / text_decoration / vertical_align / z_index / float / clear)。
@@ -384,6 +384,10 @@ pub struct ComputedValues {
     /// / `table-row` / `table-column-group` / `table-column` / `table-cell`
     /// / `table-caption` — 詳細は [`DisplayValue`] doc)。
     pub display: DisplayValue,
+    /// `list-style-type`。**inherited**、initial: `disc` (CSS Lists 3 §3.1)。
+    pub list_style_type: ListStyleType,
+    /// `list-style-position`。**inherited**、initial: `outside` (CSS Lists 3 §3.2)。
+    pub list_style_position: ListStylePosition,
     /// `counter-reset`。**non-inherited**。spec initial は `none`
     /// (CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#counter-reset>)、
     /// 本 impl はそれを空 list で表現する。
@@ -418,8 +422,9 @@ pub struct ComputedValues {
     pub counter_set: Arc<Vec<(SmolStr, i32)>>,
     /// `content` の resolved 中間表現。**non-inherited**。spec initial は
     /// `normal` (CSS Content 3 §1 propdef-content "Initial: normal") で、本 impl
-    /// は `normal` / `none` をどちらも空 list で表現する (本 crate は cascade
-    /// static side に留まり、pseudo-element 生成判断は下流 layer)。
+    /// は `normal` を空 list、明示的な `none` を
+    /// [`ContentComponent::None`] sentinel として表現する。pseudo-element
+    /// consumers can therefore suppress an explicit `content: none` declaration.
     /// 将来の GCPM directive emit に向けた pre-work。
     /// 下流 (raikiri-dom) が `raikiri_traits::ContentValueItem` に mapping する
     /// (raikiri-style は raikiri-traits に依存しない leaf crate、counter-* の
@@ -1599,6 +1604,8 @@ impl ComputedValues {
             // ascent+descent 相当を paint 側で resolve)。
             line_height: ComputedLineHeight::Normal,
             display: DisplayValue::Inline,
+            list_style_type: ListStyleType::Disc,
+            list_style_position: ListStylePosition::Outside,
             // CSS Lists 3 §4: counter-* の spec initial は `none`、本 impl は
             // 空 list で表現する (anchor は field doc 参照)。
             // shared empty Arc slot — per-node allocation 回避
@@ -2037,6 +2044,8 @@ mod tests {
         // CSS Inline 3 §5.1: line-height initial は `normal`
         assert_eq!(cv.line_height, ComputedLineHeight::Normal);
         assert_eq!(cv.display, DisplayValue::Inline);
+        assert_eq!(cv.list_style_type, ListStyleType::Disc);
+        assert_eq!(cv.list_style_position, ListStylePosition::Outside);
         // CSS Lists 3 §4: counter-* の spec initial は `none`、本 impl では
         // empty list 表現 (<https://www.w3.org/TR/css-lists-3/#auto-numbering>)。
         assert!(cv.counter_reset.is_empty());
@@ -2168,6 +2177,8 @@ mod tests {
             font_weight: 700.0,
             line_height: ComputedLineHeight::Length(ComputedLength(30.0)),
             display: DisplayValue::Block,
+            list_style_type: ListStyleType::Named(SmolStr::new("upper-roman")),
+            list_style_position: ListStylePosition::Inside,
             counter_reset: Arc::new(vec![(SmolStr::new("chapter"), 3)]),
             counter_increment: Arc::new(vec![(SmolStr::new("section"), 2)]),
             counter_set: Arc::new(vec![(SmolStr::new("page"), 5)]),
@@ -2481,7 +2492,7 @@ mod tests {
     /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
     /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
     ///
-    /// field 単位で全 92 field を検査する — delegation は `finalize` を通るので、
+    /// field 単位で全 94 field を検査する — delegation は `finalize` を通るので、
     /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
     /// `resolve_border` の gating が消える) もここに現れる。
     #[test]
@@ -2496,6 +2507,8 @@ mod tests {
         assert_eq!(child.font_family, parent.font_family);
         assert_eq!(child.font_size, parent.font_size);
         assert_eq!(child.font_weight, parent.font_weight);
+        assert_eq!(child.list_style_type, parent.list_style_type);
+        assert_eq!(child.list_style_position, parent.list_style_position);
         assert_eq!(child.text_align, parent.text_align);
         // CSS Writing Modes 4 §2.1: direction は inherited。
         assert_eq!(child.direction, parent.direction);

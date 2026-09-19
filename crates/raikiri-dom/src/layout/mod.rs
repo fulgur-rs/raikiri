@@ -661,6 +661,20 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         bridge_float(style, cv);
         bridge_margin(style, cv, &mut doc.layout_warnings);
         bridge_padding(style, cv, &mut doc.layout_warnings);
+        if cv.display == DisplayValue::ListItem
+            && matches!(
+                cv.list_style_position,
+                raikiri_style::ListStylePosition::Inside
+            )
+            && style.padding.left.into_raw().value() == 0.0
+        {
+            // The current Taffy bridge has no marker child. Reserve a
+            // conservative first-line gutter for the inside marker so its
+            // post-layout paint does not overlap ordinary text. Explicit or
+            // percentage padding remains untouched; a later inline-formatting
+            // pass will replace this estimate with measured marker width.
+            style.padding.left = LengthPercentage::length(cv.font_size.px().max(16.0) * 1.5);
+        }
         bridge_min_max_size(style, cv, &mut doc.layout_warnings);
         bridge_border(style, cv, &mut doc.layout_warnings);
         bridge_box_sizing(style, cv);
@@ -10510,6 +10524,53 @@ mod tests {
             ib_loc.size.height,
             a_loc.size.height,
             c_loc.size.height
+        );
+    }
+
+    #[test]
+    fn apply_computed_to_style_reserves_inside_list_marker_gutter() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let inside = doc.append_element(
+            Some(0),
+            "li",
+            Style::default(),
+            Some("display: list-item; list-style-position: inside"),
+        );
+        let outside = doc.append_element(
+            Some(0),
+            "li",
+            Style::default(),
+            Some("display: list-item; list-style-position: outside"),
+        );
+        let explicit_padding = doc.append_element(
+            Some(0),
+            "li",
+            Style::default(),
+            Some("display: list-item; list-style-position: inside; padding-left: 5px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        apply_computed_to_style(&mut doc, &cr);
+
+        assert_eq!(
+            doc.nodes[inside].style.padding.left.into_raw().value(),
+            24.0
+        );
+        assert_eq!(
+            doc.nodes[outside].style.padding.left.into_raw().value(),
+            0.0
+        );
+        assert_eq!(
+            doc.nodes[explicit_padding]
+                .style
+                .padding
+                .left
+                .into_raw()
+                .value(),
+            5.0
         );
     }
 

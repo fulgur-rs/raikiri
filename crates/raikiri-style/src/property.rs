@@ -1430,6 +1430,43 @@ pub enum CounterStyle {
     Named(SmolStr),
 }
 
+/// `list-style-type` の computed value。
+///
+/// CSS Lists 3 §3.1 <https://www.w3.org/TR/css-lists-3/#list-style-type>。
+/// Built-in counter styles and author-defined `@counter-style` names are kept
+/// as an identifier so the layout/paint side can resolve them at marker time.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ListStyleType {
+    /// `disc` — the initial value.
+    Disc,
+    /// `none` — suppress the marker box.
+    None,
+    /// A named built-in or author-defined counter style.
+    Named(SmolStr),
+    /// An author-supplied marker string (`<string>`).
+    String(SmolStr),
+}
+
+impl Default for ListStyleType {
+    fn default() -> Self {
+        Self::Disc
+    }
+}
+
+/// `list-style-position` の computed value。
+///
+/// CSS Lists 3 §3.2 <https://www.w3.org/TR/css-lists-3/#list-style-position>。
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ListStylePosition {
+    /// Marker is laid out outside the principal block.
+    #[default]
+    Outside,
+    /// Marker participates in the first line of the principal block.
+    Inside,
+}
+
 /// `string()` の第 2 引数 `[ first | start | last | first-except ]?`。
 ///
 /// CSS Content 3 §2.7.2 "Inserting Named Strings: the string() function"
@@ -1779,14 +1816,20 @@ pub enum ContentComponent {
     ///
     /// **`normal` との非対称性 (意図的)**: spec verbatim (§2.3) は "the initial
     /// value of content is `normal` and `normal` computes to `contents` on an
-    /// element" と述べるが、[`parse_content`] は `normal` を (既存 `none` と
-    /// 同様) 空 `Vec` に畳んで保持する — computed-value 時の `normal` →
-    /// `contents` 展開は本 crate の static-side (specified 層) scope 外。した
-    /// がって author が明示的に書いた `content: contents` は `[Contents]` を
-    /// 返す一方、`content: normal` (initial value 相当) は `[]` を返す —
-    /// specified 層での「明示 vs 省略」の区別を保つための意図的非対称性で、
-    /// spec 違反ではない (computed-value 展開は downstream 責務)。
+    /// element" と述べるが、[`parse_content`] は `normal` を空 `Vec` に畳んで
+    /// 保持する — computed-value 時の `normal` → `contents` 展開は本 crate の
+    /// static-side (specified 層) scope 外。一方、明示的な `content: none` は
+    /// [`ContentComponent::None`] sentinel として保持され、pseudo-element
+    /// consumers が box generation を抑制できる。したがって author が明示的に
+    /// 書いた `content: contents` は `[Contents]` を返し、`content: normal`
+    /// (initial value 相当) は `[]` を返す。
     Contents,
+    /// Internal sentinel for an explicit `content: none` declaration.
+    ///
+    /// `normal` remains the empty list used for the initial value. Keeping
+    /// `none` distinct lets downstream pseudo-element consumers suppress
+    /// generated content without changing the public `PropertyValue` shape.
+    None,
     /// `<quote>` (`open-quote` / `close-quote` / `no-open-quote` /
     /// `no-close-quote`) — CSS Content 3 §2.4.2
     /// <https://www.w3.org/TR/css-content-3/#quote-values>。詳細は
@@ -6676,6 +6719,12 @@ pub enum PropertyValue {
     /// 現状受理する keyword: `block` / `inline` / `inline-block` / `none`
     /// (詳細は [`DisplayValue`] doc)。
     Display(DisplayValue),
+    /// `list-style-type: none | <counter-style-name> | <string>` — inherited,
+    /// initial: `disc` (CSS Lists 3 §3.1).
+    ListStyleType(ListStyleType),
+    /// `list-style-position: inside | outside` — inherited, initial: `outside`
+    /// (CSS Lists 3 §3.2).
+    ListStylePosition(ListStylePosition),
     /// `counter-reset: [ <counter-name> <integer>? ]+ | none` —
     /// non-inherited。spec initial は `none` (CSS Lists 3 §4.1)、本 impl はそれを
     /// 空 list で表現する。
@@ -6709,7 +6758,8 @@ pub enum PropertyValue {
     /// [`Arc<Vec<..>>`] wrap は [`Self::CounterReset`] と同 rationale。
     CounterSet(Arc<Vec<(SmolStr, i32)>>),
     /// `content: normal | none | <content-list>` — non-inherited。spec initial は
-    /// `normal`、本 impl は `normal` / `none` をどちらも空 list で表現する
+    /// `normal`、本 impl は `normal` を空 list、`none` を
+    /// [`ContentComponent::None`] sentinel で表現する。
     /// (pseudo-element 生成判断は下流 layer)。CSS Content 3 §1
     /// <https://www.w3.org/TR/css-content-3/#content-property>。
     ///
@@ -8360,6 +8410,10 @@ pub enum PropertyKey {
     // background-repeat 等と同節参照 (staging field なしの parsing-only
     // だが discriminant 順は同様に自由)。
     Page,
+    // CSS Lists 3 §3 list-style longhands. Appended to preserve the
+    // discriminants of existing keys used by the winner scratch slots.
+    ListStyleType,
+    ListStylePosition,
 }
 
 impl PropertyValue {
@@ -8386,6 +8440,8 @@ impl PropertyValue {
             PropertyValue::FontWeight(_) => PropertyKey::FontWeight,
             PropertyValue::LineHeight(_) => PropertyKey::LineHeight,
             PropertyValue::Display(_) => PropertyKey::Display,
+            PropertyValue::ListStyleType(_) => PropertyKey::ListStyleType,
+            PropertyValue::ListStylePosition(_) => PropertyKey::ListStylePosition,
             PropertyValue::CounterReset(_) | PropertyValue::CounterResetInherit => {
                 PropertyKey::CounterReset
             }
@@ -9523,6 +9579,8 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "font-weight" => PropertyKey::FontWeight,
         "line-height" => PropertyKey::LineHeight,
         "display" => PropertyKey::Display,
+        "list-style-type" => PropertyKey::ListStyleType,
+        "list-style-position" => PropertyKey::ListStylePosition,
         "counter-reset" => PropertyKey::CounterReset,
         "counter-increment" => PropertyKey::CounterIncrement,
         "counter-set" => PropertyKey::CounterSet,
@@ -9846,6 +9904,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // 負値と其他 keyword は spec grammar 違反として drop。
         "line-height" => parse_line_height(input).map(PropertyValue::LineHeight),
         "display" => parse_display(input).map(PropertyValue::Display),
+        "list-style-type" => parse_list_style_type(input).map(PropertyValue::ListStyleType),
+        "list-style-position" => {
+            parse_list_style_position(input).map(PropertyValue::ListStylePosition)
+        }
         // CSS Lists 3 §4 counter properties。
         // spec default: reset = 0、increment = 1、set = 0。
         // Arc wrap は cascade memory DoS 対策 (per-element
@@ -16548,6 +16610,34 @@ fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
     }
 }
 
+/// Parse `list-style-type`'s `<counter-style-name> | <string>` grammar.
+///
+/// The built-in names are intentionally not enumerated here: CSS Lists 3
+/// permits author-defined counter styles, so an otherwise valid identifier is
+/// preserved for the marker resolver. Reserved CSS-wide keywords are rejected
+/// as values rather than accidentally becoming custom counter-style names.
+fn parse_list_style_type(input: &mut Parser<'_, '_>) -> Option<ListStyleType> {
+    if let Ok(value) = input.try_parse(|i| i.expect_string_cloned()) {
+        return Some(ListStyleType::String(SmolStr::new(value.as_ref())));
+    }
+    let ident = parse_custom_ident(input)?;
+    match ident.to_ascii_lowercase().as_str() {
+        "disc" => Some(ListStyleType::Disc),
+        "none" => Some(ListStyleType::None),
+        _ => Some(ListStyleType::Named(ident)),
+    }
+}
+
+/// Parse `list-style-position: inside | outside`.
+fn parse_list_style_position(input: &mut Parser<'_, '_>) -> Option<ListStylePosition> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "inside" => Some(ListStylePosition::Inside),
+        "outside" => Some(ListStylePosition::Outside),
+        _ => None,
+    }
+}
+
 /// `box-sizing: <ident>` を parse する
 /// (CSS Sizing 3 §3.3 <https://www.w3.org/TR/css-sizing-3/#box-sizing>)。
 ///
@@ -17296,10 +17386,10 @@ fn is_reserved_counter_name(ident: &str) -> bool {
 /// `content: normal | none | <content-list>` を parse する
 /// (CSS Content 3 §1 <https://www.w3.org/TR/css-content-3/#content-property>)。
 ///
-/// `normal` / `none` は spec で意味が異なる (pseudo-element の生成/非生成) が、
-/// 本 crate は cascade static side に留まり生成判断は下流に委ねるため、両者を
-/// 空 `Vec` に落として区別を持たない (§7.1 downstream mapping で必要になれば
-/// 変異させる)。counter-* precedent と同じ shape。
+/// `normal` / `none` は spec で意味が異なる (pseudo-element の生成/非生成)。
+/// `normal` は初期値として空 `Vec` に留め、明示的な `none` は内部 sentinel
+/// [`ContentComponent::None`] にして downstream の pseudo-element consumer が
+/// marker を抑制できるようにする。
 ///
 /// items+ loop は `<string>` literal と function token (`counter(...)` 等) を
 /// 順次 peel する。認識できない token に当たった時点で loop を break、caller
@@ -17317,7 +17407,7 @@ fn parse_content(input: &mut Parser<'_, '_>) -> Option<Vec<ContentComponent>> {
         return Some(Vec::new());
     }
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
-        return Some(Vec::new());
+        return Some(vec![ContentComponent::None]);
     }
 
     let items = parse_content_list_items(input, ContentListMode::CssContent3);
@@ -23507,6 +23597,68 @@ mod tests {
         );
     }
 
+    // ── List styling (CSS Lists 3 §3) ─────────────
+
+    #[test]
+    fn list_style_values_have_css_initial_defaults() {
+        assert_eq!(ListStyleType::default(), ListStyleType::Disc);
+        assert_eq!(ListStylePosition::default(), ListStylePosition::Outside);
+    }
+
+    #[test]
+    fn list_style_type_parses_builtin_custom_and_string_values() {
+        assert_eq!(
+            parse_entire("disc", "list-style-type"),
+            Some(PropertyValue::ListStyleType(ListStyleType::Disc))
+        );
+        assert_eq!(
+            parse_entire("none", "list-style-type"),
+            Some(PropertyValue::ListStyleType(ListStyleType::None))
+        );
+        assert_eq!(
+            parse_entire("upper-roman", "list-style-type"),
+            Some(PropertyValue::ListStyleType(ListStyleType::Named(
+                "upper-roman".into()
+            )))
+        );
+        assert_eq!(
+            parse_entire("\"→\"", "list-style-type"),
+            Some(PropertyValue::ListStyleType(ListStyleType::String(
+                "→".into()
+            )))
+        );
+    }
+
+    #[test]
+    fn list_style_type_rejects_reserved_or_trailing_values() {
+        for value in [
+            "inherit",
+            "initial",
+            "unset",
+            "revert",
+            "revert-layer",
+            "default",
+        ] {
+            assert_eq!(parse_entire(value, "list-style-type"), None, "{value}");
+        }
+        assert_eq!(parse_entire("disc none", "list-style-type"), None);
+        assert_eq!(parse_entire("url(marker.svg)", "list-style-type"), None);
+    }
+
+    #[test]
+    fn list_style_position_parses_case_insensitive_keywords_only() {
+        assert_eq!(
+            parse_entire("INSIDE", "list-style-position"),
+            Some(PropertyValue::ListStylePosition(ListStylePosition::Inside))
+        );
+        assert_eq!(
+            parse_entire("Outside", "list-style-position"),
+            Some(PropertyValue::ListStylePosition(ListStylePosition::Outside))
+        );
+        assert_eq!(parse_entire("middle", "list-style-position"), None);
+        assert_eq!(parse_entire("inside outside", "list-style-position"), None);
+    }
+
     #[test]
     fn display_rejects_unknown_ident() {
         // inline-flex / inline-grid are accepted as their formatting contexts;
@@ -24209,11 +24361,12 @@ mod tests {
     }
 
     #[test]
-    fn content_none_returns_empty_list() {
-        // spec §1: `none` — 本 crate では `normal` と同じく空 list に落とす。
+    fn content_none_keeps_a_suppression_sentinel() {
         assert_eq!(
             parse("none", "content"),
-            Some(PropertyValue::Content(empty_content_list()))
+            Some(PropertyValue::Content(Arc::new(vec![
+                ContentComponent::None
+            ])))
         );
     }
 
