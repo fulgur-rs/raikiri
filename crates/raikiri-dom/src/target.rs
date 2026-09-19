@@ -608,6 +608,72 @@ pub(crate) fn build_target_registry(doc: &Document, cascade: &CascadeResult) -> 
     registry
 }
 
+/// Snapshot of every live named counter stack after applying the directives on
+/// the corresponding node.
+///
+/// The outer-to-inner stack shape matches the `counters()` data consumed by
+/// marker and generated-content paint. Nodes that do not generate a box do not
+/// apply their own directives; descendants of `display: none` are omitted.
+/// This is an owned snapshot so paint can resolve counters without borrowing
+/// the DOM walk's transient scope state.
+pub type CounterSnapshot = HashMap<Symbol, Vec<i32>>;
+
+/// Build named-counter snapshots in document order for marker and generated
+/// content consumers.
+///
+/// The traversal deliberately shares [`CounterScopes`] with
+/// [`build_target_registry`], including sibling obscuring, self-nesting,
+/// saturating arithmetic, and `display: none` / `display: contents` rules.
+/// `snapshots[idx]` is empty for an unreachable or skipped node.
+pub fn counter_snapshots(doc: &Document, cascade: &CascadeResult) -> Vec<CounterSnapshot> {
+    let mut snapshots = vec![HashMap::new(); doc.node_count()];
+    let mut scopes = CounterScopes::default();
+
+    enum WalkStep {
+        Enter(usize),
+        Exit,
+    }
+
+    let mut stack = vec![WalkStep::Enter(doc.root)];
+    let mut pending_pops: Vec<Vec<Symbol>> = Vec::new();
+    while let Some(step) = stack.pop() {
+        match step {
+            WalkStep::Enter(idx) => {
+                let node = &doc.nodes[idx];
+                if !node.is_in_document() {
+                    continue;
+                }
+
+                let cv = cascade.computed.get(idx);
+                let is_display_none = matches!(cv, Some(cv) if cv.display == DisplayValue::None);
+                match cv {
+                    Some(cv) if is_display_none || cv.display == DisplayValue::Contents => {}
+                    Some(cv) => scopes.apply(cv, pending_pops.last_mut()),
+                    // cov:ignore: cascade output has one computed value per arena node
+                    None => {}
+                }
+                if is_display_none {
+                    // A display:none box is never a counter consumer and its
+                    // descendants are not traversed.
+                    continue;
+                }
+                snapshots[idx] = scopes.snapshot();
+                stack.push(WalkStep::Exit);
+                pending_pops.push(Vec::new());
+                for &child in node.children.iter().rev() {
+                    stack.push(WalkStep::Enter(child));
+                }
+            }
+            WalkStep::Exit => {
+                if let Some(names) = pending_pops.pop() {
+                    scopes.pop(&names);
+                }
+            }
+        }
+    }
+    snapshots
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -659,6 +725,80 @@ mod tests {
     // `build_target_registry`'s integration tests.
 
     // ── build_target_registry (arena-walk integration) ──────────────
+    #[test]
+    fn counter_snapshots_resolve_named_reset_and_following_increments() {
+        let mut doc = Document::new();
+        let scope = doc.append_element(
+            Some(0),
+            "section",
+            Style::default(),
+            Some("counter-reset: step 4"),
+        );
+        let first = doc.append_element(
+            Some(scope),
+            "div",
+            Style::default(),
+            Some("counter-increment: step"),
+        );
+        let second = doc.append_element(
+            Some(scope),
+            "div",
+            Style::default(),
+            Some("counter-increment: step"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let snapshots = counter_snapshots(&doc, &cr);
+        assert_eq!(snapshots[scope][&Symbol::new("step")], vec![4]);
+        assert_eq!(snapshots[first][&Symbol::new("step")], vec![5]);
+        assert_eq!(snapshots[second][&Symbol::new("step")], vec![6]);
+    }
+
+    #[test]
+    fn counter_snapshots_skip_display_none_and_apply_display_contents_descendants() {
+        let mut doc = Document::new();
+        let hidden = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("display: none; counter-reset: hidden 7"),
+        );
+        let hidden_child = doc.append_element(
+            Some(hidden),
+            "div",
+            Style::default(),
+            Some("counter-increment: hidden"),
+        );
+        let contents = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("display: contents; counter-reset: visible 2"),
+        );
+        let visible_child = doc.append_element(
+            Some(contents),
+            "div",
+            Style::default(),
+            Some("counter-increment: visible"),
+        );
+        let template = doc.append_element(Some(0), "template", Style::default(), None::<&str>);
+        let inert_child = doc.append_element(
+            Some(template),
+            "div",
+            Style::default(),
+            Some("counter-increment: inert"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let snapshots = counter_snapshots(&doc, &cr);
+        assert!(snapshots[hidden].is_empty());
+        assert!(snapshots[hidden_child].is_empty());
+        assert!(snapshots[contents].is_empty());
+        assert_eq!(snapshots[visible_child][&Symbol::new("visible")], vec![1]);
+        assert!(snapshots[inert_child].is_empty());
+    }
 
     fn set_id(doc: &mut Document, idx: usize, id: &str) {
         doc.set_element_attributes(idx, vec![(SmolStr::new("id"), SmolStr::new(id))]);

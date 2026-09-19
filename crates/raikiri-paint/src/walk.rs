@@ -30,7 +30,7 @@
 use anyrender::PaintScene;
 use kurbo::{Affine, Rect};
 use peniko::{Color, Fill};
-use raikiri_dom::Document;
+use raikiri_dom::{CounterSnapshot, Document};
 use raikiri_style::property::{
     BackgroundImage, Border, BorderColor, BorderStyle, ContentComponent, CounterStyle, CssColor,
     DisplayValue, FloatValue, Gradient, GradientStopColor, Length, LengthOrAuto, ListStyleType,
@@ -566,10 +566,95 @@ fn inherited_margin_box_font(
     (font_size.max(0.1), family)
 }
 
+fn apply_counter_directives_to_snapshot(
+    snapshot: &mut CounterSnapshot,
+    computed: &raikiri_style::ComputedValues,
+) {
+    // A pseudo-element has a temporary counter scope.  Reset creates a new
+    // level, then increment and set mutate the innermost active level.
+    let mut reset_values = std::collections::HashMap::new();
+    for (name, value) in computed.counter_reset.iter() {
+        reset_values.insert(name.as_str(), *value);
+    }
+    for (name, value) in reset_values {
+        snapshot
+            .entry(raikiri_traits::Symbol::new(name))
+            .or_default()
+            .push(value);
+    }
+    for (name, delta) in computed.counter_increment.iter() {
+        let stack = snapshot
+            .entry(raikiri_traits::Symbol::new(name.as_str()))
+            .or_default();
+        if let Some(top) = stack.last_mut() {
+            *top = top.saturating_add(*delta);
+        } else {
+            stack.push(*delta);
+        }
+    }
+    for (name, value) in computed.counter_set.iter() {
+        let stack = snapshot
+            .entry(raikiri_traits::Symbol::new(name.as_str()))
+            .or_default();
+        if let Some(top) = stack.last_mut() {
+            *top = *value;
+        } else {
+            stack.push(*value);
+        }
+    }
+}
+
+fn format_counter_component(
+    snapshot: &CounterSnapshot,
+    name: &str,
+    style: &CounterStyle,
+    registry: &CounterStyleRegistry,
+) -> String {
+    let value = snapshot
+        .get(&raikiri_traits::Symbol::new(name))
+        .and_then(|values| values.last())
+        .copied()
+        .unwrap_or(0);
+    format_counter(value, style, registry)
+}
+
+fn list_item_counter_value(counters: &CounterSnapshot, ordinal: u32) -> i32 {
+    counters
+        .get(&raikiri_traits::Symbol::new("list-item"))
+        .and_then(|values| values.last())
+        .copied()
+        .unwrap_or(ordinal as i32)
+}
+
+fn list_item_marker_ordinal(counters: &CounterSnapshot, ordinal: u32) -> u32 {
+    list_item_counter_value(counters, ordinal).max(0) as u32
+}
+
+fn format_counters_component(
+    snapshot: &CounterSnapshot,
+    name: &str,
+    separator: &str,
+    style: &CounterStyle,
+    registry: &CounterStyleRegistry,
+) -> String {
+    snapshot
+        .get(&raikiri_traits::Symbol::new(name))
+        .map(|values| {
+            values
+                .iter()
+                .map(|value| format_counter(*value, style, registry))
+                .collect::<Vec<_>>()
+                .join(separator)
+        })
+        .unwrap_or_default()
+}
+
 fn content_components_to_text_with_quotes<T: AsRef<str>>(
     components: &[ContentComponent],
     quotes: &[(T, T)],
     quotes_auto: bool,
+    counters: &CounterSnapshot,
+    registry: &CounterStyleRegistry,
 ) -> Option<String> {
     if components.is_empty() {
         return None;
@@ -579,6 +664,27 @@ fn content_components_to_text_with_quotes<T: AsRef<str>>(
     for component in components {
         match component {
             ContentComponent::Literal(value) => text.push_str(value.as_str()),
+            ContentComponent::Counter { name, style } => {
+                text.push_str(&format_counter_component(
+                    counters,
+                    name.as_str(),
+                    style,
+                    registry,
+                ));
+            }
+            ContentComponent::Counters {
+                name,
+                separator,
+                style,
+            } => {
+                text.push_str(&format_counters_component(
+                    counters,
+                    name.as_str(),
+                    separator.as_str(),
+                    style,
+                    registry,
+                ));
+            }
             ContentComponent::Quote(keyword) => match keyword {
                 QuoteKeyword::OpenQuote => {
                     if let Some((open, _)) = quotes.get(depth) {
@@ -979,6 +1085,14 @@ fn list_marker_text(
     list_style_type: &ListStyleType,
 ) -> Option<String> {
     let ordinal = list_item_ordinal(document, cascade, node_id);
+    list_marker_text_with_ordinal(cascade, list_style_type, ordinal)
+}
+
+fn list_marker_text_with_ordinal(
+    cascade: &CascadeResult,
+    list_style_type: &ListStyleType,
+    ordinal: u32,
+) -> Option<String> {
     // Ordered marker styles use the CSS default `". "` suffix. The
     // author-supplied string form is handled separately and remains verbatim.
     let suffix = |text: String| format!("{text}. ");
@@ -1021,6 +1135,7 @@ fn marker_content_text<T: AsRef<str>>(
     quotes: &[(T, T)],
     quotes_auto: bool,
     ordinal: u32,
+    counters: &CounterSnapshot,
     registry: &CounterStyleRegistry,
 ) -> Option<String> {
     if components.is_empty() {
@@ -1040,15 +1155,49 @@ fn marker_content_text<T: AsRef<str>>(
         match component {
             ContentComponent::Literal(value) => text.push_str(value.as_str()),
             ContentComponent::Counter { name, style } if name.as_str() == "list-item" => {
-                text.push_str(&format_counter(ordinal as i32, style, registry));
+                text.push_str(&format_counter(
+                    list_item_counter_value(counters, ordinal),
+                    style,
+                    registry,
+                ));
+            }
+            ContentComponent::Counter { name, style } => {
+                text.push_str(&format_counter_component(
+                    counters,
+                    name.as_str(),
+                    style,
+                    registry,
+                ));
             }
             ContentComponent::Counters {
                 name,
                 separator,
                 style,
             } if name.as_str() == "list-item" => {
-                text.push_str(&format_counter(ordinal as i32, style, registry));
-                let _ = separator;
+                if let Some(values) = counters.get(&raikiri_traits::Symbol::new("list-item")) {
+                    text.push_str(
+                        &values
+                            .iter()
+                            .map(|value| format_counter(*value, style, registry))
+                            .collect::<Vec<_>>()
+                            .join(separator.as_str()),
+                    );
+                } else {
+                    text.push_str(&format_counter(ordinal as i32, style, registry));
+                }
+            }
+            ContentComponent::Counters {
+                name,
+                separator,
+                style,
+            } => {
+                text.push_str(&format_counters_component(
+                    counters,
+                    name.as_str(),
+                    separator.as_str(),
+                    style,
+                    registry,
+                ));
             }
             ContentComponent::Quote(keyword) => match keyword {
                 QuoteKeyword::OpenQuote => {
@@ -1078,10 +1227,21 @@ fn marker_content_text<T: AsRef<str>>(
     Some(text)
 }
 
+#[allow(dead_code)] // Kept as a small unit-test wrapper around the snapshot-aware helper.
 fn marker_render_info<'a>(
     document: &'a Document,
     cascade: &'a CascadeResult,
     node_id: usize,
+) -> Option<(&'a raikiri_style::ComputedValues, String)> {
+    let snapshots = raikiri_dom::counter_snapshots(document, cascade);
+    marker_render_info_with_snapshots(document, cascade, node_id, &snapshots)
+}
+
+fn marker_render_info_with_snapshots<'a>(
+    document: &'a Document,
+    cascade: &'a CascadeResult,
+    node_id: usize,
+    snapshots: &[CounterSnapshot],
 ) -> Option<(&'a raikiri_style::ComputedValues, String)> {
     // cov:ignore: signature close has no executable mapping
     let computed = cascade.computed.get(node_id)?;
@@ -1094,6 +1254,11 @@ fn marker_render_info<'a>(
     if style.display == DisplayValue::None {
         return None;
     }
+    let mut counters = snapshots.get(node_id).cloned().unwrap_or_default();
+    if let Some(marker) = marker_computed {
+        apply_counter_directives_to_snapshot(&mut counters, marker);
+    }
+    let marker_ordinal = list_item_marker_ordinal(&counters, ordinal);
     let content = marker_computed
         .and_then(|marker| {
             marker_content_text(
@@ -1101,25 +1266,37 @@ fn marker_render_info<'a>(
                 &marker.quotes,
                 marker.quotes_auto,
                 ordinal,
+                &counters,
                 &cascade.counter_styles,
             )
         })
-        .or_else(|| list_marker_text(document, cascade, node_id, &computed.list_style_type))?;
+        .or_else(|| {
+            if counters.contains_key(&raikiri_traits::Symbol::new("list-item")) {
+                list_marker_text_with_ordinal(cascade, &computed.list_style_type, marker_ordinal)
+            } else {
+                list_marker_text(document, cascade, node_id, &computed.list_style_type)
+            }
+        })?;
     Some((style, content))
 }
 
-fn generated_pseudo_content(
-    cascade: &CascadeResult,
+fn generated_pseudo_content_with_snapshots<'a>(
+    cascade: &'a CascadeResult,
     node_id: usize,
     pseudo: raikiri_style::PseudoElem,
-) -> Option<(&raikiri_style::ComputedValues, String)> {
+    snapshots: &[CounterSnapshot],
+) -> Option<(&'a raikiri_style::ComputedValues, String)> {
     let computed = cascade
         .pseudo
         .get(&(raikiri_style::StyleNodeId::new(node_id as u64), pseudo))?;
+    let mut counters = snapshots.get(node_id).cloned().unwrap_or_default();
+    apply_counter_directives_to_snapshot(&mut counters, computed);
     let content = content_components_to_text_with_quotes(
         &computed.content,
         &computed.quotes,
         computed.quotes_auto,
+        &counters,
+        &cascade.counter_styles,
     )?;
     Some((computed, content))
 }
@@ -1134,8 +1311,11 @@ fn paint_generated_pseudo(
     y: f32,
     width: f32,
     height: f32,
+    snapshots: &[CounterSnapshot],
 ) {
-    let Some((computed, content)) = generated_pseudo_content(cascade, node_id, pseudo) else {
+    let Some((computed, content)) =
+        generated_pseudo_content_with_snapshots(cascade, node_id, pseudo, snapshots)
+    else {
         return;
     };
     if computed.display == DisplayValue::None {
@@ -1161,8 +1341,36 @@ fn paint_generated_pseudo(
     );
 }
 
+#[allow(dead_code)] // Kept as a small unit-test wrapper around the snapshot-aware helper.
 #[allow(clippy::too_many_arguments)] // cov:ignore: attribute has no executable mapping
 fn paint_list_marker(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    paint_x: f32,
+    paint_y: f32,
+    width: f32,
+    height: f32,
+    padding_left: f32,
+) {
+    let snapshots = raikiri_dom::counter_snapshots(document, cascade);
+    paint_list_marker_with_snapshots(
+        scene,
+        document,
+        cascade,
+        node_id,
+        paint_x,
+        paint_y,
+        width,
+        height,
+        padding_left,
+        &snapshots,
+    );
+}
+
+#[allow(clippy::too_many_arguments)] // cov:ignore: attribute has no executable mapping
+fn paint_list_marker_with_snapshots(
     // cov:ignore: signature line has no executable mapping
     scene: &mut impl PaintScene, // cov:ignore: signature line has no executable mapping
     document: &Document,         // cov:ignore: signature line has no executable mapping
@@ -1173,8 +1381,11 @@ fn paint_list_marker(
     width: f32,                  // cov:ignore: signature line has no executable mapping
     height: f32,                 // cov:ignore: signature line has no executable mapping
     padding_left: f32,           // cov:ignore: signature line has no executable mapping
+    snapshots: &[CounterSnapshot],
 ) {
-    let Some((computed, content)) = marker_render_info(document, cascade, node_id) else {
+    let Some((computed, content)) =
+        marker_render_info_with_snapshots(document, cascade, node_id, snapshots)
+    else {
         return;
     };
     if content.is_empty() || width <= 0.0 || height <= 0.0 {
@@ -2381,6 +2592,11 @@ fn paint_document_impl(
         return;
     };
 
+    // Resolve named counter stacks once per paint pass. Marker and generated
+    // content are pseudo boxes, so their temporary directives are applied by
+    // the respective consumers on a clone of this node snapshot.
+    let counter_snapshots = raikiri_dom::counter_snapshots(document, cascade);
+
     let named_page_matches = |node_id: usize| match active_page_name {
         None => true,
         Some(active) => match cascade.page_values.get(node_id) {
@@ -2897,7 +3113,7 @@ fn paint_document_impl(
                     }
                     // cov:ignore: paint_document layout traversal is covered by reftests; unit tests cover paint_list_marker directly.
                     if !paints_as_absolute_continuation && cv.display == DisplayValue::ListItem {
-                        paint_list_marker(
+                        paint_list_marker_with_snapshots(
                             scene,
                             document,
                             cascade,
@@ -2907,6 +3123,7 @@ fn paint_document_impl(
                             layout.size.width,
                             layout.size.height,
                             layout.padding.left,
+                            &counter_snapshots,
                         );
                     }
                     // Generated content is an immediate child of its
@@ -2923,6 +3140,7 @@ fn paint_document_impl(
                             paint_y,
                             layout.size.width,
                             layout.size.height,
+                            &counter_snapshots,
                         );
                     }
                 }
@@ -4042,6 +4260,7 @@ mod tests {
             &[] as &[(&str, &str)],
             false,
             1,
+            &CounterSnapshot::default(),
             &cascade.counter_styles,
         );
         assert_eq!(marker, Some("A".to_string()));
@@ -4063,6 +4282,55 @@ mod tests {
     }
 
     #[test]
+    fn marker_render_info_resolves_named_counters_from_element_scopes() {
+        let mut document = Document::new();
+        let style = document.append_element(
+            Some(document.root_index()),
+            "style",
+            Style::default(),
+            None::<&str>,
+        );
+        document.append_text(
+            style,
+            "section { counter-reset: step 4 list-item 4 } section::before { content: counter(step) } section::after { content: counters(step, \".\") } li { display: list-item; counter-increment: step list-item; list-style: none } li::marker { counter-reset: local 1; counter-increment: local 2 fresh 3; counter-set: local 9 setfresh 4; content: counter(step) \"/\" counter(list-item) \"/\" counter(local) \"/\" counter(fresh) \"/\" counter(setfresh) }",
+        );
+        let section = document.append_element(
+            Some(document.root_index()),
+            "section",
+            Style::default(),
+            None::<&str>,
+        );
+        let first = document.append_element(Some(section), "li", Style::default(), None::<&str>);
+        let second = document.append_element(Some(section), "li", Style::default(), None::<&str>);
+        document.mark_in_document_flags();
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+        let (_, first_content) =
+            marker_render_info(&document, &cascade, first).expect("first marker");
+        let (_, second_content) =
+            marker_render_info(&document, &cascade, second).expect("second marker");
+        assert_eq!(first_content, "5/5/9/3/4");
+        assert_eq!(second_content, "6/6/9/3/4");
+        let snapshots = raikiri_dom::counter_snapshots(&document, &cascade);
+        let (_, before_content) = generated_pseudo_content_with_snapshots(
+            &cascade,
+            section,
+            raikiri_style::PseudoElem::Before,
+            &snapshots,
+        )
+        .expect("generated before content");
+        assert_eq!(before_content, "4");
+        let (_, after_content) = generated_pseudo_content_with_snapshots(
+            &cascade,
+            section,
+            raikiri_style::PseudoElem::After,
+            &snapshots,
+        )
+        .expect("generated after content");
+        assert_eq!(after_content, "4");
+    }
+
+    #[test]
     fn marker_content_text_resolves_literals_counters_and_quotes() {
         let registry = CounterStyleRegistry::new();
         let components = vec![
@@ -4077,20 +4345,42 @@ mod tests {
                 separator: ".".to_string(),
                 style: CounterStyle::Named("upper-roman".into()),
             },
-            // Non-list counters and other generated-content components are
-            // intentionally ignored by this first marker slice.
-            ContentComponent::Counter {
+            // Named counters are resolved from the supplied scope snapshot.
+            ContentComponent::Counters {
                 name: "chapter".into(),
+                separator: ".".to_string(),
                 style: CounterStyle::Decimal,
             },
             ContentComponent::Quote(QuoteKeyword::CloseQuote),
         ];
+        let mut counters = CounterSnapshot::default();
+        counters.insert(raikiri_traits::Symbol::new("chapter"), vec![1, 3]);
         assert_eq!(
-            marker_content_text(&components, &[("<", ">")], false, 2, &registry),
-            Some("<(2II>".to_string())
+            marker_content_text(&components, &[("<", ">")], false, 2, &counters, &registry,),
+            Some("<(2II1.3>".to_string())
+        );
+        let mut list_item_counters = CounterSnapshot::default();
+        list_item_counters.insert(raikiri_traits::Symbol::new("list-item"), vec![1, 2]);
+        assert_eq!(
+            marker_content_text(
+                &components,
+                &[] as &[(&str, &str)],
+                false,
+                2,
+                &list_item_counters,
+                &registry,
+            ),
+            Some("(2I.II".to_string())
         );
         assert_eq!(
-            marker_content_text(&[], &[] as &[(&str, &str)], true, 1, &registry),
+            marker_content_text(
+                &[],
+                &[] as &[(&str, &str)],
+                true,
+                1,
+                &CounterSnapshot::default(),
+                &registry,
+            ),
             None
         );
         assert_eq!(
@@ -4106,6 +4396,7 @@ mod tests {
                 &[] as &[(&str, &str)],
                 true,
                 1,
+                &CounterSnapshot::default(),
                 &registry,
             ),
             Some("“‘’”".to_string())
@@ -4135,11 +4426,48 @@ mod tests {
         assert!(marker_render_info(&document, &cascade, second).is_none());
 
         let (document, cascade, first, _) = list_fixture(
+            "display: list-item; list-style-type: decimal; counter-reset: list-item 9",
+            "display: list-item",
+            None,
+        );
+        let (_, content) = marker_render_info(&document, &cascade, first)
+            .expect("explicit list-item counter fallback marker");
+        assert_eq!(content, "9. ");
+
+        let (document, cascade, first, _) = list_fixture(
             "display: list-item; list-style-type: disc",
             "display: list-item",
             Some("li::marker { display: none }"),
         );
         assert!(marker_render_info(&document, &cascade, first).is_none());
+    }
+
+    #[test]
+    fn paint_generated_pseudo_emits_counter_content() {
+        let (document, cascade, first, _) = list_fixture(
+            "display: list-item; counter-reset: marker 3",
+            "display: list-item",
+            Some(r##"li::before { content: counter(marker) }"##),
+        );
+        let snapshots = raikiri_dom::counter_snapshots(&document, &cascade);
+        let mut scene = Scene::new();
+        paint_generated_pseudo(
+            &mut scene,
+            &cascade,
+            first,
+            raikiri_style::PseudoElem::Before,
+            0.0,
+            0.0,
+            200.0,
+            30.0,
+            &snapshots,
+        );
+        assert!(
+            scene
+                .commands
+                .iter()
+                .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
+        );
     }
 
     #[test]
