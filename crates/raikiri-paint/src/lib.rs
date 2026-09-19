@@ -420,6 +420,25 @@ mod tests {
     }
 
     #[test]
+    fn named_page_paint_wrapper_uses_shared_context_entry_point() {
+        let (document, cascade) = hello_world_paint_setup();
+        let mut scene = Scene::new();
+        paint_single_page_with_origin_and_page_context_named(
+            &mut scene,
+            &document,
+            &cascade,
+            PageBox::A4,
+            0.0,
+            0,
+            1,
+            false,
+            None,
+            None,
+        );
+        assert!(!scene.commands.is_empty());
+    }
+
+    #[test]
     fn paint_single_page_box_shadow_emits_basic_outer_shadow_command() {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);

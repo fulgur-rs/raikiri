@@ -2304,6 +2304,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn resource_url_absolutization_handles_optional_and_invalid_bases() {
+        let html = r#"<img src="support/colors-16x8.png"><img src='support/other.png'>"#;
+        assert_eq!(absolutize_wpt_resource_urls(html, None), html);
+        assert_eq!(
+            absolutize_wpt_resource_urls(html, Some(Path::new("relative-base"))),
+            html
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let absolute = absolutize_wpt_resource_urls(html, Some(temp.path()));
+        assert_ne!(absolute, html);
+        assert!(absolute.contains("support/colors-16x8.png"));
+    }
+
+    #[test]
+    fn render_raikiri_pages_compatibility_wrapper_returns_document() {
+        let rendered = render_raikiri_pages("<html><body>hello</body></html>", 32, 32)
+            .expect("compatibility wrapper should render");
+        assert_eq!(rendered.pages.len(), 1);
+        assert_eq!(rendered.pages[0].width, 32);
+        assert_eq!(rendered.pages[0].height, 32);
+    }
+
+    #[test]
+    fn run_pair_reports_html_read_errors() {
+        let pair = ReftestPair {
+            test: PathBuf::from("/definitely/missing/reftest.html"),
+            reference: PathBuf::from("/definitely/missing/reference.html"),
+            kind: ReftestKind::Match,
+        };
+        let result = run_pair(&pair, ReftestConfig::default());
+        assert!(matches!(result, Err(ReftestError::Io { .. })));
+    }
+
+    #[test]
+    fn image_resolution_reparses_geometry_varying_pages() {
+        let temp = tempfile::tempdir().unwrap();
+        let support = temp.path().join("support");
+        std::fs::create_dir(&support).unwrap();
+        let image_path = support.join("tiny.png");
+        let file = std::fs::File::create(image_path).unwrap();
+        let mut encoder = png::Encoder::new(file, 1, 1);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&[255, 0, 0, 255]).unwrap();
+        writer.finish().unwrap();
+
+        let html = r#"<style>
+            @page :first { size: 100px 100px; margin: 0 }
+            @page { size: 120px 120px; margin: 0 }
+            body { margin: 0 }
+        </style><div style="height:180px"><img src="support/tiny.png" style="display:block;width:1px;height:1px"></div>"#;
+        let rendered = render_raikiri_pages_inner(html, 120, 120, Some(temp.path()))
+            .expect("geometry-varying image document should render");
+        assert!(rendered.pages.len() >= 2);
+        assert_eq!(rendered.pages[0].width, 100);
+    }
+
+    #[test]
     fn reftest_kind_roundtrip() {
         let m = ReftestKind::Match;
         let mm = ReftestKind::Mismatch;

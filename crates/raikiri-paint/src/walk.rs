@@ -3621,7 +3621,7 @@ fn paint_image(
         ObjectFit::Cover => cover_scale,
         ObjectFit::None => 1.0,
         ObjectFit::ScaleDown => contain_scale.min(1.0),
-        _ => 1.0,
+        _ => 1.0, // cov:ignore: defensive fallback for future ObjectFit variants
     };
     let image_w = if matches!(object_fit, ObjectFit::Fill) {
         content_w
@@ -3956,7 +3956,7 @@ fn position_offset(offset: ComputedCssPositionOffset, free_space: f64) -> f64 {
                 free_space * (1.0 - percent as f64 / 100.0)
             }
         },
-        _ => free_space / 2.0,
+        _ => free_space / 2.0, // cov:ignore: defensive fallback for future position variants
     }
 }
 
@@ -4006,7 +4006,7 @@ fn paint_background_image(
                 (None, None) => (intrinsic_w, intrinsic_h),
             }
         }
-        _ => (intrinsic_w, intrinsic_h),
+        _ => (intrinsic_w, intrinsic_h), // cov:ignore: defensive fallback for future background-size variants
     };
     if image_w <= 0.0 || image_h <= 0.0 {
         return;
@@ -5564,5 +5564,197 @@ mod tests {
         assert_eq!(used.top_right, ComputedLengthPercentage::Px(0.0));
         assert_eq!(used.bottom_right, ComputedLengthPercentage::Px(4.0));
         assert_eq!(used.bottom_left, ComputedLengthPercentage::Px(0.0));
+    }
+
+    #[test]
+    fn background_image_geometry_covers_supported_size_and_position_forms() {
+        let decoded = raikiri_traits::DecodedImage {
+            width: 2,
+            height: 1,
+            rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
+        };
+        // Construct the non-exhaustive computed position values through the
+        // real parser/cascade boundary rather than bypassing their visibility
+        // contract with struct literals.
+        let mut document = Document::new();
+        let start_px_id = document.append_element(
+            Some(document.root_index()),
+            "div",
+            Style::default(),
+            Some("background-position: 3px 4px"),
+        );
+        let start_percent_id = document.append_element(
+            Some(document.root_index()),
+            "div",
+            Style::default(),
+            Some("background-position: 25% 50%"),
+        );
+        let end_px_id = document.append_element(
+            Some(document.root_index()),
+            "div",
+            Style::default(),
+            Some("background-position: right 3px bottom 4px"),
+        );
+        let end_percent_id = document.append_element(
+            Some(document.root_index()),
+            "div",
+            Style::default(),
+            Some("background-position: right 25% bottom 50%"),
+        );
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+        let repeat = cascade.computed[start_px_id].background_repeat;
+        let start_px = cascade.computed[start_px_id].background_position;
+        let start_percent = cascade.computed[start_percent_id].background_position;
+        let end_px = cascade.computed[end_px_id].background_position;
+        let end_percent = cascade.computed[end_percent_id].background_position;
+        let mut scene = Scene::new();
+        paint_background_image(
+            &mut scene,
+            &decoded,
+            0.0,
+            0.0,
+            100.0,
+            50.0,
+            &ComputedBackgroundSize::Cover,
+            &start_px,
+            &repeat,
+        );
+        paint_background_image(
+            &mut scene,
+            &decoded,
+            0.0,
+            0.0,
+            100.0,
+            50.0,
+            &ComputedBackgroundSize::Contain,
+            &start_percent,
+            &repeat,
+        );
+        paint_background_image(
+            &mut scene,
+            &decoded,
+            0.0,
+            0.0,
+            100.0,
+            50.0,
+            &ComputedBackgroundSize::Explicit {
+                width: ComputedLengthPercentageOrAuto::Px(20.0),
+                height: ComputedLengthPercentageOrAuto::Px(10.0),
+            },
+            &end_px,
+            &repeat,
+        );
+        paint_background_image(
+            &mut scene,
+            &decoded,
+            0.0,
+            0.0,
+            100.0,
+            50.0,
+            &ComputedBackgroundSize::Explicit {
+                width: ComputedLengthPercentageOrAuto::Percent(50.0),
+                height: ComputedLengthPercentageOrAuto::Percent(25.0),
+            },
+            &end_percent,
+            &repeat,
+        );
+        paint_background_image(
+            &mut scene,
+            &decoded,
+            0.0,
+            0.0,
+            100.0,
+            50.0,
+            &ComputedBackgroundSize::Explicit {
+                width: ComputedLengthPercentageOrAuto::Calc(
+                    raikiri_style::property::CalcLengthPercentage {
+                        percent: 10.0,
+                        px: 2.0,
+                    },
+                ),
+                height: ComputedLengthPercentageOrAuto::Auto,
+            },
+            &start_px,
+            &repeat,
+        );
+        paint_background_image(
+            &mut scene,
+            &decoded,
+            0.0,
+            0.0,
+            100.0,
+            50.0,
+            &ComputedBackgroundSize::Explicit {
+                width: ComputedLengthPercentageOrAuto::Auto,
+                height: ComputedLengthPercentageOrAuto::Calc(
+                    raikiri_style::property::CalcLengthPercentage {
+                        percent: 20.0,
+                        px: 1.0,
+                    },
+                ),
+            },
+            &start_px,
+            &repeat,
+        );
+        paint_background_image(
+            &mut scene,
+            &decoded,
+            0.0,
+            0.0,
+            100.0,
+            50.0,
+            &ComputedBackgroundSize::Explicit {
+                width: ComputedLengthPercentageOrAuto::Auto,
+                height: ComputedLengthPercentageOrAuto::Auto,
+            },
+            &start_px,
+            &repeat,
+        );
+        assert!(!scene.commands.is_empty());
+
+        let before = scene.commands.len();
+        paint_background_image(
+            &mut scene,
+            &decoded,
+            0.0,
+            0.0,
+            0.0,
+            50.0,
+            &ComputedBackgroundSize::Cover,
+            &start_px,
+            &repeat,
+        );
+        let zero = raikiri_traits::DecodedImage {
+            width: 0,
+            height: 1,
+            rgba: Vec::new(),
+        };
+        paint_background_image(
+            &mut scene,
+            &zero,
+            0.0,
+            0.0,
+            100.0,
+            50.0,
+            &ComputedBackgroundSize::Cover,
+            &start_px,
+            &repeat,
+        );
+        paint_background_image(
+            &mut scene,
+            &decoded,
+            0.0,
+            0.0,
+            100.0,
+            50.0,
+            &ComputedBackgroundSize::Explicit {
+                width: ComputedLengthPercentageOrAuto::Px(-1.0),
+                height: ComputedLengthPercentageOrAuto::Px(10.0),
+            },
+            &start_px,
+            &repeat,
+        );
+        assert_eq!(scene.commands.len(), before);
     }
 }
