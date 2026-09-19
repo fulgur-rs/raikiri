@@ -7584,9 +7584,20 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     TextShadow(Arc<Vec<TextShadowItem>>),
-    /// `border-radius` — non-inherited。four-corner `<length>` shorthand を
-    /// [`BorderRadius`] に展開する。percentage / elliptical slash form は未対応。
+    /// `border-radius` — non-inherited。four-corner `<length-percentage>` shorthand を
+    /// [`BorderRadius`] に展開する。percentage は computed 層まで保持し、
+    /// slash-separated elliptical form は未対応。
     BorderRadius(BorderRadius),
+    /// `border-radius: inherit` — resolved from the parent computed corners.
+    BorderRadiusInherit,
+    /// `border-top-left-radius` longhand (circular `<length>` subset).
+    BorderRadiusTopLeft(Length),
+    /// `border-top-right-radius` longhand (circular `<length>` subset).
+    BorderRadiusTopRight(Length),
+    /// `border-bottom-right-radius` longhand (circular `<length>` subset).
+    BorderRadiusBottomRight(Length),
+    /// `border-bottom-left-radius` longhand (circular `<length>` subset).
+    BorderRadiusBottomLeft(Length),
     /// `box-shadow: none | <shadow>#` — non-inherited。複数 entry を保持する。
     /// `inset` and omitted colors are retained on each entry.
     BoxShadow(Arc<Vec<BoxShadowItem>>),
@@ -8256,6 +8267,10 @@ pub enum PropertyKey {
     // border-radius / box-shadow / outline (CSS Backgrounds and Borders 3 §5
     // / §6.1 and CSS UI 3 §4; semantics on matching PropertyValue variants).
     BorderRadius,
+    BorderRadiusTopLeft,
+    BorderRadiusTopRight,
+    BorderRadiusBottomRight,
+    BorderRadiusBottomLeft,
     BoxShadow,
     Outline,
     OutlineWidth,
@@ -8548,7 +8563,13 @@ impl PropertyValue {
             PropertyValue::PlaceSelf(_) => PropertyKey::PlaceSelf,
             PropertyValue::Orphans(_) => PropertyKey::Orphans,
             PropertyValue::Widows(_) => PropertyKey::Widows,
-            PropertyValue::BorderRadius(_) => PropertyKey::BorderRadius,
+            PropertyValue::BorderRadius(_) | PropertyValue::BorderRadiusInherit => {
+                PropertyKey::BorderRadius
+            }
+            PropertyValue::BorderRadiusTopLeft(_) => PropertyKey::BorderRadiusTopLeft,
+            PropertyValue::BorderRadiusTopRight(_) => PropertyKey::BorderRadiusTopRight,
+            PropertyValue::BorderRadiusBottomRight(_) => PropertyKey::BorderRadiusBottomRight,
+            PropertyValue::BorderRadiusBottomLeft(_) => PropertyKey::BorderRadiusBottomLeft,
             PropertyValue::BoxShadow(_) => PropertyKey::BoxShadow,
             PropertyValue::Outline(_) => PropertyKey::Outline,
             PropertyValue::OutlineWidth(_) => PropertyKey::OutlineWidth,
@@ -10406,7 +10427,28 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // CSS Backgrounds and Borders 3 §5: this task supports the four
         // circular `<length>` radii only; percentages and slash-separated
         // elliptical radii remain a follow-up.
-        "border-radius" => parse_border_radius(input).map(PropertyValue::BorderRadius),
+        "border-radius" => {
+            if input
+                .try_parse(|i| i.expect_ident_matching("inherit"))
+                .is_ok()
+            {
+                Some(PropertyValue::BorderRadiusInherit)
+            } else {
+                parse_border_radius(input).map(PropertyValue::BorderRadius)
+            }
+        }
+        "border-top-left-radius" => {
+            parse_non_negative_length_percentage(input).map(PropertyValue::BorderRadiusTopLeft)
+        }
+        "border-top-right-radius" => {
+            parse_non_negative_length_percentage(input).map(PropertyValue::BorderRadiusTopRight)
+        }
+        "border-bottom-right-radius" => {
+            parse_non_negative_length_percentage(input).map(PropertyValue::BorderRadiusBottomRight)
+        }
+        "border-bottom-left-radius" => {
+            parse_non_negative_length_percentage(input).map(PropertyValue::BorderRadiusBottomLeft)
+        }
         // CSS Backgrounds and Borders 3 §6.1: multiple comma-separated
         // shadows are stored as an Arc list. `inset` is intentionally outside
         // this task's downstream-compatible subset.
@@ -18319,12 +18361,18 @@ fn parse_text_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<TextShadowItem>> 
 ///
 /// CSS Backgrounds and Borders 3 §5 の shorthand expansion に従い、値は
 /// top-left, top-right, bottom-right, bottom-left の順で解釈する。
-/// percentage、slash 以降の楕円形指定、負値はこの task では受理しない。
+/// percentage は受理するが、slash 以降の楕円形指定と負値は受理しない。
 fn parse_border_radius(input: &mut Parser<'_, '_>) -> Option<BorderRadius> {
-    let first = parse_non_negative_length(input)?;
-    let second = input.try_parse(parse_non_negative_length_res).ok();
-    let third = input.try_parse(parse_non_negative_length_res).ok();
-    let fourth = input.try_parse(parse_non_negative_length_res).ok();
+    let first = parse_non_negative_length_percentage(input)?;
+    let second = input
+        .try_parse(parse_non_negative_length_percentage_res)
+        .ok();
+    let third = input
+        .try_parse(parse_non_negative_length_percentage_res)
+        .ok();
+    let fourth = input
+        .try_parse(parse_non_negative_length_percentage_res)
+        .ok();
 
     Some(match (second, third, fourth) {
         (None, _, _) => BorderRadius {
@@ -18354,10 +18402,8 @@ fn parse_border_radius(input: &mut Parser<'_, '_>) -> Option<BorderRadius> {
     })
 }
 
-fn parse_non_negative_length_res<'i>(
-    input: &mut Parser<'i, '_>,
-) -> Result<Length, ParseError<'i, ()>> {
-    parse_non_negative_length(input).ok_or_else(|| input.new_custom_error(()))
+fn parse_non_negative_length_percentage(input: &mut Parser<'_, '_>) -> Option<Length> {
+    parse_non_negative_length_percentage_res(input).ok()
 }
 
 fn parse_length_allow_negative_res<'i>(
@@ -33227,8 +33273,24 @@ mod tests {
     }
 
     #[test]
-    fn border_radius_rejects_percentages_and_negative_lengths() {
-        assert_eq!(parse_entire("50%", "border-radius"), None);
+    fn border_radius_accepts_percentages_and_rejects_negative_lengths() {
+        assert_eq!(
+            parse_entire("50% 25%", "border-radius"),
+            Some(PropertyValue::BorderRadius(BorderRadius {
+                top_left: Length::Percent(50.0),
+                top_right: Length::Percent(25.0),
+                bottom_right: Length::Percent(50.0),
+                bottom_left: Length::Percent(25.0),
+            }))
+        );
+        assert_eq!(
+            parse_entire("25%", "border-top-left-radius"),
+            Some(PropertyValue::BorderRadiusTopLeft(Length::Percent(25.0)))
+        );
+        assert_eq!(
+            parse_entire("inherit", "border-radius"),
+            Some(PropertyValue::BorderRadiusInherit)
+        );
         assert_eq!(parse_entire("1px -2px", "border-radius"), None);
     }
 

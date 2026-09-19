@@ -977,28 +977,45 @@ pub fn lift_text_shadow_item(computed: ComputedTextShadow) -> TextShadowItem {
     }
 }
 
-/// Computed `border-radius`。各 corner の length は px へ絶対化済み。
+/// Computed `border-radius`。length は px へ絶対化し、percentage は
+/// used-value layout まで保持する。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedBorderRadius {
     /// top-left corner radius。
-    pub top_left: ComputedLength,
+    pub top_left: ComputedLengthPercentage,
     /// top-right corner radius。
-    pub top_right: ComputedLength,
+    pub top_right: ComputedLengthPercentage,
     /// bottom-right corner radius。
-    pub bottom_right: ComputedLength,
+    pub bottom_right: ComputedLengthPercentage,
     /// bottom-left corner radius。
-    pub bottom_left: ComputedLength,
+    pub bottom_left: ComputedLengthPercentage,
 }
 
 impl ComputedBorderRadius {
     /// 全 corner を同じ computed length で埋める。
     pub fn all(value: ComputedLength) -> Self {
+        let value = ComputedLengthPercentage::Px(value.0);
         Self {
             top_left: value,
             top_right: value,
             bottom_right: value,
             bottom_left: value,
+        }
+    }
+
+    /// Build a radius from the four physical corner values.
+    pub const fn corners(
+        top_left: ComputedLengthPercentage,
+        top_right: ComputedLengthPercentage,
+        bottom_right: ComputedLengthPercentage,
+        bottom_left: ComputedLengthPercentage,
+    ) -> Self {
+        Self {
+            top_left,
+            top_right,
+            bottom_right,
+            bottom_left,
         }
     }
 }
@@ -1137,11 +1154,17 @@ pub fn resolve_border_radius(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedBorderRadius {
+    let resolve_corner = |value: Length| match value {
+        Length::Percent(percent) => ComputedLengthPercentage::Percent(percent),
+        value => ComputedLengthPercentage::Px(
+            resolve_length(value, font_size, own_line_height, ctx).px(),
+        ),
+    };
     ComputedBorderRadius {
-        top_left: resolve_length(specified.top_left, font_size, own_line_height, ctx),
-        top_right: resolve_length(specified.top_right, font_size, own_line_height, ctx),
-        bottom_right: resolve_length(specified.bottom_right, font_size, own_line_height, ctx),
-        bottom_left: resolve_length(specified.bottom_left, font_size, own_line_height, ctx),
+        top_left: resolve_corner(specified.top_left),
+        top_right: resolve_corner(specified.top_right),
+        bottom_right: resolve_corner(specified.bottom_right),
+        bottom_left: resolve_corner(specified.bottom_left),
     }
 }
 
@@ -3995,10 +4018,10 @@ mod tests {
                 &CTX,
             ),
             ComputedBorderRadius {
-                top_left: ComputedLength(20.0),
-                top_right: ComputedLength(8.0),
-                bottom_right: ComputedLength(16.0),
-                bottom_left: ComputedLength(20.0),
+                top_left: ComputedLengthPercentage::Px(20.0),
+                top_right: ComputedLengthPercentage::Px(8.0),
+                bottom_right: ComputedLengthPercentage::Px(16.0),
+                bottom_left: ComputedLengthPercentage::Px(20.0),
             }
         );
 

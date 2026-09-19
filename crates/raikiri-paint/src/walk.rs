@@ -28,7 +28,7 @@
 //! を crate 境界越境で pub 化するよりも paint 側で持つ方が clean。
 
 use anyrender::PaintScene;
-use kurbo::{Affine, Rect};
+use kurbo::{Affine, Arc, BezPath, Point, Rect, RoundedRectRadii, Vec2};
 use peniko::{Color, Fill};
 use raikiri_dom::{CounterSnapshot, Document};
 use raikiri_style::property::{
@@ -38,11 +38,13 @@ use raikiri_style::property::{
     QuoteKeyword, Sides, TextAlign, VerticalAlign, WritingMode, ZIndexValue,
 };
 use raikiri_style::{
-    CascadeResult, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-    ComputedTransformFunction, CounterStyleRegistry, PageMarginBoxCascadeResult, PageMarginBoxSlot,
-    ResolveContext, resolve_border, resolve_custom_counter,
+    CascadeResult, ComputedBorderRadius, ComputedLength, ComputedLengthPercentage,
+    ComputedLengthPercentageOrAuto, ComputedTransformFunction, CounterStyleRegistry,
+    PageMarginBoxCascadeResult, PageMarginBoxSlot, ResolveContext, resolve_border,
+    resolve_custom_counter,
 };
 use raikiri_traits::{ImagePixelSource, NodeKind, PageBox};
+use std::f64::consts::{FRAC_PI_2, PI};
 use taffy::CompactLength;
 
 use crate::text;
@@ -2894,6 +2896,22 @@ fn paint_document_impl(
                 let abs_y = parent_abs_y + layout.location.y;
                 let cv = &cascade.computed[node_id];
                 let paint_padding = used_padding_for_paint(cv, &layout);
+                let has_border = [
+                    &cv.border.top,
+                    &cv.border.right,
+                    &cv.border.bottom,
+                    &cv.border.left,
+                ]
+                .iter()
+                .any(|side| side.width().px() > 0.0 && side.style() != BorderStyle::None);
+                let paint_border_radius = paintable_border_radius(
+                    &cv.border_radius,
+                    (has_border
+                        || cv.background_color.a > 0
+                        || !matches!(cv.background_image, BackgroundImage::None))
+                        && cv.transform.is_empty()
+                        && cv.filter.is_empty(),
+                );
                 let own_shift =
                     vertical_align_shift_px(cv.vertical_align, cv.display, parent_font_size);
                 let child_shift_y = shift_y + own_shift;
@@ -3131,6 +3149,7 @@ fn paint_document_impl(
                             &cv.background_image,
                             cv.color,
                             cv.background_clip,
+                            &paint_border_radius,
                             &cv.border,
                             &paint_padding,
                         );
@@ -3138,8 +3157,33 @@ fn paint_document_impl(
                             scene.pop_layer();
                         }
                     }
+                    // An opaque background that uses the same solid color as
+                    // every border side already paints the complete visible
+                    // union in `paint_element_background`; avoid compositing
+                    // the same anti-aliased rounded edge a second time.
+                    let border_covered_by_background = matches!(
+                        cv.background_image,
+                        BackgroundImage::None
+                    ) && cv.background_color.a == 255
+                        && matches!(
+                            cv.background_clip,
+                            raikiri_style::property::VisualBox::PaddingBox
+                                | raikiri_style::property::VisualBox::ContentBox
+                        )
+                        && [
+                            &cv.border.top,
+                            &cv.border.right,
+                            &cv.border.bottom,
+                            &cv.border.left,
+                        ]
+                        .iter()
+                        .all(|side| {
+                            side.style() == BorderStyle::Solid
+                                && side.width().px() > 0.0
+                                && matches!(side.color, BorderColor::Resolved(c) if c == cv.background_color)
+                        });
                     // Paint border on top of background (CSS Backgrounds 3 §5).
-                    if paints_as_absolute_continuation {
+                    if !border_covered_by_background && paints_as_absolute_continuation {
                         paint_element_border_with_top(
                             scene,
                             layout.size.width,
@@ -3150,8 +3194,8 @@ fn paint_document_impl(
                             cv.color,
                             false,
                         );
-                    } else {
-                        paint_element_border(
+                    } else if !border_covered_by_background {
+                        paint_element_border_rounded(
                             scene,
                             layout.size.width,
                             paint_height,
@@ -3159,6 +3203,7 @@ fn paint_document_impl(
                             paint_y,
                             &cv.border,
                             cv.color,
+                            &paint_border_radius,
                         );
                     }
                     // Draw the decoded pixels of an `<img>` element, when a
@@ -3216,6 +3261,7 @@ fn paint_document_impl(
                             &BackgroundImage::None,
                             cv.color,
                             cv.background_clip,
+                            &paint_border_radius,
                             &cv.border,
                             &paint_padding,
                         );
@@ -3604,6 +3650,7 @@ fn paint_element_background(
     bg_image: &BackgroundImage,
     current_color: CssColor,
     clip: raikiri_style::property::VisualBox,
+    border_radius: &ComputedBorderRadius,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
 ) {
@@ -3633,7 +3680,31 @@ fn paint_element_background(
         ((abs_x + width) as f64).round(),
         ((abs_y + height) as f64).round(),
     );
+    // `border-radius` percentages resolve against the border box before an
+    // inner background clip is applied.  Keep that used-value reference while
+    // the clip match below moves the paint rectangle inward.
+    let radius_reference = x1 - x0;
+    let mut radius_inset = (0.0, 0.0, 0.0, 0.0);
     let color = Color::from_rgba8(effective.r, effective.g, effective.b, effective.a);
+    // When an opaque background and all border sides use the same color, the
+    // visible union is the border-box curve.  Painting that union once avoids
+    // a one-pixel seam where an inner clipped fill meets its border ring.
+    let border_box_union = matches!(
+        clip,
+        raikiri_style::property::VisualBox::PaddingBox
+            | raikiri_style::property::VisualBox::ContentBox
+    ) && [&border.top, &border.right, &border.bottom, &border.left]
+        .iter()
+        .all(|side| {
+            side.style() == BorderStyle::Solid
+                && side.width().px() > 0.0
+                && matches!(side.color, BorderColor::Resolved(c) if c == effective)
+        });
+    let clip = if border_box_union {
+        raikiri_style::property::VisualBox::BorderBox
+    } else {
+        clip
+    };
     match clip {
         raikiri_style::property::VisualBox::BorderArea => {
             // Border area is the border box minus the padding box (outer ring).
@@ -3694,10 +3765,15 @@ fn paint_element_background(
             return;
         }
         raikiri_style::property::VisualBox::PaddingBox => {
-            x0 = (x0 + border.left.width().px() as f64).round();
-            y0 = (y0 + border.top.width().px() as f64).round();
-            x1 = (x1 - border.right.width().px() as f64).round();
-            y1 = (y1 - border.bottom.width().px() as f64).round();
+            let bl = border.left.width().px() as f64;
+            let bt = border.top.width().px() as f64;
+            let br = border.right.width().px() as f64;
+            let bb = border.bottom.width().px() as f64;
+            radius_inset = (bl, bt, br, bb);
+            x0 = (x0 + bl).round();
+            y0 = (y0 + bt).round();
+            x1 = (x1 - br).round();
+            y1 = (y1 - bb).round();
         }
         raikiri_style::property::VisualBox::ContentBox => {
             // border inset
@@ -3710,6 +3786,7 @@ fn paint_element_background(
             let pt = padding.top as f64;
             let pr = padding.right as f64;
             let pb = padding.bottom as f64;
+            radius_inset = (bl + pl, bt + pt, br + pr, bb + pb);
             x0 = (x0 + bl + pl).round();
             y0 = (y0 + bt + pt).round();
             x1 = (x1 - br - pr).round();
@@ -3722,8 +3799,280 @@ fn paint_element_background(
     if x1 <= x0 || y1 <= y0 {
         return;
     }
-    let rect = Rect::new(x0, y0, x1, y1);
-    scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &rect);
+    fill_rounded_background(
+        scene,
+        color,
+        x0,
+        y0,
+        x1,
+        y1,
+        border_radius,
+        radius_inset,
+        radius_reference,
+    );
+}
+
+fn used_border_radius(value: ComputedLengthPercentage, reference: f64) -> f64 {
+    match value {
+        ComputedLengthPercentage::Px(px) => px as f64,
+        ComputedLengthPercentage::Percent(percent) => reference * percent as f64 / 100.0,
+    }
+}
+
+/// Normalize CSS corner radii so adjacent horizontal and vertical radii fit
+/// their corresponding edges.  Unlike kurbo's `RoundedRect`, CSS permits one
+/// corner to consume an entire edge (for example `100% 0 0 0`).
+fn normalize_border_radii(width: f64, height: f64, radii: RoundedRectRadii) -> RoundedRectRadii {
+    let scale = [
+        width / (radii.top_left + radii.top_right),
+        width / (radii.bottom_left + radii.bottom_right),
+        height / (radii.top_left + radii.bottom_left),
+        height / (radii.top_right + radii.bottom_right),
+    ]
+    .into_iter()
+    .filter(|value| value.is_finite() && *value >= 0.0)
+    .fold(1.0, f64::min)
+    .min(1.0);
+    RoundedRectRadii::new(
+        radii.top_left * scale,
+        radii.top_right * scale,
+        radii.bottom_right * scale,
+        radii.bottom_left * scale,
+    )
+}
+
+fn append_border_arc(path: &mut BezPath, center: Point, start_angle: f64, radius: f64) {
+    if radius <= 0.0 {
+        return;
+    }
+    let corner = Arc {
+        center,
+        radii: Vec2::new(radius, radius),
+        start_angle,
+        sweep_angle: FRAC_PI_2,
+        x_rotation: 0.0,
+    };
+    for element in corner.append_iter(0.1) {
+        path.push(element);
+    }
+}
+
+/// Construct a circular CSS rounded-rectangle path without kurbo's stricter
+/// per-corner half-side clamp.
+fn rounded_rect_path(x0: f64, y0: f64, x1: f64, y1: f64, radii: RoundedRectRadii) -> BezPath {
+    let radii = normalize_border_radii((x1 - x0).max(0.0), (y1 - y0).max(0.0), radii);
+    let mut path = BezPath::new();
+    path.move_to(Point::new(x0, y0 + radii.top_left));
+    append_border_arc(
+        &mut path,
+        Point::new(x0 + radii.top_left, y0 + radii.top_left),
+        PI,
+        radii.top_left,
+    );
+    path.line_to(Point::new(x1 - radii.top_right, y0));
+    append_border_arc(
+        &mut path,
+        Point::new(x1 - radii.top_right, y0 + radii.top_right),
+        3.0 * FRAC_PI_2,
+        radii.top_right,
+    );
+    path.line_to(Point::new(x1, y1 - radii.bottom_right));
+    append_border_arc(
+        &mut path,
+        Point::new(x1 - radii.bottom_right, y1 - radii.bottom_right),
+        0.0,
+        radii.bottom_right,
+    );
+    path.line_to(Point::new(x0 + radii.bottom_left, y1));
+    append_border_arc(
+        &mut path,
+        Point::new(x0 + radii.bottom_left, y1 - radii.bottom_left),
+        FRAC_PI_2,
+        radii.bottom_left,
+    );
+    path.close_path();
+    path
+}
+
+fn paintable_border_radius(radius: &ComputedBorderRadius, enabled: bool) -> ComputedBorderRadius {
+    if !enabled {
+        return ComputedBorderRadius::all(ComputedLength(0.0));
+    }
+    let zero_percent = |value: ComputedLengthPercentage| match value {
+        ComputedLengthPercentage::Px(px) => ComputedLengthPercentage::Px(px),
+        // Keep percentages in the style/computed layers. The first paint
+        // slice deliberately leaves percentage geometry to the follow-up
+        // clipping implementation rather than using a width-only circle.
+        ComputedLengthPercentage::Percent(_) => ComputedLengthPercentage::Px(0.0),
+    };
+    ComputedBorderRadius::corners(
+        zero_percent(radius.top_left),
+        zero_percent(radius.top_right),
+        zero_percent(radius.bottom_right),
+        zero_percent(radius.bottom_left),
+    )
+}
+
+/// Fill a background using the computed circular corner radii.  The shape is
+/// kept rectangular for the common zero-radius path, while non-zero corners
+/// use kurbo's anti-aliased `RoundedRect` through the same PaintScene API.
+#[allow(clippy::too_many_arguments)]
+fn fill_rounded_background(
+    scene: &mut impl PaintScene,
+    color: Color,
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
+    radius: &ComputedBorderRadius,
+    inset: (f64, f64, f64, f64),
+    reference: f64,
+) {
+    let (left, top, right, bottom) = inset;
+    let radii = RoundedRectRadii::new(
+        (used_border_radius(radius.top_left, reference) - left.max(top)).max(0.0),
+        (used_border_radius(radius.top_right, reference) - right.max(top)).max(0.0),
+        (used_border_radius(radius.bottom_right, reference) - right.max(bottom)).max(0.0),
+        (used_border_radius(radius.bottom_left, reference) - left.max(bottom)).max(0.0),
+    );
+    if radii.top_left == 0.0
+        && radii.top_right == 0.0
+        && radii.bottom_right == 0.0
+        && radii.bottom_left == 0.0
+    {
+        let rect = Rect::new(x0, y0, x1, y1);
+        scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &rect);
+    } else {
+        let rounded = rounded_rect_path(x0, y0, x1, y1, radii);
+        scene.fill(
+            Fill::NonZero,
+            kurbo::Affine::IDENTITY,
+            color,
+            None,
+            &rounded,
+        );
+    }
+}
+
+/// Paint a regular element border with a rounded outer edge when the four
+/// sides share one solid width and color.  The existing strip painter remains
+/// the conservative fallback for mixed side styles and widths.
+#[allow(clippy::too_many_arguments)]
+fn paint_element_border_rounded(
+    scene: &mut impl PaintScene,
+    width: f32,
+    height: f32,
+    abs_x: f32,
+    abs_y: f32,
+    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
+    current_color: CssColor,
+    radius: &ComputedBorderRadius,
+) {
+    let reference = width as f64;
+    let radii = RoundedRectRadii::new(
+        used_border_radius(radius.top_left, reference),
+        used_border_radius(radius.top_right, reference),
+        used_border_radius(radius.bottom_right, reference),
+        used_border_radius(radius.bottom_left, reference),
+    );
+    let has_radius = radii.top_left > 0.0
+        || radii.top_right > 0.0
+        || radii.bottom_right > 0.0
+        || radii.bottom_left > 0.0;
+    if !has_radius {
+        paint_element_border(scene, width, height, abs_x, abs_y, border, current_color);
+        return;
+    }
+
+    let widths = [
+        border.left.width().px() as f64,
+        border.top.width().px() as f64,
+        border.right.width().px() as f64,
+        border.bottom.width().px() as f64,
+    ];
+    let uniform_width = widths[0] > 0.0
+        && widths
+            .iter()
+            .all(|value| (*value - widths[0]).abs() < f64::EPSILON);
+    let solid = [&border.left, &border.top, &border.right, &border.bottom]
+        .iter()
+        .all(|side| side.style() == BorderStyle::Solid);
+    let color_for = |side: &raikiri_style::resolve::ComputedBorder| match side.color {
+        BorderColor::CurrentColor => Some(Color::from_rgba8(
+            current_color.r,
+            current_color.g,
+            current_color.b,
+            current_color.a,
+        )),
+        BorderColor::Resolved(color) => Some(Color::from_rgba8(color.r, color.g, color.b, color.a)),
+        _ => None,
+    };
+    let colors = [
+        color_for(&border.left),
+        color_for(&border.top),
+        color_for(&border.right),
+        color_for(&border.bottom),
+    ];
+    let uniform_color = colors[0].is_some() && colors.iter().all(|color| *color == colors[0]);
+    let Some(color) = colors[0] else {
+        paint_element_border(scene, width, height, abs_x, abs_y, border, current_color);
+        return;
+    };
+    if !(uniform_width && solid && uniform_color) {
+        paint_element_border(scene, width, height, abs_x, abs_y, border, current_color);
+        return;
+    }
+
+    let stroke_width = widths[0];
+    let outer = rounded_rect_path(
+        abs_x as f64,
+        abs_y as f64,
+        (abs_x + width) as f64,
+        (abs_y + height) as f64,
+        radii,
+    );
+    let inner_radii = RoundedRectRadii::new(
+        (radii.top_left - stroke_width).max(0.0),
+        (radii.top_right - stroke_width).max(0.0),
+        (radii.bottom_right - stroke_width).max(0.0),
+        (radii.bottom_left - stroke_width).max(0.0),
+    );
+    let inner = rounded_rect_path(
+        abs_x as f64 + stroke_width,
+        abs_y as f64 + stroke_width,
+        (abs_x + width) as f64 - stroke_width,
+        (abs_y + height) as f64 - stroke_width,
+        inner_radii,
+    );
+    let mut ring = outer;
+    ring.extend(inner.iter());
+    scene.fill(Fill::EvenOdd, kurbo::Affine::IDENTITY, color, None, &ring);
+    let x0 = abs_x as f64;
+    let y0 = abs_y as f64;
+    let x1 = (abs_x + width) as f64;
+    let y1 = (abs_y + height) as f64;
+    for (corner, rect) in [
+        (
+            radii.top_right,
+            Rect::new(x1 - stroke_width, y0, x1, y0 + stroke_width),
+        ),
+        (
+            radii.bottom_right,
+            Rect::new(x1 - stroke_width, y1 - stroke_width, x1, y1),
+        ),
+        (
+            radii.bottom_left,
+            Rect::new(x0, y1 - stroke_width, x0 + stroke_width, y1),
+        ),
+        (
+            radii.top_left,
+            Rect::new(x0, y0, x0 + stroke_width, y0 + stroke_width),
+        ),
+    ] {
+        if corner == 0.0 {
+            scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &rect);
+        }
+    }
 }
 
 fn paint_element_border(
@@ -4835,5 +5184,30 @@ mod tests {
         paint_list_marker(
             &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
         );
+    }
+
+    #[test]
+    fn border_radius_normalization_scales_adjacent_edges() {
+        let normalized =
+            normalize_border_radii(100.0, 100.0, RoundedRectRadii::new(80.0, 80.0, 80.0, 80.0));
+        assert_eq!(normalized.top_left, 50.0);
+        assert_eq!(normalized.top_right, 50.0);
+        assert_eq!(normalized.bottom_right, 50.0);
+        assert_eq!(normalized.bottom_left, 50.0);
+    }
+
+    #[test]
+    fn border_radius_paint_keeps_lengths_but_defers_percentages() {
+        let radius = ComputedBorderRadius::corners(
+            ComputedLengthPercentage::Px(12.0),
+            ComputedLengthPercentage::Percent(25.0),
+            ComputedLengthPercentage::Px(4.0),
+            ComputedLengthPercentage::Percent(50.0),
+        );
+        let used = paintable_border_radius(&radius, true);
+        assert_eq!(used.top_left, ComputedLengthPercentage::Px(12.0));
+        assert_eq!(used.top_right, ComputedLengthPercentage::Px(0.0));
+        assert_eq!(used.bottom_right, ComputedLengthPercentage::Px(4.0));
+        assert_eq!(used.bottom_left, ComputedLengthPercentage::Px(0.0));
     }
 }

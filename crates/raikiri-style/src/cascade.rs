@@ -47,14 +47,15 @@ use crate::error::CascadeError;
 use crate::media::MediaContext;
 use crate::page::{PageCascadeResult, PageContextQuery, PageInheritance, cascade_page};
 use crate::property::{
-    CalcLengthPercentage, CustomProperty, DeferredValue, FontWeightValue, GridAutoFlowValue,
-    GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto, LengthOrNormal,
+    BorderRadius, CalcLengthPercentage, CustomProperty, DeferredValue, FontWeightValue,
+    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto, LengthOrNormal,
     MAX_DEFERRED_VALUE_NESTING_DEPTH, MAX_SUBSTITUTED_VALUE_BYTES, PositionValue, PropertyValue,
     RelativeFontSize, Sides, WritingMode, initial_grid_auto_track_list, is_custom_property_name,
     parse_value, resolve_text_align_match_parent,
 };
 use crate::resolve::{
-    ComputedLength, ComputedLengthPercentageOrAuto, ResolveContext, used_line_height_length,
+    ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ResolveContext,
+    used_line_height_length,
 };
 use crate::rule::{expand_shorthand_into, parse_declaration_block};
 use crate::ruletree::Origin;
@@ -5418,6 +5419,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
                 candidates,
                 &mut winners,
                 &mut specified,
+                &parent_computed,
                 &custom_properties,
                 Some(&mut page_values[id.0 as usize]),
                 Some(&mut node_non_ua_margin),
@@ -5522,6 +5524,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
                         candidates,
                         &mut winners,
                         &mut pseudo_specified,
+                        &computed,
                         &pseudo_custom_properties,
                         None,
                         None,
@@ -6591,10 +6594,15 @@ fn split_top_level_commas(input: &str) -> Option<Vec<&str>> {
 /// space の slice になる — からは発生し得ない。
 ///
 /// [`PropertyKey`]: crate::property::PropertyKey
+// The winner application already groups several optional cascade side channels;
+// the inherited computed values add one more required input for `inherit`
+// resolution without changing that staging boundary.
+#[allow(clippy::too_many_arguments)]
 fn apply_winners(
     candidates: &[CascadedDecl],
     winners: &mut Vec<Option<RankedDecl>>,
     specified: &mut SpecifiedValues,
+    inherited: &ComputedValues,
     custom_properties: &CustomPropertyEnvironment,
     mut page_value: Option<&mut crate::property::PageValue>,
     mut non_ua_margin_sides: Option<&mut Sides<bool>>,
@@ -6623,6 +6631,9 @@ fn apply_winners(
                 }
             }
             let value = match value {
+                PropertyValue::BorderRadiusInherit => Some(PropertyValue::BorderRadius(
+                    inherited_border_radius_value(inherited),
+                )),
                 PropertyValue::Deferred(deferred) => {
                     resolve_deferred_value(deferred, custom_properties)
                 }
@@ -7402,6 +7413,22 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// 一度だけ構築し、本関数と phase 3 ([`crate::page`] の `absolutize_in_page_context`)
 /// の両方に使い回す (`inherited` は関数全体で不変なので、二重に計算しても
 /// 同じ値になる — 呼び手の doc 参照)。
+fn inherited_border_radius(value: ComputedLengthPercentage) -> Length {
+    match value {
+        ComputedLengthPercentage::Px(px) => Length::Px(px),
+        ComputedLengthPercentage::Percent(percent) => Length::Percent(percent),
+    }
+}
+
+fn inherited_border_radius_value(inherited: &ComputedValues) -> BorderRadius {
+    BorderRadius {
+        top_left: inherited_border_radius(inherited.border_radius.top_left),
+        top_right: inherited_border_radius(inherited.border_radius.top_right),
+        bottom_right: inherited_border_radius(inherited.border_radius.bottom_right),
+        bottom_left: inherited_border_radius(inherited.border_radius.bottom_left),
+    }
+}
+
 fn inherited_margin_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
     match value {
         ComputedLengthPercentageOrAuto::Px(px) => LengthOrAuto::Length(Length::Px(px)),
@@ -7419,6 +7446,9 @@ pub(crate) fn resolve_against_inherited(
     ctx: &ResolveContext,
 ) -> ResolvedAgainstInherited {
     ResolvedAgainstInherited(match value {
+        PropertyValue::BorderRadiusInherit => {
+            PropertyValue::BorderRadius(inherited_border_radius_value(inherited))
+        },
         PropertyValue::MarginTopInherit => {
             PropertyValue::MarginTop(inherited_margin_length(inherited.margin.top))
         }
@@ -7755,6 +7785,10 @@ pub(crate) fn resolve_against_inherited(
         // F7/F8/F9 lengths need the declaring node/page context and therefore
         // remain for phase 3.
         | PropertyValue::BorderRadius(_)
+        | PropertyValue::BorderRadiusTopLeft(_)
+        | PropertyValue::BorderRadiusTopRight(_)
+        | PropertyValue::BorderRadiusBottomRight(_)
+        | PropertyValue::BorderRadiusBottomLeft(_)
         | PropertyValue::BoxShadow(_)
         | PropertyValue::Outline(_)
         | PropertyValue::OutlineWidth(_)
@@ -8252,7 +8286,8 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // determinism が成立する (詳細は `crate::rule::expand_shorthand_into` doc)。
         // Page-only inherit markers are never produced by the element parser;
         // keep the staging path panic-free if an internal caller supplies one.
-        PropertyValue::MarginTopInherit
+        PropertyValue::BorderRadiusInherit
+        | PropertyValue::MarginTopInherit
         | PropertyValue::MarginRightInherit
         | PropertyValue::MarginBottomInherit
         | PropertyValue::MarginLeftInherit
@@ -8578,6 +8613,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // bump のみなので by-value 代入で十分。
         PropertyValue::TextShadow(shadows) => target.text_shadow = shadows,
         PropertyValue::BorderRadius(v) => target.border_radius = v,
+        PropertyValue::BorderRadiusTopLeft(v) => target.border_radius.top_left = v,
+        PropertyValue::BorderRadiusTopRight(v) => target.border_radius.top_right = v,
+        PropertyValue::BorderRadiusBottomRight(v) => target.border_radius.bottom_right = v,
+        PropertyValue::BorderRadiusBottomLeft(v) => target.border_radius.bottom_left = v,
         PropertyValue::BoxShadow(shadows) => target.box_shadow = shadows,
         PropertyValue::Outline(v) => target.outline = v,
         PropertyValue::OutlineWidth(v) => target.outline.width = v,
@@ -16745,10 +16784,10 @@ mod tests {
         assert_eq!(
             cv.border_radius,
             ComputedBorderRadius {
-                top_left: ComputedLength(16.0),
-                top_right: ComputedLength(32.0),
-                bottom_right: ComputedLength(48.0),
-                bottom_left: ComputedLength(64.0),
+                top_left: ComputedLengthPercentage::Px(16.0),
+                top_right: ComputedLengthPercentage::Px(32.0),
+                bottom_right: ComputedLengthPercentage::Px(48.0),
+                bottom_left: ComputedLengthPercentage::Px(64.0),
             }
         );
         assert_eq!(

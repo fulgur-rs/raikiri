@@ -591,6 +591,11 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::Quotes(_)
         | PropertyValue::TextShadow(_)
         | PropertyValue::BorderRadius(_)
+        | PropertyValue::BorderRadiusInherit
+        | PropertyValue::BorderRadiusTopLeft(_)
+        | PropertyValue::BorderRadiusTopRight(_)
+        | PropertyValue::BorderRadiusBottomRight(_)
+        | PropertyValue::BorderRadiusBottomLeft(_)
         | PropertyValue::BoxShadow(_)
         | PropertyValue::OutlineWidth(_)
         | PropertyValue::OutlineStyle(_)
