@@ -65,6 +65,7 @@ pub use layout::{
     layout_single_page_with_resolver, page_content_insets, page_margins, relayout_text_for_width,
 };
 pub use node::{ElementData, Node, NodeData, NodeFlags, TextData};
+pub use target::{CounterSnapshot, counter_snapshots};
 
 #[cfg(test)]
 mod tests {
