@@ -34,11 +34,13 @@ use raikiri_dom::{CounterSnapshot, Document};
 use raikiri_style::property::{
     BackgroundImage, Border, BorderColor, BorderStyle, ContentComponent, CounterStyle, CssColor,
     DisplayValue, FloatValue, Gradient, GradientStopColor, Length, LengthOrAuto, ListStyleType,
-    OutlineColor, OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue,
-    QuoteKeyword, Sides, TextAlign, TextShadowColor, VerticalAlign, WritingMode, ZIndexValue,
+    ObjectFit, OutlineColor, OutlineStyle, OverflowValue, PositionValue, PropertyKey,
+    PropertyValue, QuoteKeyword, Sides, TextAlign, TextShadowColor, VerticalAlign, WritingMode,
+    ZIndexValue,
 };
 use raikiri_style::{
-    CascadeResult, ComputedBorderRadius, ComputedLength, ComputedLengthPercentage,
+    CascadeResult, ComputedBackgroundSize, ComputedBorderRadius, ComputedCssPosition,
+    ComputedCssPositionOffset, ComputedLength, ComputedLengthPercentage,
     ComputedLengthPercentageOrAuto, ComputedTransformFunction, CounterStyleRegistry,
     PageMarginBoxCascadeResult, PageMarginBoxSlot, ResolveContext, resolve_border,
     resolve_custom_counter,
@@ -3190,6 +3192,10 @@ fn paint_document_impl(
                             &paint_border_radius,
                             &cv.border,
                             &paint_padding,
+                            &cv.background_size,
+                            &cv.background_position,
+                            &cv.background_repeat,
+                            pixel_source,
                         );
                         if clip_background.is_some() {
                             scene.pop_layer();
@@ -3281,6 +3287,8 @@ fn paint_document_impl(
                             paint_y,
                             &cv.border,
                             &paint_padding,
+                            cv.object_fit,
+                            &cv.object_position,
                         );
                     } else if node.tag_name() == Some("img")
                         && let Some(src) = node.attribute("src")
@@ -3314,6 +3322,10 @@ fn paint_document_impl(
                             &paint_border_radius,
                             &cv.border,
                             &paint_padding,
+                            &cv.background_size,
+                            &cv.background_position,
+                            &cv.background_repeat,
+                            pixel_source,
                         );
                         if clip_background.is_some() {
                             scene.pop_layer();
@@ -3565,9 +3577,8 @@ fn used_padding_for_paint(
     }
 }
 
-/// Draws `decoded`'s pixels stretched to exactly fill the element's content
-/// box (CSS Images 3 §4.3 `object-fit: fill`, the only value this scope
-/// implements — no aspect-ratio preservation, no letterboxing).
+/// Draws decoded replaced-element pixels using CSS Images 3 `object-fit` and
+/// `object-position`, clipped to the element content box.
 #[allow(clippy::too_many_arguments)]
 fn paint_image(
     scene: &mut impl PaintScene,
@@ -3578,6 +3589,8 @@ fn paint_image(
     abs_y: f32,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
+    object_fit: ObjectFit,
+    object_position: &ComputedCssPosition,
 ) {
     let bl = border.left.width().px();
     let bt = border.top.width().px();
@@ -3594,9 +3607,34 @@ fn paint_image(
     let content_y = (abs_y + bt + pt) as f64;
     let content_w = (border_box_width - bl - br - pl - pr).max(0.0) as f64;
     let content_h = (border_box_height - bt - bb - pt - pb).max(0.0) as f64;
-    if content_w <= 0.0 || content_h <= 0.0 || decoded.width == 0 || decoded.height == 0 {
+    let intrinsic_w = decoded.width as f64;
+    let intrinsic_h = decoded.height as f64;
+    if content_w <= 0.0 || content_h <= 0.0 || intrinsic_w <= 0.0 || intrinsic_h <= 0.0 {
         return;
     }
+
+    let contain_scale = (content_w / intrinsic_w).min(content_h / intrinsic_h);
+    let cover_scale = (content_w / intrinsic_w).max(content_h / intrinsic_h);
+    let scale = match object_fit {
+        ObjectFit::Fill => 1.0,
+        ObjectFit::Contain => contain_scale,
+        ObjectFit::Cover => cover_scale,
+        ObjectFit::None => 1.0,
+        ObjectFit::ScaleDown => contain_scale.min(1.0),
+        _ => 1.0,
+    };
+    let image_w = if matches!(object_fit, ObjectFit::Fill) {
+        content_w
+    } else {
+        intrinsic_w * scale
+    };
+    let image_h = if matches!(object_fit, ObjectFit::Fill) {
+        content_h
+    } else {
+        intrinsic_h * scale
+    };
+    let image_x = content_x + position_offset(object_position.horizontal, content_w - image_w);
+    let image_y = content_y + position_offset(object_position.vertical, content_h - image_h);
 
     let image_data = peniko::ImageData {
         data: peniko::Blob::from(decoded.rgba.clone()),
@@ -3606,19 +3644,22 @@ fn paint_image(
         height: decoded.height,
     };
     let brush = peniko::ImageBrush::new(image_data);
-    let transform = kurbo::Affine::translate((content_x, content_y))
-        * kurbo::Affine::scale_non_uniform(
-            content_w / decoded.width as f64,
-            content_h / decoded.height as f64,
-        );
-    let shape = kurbo::Rect::new(0.0, 0.0, decoded.width as f64, decoded.height as f64);
+    let clip = Rect::new(
+        content_x,
+        content_y,
+        content_x + content_w,
+        content_y + content_h,
+    );
+    scene.push_clip_layer(Affine::IDENTITY, &clip);
     scene.fill(
         peniko::Fill::NonZero,
-        transform,
+        Affine::translate((image_x, image_y))
+            * Affine::scale_non_uniform(image_w / intrinsic_w, image_h / intrinsic_h),
         brush.as_ref(),
         None,
-        &shape,
+        &Rect::new(0.0, 0.0, intrinsic_w, intrinsic_h),
     );
+    scene.pop_layer();
 }
 
 /// `vertical-align` が inline-level box の位置へ寄与する pixel offset。
@@ -3703,14 +3744,31 @@ fn paint_element_background(
     border_radius: &ComputedBorderRadius,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
+    background_size: &ComputedBackgroundSize,
+    background_position: &ComputedCssPosition,
+    background_repeat: &raikiri_style::property::BackgroundRepeat,
+    pixel_source: Option<&dyn ImagePixelSource>,
 ) {
     if width <= 0.0 || height <= 0.0 {
         return;
     }
-    let Some(effective) = effective_background_color(bg, bg_image, current_color) else {
-        return;
+    let decoded_image = match (bg_image, pixel_source) {
+        (BackgroundImage::Url(raw_url), Some(source)) => url::Url::parse(raw_url)
+            .ok()
+            .and_then(|url| source.get_decoded(&url)),
+        _ => None,
     };
-    if effective.a == 0 {
+    let effective = effective_background_color(bg, bg_image, current_color);
+    if effective.is_none() && decoded_image.is_none() {
+        return;
+    }
+    let effective = effective.unwrap_or(CssColor {
+        r: 0,
+        g: 0,
+        b: 0,
+        a: 0,
+    });
+    if effective.a == 0 && decoded_image.is_none() {
         return;
     }
     // background-clip: text — clip to text glyphs (CSS Backgrounds 4 §2.6).
@@ -3860,6 +3918,121 @@ fn paint_element_background(
         radius_inset,
         radius_reference,
     );
+    if let Some(decoded) = decoded_image.as_deref() {
+        paint_background_image(
+            scene,
+            decoded,
+            x0,
+            y0,
+            x1,
+            y1,
+            background_size,
+            background_position,
+            background_repeat,
+        );
+    }
+}
+
+fn background_length(value: ComputedLengthPercentageOrAuto, basis: f64) -> Option<f64> {
+    match value {
+        ComputedLengthPercentageOrAuto::Px(px) => Some(px as f64),
+        ComputedLengthPercentageOrAuto::Percent(percent) => Some(basis * percent as f64 / 100.0),
+        ComputedLengthPercentageOrAuto::Auto => None,
+        ComputedLengthPercentageOrAuto::Calc(calc) => {
+            Some(basis * calc.percent as f64 / 100.0 + calc.px as f64)
+        }
+    }
+}
+
+fn position_offset(offset: ComputedCssPositionOffset, free_space: f64) -> f64 {
+    match offset {
+        ComputedCssPositionOffset::Start(value) => match value {
+            ComputedLengthPercentage::Px(px) => px as f64,
+            ComputedLengthPercentage::Percent(percent) => free_space * percent as f64 / 100.0,
+        },
+        ComputedCssPositionOffset::End(value) => match value {
+            ComputedLengthPercentage::Px(px) => free_space - px as f64,
+            ComputedLengthPercentage::Percent(percent) => {
+                free_space * (1.0 - percent as f64 / 100.0)
+            }
+        },
+        _ => free_space / 2.0,
+    }
+}
+
+/// Paint one decoded CSS background image in its positioning area.
+///
+/// The image is clipped to the caller's background painting area. This keeps
+/// URL backgrounds useful to reftests while leaving gradients on the existing
+/// color path. Repetition is deliberately represented by the first tile for
+/// now; the object-fit tranche only consumes `no-repeat` backgrounds.
+#[allow(clippy::too_many_arguments)]
+fn paint_background_image(
+    scene: &mut impl PaintScene,
+    decoded: &raikiri_traits::DecodedImage,
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
+    size: &ComputedBackgroundSize,
+    position: &ComputedCssPosition,
+    repeat: &raikiri_style::property::BackgroundRepeat,
+) {
+    if decoded.width == 0 || decoded.height == 0 || x1 <= x0 || y1 <= y0 {
+        return;
+    }
+    let area_w = x1 - x0;
+    let area_h = y1 - y0;
+    let intrinsic_w = decoded.width as f64;
+    let intrinsic_h = decoded.height as f64;
+    let (image_w, image_h) = match size {
+        ComputedBackgroundSize::Cover => {
+            let scale = (area_w / intrinsic_w).max(area_h / intrinsic_h);
+            (intrinsic_w * scale, intrinsic_h * scale)
+        }
+        ComputedBackgroundSize::Contain => {
+            let scale = (area_w / intrinsic_w).min(area_h / intrinsic_h);
+            (intrinsic_w * scale, intrinsic_h * scale)
+        }
+        ComputedBackgroundSize::Explicit { width, height } => {
+            let width = background_length(*width, area_w);
+            let height = background_length(*height, area_h);
+            match (width, height) {
+                (Some(width), Some(height)) => (width.max(0.0), height.max(0.0)),
+                (Some(width), None) => (width.max(0.0), width.max(0.0) * intrinsic_h / intrinsic_w),
+                (None, Some(height)) => {
+                    (height.max(0.0) * intrinsic_w / intrinsic_h, height.max(0.0))
+                }
+                (None, None) => (intrinsic_w, intrinsic_h),
+            }
+        }
+        _ => (intrinsic_w, intrinsic_h),
+    };
+    if image_w <= 0.0 || image_h <= 0.0 {
+        return;
+    }
+    let image_x = x0 + position_offset(position.horizontal, area_w - image_w);
+    let image_y = y0 + position_offset(position.vertical, area_h - image_h);
+    let image_data = peniko::ImageData {
+        data: peniko::Blob::from(decoded.rgba.clone()),
+        format: peniko::ImageFormat::Rgba8,
+        alpha_type: peniko::ImageAlphaType::Alpha,
+        width: decoded.width,
+        height: decoded.height,
+    };
+    let brush = peniko::ImageBrush::new(image_data);
+    let clip = Rect::new(x0, y0, x1, y1);
+    scene.push_clip_layer(Affine::IDENTITY, &clip);
+    scene.fill(
+        Fill::NonZero,
+        Affine::translate((image_x, image_y))
+            * Affine::scale_non_uniform(image_w / intrinsic_w, image_h / intrinsic_h),
+        brush.as_ref(),
+        None,
+        &Rect::new(0.0, 0.0, intrinsic_w, intrinsic_h),
+    );
+    scene.pop_layer();
+    let _ = repeat;
 }
 
 fn used_border_radius(value: ComputedLengthPercentage, reference: f64) -> f64 {

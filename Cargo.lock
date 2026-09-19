@@ -1871,6 +1871,7 @@ dependencies = [
  "raikiri",
  "raikiri-dom",
  "raikiri-html",
+ "raikiri-net",
  "raikiri-paint",
  "raikiri-style",
  "raikiri-traits",

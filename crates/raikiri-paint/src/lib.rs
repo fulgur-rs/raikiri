@@ -149,6 +149,7 @@ pub fn paint_single_page_with_origin_and_page_context(
         paired_page_increment,
         None,
         page_box.width,
+        None,
     );
 }
 
@@ -183,6 +184,7 @@ pub fn paint_single_page_with_origin_and_page_context_named(
         paired_page_increment,
         Some(active_page_name),
         page_box.width,
+        None,
     );
 }
 
@@ -218,6 +220,43 @@ pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_widt
         paired_page_increment,
         Some(active_page_name),
         fixed_page_width,
+        None,
+    );
+}
+
+/// Named-page slice paint entry point with a resolved image pixel source.
+///
+/// The layout caller must resolve replaced-element intrinsic sizes before
+/// invoking this function. The same resolver cache can then provide decoded
+/// pixels for both `<img>` and CSS `background-image` URLs.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_images(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    content_origin_y: f32,
+    page_index: u32,
+    page_count: u32,
+    page_is_left: bool,
+    paired_page_increment: Option<i32>,
+    active_page_name: Option<&str>,
+    fixed_page_width: f32,
+    pixel_source: &dyn raikiri_traits::ImagePixelSource,
+) {
+    paint_single_page_with_origin_and_page_context_impl(
+        scene,
+        document,
+        cascade,
+        page_box,
+        content_origin_y,
+        page_index,
+        page_count,
+        page_is_left,
+        paired_page_increment,
+        Some(active_page_name),
+        fixed_page_width,
+        Some(pixel_source),
     );
 }
 
@@ -234,6 +273,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
     paired_page_increment: Option<i32>,
     active_page_name: Option<Option<&str>>,
     fixed_page_width: f32,
+    pixel_source: Option<&dyn raikiri_traits::ImagePixelSource>,
 ) {
     // walk 本体 (`walk::paint_document` / `text::draw_text_node`) は
     // `cascade.computed[node_id]` を raw index で読む複数 site を持ち、それぞれが
@@ -266,15 +306,28 @@ fn paint_single_page_with_origin_and_page_context_impl(
         page_is_left,
         paired_page_increment,
     );
-    walk::paint_document(
-        scene,
-        document,
-        cascade,
-        page_box,
-        content_origin_y,
-        active_page_name,
-        fixed_page_width,
-    );
+    if let Some(pixel_source) = pixel_source {
+        walk::paint_document_with_images(
+            scene,
+            document,
+            cascade,
+            page_box,
+            content_origin_y,
+            active_page_name,
+            fixed_page_width,
+            pixel_source,
+        );
+    } else {
+        walk::paint_document(
+            scene,
+            document,
+            cascade,
+            page_box,
+            content_origin_y,
+            active_page_name,
+            fixed_page_width,
+        );
+    }
 }
 
 /// [`paint_single_page`] と同一だが、`<img>` の decode 済み pixel を

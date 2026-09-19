@@ -7005,6 +7005,47 @@ pub fn layout_pages(
     layout_pages_with_page_steps(document, cascade, page_box, font_ctx, &[])
 }
 
+/// [`layout_pages`] と同一だが、先に `resolver` で `<img>` の intrinsic
+/// サイズを解決する。解決結果は同じ `Document` に保存されるため、ページ
+/// 分割後の通常のレイアウト処理と paint 時の pixel source が同じ画像を
+/// 参照できる。
+#[allow(clippy::result_large_err)]
+pub fn layout_pages_with_resolver(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    font_ctx: FontContext,
+    resolver: &dyn ReplacedResolver,
+) -> Result<Vec<PageSlice>, LayoutError> {
+    document.mark_in_document_flags();
+    crate::image_resolve::resolve_images(document, resolver).map_err(LayoutError::Resolver)?;
+    layout_pages(document, cascade, page_box, font_ctx)
+}
+
+/// [`layout_pages_with_page_geometry`] と同一だが、先に `resolver` で
+/// `<img>` の intrinsic サイズを解決する。
+#[allow(clippy::result_large_err)]
+pub fn layout_pages_with_page_geometry_and_resolver(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    font_ctx: FontContext,
+    page_steps: &[f32],
+    page_widths: &[f32],
+    resolver: &dyn ReplacedResolver,
+) -> Result<Vec<PageSlice>, LayoutError> {
+    document.mark_in_document_flags();
+    crate::image_resolve::resolve_images(document, resolver).map_err(LayoutError::Resolver)?;
+    layout_pages_with_page_geometry(
+        document,
+        cascade,
+        page_box,
+        font_ctx,
+        page_steps,
+        page_widths,
+    )
+}
+
 /// Layout ordinary block flow with an optional per-page content-height schedule.
 ///
 /// An empty schedule preserves the historical fixed fragmentainer height.  The

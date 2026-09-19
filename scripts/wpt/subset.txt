@@ -77,3 +77,15 @@ css/CSS2/generated-content/content-003-ref.html
 # CSS Color offscreen opacity group-compositing reftest pair.
 css/css-color/t32-opacity-offscreen-b.xht
 css/css-color/t32-opacity-offscreen-b-ref.html
+# CSS Images object-fit PNG matrix and shared RGB fixture.
+css/css-images/object-fit-fill-png-001i.html
+css/css-images/object-fit-fill-png-001-ref.html
+css/css-images/support/colors-16x8.png
+css/css-images/object-fit-contain-png-001i.html
+css/css-images/object-fit-contain-png-001-ref.html
+css/css-images/object-fit-cover-png-001i.html
+css/css-images/object-fit-cover-png-001-ref.html
+css/css-images/object-fit-none-png-001i.html
+css/css-images/object-fit-none-png-001-ref.html
+css/css-images/object-fit-scale-down-png-001i.html
+css/css-images/object-fit-scale-down-png-001-ref.html
