@@ -738,6 +738,7 @@ fn bridge_direction(style: &mut taffy::Style, cv: &ComputedValues) {
 ///   TODO(table-layout): [`crate::layout::table`] の dedicated table
 ///   formatting context (CSS 2.1 §17.2.1 anonymous table object generation
 ///   含む) が landing したら専用 Display / layout へ置換)
+/// - `flow-root` → `FlowRoot` (独立 block formatting context)
 /// - `list-item` / `contents` → `Block` (catch-all 経由、将来専用 handling
 ///   が入るまで block 近似)
 /// - catch-all arm → `Block` (`non_exhaustive` forward-compat)
@@ -746,6 +747,7 @@ fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
         DisplayValue::Block => Display::Block,
         DisplayValue::Inline => Display::Block,
         DisplayValue::InlineBlock => Display::Block,
+        DisplayValue::FlowRoot => Display::FlowRoot,
         DisplayValue::None => Display::None,
         DisplayValue::Flex | DisplayValue::InlineFlex => Display::Flex,
         DisplayValue::Grid | DisplayValue::InlineGrid => Display::Grid,
@@ -11360,6 +11362,43 @@ mod tests {
 
         layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
         assert_eq!(doc.nodes[body].style.display, Display::None);
+    }
+
+    #[test]
+    fn layout_single_page_bridges_display_flow_root() {
+        // Standalone `display: flow-root` must reach taffy as its dedicated
+        // block-formatting-context display value rather than falling through
+        // to a plain block approximation.
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let flow_root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root;width:200px"),
+        );
+        let child = doc.append_element(
+            Some(flow_root),
+            "div",
+            Style::default(),
+            Some("height:20px;background:red"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        assert_eq!(
+            doc.nodes[flow_root].style.display,
+            Display::FlowRoot,
+            // cov:ignore: panic-message literal only executes on assertion failure.
+            "bridge_display must map DisplayValue::FlowRoot to taffy::Display::FlowRoot"
+        );
+        assert!(doc.nodes[child].unrounded_layout.size.height > 0.0);
     }
 
     #[test]

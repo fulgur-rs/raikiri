@@ -441,6 +441,7 @@ css/css-images/parsing/object-fit-invalid.html
 css/css-images/parsing/object-position-invalid.html
 css/css-images/parsing/object-position-valid.html
 # --- css-lists marker foundation (exact static reftest, 800x600) ---
+css/css-display/display-flow-root-002.html
 css/css-lists/list-style-position-001.html
 css/css-lists/parsing/counter-increment-invalid.html
 css/css-lists/parsing/counter-reset-invalid.html
