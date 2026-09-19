@@ -6991,6 +6991,10 @@ fn selected_page_name(cascade: &CascadeResult, node_id: usize) -> Option<String>
 /// breaks, and keeps an empty explicitly-created page.  A block that is taller
 /// than a page is exposed on each intersecting slice; splitting its internal
 /// line/child fragments is deliberately left to the next fragmentation pass.
+/// For an ordinary direct-body block whose complete text layout fits within one
+/// fragmentainer, `orphans` / `widows` can move the block intact when the
+/// natural split would leave too few line boxes on either side. Oversized or
+/// nested inline formatting contexts remain outside this pass.
 ///
 /// This is intentionally separate from [`layout_single_page`]: existing
 /// callers retain the single-page contract while paged callers get a real
@@ -7474,6 +7478,7 @@ pub fn layout_pages_with_page_geometry(
     // minimal paginator can safely move a leading line as a unit. Track the
     // first text child so a block is not reflowed repeatedly for later lines.
     let mut checked_block_text = HashSet::new();
+    let mut checked_orphans_widows = HashSet::new();
     let mut current_page_name =
         selected_page_name(cascade, body_id).or_else(|| first_page_name(document, cascade));
     let mut page_names = vec![current_page_name.clone()];
@@ -7545,6 +7550,56 @@ pub fn layout_pages_with_page_geometry(
                     let delta = target_y - block_effective_y;
                     if delta.is_finite() && delta > 0.0 {
                         materialize_y(document, block_id, block_effective_y + delta, &parent_of);
+                        flow_shift += delta;
+                        effective_y += delta;
+                    }
+                }
+            }
+            // `orphans` and `widows` constrain breaks between line boxes, not
+            // breaks between block-level children.  The current paginator keeps
+            // a text run in one `parley::Layout`, so the safe first step is to
+            // move a fitting direct block as a unit when its natural split would
+            // violate either constraint.  Oversized blocks stay on the
+            // existing whole-box path; their line-level fragment map is a
+            // separate concern.
+            if let Some(block_id) = direct_block_parent
+                && checked_orphans_widows.insert(block_id)
+                && let Some(text_layout) = document.nodes[node_id].text_layout()
+            {
+                let page_start = page_origin(current_page);
+                let page_end = page_start + page_step_at(current_page);
+                let line_metrics: Vec<(f32, f32)> = text_layout
+                    .lines()
+                    .map(|line| {
+                        let metrics = line.metrics();
+                        (metrics.block_min_coord, metrics.block_max_coord)
+                    })
+                    .collect();
+                let total_lines = line_metrics.len();
+                let starts_on_page = line_metrics.first().is_some_and(|(line_top, _)| {
+                    let top = effective_y + line_top;
+                    top >= page_start - 0.001 && top < page_end
+                });
+                let block_height = document.nodes[block_id].unrounded_layout.size.height;
+                let fits_on_page =
+                    block_height.is_finite() && block_height <= page_step_at(current_page) + 0.001;
+                let lines_before_break = line_metrics
+                    .iter()
+                    .take_while(|(_, line_bottom)| effective_y + line_bottom <= page_end + 0.001)
+                    .count();
+                let needs_break = lines_before_break < total_lines;
+                let orphans = cascade.computed[node_id].orphans.max(1) as usize;
+                let widows = cascade.computed[node_id].widows.max(1) as usize;
+                let violates_line_constraints = needs_break
+                    && (lines_before_break < orphans
+                        || total_lines.saturating_sub(lines_before_break) < widows);
+                if starts_on_page && fits_on_page && violates_line_constraints {
+                    let block_raw_y = root_flow_offset
+                        + current_abs_y(document, block_id, &parent_of)
+                        - flow_shift;
+                    let delta = page_origin(current_page.saturating_add(1)) - block_raw_y;
+                    if delta.is_finite() && delta > 0.0 {
+                        materialize_y(document, block_id, block_raw_y + delta, &parent_of);
                         flow_shift += delta;
                         effective_y += delta;
                     }
@@ -15932,6 +15987,58 @@ mod tests {
         .expect("layout Ok");
 
         assert_eq!(doc.nodes[img].image_intrinsic_size(), None);
+    }
+
+    #[test]
+    fn layout_pages_moves_fitting_text_block_for_orphans_and_widows() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        fn paginate(style: &str) -> (usize, f32, f32, usize) {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            // Leave room for exactly two 10px lines on page zero.
+            let _lead =
+                doc.append_element(Some(body), "div", Style::default(), Some("height:30px"));
+            let paragraph = doc.append_element(Some(body), "p", Style::default(), Some(style));
+            let text = doc.append_text(paragraph, "a\nb\nc");
+            let following =
+                doc.append_element(Some(body), "div", Style::default(), Some("height:10px"));
+
+            let rules = build_rule_tree(&doc);
+            let cascade = cascade(&doc, &rules).expect("cascade Ok");
+            let mut page = PageBox::new();
+            page.width = 100.0;
+            page.height = 50.0;
+            let slices = layout_pages(&mut doc, &cascade, page, parley::FontContext::new())
+                .expect("pagination Ok");
+
+            let paragraph_y = doc.nodes[paragraph].unrounded_layout.location.y;
+            let following_y = doc.nodes[following].unrounded_layout.location.y;
+            let line_count = doc.nodes[text].text_layout().expect("text shaped").len();
+            (slices.len(), paragraph_y, following_y, line_count)
+        }
+
+        let common = "font-size:10px;line-height:10px;white-space:pre-line";
+        let (pages, paragraph_y, following_y, line_count) =
+            paginate(&format!("{common};orphans:3;widows:1"));
+        assert_eq!(pages, 2, "the paragraph should continue on page two");
+        assert!(
+            paragraph_y >= 50.0 - 0.001,
+            "orphans:3 should move the fitting paragraph intact to page two, got y={paragraph_y}"
+        );
+        assert!(
+            following_y >= paragraph_y + 30.0 - 0.001,
+            "following content must stay after the moved paragraph (paragraph y={paragraph_y}, following y={following_y})"
+        );
+        assert_eq!(line_count, 3);
+
+        let (_, paragraph_y, _, _) = paginate(&format!("{common};orphans:1;widows:2"));
+        assert!(
+            paragraph_y >= 50.0 - 0.001,
+            "widows:2 should also move a 3-line fitting paragraph when only one line would remain, got y={paragraph_y}"
+        );
     }
 
     #[test]
