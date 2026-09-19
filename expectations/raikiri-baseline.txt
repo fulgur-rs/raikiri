@@ -838,6 +838,14 @@ css/css-text/word-spacing/word-spacing-percent-001.html
 css/css-flexbox/abspos/flex-abspos-staticpos-align-self-safe-001.html
 css/css-flexbox/abspos/flex-abspos-staticpos-align-self-safe-002.html
 css/css-flexbox/abspos/position-absolute-005.html
+# --- flex abspos static-position follow-up pin 2026-09-19 (exact 800x600) ---
+css/css-flexbox/abspos/position-absolute-006.html
+css/css-flexbox/abspos/position-absolute-007.html
+css/css-flexbox/abspos/position-absolute-008.html
+css/css-flexbox/abspos/position-absolute-009.html
+css/css-flexbox/abspos/position-absolute-010.html
+css/css-flexbox/abspos/position-absolute-011.html
+css/css-flexbox/abspos/position-absolute-containing-block-001.html
 css/css-flexbox/align-baseline.html
 css/css-flexbox/align-content-001.htm
 css/css-flexbox/align-content-003.htm
