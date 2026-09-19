@@ -1709,7 +1709,7 @@ fn render_raikiri_pages_inner(
                 font_ctx.clone(),
                 &page_steps,
                 &page_widths,
-            )?
+            )? // cov:ignore: the layout API's standalone error edge is not reachable from valid reftest documents
         };
         (fresh, fresh_slices)
     } else {
