@@ -24,7 +24,8 @@ The command uses `expectations/meta-assert-baseline.txt` by default and also
 excludes the existing `expectations/raikiri-baseline.txt`. It does not modify
 either baseline. It writes `manifest.jsonl`, `reviews.template.jsonl`, copied
 HTML, and screenshots. `parsing/` tests are excluded unless
-`--include-parsing` is explicitly requested.
+`--include-parsing` is explicitly requested. Use `--path-prefix
+css/css-backgrounds/` (or another directory) to try one category at a time.
 
 ## 2. Review every pending row
 

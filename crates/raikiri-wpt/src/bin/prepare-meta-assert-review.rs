@@ -38,6 +38,7 @@ struct Args {
     baseline: PathBuf,
     exclude_baseline: PathBuf,
     output: PathBuf,
+    path_prefix: Option<String>,
     limit: Option<usize>,
     width: u32,
     height: u32,
@@ -51,6 +52,7 @@ impl Default for Args {
             baseline: PathBuf::from(DEFAULT_BASELINE),
             exclude_baseline: PathBuf::from(DEFAULT_EXCLUDE_BASELINE),
             output: PathBuf::from(DEFAULT_OUTPUT),
+            path_prefix: None,
             limit: None,
             width: DEFAULT_WIDTH,
             height: DEFAULT_HEIGHT,
@@ -89,7 +91,12 @@ fn run() -> Result<(), String> {
         baseline.extend(read_baseline(&args.exclude_baseline)?);
     }
     let wpt_sha = git_head(&args.wpt_root).unwrap_or_else(|| "unknown".to_owned());
-    let candidates = discover_candidates(&args.wpt_root, &baseline, args.include_parsing)?;
+    let candidates = discover_candidates(
+        &args.wpt_root,
+        &baseline,
+        args.include_parsing,
+        args.path_prefix.as_deref(),
+    )?;
     let candidates: Vec<_> = candidates
         .into_iter()
         .take(args.limit.unwrap_or(usize::MAX))
@@ -195,6 +202,7 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
             "--baseline" => parsed.baseline = PathBuf::from(value(&mut index)?),
             "--exclude-baseline" => parsed.exclude_baseline = PathBuf::from(value(&mut index)?),
             "--output" => parsed.output = PathBuf::from(value(&mut index)?),
+            "--path-prefix" => parsed.path_prefix = Some(value(&mut index)?),
             "--limit" => parsed.limit = Some(parse_usize(&value(&mut index)?, option)?),
             "--width" => parsed.width = parse_u32(&value(&mut index)?, option)?,
             "--height" => parsed.height = parse_u32(&value(&mut index)?, option)?,
@@ -237,10 +245,20 @@ fn read_baseline(path: &Path) -> Result<HashSet<String>, String> {
         .collect())
 }
 
+fn matches_path_prefix(test_id: &str, prefix: &str) -> bool {
+    let prefix = prefix.trim_matches('/');
+    !prefix.is_empty()
+        && (test_id == prefix
+            || test_id
+                .strip_prefix(prefix)
+                .is_some_and(|rest| rest.starts_with('/')))
+}
+
 fn discover_candidates(
     wpt_root: &Path,
     baseline: &HashSet<String>,
     include_parsing: bool,
+    path_prefix: Option<&str>,
 ) -> Result<Vec<Candidate>, String> {
     let mut paths = Vec::new();
     collect_files(&wpt_root.join("css"), wpt_root, &mut paths).map_err(|e| {
@@ -257,6 +275,11 @@ fn discover_candidates(
             continue;
         }
         let test_id = path_to_string(&path);
+        if let Some(prefix) = path_prefix {
+            if !matches_path_prefix(&test_id, prefix) {
+                continue;
+            }
+        }
         if !include_parsing && has_path_component(&test_id, "parsing") {
             continue;
         }
@@ -491,6 +514,22 @@ mod tests {
         assert!(!has_path_component(
             "css/foo/parsing-extra/a.html",
             "parsing"
+        ));
+    }
+
+    #[test]
+    fn path_prefix_matches_a_directory_without_matching_similar_names() {
+        assert!(matches_path_prefix(
+            "css/css-backgrounds/test.html",
+            "css/css-backgrounds/"
+        ));
+        assert!(matches_path_prefix(
+            "css/css-backgrounds",
+            "css/css-backgrounds"
+        ));
+        assert!(!matches_path_prefix(
+            "css/css-backgrounds-extra/test.html",
+            "css/css-backgrounds"
         ));
     }
 

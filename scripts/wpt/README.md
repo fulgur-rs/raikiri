@@ -82,7 +82,8 @@ cargo run --locked -p raikiri-wpt --bin prepare-meta-assert-review -- \
     --limit 20
 ```
 
-The output contains `manifest.jsonl`, copied source files under `html/`, and
+Use `--path-prefix css/css-backgrounds/` (or another directory) to focus the
+queue on one WPT category. The output contains `manifest.jsonl`, copied source files under `html/`, and
 screenshots under `screenshots/`. It also writes `reviews.template.jsonl`;
 copy this file to `reviews.jsonl` and fill in each `decision` and `reason`.
 The reviewed entries belong to the separate
