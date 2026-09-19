@@ -6890,14 +6890,14 @@ mod tests {
     fn cascade_page_computes_border_radius_box_shadow_and_outline() {
         let root = root_with_font_size(20.0);
         let result = page(
-            "@page { border-radius: 1em 2em 3em 4em; box-shadow: red 0.5em -1em 0.25em 0.125em, 2px 3px; outline: solid 2em red }",
+            "@page { border-radius: 10% 2em 3em 4em; box-shadow: red 0.5em -1em 0.25em 0.125em, 2px 3px; outline: solid 2em red }",
             &root,
         );
 
         assert_eq!(
             result.declarations().get(&PropertyKey::BorderRadius),
             Some(&PropertyValue::BorderRadius(BorderRadius {
-                top_left: Length::Px(20.0),
+                top_left: Length::Percent(10.0),
                 top_right: Length::Px(40.0),
                 bottom_right: Length::Px(60.0),
                 bottom_left: Length::Px(80.0),

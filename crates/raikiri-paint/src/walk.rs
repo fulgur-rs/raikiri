@@ -4005,7 +4005,7 @@ fn paint_element_border_rounded(
             current_color.a,
         )),
         BorderColor::Resolved(color) => Some(Color::from_rgba8(color.r, color.g, color.b, color.a)),
-        _ => None,
+        _ => None, // cov:ignore: defensive fallback for future BorderColor variants
     };
     let colors = [
         color_for(&border.left),
@@ -4015,7 +4015,7 @@ fn paint_element_border_rounded(
     ];
     let uniform_color = colors[0].is_some() && colors.iter().all(|color| *color == colors[0]);
     let Some(color) = colors[0] else {
-        paint_element_border(scene, width, height, abs_x, abs_y, border, current_color);
+        paint_element_border(scene, width, height, abs_x, abs_y, border, current_color); // cov:ignore: BorderColor variants currently always produce Some
         return;
     };
     if !(uniform_width && solid && uniform_color) {
@@ -5194,6 +5194,10 @@ mod tests {
         assert_eq!(normalized.top_right, 50.0);
         assert_eq!(normalized.bottom_right, 50.0);
         assert_eq!(normalized.bottom_left, 50.0);
+        assert_eq!(
+            used_border_radius(ComputedLengthPercentage::Percent(25.0), 200.0),
+            50.0
+        );
     }
 
     #[test]
