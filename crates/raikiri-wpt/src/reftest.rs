@@ -585,6 +585,46 @@ pub fn discover_all_pairs_with_docroot(walk_root: &Path, docroot: &Path) -> Vec<
 
 // ── Rendering: raikiri ─────────────────────────────────────────────────
 
+/// Make local WPT resources absolute before parsing. The parser's `base_url`
+/// handles stylesheets, while replaced-element and paint-time URLs are read
+/// from the DOM/computed values after parsing; keeping one absolute URL in all
+/// three paths lets the file provider and image cache share a key.
+fn absolutize_wpt_resource_urls(html: &str, resource_base: Option<&Path>) -> String {
+    let Some(resource_base) = resource_base else {
+        return html.to_owned();
+    };
+    let Ok(base_url) = raikiri::Url::from_directory_path(resource_base) else {
+        return html.to_owned();
+    };
+    let prefix = base_url.to_string();
+    html.replace("\"support/", &format!("\"{prefix}support/"))
+        .replace("'support/", &format!("'{prefix}support/"))
+}
+
+/// Warm the cache for URL backgrounds. The `<img>` side is resolved by the
+/// layout pre-pass; a reference made only from `background-image` has no
+/// replaced element that would otherwise populate the same cache entry.
+fn prime_image_resolver(
+    resolver: &raikiri_net::ImageResolver<raikiri_net::FileNetworkProvider>,
+    html: &str,
+) {
+    use raikiri_traits::{ReplacedResolver, ResolverRequest};
+    let mut cursor = 0;
+    while let Some(relative) = html[cursor..].find("file://") {
+        let start = cursor + relative;
+        let end = html[start..]
+            .find(|ch: char| ch.is_whitespace() || matches!(ch, '"' | '\'' | ')' | '>'))
+            .map(|offset| start + offset)
+            .unwrap_or(html.len());
+        if let Ok(url) = raikiri::Url::parse(&html[start..end])
+            && url.path().to_ascii_lowercase().ends_with(".png")
+        {
+            let _ = resolver.resolve(ResolverRequest::new(&url));
+        }
+        cursor = end;
+    }
+}
+
 /// Render the first page of `html` via raikiri.
 ///
 /// This compatibility wrapper retains the original single-image API.  Paged
@@ -605,7 +645,7 @@ pub fn render_raikiri_pages(
     width: u32,
     height: u32,
 ) -> Result<RenderedDocument, ReftestError> {
-    render_raikiri_pages_inner(html, width, height)
+    render_raikiri_pages_inner(html, width, height, None)
         .map_err(|e| ReftestError::RaikiriRender(e.to_string()))
 }
 
@@ -614,7 +654,7 @@ fn render_raikiri_inner(
     width: u32,
     height: u32,
 ) -> Result<RenderedImage, Box<dyn std::error::Error>> {
-    let document = render_raikiri_pages_inner(html, width, height)?;
+    let document = render_raikiri_pages_inner(html, width, height, None)?;
     document
         .pages
         .into_iter()
@@ -1449,6 +1489,7 @@ fn render_raikiri_pages_inner(
     html: &str,
     width: u32,
     height: u32,
+    resource_base: Option<&Path>,
 ) -> Result<RenderedDocument, Box<dyn std::error::Error>> {
     use anyrender::render_to_buffer;
     use anyrender_vello_cpu::VelloCpuImageRenderer;
@@ -1463,6 +1504,8 @@ fn render_raikiri_pages_inner(
     };
     use raikiri_html::parse;
 
+    let image_resolver =
+        resource_base.map(|_| raikiri_net::ImageResolver::new(raikiri_net::FileNetworkProvider));
     let opts = ParseOptions {
         extra_stylesheets: &[],
         network: None,
@@ -1473,7 +1516,11 @@ fn render_raikiri_pages_inner(
     // `@page` rule omits all page-margin declarations.  Add that UA value
     // before resolving viewport units so both the content box and `vh` use the
     // same print viewport as the reference renderer.
-    let html = inject_default_page_margin(html);
+    let html = absolutize_wpt_resource_urls(html, resource_base);
+    if let Some(resolver) = image_resolver.as_ref() {
+        prime_image_resolver(resolver, &html);
+    }
+    let html = inject_default_page_margin(&html);
     let (viewport_width, viewport_height) =
         authored_page_viewport(&html, width as f32, height as f32);
     let html = expand_viewport_units(&html, viewport_width, viewport_height);
@@ -1563,12 +1610,22 @@ fn render_raikiri_pages_inner(
     // expansion, relayout), so the layout passes get clones — cheaper than
     // the fresh `resolve_font_ctx()` builds these replaced (no file re-read,
     // no re-registration).
-    let provisional_slices = layout_pages(
-        &mut uncascaded.dom,
-        &first_cascade,
-        first_page_box,
-        font_ctx.clone(),
-    )
+    let provisional_slices = if let Some(resolver) = image_resolver.as_ref() {
+        raikiri_dom::layout_pages_with_resolver(
+            &mut uncascaded.dom,
+            &first_cascade,
+            first_page_box,
+            font_ctx.clone(),
+            resolver,
+        )
+    } else {
+        layout_pages(
+            &mut uncascaded.dom,
+            &first_cascade,
+            first_page_box,
+            font_ctx.clone(),
+        )
+    }
     .map_err(|e| format!("layout: {e:?}"))?;
     // A first-page-only layout cannot know that a later `@page` context has a
     // different content height.  Use the provisional page names to build a
@@ -1632,15 +1689,28 @@ fn render_raikiri_pages_inner(
             font_face_tree.font_faces(),
             &mut font_ctx,
         );
-        let fresh_slices = layout_pages_with_page_geometry(
-            &mut fresh.dom,
-            &fresh_cascade,
-            first_page_box,
-            font_ctx.clone(),
-            &page_steps,
-            &page_widths,
-        )
-        .map_err(|e| format!("layout: {e:?}"))?;
+        let fresh_slices = if let Some(resolver) = image_resolver.as_ref() {
+            // The geometry-varying path reparses the source, so the image
+            // intrinsic pre-pass must run on the fresh DOM as well.
+            raikiri_dom::layout_pages_with_page_geometry_and_resolver(
+                &mut fresh.dom,
+                &fresh_cascade,
+                first_page_box,
+                font_ctx.clone(),
+                &page_steps,
+                &page_widths,
+                resolver,
+            )? // cov:ignore: rustc maps this standalone success/error propagation token only to the unreachable resolver-error edge
+        } else {
+            layout_pages_with_page_geometry(
+                &mut fresh.dom,
+                &fresh_cascade,
+                first_page_box,
+                font_ctx.clone(),
+                &page_steps,
+                &page_widths,
+            )? // cov:ignore: the layout API's standalone error edge is not reachable from valid reftest documents
+        };
         (fresh, fresh_slices)
     } else {
         (uncascaded, provisional_slices)
@@ -1725,19 +1795,36 @@ fn render_raikiri_pages_inner(
         let page_height = page_box.height.ceil() as u32;
         let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
             |painter| {
-                raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(
-                    painter,
-                    &uncascaded.dom,
-                    &cascade,
-                    page_box,
-                    slice.content_origin_y,
-                    slice.page_index,
-                    page_count,
-                    query.is_left,
-                    paired_page_increment,
-                    active_page_name.as_deref(),
-                    fixed_page_width,
-                )
+                if let Some(resolver) = image_resolver.as_ref() {
+                    raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_images(
+                        painter,
+                        &uncascaded.dom,
+                        &cascade,
+                        page_box,
+                        slice.content_origin_y,
+                        slice.page_index,
+                        page_count,
+                        query.is_left,
+                        paired_page_increment,
+                        active_page_name.as_deref(),
+                        fixed_page_width,
+                        resolver,
+                    );
+                } else {
+                    raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(
+                        painter,
+                        &uncascaded.dom,
+                        &cascade,
+                        page_box,
+                        slice.content_origin_y,
+                        slice.page_index,
+                        page_count,
+                        query.is_left,
+                        paired_page_increment,
+                        active_page_name.as_deref(),
+                        fixed_page_width,
+                    );
+                }
             },
             page_width,
             page_height,
@@ -2053,7 +2140,25 @@ pub fn compare_documents(
 /// `read_html` indirection exists so unit tests can supply inline strings
 /// without touching the filesystem.
 pub fn run_pair(pair: &ReftestPair, config: ReftestConfig) -> Result<ReftestResult, ReftestError> {
-    run_pair_with_reader(pair, config, |p| {
+    run_pair_with_reader(pair, config, false, |p| {
+        std::fs::read_to_string(p).map_err(|source| ReftestError::Io {
+            path: p.to_path_buf(),
+            source,
+        })
+    })
+}
+
+/// Execute a pair with local PNG resource resolution enabled.
+///
+/// This opt-in variant keeps the historical `run_pair` behavior for the broad
+/// sparse WPT range, where unsupported media formats must remain a silent
+/// fallback, while image-focused tests can request the fetch → decode → layout
+/// → paint path explicitly.
+pub fn run_pair_with_images(
+    pair: &ReftestPair,
+    config: ReftestConfig,
+) -> Result<ReftestResult, ReftestError> {
+    run_pair_with_reader(pair, config, true, |p| {
         std::fs::read_to_string(p).map_err(|source| ReftestError::Io {
             path: p.to_path_buf(),
             source,
@@ -2064,6 +2169,7 @@ pub fn run_pair(pair: &ReftestPair, config: ReftestConfig) -> Result<ReftestResu
 fn run_pair_with_reader<F>(
     pair: &ReftestPair,
     config: ReftestConfig,
+    resolve_images: bool,
     read_html: F,
 ) -> Result<ReftestResult, ReftestError>
 where
@@ -2072,8 +2178,28 @@ where
     let test_html = read_html(&pair.test)?;
     let ref_html = read_html(&pair.reference)?;
     let ref_html = mirror_default_page_margin(&test_html, &ref_html);
-    let test_doc = render_raikiri_pages(&test_html, config.width, config.height)?;
-    let ref_doc = render_raikiri_pages(&ref_html, config.width, config.height)?;
+    let test_doc = render_raikiri_pages_inner(
+        &test_html,
+        config.width,
+        config.height,
+        if resolve_images {
+            pair.test.parent()
+        } else {
+            None
+        },
+    )
+    .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
+    let ref_doc = render_raikiri_pages_inner(
+        &ref_html,
+        config.width,
+        config.height,
+        if resolve_images {
+            pair.reference.parent()
+        } else {
+            None
+        },
+    )
+    .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
     let (test_selection, reference_selection) =
         page_selections_for_pair(&test_html, &pair.reference);
     let diff = compare_documents_selected(
@@ -2176,6 +2302,68 @@ pub fn run_all_pairs(pairs: &[ReftestPair], config: ReftestConfig) -> Vec<Reftes
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resource_url_absolutization_handles_optional_and_invalid_bases() {
+        let html = r#"<img src="support/colors-16x8.png"><img src='support/other.png'>"#;
+        assert_eq!(absolutize_wpt_resource_urls(html, None), html);
+        assert_eq!(
+            absolutize_wpt_resource_urls(html, Some(Path::new("relative-base"))),
+            html
+        );
+        let temp = tempfile::tempdir().unwrap();
+        let absolute = absolutize_wpt_resource_urls(html, Some(temp.path()));
+        assert_ne!(absolute, html);
+        assert!(absolute.contains("support/colors-16x8.png"));
+    }
+
+    #[test]
+    fn render_raikiri_pages_compatibility_wrapper_returns_document() {
+        let rendered = render_raikiri_pages("<html><body>hello</body></html>", 32, 32)
+            .expect("compatibility wrapper should render");
+        assert_eq!(rendered.pages.len(), 1);
+        assert_eq!(rendered.pages[0].width, 32);
+        assert_eq!(rendered.pages[0].height, 32);
+    }
+
+    #[test]
+    fn run_pair_reports_html_read_errors() {
+        let pair = ReftestPair {
+            test: PathBuf::from("/definitely/missing/reftest.html"),
+            reference: PathBuf::from("/definitely/missing/reference.html"),
+            kind: ReftestKind::Match,
+        };
+        let result = run_pair(&pair, ReftestConfig::default());
+        assert!(matches!(result, Err(ReftestError::Io { .. })));
+    }
+
+    #[test]
+    fn image_resolution_reparses_geometry_varying_pages() {
+        let temp = tempfile::tempdir().unwrap();
+        let support = temp.path().join("support");
+        std::fs::create_dir(&support).unwrap();
+        let image_path = support.join("tiny.png");
+        let file = std::fs::File::create(image_path).unwrap();
+        let mut encoder = png::Encoder::new(file, 1, 1);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&[255, 0, 0, 255]).unwrap();
+        writer.finish().unwrap();
+
+        let html = r#"<style>
+            @page :first { size: 100px 100px; margin: 0 }
+            @page { size: 120px 120px; margin: 0 }
+            body { margin: 0 }
+        </style><div style="height:180px"><img src="support/tiny.png" style="display:block;width:1px;height:1px"></div>"#;
+        let rendered = render_raikiri_pages_inner(html, 120, 120, Some(temp.path()))
+            .expect("geometry-varying image document should render");
+        assert!(rendered.pages.len() >= 2);
+        assert_eq!(rendered.pages[0].width, 100);
+        let rendered_without_resolver = render_raikiri_pages_inner(html, 120, 120, None)
+            .expect("geometry-varying document without images should render");
+        assert!(rendered_without_resolver.pages.len() >= 2);
+    }
 
     #[test]
     fn reftest_kind_roundtrip() {

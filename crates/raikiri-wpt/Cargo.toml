@@ -22,6 +22,7 @@ raikiri-dom         = { workspace = true }
 raikiri-traits      = { workspace = true }
 raikiri-style       = { workspace = true }
 raikiri-paint       = { workspace = true }
+raikiri-net         = { workspace = true }
 time                = { workspace = true }
 png                 = { workspace = true }
 
