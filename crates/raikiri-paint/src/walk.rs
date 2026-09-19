@@ -3216,6 +3216,18 @@ fn paint_document_impl(
                             &paint_border_radius,
                         );
                     }
+                    // Outlines do not consume box-model space and are painted
+                    // outside the border edge (CSS Basic UI §4).
+                    paint_element_outline(
+                        scene,
+                        layout.size.width,
+                        paint_height,
+                        paint_x,
+                        paint_y,
+                        &cv.outline,
+                        cv.outline_offset,
+                        cv.color,
+                    );
                     // Draw the decoded pixels of an `<img>` element, when a
                     // resolver is supplied and it already has decoded pixels
                     // for this element's `src` (CSS Images 3 §4.3, `object-fit:
@@ -4146,6 +4158,71 @@ fn paint_element_border_rounded(
             scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &rect);
         }
     }
+}
+
+/// Paint a basic solid element outline without changing layout geometry.
+///
+/// The first visual tranche intentionally handles square block outlines only.
+/// Inset/negative-offset edge cases, non-solid styles, and rounded outlines
+/// remain outside this focused slice.
+#[allow(clippy::too_many_arguments)]
+fn paint_element_outline(
+    scene: &mut impl PaintScene,
+    width: f32,
+    height: f32,
+    abs_x: f32,
+    abs_y: f32,
+    outline: &raikiri_style::ComputedOutline,
+    outline_offset: ComputedLength,
+    current_color: CssColor,
+) {
+    let outline_width = outline.width().px();
+    let offset = outline_offset.px();
+    if width <= 0.0
+        || height <= 0.0
+        || outline_width <= 0.0
+        || !outline_width.is_finite()
+        || !offset.is_finite()
+        || !matches!(outline.style(), OutlineStyle::Solid)
+    {
+        return;
+    }
+    let outset = outline_width + offset;
+    let outer_width = width + 2.0 * outset;
+    let outer_height = height + 2.0 * outset;
+    if outer_width <= 0.0 || outer_height <= 0.0 {
+        return; // cov:ignore: collapsed negative-offset outlines are deferred
+    }
+    let color = match outline.color {
+        OutlineColor::Resolved(color) => BorderColor::Resolved(color),
+        OutlineColor::CurrentColor | OutlineColor::Invert => BorderColor::Resolved(current_color),
+        _ => BorderColor::Resolved(current_color), // cov:ignore: defensive fallback for future OutlineColor variants
+    };
+    let mut border = Border::new();
+    border.width = Length::Px(outline_width);
+    border.style = BorderStyle::Solid;
+    border.color = color;
+    let border = resolve_border(
+        border,
+        ComputedLength(16.0),
+        None,
+        &ResolveContext::initial(),
+    );
+    let borders = Sides {
+        top: border,
+        right: border,
+        bottom: border,
+        left: border,
+    };
+    paint_element_border(
+        scene,
+        outer_width,
+        outer_height,
+        abs_x - outset,
+        abs_y - outset,
+        &borders,
+        current_color,
+    );
 }
 
 fn paint_element_border(
