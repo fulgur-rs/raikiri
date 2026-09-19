@@ -144,13 +144,15 @@ fn run() -> Result<(), String> {
         write_manifest_entry(
             &mut manifest,
             &candidate,
-            &html_rel,
-            &screenshot_rel,
-            &wpt_sha,
-            args.width,
-            args.height,
-            status,
-            error.as_deref(),
+            &ManifestEntry {
+                html_path: &html_rel,
+                screenshot_path: &screenshot_rel,
+                wpt_sha: &wpt_sha,
+                width: args.width,
+                height: args.height,
+                status,
+                error: error.as_deref(),
+            },
         );
         if status == "pending" {
             let _ = writeln!(
@@ -275,10 +277,10 @@ fn discover_candidates(
             continue;
         }
         let test_id = path_to_string(&path);
-        if let Some(prefix) = path_prefix {
-            if !matches_path_prefix(&test_id, prefix) {
-                continue;
-            }
+        if let Some(prefix) = path_prefix
+            && !matches_path_prefix(&test_id, prefix)
+        {
+            continue;
         }
         if !include_parsing && has_path_component(&test_id, "parsing") {
             continue;
@@ -437,19 +439,19 @@ fn git_head(wpt_root: &Path) -> Option<String> {
     (!sha.is_empty()).then_some(sha)
 }
 
-fn write_manifest_entry(
-    output: &mut String,
-    candidate: &Candidate,
-    html_path: &Path,
-    screenshot_path: &Path,
-    wpt_sha: &str,
+struct ManifestEntry<'a> {
+    html_path: &'a Path,
+    screenshot_path: &'a Path,
+    wpt_sha: &'a str,
     width: u32,
     height: u32,
-    status: &str,
-    error: Option<&str>,
-) {
-    let html_path = path_to_string(html_path);
-    let screenshot_path = path_to_string(screenshot_path);
+    status: &'a str,
+    error: Option<&'a str>,
+}
+
+fn write_manifest_entry(output: &mut String, candidate: &Candidate, entry: &ManifestEntry<'_>) {
+    let html_path = path_to_string(entry.html_path);
+    let screenshot_path = path_to_string(entry.screenshot_path);
     let _ = write!(
         output,
         "{{\"schema\":1,\"test_id\":{},\"html\":{},\"screenshot\":{},\"assert\":{},\"wpt_sha\":{},\"viewport\":{{\"width\":{},\"height\":{}}},\"renderer\":\"raikiri\",\"font_source\":\"wpt-root/fonts\",\"status\":{}",
@@ -457,12 +459,12 @@ fn write_manifest_entry(
         json_string(&html_path),
         json_string(&screenshot_path),
         json_string(&candidate.assert_text),
-        json_string(wpt_sha),
-        width,
-        height,
-        json_string(status),
+        json_string(entry.wpt_sha),
+        entry.width,
+        entry.height,
+        json_string(entry.status),
     );
-    if let Some(error) = error {
+    if let Some(error) = entry.error {
         let _ = write!(output, ",\"error\":{}", json_string(error));
     }
     output.push_str("}\n");
