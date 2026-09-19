@@ -1892,7 +1892,8 @@ pub fn resolve_border_spacing(
 /// 自 node 基準)。
 ///
 /// CSS 2.1 §10.8.1 propdef: "Computed value: for `<percentage>` and
-/// `<length>` the absolute length, otherwise as specified" — 6 keyword は
+/// `<length>` the absolute length, otherwise as specified" — bare keywords are
+/// passed through unchanged.
 /// computed 層でもそのまま keyword、`<length>` / `<percentage>` が絶対化対象。
 ///
 /// `<percentage>` は要素自身の used line-height に対する比率として解決する
@@ -1933,7 +1934,9 @@ pub fn resolve_vertical_align(
         | VerticalAlign::Super
         | VerticalAlign::Middle
         | VerticalAlign::TextTop
-        | VerticalAlign::TextBottom => specified,
+        | VerticalAlign::TextBottom
+        | VerticalAlign::Top
+        | VerticalAlign::Bottom => specified,
         VerticalAlign::Length(Length::Percent(p)) => {
             let px = own_line_height.map(|b| b.0 * p / 100.0).unwrap_or(0.0);
             VerticalAlign::Length(Length::Px(px))
@@ -4224,7 +4227,7 @@ mod tests {
         );
     }
 
-    /// [`resolve_vertical_align`]'s 6 bare-keyword variants are pass-through
+    /// [`resolve_vertical_align`]'s bare-keyword variants are pass-through
     /// — no length payload, nothing for phase 3 to absolutize (same shape
     /// as [`resolve_flex_basis`]'s `Content` arm above).
     #[test]
@@ -4236,6 +4239,8 @@ mod tests {
             VerticalAlign::Middle,
             VerticalAlign::TextTop,
             VerticalAlign::TextBottom,
+            VerticalAlign::Top,
+            VerticalAlign::Bottom,
         ] {
             assert_eq!(
                 resolve_vertical_align(va, ComputedLength(20.0), None, &CTX),

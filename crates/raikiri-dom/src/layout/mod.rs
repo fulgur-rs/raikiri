@@ -24,7 +24,7 @@ use raikiri_style::property::{
     FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle as StyleFontStyle, GridAutoFlowValue,
     GridLineValue, GridRepeatCount, GridTemplateAreasValue, Hyphens, Length, LengthOrAuto,
     OverflowValue, OverflowWrap, PositionValue, PropertyKey, PropertyValue, SelfAlignmentValue,
-    TextAlign, TextJustify, TextTransform, TextWrapMode, WhiteSpace, WordBreak,
+    TextAlign, TextJustify, TextTransform, TextWrapMode, VerticalAlign, WhiteSpace, WordBreak,
 };
 use raikiri_style::{
     CascadeResult, ChLengthProvenance, ComputedFlexBasis, ComputedGridTemplateTracks,
@@ -34,8 +34,8 @@ use raikiri_style::{
 };
 use raikiri_traits::{LayoutError, PageBox, ReplacedResolver};
 use taffy::{
-    AlignContent as TaffyAlignContent, AlignItems as TaffyAlignItems, AvailableSpace,
-    BoxSizing as TaffyBoxSizing, Clear as TaffyClear, CompactLength, Dimension,
+    AlignContent as TaffyAlignContent, AlignItems as TaffyAlignItems, AlignSelf as TaffyAlignSelf,
+    AvailableSpace, BoxSizing as TaffyBoxSizing, Clear as TaffyClear, CompactLength, Dimension,
     Direction as TaffyDirection, Display, FlexDirection as TaffyFlexDirection,
     FlexWrap as TaffyFlexWrap, Float as TaffyFloat, GridAutoFlow as TaffyGridAutoFlow,
     GridPlacement, GridTemplateArea as TaffyGridTemplateArea, GridTemplateComponent,
@@ -2722,7 +2722,19 @@ fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
         }
         for c in participating_children {
             let is_break = is_forced_line_break(doc, c, cascade);
+            let strip_inline_padding = cascade.computed[c].display == DisplayValue::Inline
+                && has_line_box_edge_aligned_descendant(doc, c, cascade);
             let child_style = &mut doc.nodes[c].style;
+            if strip_inline_padding {
+                // An inline wrapper's block-axis padding contributes to the
+                // line box, but the current taffy bridge has no inline
+                // baseline/strut model to move its descendants back against
+                // the line edge.  For the narrow top/bottom slice, remove
+                // that padding from the wrapper's block layout so its text
+                // and aligned subtree retain the line-box position.
+                child_style.padding.top = LengthPercentage::length(0.0);
+                child_style.padding.bottom = LengthPercentage::length(0.0);
+            }
             child_style.flex_grow = 0.0;
             child_style.flex_shrink = 0.0;
             child_style.flex_basis = if is_break {
@@ -2730,7 +2742,10 @@ fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
             } else {
                 Dimension::auto()
             };
-            child_style.align_self = None;
+            child_style.align_self = match cascade.computed[c].vertical_align {
+                VerticalAlign::Bottom => Some(TaffyAlignSelf::FLEX_END),
+                _ => None,
+            };
         }
     }
 }
@@ -2748,6 +2763,33 @@ fn is_forced_line_break(doc: &Document, idx: usize, cascade: &CascadeResult) -> 
     doc.nodes[idx].kind() == NodeKind::Element
         && doc.nodes[idx].tag_name() == Some("br")
         && cascade.computed[idx].display != DisplayValue::None
+}
+
+/// Return whether an inline wrapper contains a descendant whose aligned
+/// subtree is explicitly pinned to a line-box edge.
+///
+/// The minimal bridge keeps nested inline wrappers on taffy's block path.  A
+/// wrapper with `padding-top`/`padding-bottom` would therefore move both its
+/// text and the aligned descendant, unlike the CSS line-box model.  The
+/// caller uses this predicate only for the focused `top`/`bottom` slice.
+fn has_line_box_edge_aligned_descendant(
+    doc: &Document,
+    idx: usize,
+    cascade: &CascadeResult,
+) -> bool {
+    let mut stack = doc.nodes[idx].children.clone();
+    while let Some(child) = stack.pop() {
+        if doc.nodes[child].kind() == NodeKind::Element {
+            if matches!(
+                cascade.computed[child].vertical_align,
+                VerticalAlign::Top | VerticalAlign::Bottom
+            ) {
+                return true;
+            }
+            stack.extend(doc.nodes[child].children.iter().copied());
+        }
+    }
+    false
 }
 
 /// `idx` (ある [`NodeKind::Element`]) が
@@ -8550,6 +8592,71 @@ mod tests {
             "second child must not sit at x=0 — that would mean it's \
              still being independently stacked below the first child \
              rather than placed beside it"
+        );
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_honors_vertical_align_top_and_bottom() {
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+        let top = doc.append_element(
+            Some(p),
+            "span",
+            Style::default(),
+            Some("display:inline-block; width:10px; height:30px; vertical-align:top"),
+        );
+        let bottom = doc.append_element(
+            Some(p),
+            "span",
+            Style::default(),
+            Some("display:inline-block; width:10px; height:10px; vertical-align:bottom"),
+        );
+        let wrapper = doc.append_element(
+            Some(p),
+            "span",
+            Style::default(),
+            Some("display:inline; padding-top:20px"),
+        );
+        let _wrapper_text = doc.append_text(wrapper, "A");
+        let intermediary = doc.append_element(
+            Some(wrapper),
+            "span",
+            Style::default(),
+            Some("display:inline"),
+        );
+        let _nested_top = doc.append_element(
+            Some(intermediary),
+            "span",
+            Style::default(),
+            Some("display:inline-block; width:10px; height:30px; vertical-align:top"),
+        );
+        let plain_wrapper =
+            doc.append_element(Some(p), "span", Style::default(), Some("display:inline"));
+        let _plain_text = doc.append_text(plain_wrapper, "B");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let parent_y = doc.nodes[p].unrounded_layout.location.y;
+        let parent_bottom = parent_y + doc.nodes[p].unrounded_layout.size.height;
+        let top_layout = doc.nodes[top].unrounded_layout;
+        let bottom_layout = doc.nodes[bottom].unrounded_layout;
+        assert!((top_layout.location.y - parent_y).abs() < 1e-3);
+        assert!(
+            (bottom_layout.location.y + bottom_layout.size.height - parent_bottom).abs() < 1e-3
+        );
+        assert!((top_layout.size.height - 30.0).abs() < 1e-3);
+        assert!((bottom_layout.size.height - 10.0).abs() < 1e-3);
+        assert_eq!(
+            doc.nodes[wrapper].style.padding.top,
+            LengthPercentage::length(0.0)
         );
     }
 

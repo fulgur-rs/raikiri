@@ -3875,7 +3875,9 @@ pub enum PageValue {
 ///
 /// # Scope carving
 ///
-/// - **実装済み**: `baseline` (spec initial value) / `sub` / `super` の 3
+/// - **実装済み**: `baseline` / `sub` / `super` / `top` / `bottom` の
+///   keyword と、minimal line-box scope の edge placement。
+///   `baseline` (spec initial value) / `sub` / `super` の 3
 ///   keyword。いずれも percentage / length を運ばないため、computed value =
 ///   specified keyword そのまま (相対解決なし)。raikiri-paint がこの 3
 ///   keyword を実際の glyph 描画位置へ反映する (下記「baseline shift 量の
@@ -3891,8 +3893,8 @@ pub enum PageValue {
 ///
 ///   いずれも `sub`/`super` と同じ基準 — **親の font metric だけ**
 ///   (baseline / x-height / content area の top・bottom) で定まり、line
-///   box 内の他 box の extent を必要としない。`top`/`bottom` (下記
-///   「非対応、silent drop 継続」節) との違いはまさにここ。percentage /
+///   box 内の他 box の extent を必要としない。`top`/`bottom` は下記の
+///   minimal line-box scope で別途扱う。percentage /
 ///   length を運ばないため computed value = specified keyword そのまま。
 /// - **実装済み**: `<length>` value (§10.8.1 spec verbatim: "Raise
 ///   (positive value) or lower (negative value) the box by this
@@ -3910,50 +3912,14 @@ pub enum PageValue {
 ///   でも型を分けない理由」節参照。`@page` 側の phase-3 pipeline
 ///   ([`crate::page`] の `absolutize_in_page_context` /
 ///   `specified_layer_residue`) もこの variant 専用の match arm を持つ。
-/// - **(b) 非対応、silent drop 継続**: `top` / `bottom` keyword は
-///   spec-valid だが未実装 (§10.8.1 spec verbatim: `top` = "Align the top
-///   of the aligned subtree with the top of the line box."、`bottom` =
-///   "Align the bottom of the aligned subtree with the bottom of the
-///   line box.")。line box 内の **他 box すべての extent** を要する、真の
-///   inline formatting context / line box model 依存の値であり、
-///   `middle`/`text-top`/`text-bottom` の「親の font metric だけで定まる」
-///   性質とは計算可能性の質が異なる。qualify する block / inline-block
-///   container に対しては `crates/raikiri-dom/src/layout.rs` の
-///   `establish_minimal_line_boxes` が既に line box を近似しており
-///   (inline-level な children はもはや他の block 要素と同じ独立した行
-///   として積み上がらず、side-by-side に並ぶ)。この近似はなお
-///   `top`/`bottom` が要求する量を提供しない。第一に、taffy の leaf
-///   layout は baseline / ascent / descent を一切 report しない
-///   (`establish_minimal_line_boxes` doc の「実現方法」節参照) ため、
-///   参加する各 child は real font metric に基づく baseline からの
-///   extent を持たず、line box 自身の top/bottom という量が
-///   layout・raikiri-paint のどちらの側にも計算対象として存在しない。
-///   第二に、CSS 2.1 §10.8.1 の
-///   <https://www.w3.org/TR/CSS21/visudet.html#strut> が定める strut
-///   (各 line box 先頭に置かれる、その line box を確立した要素の
-///   font/line-height を持つ幅 0 の仮想 inline box。空行にも
-///   line-height 分の高さを与える) を `establish_minimal_line_boxes` は
-///   合成しない (同関数 doc の「Non-goals」節参照) — strut はまさに
-///   line box の top/bottom を well-defined にする要素であり、これが
-///   無い以上 line box の縦方向の境界自体が spec 通りには定まらない。
-///   第三に、nested な inline element は ancestor の line box へ
-///   flatten されず各自が自分の pass の対象になる (同関数 doc の
-///   「Non-goals」節参照) ため、`top`/`bottom` の対象である「aligned
-///   subtree」— nested inline を跨いで再帰的に定まる — に相当する構造も
-///   まだ存在しない。上記 3 点をすべて埋めても、spec 自体が一般には
-///   一意に解けないと認めている境界ケースが残る: CSS 2.1 §10.8 "Line
-///   height calculations: the 'line-height' and 'vertical-align'
-///   properties" <https://www.w3.org/TR/CSS21/visudet.html#line-height>
-///   の line box height 算出手順 (numbered list) 第 2 項は、`top`/
-///   `bottom` に揃える box が "tall enough" な場合 line box height を
-///   最小化する解が複数存在し、"CSS 2.1 does not define the position
-///   of the line box's baseline" と明言する (spec verbatim)。つまり
-///   `top`/`bottom` の完全な実装は、上記 3 点の integration logic を超えて、
-///   この未定義ケースをどう扱うかという設計判断も要する。
-///   `middle`/`text-top`/`text-bottom` に適用した
-///   「parse を通し、raikiri-paint 側の実装待ちは 0px shift の暫定値で
-///   吸収する」形の緩和 (下記「cascade-regression risk の受け入れ」節)
-///   では済まない、質的に大きい別 work として引き続き未実装のまま残す。
+/// - **実装済み (minimal line-box scope)**: `top` / `bottom` keyword は
+///   CSS 2.1 §10.8.1 の line-box edge alignment として parse/cascade される。
+///   `establish_minimal_line_boxes` の taffy bridge は direct
+///   inline-level child の `bottom` を `flex-end` へ写像し、nested inline
+///   wrapper の block-axis padding が edge-aligned subtree をずらさないよう
+///   その padding をこの narrow slice では除外する。これは full baseline/
+///   strut/nested-inline flattening の実装ではなく、単一 minimal line box の
+///   focused behavior である。
 /// - **実装済み**: `<percentage>` value (§10.8.1 propdef
 ///   "Percentages: refer to the 'line-height' of the element itself")。
 ///   要素自身の used `line-height` に対する比率として絶対化する
@@ -4016,7 +3982,7 @@ pub enum PageValue {
 /// 扱う設計だったため、この 3 keyword が増えても新種の failure mode は
 /// 生じない — 追加される regression risk の形は `sub`/`super` が既に
 /// 許容しているものと同型であり、対象 keyword が増えるだけである。
-/// `top`/`bottom` は引き続き対象外 (上記「非対応、silent drop 継続」節)。
+/// `top`/`bottom` は style 層では受理し、minimal line-box layout へ渡す。
 /// `<percentage>` は上記「実装済み: `<percentage>`」節の
 /// `line-height: normal` fallback を伴い実装済み — `top`/`bottom` とは異なり
 /// raikiri-style 内部で完結して絶対化できるため、cascade-regression risk
@@ -4054,6 +4020,14 @@ pub enum VerticalAlign {
     /// `text-bottom` — "Align the bottom of the box with the bottom of
     /// the parent's content area." (§10.8.1 spec verbatim)。
     TextBottom,
+    /// `top` — align the top of the aligned subtree with the top of the line box
+    /// (CSS 2.1 §10.8.1). Layout consumes this keyword in the minimal line-box
+    /// bridge; the style layer carries it unchanged.
+    Top,
+    /// `bottom` — align the bottom of the aligned subtree with the bottom of the
+    /// line box (CSS 2.1 §10.8.1). Layout consumes this keyword in the minimal
+    /// line-box bridge; the style layer carries it unchanged.
+    Bottom,
     /// `<length>` / `<percentage>` — "Raise (positive value) or lower
     /// (negative value) the box by this distance. The value `0cm` means the
     /// same as `baseline`." (§10.8.1 spec verbatim、`<percentage>` は同 propdef
@@ -17246,6 +17220,8 @@ fn parse_vertical_align(input: &mut Parser<'_, '_>) -> Option<VerticalAlign> {
             "middle" => Some(VerticalAlign::Middle),
             "text-top" => Some(VerticalAlign::TextTop),
             "text-bottom" => Some(VerticalAlign::TextBottom),
+            "top" => Some(VerticalAlign::Top),
+            "bottom" => Some(VerticalAlign::Bottom),
             _ => None,
         };
     }
@@ -27472,6 +27448,14 @@ mod tests {
             parse("text-bottom", "vertical-align"),
             Some(PropertyValue::VerticalAlign(VerticalAlign::TextBottom))
         );
+        assert_eq!(
+            parse("top", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::Top))
+        );
+        assert_eq!(
+            parse("bottom", "vertical-align"),
+            Some(PropertyValue::VerticalAlign(VerticalAlign::Bottom))
+        );
     }
 
     #[test]
@@ -27532,11 +27516,8 @@ mod tests {
     }
 
     #[test]
-    fn vertical_align_rejects_unimplemented_keywords() {
-        // (b) not supported — `top` / `bottom` are explicit follow-up
-        // (`VerticalAlign` doc's "Scope carving" section: true inline
-        // formatting context dependency), not (a) spec-invalid.
-        for kw in ["top", "bottom"] {
+    fn vertical_align_rejects_unknown_keywords() {
+        for kw in ["sideways", "unknown"] {
             assert_eq!(parse(kw, "vertical-align"), None);
         }
     }
@@ -27589,6 +27570,8 @@ mod tests {
             VerticalAlign::Middle,
             VerticalAlign::TextTop,
             VerticalAlign::TextBottom,
+            VerticalAlign::Top,
+            VerticalAlign::Bottom,
             VerticalAlign::Length(Length::Px(3.0)),
         ] {
             assert_eq!(

@@ -16410,24 +16410,16 @@ mod tests {
     }
 
     #[test]
-    fn vertical_align_scope_cut_top_is_dropped_and_prior_wins() {
-        // CSS 2.1 §10.8.1 `vertical-align: top` / `bottom` are spec-valid but
-        // unimplemented (`VerticalAlign` doc's Scope carving: needs inline
-        // formatting context extent). Same mechanism.
+    fn vertical_align_top_and_bottom_cascade_as_computed_values() {
         use crate::property::VerticalAlign;
         let cv = cascade_doc(
             "",
             "span",
             Some("vertical-align: baseline; vertical-align: top"),
         );
-        // cov:ignore: assertion text is only evaluated when this test fails
-        assert_eq!(
-            cv.vertical_align,
-            VerticalAlign::Baseline,
-            "scope-limited `vertical-align: top` is dropped, prior `baseline` must remain winner"
-        );
-        let cv = cascade_doc("", "span", Some("vertical-align: top"));
-        assert_eq!(cv.vertical_align, VerticalAlign::Baseline);
+        assert_eq!(cv.vertical_align, VerticalAlign::Top);
+        let cv = cascade_doc("", "span", Some("vertical-align: bottom"));
+        assert_eq!(cv.vertical_align, VerticalAlign::Bottom);
     }
 
     #[test]
