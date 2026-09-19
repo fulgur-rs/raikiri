@@ -468,6 +468,44 @@ mod tests {
     }
 
     #[test]
+    fn paint_single_page_opacity_wraps_element_subtree_in_one_layer() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let _box = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("width: 60px; height: 60px; background: red; opacity: 0.5"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+
+        let layers: Vec<_> = scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::PushLayer(layer) => Some(layer),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(layers.len(), 1);
+        assert!((layers[0].alpha - 0.5).abs() < f32::EPSILON);
+        assert!(
+            scene
+                .commands
+                .iter()
+                .filter(|command| matches!(command, RenderCommand::PopLayer))
+                .count()
+                >= 1
+        );
+    }
+
+    #[test]
     fn paint_single_page_compiles_and_returns_unit() {
         let doc = Document::new();
         let rules = build_rule_tree(&doc);

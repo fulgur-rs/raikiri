@@ -74,3 +74,6 @@ css/CSS2/linebox/vertical-align-top-bottom-padding-ref.html
 # CSS generated-content foundation: literal ::before/::after strings.
 css/CSS2/generated-content/before-after-002.xht
 css/CSS2/generated-content/content-003-ref.html
+# CSS Color offscreen opacity group-compositing reftest pair.
+css/css-color/t32-opacity-offscreen-b.xht
+css/css-color/t32-opacity-offscreen-b-ref.html
