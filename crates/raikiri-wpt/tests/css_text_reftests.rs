@@ -151,3 +151,29 @@ fn assert_exact_passes(root: &std::path::Path, candidates: &[&str]) {
         );
     }
 }
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn shaping_unpinned_exact_passes() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let candidates = [
+        "css/css-text/shaping/shaping-001.html",
+        "css/css-text/shaping/shaping-002.html",
+        "css/css-text/shaping/shaping-003.html",
+        "css/css-text/shaping/shaping-008.html",
+        "css/css-text/shaping/shaping-009.html",
+        "css/css-text/shaping/shaping-010.html",
+        "css/css-text/shaping/shaping-011.html",
+        "css/css-text/shaping/shaping-014.html",
+        "css/css-text/shaping/shaping-016.html",
+        "css/css-text/shaping/shaping-017.html",
+        "css/css-text/shaping/shaping-018.html",
+        "css/css-text/shaping/shaping-020.html",
+        "css/css-text/shaping/shaping-021.html",
+        "css/css-text/shaping/shaping-022.html",
+        "css/css-text/shaping/shaping-023.html",
+        "css/css-text/shaping/shaping-024.html",
+        "css/css-text/shaping/shaping-025.html",
+        "css/css-text/shaping/shaping-arabic-diacritics-001.html",
+    ];
+    assert_exact_passes(&root, &candidates);
+}

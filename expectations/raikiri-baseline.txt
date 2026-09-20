@@ -1310,3 +1310,22 @@ css/css-text/hanging-punctuation/hanging-punctuation-last-ascii-quote.html
 css/css-text/hanging-punctuation/hanging-punctuation-last-whitespace.html
 css/css-text/hanging-punctuation/hanging-punctuation-last.html
 css/css-text/hanging-punctuation/hanging-punctuation-with-bidi.html
+# --- CSS Text shaping exact 800x600 PASS-only pins 2026-09-21 ---
+css/css-text/shaping/shaping-001.html
+css/css-text/shaping/shaping-002.html
+css/css-text/shaping/shaping-003.html
+css/css-text/shaping/shaping-008.html
+css/css-text/shaping/shaping-009.html
+css/css-text/shaping/shaping-010.html
+css/css-text/shaping/shaping-011.html
+css/css-text/shaping/shaping-014.html
+css/css-text/shaping/shaping-016.html
+css/css-text/shaping/shaping-017.html
+css/css-text/shaping/shaping-018.html
+css/css-text/shaping/shaping-020.html
+css/css-text/shaping/shaping-021.html
+css/css-text/shaping/shaping-022.html
+css/css-text/shaping/shaping-023.html
+css/css-text/shaping/shaping-024.html
+css/css-text/shaping/shaping-025.html
+css/css-text/shaping/shaping-arabic-diacritics-001.html
