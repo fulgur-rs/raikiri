@@ -3941,7 +3941,7 @@ fn parse_text_indent(input: &mut Parser<'_, '_>) -> Option<TextIndentValue> {
 /// `expect_ident_matching` は ASCII case-insensitive (cssparser 慣行、既存
 /// `counter_reset_is_case_insensitive_on_none` test が挙動を pin) なので
 /// `AUTO` / `Auto` も透過的に受理される。
-fn parse_margin_side(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
+pub(crate) fn parse_margin_side(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
@@ -4181,7 +4181,7 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 /// 内の 2, 3 行の並べ替えで足りる (`parent` は本関数の呼び出しに入る前に
 /// tree walk で既に確定済みのため、cross-node な phase 順序の変更は不要 —
 /// [`mod@crate::resolve`] module doc の「想定される 4 段階」節参照)。
-fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+pub(crate) fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
     if let Ok(ident) = input.try_parse(|i| i.expect_ident().cloned()) {
         return parse_font_size_keyword(&ident);
     }
@@ -5113,7 +5113,7 @@ fn parse_tab_size(input: &mut Parser<'_, '_>) -> Option<TabSize> {
 ///   silent drop
 /// - **(a) spec-invalid → drop**: `<percentage>`、`auto` 等 spec-invalid
 ///   keyword は spec grammar 違反、drop
-fn parse_letter_or_word_spacing(input: &mut Parser<'_, '_>) -> Option<LengthOrNormal> {
+pub(crate) fn parse_letter_or_word_spacing(input: &mut Parser<'_, '_>) -> Option<LengthOrNormal> {
     // 1. `normal` keyword — spec initial value、"Computes to zero"。
     if input
         .try_parse(|i| i.expect_ident_matching("normal"))
@@ -5177,7 +5177,7 @@ fn parse_flex_wrap(input: &mut Parser<'_, '_>) -> Option<FlexWrapValue> {
 /// huge-exponent literal (`flex-grow: 0e999`) 由来の `NaN` を acquisition
 /// 時点で既に訂正するため、通常の parse ではこの check が `NaN` を実際に
 /// 弾く場面はもう無い — `+Inf` に対する必須の check という位置づけ。
-fn parse_nonneg_finite_number(input: &mut Parser<'_, '_>) -> Option<f32> {
+pub(crate) fn parse_nonneg_finite_number(input: &mut Parser<'_, '_>) -> Option<f32> {
     let n = expect_number_stable(input).ok()?;
     (n.is_finite() && n >= 0.0).then_some(n)
 }
@@ -5202,7 +5202,7 @@ fn parse_nonneg_finite_number_res<'i>(
 /// [`parse_width`] と同じ 3-branch shape (`auto` → `content` →
 /// `<length-percentage [0,∞]>`) に `content` branch を追加したもの —
 /// [`FlexBasisValue`] doc 参照。
-fn parse_flex_basis(input: &mut Parser<'_, '_>) -> Option<FlexBasisValue> {
+pub(crate) fn parse_flex_basis(input: &mut Parser<'_, '_>) -> Option<FlexBasisValue> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(FlexBasisValue::Auto);
     }
@@ -5283,7 +5283,7 @@ fn parse_flex_basis_res<'i>(
 /// 5 個目以降の leftover token は本関数では consume せず、[`parse_padding_shorthand`]
 /// 等と同じく caller (`rule.rs::DeclParser`) の `expect_exhausted` が
 /// declaration ごと drop する。
-fn parse_flex_shorthand(input: &mut Parser<'_, '_>) -> Option<FlexShorthand> {
+pub(crate) fn parse_flex_shorthand(input: &mut Parser<'_, '_>) -> Option<FlexShorthand> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(FlexShorthand {
             grow: 0.0,
@@ -5371,7 +5371,7 @@ fn parse_flex_wrap_res<'i>(
 /// leftover token は本関数では consume せず、caller
 /// (`rule.rs::DeclParser`) の `expect_exhausted` が declaration ごと drop
 /// する ([`parse_flex_shorthand`] と同じ contract)。
-fn parse_flex_flow(input: &mut Parser<'_, '_>) -> Option<FlexFlow> {
+pub(crate) fn parse_flex_flow(input: &mut Parser<'_, '_>) -> Option<FlexFlow> {
     let mut direction: Option<FlexDirectionValue> = None;
     let mut wrap: Option<FlexWrapValue> = None;
     for _ in 0..2 {
@@ -5547,7 +5547,7 @@ fn parse_align_self_res<'i>(
 /// (`allow_percentage = true`、letter-spacing/word-spacing は "Percentages:
 /// N/A" だが gap は `<length-percentage>`)。non-negative constraint は
 /// [`parse_padding_side`] と同 pattern。
-fn parse_gap_value(input: &mut Parser<'_, '_>) -> Option<LengthOrNormal> {
+pub(crate) fn parse_gap_value(input: &mut Parser<'_, '_>) -> Option<LengthOrNormal> {
     if input
         .try_parse(|i| i.expect_ident_matching("normal"))
         .is_ok()
@@ -5570,7 +5570,7 @@ fn parse_gap_value_res<'i>(
 /// Alignment Module Level 3 §8.2
 /// <https://www.w3.org/TR/css-align-3/#propdef-gap>)。第 2 成分省略時は
 /// spec 本文通り第 1 成分をそのまま copy する ([`GapShorthand`] doc 参照)。
-fn parse_gap_shorthand(input: &mut Parser<'_, '_>) -> Option<GapShorthand> {
+pub(crate) fn parse_gap_shorthand(input: &mut Parser<'_, '_>) -> Option<GapShorthand> {
     let row = parse_gap_value(input)?;
     let column = input.try_parse(parse_gap_value_res).unwrap_or(row);
     Some(GapShorthand { row, column })
@@ -5583,7 +5583,9 @@ fn parse_gap_shorthand(input: &mut Parser<'_, '_>) -> Option<GapShorthand> {
 /// ([`PlaceContentShorthand`] doc 参照 — `<baseline-position>` 例外分岐は
 /// [`ContentAlignmentValue`] が同 variant を持たないため本 crate では
 /// 到達不能)。
-fn parse_place_content_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceContentShorthand> {
+pub(crate) fn parse_place_content_shorthand(
+    input: &mut Parser<'_, '_>,
+) -> Option<PlaceContentShorthand> {
     let align = parse_content_alignment(input)?;
     let justify = input
         .try_parse(parse_content_alignment_res)
@@ -5606,7 +5608,7 @@ fn parse_place_content_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceCont
 /// excludes the keywords span and auto." — §7.2.2 自身がこの除外を明示的に
 /// `<line-names>` production に適用すると述べている ([`is_reserved_counter_name`]
 /// が base list に `none` を足す precedent と同じ pattern)。
-fn is_reserved_grid_line_name(ident: &str) -> bool {
+pub(crate) fn is_reserved_grid_line_name(ident: &str) -> bool {
     is_reserved_custom_ident(ident)
         || matches!(ident.to_ascii_lowercase().as_str(), "span" | "auto")
 }
@@ -5822,7 +5824,7 @@ fn grid_inflexible_breadth_is_fixed(b: &GridInflexibleBreadth) -> bool {
 /// (spec 上両方が fixed である必要はない — `minmax(100px, 1fr)` は valid
 /// `<fixed-size>`)。`fit-content()` は `<fixed-size>` の grammar に
 /// alternative が無いため常に `false`。
-fn grid_track_size_is_fixed(t: &GridTrackSize) -> bool {
+pub(crate) fn grid_track_size_is_fixed(t: &GridTrackSize) -> bool {
     match t {
         GridTrackSize::Breadth(b) => grid_track_breadth_is_fixed(b),
         GridTrackSize::MinMax(min, max) => {
@@ -5886,7 +5888,7 @@ fn parse_grid_repeat_res<'i>(
 
 /// [`parse_grid_repeat_res`] の `Option` 版 —
 /// [`parse_grid_track_list`] の alternation 用。
-fn parse_grid_repeat(input: &mut Parser<'_, '_>) -> Option<GridTrackRepeat> {
+pub(crate) fn parse_grid_repeat(input: &mut Parser<'_, '_>) -> Option<GridTrackRepeat> {
     input.try_parse(parse_grid_repeat_res).ok()
 }
 
@@ -5982,7 +5984,7 @@ fn parse_grid_shorthand(input: &mut Parser<'_, '_>) -> Option<GridShorthand> {
     Some(GridShorthand { rows, columns })
 }
 
-fn parse_grid_template_tracks(input: &mut Parser<'_, '_>) -> Option<GridTemplateTracks> {
+pub(crate) fn parse_grid_template_tracks(input: &mut Parser<'_, '_>) -> Option<GridTemplateTracks> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(GridTemplateTracks::None);
     }
@@ -6140,7 +6142,7 @@ pub(crate) fn parse_grid_line(input: &mut Parser<'_, '_>) -> Option<GridLineValu
 
 /// `grid-row` / `grid-column`: `<grid-line> [ / <grid-line> ]?` shorthand を
 /// parse する ([`GridLineShorthand`] doc 参照)。
-fn parse_grid_line_shorthand(input: &mut Parser<'_, '_>) -> Option<GridLineShorthand> {
+pub(crate) fn parse_grid_line_shorthand(input: &mut Parser<'_, '_>) -> Option<GridLineShorthand> {
     let start = parse_grid_line(input)?;
     if input.try_parse(|i| i.expect_delim('/')).is_ok() {
         let end = parse_grid_line(input)?;
@@ -6282,7 +6284,9 @@ fn build_grid_template_areas(
 /// Module Level 1 §7.3
 /// <https://www.w3.org/TR/css-grid-1/#grid-template-areas-property>、
 /// [`GridTemplateAreasValue`] doc 参照)。
-fn parse_grid_template_areas(input: &mut Parser<'_, '_>) -> Option<GridTemplateAreasValue> {
+pub(crate) fn parse_grid_template_areas(
+    input: &mut Parser<'_, '_>,
+) -> Option<GridTemplateAreasValue> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(GridTemplateAreasValue::None);
     }
@@ -6305,7 +6309,9 @@ fn parse_grid_template_areas(input: &mut Parser<'_, '_>) -> Option<GridTemplateA
 /// <https://www.w3.org/TR/css-align-3/#propdef-place-items>)。第 2 成分
 /// 省略時は spec 本文通り第 1 成分をそのまま copy する
 /// ([`PlaceItemsShorthand`] doc 参照)。
-fn parse_place_items_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceItemsShorthand> {
+pub(crate) fn parse_place_items_shorthand(
+    input: &mut Parser<'_, '_>,
+) -> Option<PlaceItemsShorthand> {
     let align = parse_self_alignment(input)?;
     let justify = input.try_parse(parse_self_alignment_res).unwrap_or(align);
     Some(PlaceItemsShorthand { align, justify })
@@ -6315,7 +6321,7 @@ fn parse_place_items_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceItemsS
 /// (CSS Box Alignment Module Level 3 §6.3
 /// <https://www.w3.org/TR/css-align-3/#propdef-place-self>)。第 2 成分
 /// 省略時の copy 規則は [`parse_place_items_shorthand`] と同じ。
-fn parse_place_self_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceSelfShorthand> {
+pub(crate) fn parse_place_self_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceSelfShorthand> {
     let align = parse_align_self(input)?;
     let justify = input.try_parse(parse_align_self_res).unwrap_or(align);
     Some(PlaceSelfShorthand { align, justify })
@@ -6369,7 +6375,7 @@ fn parse_place_self_shorthand(input: &mut Parser<'_, '_>) -> Option<PlaceSelfSho
 /// と食い違う。`549.5` + `bolder`、`749.5` + `lighter` も同型 — check:
 /// `crate::cascade::tests::bolder_lighter_resolve_against_unrounded_fractional_parent_weight`)。
 /// `f32` 格上げにより丸めそのものが不要になったため、この 2 次被害も解消される。
-fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeightValue> {
+pub(crate) fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeightValue> {
     match &next_numeric_stable(input).ok()? {
         // `<number [1,1000]>`。`value` field (f32) を見るので `1e3` のような
         // scientific notation や fractional もそのまま受理される (どちらも
@@ -7671,7 +7677,7 @@ fn parse_quotes_property(input: &mut Parser<'_, '_>) -> Option<Vec<(SmolStr, Smo
 /// keyword の実装状況とは無関係** — [`PropertyValue`] doc の「CSS-wide keyword」節
 /// が説明する「property value としては未実装」claim
 /// とは別の話なので混同しないこと。
-fn is_reserved_counter_name(ident: &str) -> bool {
+pub(crate) fn is_reserved_counter_name(ident: &str) -> bool {
     matches!(
         ident.to_ascii_lowercase().as_str(),
         "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "default" | "none"
@@ -7693,7 +7699,7 @@ fn is_reserved_counter_name(ident: &str) -> bool {
 /// `alt text` (spec `... [/ <string>...]?`) は現状 scope 外、`/` 以降は
 /// unconsumed のまま caller に返す (現状 rule.rs の `expect_exhausted` により
 /// declaration drop、alt text 対応時に本関数を extend)。
-fn parse_content(input: &mut Parser<'_, '_>) -> Option<Vec<ContentComponent>> {
+pub(crate) fn parse_content(input: &mut Parser<'_, '_>) -> Option<Vec<ContentComponent>> {
     // `normal` / `none` = 空 list (top-level alternative)。
     if input
         .try_parse(|i| i.expect_ident_matching("normal"))
@@ -8085,7 +8091,7 @@ fn parse_optional_counter_style(input: &mut Parser<'_, '_>) -> Option<CounterSty
     }
 }
 
-fn counter_style_from_ident(ident: &str) -> CounterStyle {
+pub(crate) fn counter_style_from_ident(ident: &str) -> CounterStyle {
     if ident.eq_ignore_ascii_case("decimal") {
         CounterStyle::Decimal
     } else {
@@ -8606,7 +8612,7 @@ fn parse_text_shadow_color(input: &mut Parser<'_, '_>) -> Option<TextShadowColor
 /// ([`parse_length_value`] は token を unconditional に消費するため、
 /// [`parse_margin_side`] doc の「Order of alternative」節と同じ理由で
 /// checkpoint 経由の rewind が要る)。
-fn parse_text_shadow_lengths<'i>(
+pub(crate) fn parse_text_shadow_lengths<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<(Length, Length, Length), ParseError<'i, ()>> {
     let x = parse_shadow_length_reject_nan_res(input)?;
@@ -8834,7 +8840,7 @@ fn normalize_css_position_offset(offset: CssPositionOffset) -> CssPositionOffset
     }
 }
 
-fn normalize_css_position(position: CssPosition) -> CssPosition {
+pub(crate) fn normalize_css_position(position: CssPosition) -> CssPosition {
     CssPosition {
         horizontal: normalize_css_position_offset(position.horizontal),
         vertical: normalize_css_position_offset(position.vertical),
@@ -9042,7 +9048,7 @@ fn parse_position_branch3(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
 /// 消費してしまう (leftover が残らない) ため、呼び出し元の
 /// `expect_exhausted` による leftover 検出でも捕捉できない。本関数は
 /// それを防ぐための、offset 有無の対称性チェックを追加した sibling。
-fn parse_position_branch3_strict(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
+pub(crate) fn parse_position_branch3_strict(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
     let (position, h_offset, v_offset) = parse_position_branch3_core(input)?;
     if h_offset != v_offset {
         return None;
@@ -9282,7 +9288,7 @@ fn parse_background_image(input: &mut Parser<'_, '_>) -> Option<BackgroundImage>
 /// ([`MaskImage`] doc の「`<mask-source>` と `<image>` の `url`
 /// alternative は同じ具象構文」節) — [`BackgroundImage`] への alias により
 /// body も共有する。
-fn parse_mask_image(input: &mut Parser<'_, '_>) -> Option<MaskImage> {
+pub(crate) fn parse_mask_image(input: &mut Parser<'_, '_>) -> Option<MaskImage> {
     parse_background_image(input)
 }
 
@@ -9684,7 +9690,7 @@ fn parse_path_shape(input: &mut Parser<'_, '_>) -> Option<PathShape> {
 /// stabilization" section) before this function sees `n`, so in ordinary
 /// use this `!is_nan()` check is defense-in-depth, not the primary
 /// mechanism.
-fn parse_transform_number(input: &mut Parser<'_, '_>) -> Option<f32> {
+pub(crate) fn parse_transform_number(input: &mut Parser<'_, '_>) -> Option<f32> {
     let n = expect_number_stable(input).ok()?;
     (!n.is_nan()).then_some(n)
 }
@@ -9700,7 +9706,7 @@ fn parse_transform_number(input: &mut Parser<'_, '_>) -> Option<f32> {
 /// [`parse_length_value`] already routes through `next_numeric_stable`
 /// (module doc above), so this is likewise defense-in-depth in ordinary
 /// use.
-fn parse_transform_length_percentage(input: &mut Parser<'_, '_>) -> Option<Length> {
+pub(crate) fn parse_transform_length_percentage(input: &mut Parser<'_, '_>) -> Option<Length> {
     let length = parse_length_value(input, true)?;
     (!length_payload(length).is_nan()).then_some(length)
 }
@@ -9720,7 +9726,7 @@ fn parse_transform_length_percentage(input: &mut Parser<'_, '_>) -> Option<Lengt
 /// Guarded here at the call site rather than inside `parse_angle` itself,
 /// to avoid changing that shared helper's behavior for its other
 /// (gradient) callers.
-fn parse_angle_reject_nan(input: &mut Parser<'_, '_>) -> Option<Angle> {
+pub(crate) fn parse_angle_reject_nan(input: &mut Parser<'_, '_>) -> Option<Angle> {
     let angle = input.try_parse(parse_angle).ok()?;
     (!angle.0.is_nan()).then_some(angle)
 }
@@ -9746,7 +9752,7 @@ fn parse_matrix_args<'i>(
 /// omitted defaults to `0` (CSS Transforms Level 1 §9.1 grammar's `?`
 /// multiplier on the 2nd slot; the spec text names this default
 /// explicitly in the 1-argument `translate()` case).
-fn parse_translate_args<'i>(
+pub(crate) fn parse_translate_args<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<TransformFunction, ParseError<'i, ()>> {
     let tx = parse_transform_length_percentage(input).ok_or_else(|| input.new_custom_error(()))?;
@@ -9780,7 +9786,7 @@ fn parse_translate_y_args<'i>(
 /// value defaults to the same value as the first"), unlike `translate()`'s
 /// "defaults to 0" or `skew()`'s "defaults to 0deg" — three different
 /// defaulting rules across the three 2-argument functions.
-fn parse_scale_args<'i>(
+pub(crate) fn parse_scale_args<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<TransformFunction, ParseError<'i, ()>> {
     let sx = parse_transform_number(input).ok_or_else(|| input.new_custom_error(()))?;
@@ -9821,7 +9827,7 @@ fn parse_rotate_args<'i>(
 /// defaults to `0deg` (CSS Transforms Level 1 §9.1's 1-argument `skew()`
 /// text), the same "defaults to 0" shape as `translate()` (unlike
 /// `scale()`'s "copies the 1st" — see `parse_scale_args` doc).
-fn parse_skew_args<'i>(
+pub(crate) fn parse_skew_args<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<TransformFunction, ParseError<'i, ()>> {
     let ax = parse_angle_reject_nan(input).ok_or_else(|| input.new_custom_error(()))?;
@@ -9856,7 +9862,7 @@ fn parse_skew_y_args<'i>(
 /// (`translate3d`/`rotate3d`/`matrix3d`/`perspective` 等、§10) は
 /// unrecognized name として `_` arm に落ち reject する
 /// ([`TransformFunction`] doc の Non-goal 節参照)。
-fn parse_transform_function<'i>(
+pub(crate) fn parse_transform_function<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<TransformFunction, ParseError<'i, ()>> {
     let name = match input.next()?.clone() {
@@ -9920,7 +9926,9 @@ fn parse_transform(input: &mut Parser<'_, '_>) -> Option<Vec<TransformFunction>>
 /// doc's "Numeric-token NaN stabilization" section) already correct it to
 /// `0.0` at acquisition, so `v >= 0.0` accepts it normally instead of
 /// incidentally rejecting it.
-fn parse_filter_amount<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
+pub(crate) fn parse_filter_amount<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<f32, ParseError<'i, ()>> {
     let v = if let Ok(pct) = input.try_parse(|i| expect_percentage_stable(i)) {
         pct
     } else {
@@ -10014,7 +10022,7 @@ fn parse_sepia_args<'i>(input: &mut Parser<'i, '_>) -> Result<FilterFunction, Pa
 /// offset-x/offset-y already go through [`parse_shadow_length_reject_nan`]'s
 /// `!is_nan()` guard (see that function's doc), so this reuse inherits the
 /// guard automatically — no separate guard needed at this call site.
-fn parse_drop_shadow_args<'i>(
+pub(crate) fn parse_drop_shadow_args<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<FilterFunction, ParseError<'i, ()>> {
     let item = parse_text_shadow_item(input).ok_or_else(|| input.new_custom_error(()))?;
@@ -10196,7 +10204,7 @@ fn parse_non_negative_length_percentage_res<'i>(
 /// doc参照) — parse + validation は `parse_color_mix_function`と共有する
 /// [`parse_color_interpolation_method`] に委譲し、ここでは結果 tuple を
 /// [`GradientColorInterpolation`] へ組み立てるだけ。
-fn parse_gradient_color_interpolation<'i>(
+pub(crate) fn parse_gradient_color_interpolation<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<GradientColorInterpolation, ParseError<'i, ()>> {
     let (color_space, hue_method) = parse_color_interpolation_method(input, false)?;
@@ -10681,7 +10689,7 @@ fn parse_background_repeat_keyword_res<'i>(
 /// (spec computed value: `repeat-x` = `repeat no-repeat`、`repeat-y` =
 /// `no-repeat repeat`)。1 keyword のみ指定時は両軸に同じ値を適用する
 /// (`repeat` = `repeat repeat` 等)。
-fn parse_background_repeat(input: &mut Parser<'_, '_>) -> Option<BackgroundRepeat> {
+pub(crate) fn parse_background_repeat(input: &mut Parser<'_, '_>) -> Option<BackgroundRepeat> {
     if input
         .try_parse(|i| i.expect_ident_matching("repeat-x"))
         .is_ok()
@@ -10814,7 +10822,7 @@ fn parse_background_size_axis_res<'i>(
 /// one value is given the second is assumed to be auto.") — 1 個目の
 /// 値を複製する [`parse_border_radius`] 系の fill 規則とは異なるので
 /// 流用しない。
-fn parse_background_size(input: &mut Parser<'_, '_>) -> Option<BackgroundSize> {
+pub(crate) fn parse_background_size(input: &mut Parser<'_, '_>) -> Option<BackgroundSize> {
     if input
         .try_parse(|i| i.expect_ident_matching("cover"))
         .is_ok()
@@ -10847,7 +10855,7 @@ fn parse_background_size(input: &mut Parser<'_, '_>) -> Option<BackgroundSize> {
 /// later shorthand component. That is what lets this function's caller
 /// ([`parse_background_shorthand`]) safely hand any leftover tokens back to
 /// its own any-order loop instead of treating them as part of the position.
-fn parse_background_position_and_size(
+pub(crate) fn parse_background_position_and_size(
     input: &mut Parser<'_, '_>,
 ) -> Option<(CssPosition, Option<BackgroundSize>)> {
     let position = parse_bg_position(input)?;
@@ -11113,7 +11121,9 @@ fn parse_font_shorthand(input: &mut Parser<'_, '_>) -> Option<FontShorthand> {
 /// background-clip.") — 0 個の場合は 2 longhand それぞれの spec initial
 /// (origin: padding-box、clip: border-box) を使う点が 1 個の場合と異なる
 /// (1 個の場合は両方その値になるため、0 個の場合だけ非対称)。
-fn parse_background_shorthand(input: &mut Parser<'_, '_>) -> Option<BackgroundShorthand> {
+pub(crate) fn parse_background_shorthand(
+    input: &mut Parser<'_, '_>,
+) -> Option<BackgroundShorthand> {
     let mut image: Option<BackgroundImage> = None;
     let mut position_and_size: Option<(CssPosition, Option<BackgroundSize>)> = None;
     let mut repeat: Option<BackgroundRepeat> = None;
