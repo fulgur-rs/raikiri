@@ -1281,7 +1281,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Text overflow-wrap cluster and min-content slice (+3).
         // + CSS Text letter-spacing ligatures slice (+1).
         // + CSS Text writing-system font slice (+1).
-        assert_eq!(set.baseline.entries.len(), 1076);
+        // + CSS Text text-group-align/text-spacing-trim/hanging-punctuation slice (+28).
+        assert_eq!(set.baseline.entries.len(), 1104);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
