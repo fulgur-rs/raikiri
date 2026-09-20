@@ -1,12 +1,13 @@
 //! Run a WPT CSS parsing test script inside a pure-Rust JS engine (Boa),
-//! backed by `raikiri_style::property::parse_value`/`serialize_value` for
-//! the actual CSS validity and serialization decisions.
+//! backed by `raikiri_style::property::parse_value`/`serialize_value`/
+//! `serialize_color_value` for the actual CSS validity and serialization
+//! decisions.
 //!
 //! Scope: `test_invalid_value` and the parts of `test_valid_value` that
-//! `raikiri_style::property::serialize_value` covers (falls back to
-//! echoing the input for the rest — see that function's doc comment).
-//! `test_valid_selector`/`test_valid_rule` need a `CSSStyleSheet`/`CSSRule`
-//! surface this crate doesn't implement.
+//! `raikiri_style::property::serialize_value`/`serialize_color_value` cover
+//! (falls back to echoing the input for the rest — see those functions'
+//! doc comments). `test_valid_selector`/`test_valid_rule` need a
+//! `CSSStyleSheet`/`CSSRule` surface this crate doesn't implement.
 
 use boa_engine::object::builtins::JsArray;
 use boa_engine::{Context, JsResult, JsValue, NativeFunction, Source, js_string};
@@ -53,10 +54,11 @@ impl std::error::Error for HarnessError {}
 /// `args[1]` as a value for the CSS property named `args[0]`, and if so,
 /// what should `getPropertyValue` read back? Returns `null` when the value
 /// is invalid; otherwise the real canonical serialization when
-/// `raikiri_style::property::serialize_value` covers this variant, or the
-/// raw input echoed back when it doesn't (yet) — see that function's doc
-/// comment for what "doesn't (yet)" covers. Called from the JS-side
-/// `Proxy` `set` trap defined in [`SHIM_JS`].
+/// `raikiri_style::property::serialize_value` or `serialize_color_value`
+/// covers this variant, or the raw input echoed back when neither does
+/// (yet) — see those functions' doc comments for what "doesn't (yet)"
+/// covers. Called from the JS-side `Proxy` `set` trap defined in
+/// [`SHIM_JS`].
 fn parse_and_serialize_property_native(
     _this: &JsValue,
     args: &[JsValue],
@@ -86,7 +88,9 @@ fn parse_and_serialize_property_native(
     let Some(value) = value else {
         return Ok(JsValue::null());
     };
-    let serialized = raikiri_style::property::serialize_value(&value).unwrap_or(raw_value);
+    let serialized = raikiri_style::property::serialize_value(&value)
+        .or_else(|| raikiri_style::property::serialize_color_value(&name, &raw_value))
+        .unwrap_or(raw_value);
     Ok(JsValue::from(js_string!(serialized)))
 }
 
@@ -392,5 +396,35 @@ mod tests {
         .unwrap();
         assert_eq!(outcomes.len(), 1);
         assert!(outcomes[0].passed, "{:?}", outcomes[0]);
+    }
+
+    #[test]
+    fn valid_value_serializes_legacy_color_syntax_but_echoes_modern_syntax() {
+        let outcomes = run_invalid_value_script(
+            "",
+            r##"test(function () {
+                var div = document.createElement("div");
+                div.style["color"] = "";
+                div.style["color"] = "#234";
+                assert_equals(div.style.getPropertyValue("color"), "rgb(34, 51, 68)");
+            }, "color serializes hex as rgb()");
+            test(function () {
+                var div = document.createElement("div");
+                div.style["color"] = "";
+                div.style["color"] = "red";
+                assert_equals(div.style.getPropertyValue("color"), "red");
+            }, "color echoes a keyword back unchanged");
+            test(function () {
+                var div = document.createElement("div");
+                div.style["color"] = "";
+                div.style["color"] = "lab(0 0 0)";
+                assert_equals(div.style.getPropertyValue("color"), "lab(0 0 0)");
+            }, "color echoes modern syntax it cannot serialize");"##,
+        )
+        .unwrap();
+        assert_eq!(outcomes.len(), 3);
+        for outcome in &outcomes {
+            assert!(outcome.passed, "{outcome:?}");
+        }
     }
 }
