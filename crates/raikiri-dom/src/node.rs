@@ -8,6 +8,8 @@
 use smol_str::SmolStr;
 use taffy::{Cache, Layout, Style};
 
+use crate::fragment::MulticolStyle;
+
 use raikiri_style::property::{BorderCollapseValue, DisplayValue, TableLayoutValue};
 use raikiri_traits::NodeKind;
 
@@ -262,6 +264,8 @@ pub struct Node {
     /// is inherited — the value here is already the post-inheritance
     /// computed value, seed handling lives in raikiri-style).
     pub(crate) border_collapse: BorderCollapseValue,
+    /// Computed multicolumn settings consumed by the custom Taffy dispatch.
+    pub(crate) multicol: Option<MulticolStyle>,
     /// Child arena indices (`Document::nodes` の usize)。
     pub children: Vec<usize>,
     /// Taffy layout cache (per-node)。
@@ -322,6 +326,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            multicol: None,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -343,6 +348,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            multicol: None,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -365,6 +371,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            multicol: None,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -392,6 +399,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            multicol: None,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -409,6 +417,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            multicol: None,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -428,6 +437,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            multicol: None,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -528,11 +538,15 @@ impl Node {
                     each_line: text.text_indent_each_line,
                 },
             );
-            if text.text_indent_rebreak
-                && let Some(width) = width.filter(|width| width.is_finite() && *width > 0.0)
-            {
-                layout.break_all_lines(Some(width));
-            }
+        }
+        // A nested fragmentainer can provide a narrower used width than the
+        // page-level preshape pass. Rebreak narrower probes, not only the
+        // text-indent path, so recursive multicol leaves measure their real
+        // line count before the parent places them.
+        if let Some(width) = width.filter(|width| width.is_finite() && *width > 0.0)
+            && (text.text_indent_rebreak || width < layout.width() - f32::EPSILON)
+        {
+            layout.break_all_lines(Some(width));
         }
         Some((layout.width(), layout.height()))
     }

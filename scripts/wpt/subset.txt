@@ -113,3 +113,10 @@ css/css-multicol/support
 css/css-multicol/column-count-used-001.html
 css/css-multicol/multicol-span-all-004-ref.html
 css/css-multicol/multicol-under-vertical-rl-scroll-ref.html
+# Nested multicol probes for the recursive fragmentation tranche.
+css/css-multicol/multicol-nested-029.html
+css/css-multicol/multicol-nested-029-ref.html
+css/css-multicol/multicol-nested-033.html
+css/css-multicol/multicol-nested-033-ref.html
+css/css-multicol/multicol-nested-025.html
+css/css-multicol/multicol-nested-027.html
