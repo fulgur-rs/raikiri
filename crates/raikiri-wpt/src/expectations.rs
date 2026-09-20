@@ -1279,7 +1279,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS generated-content counters() nested-scope slice (+1).
         // + CSS generated-content before/after literal string slice (+1).
         // + CSS Text overflow-wrap cluster and min-content slice (+3).
-        assert_eq!(set.baseline.entries.len(), 1074);
+        // + CSS Text letter-spacing ligatures slice (+1).
+        assert_eq!(set.baseline.entries.len(), 1075);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
