@@ -185,18 +185,10 @@ li { display: list-item; text-align: match-parent; }
  * is load-bearing, not decorative — dropping it would paint the border in
  * whatever `color` this hr inherits instead of spec gray.
  *
- * margin-block / margin-inline are logical properties raikiri-style does
- * not implement (only margin-{top,right,bottom,left} physical longhands
- * and the physical `margin` shorthand exist). `margin: 0.5em auto;`
- * below reaches the physical equivalents through the shorthand's 2-value
- * form (top/bottom = 0.5em, right/left = auto): margin-top/margin-bottom
- * for the block axis (raikiri-style has no writing-mode support at all
- * yet, so physical block-axis == logical block-axis unconditionally
- * here), and margin-left/margin-right: auto for the inline axis (both
- * sides get the same auto value, so the logical->physical mapping is
- * symmetric regardless of `direction` — raikiri-style does implement
- * `direction` (ltr/rtl), but it can't matter here since both physical
- * sides resolve identically).
+ * margin-block / margin-inline (CSS Logical Properties and Values 1 §4.2
+ * shorthands) are implemented below verbatim, matching the spec
+ * declaration exactly rather than approximating through the physical
+ * `margin` shorthand.
  *
  * overflow: hidden is included below — raikiri-style implements the
  * `overflow` property (CSS Overflow Module Level 3 §3.1 shorthand +
@@ -210,7 +202,7 @@ li { display: list-item; text-align: match-parent; }
  * BFC to clear. Tracked separately, blocked on float support landing
  * first, same "implement the fallback, track the gap" precedent as the li
  * display:list-item fallback above. */
-hr { color: gray; border: 1px inset; margin: 0.5em auto; overflow: hidden; }
+hr { color: gray; border: 1px inset; margin-block: 0.5em; margin-inline: auto; overflow: hidden; }
 
 /* HTML Living Standard "Rendering" §flow-content-3 (15.3.3) also
  * specifies:
@@ -218,34 +210,9 @@ hr { color: gray; border: 1px inset; margin: 0.5em auto; overflow: hidden; }
  *     margin-block: 1em;
  *   }
  *   blockquote, figure { margin-inline: 40px; }
- * — two separate rules, not one combined declaration the way hr's own
- * margin-block/margin-inline pair above is.
- *
- * margin-block is a logical property raikiri-style does not implement
- * (property.rs's parse_value has no "margin-block"/"margin-inline" arm at
- * all, only the margin-{top,right,bottom,left} physical longhands and the
- * physical `margin` shorthand). raikiri-style also has no writing-mode
- * support, so physical block axis == logical block axis unconditionally
- * here. Unlike hr's margin rule above, this substitution needs no
- * auto-symmetry argument: margin-block never touches the inline axis at
- * all, so `margin-top: 1em; margin-bottom: 1em;` below is an exact,
- * complete substitution for it, not an approximation.
- *
- * The `margin-inline: 40px` rule for blockquote/figure is a genuinely
- * separate declaration and stays deferred here. That is why the two
- * physical longhands are used directly below instead of the `margin`
- * shorthand's 2-value form (`margin: 1em 0`): the shorthand would also
- * explicitly set margin-left/margin-right to 0, which happens to already
- * be blockquote/figure's current (CSS-initial) value but is not the
- * spec-correct one — same "nothing here for a shorthand to reset that a
- * narrower longhand-only rule wouldn't already leave alone" shape as
- * `background-color: yellow` standing in for the unimplemented
- * `background` shorthand below, except here it guards against a false
- * completeness claim on the still-deferred `margin-inline: 40px` rule,
- * rather than the background case's simple absence of any other
- * implemented sub-property to reset. For listing/p/plaintext/pre/xmp,
- * which have no margin-inline rule of their own, margin-left/right
- * staying at CSS-initial 0 already matches spec either way.
+ * — two separate rules (margin-inline only applies to blockquote/figure,
+ * not the other five selector members), both implemented below verbatim
+ * using the CSS Logical Properties and Values 1 §4.2 shorthands.
  *
  * pre itself still has no `display: block` rule anywhere in this file
  * (see file header's `<pre>` scope note) — a separate, pre-existing gap
@@ -269,7 +236,8 @@ hr { color: gray; border: 1px inset; margin: 0.5em auto; overflow: hidden; }
  * the spec-mandated zeroed value while no margin rule existed at all for
  * these elements) but is a real, unimplemented case now that a nonzero
  * margin-block-start actually lands. */
-blockquote, figure, listing, p, plaintext, pre, xmp { margin-top: 1em; margin-bottom: 1em; }
+blockquote, figure, listing, p, plaintext, pre, xmp { margin-block: 1em; }
+blockquote, figure { margin-inline: 40px; }
 
 /* HTML Living Standard "Rendering" §phrasing-content-3 (15.3.4) specifies,
  * for hyperlink elements:
