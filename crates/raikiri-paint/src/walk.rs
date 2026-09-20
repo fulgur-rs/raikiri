@@ -654,6 +654,8 @@ fn format_counters_component(
 }
 
 fn content_components_to_text_with_quotes<T: AsRef<str>>(
+    document: &Document,
+    node_id: usize,
     components: &[ContentComponent],
     quotes: &[(T, T)],
     quotes_auto: bool,
@@ -668,6 +670,20 @@ fn content_components_to_text_with_quotes<T: AsRef<str>>(
     for component in components {
         match component {
             ContentComponent::Literal(value) => text.push_str(value.as_str()),
+            ContentComponent::Attr { name } => {
+                if let Some(node) = document.get_node(node_id) {
+                    text.push_str(node.attribute(name.as_str()).unwrap_or_default());
+                }
+            }
+            ContentComponent::AttrFallback { name, fallback } => {
+                let value = document
+                    .get_node(node_id)
+                    .and_then(|node| node.attribute(name.as_str()))
+                    .map(str::to_owned)
+                    .or_else(|| fallback.as_ref().map(|value| value.to_string()))
+                    .unwrap_or_default();
+                text.push_str(&value);
+            }
             ContentComponent::Counter { name, style } => {
                 text.push_str(&format_counter_component(
                     counters,
@@ -1285,6 +1301,7 @@ fn marker_render_info_with_snapshots<'a>(
 }
 
 fn generated_pseudo_content_with_snapshots<'a>(
+    document: &Document,
     cascade: &'a CascadeResult,
     node_id: usize,
     pseudo: raikiri_style::PseudoElem,
@@ -1296,6 +1313,8 @@ fn generated_pseudo_content_with_snapshots<'a>(
     let mut counters = snapshots.get(node_id).cloned().unwrap_or_default();
     apply_counter_directives_to_snapshot(&mut counters, computed);
     let content = content_components_to_text_with_quotes(
+        document,
+        node_id,
         &computed.content,
         &computed.quotes,
         computed.quotes_auto,
@@ -1306,13 +1325,14 @@ fn generated_pseudo_content_with_snapshots<'a>(
 }
 
 fn generated_pseudo_text_height(
+    document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
     pseudo: raikiri_style::PseudoElem,
     snapshots: &[CounterSnapshot],
 ) -> f32 {
     let Some((computed, content)) =
-        generated_pseudo_content_with_snapshots(cascade, node_id, pseudo, snapshots)
+        generated_pseudo_content_with_snapshots(document, cascade, node_id, pseudo, snapshots)
     else {
         return 0.0;
     };
@@ -1330,6 +1350,7 @@ fn generated_pseudo_text_height(
 #[allow(clippy::too_many_arguments)]
 fn paint_generated_pseudo(
     scene: &mut impl PaintScene,
+    document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
     pseudo: raikiri_style::PseudoElem,
@@ -1340,7 +1361,7 @@ fn paint_generated_pseudo(
     snapshots: &[CounterSnapshot],
 ) -> f32 {
     let Some((computed, content)) =
-        generated_pseudo_content_with_snapshots(cascade, node_id, pseudo, snapshots)
+        generated_pseudo_content_with_snapshots(document, cascade, node_id, pseudo, snapshots)
     else {
         return 0.0;
     };
@@ -2888,6 +2909,7 @@ fn paint_document_impl(
             } => {
                 let _ = paint_generated_pseudo(
                     scene,
+                    document,
                     cascade,
                     node_id,
                     raikiri_style::PseudoElem::After,
@@ -3140,12 +3162,14 @@ fn paint_document_impl(
                     && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
                 {
                     let pseudo_height = generated_pseudo_text_height(
+                        document,
                         cascade,
                         node_id,
                         raikiri_style::PseudoElem::Before,
                         &counter_snapshots,
                     )
                     .max(generated_pseudo_text_height(
+                        document,
                         cascade,
                         node_id,
                         raikiri_style::PseudoElem::After,
@@ -3422,6 +3446,7 @@ fn paint_document_impl(
                     before_advance = if !paints_as_absolute_continuation {
                         paint_generated_pseudo(
                             scene,
+                            document,
                             cascade,
                             node_id,
                             raikiri_style::PseudoElem::Before,
@@ -5278,6 +5303,7 @@ mod tests {
         assert_eq!(second_content, "6/6/9/3/4");
         let snapshots = raikiri_dom::counter_snapshots(&document, &cascade);
         let (_, before_content) = generated_pseudo_content_with_snapshots(
+            &document,
             &cascade,
             section,
             raikiri_style::PseudoElem::Before,
@@ -5286,6 +5312,7 @@ mod tests {
         .expect("generated before content");
         assert_eq!(before_content, "4");
         let (_, after_content) = generated_pseudo_content_with_snapshots(
+            &document,
             &cascade,
             section,
             raikiri_style::PseudoElem::After,
@@ -5369,6 +5396,44 @@ mod tests {
     }
 
     #[test]
+    fn generated_content_resolves_dom_attributes_and_fallbacks() {
+        let mut document = Document::new();
+        let element = document.append_element(
+            Some(document.root_index()),
+            "div",
+            Style::default(),
+            None::<&str>,
+        );
+        document.set_element_attributes(element, vec![("data-value".into(), "Actual".into())]);
+        let components = vec![
+            ContentComponent::AttrFallback {
+                name: "missing".into(),
+                fallback: Some("Fallback".into()),
+            },
+            ContentComponent::Literal(" ".into()),
+            ContentComponent::Attr {
+                name: "data-value".into(),
+            },
+            ContentComponent::Literal(" ".into()),
+            ContentComponent::AttrFallback {
+                name: "missing-invalid".into(),
+                fallback: None,
+            },
+        ];
+        let registry = CounterStyleRegistry::new();
+        let rendered = content_components_to_text_with_quotes(
+            &document,
+            element,
+            &components,
+            &[] as &[(&str, &str)],
+            false,
+            &CounterSnapshot::default(),
+            &registry,
+        );
+        assert_eq!(rendered.as_deref(), Some("Fallback Actual "));
+    }
+
+    #[test]
     fn marker_render_info_uses_author_content_and_falls_back_to_list_style() {
         let (document, cascade, first, second) = list_fixture(
             "display: list-item; list-style-type: decimal",
@@ -5417,6 +5482,7 @@ mod tests {
         let snapshots = raikiri_dom::counter_snapshots(&document, &cascade);
         assert!(
             generated_pseudo_text_height(
+                &document,
                 &cascade,
                 first,
                 raikiri_style::PseudoElem::Before,
@@ -5425,6 +5491,7 @@ mod tests {
         );
         assert!(
             generated_pseudo_text_height(
+                &document,
                 &cascade,
                 first,
                 raikiri_style::PseudoElem::After,
@@ -5435,6 +5502,7 @@ mod tests {
         let mut scene = Scene::new();
         let before_advance = paint_generated_pseudo(
             &mut scene,
+            &document,
             &cascade,
             first,
             raikiri_style::PseudoElem::Before,
@@ -5448,6 +5516,7 @@ mod tests {
         assert!(before_advance > 0.0);
         let _ = paint_generated_pseudo(
             &mut scene,
+            &document,
             &cascade,
             first,
             raikiri_style::PseudoElem::After,
@@ -5467,6 +5536,7 @@ mod tests {
         let snapshots = raikiri_dom::counter_snapshots(&document, &cascade);
         assert_eq!(
             generated_pseudo_text_height(
+                &document,
                 &cascade,
                 first,
                 raikiri_style::PseudoElem::Before,
@@ -5478,6 +5548,7 @@ mod tests {
         assert_eq!(
             paint_generated_pseudo(
                 &mut hidden_scene,
+                &document,
                 &cascade,
                 first,
                 raikiri_style::PseudoElem::Before,
@@ -5580,6 +5651,7 @@ mod tests {
         let mut scene = Scene::new();
         paint_generated_pseudo(
             &mut scene,
+            &document,
             &cascade,
             first,
             raikiri_style::PseudoElem::Before,
