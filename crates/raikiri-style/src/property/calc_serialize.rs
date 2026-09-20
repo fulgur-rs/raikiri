@@ -1,4 +1,4 @@
-use cssparser::{Parser, Token};
+use cssparser::{Parser, ToCss as _, Token};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CalcUnitKind {
@@ -34,6 +34,7 @@ fn angle_to_degrees(value: f64, unit: &str) -> Option<f64> {
 /// Parses one `<calc-value>`: a leaf (number/percentage/angle/infinity/NaN/
 /// sign()/an unresolved dimension) or a parenthesized sub-expression.
 fn parse_calc_value(input: &mut Parser<'_, '_>, unit_kind: CalcUnitKind) -> Option<CalcNode> {
+    input.skip_whitespace();
     let start = input.position();
     let token = input.next().ok()?.clone();
     match token {
@@ -104,10 +105,18 @@ fn parse_calc_product(input: &mut Parser<'_, '_>, unit_kind: CalcUnitKind) -> Op
         } else {
             break;
         };
-        // The right-hand side of `*`/`/` in this grammar subset is always
-        // a plain number (e.g. `sign(...) * 10`) — CSS calc()
-        // multiplication requires exactly one side to be a <number>.
-        let rhs = parse_calc_value(input, CalcUnitKind::Number)?;
+        // CSS calc() multiplication only requires that *one* side resolve
+        // to a plain `<number>` — the other can keep `unit_kind` (e.g.
+        // `sign(1em - 10px) * 10%`, where the percentage is the right-hand
+        // side). Try `unit_kind` first, fall back to a plain number.
+        let rhs_start = input.state();
+        let rhs = match parse_calc_value(input, unit_kind) {
+            Some(node) => node,
+            None => {
+                input.reset(&rhs_start);
+                parse_calc_value(input, CalcUnitKind::Number)?
+            }
+        };
         node = CalcNode::Product(Box::new(node), Box::new(rhs), is_multiply);
     }
     Some(node)
@@ -139,6 +148,166 @@ pub(crate) fn parse_calc_or_plain(
     unit_kind: CalcUnitKind,
 ) -> Option<CalcNode> {
     parse_calc_value(input, unit_kind)
+}
+
+/// Duplicates `serialize.rs`'s `serialize_number`/`serialize_percentage`
+/// (same `Token::Number`/`Token::Percentage` + `to_css_string()` approach).
+/// The duplication is deliberate: this module has no dependency on
+/// `serialize.rs` (it depends on nothing but `cssparser`), so it can't
+/// import them without inverting that direction. If a third consumer of
+/// this exact formatting shows up later, that's the point to factor it
+/// out — not before.
+fn format_number(value: f64) -> String {
+    let value = value as f32;
+    let int_value = if value.fract() == 0.0 {
+        Some(value as i32)
+    } else {
+        None
+    };
+    Token::Number {
+        has_sign: false,
+        value,
+        int_value,
+    }
+    .to_css_string()
+}
+
+fn format_percentage(value: f64) -> String {
+    let value = value as f32;
+    let int_value = if value.fract() == 0.0 {
+        Some(value as i32)
+    } else {
+        None
+    };
+    Token::Percentage {
+        has_sign: false,
+        unit_value: value / 100.0,
+        int_value,
+    }
+    .to_css_string()
+}
+
+/// Attempts to fold `node` to a single constant. `None` means some part of
+/// the tree is `Unresolved` — `sign()` also can't fold when its argument
+/// isn't foldable, since it depends on the runtime sign of a value this
+/// module can't compute (e.g. a font-relative length).
+fn try_evaluate(node: &CalcNode) -> Option<f64> {
+    match node {
+        CalcNode::Number(v) | CalcNode::Percentage(v) | CalcNode::Angle(v) => Some(*v),
+        CalcNode::Infinity => Some(f64::INFINITY),
+        CalcNode::NegInfinity => Some(f64::NEG_INFINITY),
+        CalcNode::Nan => Some(f64::NAN),
+        CalcNode::Unresolved(_) => None,
+        CalcNode::Sign(inner) => {
+            let v = try_evaluate(inner)?;
+            if v.is_nan() {
+                Some(f64::NAN)
+            } else if v > 0.0 {
+                Some(1.0)
+            } else if v < 0.0 {
+                Some(-1.0)
+            } else {
+                Some(0.0)
+            }
+        }
+        CalcNode::Sum(left, right, is_add) => {
+            let l = try_evaluate(left)?;
+            let r = try_evaluate(right)?;
+            Some(if *is_add { l + r } else { l - r })
+        }
+        CalcNode::Product(left, right, is_multiply) => {
+            let l = try_evaluate(left)?;
+            let r = try_evaluate(right)?;
+            Some(if *is_multiply { l * r } else { l / r })
+        }
+    }
+}
+
+/// Renders a node's own (non-`calc(...)`-wrapped) text — used both inside
+/// the final `calc(...)` wrapper and for parenthesized sub-expressions.
+fn render(node: &CalcNode) -> String {
+    match node {
+        CalcNode::Number(v) => format_number(*v),
+        CalcNode::Percentage(v) => format_percentage(*v),
+        CalcNode::Angle(v) => format_number(*v),
+        CalcNode::Infinity => "infinity".to_owned(),
+        CalcNode::NegInfinity => "-infinity".to_owned(),
+        CalcNode::Nan => "NaN".to_owned(),
+        CalcNode::Unresolved(text) => text.clone(),
+        CalcNode::Sign(inner) => format!("sign({})", render(inner)),
+        CalcNode::Sum(left, right, is_add) => {
+            format!(
+                "{} {} {}",
+                render(left),
+                if *is_add { "+" } else { "-" },
+                render(right)
+            )
+        }
+        CalcNode::Product(left, right, is_multiply) => {
+            // Canonical order: when exactly one side is a plain literal
+            // (Number/Percentage) and the other is not, the literal comes
+            // first — matches the real corpus's `10 * sign(...)`
+            // ordering.
+            let left_is_literal =
+                matches!(left.as_ref(), CalcNode::Number(_) | CalcNode::Percentage(_));
+            let right_is_literal = matches!(
+                right.as_ref(),
+                CalcNode::Number(_) | CalcNode::Percentage(_)
+            );
+            let op = if *is_multiply { "*" } else { "/" };
+            if right_is_literal && !left_is_literal {
+                format!("{} {} {}", render(right), op, render(left))
+            } else {
+                format!("{} {} {}", render(left), op, render(right))
+            }
+        }
+    }
+}
+
+/// Wraps a rendered sub-expression in parens when it's a Sum or Product
+/// nested inside another operator — matches the real corpus's
+/// `(sign(1em - 10px) * 10%)` parenthesization inside a surrounding `+`.
+fn render_parenthesized_if_needed(node: &CalcNode, is_top_level: bool) -> String {
+    let rendered = render(node);
+    if is_top_level {
+        return rendered;
+    }
+    match node {
+        CalcNode::Sum(..) | CalcNode::Product(..) => format!("({rendered})"),
+        _ => rendered,
+    }
+}
+
+/// Serializes a `CalcNode`: if every leaf is a resolved constant, evaluates
+/// the whole expression to a single number and returns `calc(<number>)`.
+/// Otherwise, returns a `calc(...)` string with operators printed in their
+/// canonical order (see `render`'s `Product` arm).
+pub(crate) fn serialize_calc_node(node: &CalcNode) -> String {
+    if let Some(value) = try_evaluate(node) {
+        if value.is_nan() {
+            return "calc(NaN)".to_owned();
+        }
+        if value.is_infinite() {
+            return if value > 0.0 {
+                "calc(infinity)".to_owned()
+            } else {
+                "calc(-infinity)".to_owned()
+            };
+        }
+        return match node {
+            CalcNode::Percentage(_) => format!("calc({})", format_percentage(value)),
+            _ => format!("calc({})", format_number(value)),
+        };
+    }
+    match node {
+        CalcNode::Sum(left, right, is_add) => format!(
+            "calc({} {} {})",
+            render_parenthesized_if_needed(left, true),
+            if *is_add { "+" } else { "-" },
+            render_parenthesized_if_needed(right, false)
+        ),
+        _ => format!("calc({})", render(node)),
+    }
 }
 
 #[cfg(test)]
@@ -216,5 +385,58 @@ mod tests {
     #[test]
     fn returns_none_for_unsupported_math_functions() {
         assert!(parse("calc(min(1, 2))", CalcUnitKind::Number).is_none());
+    }
+
+    #[test]
+    fn folds_a_fully_constant_product() {
+        let node = parse("calc(50 * 3)", CalcUnitKind::Number).unwrap();
+        assert_eq!(serialize_calc_node(&node), "calc(150)");
+    }
+
+    #[test]
+    fn folds_a_fully_constant_difference() {
+        let node = parse("calc(0.5 - 1)", CalcUnitKind::Number).unwrap();
+        assert_eq!(serialize_calc_node(&node), "calc(-0.5)");
+    }
+
+    #[test]
+    fn reorders_a_sign_call_multiplied_by_a_literal() {
+        let node = parse("calc(sign(1em - 10px) * 10)", CalcUnitKind::Number).unwrap();
+        assert_eq!(serialize_calc_node(&node), "calc(10 * sign(1em - 10px))");
+    }
+
+    #[test]
+    fn reorders_a_percentage_variant_the_same_way() {
+        let node = parse("calc(sign(1em - 10px) * 10%)", CalcUnitKind::Percentage).unwrap();
+        assert_eq!(serialize_calc_node(&node), "calc(10% * sign(1em - 10px))");
+    }
+
+    #[test]
+    fn preserves_addition_operand_order_around_an_unresolved_sign_product() {
+        let node = parse(
+            "calc(50% + (sign(1em - 10px) * 10%))",
+            CalcUnitKind::Percentage,
+        )
+        .unwrap();
+        assert_eq!(
+            serialize_calc_node(&node),
+            "calc(50% + (10% * sign(1em - 10px)))"
+        );
+    }
+
+    #[test]
+    fn serializes_infinity_and_nan() {
+        assert_eq!(serialize_calc_node(&CalcNode::Infinity), "calc(infinity)");
+        assert_eq!(
+            serialize_calc_node(&CalcNode::NegInfinity),
+            "calc(-infinity)"
+        );
+        assert_eq!(serialize_calc_node(&CalcNode::Nan), "calc(NaN)");
+    }
+
+    #[test]
+    fn zero_divided_by_zero_folds_to_nan() {
+        let node = parse("calc(0 / 0)", CalcUnitKind::Number).unwrap();
+        assert_eq!(serialize_calc_node(&node), "calc(NaN)");
     }
 }
