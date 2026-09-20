@@ -7,5 +7,6 @@
 pub mod expectations;
 pub mod lint;
 pub mod oracle;
+pub mod parsing_invalid;
 pub mod reftest;
 pub mod runner;

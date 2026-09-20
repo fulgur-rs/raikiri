@@ -23,6 +23,7 @@ raikiri-traits      = { workspace = true }
 raikiri-style       = { workspace = true }
 raikiri-paint       = { workspace = true }
 raikiri-net         = { workspace = true }
+raikiri-js          = { workspace = true }
 time                = { workspace = true }
 png                 = { workspace = true }
 
@@ -45,3 +46,7 @@ workspace = true
 [[bin]]
 name = "prepare-meta-assert-review"
 path = "src/bin/prepare-meta-assert-review.rs"
+
+[[bin]]
+name = "run-parsing-invalid"
+path = "src/bin/run-parsing-invalid.rs"
