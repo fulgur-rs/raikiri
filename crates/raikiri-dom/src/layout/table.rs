@@ -804,7 +804,19 @@ fn resolve_column_widths(
     let mut col_min_full = col_min.clone();
     let mut col_max_full = col_max.clone();
 
-    // (C.2) colspan>1 excess distribution (smallest span first)
+    // (C.2) colspan>1 excess distribution (smallest span first). A
+    // definite single-column width already constrains that track, so a
+    // spanning cell's excess is assigned to the remaining tracks whenever
+    // possible (CSS Tables track sizing, intrinsic minimum phase).
+    let authored_length = (0..n)
+        .map(|column| {
+            grid.cells.iter().any(|cell| {
+                cell.col_span == 1
+                    && usize::from(cell.col_start) == column
+                    && cell.specified_width.tag() == CompactLength::LENGTH_TAG
+            })
+        })
+        .collect::<Vec<_>>();
     let mut spans: Vec<(usize, u16, u16)> = grid
         .cells
         .iter()
@@ -819,19 +831,25 @@ fn resolve_column_widths(
         if s >= e {
             continue;
         }
-        let cnt = (e - s) as f32;
+        let targets: Vec<usize> = (s..e).filter(|&column| !authored_length[column]).collect();
+        let targets = if targets.is_empty() {
+            (s..e).collect()
+        } else {
+            targets
+        };
+        let cnt = targets.len() as f32;
         let cur_min: f32 = col_min_full[s..e].iter().sum();
         if cell_min[i] > cur_min {
             let add = (cell_min[i] - cur_min) / cnt;
-            for slot in col_min_full[s..e].iter_mut() {
-                *slot += add;
+            for column in &targets {
+                col_min_full[*column] += add;
             }
         }
         let cur_max: f32 = col_max_full[s..e].iter().sum();
         if cell_max[i] > cur_max {
             let add = (cell_max[i] - cur_max) / cnt;
-            for slot in col_max_full[s..e].iter_mut() {
-                *slot += add;
+            for column in &targets {
+                col_max_full[*column] += add;
             }
         }
         if grid.cells[i].specified_width.tag() == CompactLength::PERCENT_TAG {
@@ -839,8 +857,8 @@ fn resolve_column_widths(
             let cur_p: f32 = col_pct[s..e].iter().sum();
             if p > cur_p {
                 let add = (p - cur_p) / cnt;
-                for slot in col_pct[s..e].iter_mut() {
-                    *slot += add;
+                for column in &targets {
+                    col_pct[*column] += add;
                 }
             }
         }
@@ -933,7 +951,13 @@ fn resolve_column_widths(
     match inputs.known_dimensions.width {
         Some(w) => {
             let avail = f32_max_compat(w - insets, 0.0);
-            distribute_columns(avail, &col_min, &col_max, &col_pct)
+            distribute_columns_with_authored(
+                avail,
+                &col_min_full,
+                &col_max_full,
+                &col_pct,
+                &authored_length,
+            )
         }
         None => match inputs.available_space.width {
             AvailableSpace::MinContent => col_min_full,
@@ -1001,6 +1025,77 @@ fn distribute_columns(avail: f32, min: &[f32], max: &[f32], pct: &[f32]) -> Vec<
             }
         }
     }
+    w
+}
+
+fn distribute_columns_with_authored(
+    avail: f32,
+    min: &[f32],
+    max: &[f32],
+    pct: &[f32],
+    authored_length: &[bool],
+) -> Vec<f32> {
+    let n = min.len();
+    let psum: f32 = pct.iter().sum();
+    let scale = if psum > 1.0 { 1.0 / psum } else { 1.0 };
+    let mut w = vec![0.0f32; n];
+    for i in 0..n {
+        w[i] = if pct[i] > 0.0 {
+            f32_max_compat(pct[i] * scale * avail, min[i])
+        } else {
+            min[i]
+        };
+    }
+    let assigned: f32 = w.iter().sum();
+    if assigned + 0.01 < avail {
+        let mut remaining = avail - assigned;
+        let grow: Vec<f32> = (0..n)
+            .map(|i| {
+                if pct[i] == 0.0 {
+                    f32_max_compat(max[i] - w[i], 0.0)
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let gsum: f32 = grow.iter().sum();
+        if gsum > 0.0 {
+            let take = if remaining < gsum { remaining } else { gsum };
+            for i in 0..n {
+                w[i] += take * grow[i] / gsum;
+            }
+            remaining -= take;
+        }
+        if remaining > 0.0 {
+            let np: Vec<usize> = (0..n)
+                .filter(|&i| pct[i] == 0.0 && !authored_length[i])
+                .collect();
+            let targets = if np.is_empty() {
+                let all_auto: Vec<usize> = (0..n).filter(|&i| !authored_length[i]).collect();
+                if all_auto.is_empty() {
+                    (0..n).collect()
+                } else {
+                    all_auto
+                }
+            } else {
+                np
+            };
+            let share = remaining / targets.len() as f32;
+            for i in targets {
+                w[i] += share;
+            }
+        }
+    } else if assigned > avail + 0.01 {
+        let excess = assigned - avail;
+        let shrink: Vec<f32> = (0..n).map(|i| f32_max_compat(w[i] - min[i], 0.0)).collect();
+        let ssum: f32 = shrink.iter().sum();
+        if ssum > 0.0 {
+            let take = if excess < ssum { excess } else { ssum };
+            for i in 0..n {
+                w[i] -= take * shrink[i] / ssum;
+            }
+        } // cov:ignore: llvm-cov reports the covered shrink branch's closing brace as uncovered.
+    } // cov:ignore: llvm-cov reports the covered shrink branch's closing brace as uncovered.
     w
 }
 
@@ -2167,5 +2262,105 @@ mod tests {
                 cl.size.height
             );
         }
+    }
+
+    #[test]
+    fn distribute_columns_preserves_authored_tracks_for_spanning_excess() {
+        let widths = super::distribute_columns_with_authored(
+            110.0,
+            &[5.0, 95.0, 0.0, 5.0],
+            &[5.0, 95.0, 0.0, 5.0],
+            &[0.0, 0.0, 0.0, 0.0],
+            &[true, false, false, true],
+        );
+        assert!((widths[0] - 5.0).abs() < 0.01);
+        assert!((widths[3] - 5.0).abs() < 0.01);
+        assert!((widths.iter().sum::<f32>() - 110.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn distribute_columns_falls_back_to_all_tracks_when_all_are_authored() {
+        let widths = super::distribute_columns_with_authored(
+            12.0,
+            &[5.0, 5.0],
+            &[5.0, 5.0],
+            &[0.0, 0.0],
+            &[true, true],
+        );
+        assert_eq!(widths, [6.0, 6.0]);
+    }
+
+    #[test]
+    fn distribute_columns_covers_growth_and_shrink_phases() {
+        let grown =
+            super::distribute_columns_with_authored(10.0, &[1.0], &[10.0], &[0.0], &[false]);
+        assert_eq!(grown, [10.0]);
+
+        let percentage =
+            super::distribute_columns_with_authored(10.0, &[0.0], &[0.0], &[0.5], &[false]);
+        assert_eq!(percentage, [10.0]);
+
+        let shrunk = super::distribute_columns_with_authored(
+            4.0,
+            &[0.0, 5.0],
+            &[10.0, 5.0],
+            &[1.0, 0.0],
+            &[false, false],
+        );
+        assert_eq!(shrunk, [0.0, 5.0]);
+    }
+
+    #[test]
+    fn table_colspan_percent_distribution_uses_definite_table_width() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display: table; width: 110px"),
+        );
+        let tr1 = doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display: table-row"),
+        );
+        let wide = doc.append_element(
+            Some(tr1),
+            "td",
+            Style::default(),
+            Some("display: table-cell; width: 50%"),
+        );
+        doc.set_element_attributes(wide, vec![("colspan".into(), "2".into())]);
+        let tr2 = doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display: table-row"),
+        );
+        let left = doc.append_element(
+            Some(tr2),
+            "td",
+            Style::default(),
+            Some("display: table-cell; width: 5px"),
+        );
+        let right = doc.append_element(
+            Some(tr2),
+            "td",
+            Style::default(),
+            Some("display: table-cell; width: 5px"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).unwrap();
+        crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+        let wide_layout = doc.nodes[wide].unrounded_layout;
+        let left_layout = doc.nodes[left].unrounded_layout;
+        let right_layout = doc.nodes[right].unrounded_layout;
+        assert!((wide_layout.size.width - 110.0).abs() < 1.0);
+        assert!((left_layout.size.width - 55.0).abs() < 1.0);
+        assert!((right_layout.size.width - 55.0).abs() < 1.0);
     }
 }
