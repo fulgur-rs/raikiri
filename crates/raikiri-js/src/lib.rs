@@ -1,10 +1,10 @@
 //! Run a WPT CSS parsing test script inside a pure-Rust JS engine (Boa),
-//! backed by `raikiri_style::property::parse_value` for the actual CSS
-//! validity decision.
+//! backed by `raikiri_style::property::parse_value`/`serialize_value` for
+//! the actual CSS validity and serialization decisions.
 //!
-//! Scope: `test_invalid_value` only (CSS Syntax `parsing/` test files'
-//! valid/invalid-value assertions). `test_valid_value` needs a CSS value
-//! serializer (`raikiri_style` doesn't have one yet) and is out of scope;
+//! Scope: `test_invalid_value` and the parts of `test_valid_value` that
+//! `raikiri_style::property::serialize_value` covers (falls back to
+//! echoing the input for the rest — see that function's doc comment).
 //! `test_valid_selector`/`test_valid_rule` need a `CSSStyleSheet`/`CSSRule`
 //! surface this crate doesn't implement.
 
@@ -50,9 +50,14 @@ impl std::fmt::Display for HarnessError {
 impl std::error::Error for HarnessError {}
 
 /// The only native hook the harness needs: does `raikiri_style` accept
-/// `args[1]` as a value for the CSS property named `args[0]`? Called from
-/// the JS-side `Proxy` `set` trap defined in [`SHIM_JS`].
-fn parse_property_native(
+/// `args[1]` as a value for the CSS property named `args[0]`, and if so,
+/// what should `getPropertyValue` read back? Returns `null` when the value
+/// is invalid; otherwise the real canonical serialization when
+/// `raikiri_style::property::serialize_value` covers this variant, or the
+/// raw input echoed back when it doesn't (yet) — see that function's doc
+/// comment for what "doesn't (yet)" covers. Called from the JS-side
+/// `Proxy` `set` trap defined in [`SHIM_JS`].
+fn parse_and_serialize_property_native(
     _this: &JsValue,
     args: &[JsValue],
     context: &mut Context,
@@ -63,29 +68,36 @@ fn parse_property_native(
         .unwrap_or_default()
         .to_string(context)?
         .to_std_string_escaped();
-    let value = args
+    let raw_value = args
         .get(1)
         .cloned()
         .unwrap_or_default()
         .to_string(context)?
         .to_std_string_escaped();
-    let mut input = ParserInput::new(&value);
-    let mut parser = Parser::new(&mut input);
-    let valid = parser
-        .parse_entirely(|i| -> Result<PropertyValue, ParseError<'_, ()>> {
-            raikiri_style::property::parse_value(&name, i).ok_or_else(|| i.new_custom_error(()))
-        })
-        .is_ok();
-    Ok(JsValue::from(valid))
+    let value: Option<PropertyValue> = {
+        let mut input = ParserInput::new(&raw_value);
+        let mut parser = Parser::new(&mut input);
+        parser
+            .parse_entirely(|i| -> Result<PropertyValue, ParseError<'_, ()>> {
+                raikiri_style::property::parse_value(&name, i).ok_or_else(|| i.new_custom_error(()))
+            })
+            .ok()
+    };
+    let Some(value) = value else {
+        return Ok(JsValue::null());
+    };
+    let serialized = raikiri_style::property::serialize_value(&value).unwrap_or(raw_value);
+    Ok(JsValue::from(js_string!(serialized)))
 }
 
 /// Harness shim: a `document`/`style` stand-in plus the small subset of
-/// `testharness.js` that `parsing-testcommon.js`'s `test_invalid_value`
-/// actually calls (`test`, `assert_equals`, `assert_not_equals`). `style` is
-/// a standard ECMAScript `Proxy` whose `get`/`set` traps forward to
-/// [`parse_property_native`] by property name, so no property needs its own
-/// JS declaration — any property `raikiri_style::property::parse_value`
-/// recognizes works without a code change here.
+/// `testharness.js` that `parsing-testcommon.js`'s `test_invalid_value`/
+/// `test_valid_value` actually call (`test`, `assert_equals`,
+/// `assert_not_equals`). `style` is a standard ECMAScript `Proxy` whose
+/// `get`/`set` traps forward to [`parse_and_serialize_property_native`] by
+/// property name, so no property needs its own JS declaration — any
+/// property `raikiri_style::property::parse_value` recognizes works
+/// without a code change here.
 const SHIM_JS: &str = r#"
 function makeStyle() {
     var backing = {};
@@ -99,10 +111,11 @@ function makeStyle() {
             return backing[prop] === undefined ? "" : backing[prop];
         },
         set: function (target, prop, value) {
-            if (value === "" || !__raikiri_parse_property(prop, value)) {
+            var result = value === "" ? null : __raikiri_parse_and_serialize_property(prop, value);
+            if (result === null) {
                 delete backing[prop];
             } else {
-                backing[prop] = value;
+                backing[prop] = result;
             }
             return true;
         }
@@ -145,8 +158,8 @@ function assert_not_equals(actual, notExpected, message) {
 /// valid by `raikiri-style`'s own test suite, independent of whatever
 /// property the real test script under evaluation exercises. Its only job
 /// is to catch a completely inert binding (the `Proxy` `set` trap never
-/// firing, [`parse_property_native`] always returning `true` or always
-/// returning `false`, and so on) before any real assertion is trusted — see
+/// firing, [`parse_and_serialize_property_native`] always returning
+/// `null`, and so on) before any real assertion is trusted — see
 /// [`run_invalid_value_script`].
 const POSITIVE_CONTROL_JS: &str = r#"
 (function () {
@@ -162,9 +175,9 @@ const POSITIVE_CONTROL_JS: &str = r#"
 fn new_context() -> JsResult<Context> {
     let mut context = Context::default();
     context.register_global_callable(
-        js_string!("__raikiri_parse_property"),
+        js_string!("__raikiri_parse_and_serialize_property"),
         2,
-        NativeFunction::from_fn_ptr(parse_property_native),
+        NativeFunction::from_fn_ptr(parse_and_serialize_property_native),
     )?;
     context.eval(Source::from_bytes(SHIM_JS))?;
     Ok(context)
@@ -178,9 +191,9 @@ fn new_context() -> JsResult<Context> {
 /// `style["color"]` to `"red"` must read back `"red"` through the same
 /// JS-visible path the real assertions use. If the CSSOM binding's setter
 /// silently no-ops (or the native hook always accepts/rejects regardless of
-/// input), every `test_invalid_value` assertion in `test_script` could pass
-/// or fail for the wrong reason; a positive-control failure is reported
-/// instead of a result that isn't backed by a working binding.
+/// input), every assertion in `test_script` could pass or fail for the
+/// wrong reason; a positive-control failure is reported instead of a
+/// result that isn't backed by a working binding.
 pub fn run_invalid_value_script(
     parsing_testcommon_js: &str,
     test_script: &str,
@@ -247,21 +260,20 @@ mod tests {
         );
     }
 
-    /// If [`parse_property_native`] were stubbed to always reject (or the
-    /// `Proxy` `set` trap never called it at all), the positive control
-    /// itself — not just the real assertions — must fail. This is what
-    /// makes a run's eventual PASS/FAIL trustworthy rather than vacuous.
+    /// If [`parse_and_serialize_property_native`] were stubbed to always
+    /// reject (or the `Proxy` `set` trap never called it at all), the
+    /// positive control itself — not just the real assertions — must fail.
+    /// This is what makes a run's eventual PASS/FAIL trustworthy rather
+    /// than vacuous.
     #[test]
     fn positive_control_catches_a_stub_binding() {
         let mut context = Context::default();
         context
             .register_global_callable(
-                js_string!("__raikiri_parse_property"),
+                js_string!("__raikiri_parse_and_serialize_property"),
                 2,
                 NativeFunction::from_fn_ptr(
-                    |_this: &JsValue, _args: &[JsValue], _ctx: &mut Context| {
-                        Ok(JsValue::from(false))
-                    },
+                    |_this: &JsValue, _args: &[JsValue], _ctx: &mut Context| Ok(JsValue::null()),
                 ),
             )
             .unwrap();
@@ -281,10 +293,10 @@ mod tests {
             ("box-sizing", "bogus"),
             ("display", "not-a-real-display-keyword"),
         ] {
-            let script = format!("__raikiri_parse_property({name:?}, {bad:?})");
+            let script = format!("__raikiri_parse_and_serialize_property({name:?}, {bad:?})");
             let result = context.eval(Source::from_bytes(script.as_bytes())).unwrap();
             assert!(
-                !result.to_boolean(),
+                result.is_null(),
                 "expected ({name:?}, {bad:?}) to be rejected"
             );
         }
@@ -298,10 +310,10 @@ mod tests {
             ("display", "block"),
             ("color", "red"),
         ] {
-            let script = format!("__raikiri_parse_property({name:?}, {good:?})");
+            let script = format!("__raikiri_parse_and_serialize_property({name:?}, {good:?})");
             let result = context.eval(Source::from_bytes(script.as_bytes())).unwrap();
             assert!(
-                result.to_boolean(),
+                !result.is_null(),
                 "expected ({name:?}, {good:?}) to be accepted"
             );
         }
@@ -364,5 +376,21 @@ mod tests {
         .unwrap();
         assert_eq!(display_outcomes.len(), 1);
         assert!(display_outcomes[0].passed, "{:?}", display_outcomes[0]);
+    }
+
+    #[test]
+    fn valid_value_reads_back_the_real_serialization_not_the_raw_input() {
+        let outcomes = run_invalid_value_script(
+            "",
+            r#"test(function () {
+                var div = document.createElement("div");
+                div.style["padding-top"] = "";
+                div.style["padding-top"] = "010.0px";
+                assert_equals(div.style.getPropertyValue("padding-top"), "10px");
+            }, "padding-top serializes 010.0px as 10px");"#,
+        )
+        .unwrap();
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].passed, "{:?}", outcomes[0]);
     }
 }
