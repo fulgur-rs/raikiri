@@ -804,7 +804,19 @@ fn resolve_column_widths(
     let mut col_min_full = col_min.clone();
     let mut col_max_full = col_max.clone();
 
-    // (C.2) colspan>1 excess distribution (smallest span first)
+    // (C.2) colspan>1 excess distribution (smallest span first). A
+    // definite single-column width already constrains that track, so a
+    // spanning cell's excess is assigned to the remaining tracks whenever
+    // possible (CSS Tables track sizing, intrinsic minimum phase).
+    let authored_length = (0..n)
+        .map(|column| {
+            grid.cells.iter().any(|cell| {
+                cell.col_span == 1
+                    && usize::from(cell.col_start) == column
+                    && cell.specified_width.tag() == CompactLength::LENGTH_TAG
+            })
+        })
+        .collect::<Vec<_>>();
     let mut spans: Vec<(usize, u16, u16)> = grid
         .cells
         .iter()
@@ -819,19 +831,25 @@ fn resolve_column_widths(
         if s >= e {
             continue;
         }
-        let cnt = (e - s) as f32;
+        let targets: Vec<usize> = (s..e).filter(|&column| !authored_length[column]).collect();
+        let targets = if targets.is_empty() {
+            (s..e).collect()
+        } else {
+            targets
+        };
+        let cnt = targets.len() as f32;
         let cur_min: f32 = col_min_full[s..e].iter().sum();
         if cell_min[i] > cur_min {
             let add = (cell_min[i] - cur_min) / cnt;
-            for slot in col_min_full[s..e].iter_mut() {
-                *slot += add;
+            for column in &targets {
+                col_min_full[*column] += add;
             }
         }
         let cur_max: f32 = col_max_full[s..e].iter().sum();
         if cell_max[i] > cur_max {
             let add = (cell_max[i] - cur_max) / cnt;
-            for slot in col_max_full[s..e].iter_mut() {
-                *slot += add;
+            for column in &targets {
+                col_max_full[*column] += add;
             }
         }
         if grid.cells[i].specified_width.tag() == CompactLength::PERCENT_TAG {
@@ -839,8 +857,8 @@ fn resolve_column_widths(
             let cur_p: f32 = col_pct[s..e].iter().sum();
             if p > cur_p {
                 let add = (p - cur_p) / cnt;
-                for slot in col_pct[s..e].iter_mut() {
-                    *slot += add;
+                for column in &targets {
+                    col_pct[*column] += add;
                 }
             }
         }
@@ -933,7 +951,13 @@ fn resolve_column_widths(
     match inputs.known_dimensions.width {
         Some(w) => {
             let avail = f32_max_compat(w - insets, 0.0);
-            distribute_columns(avail, &col_min, &col_max, &col_pct)
+            distribute_columns(
+                avail,
+                &col_min_full,
+                &col_max_full,
+                &col_pct,
+                &authored_length,
+            )
         }
         None => match inputs.available_space.width {
             AvailableSpace::MinContent => col_min_full,
@@ -943,14 +967,20 @@ fn resolve_column_widths(
                 if col_max_full.iter().sum::<f32>() <= avail {
                     col_max_full
                 } else {
-                    distribute_columns(avail, &col_min, &col_max, &col_pct)
+                    distribute_columns(avail, &col_min, &col_max, &col_pct, &authored_length)
                 }
             }
         },
     }
 }
 
-fn distribute_columns(avail: f32, min: &[f32], max: &[f32], pct: &[f32]) -> Vec<f32> {
+fn distribute_columns(
+    avail: f32,
+    min: &[f32],
+    max: &[f32],
+    pct: &[f32],
+    authored_length: &[bool],
+) -> Vec<f32> {
     let n = min.len();
     let psum: f32 = pct.iter().sum();
     let scale = if psum > 1.0 { 1.0 / psum } else { 1.0 };
@@ -983,8 +1013,19 @@ fn distribute_columns(avail: f32, min: &[f32], max: &[f32], pct: &[f32]) -> Vec<
             remaining -= take;
         }
         if remaining > 0.0 {
-            let np: Vec<usize> = (0..n).filter(|&i| pct[i] == 0.0).collect();
-            let targets = if np.is_empty() { (0..n).collect() } else { np };
+            let np: Vec<usize> = (0..n)
+                .filter(|&i| pct[i] == 0.0 && !authored_length[i])
+                .collect();
+            let targets = if np.is_empty() {
+                let all_auto: Vec<usize> = (0..n).filter(|&i| !authored_length[i]).collect();
+                if all_auto.is_empty() {
+                    (0..n).collect()
+                } else {
+                    all_auto
+                }
+            } else {
+                np
+            };
             let share = remaining / targets.len() as f32;
             for i in targets {
                 w[i] += share;
