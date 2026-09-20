@@ -2291,6 +2291,26 @@ mod tests {
     }
 
     #[test]
+    fn distribute_columns_covers_growth_and_shrink_phases() {
+        let grown =
+            super::distribute_columns_with_authored(10.0, &[1.0], &[10.0], &[0.0], &[false]);
+        assert_eq!(grown, [10.0]);
+
+        let percentage =
+            super::distribute_columns_with_authored(10.0, &[0.0], &[0.0], &[0.5], &[false]);
+        assert_eq!(percentage, [10.0]);
+
+        let shrunk = super::distribute_columns_with_authored(
+            4.0,
+            &[0.0, 5.0],
+            &[10.0, 5.0],
+            &[1.0, 0.0],
+            &[false, false],
+        );
+        assert_eq!(shrunk, [0.0, 5.0]);
+    }
+
+    #[test]
     fn table_colspan_percent_distribution_uses_definite_table_width() {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
