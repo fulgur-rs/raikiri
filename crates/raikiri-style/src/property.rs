@@ -11,7 +11,8 @@ use std::sync::{Arc, OnceLock};
 
 use cssparser::color::parse_named_color;
 use cssparser::{
-    BasicParseError, BasicParseErrorKind, ParseError, Parser, ParserInput, SourcePosition, Token,
+    BasicParseError, BasicParseErrorKind, CowRcStr, ParseError, Parser, ParserInput,
+    SourcePosition, ToCss as _, Token,
 };
 use smol_str::SmolStr;
 
@@ -511,6 +512,65 @@ pub enum Length {
     Rlh(f32),
 }
 
+/// Serializes a numeric CSS dimension (`10px`, `1.5em`) using the exact
+/// number-formatting algorithm `cssparser`'s own tokenizer uses for
+/// `Token::Dimension`/`Token::Percentage` (shortest round-tripping decimal
+/// via `dtoa_short`, integers printed without a decimal point). Building a
+/// `Token` and calling its `to_css_string()` reuses that algorithm instead
+/// of reimplementing CSS number serialization here.
+fn serialize_dimension(value: f32, unit: &str) -> String {
+    let int_value = if value.fract() == 0.0 {
+        Some(value as i32)
+    } else {
+        None
+    };
+    Token::Dimension {
+        has_sign: false,
+        value,
+        int_value,
+        unit: CowRcStr::from(unit),
+    }
+    .to_css_string()
+}
+
+fn serialize_percentage(value: f32) -> String {
+    let int_value = if value.fract() == 0.0 {
+        Some(value as i32)
+    } else {
+        None
+    };
+    Token::Percentage {
+        has_sign: false,
+        unit_value: value / 100.0,
+        int_value,
+    }
+    .to_css_string()
+}
+
+/// Serializes a [`Length`] back to CSS text (`Length::Px(10.0)` -> `"10px"`).
+pub(crate) fn serialize_length(length: &Length) -> String {
+    match *length {
+        Length::Px(v) => serialize_dimension(v, "px"),
+        Length::Em(v) => serialize_dimension(v, "em"),
+        Length::Rem(v) => serialize_dimension(v, "rem"),
+        Length::Percent(v) => serialize_percentage(v),
+        Length::Pt(v) => serialize_dimension(v, "pt"),
+        Length::Ex(v) => serialize_dimension(v, "ex"),
+        Length::Rex(v) => serialize_dimension(v, "rex"),
+        Length::Ch(v) => serialize_dimension(v, "ch"),
+        Length::Rch(v) => serialize_dimension(v, "rch"),
+        Length::Ic(v) => serialize_dimension(v, "ic"),
+        Length::Ric(v) => serialize_dimension(v, "ric"),
+        Length::Cm(v) => serialize_dimension(v, "cm"),
+        Length::Mm(v) => serialize_dimension(v, "mm"),
+        Length::Q(v) => serialize_dimension(v, "q"),
+        Length::In(v) => serialize_dimension(v, "in"),
+        Length::Pc(v) => serialize_dimension(v, "pc"),
+        Length::Lh(v) => serialize_dimension(v, "lh"),
+        Length::Rlh(v) => serialize_dimension(v, "rlh"),
+    }
+}
+
 /// `<length-percentage> | auto` — margin / width で共有される Author CSS seed
 /// (margin longhand 用に導入し、後に `width` からも reuse)。
 ///
@@ -573,6 +633,45 @@ pub enum LengthOrAuto {
     Auto,
     /// A deferred mixed-unit `calc()` expression.
     Calc(CalcLengthPercentage),
+}
+
+/// `LengthOrAuto::Calc` is never constructed by any parser in this file
+/// today (verified: no `LengthOrAuto::Calc(` or `::Calc(` construction site
+/// exists in `property.rs`). This keeps the match exhaustive and gives a
+/// spec-plausible `calc()` serialization if that ever changes, rather than
+/// a `match` arm that would need revisiting the moment it does.
+fn serialize_calc_length_percentage(calc: &CalcLengthPercentage) -> String {
+    if calc.px == 0.0 {
+        return format!("calc({})", serialize_percentage(calc.percent));
+    }
+    if calc.percent == 0.0 {
+        return format!("calc({})", serialize_dimension(calc.px, "px"));
+    }
+    if calc.px >= 0.0 {
+        format!(
+            "calc({} + {})",
+            serialize_percentage(calc.percent),
+            serialize_dimension(calc.px, "px")
+        )
+    } else {
+        format!(
+            "calc({} - {})",
+            serialize_percentage(calc.percent),
+            serialize_dimension(-calc.px, "px")
+        )
+    }
+}
+
+/// Serializes a [`LengthOrAuto`] back to CSS text. Callers must confirm
+/// `Auto` is unambiguous for the property they are serializing before
+/// using this — see the `Width`/`Height`/`Min*`/`Max*` exclusion in
+/// [`serialize_value`].
+pub(crate) fn serialize_length_or_auto(value: &LengthOrAuto) -> String {
+    match value {
+        LengthOrAuto::Length(l) => serialize_length(l),
+        LengthOrAuto::Auto => "auto".to_owned(),
+        LengthOrAuto::Calc(calc) => serialize_calc_length_percentage(calc),
+    }
 }
 
 /// `column-count` value from CSS Multi-column Layout.
@@ -728,6 +827,43 @@ pub struct StartEnd<T> {
     /// `*-end` component (`margin-inline-end` / `margin-block-end` /
     /// `padding-inline-end` / `padding-block-end` に相当)。
     pub end: T,
+}
+
+/// Collapses a [`Sides`] value using the CSS box-model 1-4 value
+/// serialization rule (CSS Box 3 §3.2 / §4.2, the shorthand's own
+/// serialization algorithm): all four equal -> one value; top==bottom and
+/// left==right -> two values; left==right only -> three values; otherwise
+/// four values, in top/right/bottom/left order.
+fn serialize_sides<T: PartialEq>(sides: &Sides<T>, serialize: impl Fn(&T) -> String) -> String {
+    let top = serialize(&sides.top);
+    let right = serialize(&sides.right);
+    let bottom = serialize(&sides.bottom);
+    let left = serialize(&sides.left);
+    if sides.top == sides.right && sides.top == sides.bottom && sides.top == sides.left {
+        top
+    } else if sides.top == sides.bottom && sides.right == sides.left {
+        format!("{top} {right}")
+    } else if sides.right == sides.left {
+        format!("{top} {right} {bottom}")
+    } else {
+        format!("{top} {right} {bottom} {left}")
+    }
+}
+
+/// Collapses a [`StartEnd`] value using the CSS Logical Properties 2-value
+/// shorthand serialization rule: `start == end` -> one value, else two,
+/// in start/end order.
+fn serialize_start_end<T: PartialEq>(
+    pair: &StartEnd<T>,
+    serialize: impl Fn(&T) -> String,
+) -> String {
+    let start = serialize(&pair.start);
+    let end = serialize(&pair.end);
+    if pair.start == pair.end {
+        start
+    } else {
+        format!("{start} {end}")
+    }
 }
 
 impl<T: Clone> StartEnd<T> {
@@ -9808,6 +9944,70 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "filter" => PropertyKey::Filter,
         _ => return None,
     })
+}
+
+/// Serializes a parsed [`PropertyValue`] back to canonical CSS text, for
+/// WPT `test_valid_value` assertions that expect a specific serialization
+/// rather than an echo of the input. Returns `None` for any variant this
+/// crate cannot yet serialize (or, for `Width`/`Height`/`Min*`/`Max*`,
+/// cannot *correctly* serialize with their current parsed representation —
+/// see the Tier2 Phase 1 plan's Global Constraints). Callers should fall
+/// back to echoing the raw input string when this returns `None`.
+pub fn serialize_value(value: &PropertyValue) -> Option<String> {
+    match value {
+        PropertyValue::FontSize(l)
+        | PropertyValue::PaddingTop(l)
+        | PropertyValue::PaddingRight(l)
+        | PropertyValue::PaddingBottom(l)
+        | PropertyValue::PaddingLeft(l)
+        | PropertyValue::BorderTopWidth(l)
+        | PropertyValue::BorderRightWidth(l)
+        | PropertyValue::BorderBottomWidth(l)
+        | PropertyValue::BorderLeftWidth(l)
+        | PropertyValue::BorderRadiusTopLeft(l)
+        | PropertyValue::BorderRadiusTopRight(l)
+        | PropertyValue::BorderRadiusBottomRight(l)
+        | PropertyValue::BorderRadiusBottomLeft(l)
+        | PropertyValue::OutlineWidth(l)
+        | PropertyValue::OutlineOffset(l) => Some(serialize_length(l)),
+
+        PropertyValue::Top(v)
+        | PropertyValue::Right(v)
+        | PropertyValue::Bottom(v)
+        | PropertyValue::Left(v)
+        | PropertyValue::MarginTop(v)
+        | PropertyValue::MarginRight(v)
+        | PropertyValue::MarginBottom(v)
+        | PropertyValue::MarginLeft(v) => Some(serialize_length_or_auto(v)),
+
+        PropertyValue::Padding(sides) => Some(serialize_sides(sides, serialize_length)),
+        PropertyValue::BorderWidth(sides) => Some(serialize_sides(sides, serialize_length)),
+        PropertyValue::Margin(sides) => Some(serialize_sides(sides, serialize_length_or_auto)),
+
+        PropertyValue::PaddingInline(pair) | PropertyValue::PaddingBlock(pair) => {
+            Some(serialize_start_end(pair, serialize_length))
+        }
+        PropertyValue::MarginInline(pair) | PropertyValue::MarginBlock(pair) => {
+            Some(serialize_start_end(pair, serialize_length_or_auto))
+        }
+
+        // Width/Height/MinWidth/MinHeight/MaxWidth/MaxHeight all wrap
+        // LengthOrAuto too, but parse_width/parse_min_size/parse_max_size
+        // fold `auto`/`min-content`/`max-content`/bare `fit-content` into
+        // the same LengthOrAuto::Auto, discarding which keyword was
+        // written. Serializing Auto as "auto" here would silently turn a
+        // currently-correct echoed "none"/"min-content"/"max-content" into
+        // a wrong "auto" — deliberately left unserialized (falls back to
+        // echo) until those three parse functions preserve the keyword.
+        PropertyValue::Width(_)
+        | PropertyValue::Height(_)
+        | PropertyValue::MinWidth(_)
+        | PropertyValue::MinHeight(_)
+        | PropertyValue::MaxWidth(_)
+        | PropertyValue::MaxHeight(_) => None,
+
+        _ => None,
+    }
 }
 
 /// Property name + Parser から `PropertyValue` を produce。
@@ -37967,6 +38167,158 @@ mod tests {
         assert_eq!(
             parse_entire("auto auto", "columns"),
             Some(expected(ColumnCountValue::Auto, ColumnWidthValue::Auto))
+        );
+    }
+
+    #[test]
+    fn serialize_length_formats_each_unit() {
+        assert_eq!(serialize_length(&Length::Px(10.0)), "10px");
+        assert_eq!(serialize_length(&Length::Em(1.5)), "1.5em");
+        assert_eq!(serialize_length(&Length::Rem(1.0)), "1rem");
+        assert_eq!(serialize_length(&Length::Percent(50.0)), "50%");
+        assert_eq!(serialize_length(&Length::Pt(12.0)), "12pt");
+        assert_eq!(serialize_length(&Length::Ex(1.0)), "1ex");
+        assert_eq!(serialize_length(&Length::Rex(1.0)), "1rex");
+        assert_eq!(serialize_length(&Length::Ch(1.0)), "1ch");
+        assert_eq!(serialize_length(&Length::Rch(1.0)), "1rch");
+        assert_eq!(serialize_length(&Length::Ic(1.0)), "1ic");
+        assert_eq!(serialize_length(&Length::Ric(1.0)), "1ric");
+        assert_eq!(serialize_length(&Length::Cm(1.0)), "1cm");
+        assert_eq!(serialize_length(&Length::Mm(1.0)), "1mm");
+        assert_eq!(serialize_length(&Length::Q(1.0)), "1q");
+        assert_eq!(serialize_length(&Length::In(1.0)), "1in");
+        assert_eq!(serialize_length(&Length::Pc(1.0)), "1pc");
+        assert_eq!(serialize_length(&Length::Lh(1.0)), "1lh");
+        assert_eq!(serialize_length(&Length::Rlh(1.0)), "1rlh");
+    }
+
+    #[test]
+    fn serialize_length_formats_negative_and_fractional_values() {
+        assert_eq!(serialize_length(&Length::Px(-5.0)), "-5px");
+        assert_eq!(serialize_length(&Length::Px(0.0)), "0px");
+        assert_eq!(serialize_length(&Length::Percent(33.333332)), "33.3333%");
+    }
+
+    #[test]
+    fn serialize_length_or_auto_formats_length_and_auto() {
+        assert_eq!(
+            serialize_length_or_auto(&LengthOrAuto::Length(Length::Px(10.0))),
+            "10px"
+        );
+        assert_eq!(serialize_length_or_auto(&LengthOrAuto::Auto), "auto");
+    }
+
+    #[test]
+    fn serialize_value_covers_simple_length_variants() {
+        assert_eq!(
+            serialize_value(&PropertyValue::PaddingTop(Length::Px(10.0))),
+            Some("10px".to_owned())
+        );
+        assert_eq!(
+            serialize_value(&PropertyValue::OutlineWidth(Length::Px(2.0))),
+            Some("2px".to_owned())
+        );
+    }
+
+    #[test]
+    fn serialize_value_covers_safe_length_or_auto_variants() {
+        assert_eq!(
+            serialize_value(&PropertyValue::Top(LengthOrAuto::Auto)),
+            Some("auto".to_owned())
+        );
+        assert_eq!(
+            serialize_value(&PropertyValue::MarginLeft(LengthOrAuto::Length(
+                Length::Percent(10.0)
+            ))),
+            Some("10%".to_owned())
+        );
+    }
+
+    #[test]
+    fn serialize_value_excludes_width_height_min_max_variants() {
+        assert_eq!(
+            serialize_value(&PropertyValue::Width(LengthOrAuto::Auto)),
+            None
+        );
+        assert_eq!(
+            serialize_value(&PropertyValue::Height(LengthOrAuto::Auto)),
+            None
+        );
+        assert_eq!(
+            serialize_value(&PropertyValue::MinWidth(LengthOrAuto::Auto)),
+            None
+        );
+        assert_eq!(
+            serialize_value(&PropertyValue::MinHeight(LengthOrAuto::Auto)),
+            None
+        );
+        assert_eq!(
+            serialize_value(&PropertyValue::MaxWidth(LengthOrAuto::Auto)),
+            None
+        );
+        assert_eq!(
+            serialize_value(&PropertyValue::MaxHeight(LengthOrAuto::Auto)),
+            None
+        );
+    }
+
+    #[test]
+    fn serialize_value_collapses_sides_by_css_box_model_rules() {
+        assert_eq!(
+            serialize_value(&PropertyValue::Padding(Sides::all(Length::Px(10.0)))),
+            Some("10px".to_owned())
+        );
+        assert_eq!(
+            serialize_value(&PropertyValue::Padding(Sides {
+                top: Length::Px(1.0),
+                right: Length::Px(2.0),
+                bottom: Length::Px(1.0),
+                left: Length::Px(2.0),
+            })),
+            Some("1px 2px".to_owned())
+        );
+        assert_eq!(
+            serialize_value(&PropertyValue::Padding(Sides {
+                top: Length::Px(1.0),
+                right: Length::Px(2.0),
+                bottom: Length::Px(3.0),
+                left: Length::Px(2.0),
+            })),
+            Some("1px 2px 3px".to_owned())
+        );
+        assert_eq!(
+            serialize_value(&PropertyValue::Padding(Sides {
+                top: Length::Px(1.0),
+                right: Length::Px(2.0),
+                bottom: Length::Px(3.0),
+                left: Length::Px(4.0),
+            })),
+            Some("1px 2px 3px 4px".to_owned())
+        );
+    }
+
+    #[test]
+    fn serialize_value_collapses_start_end_pairs() {
+        assert_eq!(
+            serialize_value(&PropertyValue::PaddingInline(StartEnd {
+                start: Length::Px(5.0),
+                end: Length::Px(5.0),
+            })),
+            Some("5px".to_owned())
+        );
+        assert_eq!(
+            serialize_value(&PropertyValue::PaddingInline(StartEnd {
+                start: Length::Px(5.0),
+                end: Length::Px(10.0),
+            })),
+            Some("5px 10px".to_owned())
+        );
+        assert_eq!(
+            serialize_value(&PropertyValue::MarginBlock(StartEnd {
+                start: LengthOrAuto::Auto,
+                end: LengthOrAuto::Length(Length::Px(10.0)),
+            })),
+            Some("auto 10px".to_owned())
         );
     }
 }

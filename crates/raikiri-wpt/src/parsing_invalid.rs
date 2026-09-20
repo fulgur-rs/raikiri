@@ -111,7 +111,7 @@ pub fn run_parsing_invalid_file(
     let html = fs::read_to_string(wpt_root.join(relative_path))
         .map_err(|e| ParsingFileError::Io(e.to_string()))?;
     let script = inline_scripts(&html);
-    if !script.contains("test_invalid_value(") {
+    if !script.contains("test_invalid_value(") && !script.contains("test_valid_value(") {
         return Err(ParsingFileError::NoInvalidValueCalls);
     }
     let parsing_testcommon = fs::read_to_string(wpt_root.join("css/support/parsing-testcommon.js"))
@@ -164,8 +164,13 @@ test_invalid_value("box-sizing", "margin-box");
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir_all(dir.path().join("css/some-cat/parsing")).unwrap();
         fs::write(
+            // A file whose only assertion helper is test_valid_selector(
+            // (out of scope, needs a CSSStyleSheet/CSSRule surface this
+            // harness doesn't implement) has neither test_invalid_value(
+            // nor test_valid_value( — the case this error variant exists
+            // for, now that Task 5 widened detection to catch both.
             dir.path().join("css/some-cat/parsing/only-valid.html"),
-            "<script>test_valid_value(\"color\", \"red\");</script>",
+            "<script>test_valid_selector(\"div\");</script>",
         )
         .unwrap();
         let result = run_parsing_invalid_file(
@@ -190,5 +195,24 @@ test_invalid_value("box-sizing", "margin-box");
         );
         assert_eq!(outcome.total(), 7);
         assert!(outcome.all_passed(), "{:?}", outcome.outcomes);
+    }
+
+    #[test]
+    fn run_parsing_invalid_file_accepts_files_with_only_test_valid_value_calls() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("css/some-cat/parsing")).unwrap();
+        fs::write(
+            dir.path().join("css/some-cat/parsing/only-valid.html"),
+            "<script>test_valid_value(\"padding-top\", \"10px\");</script>",
+        )
+        .unwrap();
+        let result = run_parsing_invalid_file(
+            dir.path(),
+            Path::new("css/some-cat/parsing/only-valid.html"),
+        );
+        assert!(
+            !matches!(result, Err(ParsingFileError::NoInvalidValueCalls)),
+            "a file with only test_valid_value( calls should not be treated as having no assertions"
+        );
     }
 }
