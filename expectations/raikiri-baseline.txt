@@ -795,6 +795,7 @@ css/css-text/text-transform/text-transform-shaping-001.html
 css/css-text/text-transform/text-transform-shaping-002.html
 css/css-text/text-transform/text-transform-shaping-003.html
 css/css-text/text-transform/text-transform-uppercase-dynamic.html
+css/css-text/white-space/control-chars-000.html
 css/css-text/white-space/object-replacement-1.html
 css/css-text/white-space/object-replacement-2.html
 css/css-text/white-space/pre-float-001.html
