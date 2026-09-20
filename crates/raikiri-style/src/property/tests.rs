@@ -17148,6 +17148,35 @@ fn serialize_color_value_handles_lch_chroma_and_hue() {
         serialize_color_value("color", "lch(10 20 1.28rad)"),
         Some("lch(10 20 73.3386)".to_owned())
     );
+    // A unitless hue number still needs [0, 360) normalization — the
+    // grammar treats it as degrees even without the `deg` suffix.
+    assert_eq!(
+        serialize_color_value("color", "lch(10 20 -700)"),
+        Some("lch(10 20 20)".to_owned())
+    );
+    assert_eq!(
+        serialize_color_value("color", "lch(0.5 -20% -20)"),
+        Some("lch(0.5 0 340)".to_owned())
+    );
+}
+
+#[test]
+fn serialize_color_value_keeps_calc_folded_hue_unnormalized_with_its_deg_unit() {
+    // Unlike a bare hue, a calc()-authored one is neither scaled nor
+    // range-normalized — it folds to a plain evaluated number, keeping
+    // `deg` only because an actual Angle operand (`20deg`) was present.
+    assert_eq!(
+        serialize_color_value(
+            "color",
+            "lch(calc(-50 * 3) calc(0.5 + 1) calc(-20deg * 2) / calc(-0.5 * 2))"
+        ),
+        Some("lch(calc(-150) calc(1.5) calc(-40deg) / calc(-1))".to_owned())
+    );
+    // A calc() hue with no Angle operand anywhere keeps no unit at all.
+    assert_eq!(
+        serialize_color_value("color", "lch(none 20 calc(0.5))"),
+        Some("lch(none 20 calc(0.5))".to_owned())
+    );
 }
 
 #[test]

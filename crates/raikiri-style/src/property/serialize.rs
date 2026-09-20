@@ -1,6 +1,8 @@
 use cssparser::{CowRcStr, ParseError, Parser, ParserInput, ToCss as _, Token};
 
-use super::calc_serialize::{CalcNode, CalcUnitKind, parse_calc_or_plain, serialize_calc_node};
+use super::calc_serialize::{
+    CalcNode, CalcUnitKind, parse_calc_or_plain, serialize_calc_node, serialize_calc_node_as_angle,
+};
 use super::parse::{channel_to_u8, parse_color, parse_color_float};
 use super::types::*;
 
@@ -405,14 +407,20 @@ fn serialize_lab_component(
     scale: f64,
     clamp_min: Option<f64>,
     clamp_max: Option<f64>,
+    is_angle: bool,
 ) -> String {
     let node = match component {
         LabComponent::None => return "none".to_owned(),
+        LabComponent::Calc(node) if is_angle => return serialize_calc_node_as_angle(node),
         LabComponent::Calc(node) => return serialize_calc_node(node),
         LabComponent::Plain(node) => node,
     };
+    // A hue's bare `<number>` (no `deg` suffix, e.g. `lch(10 20 -700)`)
+    // still needs the [0, 360) normalization a `CalcNode::Angle` gets —
+    // the grammar treats a unitless hue as degrees.
     let scaled = match node {
         CalcNode::Percentage(v) => Some(v / 100.0 * scale),
+        CalcNode::Number(v) if is_angle => Some(v.rem_euclid(360.0)),
         CalcNode::Number(v) => Some(*v),
         CalcNode::Angle(v) => Some(v.rem_euclid(360.0)),
         _ => None,
@@ -479,24 +487,32 @@ fn serialize_lab_family_function(spec: &LabFamilySpec, raw_value: &str) -> Optio
                 return Err(nested.new_custom_error(()));
             }
 
+            let is_angle_third = matches!(spec.third_kind, ThirdComponentKind::Angle);
             let lightness_text = serialize_lab_component(
                 &lightness,
                 spec.lightness_scale,
                 Some(0.0),
                 Some(spec.lightness_max),
+                false,
             );
-            let second_text =
-                serialize_lab_component(&second, spec.second_scale, spec.second_clamp_min, None);
+            let second_text = serialize_lab_component(
+                &second,
+                spec.second_scale,
+                spec.second_clamp_min,
+                None,
+                false,
+            );
             let third_scale = match spec.third_kind {
                 ThirdComponentKind::Cartesian => spec.second_scale,
                 ThirdComponentKind::Angle => 1.0,
             };
-            let third_text = serialize_lab_component(&third, third_scale, None, None);
+            let third_text =
+                serialize_lab_component(&third, third_scale, None, None, is_angle_third);
 
             let function_name = spec.function_name;
             let mut result = format!("{function_name}({lightness_text} {second_text} {third_text}");
             if let Some(alpha) = alpha {
-                let alpha_text = serialize_lab_component(&alpha, 1.0, Some(0.0), Some(1.0));
+                let alpha_text = serialize_lab_component(&alpha, 1.0, Some(0.0), Some(1.0), false);
                 if alpha_text != "1" {
                     result.push_str(&format!(" / {alpha_text}"));
                 }

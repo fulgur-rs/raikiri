@@ -304,6 +304,62 @@ pub(crate) fn serialize_calc_node(node: &CalcNode) -> String {
         };
     }
     match node {
+        CalcNode::Sum(..) | CalcNode::Product(..) => serialize_calc_sum_or_product(node),
+        _ => format!("calc({})", render(node)),
+    }
+}
+
+/// Like `serialize_calc_node`, but for an angle-typed component (a lab-
+/// family hue): when the whole expression folds to a constant, normalizes
+/// it into `[0, 360)` and appends the `deg` unit (real corpus:
+/// `calc(20deg * 2)` -> `calc(40deg)`, not `calc(40)` — the multiplication
+/// result keeps degrees since one operand was itself an angle). When it
+/// doesn't fold (an `Unresolved` leaf is present), falls back to the
+/// regular non-angle rendering — the source text of any dimension leaf
+/// already carries its own unit verbatim.
+/// Whether `node`'s tree contains at least one `CalcNode::Angle` leaf —
+/// determines whether a folded result keeps the `deg` unit. Real corpus:
+/// `calc(20deg * 2)` (an actual angle operand) folds to `calc(40deg)`, but
+/// `calc(0.5)` (no angle operand anywhere, even though it's serving as an
+/// hue component) folds to plain `calc(0.5)`, no unit. Note this is
+/// distinct from range normalization: a folded angle keeps its raw value
+/// (`calc(-20deg * 2)` -> `calc(-40deg)`, not `calc(320deg)`) — only a
+/// *bare* (non-`calc()`) hue component gets `[0, 360)` wraparound, handled
+/// separately in `serialize.rs`'s `serialize_lab_component`.
+fn contains_angle(node: &CalcNode) -> bool {
+    match node {
+        CalcNode::Angle(_) => true,
+        CalcNode::Sign(inner) => contains_angle(inner),
+        CalcNode::Sum(left, right, _) | CalcNode::Product(left, right, _) => {
+            contains_angle(left) || contains_angle(right)
+        }
+        _ => false,
+    }
+}
+
+pub(crate) fn serialize_calc_node_as_angle(node: &CalcNode) -> String {
+    if let Some(value) = try_evaluate(node) {
+        if value.is_nan() {
+            return "calc(NaN)".to_owned();
+        }
+        if value.is_infinite() {
+            return if value > 0.0 {
+                "calc(infinity)".to_owned()
+            } else {
+                "calc(-infinity)".to_owned()
+            };
+        }
+        return if contains_angle(node) {
+            format!("calc({}deg)", format_number(value))
+        } else {
+            format!("calc({})", format_number(value))
+        };
+    }
+    serialize_calc_node(node)
+}
+
+fn serialize_calc_sum_or_product(node: &CalcNode) -> String {
+    match node {
         CalcNode::Sum(left, right, is_add) => format!(
             "calc({} {} {})",
             render_parenthesized_if_needed(left, true),
