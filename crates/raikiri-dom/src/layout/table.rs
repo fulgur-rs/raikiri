@@ -951,7 +951,7 @@ fn resolve_column_widths(
     match inputs.known_dimensions.width {
         Some(w) => {
             let avail = f32_max_compat(w - insets, 0.0);
-            distribute_columns(
+            distribute_columns_with_authored(
                 avail,
                 &col_min_full,
                 &col_max_full,
@@ -967,14 +967,19 @@ fn resolve_column_widths(
                 if col_max_full.iter().sum::<f32>() <= avail {
                     col_max_full
                 } else {
-                    distribute_columns(avail, &col_min, &col_max, &col_pct, &authored_length)
+                    distribute_columns(avail, &col_min, &col_max, &col_pct)
                 }
             }
         },
     }
 }
 
-fn distribute_columns(
+fn distribute_columns(avail: f32, min: &[f32], max: &[f32], pct: &[f32]) -> Vec<f32> {
+    let authored_length = vec![false; min.len()];
+    distribute_columns_with_authored(avail, min, max, pct, &authored_length)
+}
+
+fn distribute_columns_with_authored(
     avail: f32,
     min: &[f32],
     max: &[f32],
@@ -2208,5 +2213,85 @@ mod tests {
                 cl.size.height
             );
         }
+    }
+
+    #[test]
+    fn distribute_columns_preserves_authored_tracks_for_spanning_excess() {
+        let widths = super::distribute_columns_with_authored(
+            110.0,
+            &[5.0, 95.0, 0.0, 5.0],
+            &[5.0, 95.0, 0.0, 5.0],
+            &[0.0, 0.0, 0.0, 0.0],
+            &[true, false, false, true],
+        );
+        assert!((widths[0] - 5.0).abs() < 0.01);
+        assert!((widths[3] - 5.0).abs() < 0.01);
+        assert!((widths.iter().sum::<f32>() - 110.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn distribute_columns_falls_back_to_all_tracks_when_all_are_authored() {
+        let widths = super::distribute_columns_with_authored(
+            12.0,
+            &[5.0, 5.0],
+            &[5.0, 5.0],
+            &[0.0, 0.0],
+            &[true, true],
+        );
+        assert_eq!(widths, [6.0, 6.0]);
+    }
+
+    #[test]
+    fn table_colspan_percent_distribution_uses_definite_table_width() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display: table; width: 110px"),
+        );
+        let tr1 = doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display: table-row"),
+        );
+        let wide = doc.append_element(
+            Some(tr1),
+            "td",
+            Style::default(),
+            Some("display: table-cell; width: 50%"),
+        );
+        doc.set_element_attributes(wide, vec![("colspan".into(), "2".into())]);
+        let tr2 = doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display: table-row"),
+        );
+        let left = doc.append_element(
+            Some(tr2),
+            "td",
+            Style::default(),
+            Some("display: table-cell; width: 5px"),
+        );
+        let right = doc.append_element(
+            Some(tr2),
+            "td",
+            Style::default(),
+            Some("display: table-cell; width: 5px"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).unwrap();
+        crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+        let wide_layout = doc.nodes[wide].unrounded_layout;
+        let left_layout = doc.nodes[left].unrounded_layout;
+        let right_layout = doc.nodes[right].unrounded_layout;
+        assert!((wide_layout.size.width - 110.0).abs() < 1.0);
+        assert!((left_layout.size.width - 55.0).abs() < 1.0);
+        assert!((right_layout.size.width - 55.0).abs() < 1.0);
     }
 }
