@@ -3538,25 +3538,27 @@ fn sanitize_font_weight(v: f32, diag: &mut Vec<LayoutWarn>) -> f32 {
     clamped
 }
 
-/// `raikiri_style::property::FontStyle` (`Normal | Italic`, `#[non_exhaustive]`)
-/// → parley's `FontStyle` (re-exported from the `parlance` crate: `Normal |
-/// Italic | Oblique(Option<f32>)`, CSS Fonts 4 §2.4
-/// <https://www.w3.org/TR/css-fonts-4/#font-style-prop>).
+/// `raikiri_style::property::FontStyle` (`Normal | Italic | Oblique`,
+/// `#[non_exhaustive]`) → parley's `FontStyle` (re-exported from the
+/// `parlance` crate: `Normal | Italic | Oblique(Option<f32>)`, CSS Fonts 4
+/// §2.4 <https://www.w3.org/TR/css-fonts-4/#font-style-prop>).
 ///
-/// Only the first two variants have a raikiri-style counterpart today —
-/// `oblique` isn't parsed yet (see `raikiri_style::property::FontStyle`
-/// doc's "Scope carving" section) — so parley's third variant has no source
-/// value to map from. The wildcard arm exists purely for `StyleFontStyle`'s
-/// `#[non_exhaustive]` forward-compat contract (a downstream match must
-/// tolerate variants added to the source enum later) and is unreachable
-/// with the variant set that exists today.
+/// `Oblique` has no `<angle>` payload on the raikiri-style side (bare
+/// keyword only — see `raikiri_style::property::FontStyle` doc's "Scope
+/// carving" section), so it maps to parley's `Oblique(None)`, which per
+/// parley's own doc uses the engine-specific default oblique angle. The
+/// wildcard arm exists purely for `StyleFontStyle`'s `#[non_exhaustive]`
+/// forward-compat contract (a downstream match must tolerate variants
+/// added to the source enum later, e.g. a future `<angle>`-bearing
+/// oblique) and is unreachable with the variant set that exists today.
 fn font_style_to_parley(v: StyleFontStyle) -> FontStyle {
     match v {
         StyleFontStyle::Normal => FontStyle::Normal,
         StyleFontStyle::Italic => FontStyle::Italic,
-        // cov:ignore: unreachable while StyleFontStyle is Normal|Italic
-        // only; required for its #[non_exhaustive] contract (see doc
-        // above).
+        StyleFontStyle::Oblique => FontStyle::Oblique(None),
+        // cov:ignore: unreachable while StyleFontStyle is
+        // Normal|Italic|Oblique only; required for its #[non_exhaustive]
+        // contract (see doc above).
         _ => FontStyle::Normal,
     }
 }
@@ -13979,6 +13981,19 @@ mod tests {
         assert_eq!(
             font_style_to_parley(StyleFontStyle::Italic),
             FontStyle::Italic
+        );
+    }
+
+    #[test]
+    fn font_style_to_parley_maps_oblique_not_normal() {
+        // Regression: `Oblique` previously fell through the wildcard arm
+        // and was silently converted to `FontStyle::Normal`, discarding a
+        // real cascade winner (e.g. a child overriding an inherited
+        // `font-style: italic` with `font-style: oblique` would render
+        // upright instead of slanted).
+        assert_eq!(
+            font_style_to_parley(StyleFontStyle::Oblique),
+            FontStyle::Oblique(None)
         );
     }
 
