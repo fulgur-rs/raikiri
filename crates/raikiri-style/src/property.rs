@@ -740,7 +740,9 @@ fn parse_color_entirely(raw_value: &str) -> Option<CssColor> {
 /// from its raw CSS text, for the property names whose `PropertyValue`
 /// payload is a bare [`CssColor`] or a `CurrentColor`-wrapping enum around
 /// one: `color`, `background-color`, the four physical `border-*-color`
-/// longhands, `text-decoration-color`, `outline-color`.
+/// longhands, `text-decoration-color`, `outline-color`. `border-color`'s
+/// `<color>{1,4}` shorthand goes through [`serialize_border_color_shorthand`]
+/// instead, since it is several raw `<color>` values, not one.
 ///
 /// CSS Color 4 "Serializing color values" gives three different
 /// serializations depending on how a color was written, and the parsed
@@ -767,6 +769,9 @@ fn parse_color_entirely(raw_value: &str) -> Option<CssColor> {
 /// changing `CssColor`/`PropertyValue`'s shape, which is public API used
 /// well beyond this parser (cascade, paint, and downstream consumers).
 pub fn serialize_color_value(name: &str, raw_value: &str) -> Option<String> {
+    if name == "border-color" {
+        return serialize_border_color_shorthand(raw_value);
+    }
     if !matches!(
         name,
         "color"
@@ -780,7 +785,14 @@ pub fn serialize_color_value(name: &str, raw_value: &str) -> Option<String> {
     ) {
         return None;
     }
+    serialize_one_color(raw_value)
+}
 
+/// The single-`<color>`-value classification logic behind
+/// [`serialize_color_value`], factored out so
+/// [`serialize_border_color_shorthand`] can apply it to each of its
+/// shorthand's 1-4 components individually.
+fn serialize_one_color(raw_value: &str) -> Option<String> {
     let mut input = ParserInput::new(raw_value);
     let mut parser = Parser::new(&mut input);
     let leading_token = parser.next().ok()?.clone();
@@ -826,6 +838,80 @@ pub fn serialize_color_value(name: &str, raw_value: &str) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// Serializes `border-color`'s `<color>{1,4}` shorthand from its raw CSS
+/// text. Splits it into its 1-4 authored `<color>` components using the
+/// real parser (not a whitespace split — a legacy functional color like
+/// `rgb(0 0 255)` contains internal spaces a naive split would misread as
+/// component boundaries), classifies each component via
+/// [`serialize_one_color`], expands them to the four physical positions per
+/// the CSS box-model shorthand rule, and re-collapses using the same 1/2/3
+/// -value rule `serialize_sides` applies to typed values — but by string
+/// equality of the already-serialized components.
+///
+/// This can miss collapsing two components that are the same color written
+/// in different syntax (e.g. `red` and `#ff0000` both resolve to the same
+/// `CssColor`, but serialize to different strings and so compare unequal
+/// here). No known WPT fixture exercises that case; catching it would need
+/// each component's `BorderColor`-equivalent resolved value alongside its
+/// serialized string, not just the string.
+fn serialize_border_color_shorthand(raw_value: &str) -> Option<String> {
+    let mut input = ParserInput::new(raw_value);
+    let mut parser = Parser::new(&mut input);
+
+    let mut components: Vec<String> = Vec::with_capacity(4);
+    while !parser.is_exhausted() {
+        let start = parser.position();
+        parse_color_float(&mut parser, 0)?;
+        let component = parser.slice_from(start);
+        components.push(serialize_one_color(component)?);
+    }
+
+    let resolved: [&str; 4] = match components.len() {
+        1 => [
+            &components[0],
+            &components[0],
+            &components[0],
+            &components[0],
+        ],
+        2 => [
+            &components[0],
+            &components[1],
+            &components[0],
+            &components[1],
+        ],
+        3 => [
+            &components[0],
+            &components[1],
+            &components[2],
+            &components[1],
+        ],
+        4 => [
+            &components[0],
+            &components[1],
+            &components[2],
+            &components[3],
+        ],
+        // 0 (empty input) or 5+ components are not valid `border-color`
+        // syntax; a caller that pre-validated via `parse_value` never
+        // reaches this, but `serialize_color_value` is `pub` and re-parses
+        // `raw_value` independently of any such validation, so this reports
+        // the mismatch as `None` rather than panicking on a malformed
+        // direct call.
+        _ => return None,
+    };
+    let [top, right, bottom, left] = resolved;
+
+    Some(if top == right && right == bottom && bottom == left {
+        top.to_owned()
+    } else if top == bottom && right == left {
+        format!("{top} {right}")
+    } else if right == left {
+        format!("{top} {right} {bottom}")
+    } else {
+        format!("{top} {right} {bottom} {left}")
+    })
 }
 
 /// `column-count` value from CSS Multi-column Layout.
@@ -10161,16 +10247,13 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::MaxHeight(_) => None,
 
         // `color`/`background-color`/`border-*-color`/`text-decoration-color`/
-        // `outline-color` are deliberately absent here even though they carry
-        // `CssColor`/`CurrentColor`-wrapping payloads: see
-        // `serialize_color_value`, which serializes them from raw CSS text
-        // instead, because the parsed value alone cannot distinguish keyword
-        // syntax from legacy-functional syntax from modern-functional syntax
-        // (all three can produce the same `CssColor`). `border-color`'s
-        // `Sides<BorderColor>` shorthand is out of scope for that raw-text
-        // approach (splitting 1-4 components requires a nested-paren-aware
-        // reparse, not a naive whitespace split) and is left unserialized
-        // (falls back to echo) until that is implemented.
+        // `outline-color` (including the `border-color` shorthand here) are
+        // deliberately absent even though they carry `CssColor`/
+        // `CurrentColor`-wrapping payloads: see `serialize_color_value`,
+        // which serializes them from raw CSS text instead, because the
+        // parsed value alone cannot distinguish keyword syntax from
+        // legacy-functional syntax from modern-functional syntax (all three
+        // can produce the same `CssColor`).
         PropertyValue::BorderColor(_) => None,
 
         _ => None,
@@ -38615,12 +38698,6 @@ mod tests {
     #[test]
     fn serialize_color_value_returns_none_for_names_it_does_not_own() {
         assert_eq!(serialize_color_value("width", "10px"), None);
-        // `border-color`'s 1-4-value shorthand is deliberately deferred —
-        // see the `PropertyValue::BorderColor(_)` arm in `serialize_value`.
-        assert_eq!(
-            serialize_color_value("border-color", "red yellow green blue"),
-            None
-        );
     }
 
     #[test]
@@ -38632,6 +38709,56 @@ mod tests {
                 bottom: BorderColor::CurrentColor,
                 left: BorderColor::CurrentColor,
             })),
+            None
+        );
+    }
+
+    #[test]
+    fn serialize_color_value_collapses_border_color_shorthand_by_box_model_rules() {
+        assert_eq!(
+            serialize_color_value("border-color", "currentcolor"),
+            Some("currentcolor".to_owned())
+        );
+        assert_eq!(
+            serialize_color_value("border-color", "currentColor"),
+            Some("currentcolor".to_owned())
+        );
+        assert_eq!(
+            serialize_color_value("border-color", "red yellow green blue"),
+            Some("red yellow green blue".to_owned())
+        );
+        assert_eq!(
+            serialize_color_value("border-color", "red green"),
+            Some("red green".to_owned())
+        );
+        // 3 authored components (top, right, bottom) with left implied
+        // equal to right: [red, green, red, green] collapses further to
+        // the 2-value form, since top == bottom and right == left too.
+        assert_eq!(
+            serialize_color_value("border-color", "red green red"),
+            Some("red green".to_owned())
+        );
+        // 3 authored components that do NOT collapse further stay 3-value.
+        assert_eq!(
+            serialize_color_value("border-color", "red green blue"),
+            Some("red green blue".to_owned())
+        );
+    }
+
+    #[test]
+    fn serialize_color_value_splits_border_color_components_paren_aware() {
+        // A naive whitespace split would misread `rgb(0 0 255)`'s internal
+        // spaces as component boundaries.
+        assert_eq!(
+            serialize_color_value("border-color", "rgb(0 0 255) red"),
+            Some("rgb(0, 0, 255) red".to_owned())
+        );
+    }
+
+    #[test]
+    fn serialize_color_value_returns_none_for_border_color_with_a_modern_component() {
+        assert_eq!(
+            serialize_color_value("border-color", "red lab(0 0 0)"),
             None
         );
     }
