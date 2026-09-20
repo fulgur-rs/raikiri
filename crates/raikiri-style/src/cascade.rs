@@ -5850,6 +5850,16 @@ fn project_deferred_value(
             crate::property::PropertyKey::FlexWrap => PropertyValue::FlexWrap(shorthand.wrap),
             _ => return None,
         },
+        // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
+        PropertyValue::Columns(shorthand) => match key {
+            crate::property::PropertyKey::ColumnWidth => {
+                PropertyValue::ColumnWidth(shorthand.width)
+            }
+            crate::property::PropertyKey::ColumnCount => {
+                PropertyValue::ColumnCount(shorthand.count)
+            }
+            _ => return None,
+        },
         PropertyValue::Gap(shorthand) => match key {
             crate::property::PropertyKey::RowGap => PropertyValue::RowGap(shorthand.row),
             crate::property::PropertyKey::ColumnGap => PropertyValue::ColumnGap(shorthand.column),
@@ -7932,7 +7942,10 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::TextCombineUpright(_)
         | PropertyValue::TextOrientation(_)
         | PropertyValue::UnicodeBidi(_)
-        | PropertyValue::Page(_)) => v,
+        | PropertyValue::Page(_)
+        | PropertyValue::ColumnCount(_)
+        | PropertyValue::ColumnWidth(_)
+        | PropertyValue::Columns(_)) => v,
     })
 }
 
@@ -8852,6 +8865,17 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // in the specified staging bag; the page driver consumes it when it
         // selects the next page context.
         PropertyValue::Page(value) => target.page = value,
+        // CSS Multi-column Layout 1: both longhands are non-inherited and
+        // retain their specified representations until finalization.
+        PropertyValue::ColumnCount(value) => target.column_count = value,
+        PropertyValue::ColumnWidth(value) => target.column_width = value,
+        // `columns` is expanded by `rule::expand_shorthand_into`; keep this
+        // arm defensive for callers that construct declarations directly.
+        // cov:ignore: direct unexpanded shorthand callers are defensive-only.
+        PropertyValue::Columns(value) => {
+            target.column_count = value.count;
+            target.column_width = value.width;
+        }
         // These values are resolved before ordinary winners reach this
         // function. Keeping an explicit no-op makes direct internal callers
         // panic-free without allowing raw deferred data into a computed field.
@@ -14423,6 +14447,31 @@ mod tests {
         assert_eq!(
             cv.align_self,
             crate::property::AlignSelfValue::Value(crate::property::SelfAlignmentValue::FlexEnd)
+        );
+    }
+
+    #[test]
+    fn author_multicol_longhands_compute_through_cascade() {
+        let cv = cascade_with_ua(
+            "",
+            "div { column-count: 3; column-width: 2em; }",
+            "div",
+            None,
+        );
+        assert_eq!(cv.column_count, crate::property::ColumnCountValue::Count(3));
+        assert_eq!(
+            cv.column_width,
+            crate::resolve::ComputedColumnWidth::Px(32.0)
+        );
+    }
+
+    #[test]
+    fn author_multicol_shorthand_fans_out_through_cascade() {
+        let cv = cascade_with_ua("", "div { columns: 3 2em; }", "div", None);
+        assert_eq!(cv.column_count, crate::property::ColumnCountValue::Count(3));
+        assert_eq!(
+            cv.column_width,
+            crate::resolve::ComputedColumnWidth::Px(32.0)
         );
     }
 

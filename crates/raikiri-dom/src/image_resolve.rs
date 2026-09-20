@@ -1,6 +1,6 @@
 //! Pre-layout `<img>` intrinsic-size resolution.
 //!
-//! Mirrors [`crate::layout::preshape_text`]'s role: runs once before taffy
+//! Mirrors [`crate::layout`]'s `preshape_text` role: runs once before taffy
 //! layout, writes results onto [`crate::node::Node`], so the taffy
 //! leaf-measure closures (`crate::taffy_impl`) stay synchronous flat reads
 //! with no new integration logic into taffy's own trait surface. Like

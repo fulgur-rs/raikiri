@@ -6,7 +6,9 @@
 
 use std::path::PathBuf;
 
-use raikiri_wpt::reftest::{ReftestConfig, discover_pairs_for_file_with_wpt_root, run_pair};
+use raikiri_wpt::reftest::{
+    ReftestConfig, discover_pairs_for_file_with_wpt_root, run_pair, run_pair_with_images,
+};
 use raikiri_wpt::runner::{TestOutcome, Tolerance};
 
 /// Keep verified Multi-column passes covered across the first precision groups.
@@ -40,6 +42,42 @@ fn css_multicol_pass_pairs_are_pixel_exact_at_800x600() {
         assert_eq!(pairs.len(), 1, "expected one pair for {relative}");
         let result =
             run_pair(&pairs[0], config).unwrap_or_else(|error| panic!("run {relative}: {error}"));
+        assert!(
+            matches!(result.outcome, TestOutcome::Pass),
+            "{relative}: {:?} ({} mismatched pixels)",
+            result.outcome,
+            result.mismatched_pixels
+        );
+    }
+}
+
+/// Keep the foundational columns/count/width implementation covered with
+/// resource-enabled rendering (Ahem and the bundled image reference).
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn css_multicol_foundation_pairs_are_pixel_exact_at_800x600() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let cases = [
+        "css/css-multicol/multicol-basic-001.html",
+        "css/css-multicol/multicol-basic-002.html",
+        "css/css-multicol/multicol-basic-003.html",
+        "css/css-multicol/multicol-basic-004.html",
+        "css/css-multicol/multicol-count-001.xht",
+        "css/css-multicol/multicol-count-002.xht",
+        "css/css-multicol/column-count-used-001.html",
+    ];
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    for relative in cases {
+        let test = root.join(relative);
+        let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
+            .unwrap_or_else(|error| panic!("discover {relative}: {error}"));
+        assert_eq!(pairs.len(), 1, "expected one pair for {relative}");
+        let result = run_pair_with_images(&pairs[0], config)
+            .unwrap_or_else(|error| panic!("run {relative}: {error}"));
         assert!(
             matches!(result.outcome, TestOutcome::Pass),
             "{relative}: {:?} ({} mismatched pixels)",

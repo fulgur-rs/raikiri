@@ -575,6 +575,38 @@ pub enum LengthOrAuto {
     Calc(CalcLengthPercentage),
 }
 
+/// `column-count` value from CSS Multi-column Layout.
+///
+/// The `auto` keyword leaves the used count to the paired `column-width` and
+/// available inline size. Positive integer counts are preserved as authored.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColumnCountValue {
+    /// Automatic column count.
+    Auto,
+    /// A positive integer column count.
+    Count(u32),
+}
+
+/// `column-width` value from CSS Multi-column Layout.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ColumnWidthValue {
+    /// Automatic column width.
+    Auto,
+    /// A non-negative authored length.
+    Length(Length),
+}
+
+/// The `columns` shorthand, before expansion into its two longhands.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ColumnsShorthand {
+    /// The `column-width` component.
+    pub width: ColumnWidthValue,
+    /// The `column-count` component.
+    pub count: ColumnCountValue,
+}
+
 /// `normal | <length>` を取る property の specified value —
 /// [`letter-spacing`](PropertyValue::LetterSpacing) と
 /// [`word-spacing`](PropertyValue::WordSpacing) で共有する
@@ -7929,6 +7961,12 @@ pub enum PropertyValue {
     /// (E/F/G の `TextCombineUpright` 等と同 pattern)。
     /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
     Page(PageValue),
+    /// `column-count` — non-inherited, positive integer or `auto`.
+    ColumnCount(ColumnCountValue),
+    /// `column-width` — non-inherited, non-negative length or `auto`.
+    ColumnWidth(ColumnWidthValue),
+    /// `columns` shorthand for `column-width` and `column-count`.
+    Columns(ColumnsShorthand),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -8408,6 +8446,10 @@ pub enum PropertyKey {
     // discriminants of existing keys used by the winner scratch slots.
     ListStyleType,
     ListStylePosition,
+    // CSS Multi-column Layout Module Level 1.
+    ColumnCount,
+    ColumnWidth,
+    Columns,
 }
 
 impl PropertyValue {
@@ -8607,6 +8649,9 @@ impl PropertyValue {
             PropertyValue::TextEmphasisPosition(_) => PropertyKey::TextEmphasisPosition,
             PropertyValue::TextUnderlinePosition(_) => PropertyKey::TextUnderlinePosition,
             PropertyValue::Page(_) => PropertyKey::Page,
+            PropertyValue::ColumnCount(_) => PropertyKey::ColumnCount,
+            PropertyValue::ColumnWidth(_) => PropertyKey::ColumnWidth,
+            PropertyValue::Columns(_) => PropertyKey::Columns,
         }
     }
 }
@@ -9684,6 +9729,9 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "row-gap" => PropertyKey::RowGap,
         "column-gap" => PropertyKey::ColumnGap,
         "gap" => PropertyKey::Gap,
+        "column-count" => PropertyKey::ColumnCount,
+        "column-width" => PropertyKey::ColumnWidth,
+        "columns" => PropertyKey::Columns,
         "place-content" => PropertyKey::PlaceContent,
         "hyphens" => PropertyKey::Hyphens,
         "tab-size" => PropertyKey::TabSize,
@@ -10334,6 +10382,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // <https://www.w3.org/TR/css-align-3/#propdef-gap>.
         "gap" => parse_gap_shorthand(input).map(PropertyValue::Gap),
         "grid-gap" => parse_gap_shorthand(input).map(PropertyValue::Gap),
+        // CSS Multi-column Layout Module Level 1.
+        "column-count" => parse_column_count(input).map(PropertyValue::ColumnCount),
+        "column-width" => parse_column_width(input).map(PropertyValue::ColumnWidth),
+        "columns" => parse_columns_shorthand(input).map(PropertyValue::Columns),
         // CSS Box Alignment Module Level 3 §5.2
         // <https://www.w3.org/TR/css-align-3/#propdef-place-content>.
         "place-content" => parse_place_content_shorthand(input).map(PropertyValue::PlaceContent),
@@ -18044,6 +18096,62 @@ fn parse_z_index(input: &mut Parser<'_, '_>) -> Option<ZIndexValue> {
 fn parse_positive_integer(input: &mut Parser<'_, '_>) -> Option<i32> {
     let value = input.try_parse(|i| i.expect_integer()).ok()?;
     if value > 0 { Some(value) } else { None }
+}
+
+/// `column-count: auto | <integer [1,∞]>`.
+fn parse_column_count(input: &mut Parser<'_, '_>) -> Option<ColumnCountValue> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(ColumnCountValue::Auto);
+    }
+    let count = parse_positive_integer(input)?;
+    Some(ColumnCountValue::Count(u32::try_from(count).ok()?))
+}
+
+/// `column-width: auto | <length [0,∞]>`.
+fn parse_column_width(input: &mut Parser<'_, '_>) -> Option<ColumnWidthValue> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(ColumnWidthValue::Auto);
+    }
+    Some(ColumnWidthValue::Length(parse_non_negative_length(input)?))
+}
+
+fn parse_columns_shorthand(input: &mut Parser<'_, '_>) -> Option<ColumnsShorthand> {
+    // The grammar is an unordered pair (`||`).  Parsing in one fixed order
+    // is not enough because `auto` is valid for both components: `auto 3`
+    // and `auto 200px` need opposite interpretations of the first token.
+    // Each complete candidate is tried transactionally and must consume the
+    // whole value, so duplicate components and trailing garbage are rejected.
+    if let Ok(value) = input.try_parse(|i| {
+        let width = parse_column_width(i).ok_or_else(|| i.new_custom_error::<(), ()>(()))?;
+        let has_second = !i.is_exhausted();
+        let count = if has_second {
+            parse_column_count(i).ok_or_else(|| i.new_custom_error::<(), ()>(()))?
+        } else {
+            ColumnCountValue::Auto
+        };
+        if !i.is_exhausted() {
+            return Err(i.new_custom_error::<(), ()>(()));
+        }
+        Ok(ColumnsShorthand { count, width })
+    }) {
+        return Some(value);
+    }
+
+    input
+        .try_parse(|i| {
+            let count = parse_column_count(i).ok_or_else(|| i.new_custom_error::<(), ()>(()))?;
+            let has_second = !i.is_exhausted();
+            let width = if has_second {
+                parse_column_width(i).ok_or_else(|| i.new_custom_error::<(), ()>(()))?
+            } else {
+                ColumnWidthValue::Auto
+            };
+            if !i.is_exhausted() {
+                return Err(i.new_custom_error::<(), ()>(()));
+            }
+            Ok(ColumnsShorthand { count, width })
+        })
+        .ok()
 }
 
 /// `break-before: <ident>` / `break-after: <ident>` を parse する (CSS
@@ -37741,5 +37849,82 @@ mod tests {
         assert_eq!(parse("auto", "empty-cells"), None);
         assert_eq!(parse_entire("show hide", "empty-cells"), None);
         assert_eq!(parse("visible", "empty-cells"), None);
+    }
+
+    #[test]
+    fn multicol_longhands_parse_and_reject_out_of_range_values() {
+        assert_eq!(
+            parse_entire("auto", "column-count"),
+            Some(PropertyValue::ColumnCount(ColumnCountValue::Auto))
+        );
+        assert_eq!(
+            parse_entire("3", "column-count"),
+            Some(PropertyValue::ColumnCount(ColumnCountValue::Count(3)))
+        );
+        for source in ["0", "-1", "1.5", "3.0"] {
+            assert_eq!(parse_entire(source, "column-count"), None, "{source}");
+        }
+
+        assert_eq!(
+            parse_entire("auto", "column-width"),
+            Some(PropertyValue::ColumnWidth(ColumnWidthValue::Auto))
+        );
+        assert_eq!(
+            parse_entire("10px", "column-width"),
+            Some(PropertyValue::ColumnWidth(ColumnWidthValue::Length(
+                Length::Px(10.0)
+            )))
+        );
+        assert!(matches!(
+            parse_entire("2em", "column-width"),
+            Some(PropertyValue::ColumnWidth(ColumnWidthValue::Length(Length::Em(value))))
+                if (value - 2.0).abs() < f32::EPSILON
+        ));
+        for source in ["-1px", "10%"] {
+            assert_eq!(parse_entire(source, "column-width"), None, "{source}");
+        }
+    }
+
+    #[test]
+    fn multicol_columns_accepts_both_orders_and_rejects_duplicate_non_auto_components() {
+        let expected = |count, width| PropertyValue::Columns(ColumnsShorthand { count, width });
+        for source in ["3 100px", "100px 3"] {
+            assert_eq!(
+                parse_entire(source, "columns"),
+                Some(expected(
+                    ColumnCountValue::Count(3),
+                    ColumnWidthValue::Length(Length::Px(100.0)),
+                )),
+                "{source}" // cov:ignore: assertion failure formatting is only evaluated on a regression.
+            );
+        }
+        assert_eq!(
+            parse_entire("auto 3", "columns"),
+            Some(expected(ColumnCountValue::Count(3), ColumnWidthValue::Auto,))
+        );
+        assert_eq!(
+            parse_entire("auto 200px", "columns"),
+            Some(expected(
+                ColumnCountValue::Auto,
+                ColumnWidthValue::Length(Length::Px(200.0)),
+            ))
+        );
+        assert_eq!(
+            parse_entire("auto", "columns"),
+            Some(expected(ColumnCountValue::Auto, ColumnWidthValue::Auto))
+        );
+        assert_eq!(
+            parse_entire("3", "columns"),
+            Some(expected(ColumnCountValue::Count(3), ColumnWidthValue::Auto,))
+        );
+        for source in ["3 4", "100px 200px", "3 100px 2"] {
+            // cov:ignore: assertion failure formatting is only evaluated on a regression.
+            assert_eq!(parse_entire(source, "columns"), None, "{source}");
+        }
+        assert_eq!(parse_entire("100px 3 2", "columns"), None);
+        assert_eq!(
+            parse_entire("auto auto", "columns"),
+            Some(expected(ColumnCountValue::Auto, ColumnWidthValue::Auto))
+        );
     }
 }

@@ -2772,6 +2772,60 @@ fn paint_document_impl(
         margins.left + insets.left
     };
     let page_offset_y = margins.top + insets.top - content_origin_y;
+    // A body background is normally propagated to the canvas. When the body
+    // has authored padding, its border box can still extend beyond the
+    // synthetic canvas width used by this paint walk; paint that visible
+    // padding strip as part of the body box. This preserves the CSS body
+    // background in cases such as `body { width: 20em; padding-right: 1em }`
+    // without flooding the rest of the page.
+    // cov:ignore: authored body-padding propagation is exercised by the ignored image-enabled WPT run.
+    if cascade.computed[body_id].background_color.a != 0
+        // cov:ignore: authored body-padding propagation is exercised by the ignored image-enabled WPT run.
+        && cascade.computed[body_id].background_image == BackgroundImage::None
+    // cov:ignore: authored body-padding propagation is exercised by the ignored image-enabled WPT run.
+    {
+        let Some(body) = document.get_node(body_id) else {
+            return;
+        };
+        let right_padding = body.unrounded_layout.padding.right.max(0.0);
+        if right_padding > 0.0 {
+            let content_end = body
+                .children
+                .iter()
+                .filter_map(|&child| {
+                    let node = document.get_node(child)?;
+                    (node.is_in_document() && node.unrounded_layout.size.height > 0.0).then_some(
+                        node.unrounded_layout.location.x + node.unrounded_layout.size.width,
+                    )
+                })
+                .fold(0.0_f32, f32::max);
+            let content_bottom = body
+                .children
+                .iter()
+                .filter_map(|&child| {
+                    let node = document.get_node(child)?;
+                    node.is_in_document().then_some(
+                        node.unrounded_layout.location.y + node.unrounded_layout.size.height,
+                    )
+                })
+                .fold(0.0_f32, f32::max);
+            if content_end > 0.0 && content_bottom > 0.0 {
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    css_color(cascade.computed[body_id].background_color),
+                    None,
+                    &Rect::new(
+                        (page_offset_x + body.unrounded_layout.padding.left) as f64,
+                        (page_offset_y + body.unrounded_layout.padding.top) as f64,
+                        (page_offset_x + content_end + right_padding) as f64,
+                        (page_offset_y + content_bottom + body.unrounded_layout.padding.bottom)
+                            as f64,
+                    ),
+                );
+            }
+        }
+    }
     // The synthetic body root keeps the historical inline width, so normal
     // element backgrounds can extend past the page content box when a page
     // has border/padding. Clip those backgrounds to the physical content box

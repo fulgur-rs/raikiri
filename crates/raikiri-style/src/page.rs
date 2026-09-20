@@ -124,13 +124,14 @@ use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_pr
 #[allow(unused_imports)]
 use crate::property::{
     BackgroundShorthand, BackgroundSize, Border, BorderCollapseValue, BorderColor, BorderRadius,
-    BorderSpacingValue, BorderStyle, BoxShadowItem, CaptionSideValue, CssPosition,
-    CssPositionOffset, CustomProperty, EmptyCellsValue, FlexBasisValue, FlexFlow, FlexShorthand,
-    FontShorthand, FontShorthandSize, GapShorthand, GridInflexibleBreadth, GridTemplateTracks,
-    GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize,
-    Length, LengthOrAuto, LengthOrNormal, Outline, OutlineColor, OutlineStyle, OverflowValue,
-    OverflowXY, PageValue, PropertyKey, PropertyValue, Sides, TableLayoutValue, TextCombineUpright,
-    TextDecorationInset, TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces,
+    BorderSpacingValue, BorderStyle, BoxShadowItem, CaptionSideValue, ColumnCountValue,
+    ColumnWidthValue, ColumnsShorthand, CssPosition, CssPositionOffset, CustomProperty,
+    EmptyCellsValue, FlexBasisValue, FlexFlow, FlexShorthand, FontShorthand, FontShorthandSize,
+    GapShorthand, GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+    GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
+    Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowXY, PageValue, PropertyKey,
+    PropertyValue, Sides, TableLayoutValue, TextCombineUpright, TextDecorationInset,
+    TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces,
     TextDecorationThickness, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisVEdge,
     TextIndentValue, TextOrientation, TextShadowItem, TextUnderlinePosition, TextWrapMode,
     TransformFunction, UnicodeBidi, parse_length_allow_negative, parse_non_negative_length,
@@ -3282,6 +3283,12 @@ fn absolutize_in_page_context(
         // `page` (CSS Paged Media 3 §8.1) carries no length and computed
         // value = specified value — nothing for phase 3 to absolutize.
         | PropertyValue::Page(_)
+        // `column-count` carries only a keyword/integer and has no page-side
+        // length to absolutize. `column-width:auto` is likewise already
+        // computed-equivalent; the length-bearing forms have dedicated arms
+        // below so relative units do not leak into the page declaration bag.
+        | PropertyValue::ColumnCount(_)
+        | PropertyValue::ColumnWidth(ColumnWidthValue::Auto)
         // `flex-direction`/`flex-wrap` (CSS Flexible Box Layout Module
         // Level 1 §5.1/§5.2) carry no length and computed value = specified
         // keyword — nothing for phase 3 to absolutize.
@@ -3408,6 +3415,24 @@ fn absolutize_in_page_context(
         | PropertyValue::BorderCollapse(_)
         | PropertyValue::CaptionSide(_)
         | PropertyValue::EmptyCells(_)) => v,
+        // `column-width` and the width component of `columns` are
+        // length-bearing. Resolve relative units against the page context,
+        // matching the other single-length properties above.
+        PropertyValue::ColumnWidth(ColumnWidthValue::Length(length)) => {
+            PropertyValue::ColumnWidth(ColumnWidthValue::Length(Length::Px(
+                resolve_length(length, font_size, own_line_height, ctx).px(),
+            )))
+        }
+        // cov:ignore: page-context shorthand absolutization is defensive and not part of the focused layout path.
+        PropertyValue::Columns(shorthand) => PropertyValue::Columns(ColumnsShorthand {
+            width: match shorthand.width {
+                ColumnWidthValue::Auto => ColumnWidthValue::Auto,
+                ColumnWidthValue::Length(length) => ColumnWidthValue::Length(Length::Px(
+                    resolve_length(length, font_size, own_line_height, ctx).px(),
+                )),
+            },
+            count: shorthand.count,
+        }),
         // ── background-image / mask-image ───────────────────────────────
         // `None`/`Url(String)` are computed-equivalent. `Gradient(..)`'s
         // `<length-percentage>` payloads (`GradientColorStop::position`,
@@ -7241,7 +7266,7 @@ mod tests {
     /// この値は `page_corpus` の現在の identity/pass-through arms と同期する。
     // Includes the five page-only inherit markers, which phase 3 leaves
     // untouched as a defensive no-op after phase 2 has normally resolved them.
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 117;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 118;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -7998,6 +8023,12 @@ mod tests {
         Page => PropertyValue::Page(PageValue::Named(Atom::from("cover"))),
         ListStyleType => PropertyValue::ListStyleType(ListStyleType::Named("decimal".into())),
         ListStylePosition => PropertyValue::ListStylePosition(ListStylePosition::Inside),
+        ColumnCount => PropertyValue::ColumnCount(ColumnCountValue::Count(3)),
+        ColumnWidth => PropertyValue::ColumnWidth(ColumnWidthValue::Length(Length::Em(2.0))),
+        Columns => PropertyValue::Columns(ColumnsShorthand {
+            width: ColumnWidthValue::Length(Length::Em(2.0)),
+            count: ColumnCountValue::Count(3),
+        }),
     }
 
     /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -8317,6 +8348,9 @@ mod tests {
         TextEmphasisPosition,
         TextUnderlinePosition,
         Page,
+        ColumnCount,
+        ColumnWidth,
+        Columns,
     }
 
     /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -8602,7 +8636,22 @@ mod tests {
             | PropertyValue::TextOrientation(_)
             | PropertyValue::UnicodeBidi(_)
             // `page` carries no length either (`auto` / named page).
-            | PropertyValue::Page(_) => None,
+            | PropertyValue::Page(_)
+            // `column-count` carries no specified-layer length. Width-bearing
+            // forms are resolved by `absolutize_in_page_context`, so raw
+            // relative units remain visible to this detector only before
+            // that phase.
+            | PropertyValue::ColumnCount(_) => None,
+            // cov:ignore: auto width has no length residue to report.
+            PropertyValue::ColumnWidth(ColumnWidthValue::Auto) => None,
+            PropertyValue::ColumnWidth(ColumnWidthValue::Length(l)) => {
+                length(*l)
+            }
+            // cov:ignore: shorthand auto width has no length residue to report.
+            PropertyValue::Columns(shorthand) => match shorthand.width {
+                ColumnWidthValue::Auto => None,
+                ColumnWidthValue::Length(l) => length(l),
+            },
             PropertyValue::LineHeight(lh) => line_height(*lh),
             // `font-size` だけは `%` も残滓 (§5.5.1 の明示的例外)。
             PropertyValue::FontSize(l) => length_absolute_only(*l, "font-size: <percentage>"),
