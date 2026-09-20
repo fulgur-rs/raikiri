@@ -725,6 +725,9 @@ css/css-text/overflow-wrap/overflow-wrap-break-word-fit-content-001.html
 css/css-text/overflow-wrap/overflow-wrap-min-content-size-002.html
 css/css-text/overflow-wrap/overflow-wrap-min-content-size-003.html
 css/css-text/overflow-wrap/word-wrap-004.html
+css/css-text/overflow-wrap/overflow-wrap-cluster-001.html
+css/css-text/overflow-wrap/overflow-wrap-cluster-002.html
+css/css-text/overflow-wrap/overflow-wrap-min-content-size-006.html
 css/css-text/shaping/reference/shaping-000-ref.html
 css/css-text/shaping/reference/shaping-012-ref.html
 css/css-text/shaping/shaping-012.html
