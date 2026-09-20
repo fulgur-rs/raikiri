@@ -1280,3 +1280,33 @@ css/css-multicol/change-fragmentainer-size-000.html
 
 # --- CSS Text writing-system exact 800x600 PASS-only pin 2026-09-20 ---
 css/css-text/writing-system/writing-system-font-001.html
+# --- CSS Text multi-category exact 800x600 PASS-only pins 2026-09-21 ---
+# text-group-align, text-spacing-trim, and hanging-punctuation.
+css/css-text/text-group-align/text-group-align-center-vlr.html
+css/css-text/text-group-align/text-group-align-center.html
+css/css-text/text-group-align/text-group-align-end-vlr.html
+css/css-text/text-group-align/text-group-align-end.html
+css/css-text/text-group-align/text-group-align-left-vlr.html
+css/css-text/text-group-align/text-group-align-left.html
+css/css-text/text-group-align/text-group-align-right-vlr.html
+css/css-text/text-group-align/text-group-align-right.html
+css/css-text/text-group-align/text-group-align-start-vlr.html
+css/css-text/text-group-align/text-group-align-start.html
+css/css-text/text-spacing-trim/text-spacing-trim-001.html
+css/css-text/text-spacing-trim/text-spacing-trim-colon-001.html
+css/css-text/text-spacing-trim/text-spacing-trim-dot-001.html
+css/css-text/text-spacing-trim/text-spacing-trim-fallback-001.html
+css/css-text/text-spacing-trim/text-spacing-trim-fallback-002.html
+css/css-text/text-spacing-trim/text-spacing-trim-feature-001.html
+css/css-text/text-spacing-trim/text-spacing-trim-narrow-001.html
+css/css-text/text-spacing-trim/text-spacing-trim-quote-001.html
+css/css-text/text-spacing-trim/text-spacing-trim-span-001.html
+css/css-text/text-spacing-trim/text-spacing-trim-start-oof-001.html
+css/css-text/text-spacing-trim/text-spacing-trim-subset-001.html
+css/css-text/text-spacing-trim/text-spacing-trim-trim-all-001.html
+css/css-text/hanging-punctuation/hanging-punctuation-first-ascii-quote.html
+css/css-text/hanging-punctuation/hanging-punctuation-inline-001.html
+css/css-text/hanging-punctuation/hanging-punctuation-last-ascii-quote.html
+css/css-text/hanging-punctuation/hanging-punctuation-last-whitespace.html
+css/css-text/hanging-punctuation/hanging-punctuation-last.html
+css/css-text/hanging-punctuation/hanging-punctuation-with-bidi.html

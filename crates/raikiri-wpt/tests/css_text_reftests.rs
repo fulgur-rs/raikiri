@@ -76,3 +76,78 @@ fn writing_system_font_unpinned_exact_passes() {
         result.mismatched_pixels
     );
 }
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_group_align_unpinned_exact_passes() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let candidates = [
+        "css/css-text/text-group-align/text-group-align-center-vlr.html",
+        "css/css-text/text-group-align/text-group-align-center.html",
+        "css/css-text/text-group-align/text-group-align-end-vlr.html",
+        "css/css-text/text-group-align/text-group-align-end.html",
+        "css/css-text/text-group-align/text-group-align-left-vlr.html",
+        "css/css-text/text-group-align/text-group-align-left.html",
+        "css/css-text/text-group-align/text-group-align-right-vlr.html",
+        "css/css-text/text-group-align/text-group-align-right.html",
+        "css/css-text/text-group-align/text-group-align-start-vlr.html",
+        "css/css-text/text-group-align/text-group-align-start.html",
+    ];
+    assert_exact_passes(&root, &candidates);
+}
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_spacing_trim_unpinned_exact_passes() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let candidates = [
+        "css/css-text/text-spacing-trim/text-spacing-trim-001.html",
+        "css/css-text/text-spacing-trim/text-spacing-trim-colon-001.html",
+        "css/css-text/text-spacing-trim/text-spacing-trim-dot-001.html",
+        "css/css-text/text-spacing-trim/text-spacing-trim-fallback-001.html",
+        "css/css-text/text-spacing-trim/text-spacing-trim-fallback-002.html",
+        "css/css-text/text-spacing-trim/text-spacing-trim-feature-001.html",
+        "css/css-text/text-spacing-trim/text-spacing-trim-narrow-001.html",
+        "css/css-text/text-spacing-trim/text-spacing-trim-quote-001.html",
+        "css/css-text/text-spacing-trim/text-spacing-trim-span-001.html",
+        "css/css-text/text-spacing-trim/text-spacing-trim-start-oof-001.html",
+        "css/css-text/text-spacing-trim/text-spacing-trim-subset-001.html",
+        "css/css-text/text-spacing-trim/text-spacing-trim-trim-all-001.html",
+    ];
+    assert_exact_passes(&root, &candidates);
+}
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn hanging_punctuation_unpinned_exact_passes() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let candidates = [
+        "css/css-text/hanging-punctuation/hanging-punctuation-first-ascii-quote.html",
+        "css/css-text/hanging-punctuation/hanging-punctuation-inline-001.html",
+        "css/css-text/hanging-punctuation/hanging-punctuation-last-ascii-quote.html",
+        "css/css-text/hanging-punctuation/hanging-punctuation-last-whitespace.html",
+        "css/css-text/hanging-punctuation/hanging-punctuation-last.html",
+        "css/css-text/hanging-punctuation/hanging-punctuation-with-bidi.html",
+    ];
+    assert_exact_passes(&root, &candidates);
+}
+
+fn assert_exact_passes(root: &std::path::Path, candidates: &[&str]) {
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    for relative in candidates {
+        let test = root.join(relative);
+        let pairs =
+            discover_pairs_for_file_with_wpt_root(&test, Some(root)).expect("discover WPT pair");
+        assert_eq!(pairs.len(), 1, "{relative}");
+        let result = run_pair(&pairs[0], config).expect("run WPT pair");
+        assert!(
+            matches!(&result.outcome, TestOutcome::Pass),
+            "{relative}: outcome={:?}, mismatches={}",
+            result.outcome,
+            result.mismatched_pixels
+        );
+    }
+}
