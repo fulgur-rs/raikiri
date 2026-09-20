@@ -1,5 +1,6 @@
 use cssparser::{CowRcStr, ParseError, Parser, ParserInput, ToCss as _, Token};
 
+use super::calc_serialize::{CalcNode, CalcUnitKind, parse_calc_or_plain, serialize_calc_node};
 use super::parse::{channel_to_u8, parse_color, parse_color_float};
 use super::types::*;
 
@@ -289,6 +290,223 @@ pub fn serialize_color_value(name: &str, raw_value: &str) -> Option<String> {
     serialize_one_color(raw_value)
 }
 
+struct LabFamilySpec {
+    function_name: &'static str,
+    lightness_scale: f64,
+    lightness_max: f64,
+    second_scale: f64,
+    second_clamp_min: Option<f64>,
+    third_kind: ThirdComponentKind,
+}
+
+enum ThirdComponentKind {
+    Cartesian,
+    Angle,
+}
+
+const LAB_FAMILY_SPECS: &[LabFamilySpec] = &[
+    LabFamilySpec {
+        function_name: "lab",
+        lightness_scale: 100.0,
+        lightness_max: 100.0,
+        second_scale: 125.0,
+        second_clamp_min: None,
+        third_kind: ThirdComponentKind::Cartesian,
+    },
+    LabFamilySpec {
+        function_name: "oklab",
+        lightness_scale: 1.0,
+        lightness_max: 1.0,
+        second_scale: 0.4,
+        second_clamp_min: None,
+        third_kind: ThirdComponentKind::Cartesian,
+    },
+    LabFamilySpec {
+        function_name: "lch",
+        lightness_scale: 100.0,
+        lightness_max: 100.0,
+        second_scale: 150.0,
+        second_clamp_min: Some(0.0),
+        third_kind: ThirdComponentKind::Angle,
+    },
+    LabFamilySpec {
+        function_name: "oklch",
+        lightness_scale: 1.0,
+        lightness_max: 1.0,
+        second_scale: 0.4,
+        second_clamp_min: Some(0.0),
+        third_kind: ThirdComponentKind::Angle,
+    },
+];
+
+/// One `<lab()>`/`<lch()>`/`<oklab()>`/`<oklch()>` component: either the
+/// literal `none` keyword, or a value to scale/clamp/serialize.
+enum LabComponent {
+    None,
+    /// A bare number/percentage/angle — gets its function's scale factor
+    /// and clamp range applied at serialize time.
+    Plain(CalcNode),
+    /// A `calc(...)`-wrapped value. Per the real corpus (e.g.
+    /// `lab(200 calc(50%) 0.5)` -> `lab(100 calc(50%) 0.5)`: the bare `200`
+    /// clamps to `100`, but `calc(50%)` serializes unchanged, without the
+    /// lightness scale factor or clamp applied), a `calc()`-authored
+    /// component is serialized as-is — no scaling, no clamping.
+    Calc(CalcNode),
+}
+
+fn parse_lab_component(
+    input: &mut Parser<'_, '_>,
+    unit_kind: CalcUnitKind,
+) -> Option<LabComponent> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(LabComponent::None);
+    }
+    let start = input.state();
+    let is_calc = input
+        .try_parse(|i| match i.next() {
+            Ok(Token::Function(name)) if name.eq_ignore_ascii_case("calc") => Ok(()),
+            _ => Err(()),
+        })
+        .is_ok();
+    input.reset(&start);
+    let node = parse_calc_or_plain(input, unit_kind)?;
+    Some(if is_calc {
+        LabComponent::Calc(node)
+    } else {
+        LabComponent::Plain(node)
+    })
+}
+
+/// Tries `preferred_unit_kind` first, then falls back to a plain number —
+/// covers every lab-family component's grammar, which always accepts
+/// `<number>` in addition to its own preferred unit (percentage for L/a/b/
+/// C/alpha, angle for hue).
+fn parse_lab_component_preferring(
+    input: &mut Parser<'_, '_>,
+    preferred_unit_kind: CalcUnitKind,
+) -> Option<LabComponent> {
+    let start = input.state();
+    if let Some(component) = parse_lab_component(input, preferred_unit_kind) {
+        return Some(component);
+    }
+    input.reset(&start);
+    parse_lab_component(input, CalcUnitKind::Number)
+}
+
+/// Scales and clamps a parsed component per the given scale/clamp range,
+/// returning its final serialized text (either `none`, a folded/reordered
+/// `calc(...)`, or a plain number). Only a fully-resolved constant
+/// Number/Percentage/Angle gets the scale factor and clamp applied — an
+/// unresolved (font-relative) calc() expression can't be scaled here since
+/// its real value isn't known until used-value time; the real corpus never
+/// asks this module to scale+reorder in the same value.
+fn serialize_lab_component(
+    component: &LabComponent,
+    scale: f64,
+    clamp_min: Option<f64>,
+    clamp_max: Option<f64>,
+) -> String {
+    let node = match component {
+        LabComponent::None => return "none".to_owned(),
+        LabComponent::Calc(node) => return serialize_calc_node(node),
+        LabComponent::Plain(node) => node,
+    };
+    let scaled = match node {
+        CalcNode::Percentage(v) => Some(v / 100.0 * scale),
+        CalcNode::Number(v) => Some(*v),
+        CalcNode::Angle(v) => Some(v.rem_euclid(360.0)),
+        _ => None,
+    };
+    let Some(mut value) = scaled else {
+        return serialize_calc_node(node);
+    };
+    if let Some(min) = clamp_min {
+        value = value.max(min);
+    }
+    if let Some(max) = clamp_max {
+        value = value.min(max);
+    }
+    serialize_calc_node(&CalcNode::Number(value))
+        .trim_start_matches("calc(")
+        .trim_end_matches(')')
+        .to_owned()
+}
+
+fn serialize_lab_family_function(spec: &LabFamilySpec, raw_value: &str) -> Option<String> {
+    let mut input = ParserInput::new(raw_value);
+    let mut parser = Parser::new(&mut input);
+
+    let start = parser.state();
+    let is_relative = parser
+        .try_parse(|i| -> Result<(), ParseError<'_, ()>> {
+            i.expect_function_matching(spec.function_name)?;
+            i.parse_nested_block(|nested| -> Result<(), ParseError<'_, ()>> {
+                nested
+                    .try_parse(|n| n.expect_ident_matching("from"))
+                    .map_err(|_| nested.new_custom_error(()))
+            })
+        })
+        .is_ok();
+    if is_relative {
+        return None; // relative color syntax, e.g. `lab(from red l a b)`
+    }
+    parser.reset(&start);
+
+    parser.expect_function_matching(spec.function_name).ok()?;
+    parser
+        .parse_nested_block(|nested| -> Result<String, ParseError<'_, ()>> {
+            let lightness = parse_lab_component_preferring(nested, CalcUnitKind::Percentage)
+                .ok_or_else(|| nested.new_custom_error(()))?;
+            let second = parse_lab_component_preferring(nested, CalcUnitKind::Percentage)
+                .ok_or_else(|| nested.new_custom_error(()))?;
+            let third_unit = match spec.third_kind {
+                ThirdComponentKind::Cartesian => CalcUnitKind::Percentage,
+                ThirdComponentKind::Angle => CalcUnitKind::Angle,
+            };
+            let third = parse_lab_component_preferring(nested, third_unit)
+                .ok_or_else(|| nested.new_custom_error(()))?;
+
+            let alpha = if nested.try_parse(|i| i.expect_delim('/')).is_ok() {
+                Some(
+                    parse_lab_component_preferring(nested, CalcUnitKind::Percentage)
+                        .ok_or_else(|| nested.new_custom_error(()))?,
+                )
+            } else {
+                None
+            };
+
+            if !nested.is_exhausted() {
+                return Err(nested.new_custom_error(()));
+            }
+
+            let lightness_text = serialize_lab_component(
+                &lightness,
+                spec.lightness_scale,
+                Some(0.0),
+                Some(spec.lightness_max),
+            );
+            let second_text =
+                serialize_lab_component(&second, spec.second_scale, spec.second_clamp_min, None);
+            let third_scale = match spec.third_kind {
+                ThirdComponentKind::Cartesian => spec.second_scale,
+                ThirdComponentKind::Angle => 1.0,
+            };
+            let third_text = serialize_lab_component(&third, third_scale, None, None);
+
+            let function_name = spec.function_name;
+            let mut result = format!("{function_name}({lightness_text} {second_text} {third_text}");
+            if let Some(alpha) = alpha {
+                let alpha_text = serialize_lab_component(&alpha, 1.0, Some(0.0), Some(1.0));
+                if alpha_text != "1" {
+                    result.push_str(&format!(" / {alpha_text}"));
+                }
+            }
+            result.push(')');
+            Ok(result)
+        })
+        .ok()
+}
+
 /// The single-`<color>`-value classification logic behind
 /// [`serialize_color_value`], factored out so
 /// [`serialize_border_color_shorthand`] can apply it to each of its
@@ -336,6 +554,18 @@ fn serialize_one_color(raw_value: &str) -> Option<String> {
             } else {
                 parse_color_entirely(raw_value).map(|color| serialize_css_color(&color))
             }
+        }
+        Token::Function(ref function_name)
+            if matches!(
+                function_name.to_ascii_lowercase().as_str(),
+                "lab" | "lch" | "oklab" | "oklch"
+            ) =>
+        {
+            let name = function_name.to_ascii_lowercase();
+            let spec = LAB_FAMILY_SPECS
+                .iter()
+                .find(|spec| spec.function_name == name)?;
+            serialize_lab_family_function(spec, raw_value)
         }
         _ => None,
     }

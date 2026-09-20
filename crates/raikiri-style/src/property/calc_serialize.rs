@@ -49,13 +49,17 @@ fn parse_calc_value(input: &mut Parser<'_, '_>, unit_kind: CalcUnitKind) -> Opti
         } if unit_kind == CalcUnitKind::Angle => {
             angle_to_degrees(f64::from(value), unit.as_ref()).map(CalcNode::Angle)
         }
-        Token::Dimension { .. } | Token::Number { .. } | Token::Percentage { .. } => {
-            // A dimension/number/percentage that doesn't match the
-            // expected unit_kind (e.g. a length like `1em` inside a
-            // number-typed calc()) — not evaluable here, but its own CSS
-            // text is still valid output verbatim.
-            Some(CalcNode::Unresolved(input.slice_from(start).to_owned()))
-        }
+        // A `<number>`/`<percentage>` that doesn't match the expected
+        // `unit_kind` is a genuine parse failure here (`None`) rather than
+        // `Unresolved` — the lab-family grammar always accepts either a
+        // percentage or a plain number for a given component, and the
+        // caller (`parse_lab_component_preferring`) retries with the other
+        // `unit_kind` on `None`. A physical-unit `<dimension>` (`1em`,
+        // `10px`) is different: it's never evaluable by this module no
+        // matter which `unit_kind` was requested, so it always becomes an
+        // `Unresolved` leaf carrying its own already-correct CSS text
+        // (e.g. inside `sign(1em - 10px)`).
+        Token::Dimension { .. } => Some(CalcNode::Unresolved(input.slice_from(start).to_owned())),
         Token::Ident(ref name) if name.eq_ignore_ascii_case("infinity") => Some(CalcNode::Infinity),
         // `-infinity` is a valid CSS <ident-token> in its own right (CSS
         // identifiers may start with `-`), so it tokenizes as one Ident,

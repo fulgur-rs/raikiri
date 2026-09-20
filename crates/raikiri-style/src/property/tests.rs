@@ -16998,8 +16998,10 @@ fn serialize_color_value_canonicalizes_legacy_functional_syntax() {
 
 #[test]
 fn serialize_color_value_returns_none_for_modern_functional_syntax() {
-    assert_eq!(serialize_color_value("color", "lab(0 0 0)"), None);
-    assert_eq!(serialize_color_value("color", "oklch(0.5 0.1 180)"), None);
+    // lab()/lch()/oklab()/oklch() are covered by
+    // serialize_color_value_handles_lab_plain_values and friends —
+    // color()/color-mix()/color-layers()/light-dark()/contrast-color()
+    // remain out of scope (Phase2b's non-goals, see the design spec).
     assert_eq!(
         serialize_color_value("background-color", "color(srgb 1 0 0)"),
         None
@@ -17090,8 +17092,102 @@ fn serialize_color_value_splits_border_color_components_paren_aware() {
 
 #[test]
 fn serialize_color_value_returns_none_for_border_color_with_a_modern_component() {
+    // lab() is now supported (Phase2b) — use a function still out of
+    // scope (color-mix()) so this keeps testing "an unsupported modern
+    // component anywhere in the shorthand forces None for the whole
+    // value."
     assert_eq!(
-        serialize_color_value("border-color", "red lab(0 0 0)"),
+        serialize_color_value("border-color", "red color-mix(in srgb, red, blue)"),
+        None
+    );
+}
+
+#[test]
+fn serialize_color_value_handles_lab_plain_values() {
+    assert_eq!(
+        serialize_color_value("color", "lab(0 0 0)"),
+        Some("lab(0 0 0)".to_owned())
+    );
+    assert_eq!(
+        serialize_color_value("color", "lab(-40 0 0)"),
+        Some("lab(0 0 0)".to_owned())
+    );
+    assert_eq!(
+        serialize_color_value("color", "lab(400 0 10/50%)"),
+        Some("lab(100 0 10 / 0.5)".to_owned())
+    );
+    assert_eq!(
+        serialize_color_value("color", "lab(50% 50% -20%)"),
+        Some("lab(50 62.5 -25)".to_owned())
+    );
+}
+
+#[test]
+fn serialize_color_value_handles_oklab_scale_factors() {
+    assert_eq!(
+        serialize_color_value("color", "oklab(50% 50% -20%)"),
+        Some("oklab(0.5 0.2 -0.08)".to_owned())
+    );
+}
+
+#[test]
+fn serialize_color_value_handles_lch_chroma_and_hue() {
+    assert_eq!(
+        serialize_color_value("color", "lch(20 -20 0)"),
+        Some("lch(20 0 0)".to_owned())
+    );
+    assert_eq!(
+        serialize_color_value("color", "lch(10 20 380deg)"),
+        Some("lch(10 20 20)".to_owned())
+    );
+    assert_eq!(
+        serialize_color_value("color", "lch(10 20 -700deg)"),
+        Some("lch(10 20 20)".to_owned())
+    );
+    assert_eq!(
+        serialize_color_value("color", "lch(10 20 1.28rad)"),
+        Some("lch(10 20 73.3386)".to_owned())
+    );
+}
+
+#[test]
+fn serialize_color_value_handles_oklch_scale_factors() {
+    assert_eq!(
+        serialize_color_value("color", "oklch(20% 60% 10/0.5)"),
+        Some("oklch(0.2 0.24 10 / 0.5)".to_owned())
+    );
+}
+
+#[test]
+fn serialize_color_value_preserves_none_in_lab_family() {
+    assert_eq!(
+        serialize_color_value("color", "lab(none 20 calc(0.5))"),
+        Some("lab(none 20 calc(0.5))".to_owned())
+    );
+}
+
+#[test]
+fn serialize_color_value_folds_and_reorders_calc_in_lab_family() {
+    assert_eq!(
+        serialize_color_value(
+            "color",
+            "lab(calc(50 * 3) calc(0.5 - 1) calc(1.5) / calc(-0.5 + 1))"
+        ),
+        Some("lab(calc(150) calc(-0.5) calc(1.5) / calc(0.5))".to_owned())
+    );
+    assert_eq!(
+        serialize_color_value(
+            "color",
+            "lab(calc(50 + (sign(1em - 10px) * 10)) 30 50 / 50%)"
+        ),
+        Some("lab(calc(50 + (10 * sign(1em - 10px))) 30 50 / 0.5)".to_owned())
+    );
+}
+
+#[test]
+fn serialize_color_value_returns_none_for_relative_lab_syntax() {
+    assert_eq!(
+        serialize_color_value("color", "lab(from red 50 20 10)"),
         None
     );
 }
