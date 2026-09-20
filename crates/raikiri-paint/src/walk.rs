@@ -574,8 +574,10 @@ fn apply_counter_directives_to_snapshot(
     snapshot: &mut CounterSnapshot,
     computed: &raikiri_style::ComputedValues,
 ) {
-    // A pseudo-element has a temporary counter scope.  Reset creates a new
-    // level, then increment and set mutate the innermost active level.
+    // Apply pseudo directives to the local content snapshot. `::before`
+    // scope propagation to descendants is handled by
+    // `raikiri_dom::counter_snapshots`; this clone resolves the pseudo's own
+    // generated content before the scope is used by later real children.
     let mut reset_values = std::collections::HashMap::new();
     for (name, value) in computed.counter_reset.iter() {
         reset_values.insert(name.as_str(), *value);
@@ -1353,48 +1355,89 @@ fn generated_flow_height(
     node_id: usize,
     snapshots: &[CounterSnapshot],
 ) -> f32 {
-    let own = generated_pseudo_text_height(
+    let before = generated_pseudo_text_height(
         document,
         cascade,
         node_id,
         raikiri_style::PseudoElem::Before,
         snapshots,
-    )
-    .max(generated_pseudo_text_height(
+    );
+    let after = generated_pseudo_text_height(
         document,
         cascade,
         node_id,
         raikiri_style::PseudoElem::After,
         snapshots,
-    ));
-    let inline_child = document
-        .get_node(node_id)
-        .map(|node| {
-            node.children
-                .iter()
-                .filter_map(|&child| {
-                    let child_cv = cascade.computed.get(child)?;
-                    (child_cv.display == DisplayValue::Inline).then_some(
-                        generated_pseudo_text_height(
-                            document,
-                            cascade,
-                            child,
-                            raikiri_style::PseudoElem::Before,
-                            snapshots,
-                        )
-                        .max(generated_pseudo_text_height(
-                            document,
-                            cascade,
-                            child,
-                            raikiri_style::PseudoElem::After,
-                            snapshots,
-                        )),
+    );
+    let Some(node) = document.get_node(node_id) else {
+        return before.max(after); // cov:ignore: generated flow receives arena-valid node ids
+    };
+
+    // A generated `::before` run is the first child of a block box.  When the
+    // block also owns normal-flow block children, those children must start
+    // after the generated run, and their generated flow contributes to the
+    // block's auto height.  Keep the existing inline-only bridge unchanged.
+    let block_children = node
+        .children
+        .iter()
+        .filter_map(|&child| {
+            let child_node = document.get_node(child)?;
+            let child_cv = cascade.computed.get(child)?;
+            let normal_flow = matches!(
+                child_cv.position,
+                PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+            );
+            (child_node.kind() != NodeKind::Text
+                && child_cv.display != DisplayValue::Inline
+                && normal_flow)
+                .then_some(child)
+        })
+        .collect::<Vec<_>>();
+    let has_generated_block_child = block_children
+        .iter()
+        .any(|&child| generated_flow_height(document, cascade, child, snapshots) > 0.0);
+    if !block_children.is_empty() && (before > 0.0 || after > 0.0 || has_generated_block_child) {
+        return before
+            + after
+            + block_children
+                .into_iter()
+                .filter_map(|child| {
+                    let child_node = document.get_node(child)?;
+                    Some(
+                        child_node
+                            .unrounded_layout
+                            .size
+                            .height
+                            .max(generated_flow_height(document, cascade, child, snapshots)),
                     )
                 })
-                .fold(0.0, f32::max)
+                .sum::<f32>();
+    }
+
+    let inline_child = node
+        .children
+        .iter()
+        .filter_map(|&child| {
+            let child_cv = cascade.computed.get(child)?;
+            (child_cv.display == DisplayValue::Inline).then_some(
+                generated_pseudo_text_height(
+                    document,
+                    cascade,
+                    child,
+                    raikiri_style::PseudoElem::Before,
+                    snapshots,
+                )
+                .max(generated_pseudo_text_height(
+                    document,
+                    cascade,
+                    child,
+                    raikiri_style::PseudoElem::After,
+                    snapshots,
+                )),
+            )
         })
-        .unwrap_or(0.0);
-    own.max(inline_child)
+        .fold(0.0, f32::max);
+    before.max(after).max(inline_child)
 }
 
 fn generated_pseudo_text_height(
@@ -3234,20 +3277,8 @@ fn paint_document_impl(
                 if !paints_as_absolute_continuation
                     && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
                 {
-                    let pseudo_height = generated_pseudo_text_height(
-                        document,
-                        cascade,
-                        node_id,
-                        raikiri_style::PseudoElem::Before,
-                        &counter_snapshots,
-                    )
-                    .max(generated_pseudo_text_height(
-                        document,
-                        cascade,
-                        node_id,
-                        raikiri_style::PseudoElem::After,
-                        &counter_snapshots,
-                    ));
+                    let pseudo_height =
+                        generated_flow_height(document, cascade, node_id, &counter_snapshots);
                     let pseudo_border_height = cv.border.top.width().px()
                         + paint_padding.top
                         + pseudo_height
@@ -3654,7 +3685,13 @@ fn paint_document_impl(
                     Vec::new()
                 };
                 let vertical_generated_offsets = if cv.display != DisplayValue::Inline {
-                    let mut flow_extra = 0.0;
+                    let mut flow_extra = generated_pseudo_text_height(
+                        document,
+                        cascade,
+                        node_id,
+                        raikiri_style::PseudoElem::Before,
+                        &counter_snapshots,
+                    );
                     let mut offsets = Vec::new();
                     for &child in &children {
                         offsets.push((child, flow_extra));
