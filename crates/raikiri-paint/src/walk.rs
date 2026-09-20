@@ -1324,6 +1324,79 @@ fn generated_pseudo_content_with_snapshots<'a>(
     Some((computed, content))
 }
 
+fn generated_pseudo_text_advance(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    pseudo: raikiri_style::PseudoElem,
+    snapshots: &[CounterSnapshot],
+) -> f32 {
+    let Some((computed, content)) =
+        generated_pseudo_content_with_snapshots(document, cascade, node_id, pseudo, snapshots)
+    else {
+        return 0.0;
+    };
+    if computed.display == DisplayValue::None {
+        return 0.0;
+    }
+    let family = computed
+        .font_family
+        .first()
+        .map(|family| family.0.as_str().to_string())
+        .unwrap_or_else(|| "serif".to_string());
+    text::measure_margin_text_advance(&content, computed.font_size.px(), &family)
+}
+
+fn generated_flow_height(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    snapshots: &[CounterSnapshot],
+) -> f32 {
+    let own = generated_pseudo_text_height(
+        document,
+        cascade,
+        node_id,
+        raikiri_style::PseudoElem::Before,
+        snapshots,
+    )
+    .max(generated_pseudo_text_height(
+        document,
+        cascade,
+        node_id,
+        raikiri_style::PseudoElem::After,
+        snapshots,
+    ));
+    let inline_child = document
+        .get_node(node_id)
+        .map(|node| {
+            node.children
+                .iter()
+                .filter_map(|&child| {
+                    let child_cv = cascade.computed.get(child)?;
+                    (child_cv.display == DisplayValue::Inline).then_some(
+                        generated_pseudo_text_height(
+                            document,
+                            cascade,
+                            child,
+                            raikiri_style::PseudoElem::Before,
+                            snapshots,
+                        )
+                        .max(generated_pseudo_text_height(
+                            document,
+                            cascade,
+                            child,
+                            raikiri_style::PseudoElem::After,
+                            snapshots,
+                        )),
+                    )
+                })
+                .fold(0.0, f32::max)
+        })
+        .unwrap_or(0.0);
+    own.max(inline_child)
+}
+
 fn generated_pseudo_text_height(
     document: &Document,
     cascade: &CascadeResult,
@@ -1379,7 +1452,7 @@ fn paint_generated_pseudo(
         &content,
         x,
         y,
-        width,
+        width.max(advance),
         height,
         css_color(computed.color),
         computed.font_size.px(),
@@ -3507,6 +3580,108 @@ fn paint_document_impl(
                 // isolation remains outside this minimal painter.
                 let mut children = node.children.clone();
                 children.sort_by_key(|&child| paint_order_key(cascade, child));
+
+                // The current Taffy bridge treats inline children as zero-sized
+                // block items.  Keep that layout authority, but provide the
+                // measured paint-time inline advance for generated pseudo text
+                // so a sequence such as `span::before { content: counter(c) }`
+                // remains in source order.  This is deliberately limited to
+                // siblings that actually carry generated content; ordinary
+                // inline layout remains unchanged until a full IFC lands.
+                let child_generated_advances: Vec<(usize, bool, f32)> =
+                    children
+                        .iter()
+                        .map(|&child| {
+                            let is_text = document
+                                .get_node(child)
+                                .is_some_and(|child_node| child_node.kind() == NodeKind::Text);
+                            let advance = if !is_text
+                                && cascade.computed.get(child).is_some_and(|child_cv| {
+                                    child_cv.display == DisplayValue::Inline
+                                }) {
+                                generated_pseudo_text_advance(
+                                    document,
+                                    cascade,
+                                    child,
+                                    raikiri_style::PseudoElem::Before,
+                                    &counter_snapshots,
+                                ) + generated_pseudo_text_advance(
+                                    document,
+                                    cascade,
+                                    child,
+                                    raikiri_style::PseudoElem::After,
+                                    &counter_snapshots,
+                                )
+                            } else {
+                                0.0
+                            };
+                            (child, is_text, advance)
+                        })
+                        .collect();
+                let inline_offsets = if child_generated_advances
+                    .iter()
+                    .any(|(_, _, advance)| *advance > 0.0)
+                {
+                    let family = cv
+                        .font_family
+                        .first()
+                        .map(|family| family.0.as_str().to_string())
+                        .unwrap_or_else(|| "serif".to_string());
+                    let collapsed_space =
+                        text::measure_margin_text_advance(" ", cv.font_size.px(), &family);
+                    let mut flow_advance = 0.0;
+                    let mut saw_generated_inline = false;
+                    let mut offsets = Vec::new();
+                    for (index, (child, is_text, advance)) in
+                        child_generated_advances.iter().enumerate()
+                    {
+                        if *is_text {
+                            let has_following_generated_inline = child_generated_advances
+                                .iter()
+                                .skip(index + 1)
+                                .any(|(_, _, following)| *following > 0.0);
+                            if saw_generated_inline && has_following_generated_inline {
+                                flow_advance += collapsed_space;
+                            }
+                        } else if *advance > 0.0 {
+                            offsets.push((*child, flow_advance));
+                            flow_advance += *advance;
+                            saw_generated_inline = true;
+                        }
+                    }
+                    offsets
+                } else {
+                    Vec::new()
+                };
+                let vertical_generated_offsets = if cv.display != DisplayValue::Inline {
+                    let mut flow_extra = 0.0;
+                    let mut offsets = Vec::new();
+                    for &child in &children {
+                        offsets.push((child, flow_extra));
+                        let Some(child_node) = document.get_node(child) else {
+                            continue; // cov:ignore: document child ids are arena-valid
+                        };
+                        let child_cv = &cascade.computed[child];
+                        let child_is_normal_flow = matches!(
+                            child_cv.position,
+                            PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+                        );
+                        if child_node.kind() != NodeKind::Text
+                            && child_cv.display != DisplayValue::Inline
+                            && child_is_normal_flow
+                        {
+                            let required_height =
+                                generated_flow_height(document, cascade, child, &counter_snapshots);
+                            flow_extra += (required_height
+                                - child_node.unrounded_layout.size.height)
+                                .max(0.0);
+                        }
+                    }
+                    offsets
+                } else {
+                    Vec::new()
+                };
+
                 // Reverse push makes the lowest stack level paint first.
                 // For position:relative, children are laid out at normal flow
                 // position but paint at offset position.
@@ -3529,12 +3704,25 @@ fn paint_document_impl(
                         0.0
                     };
                     let generated_text_shift = if is_direct_text { before_advance } else { 0.0 };
+                    let inline_generated_offset = inline_offsets
+                        .iter()
+                        .find_map(|(offset_child, offset)| {
+                            (*offset_child == child).then_some(*offset)
+                        })
+                        .unwrap_or(0.0);
+                    let vertical_generated_offset = vertical_generated_offsets
+                        .iter()
+                        .find_map(|(offset_child, offset)| {
+                            (*offset_child == child).then_some(*offset)
+                        })
+                        .unwrap_or(0.0);
                     stack.push(PaintFrame::Visit {
                         node_id: child,
                         parent_abs_x: child_parent_x
                             + body_child_margin_offset
-                            + generated_text_shift,
-                        parent_abs_y: child_parent_y,
+                            + generated_text_shift
+                            + inline_generated_offset,
+                        parent_abs_y: child_parent_y + vertical_generated_offset,
                         parent_font_size: child_font_size,
                         shift_y: child_shift_y,
                         transform_x: child_transform_x,
@@ -5605,6 +5793,43 @@ mod tests {
             last_three[0] < last_three[1] && last_three[1] < last_three[2],
             // cov:ignore: assert! diagnostic is only evaluated on failure
             "literal pseudo/text runs must advance in source order: {last_three:?}"
+        );
+    }
+
+    #[test]
+    fn paint_document_offsets_generated_counter_inline_siblings() {
+        let mut document = Document::new();
+        let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+        document.append_text(
+            style,
+            r##"div { counter-reset: c } div span { counter-increment: c } div span::before { content: counter(c) } div span::after { display: none; content: "hidden" }"##,
+        );
+        let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let test = document.append_element(Some(body), "div", Style::default(), None::<&str>);
+        document.append_text(test, "\n");
+        document.append_element(Some(test), "span", Style::default(), None::<&str>);
+        document.append_text(test, "\n");
+        document.append_element(Some(test), "span", Style::default(), None::<&str>);
+
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+        raikiri_dom::layout_single_page(
+            &mut document,
+            &cascade,
+            PageBox::A4,
+            parley::FontContext::new(),
+        )
+        .expect("layout Ok");
+
+        let mut scene = Scene::new();
+        crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
+        assert!(
+            scene
+                .commands
+                .iter()
+                .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
         );
     }
 
