@@ -176,6 +176,7 @@ test_invalid_value("box-sizing", "margin-box");
     }
 
     #[test]
+    #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
     fn run_parsing_invalid_file_on_real_fixture_is_seven_of_seven() {
         let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
         let outcome = run_parsing_invalid_file(

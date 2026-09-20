@@ -23,6 +23,7 @@ fn extract_inline_script(html: &str) -> String {
 }
 
 #[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn box_sizing_invalid_all_seven_reject() {
     let parsing_testcommon = read_fixture("target/wpt/css/support/parsing-testcommon.js");
     let fixture_html = read_fixture("target/wpt/css/css-sizing/parsing/box-sizing-invalid.html");

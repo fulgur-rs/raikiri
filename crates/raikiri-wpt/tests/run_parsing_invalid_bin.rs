@@ -5,6 +5,7 @@ use std::path::Path;
 use assert_cmd::Command;
 
 #[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn bin_reports_box_sizing_invalid_as_all_pass() {
     // `cargo test`'s working directory is this crate's manifest directory,
     // not the workspace root, so `target/wpt` needs the same absolute-path
