@@ -1094,8 +1094,8 @@ fn distribute_columns_with_authored(
             for i in 0..n {
                 w[i] -= take * shrink[i] / ssum;
             }
-        }
-    }
+        } // cov:ignore: llvm-cov reports the covered shrink branch's closing brace as uncovered.
+    } // cov:ignore: llvm-cov reports the covered shrink branch's closing brace as uncovered.
     w
 }
 
