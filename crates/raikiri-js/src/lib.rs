@@ -97,7 +97,8 @@ fn parse_and_serialize_property_native(
 /// Harness shim: a `document`/`style` stand-in plus the small subset of
 /// `testharness.js` that `parsing-testcommon.js`'s `test_invalid_value`/
 /// `test_valid_value` actually call (`test`, `assert_equals`,
-/// `assert_not_equals`). `style` is a standard ECMAScript `Proxy` whose
+/// `assert_not_equals`, `assert_in_array`). `style` is a standard ECMAScript
+/// `Proxy` whose
 /// `get`/`set` traps forward to [`parse_and_serialize_property_native`] by
 /// property name, so no property needs its own JS declaration — any
 /// property `raikiri_style::property::parse_value` recognizes works
@@ -154,6 +155,15 @@ function assert_equals(actual, expected, message) {
 function assert_not_equals(actual, notExpected, message) {
     if (actual === notExpected) {
         throw new Error((message || "assert_not_equals") + ": did not expect " + JSON.stringify(notExpected));
+    }
+}
+
+function assert_in_array(actual, expectedArray, message) {
+    if (expectedArray.indexOf(actual) === -1) {
+        throw new Error(
+            (message || "assert_in_array") + ": value " + JSON.stringify(actual) +
+            " not in array " + JSON.stringify(expectedArray)
+        );
     }
 }
 "#;
@@ -426,5 +436,22 @@ mod tests {
         for outcome in &outcomes {
             assert!(outcome.passed, "{outcome:?}");
         }
+    }
+
+    #[test]
+    fn assert_in_array_accepts_any_array_member_and_rejects_the_rest() {
+        let outcomes = run_invalid_value_script(
+            "",
+            r#"test(function () {
+                assert_in_array("b", ["a", "b", "c"]);
+            }, "value present in the array passes");
+            test(function () {
+                assert_in_array("z", ["a", "b", "c"]);
+            }, "value absent from the array must fail");"#,
+        )
+        .unwrap();
+        assert_eq!(outcomes.len(), 2);
+        assert!(outcomes[0].passed, "{:?}", outcomes[0]);
+        assert!(!outcomes[1].passed, "{:?}", outcomes[1]);
     }
 }
