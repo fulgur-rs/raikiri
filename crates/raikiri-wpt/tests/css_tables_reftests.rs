@@ -35,3 +35,49 @@ fn css_tables_colspan_pairs_are_pixel_exact_at_800x600() {
         );
     }
 }
+
+/// Verify measured border-collapse and table-border-painting PASS pairs.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn css_tables_border_collapse_and_paint_pairs_are_pixel_exact_at_800x600() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let cases = [
+        "css/css-tables/border-collapse-double-border.html",
+        "css/css-tables/border-collapse-dynamic-oof.html",
+        "css/css-tables/border-collapse-empty-cell.html",
+        "css/css-tables/border-collapse-rowspan-cell.html",
+        "css/css-tables/border-conflict-resolution.html",
+        "css/css-tables/collapsed-border-paint-phase-001.html",
+        "css/css-tables/collapsed-border-partial-invalidation-003.html",
+        "css/css-tables/collapsed-border-positioned-tr-td.html",
+        "css/css-tables/collapsed-border-sideways-rl-rtl-overflow.html",
+        "css/css-tables/collapsed-border-vertical-lr-rtl-overflow.html",
+        "css/css-tables/collapsed-border-vertical-rtl-overflow.html",
+        "css/css-tables/out-of-order-elements-collapsed-border.html",
+        "css/css-tables/paint/col-change-span-bg-invalidation-002.html",
+        "css/css-tables/paint/col-paint-htb-rtl.html",
+        "css/css-tables/paint/table-border-paint-caption-change.html",
+        "css/css-tables/rowspan-cell-border-after-color.html",
+        "css/css-tables/table-has-box-sizing-border-box-001.html",
+        "css/css-tables/visibility-collapse-rowspan-005.html",
+    ];
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    for relative in cases {
+        let test = root.join(relative);
+        let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
+            .unwrap_or_else(|error| panic!("discover {relative}: {error}"));
+        assert_eq!(pairs.len(), 1, "expected one pair for {relative}");
+        let result =
+            run_pair(&pairs[0], config).unwrap_or_else(|error| panic!("run {relative}: {error}"));
+        assert!(
+            matches!(result.outcome, TestOutcome::Pass),
+            "{relative}: {:?} ({} mismatched pixels)",
+            result.outcome,
+            result.mismatched_pixels
+        );
+    }
+}
