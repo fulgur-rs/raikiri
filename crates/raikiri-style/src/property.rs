@@ -38732,8 +38732,9 @@ mod tests {
             Some("red green".to_owned())
         );
         // 3 authored components (top, right, bottom) with left implied
-        // equal to right: [red, green, red, green] collapses further to
-        // the 2-value form, since top == bottom and right == left too.
+        // equal to right: the resolved sides are red/green/red/green,
+        // which collapses further to the 2-value form since top == bottom
+        // and right == left too.
         assert_eq!(
             serialize_color_value("border-color", "red green red"),
             Some("red green".to_owned())
