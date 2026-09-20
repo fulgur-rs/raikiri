@@ -1277,7 +1277,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Text control-chars-000 literal generated-content slice (+1).
         // + CSS generated-content counter, attr fallback, quote, and image slices (+5).
         // + CSS generated-content counters() nested-scope slice (+1).
-        assert_eq!(set.baseline.entries.len(), 1070);
+        // + CSS generated-content before/after literal string slice (+1).
+        assert_eq!(set.baseline.entries.len(), 1071);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
