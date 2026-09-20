@@ -1253,6 +1253,7 @@ css/css-text/text-transform/text-transform-upperlower-104.html
 css/css-text/text-transform/text-transform-upperlower-105.html
 
 # --- CSS generated-content exact 800x600 PASS-only pins 2026-09-20 ---
+css/CSS2/generated-content/before-after-002.xht
 css/CSS2/generated-content/before-after-images-001.xht
 css/CSS2/generated-content/content-005.xht
 css/CSS2/generated-content/content-counter-000.xht
