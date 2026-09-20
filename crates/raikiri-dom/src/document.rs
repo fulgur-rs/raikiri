@@ -29,6 +29,7 @@ use taffy::Style;
 
 use raikiri_traits::{QuirksMode, StylesheetKind};
 
+use crate::fragment::{FragmentTree, FragmentationContext};
 use crate::layout::LayoutWarn;
 use crate::node::{Attr, Node, NodeData};
 use raikiri_style::property::CalcLengthPercentage;
@@ -108,6 +109,10 @@ pub struct Document {
     /// Stable storage for Taffy calc resolver payloads used by the current
     /// layout pass. The heap allocations keep pointees stable while styles hold raw handles.
     pub(crate) calc_values: Vec<Arc<CalcLengthPercentage>>,
+    /// Fragments emitted by the active multicol strategy for this layout pass.
+    pub(crate) fragment_tree: FragmentTree,
+    /// Active nested fragmentainer stack while Taffy recursively lays out nodes.
+    pub(crate) fragmentation_stack: Vec<FragmentationContext>,
     /// HTML5 quirks mode for this whole document. Default
     /// [`QuirksMode::NoQuirks`] (matching the type's own `#[default]`) for
     /// `Document`s built by hand (raikiri-dom unit tests, raikiri-paint
@@ -138,6 +143,8 @@ impl Document {
             stylesheets: Vec::new(),
             layout_warnings: Vec::new(),
             calc_values: Vec::new(),
+            fragment_tree: FragmentTree::default(),
+            fragmentation_stack: Vec::new(),
             quirks_mode: QuirksMode::default(),
         }
     }

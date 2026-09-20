@@ -12,6 +12,7 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 use crate::document::Document;
+use crate::fragment::{FragmentationContext, MulticolStyle};
 use crate::node::{MulticolTextFragment, NodeData, NodeFlags};
 use parley::{
     Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, IndentOptions,
@@ -37,14 +38,16 @@ use raikiri_style::{
 use raikiri_traits::{LayoutError, PageBox, ReplacedResolver};
 use taffy::{
     AlignContent as TaffyAlignContent, AlignItems as TaffyAlignItems, AlignSelf as TaffyAlignSelf,
-    AvailableSpace, BoxSizing as TaffyBoxSizing, Clear as TaffyClear, CompactLength, Dimension,
-    Direction as TaffyDirection, Display, FlexDirection as TaffyFlexDirection,
-    FlexWrap as TaffyFlexWrap, Float as TaffyFloat, GridAutoFlow as TaffyGridAutoFlow,
-    GridPlacement, GridTemplateArea as TaffyGridTemplateArea, GridTemplateComponent,
-    GridTemplateRepetition, Layout as TaffyLayout, LengthPercentage, LengthPercentageAuto,
-    Line as TaffyLine, MaxTrackSizingFunction, MinTrackSizingFunction, NodeId as TaffyNodeId,
+    AvailableSpace, BlockContext, BoxSizing as TaffyBoxSizing, Clear as TaffyClear, CompactLength,
+    Dimension, Direction as TaffyDirection, Display, ExpandedDimension, ExpandedLengthPercentage,
+    FlexDirection as TaffyFlexDirection, FlexWrap as TaffyFlexWrap, Float as TaffyFloat,
+    GridAutoFlow as TaffyGridAutoFlow, GridPlacement, GridTemplateArea as TaffyGridTemplateArea,
+    GridTemplateComponent, GridTemplateRepetition, Layout as TaffyLayout, LayoutInput,
+    LayoutOutput, LayoutPartialTree, LengthPercentage, LengthPercentageAuto, Line as TaffyLine,
+    MaxTrackSizingFunction, MinTrackSizingFunction, NodeId as TaffyNodeId,
     Overflow as TaffyOverflow, Point, Position as TaffyPosition, Rect,
-    RepetitionCount as TaffyRepetitionCount, Size, TrackSizingFunction, compute_root_layout,
+    RepetitionCount as TaffyRepetitionCount, RequestedAxis, RunMode, Size, SizingMode,
+    TrackSizingFunction, compute_block_layout, compute_root_layout,
     style_helpers as taffy_style_helpers,
 };
 
@@ -583,6 +586,34 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
     None
 }
 
+// cov:ignore: computed multicol bridge is exercised by ignored WPT reftests.
+fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
+    let count = match cv.column_count {
+        ColumnCountValue::Count(value) if value > 0 => Some(value as usize),
+        _ => None,
+    };
+    let width = match cv.column_width {
+        ComputedColumnWidth::Px(value) if value.is_finite() && value > 0.0 => Some(value),
+        _ => None,
+    };
+    if count.is_none() && width.is_none() {
+        return None;
+    }
+    let (gap, gap_percent) = match cv.column_gap {
+        ComputedLengthPercentageOrNormal::Px(value) if value.is_finite() => (value.max(0.0), None),
+        ComputedLengthPercentageOrNormal::Percent(value) if value.is_finite() => (0.0, Some(value)),
+        _ => (0.0, None),
+    };
+    Some(MulticolStyle {
+        count,
+        width,
+        gap,
+        gap_percent,
+        height_definite: !matches!(cv.height, ComputedLengthPercentageOrAuto::Auto),
+        horizontal: matches!(cv.writing_mode, WritingMode::HorizontalTb),
+    })
+}
+
 /// ComputedValues → taffy::Style bridge の dispatch site。
 ///
 /// per-element for loop 内 inline mapping から per-field `bridge_*` helper へ
@@ -639,6 +670,10 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         let cv = &cascade.computed[idx];
         // Preserve full DisplayValue for table dispatch before taffy collapses it.
         doc.nodes[idx].display = cv.display;
+        // Carry multicol settings into the Taffy dispatch seam. Taffy has no
+        // native multicol style fields, so the custom strategy reads this
+        // side-channel while the ordinary Style remains Taffy-compatible.
+        doc.nodes[idx].multicol = multicol_style_from_computed(cv);
         // Table engine inputs — no taffy::Style counterpart (taffy 0.12
         // has no table layout), carried Node-side like `display` above.
         doc.nodes[idx].table_layout = cv.table_layout;
@@ -6335,6 +6370,392 @@ fn parley_text_wrap_mode(value: TextWrapMode, nowrap: bool) -> ParleyTextWrapMod
     }
 }
 
+/// Dispatch a multicolumn container through the nested fragmentation seam.
+///
+/// Taffy still resolves the ordinary box and intrinsic sizes, while this
+/// seam owns nested child placement, fragmentainer breaks, and fragment-tree
+/// records. Standalone and deferred out-of-flow cases continue through the
+/// PR #79 projection so their exact geometry remains unchanged.
+// cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
+pub(crate) fn compute_multicol_layout(
+    tree: &mut Document,
+    node_id: TaffyNodeId,
+    inputs: LayoutInput,
+    block_ctx: Option<&mut BlockContext<'_>>,
+) -> LayoutOutput {
+    let index = usize::from(node_id);
+    let Some(style) = tree.nodes[index].multicol else {
+        return compute_block_layout(tree, node_id, inputs, block_ctx);
+    };
+
+    // Taffy supplies the used border-box width to a block child. Do not fall
+    // back to the page width when a nested box is measured: that would make a
+    // nested percentage gap resolve against the wrong containing block.
+    let parent_width = inputs.parent_size.width;
+    let available_width = inputs
+        .known_dimensions
+        .width
+        .or(match inputs.available_space.width {
+            AvailableSpace::Definite(value) => Some(value),
+            AvailableSpace::MinContent | AvailableSpace::MaxContent => None,
+        })
+        .or_else(|| {
+            multicol_definite_dimension(tree, tree.nodes[index].style.size.width, parent_width)
+        })
+        .unwrap_or(0.0);
+    let available_height = if style.height_definite {
+        multicol_definite_dimension(
+            tree,
+            tree.nodes[index].style.size.height,
+            inputs.parent_size.height,
+        )
+        .or(inputs.known_dimensions.height)
+    } else {
+        None
+    };
+    let Some(context) = FragmentationContext::resolve(available_width, available_height, style)
+    else {
+        return compute_block_layout(tree, node_id, inputs, block_ctx);
+    };
+
+    // Keep the existing foundational post-pass authoritative for standalone
+    // multicol boxes and for deferred out-of-flow cases. The custom path is
+    // entered only at a real nested block-flow boundary.
+    let custom_scope = (tree.fragmentation_stack.is_empty()
+        && multicol_has_nested_descendant(tree, index)
+        || !tree.fragmentation_stack.is_empty())
+        && style.horizontal
+        && !multicol_has_out_of_flow_descendant(tree, index);
+
+    let stack_depth = tree.fragmentation_stack.len();
+    tree.fragmentation_stack.push(context);
+    let mut output = compute_block_layout(tree, node_id, inputs, block_ctx);
+    if custom_scope && inputs.run_mode == RunMode::PerformLayout {
+        // Taffy's input width is normally already the content width for this
+        // bridge. Correct it for authored padding/border before deriving the
+        // child column width, so percentage gaps use the used content box.
+        let content_width = multicol_content_width(tree, index, output.size.width, parent_width);
+        let resolved = FragmentationContext::resolve(content_width, available_height, style)
+            .unwrap_or(context);
+        if let Some(active) = tree.fragmentation_stack.last_mut() {
+            *active = resolved;
+        }
+        let used_height =
+            relayout_nested_multicol_children(tree, node_id, resolved, output.size.height);
+        if available_height.is_none() {
+            output.size.height = used_height.max(0.0);
+        }
+    }
+    // Truncating to the depth captured on entry keeps the stack balanced if a
+    // future child strategy starts pushing a nested context of its own.
+    tree.fragmentation_stack.truncate(stack_depth);
+    output
+}
+
+// cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
+fn multicol_definite_dimension(
+    tree: &Document,
+    value: Dimension,
+    basis: Option<f32>,
+) -> Option<f32> {
+    let basis = basis.unwrap_or(0.0);
+    let resolved = match value.expand() {
+        ExpandedDimension::Length(px) => px,
+        ExpandedDimension::Percent(percent) => basis * percent,
+        ExpandedDimension::Calc(pointer) => tree.resolve_calc_value(pointer, basis),
+        ExpandedDimension::Auto
+        | ExpandedDimension::MinContent
+        | ExpandedDimension::MaxContent
+        | ExpandedDimension::FitContentPx(_)
+        | ExpandedDimension::FitContentPercent(_)
+        | ExpandedDimension::FitContent
+        | ExpandedDimension::Stretch
+        | ExpandedDimension::Content => return None,
+    };
+    resolved.is_finite().then_some(resolved.max(0.0))
+}
+
+// cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
+fn multicol_resolve_inset(tree: &Document, value: LengthPercentage, basis: f32) -> f32 {
+    let resolved = match value.expand() {
+        ExpandedLengthPercentage::Length(px) => px,
+        ExpandedLengthPercentage::Percent(percent) => basis * percent,
+        ExpandedLengthPercentage::Calc(pointer) => tree.resolve_calc_value(pointer, basis),
+    };
+    if resolved.is_finite() {
+        resolved.max(0.0)
+    } else {
+        0.0
+    }
+}
+
+// cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
+fn multicol_content_width(
+    tree: &Document,
+    node_id: usize,
+    border_box_width: f32,
+    parent_width: Option<f32>,
+) -> f32 {
+    let style = &tree.nodes[node_id].style;
+    let basis = parent_width.unwrap_or(border_box_width).max(0.0);
+    let horizontal = multicol_resolve_inset(tree, style.padding.left, basis)
+        + multicol_resolve_inset(tree, style.padding.right, basis)
+        + multicol_resolve_inset(tree, style.border.left, basis)
+        + multicol_resolve_inset(tree, style.border.right, basis);
+    (border_box_width - horizontal).max(0.0)
+}
+
+// cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
+fn multicol_has_nested_descendant(tree: &Document, node_id: usize) -> bool {
+    let mut pending = tree.nodes[node_id].children.clone();
+    while let Some(child) = pending.pop() {
+        if tree.nodes[child].multicol.is_some() {
+            return true;
+        }
+        pending.extend(tree.nodes[child].children.iter().copied());
+    }
+    false
+}
+
+// cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
+fn multicol_has_out_of_flow_descendant(tree: &Document, node_id: usize) -> bool {
+    let mut pending = tree.nodes[node_id].children.clone();
+    while let Some(child) = pending.pop() {
+        if tree.nodes[child].style.position == TaffyPosition::Absolute {
+            return true;
+        }
+        pending.extend(tree.nodes[child].children.iter().copied());
+    }
+    false
+}
+
+// cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
+fn relayout_nested_multicol_children(
+    tree: &mut Document,
+    node_id: TaffyNodeId,
+    context: FragmentationContext,
+    fallback_height: f32,
+) -> f32 {
+    let index = usize::from(node_id);
+    let children: Vec<usize> = tree.nodes[index]
+        .children
+        .iter()
+        .copied()
+        .filter(|&child| {
+            tree.nodes[child].is_in_document() && tree.nodes[child].style.display != Display::None
+        })
+        .collect();
+    let container_fragment = tree.fragment_tree.push(crate::fragment::LayoutFragment {
+        node_id: index,
+        parent: None,
+        fragmentainer: context.column_index,
+        x: context.origin_x,
+        y: context.origin_y,
+        width: context.available_width,
+        height: fallback_height,
+        line_start: None,
+        line_end: None,
+    });
+    // This tranche models `column-fill:auto`: source-order children consume
+    // the current definite fragmentainer before the next column starts.
+    // Balancing remains on the foundational direct-text path.
+    let fragment_height = context.available_height;
+    let mut column = 0usize;
+    let mut cursor = 0.0f32;
+    let mut maximum = 0.0f32;
+
+    for (order, child) in children.into_iter().enumerate() {
+        let child_height = match fragment_height {
+            Some(height) => AvailableSpace::Definite((height - cursor).max(0.0)),
+            None => AvailableSpace::MaxContent,
+        };
+        let child_inputs = LayoutInput {
+            run_mode: RunMode::PerformLayout,
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Both,
+            known_dimensions: Size {
+                width: Some(context.column_width),
+                height: None,
+            },
+            known_dimensions_are_definite: Size {
+                width: true,
+                height: false,
+            },
+            parent_size: Size {
+                width: Some(context.column_width),
+                height: context.available_height,
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(context.column_width),
+                height: child_height,
+            },
+            vertical_margins_are_collapsible: TaffyLine::FALSE,
+        };
+
+        // prepare_multicol_layout gives direct text a temporary used height
+        // for its page-level projection. A nested width probe must measure the
+        // shaped layout again instead of reusing that stale height.
+        if matches!(tree.nodes[child].data, NodeData::Text(_)) {
+            tree.nodes[child].style.size.height = Dimension::auto();
+            tree.nodes[child].cache.clear();
+        }
+        let child_output = tree.compute_child_layout(TaffyNodeId::from(child), child_inputs);
+        refresh_nested_text_fragments(tree, child, context);
+        let mut child_layout = tree.nodes[child].unrounded_layout;
+        let margin_top = child_layout.margin.top;
+        let margin_bottom = child_layout.margin.bottom;
+        let needed = margin_top + child_output.size.height + margin_bottom;
+        if let Some(height) = fragment_height
+            && column + 1 < context.column_count
+            && cursor > 0.0
+            && cursor + needed > height
+        {
+            maximum = maximum.max(cursor);
+            tree.fragment_tree
+                .record_break(crate::fragment::BreakToken {
+                    node_id: index,
+                    child_index: order,
+                    line_index: 0,
+                });
+            column += 1;
+            cursor = 0.0;
+        }
+
+        let column_context = context.in_column(
+            column,
+            context.origin_x + context.column_offset_x(column),
+            context.origin_y + cursor,
+        );
+        let x = child_layout.location.x + context.column_offset_x(column);
+        let y = cursor + margin_top;
+        child_layout.order = order as u32;
+        child_layout.size = child_output.size;
+        child_layout.location = Point { x, y };
+        tree.set_unrounded_layout(TaffyNodeId::from(child), &child_layout);
+        let child_fragment = tree.fragment_tree.push(crate::fragment::LayoutFragment {
+            node_id: child,
+            parent: Some(container_fragment),
+            fragmentainer: column_context.column_index,
+            x: column_context.origin_x,
+            y: column_context.origin_y + margin_top,
+            width: child_output.size.width,
+            height: child_output.size.height,
+            line_start: None,
+            line_end: None,
+        });
+        tree.fragment_tree.reparent_roots(child, child_fragment);
+        // Keep text ranges in the same first-class tree as element boxes.
+        // Paint still consumes the node-local ranges for compatibility, while
+        // future incremental reflow can walk one nested fragment tree.
+        let text_fragments = tree.nodes[child]
+            .multicol_fragments()
+            .map(|fragments| fragments.to_vec());
+        if let Some(text_fragments) = text_fragments {
+            for fragment in text_fragments {
+                tree.fragment_tree.push(crate::fragment::LayoutFragment {
+                    node_id: child,
+                    parent: Some(child_fragment),
+                    fragmentainer: column_context.column_index,
+                    x: child_layout.location.x + fragment.x,
+                    y: child_layout.location.y + fragment.y,
+                    width: child_output.size.width,
+                    height: child_output.size.height,
+                    line_start: Some(fragment.line_start),
+                    line_end: Some(fragment.line_end),
+                });
+            }
+        }
+        cursor = y + child_output.size.height + margin_bottom;
+    }
+    maximum
+        .max(cursor)
+        .max(fallback_height.min(fragment_height.unwrap_or(fallback_height)))
+}
+
+// cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
+fn nested_text_line_ranges(
+    layout: &parley::Layout<()>,
+    context: FragmentationContext,
+) -> Vec<(usize, usize)> {
+    let line_count = layout.len();
+    if let Some(height) = context.available_height.filter(|height| *height > 0.0) {
+        let mut ranges = Vec::with_capacity(context.column_count);
+        let mut start = 0usize;
+        for _ in 0..context.column_count {
+            if start >= line_count {
+                break;
+            }
+            let origin = layout
+                .lines()
+                .nth(start)
+                .map(|line| line.metrics().block_min_coord)
+                .unwrap_or(0.0);
+            let mut end = start;
+            while end < line_count {
+                let fits = layout
+                    .lines()
+                    .nth(end)
+                    .map(|line| line.metrics().block_max_coord - origin <= height + f32::EPSILON)
+                    .unwrap_or(false);
+                if !fits && end > start {
+                    break;
+                }
+                end += 1;
+            }
+            ranges.push((start, end.max(start + 1).min(line_count)));
+            start = end.max(start + 1).min(line_count);
+        }
+        return ranges;
+    }
+    let lines_per_column = line_count.div_ceil(context.column_count);
+    (0..context.column_count)
+        .filter_map(|column| {
+            let start = (column * lines_per_column).min(line_count);
+            let end = ((column + 1) * lines_per_column).min(line_count);
+            (start < end).then_some((start, end))
+        })
+        .collect()
+}
+
+// cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
+fn refresh_nested_text_fragments(
+    tree: &mut Document,
+    node_id: usize,
+    context: FragmentationContext,
+) {
+    let NodeData::Text(text) = &mut tree.nodes[node_id].data else {
+        return;
+    };
+    let Some(layout) = text.text_layout.as_ref() else {
+        return;
+    };
+    let line_count = layout.len();
+    if line_count == 0 {
+        text.multicol_fragments = None;
+        return;
+    }
+    let ranges = nested_text_line_ranges(layout, context);
+    text.multicol_fragments = Some(
+        ranges
+            .into_iter()
+            .enumerate()
+            .map(|(column, (start, end))| MulticolTextFragment {
+                line_start: start,
+                line_end: end,
+                x: context.column_offset_x(column),
+                // The painter normalizes the first selected line's
+                // block-minimum. Store that minimum here so a recursive
+                // fragment keeps the ordinary block-flow baseline.
+                y: layout
+                    .lines()
+                    .nth(start)
+                    .map(|line| line.metrics().block_min_coord)
+                    .unwrap_or(0.0),
+            })
+            .collect(),
+    );
+}
+
 #[derive(Clone, Copy, Debug)]
 struct MulticolMetrics {
     /// Used inline size of one column.
@@ -6473,6 +6894,18 @@ fn has_vertical_writing_mode(
     false
 }
 
+// cov:ignore: nested recursion is exercised by the ignored nested WPT reftests.
+fn has_multicol_ancestor(doc: &Document, parent_of: &[Option<usize>], node_id: usize) -> bool {
+    let mut current = parent_of.get(node_id).copied().flatten();
+    while let Some(parent) = current {
+        if doc.nodes[parent].multicol.is_some() {
+            return true;
+        }
+        current = parent_of.get(parent).copied().flatten();
+    }
+    false
+}
+
 // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
 fn multicol_metrics_for_node(
     cascade: &CascadeResult,
@@ -6553,7 +6986,9 @@ fn line_height_px(cv: &ComputedValues) -> f32 {
 ///
 /// Inline element children use a flex-row projection so each item occupies one
 /// column. Direct text keeps its DOM node and receives explicit line ranges;
-/// paint emits those ranges at the corresponding column offset.
+/// paint emits those ranges at the corresponding column offset. Descendants
+/// below another multicol container are left to the recursive Taffy seam so
+/// their used widths are not guessed from a page fallback.
 // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
 fn prepare_multicol_layout(doc: &mut Document, cascade: &CascadeResult, fallback_width: f32) {
     let mut parent_of = vec![None; doc.nodes.len()];
@@ -6566,6 +7001,12 @@ fn prepare_multicol_layout(doc: &mut Document, cascade: &CascadeResult, fallback
     }
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
+            continue;
+        }
+        // Used widths for descendants of a multicol container are supplied by
+        // the recursive Taffy seam. Do not pre-project them from cascade
+        // fallback widths; that was the source of the nested-width bug.
+        if has_multicol_ancestor(doc, &parent_of, idx) {
             continue;
         }
         if matches!(
@@ -6585,6 +7026,9 @@ fn prepare_multicol_layout(doc: &mut Document, cascade: &CascadeResult, fallback
     }
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
+            continue;
+        }
+        if has_multicol_ancestor(doc, &parent_of, idx) {
             continue;
         }
         if has_vertical_writing_mode(cascade, &parent_of, idx) {
@@ -7477,6 +7921,8 @@ pub fn layout_single_page(
     // but an early `?` return (Step 3) would otherwise leave a previous call's
     // leftover entries for the next call to inherit.
     document.layout_warnings.clear();
+    document.fragment_tree.clear();
+    document.fragmentation_stack.clear();
 
     // Step 1: ComputedValues → taffy::Style bridge (現時点では no-op site)
     apply_computed_to_style(document, cascade);

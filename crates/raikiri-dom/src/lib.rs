@@ -41,6 +41,7 @@
 //! 追加時に漏れる。
 
 mod diag;
+mod fragment;
 mod image_resolve;
 mod node;
 mod phase_b;
