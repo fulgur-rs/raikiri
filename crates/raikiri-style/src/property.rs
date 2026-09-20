@@ -1748,8 +1748,19 @@ pub enum ContentComponent {
         name: SmolStr,
         fetch: StringFetchMode,
     },
-    /// `attr(<attribute-name>)` (§2.1、type/fallback は未実装、将来対応)。
+    /// `attr(<attribute-name>)` (§2.1)。
+    ///
+    /// The legacy untyped form resolves a missing attribute to an empty
+    /// string. Typed values and fallbacks use [`Self::AttrFallback`].
     Attr { name: SmolStr },
+    /// Untyped `attr(<attribute-name>, <fallback>)` with a narrow static
+    /// fallback subset: a quoted string is retained, while any other
+    /// fallback token is represented as invalid and therefore contributes no
+    /// generated text when the attribute is absent.
+    AttrFallback {
+        name: SmolStr,
+        fallback: Option<SmolStr>,
+    },
     /// `target-counter([<string>|<url>], <custom-ident>, <counter-style>?)`。
     /// CSS Content 3 §2.6.1 <https://www.w3.org/TR/css-content-3/#target-counter>。
     ///
@@ -17874,15 +17885,33 @@ fn counter_style_from_ident(ident: &str) -> CounterStyle {
     }
 }
 
-/// `attr(<attribute-name>)`。CSS Content 3 §2.1
-/// <https://www.w3.org/TR/css-content-3/#strings>。
+/// `attr(<attribute-name> [, <fallback>])`。CSS Content 3 §2.1 and
+/// CSS Values and Units 5 §7.7.1.
 ///
-/// static-side scope: type / fallback (attr(x string, "default") 等) は defer。
+/// This phase intentionally supports only untyped fallbacks that are either a
+/// quoted string or a single identifier. The latter is retained as an
+/// invalid-fallback marker: it contributes no text when the attribute is
+/// absent, matching the measured `invalid` case without pretending to support
+/// typed `attr()` syntax.
 fn parse_attr_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
     let name = input.expect_ident().ok()?.clone();
-    Some(ContentComponent::Attr {
-        name: SmolStr::new(name.as_ref()),
-    })
+    let name = SmolStr::new(name.as_ref());
+    if input.try_parse(|i| i.expect_comma()).is_err() {
+        return Some(ContentComponent::Attr { name });
+    }
+
+    let fallback = if let Ok(value) =
+        input.try_parse(|i| i.expect_string().map(|value| SmolStr::new(value.as_ref())))
+    {
+        Some(value)
+    } else {
+        // A single non-string fallback token is represented as invalid for
+        // the narrow untyped subset. `parse_nested_block` still enforces that
+        // no additional tokens remain in the function.
+        input.expect_ident().ok()?;
+        None
+    };
+    Some(ContentComponent::AttrFallback { name, fallback })
 }
 
 /// CSS `<url>` value type (CSS Values and Units 4 §4.4
@@ -24252,6 +24281,24 @@ mod tests {
             ContentComponent::Attr {
                 name: SmolStr::new("href"),
             }
+        );
+    }
+
+    #[test]
+    fn content_parse_attr_untyped_fallbacks() {
+        let items = content_items(r#"attr(missing, "Fallback value") attr(missing, invalid)"#);
+        assert_eq!(
+            items,
+            vec![
+                ContentComponent::AttrFallback {
+                    name: SmolStr::new("missing"),
+                    fallback: Some(SmolStr::new("Fallback value")),
+                },
+                ContentComponent::AttrFallback {
+                    name: SmolStr::new("missing"),
+                    fallback: None,
+                },
+            ]
         );
     }
 
