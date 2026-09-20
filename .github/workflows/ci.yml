@@ -34,6 +34,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Free disk space on the runner
+        # boa_engine (raikiri-js) を追加した際に "No space left on device" で
+        # fmt+test+clippy job が落ちた (他の同時期の CI run は全て成功、この
+        # PR の branch だけ失敗、ローカル再現なし → runner のプリインストール
+        # 済みツール群込みのディスク使用量が上限に近く、依存 tree 追加分で
+        # 溢れたと判断)。Android SDK / .NET / Haskell 等の未使用ツールを削除
+        # して空き容量を確保する。
+        uses: jlumbroso/free-disk-space@v2.0.0
+        with:
+          preinstalled-runtimes: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: true
+          swap-storage: false
+
       - name: Setup Rust toolchain
         # rustup が rust-toolchain.toml (1.91.0 + rustfmt + clippy) を尊重、
         # first cargo 呼び出し前に explicit install する。dtolnay/rust-toolchain
