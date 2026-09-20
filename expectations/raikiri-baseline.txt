@@ -647,6 +647,7 @@ css/css-text/hyphens/hyphens-span-002.html
 css/css-text/letter-spacing/letter-spacing-animating-letter-spacing.html
 css/css-text/letter-spacing/letter-spacing-cursive-001.html
 css/css-text/letter-spacing/letter-spacing-ligatures-001.html
+css/css-text/letter-spacing/letter-spacing-ligatures-004.html
 css/css-text/letter-spacing/letter-spacing-nesting-002.html
 css/css-text/letter-spacing/letter-spacing-percent-001.html
 css/css-text/line-break/line-break-loose-hyphens-003.html
