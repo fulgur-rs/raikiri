@@ -2948,29 +2948,26 @@ mod tests {
     }
 
     #[test]
-    fn margin_block_ua_rule_survives_real_parse_and_cascade() {
+    fn margin_block_and_inline_ua_rules_survive_real_parse_and_cascade() {
         // HTML LS §flow-content-3's
         //   blockquote, figure, listing, p, plaintext, pre, xmp {
         //     margin-block: 1em;
         //   }
-        // lands in MINIMAL_UA_CSS as `margin-top: 1em; margin-bottom: 1em;`
-        // (see minimal.css's comment on this rule for why bare physical
-        // longhands are used instead of the `margin` shorthand). This test
-        // pins that the rule reaches `computed.margin.{top,bottom}` through
-        // real cssparser parsing and cascade, not just literal text in
-        // `MINIMAL_UA_CSS` — same "survives real parse+cascade" concern as
-        // the `hr` test above. 1em resolves to 16px against the UA-default
-        // inherited 16px font-size.
+        //   blockquote, figure { margin-inline: 40px; }
+        // land in MINIMAL_UA_CSS verbatim, using the CSS Logical Properties
+        // and Values 1 §4.2 shorthands directly. This test pins that both
+        // rules reach `computed.margin.*` through real cssparser parsing
+        // and cascade, not just literal text in `MINIMAL_UA_CSS` — same
+        // "survives real parse+cascade" concern as the `hr` test above.
+        // 1em resolves to 16px against the UA-default inherited 16px
+        // font-size; margin-inline's 40px is a plain absolute length with
+        // no such resolution step.
         //
-        // margin-left/margin-right are also asserted, at CSS-initial 0px:
-        // this pins that the rule stays confined to the block axis. It
-        // would catch an accidental switch to the single-value `margin:
-        // 1em` shorthand (which fans out to all 4 sides, giving left/right
-        // 1em too) or to hr-style `margin: 1em auto` (which would give
-        // left/right `Auto` instead) — it would NOT distinguish today's
-        // longhand-only form from `margin: 1em 0`, since that 2-value
-        // shorthand computes to the same Px(0.0) on left/right that
-        // leaving them untouched already does.
+        // margin-left/margin-right are asserted per tag: 40px for
+        // blockquote/figure (the only two the margin-inline rule targets,
+        // resolved from the LTR-default `direction: ltr` inline-start/end
+        // pair to left/right respectively) and CSS-initial 0px for the
+        // other five, which margin-inline does not touch at all.
         //
         // Each tag is parsed in its own isolated document, same reason as
         // `listing_plaintext_pre_xmp_font_family_and_white_space_survives_real_parse_and_cascade`
@@ -3017,7 +3014,7 @@ mod tests {
             assert_eq!(
                 margin.top,
                 ComputedLengthPercentageOrAuto::Px(16.0),
-                "{tag}'s UA rule margin-top: 1em must reach computed.margin.top (16px at \
+                "{tag}'s UA rule margin-block: 1em must reach computed.margin.top (16px at \
                  default 16px font-size) through real parse+cascade"
             );
             // cov:ignore: panic-message literal only executed on assertion
@@ -3025,24 +3022,29 @@ mod tests {
             assert_eq!(
                 margin.bottom,
                 ComputedLengthPercentageOrAuto::Px(16.0),
-                "{tag}'s UA rule margin-bottom: 1em must reach computed.margin.bottom (16px \
+                "{tag}'s UA rule margin-block: 1em must reach computed.margin.bottom (16px \
                  at default 16px font-size) through real parse+cascade"
             );
+            // blockquote/figure additionally carry `margin-inline: 40px`;
+            // the other five tags stay at CSS-initial 0 on the inline axis.
+            let expect_inline = if matches!(tag, "blockquote" | "figure") {
+                ComputedLengthPercentageOrAuto::Px(40.0)
+            } else {
+                ComputedLengthPercentageOrAuto::Px(0.0)
+            };
             // cov:ignore: panic-message literal only executed on assertion
             // failure, which doesn't happen while this test passes.
             assert_eq!(
-                margin.left,
-                ComputedLengthPercentageOrAuto::Px(0.0),
-                "{tag}'s UA rule must not touch margin-left (stays CSS-initial 0) — the \
-                 rule stays confined to the block axis"
+                margin.left, expect_inline,
+                "{tag}'s computed.margin.left must reflect the margin-inline UA rule \
+                 (40px for blockquote/figure, CSS-initial 0 otherwise)"
             );
             // cov:ignore: panic-message literal only executed on assertion
             // failure, which doesn't happen while this test passes.
             assert_eq!(
-                margin.right,
-                ComputedLengthPercentageOrAuto::Px(0.0),
-                "{tag}'s UA rule must not touch margin-right (stays CSS-initial 0) — the \
-                 rule stays confined to the block axis"
+                margin.right, expect_inline,
+                "{tag}'s computed.margin.right must reflect the margin-inline UA rule \
+                 (40px for blockquote/figure, CSS-initial 0 otherwise)"
             );
         }
 
