@@ -678,6 +678,10 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         // has no table layout), carried Node-side like `display` above.
         doc.nodes[idx].table_layout = cv.table_layout;
         doc.nodes[idx].border_collapse = cv.border_collapse;
+        doc.nodes[idx].authored_writing_mode = cascade
+            .authored_writing_modes
+            .get(idx)
+            .and_then(|mode| *mode);
         bridge_size(doc, idx, cv);
         if let Some((intrinsic_width, intrinsic_height)) =
             bridge_known_image_intrinsic_size(doc, idx, cv)

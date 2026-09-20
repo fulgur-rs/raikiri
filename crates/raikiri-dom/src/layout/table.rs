@@ -32,7 +32,7 @@
 //!   cells abut exactly.
 //! - Nested tables are depth-capped fail-closed (`MAX_TABLE_NESTING`).
 
-use raikiri_style::property::{BorderCollapseValue, DisplayValue, TableLayoutValue};
+use raikiri_style::property::{BorderCollapseValue, DisplayValue, TableLayoutValue, WritingMode};
 use taffy::style::{CompactLength, Dimension};
 use taffy::style_helpers::{TaffyMaxContent, TaffyMinContent};
 use taffy::tree::{RunMode, SizingMode};
@@ -107,6 +107,27 @@ struct CellPlacement {
 // Public entry — called from `taffy_impl.rs` when `Node::display == Table`.
 // ---------------------------------------------------------------------------
 
+fn table_writing_mode(doc: &Document, table_idx: usize) -> WritingMode {
+    let mut current = Some(table_idx);
+    while let Some(id) = current {
+        if let Some(mode) = doc.nodes[id].authored_writing_mode {
+            return mode;
+        }
+        current = doc.parent_of(id);
+    }
+    WritingMode::HorizontalTb
+}
+
+fn is_vertical_writing_mode(mode: WritingMode) -> bool {
+    matches!(
+        mode,
+        WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr
+    )
+}
+
 pub fn compute_table_layout(
     doc: &mut Document,
     table_id: NodeId,
@@ -132,6 +153,7 @@ pub fn compute_table_layout(
     let mut grid = build_table_grid(doc, table_idx);
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
+    let vertical_writing = is_vertical_writing_mode(table_writing_mode(doc, table_idx));
 
     // Container metrics, split so collapse can substitute collapsed outer
     // borders for the table's own border widths (CSS 2.1 §17.6.2 — the table
@@ -372,26 +394,37 @@ pub fn compute_table_layout(
             None => None,
         },
     };
+    let vertical_content_height = row_heights.iter().sum::<f32>() * grid.n_cols as f32;
     let final_size = Size {
-        width: table_width_basis
-            .map(|w| clamp_min_max(w, min_w_outer, max_w_outer))
-            .unwrap_or_else(|| {
-                clamp_min_max(
-                    content_width + padding_border_size.width,
-                    min_w_outer,
-                    max_w_outer,
-                )
-            }),
-        height: effective_known
-            .height
-            .map(|h| clamp_min_max(h, min_h_outer, max_h_outer))
-            .unwrap_or_else(|| {
-                clamp_min_max(
-                    content_height + padding_border_size.height,
-                    min_h_outer,
-                    max_h_outer,
-                )
-            }),
+        width: if vertical_writing {
+            effective_known
+                .width
+                .unwrap_or(content_width + padding_border_size.width)
+        } else {
+            table_width_basis
+                .map(|w| clamp_min_max(w, min_w_outer, max_w_outer))
+                .unwrap_or_else(|| {
+                    clamp_min_max(
+                        content_width + padding_border_size.width,
+                        min_w_outer,
+                        max_w_outer,
+                    )
+                })
+        },
+        height: if vertical_writing {
+            vertical_content_height + padding_border_size.height
+        } else {
+            effective_known
+                .height
+                .map(|h| clamp_min_max(h, min_h_outer, max_h_outer))
+                .unwrap_or_else(|| {
+                    clamp_min_max(
+                        content_height + padding_border_size.height,
+                        min_h_outer,
+                        max_h_outer,
+                    )
+                })
+        },
     };
 
     if inputs.run_mode == RunMode::ComputeSize {
@@ -411,6 +444,17 @@ pub fn compute_table_layout(
         &col_origins,
         &row_origins,
     );
+    if vertical_writing {
+        reposition_cells_for_vertical_writing(
+            doc,
+            &mut grid,
+            &column_widths,
+            &row_heights,
+            (final_size.width - padding_border_size.width).max(0.0),
+            x_origin,
+            y_origin,
+        );
+    }
 
     LayoutOutput::from_outer_size(final_size)
 }
@@ -1313,6 +1357,42 @@ fn place_cells(
     }
 }
 
+/// Re-map the already measured table grid from horizontal physical axes to
+/// vertical writing-mode axes. The normal placement pass remains authoritative
+/// for child sizing; this pass changes only the cell track positions and the
+/// vertical span used by the table grid.
+fn reposition_cells_for_vertical_writing(
+    doc: &mut Document,
+    grid: &mut TableGrid,
+    column_widths: &[f32],
+    row_heights: &[f32],
+    cell_width: f32,
+    x_origin: f32,
+    y_origin: f32,
+) {
+    let vertical_track = row_heights.iter().sum::<f32>();
+    if !vertical_track.is_finite() || vertical_track <= 0.0 {
+        return; // cov:ignore: defensive empty/invalid vertical track fallback.
+    }
+    for cell in &mut grid.cells {
+        let col_start = cell.col_start as usize;
+        let col_end = col_start
+            .saturating_add(cell.col_span as usize)
+            .min(column_widths.len());
+        let col_span = col_end.saturating_sub(col_start).max(1);
+        let y = y_origin + vertical_track * col_start as f32;
+        let height = vertical_track * col_span as f32;
+        let Some(layout) = cell.resolved.as_mut() else {
+            continue; // cov:ignore: defensive unresolved-cell fallback.
+        };
+        layout.location = Point { x: x_origin, y };
+        layout.size.width = cell_width;
+        layout.size.height = height;
+        let sanitized = super::sanitize_taffy_layout(layout, &mut doc.layout_warnings);
+        doc.nodes[cell.node_id].unrounded_layout = sanitized;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers for style resolution
 // ---------------------------------------------------------------------------
@@ -1704,6 +1784,76 @@ mod tests {
             "table width {} should >= content {}",
             tl.size.width,
             expected_w
+        );
+    }
+
+    #[test]
+    fn table_vertical_writing_mode_maps_columns_to_inline_axis() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display: table; writing-mode: vertical-lr"),
+        );
+        let row = doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display: table-row"),
+        );
+        let first = doc.append_element(
+            Some(row),
+            "td",
+            Style::default(),
+            Some("display: table-cell"),
+        );
+        let second = doc.append_element(
+            Some(row),
+            "td",
+            Style::default(),
+            Some("display: table-cell"),
+        );
+        let _first_child = doc.append_element(
+            Some(first),
+            "div",
+            Style::default(),
+            Some("width: 50px; height: 100px"),
+        );
+        let _second_child = doc.append_element(
+            Some(second),
+            "div",
+            Style::default(),
+            Some("width: 50px; height: 100px"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade");
+        crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new())
+            .expect("layout");
+
+        let first_layout = doc.nodes[first].unrounded_layout;
+        let second_layout = doc.nodes[second].unrounded_layout;
+        let table_layout = doc.nodes[table].unrounded_layout;
+        assert!(
+            (first_layout.location.x - second_layout.location.x).abs() < 0.5,
+            "vertical columns share the block-axis origin: {:?} vs {:?}", // cov:ignore: assertion diagnostic is evaluated only on failure.
+            first_layout.location,
+            second_layout.location
+        );
+        assert!(
+            second_layout.location.y - first_layout.location.y >= 99.5,
+            "vertical columns advance along the inline axis: {:?} vs {:?}", // cov:ignore: assertion diagnostic is evaluated only on failure.
+            first_layout.location,
+            second_layout.location
+        );
+        assert!(
+            table_layout.size.height >= first_layout.size.height + second_layout.size.height - 0.5,
+            "vertical table height covers its inline tracks: {:?} vs {:?}", // cov:ignore: assertion diagnostic is evaluated only on failure.
+            table_layout.size,
+            (first_layout.size, second_layout.size) // cov:ignore: assertion diagnostic is evaluated only on failure.
         );
     }
 
