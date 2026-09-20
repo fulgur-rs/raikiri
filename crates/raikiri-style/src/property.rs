@@ -13,79 +13,8 @@ pub use types::*;
 mod parse;
 pub use parse::*;
 
-/// Serializes a parsed [`PropertyValue`] back to canonical CSS text, for
-/// WPT `test_valid_value` assertions that expect a specific serialization
-/// rather than an echo of the input. Returns `None` for any variant this
-/// crate cannot yet serialize (or, for `Width`/`Height`/`Min*`/`Max*`,
-/// cannot *correctly* serialize with their current parsed representation —
-/// see the Tier2 Phase 1 plan's Global Constraints). Callers should fall
-/// back to echoing the raw input string when this returns `None`.
-pub fn serialize_value(value: &PropertyValue) -> Option<String> {
-    match value {
-        PropertyValue::FontSize(l)
-        | PropertyValue::PaddingTop(l)
-        | PropertyValue::PaddingRight(l)
-        | PropertyValue::PaddingBottom(l)
-        | PropertyValue::PaddingLeft(l)
-        | PropertyValue::BorderTopWidth(l)
-        | PropertyValue::BorderRightWidth(l)
-        | PropertyValue::BorderBottomWidth(l)
-        | PropertyValue::BorderLeftWidth(l)
-        | PropertyValue::BorderRadiusTopLeft(l)
-        | PropertyValue::BorderRadiusTopRight(l)
-        | PropertyValue::BorderRadiusBottomRight(l)
-        | PropertyValue::BorderRadiusBottomLeft(l)
-        | PropertyValue::OutlineWidth(l)
-        | PropertyValue::OutlineOffset(l) => Some(serialize_length(l)),
-
-        PropertyValue::Top(v)
-        | PropertyValue::Right(v)
-        | PropertyValue::Bottom(v)
-        | PropertyValue::Left(v)
-        | PropertyValue::MarginTop(v)
-        | PropertyValue::MarginRight(v)
-        | PropertyValue::MarginBottom(v)
-        | PropertyValue::MarginLeft(v) => Some(serialize_length_or_auto(v)),
-
-        PropertyValue::Padding(sides) => Some(serialize_sides(sides, serialize_length)),
-        PropertyValue::BorderWidth(sides) => Some(serialize_sides(sides, serialize_length)),
-        PropertyValue::Margin(sides) => Some(serialize_sides(sides, serialize_length_or_auto)),
-
-        PropertyValue::PaddingInline(pair) | PropertyValue::PaddingBlock(pair) => {
-            Some(serialize_start_end(pair, serialize_length))
-        }
-        PropertyValue::MarginInline(pair) | PropertyValue::MarginBlock(pair) => {
-            Some(serialize_start_end(pair, serialize_length_or_auto))
-        }
-
-        // Width/Height/MinWidth/MinHeight/MaxWidth/MaxHeight all wrap
-        // LengthOrAuto too, but parse_width/parse_min_size/parse_max_size
-        // fold `auto`/`min-content`/`max-content`/bare `fit-content` into
-        // the same LengthOrAuto::Auto, discarding which keyword was
-        // written. Serializing Auto as "auto" here would silently turn a
-        // currently-correct echoed "none"/"min-content"/"max-content" into
-        // a wrong "auto" — deliberately left unserialized (falls back to
-        // echo) until those three parse functions preserve the keyword.
-        PropertyValue::Width(_)
-        | PropertyValue::Height(_)
-        | PropertyValue::MinWidth(_)
-        | PropertyValue::MinHeight(_)
-        | PropertyValue::MaxWidth(_)
-        | PropertyValue::MaxHeight(_) => None,
-
-        // `color`/`background-color`/`border-*-color`/`text-decoration-color`/
-        // `outline-color` (including the `border-color` shorthand here) are
-        // deliberately absent even though they carry `CssColor`/
-        // `CurrentColor`-wrapping payloads: see `serialize_color_value`,
-        // which serializes them from raw CSS text instead, because the
-        // parsed value alone cannot distinguish keyword syntax from
-        // legacy-functional syntax from modern-functional syntax (all three
-        // can produce the same `CssColor`).
-        PropertyValue::BorderColor(_) => None,
-
-        _ => None,
-    }
-}
+mod serialize;
+pub use serialize::*;
 
 #[cfg(test)]
 mod tests {
