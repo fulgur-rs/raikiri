@@ -1,0 +1,28 @@
+[package]
+name = "raikiri-js"
+version = "0.1.0"
+description = "Boa (pure Rust JS engine) wrapper for running WPT CSS parsing test_invalid_value assertions"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+raikiri-style = { workspace = true }
+cssparser     = { workspace = true }
+# default-features = false drops boa_engine's `temporal`/`intl` machinery
+# (ICU, timezone data) this crate has no use for; `default-features = true`
+# would also work but pulls in dependencies purely for API surface this
+# crate never calls.
+boa_engine = { version = "0.22", default-features = false }
+
+[features]
+# Off by default: native builds and tests never need it. Exists so the
+# 原則5 (Pure Rust / WASM must) wasm32-unknown-unknown check has something
+# to enable — boa_engine's own `js` feature is required for that target
+# (see getrandom's wasm backend requirement), verified via:
+#   rustup target add wasm32-unknown-unknown
+#   cargo check -p raikiri-js --target wasm32-unknown-unknown --features wasm
+wasm = ["boa_engine/js"]
+
+[lints]
+workspace = true

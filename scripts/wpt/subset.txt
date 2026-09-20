@@ -142,3 +142,4 @@ css/css-multicol/multicol-nested-033.html
 css/css-multicol/multicol-nested-033-ref.html
 css/css-multicol/multicol-nested-025.html
 css/css-multicol/multicol-nested-027.html
+css/support
