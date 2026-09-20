@@ -1275,8 +1275,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Lists marker-position foundation slice (+1, exact static reftest).
         // + y0zo gap-008-ltr/gap-009-ltr (+2, exact 800x600 passes).
         // + CSS Text control-chars-000 literal generated-content slice (+1).
-        // + CSS generated-content attr fallback, quote, and image slices (+3).
-        assert_eq!(set.baseline.entries.len(), 1066);
+        // + CSS generated-content counter, attr fallback, quote, and image slices (+5).
+        assert_eq!(set.baseline.entries.len(), 1068);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }

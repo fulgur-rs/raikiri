@@ -77,6 +77,25 @@ css/CSS2/generated-content/content-003-ref.html
 # CSS generated-content image fallback: missing image contributes nothing.
 css/CSS2/generated-content/before-after-images-001.xht
 css/CSS2/generated-content/before-after-images-001-ref.xht
+# CSS generated-content simple counter()/counters() and list-item coverage.
+css/CSS2/generated-content/content-counter-000.xht
+css/CSS2/generated-content/content-counter-000-ref.xht
+css/CSS2/generated-content/content-005.xht
+css/CSS2/generated-content/content-005-ref.html
+css/CSS2/generated-content/content-021.xht
+css/CSS2/generated-content/content-021-ref.html
+css/CSS2/generated-content/content-auto-reset-001.xht
+css/CSS2/generated-content/content-auto-reset-001-ref.html
+css/css-lists/counter-list-item.html
+css/css-lists/counter-list-item-ref.html
+css/css-lists/counter-list-item-2.html
+css/css-lists/counter-list-item-2-ref.html
+css/css-lists/counter-list-item-3.html
+css/css-lists/counter-list-item-3-ref.html
+css/css-lists/implicit-and-explicit-list-item-counters.html
+css/css-lists/implicit-and-explicit-list-item-counters-ref.html
+css/css-lists/marker-counter.html
+css/css-lists/marker-counter-ref.html
 # CSS Color offscreen opacity group-compositing reftest pair.
 css/css-color/t32-opacity-offscreen-b.xht
 css/css-color/t32-opacity-offscreen-b-ref.html
