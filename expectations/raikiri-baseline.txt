@@ -1256,6 +1256,7 @@ css/css-text/text-transform/text-transform-upperlower-105.html
 css/CSS2/generated-content/before-after-images-001.xht
 css/CSS2/generated-content/content-005.xht
 css/CSS2/generated-content/content-counter-000.xht
+css/CSS2/generated-content/content-021.xht
 css/CSS2/generated-content/content-auto-reset-001.xht
 css/css-page/margin-boxes/content-002-print.html
 css/css-values/attr-notype-fallback.html

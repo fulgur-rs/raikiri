@@ -657,9 +657,24 @@ pub fn counter_snapshots(doc: &Document, cascade: &CascadeResult) -> Vec<Counter
                     // descendants are not traversed.
                     continue;
                 }
+                // Keep the element snapshot before its own `::before`
+                // directives. The generated pseudo is a child of the element,
+                // so a counter scope it creates must be visible to the
+                // element's real children, while the pseudo's own content
+                // applies those directives locally in paint.
                 snapshots[idx] = scopes.snapshot();
                 stack.push(WalkStep::Exit);
                 pending_pops.push(Vec::new());
+                if let Some(before) = cascade.pseudo.get(&(
+                    raikiri_style::StyleNodeId::new(idx as u64),
+                    raikiri_style::PseudoElem::Before,
+                )) && before.display != DisplayValue::None
+                    && before.content.iter().any(|component| {
+                        !matches!(component, raikiri_style::property::ContentComponent::None)
+                    })
+                {
+                    scopes.apply(before, pending_pops.last_mut());
+                }
                 for &child in node.children.iter().rev() {
                     stack.push(WalkStep::Enter(child));
                 }
@@ -753,6 +768,63 @@ mod tests {
         assert_eq!(snapshots[scope][&Symbol::new("step")], vec![4]);
         assert_eq!(snapshots[first][&Symbol::new("step")], vec![5]);
         assert_eq!(snapshots[second][&Symbol::new("step")], vec![6]);
+    }
+
+    #[test]
+    fn counter_snapshots_include_before_pseudo_scope_for_descendants() {
+        let mut doc = Document::new();
+        let style = doc.append_element(
+            Some(doc.root_index()),
+            "style",
+            Style::default(),
+            None::<&str>,
+        );
+        doc.append_text(
+            style,
+            r#"div::before { content: counters(test, "."); counter-reset: test }"#,
+        );
+        let outer = doc.append_element(
+            Some(doc.root_index()),
+            "div",
+            Style::default(),
+            None::<&str>,
+        );
+        let inner = doc.append_element(Some(outer), "div", Style::default(), None::<&str>);
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let snapshots = counter_snapshots(&doc, &cr);
+
+        assert!(!snapshots[outer].contains_key(&Symbol::new("test")));
+        assert_eq!(snapshots[inner][&Symbol::new("test")], vec![0]);
+    }
+
+    #[test]
+    fn counter_snapshots_ignore_none_before_pseudo_scope() {
+        let mut doc = Document::new();
+        let style = doc.append_element(
+            Some(doc.root_index()),
+            "style",
+            Style::default(),
+            None::<&str>,
+        );
+        doc.append_text(
+            style,
+            r#"div::before { content: none; counter-reset: test }"#,
+        );
+        let outer = doc.append_element(
+            Some(doc.root_index()),
+            "div",
+            Style::default(),
+            None::<&str>,
+        );
+        let inner = doc.append_element(Some(outer), "div", Style::default(), None::<&str>);
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let snapshots = counter_snapshots(&doc, &cr);
+
+        assert!(!snapshots[inner].contains_key(&Symbol::new("test")));
     }
 
     #[test]
