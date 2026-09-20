@@ -61,6 +61,42 @@ fn css_tables_vertical_baseline_is_pixel_exact_at_800x600() {
     );
 }
 
+/// Verify measured caption, anonymous-table, and percentage-height pairs.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn css_tables_caption_percentage_and_anonymous_pairs_are_pixel_exact_at_800x600() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let cases = [
+        "css/css-tables/caption-relative-positioning.html",
+        "css/css-tables/anonymous-table-ws-001.html",
+        "css/css-tables/html-display-table.html",
+        "css/css-tables/percent-height-replaced-in-percent-cell.tentative.html",
+        "css/css-tables/height-distribution/percentage-sizing-of-table-cell-children-002.html",
+        "css/css-tables/height-distribution/percentage-sizing-of-table-cell-children-003.html",
+        "css/css-tables/height-distribution/percentage-sizing-of-table-cell-children-004.html",
+        "css/css-tables/height-distribution/percentage-sizing-of-table-cell-replaced-children-001.html",
+    ];
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    for relative in cases {
+        let test = root.join(relative);
+        let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
+            .unwrap_or_else(|error| panic!("discover {relative}: {error}"));
+        assert_eq!(pairs.len(), 1, "expected one pair for {relative}");
+        let result =
+            run_pair(&pairs[0], config).unwrap_or_else(|error| panic!("run {relative}: {error}"));
+        assert!(
+            matches!(result.outcome, TestOutcome::Pass),
+            "{relative}: {:?} ({} mismatched pixels)",
+            result.outcome,
+            result.mismatched_pixels
+        );
+    }
+}
+
 /// Verify measured border-collapse and table-border-painting PASS pairs.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]

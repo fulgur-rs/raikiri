@@ -128,6 +128,69 @@ fn is_vertical_writing_mode(mode: WritingMode) -> bool {
     )
 }
 
+fn layout_empty_table_caption(
+    doc: &mut Document,
+    table_idx: usize,
+    parent_width: f32,
+    parent_height: Option<f32>,
+) -> Option<Size<f32>> {
+    let caption_id = doc.nodes[table_idx]
+        .children
+        .iter()
+        .copied()
+        .find(|&child| doc.nodes[child].display == DisplayValue::TableCaption)?;
+    let style = doc.nodes[caption_id].style.clone();
+    let known_width = resolve_dimension(style.size.width, Some(parent_width));
+    let known_height = resolve_dimension(style.size.height, parent_height);
+    let output = doc.compute_child_layout(
+        NodeId::from(caption_id),
+        LayoutInput {
+            run_mode: RunMode::PerformLayout,
+            sizing_mode: SizingMode::InherentSize,
+            axis: taffy::tree::RequestedAxis::Both,
+            known_dimensions: Size {
+                width: known_width,
+                height: known_height,
+            },
+            parent_size: Size {
+                width: Some(parent_width),
+                height: parent_height,
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(parent_width.max(0.0)),
+                height: parent_height
+                    .map(AvailableSpace::Definite)
+                    .unwrap_or(AvailableSpace::MaxContent),
+            },
+            known_dimensions_are_definite: taffy::geometry::Size {
+                width: known_width.is_some(),
+                height: known_height.is_some(),
+            },
+            vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+        },
+    );
+    let margin_left =
+        super::used_style_length_percentage_auto(style.margin.left, parent_width).unwrap_or(0.0);
+    let margin_top =
+        super::used_style_length_percentage_auto(style.margin.top, parent_width).unwrap_or(0.0);
+    let layout = TaffyLayout {
+        order: 0,
+        location: Point {
+            x: margin_left,
+            y: margin_top,
+        },
+        size: output.size,
+        scrollable_overflow_rect: output.scrollable_overflow_rect,
+        scrollbar_size: Size::ZERO,
+        padding: Rect::ZERO,
+        border: Rect::ZERO,
+        margin: Rect::ZERO,
+    };
+    let sanitized = super::sanitize_taffy_layout(&layout, &mut doc.layout_warnings);
+    doc.nodes[caption_id].unrounded_layout = sanitized;
+    Some(output.size)
+}
+
 pub fn compute_table_layout(
     doc: &mut Document,
     table_id: NodeId,
@@ -217,7 +280,7 @@ pub fn compute_table_layout(
                 taffy::Display::Flex | taffy::Display::Grid
             )
         });
-        let width = if parent_is_flex_or_grid {
+        let mut width = if parent_is_flex_or_grid {
             effective_known.width.or(specified_w).unwrap_or_else(|| {
                 let natural = padding_border_size.width;
                 match effective_known.width {
@@ -234,6 +297,19 @@ pub fn compute_table_layout(
                 }
             })
         };
+        let caption_size = layout_empty_table_caption(
+            doc,
+            table_idx,
+            effective_known
+                .width
+                .or(inputs.parent_size.width)
+                .unwrap_or(width)
+                .max(width),
+            inputs.parent_size.height,
+        );
+        if let Some(size) = caption_size {
+            width = width.max(size.width + padding_border_size.width);
+        }
         let specified_h = resolve_dimension(
             doc.nodes[table_idx].style.size.height,
             inputs.parent_size.height,
@@ -243,6 +319,10 @@ pub fn compute_table_layout(
                 .height
                 .unwrap_or(0.0)
                 .max(direct_content_height + padding_border_size.height)
+                .max(
+                    caption_size.map(|size| size.height).unwrap_or(0.0)
+                        + padding_border_size.height,
+                )
         });
         return LayoutOutput::from_outer_size(Size { width, height });
     }
@@ -1855,6 +1935,40 @@ mod tests {
             table_layout.size,
             (first_layout.size, second_layout.size) // cov:ignore: assertion diagnostic is evaluated only on failure.
         );
+    }
+
+    #[test]
+    fn empty_table_caption_is_laid_out_and_painted() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display: table"),
+        );
+        let caption = doc.append_element(
+            Some(table),
+            "caption",
+            Style::default(),
+            Some(
+                "display: table-caption; width: 100px; height: 50px; margin-left: 200px; \
+                 position: relative; left: -200px",
+            ),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade");
+        crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new())
+            .expect("layout");
+
+        let caption_layout = doc.nodes[caption].unrounded_layout;
+        let table_layout = doc.nodes[table].unrounded_layout;
+        assert!((caption_layout.size.width - 100.0).abs() < 0.5);
+        assert!((caption_layout.size.height - 50.0).abs() < 0.5);
+        assert!((caption_layout.location.x - 200.0).abs() < 0.5);
+        assert!(table_layout.size.height >= 50.0);
     }
 
     #[test]
