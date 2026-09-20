@@ -975,8 +975,57 @@ fn resolve_column_widths(
 }
 
 fn distribute_columns(avail: f32, min: &[f32], max: &[f32], pct: &[f32]) -> Vec<f32> {
-    let authored_length = vec![false; min.len()];
-    distribute_columns_with_authored(avail, min, max, pct, &authored_length)
+    let n = min.len();
+    let psum: f32 = pct.iter().sum();
+    let scale = if psum > 1.0 { 1.0 / psum } else { 1.0 };
+    let mut w = vec![0.0f32; n];
+    for i in 0..n {
+        w[i] = if pct[i] > 0.0 {
+            f32_max_compat(pct[i] * scale * avail, min[i])
+        } else {
+            min[i]
+        };
+    }
+    let assigned: f32 = w.iter().sum();
+    if assigned + 0.01 < avail {
+        let mut remaining = avail - assigned;
+        let grow: Vec<f32> = (0..n)
+            .map(|i| {
+                if pct[i] == 0.0 {
+                    f32_max_compat(max[i] - w[i], 0.0)
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        let gsum: f32 = grow.iter().sum();
+        if gsum > 0.0 {
+            let take = if remaining < gsum { remaining } else { gsum };
+            for i in 0..n {
+                w[i] += take * grow[i] / gsum;
+            }
+            remaining -= take;
+        }
+        if remaining > 0.0 {
+            let np: Vec<usize> = (0..n).filter(|&i| pct[i] == 0.0).collect();
+            let targets = if np.is_empty() { (0..n).collect() } else { np };
+            let share = remaining / targets.len() as f32;
+            for i in targets {
+                w[i] += share;
+            }
+        }
+    } else if assigned > avail + 0.01 {
+        let excess = assigned - avail;
+        let shrink: Vec<f32> = (0..n).map(|i| f32_max_compat(w[i] - min[i], 0.0)).collect();
+        let ssum: f32 = shrink.iter().sum();
+        if ssum > 0.0 {
+            let take = if excess < ssum { excess } else { ssum };
+            for i in 0..n {
+                w[i] -= take * shrink[i] / ssum;
+            }
+        }
+    }
+    w
 }
 
 fn distribute_columns_with_authored(
