@@ -674,6 +674,160 @@ pub(crate) fn serialize_length_or_auto(value: &LengthOrAuto) -> String {
     }
 }
 
+/// `<alpha-value>` serialization for legacy `rgba()`: finds the shortest
+/// decimal that re-quantizes, via [`channel_to_u8`], back to the same u8.
+/// `channel_to_u8` already discarded the original alpha precision when
+/// parsing, so naive `alpha as f32 / 255.0` division does not reproduce
+/// clean expected decimals (e.g. u8 128 -> 0.50196..., not "0.5"). Any u8
+/// alpha's rounding bucket under `channel_to_u8` spans ~1/255 (~0.00392),
+/// wider than a 3-decimal-place grid step (0.001), so a grid search up to 3
+/// decimal places always finds a match.
+fn serialize_alpha_channel(alpha: u8) -> String {
+    let exact = f64::from(alpha) / 255.0;
+    for digits in 0..=3 {
+        let scale = 10f64.powi(digits);
+        let rounded = (exact * scale).round() / scale;
+        if channel_to_u8(rounded as f32) == alpha {
+            return serialize_number(rounded as f32);
+        }
+    }
+    unreachable!("a 3-decimal-place grid always round-trips through channel_to_u8")
+}
+
+fn serialize_number(value: f32) -> String {
+    let int_value = if value.fract() == 0.0 {
+        Some(value as i32)
+    } else {
+        None
+    };
+    Token::Number {
+        has_sign: false,
+        value,
+        int_value,
+    }
+    .to_css_string()
+}
+
+/// Serializes a [`CssColor`] as legacy `rgb()`/`rgba()` notation. CSS Color 4
+/// §5.1 "The RGB functions" makes `rgb()`/`rgba()` aliases sharing one
+/// grammar, and legacy syntax always serializes via comma-separated
+/// `rgb()`/`rgba()` (§"Serializing color values").
+fn serialize_css_color(color: &CssColor) -> String {
+    if color.a == 255 {
+        format!("rgb({}, {}, {})", color.r, color.g, color.b)
+    } else {
+        format!(
+            "rgba({}, {}, {}, {})",
+            color.r,
+            color.g,
+            color.b,
+            serialize_alpha_channel(color.a)
+        )
+    }
+}
+
+fn parse_color_entirely(raw_value: &str) -> Option<CssColor> {
+    let mut input = ParserInput::new(raw_value);
+    let mut parser = Parser::new(&mut input);
+    parser
+        .parse_entirely(|i| -> Result<CssColor, ParseError<'_, ()>> {
+            parse_color(i).ok_or_else(|| i.new_custom_error(()))
+        })
+        .ok()
+}
+
+/// Serializes a single-value `<color>` property's specified value directly
+/// from its raw CSS text, for the property names whose `PropertyValue`
+/// payload is a bare [`CssColor`] or a `CurrentColor`-wrapping enum around
+/// one: `color`, `background-color`, the four physical `border-*-color`
+/// longhands, `text-decoration-color`, `outline-color`.
+///
+/// CSS Color 4 "Serializing color values" gives three different
+/// serializations depending on how a color was written, and the parsed
+/// `PropertyValue` alone cannot tell them apart — a resolved
+/// `CssColor{255,0,0,255}` could have come from `red`, `#ff0000`, or
+/// `rgb(255,0,0)`, three different correct serializations:
+///
+/// - keyword syntax (named colors, `transparent`, `currentcolor`, system
+///   colors) serializes as the keyword itself, lowercased;
+/// - legacy functional syntax (hex notation, `rgb()`, `rgba()`, `hsl()`,
+///   `hsla()`, `hwb()`) always canonicalizes to comma-separated
+///   `rgb()`/`rgba()`;
+/// - anything else (modern functional syntax: `lab()`, `lch()`, `oklab()`,
+///   `oklch()`, `color()`, `color-mix()`, `color-layers()`,
+///   `light-dark()`, `contrast-color()`, relative `from` forms) must
+///   preserve its own functional notation, which a resolved `CssColor`'s
+///   u8 sRGB triple cannot represent — deliberately returns `None` here
+///   (falls back to echo) until a color-space-aware value model exists.
+///
+/// This re-parses `raw_value` directly rather than going through
+/// [`serialize_value`], because the syntax classification above happens
+/// before `parse_color` collapses everything to `CssColor` — recovering it
+/// from the already-parsed `PropertyValue` is not possible without
+/// changing `CssColor`/`PropertyValue`'s shape, which is public API used
+/// well beyond this parser (cascade, paint, and downstream consumers).
+pub fn serialize_color_value(name: &str, raw_value: &str) -> Option<String> {
+    if !matches!(
+        name,
+        "color"
+            | "background-color"
+            | "border-top-color"
+            | "border-right-color"
+            | "border-bottom-color"
+            | "border-left-color"
+            | "text-decoration-color"
+            | "outline-color"
+    ) {
+        return None;
+    }
+
+    let mut input = ParserInput::new(raw_value);
+    let mut parser = Parser::new(&mut input);
+    let leading_token = parser.next().ok()?.clone();
+
+    match leading_token {
+        Token::Ident(ident) => Some(ident.as_ref().to_ascii_lowercase()),
+        Token::Hash(_) | Token::IDHash(_) => {
+            parse_color_entirely(raw_value).map(|color| serialize_css_color(&color))
+        }
+        Token::Function(ref function_name)
+            if matches!(
+                function_name.to_ascii_lowercase().as_str(),
+                "rgb" | "rgba" | "hsl" | "hsla" | "hwb"
+            ) =>
+        {
+            // CSS Color 4's relative color syntax lets a `from` clause
+            // appear inside any of these legacy function names (e.g.
+            // `rgb(from contrast-color(blue) r g b)`); its resolved
+            // value must serialize back using the origin's own
+            // notation, which a resolved `CssColor`'s u8 sRGB triple
+            // loses just like the modern-syntax cases below. Peek past
+            // the function name for a leading `from` keyword before
+            // treating this as ordinary legacy syntax.
+            //
+            // `parse_nested_block` requires its closure to consume the
+            // whole block (it is `parse_entirely` under the hood) or it
+            // reports that as an error — irrelevant here, since we only
+            // want to peek at the leading token. Capture the answer via
+            // a side effect set before that exhaustion check runs, and
+            // discard the block result itself.
+            let mut is_relative = false;
+            let _: Result<(), ParseError<'_, ()>> = parser.parse_nested_block(|nested| {
+                is_relative = nested
+                    .try_parse(|i| i.expect_ident_matching("from"))
+                    .is_ok();
+                Ok(())
+            });
+            if is_relative {
+                None
+            } else {
+                parse_color_entirely(raw_value).map(|color| serialize_css_color(&color))
+            }
+        }
+        _ => None,
+    }
+}
+
 /// `column-count` value from CSS Multi-column Layout.
 ///
 /// The `auto` keyword leaves the used count to the paired `column-width` and
@@ -10005,6 +10159,19 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::MinHeight(_)
         | PropertyValue::MaxWidth(_)
         | PropertyValue::MaxHeight(_) => None,
+
+        // `color`/`background-color`/`border-*-color`/`text-decoration-color`/
+        // `outline-color` are deliberately absent here even though they carry
+        // `CssColor`/`CurrentColor`-wrapping payloads: see
+        // `serialize_color_value`, which serializes them from raw CSS text
+        // instead, because the parsed value alone cannot distinguish keyword
+        // syntax from legacy-functional syntax from modern-functional syntax
+        // (all three can produce the same `CssColor`). `border-color`'s
+        // `Sides<BorderColor>` shorthand is out of scope for that raw-text
+        // approach (splitting 1-4 components requires a nested-paren-aware
+        // reparse, not a naive whitespace split) and is left unserialized
+        // (falls back to echo) until that is implemented.
+        PropertyValue::BorderColor(_) => None,
 
         _ => None,
     }
@@ -38319,6 +38486,153 @@ mod tests {
                 end: LengthOrAuto::Length(Length::Px(10.0)),
             })),
             Some("auto 10px".to_owned())
+        );
+    }
+
+    #[test]
+    fn serialize_alpha_channel_round_trips_every_u8_through_channel_to_u8() {
+        for alpha in 0u8..=255 {
+            let serialized = serialize_alpha_channel(alpha);
+            let reparsed: f32 = serialized
+                .parse()
+                .unwrap_or_else(|_| panic!("{serialized:?} should parse as a number"));
+            assert_eq!(
+                channel_to_u8(reparsed),
+                alpha,
+                "alpha {alpha} serialized as {serialized:?}, which does not round-trip"
+            );
+        }
+    }
+
+    #[test]
+    fn serialize_number_formats_plain_decimals_without_a_leading_dot() {
+        assert_eq!(serialize_number(0.5), "0.5");
+        assert_eq!(serialize_number(1.0), "1");
+        assert_eq!(serialize_number(0.0), "0");
+    }
+
+    #[test]
+    fn serialize_css_color_formats_opaque_and_translucent() {
+        assert_eq!(
+            serialize_css_color(&CssColor {
+                r: 34,
+                g: 51,
+                b: 68,
+                a: 255
+            }),
+            "rgb(34, 51, 68)"
+        );
+        assert_eq!(
+            serialize_css_color(&CssColor {
+                r: 2,
+                g: 3,
+                b: 4,
+                a: 128
+            }),
+            "rgba(2, 3, 4, 0.5)"
+        );
+        assert_eq!(
+            serialize_css_color(&CssColor::TRANSPARENT),
+            "rgba(0, 0, 0, 0)"
+        );
+    }
+
+    #[test]
+    fn serialize_color_value_echoes_keyword_syntax_lowercased() {
+        assert_eq!(
+            serialize_color_value("color", "currentColor"),
+            Some("currentcolor".to_owned())
+        );
+        assert_eq!(
+            serialize_color_value("color", "transparent"),
+            Some("transparent".to_owned())
+        );
+        assert_eq!(
+            serialize_color_value("background-color", "teal"),
+            Some("teal".to_owned())
+        );
+        assert_eq!(
+            serialize_color_value("border-top-color", "red"),
+            Some("red".to_owned())
+        );
+    }
+
+    #[test]
+    fn serialize_color_value_canonicalizes_legacy_functional_syntax() {
+        assert_eq!(
+            serialize_color_value("color", "#234"),
+            Some("rgb(34, 51, 68)".to_owned())
+        );
+        assert_eq!(
+            serialize_color_value("color", "rgb(100%, 0%, 0%)"),
+            Some("rgb(255, 0, 0)".to_owned())
+        );
+        assert_eq!(
+            serialize_color_value("color", "hsl(120, 100%, 50%)"),
+            Some("rgb(0, 255, 0)".to_owned())
+        );
+        assert_eq!(
+            serialize_color_value("color", "hsla(120, 100%, 50%, 0.25)"),
+            Some("rgba(0, 255, 0, 0.25)".to_owned())
+        );
+        assert_eq!(
+            serialize_color_value("text-decoration-color", "rgba(2, 3, 4, 50%)"),
+            Some("rgba(2, 3, 4, 0.5)".to_owned())
+        );
+    }
+
+    #[test]
+    fn serialize_color_value_returns_none_for_modern_functional_syntax() {
+        assert_eq!(serialize_color_value("color", "lab(0 0 0)"), None);
+        assert_eq!(serialize_color_value("color", "oklch(0.5 0.1 180)"), None);
+        assert_eq!(
+            serialize_color_value("background-color", "color(srgb 1 0 0)"),
+            None
+        );
+        assert_eq!(
+            serialize_color_value("color", "color-mix(in srgb, red, blue)"),
+            None
+        );
+    }
+
+    #[test]
+    fn serialize_color_value_returns_none_for_relative_color_syntax_under_a_legacy_function_name() {
+        // A `from` clause can appear inside `rgb()`/`hsl()`/etc. too (CSS
+        // Color 4's relative color syntax) — its resolved value must
+        // serialize back through the origin's own notation, not through
+        // `rgb()`/`rgba()`, so this must stay unserialized just like the
+        // other modern-syntax cases above.
+        assert_eq!(
+            serialize_color_value("background-color", "rgb(from contrast-color(blue) r g b)"),
+            None
+        );
+        assert_eq!(
+            serialize_color_value("color", "rgb(from alpha(from currentcolor / 0.5) r g b)"),
+            None
+        );
+    }
+
+    #[test]
+    fn serialize_color_value_returns_none_for_names_it_does_not_own() {
+        assert_eq!(serialize_color_value("width", "10px"), None);
+        // `border-color`'s 1-4-value shorthand is deliberately deferred —
+        // see the `PropertyValue::BorderColor(_)` arm in `serialize_value`.
+        assert_eq!(
+            serialize_color_value("border-color", "red yellow green blue"),
+            None
+        );
+    }
+
+    #[test]
+    fn serialize_value_defers_border_color_shorthand() {
+        assert_eq!(
+            serialize_value(&PropertyValue::BorderColor(Sides {
+                top: BorderColor::CurrentColor,
+                right: BorderColor::CurrentColor,
+                bottom: BorderColor::CurrentColor,
+                left: BorderColor::CurrentColor,
+            })),
+            None
         );
     }
 }
