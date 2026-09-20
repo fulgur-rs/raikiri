@@ -16,25 +16,26 @@ use crate::Atom;
 use crate::property::{
     AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
     BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderStyle, BoxSizing,
-    BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ContentAlignmentValue,
-    ContentComponent, CssColor, Direction, DisplayValue, EmptyCellsValue, FilterFunction,
-    FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue,
-    GridLineValue, GridTemplateAreasValue, Hyphens, Isolation, ListStylePosition, ListStyleType,
-    MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
-    OverflowXY, PositionValue, SelfAlignmentValue, Sides, TableLayoutValue, TextAlign,
-    TextAlignLast, TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextJustify,
-    TextTransform, TextWrapMode, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak,
-    WritingMode, ZIndexValue, empty_content_list, empty_counter_entries, empty_filter_list,
-    empty_quotes_entries, empty_string_set_entries, initial_font_family,
+    BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
+    ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue, EmptyCellsValue,
+    FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps,
+    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Hyphens, Isolation,
+    ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, OutlineColor,
+    OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue, SelfAlignmentValue,
+    Sides, TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine,
+    TextDecorationStyle, TextJustify, TextTransform, TextWrapMode, VerticalAlign, Visibility,
+    VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_content_list,
+    empty_counter_entries, empty_filter_list, empty_quotes_entries, empty_string_set_entries,
+    initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
-    ComputedBoxShadowItem, ComputedCssPosition, ComputedCssPositionOffset, ComputedFlexBasis,
-    ComputedGridTemplateTracks, ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
-    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
-    ComputedOutline, ComputedTabSize, ComputedTextShadow, ComputedTransformFunction,
-    empty_computed_box_shadow_list, empty_computed_text_shadow_list, empty_computed_transform_list,
-    initial_computed_grid_auto_track_list,
+    ComputedBoxShadowItem, ComputedColumnWidth, ComputedCssPosition, ComputedCssPositionOffset,
+    ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackSize, ComputedLength,
+    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
+    ComputedLineHeight, ComputedOutline, ComputedTabSize, ComputedTextShadow,
+    ComputedTransformFunction, empty_computed_box_shadow_list, empty_computed_text_shadow_list,
+    empty_computed_transform_list, initial_computed_grid_auto_track_list,
 };
 
 /// CSS spec 上の `font-size` initial value (`medium`) に対応する px 値。
@@ -1578,6 +1579,10 @@ pub struct ComputedValues {
     /// raikiri-paint scope) — [`Self::table_layout`] doc's split applies
     /// here as well.
     pub empty_cells: EmptyCellsValue,
+    /// `column-count` — non-inherited multicol container setting.
+    pub column_count: ColumnCountValue,
+    /// Computed `column-width` — non-inherited multicol container setting.
+    pub column_width: ComputedColumnWidth,
     /// Resolved custom properties for the page-context inheritance bridge.
     ///
     /// This is deliberately crate-private: `ComputedValues`' public property
@@ -1885,6 +1890,9 @@ impl ComputedValues {
             // CSS Tables 3 §8: empty-cells initial は `show`
             // (inherited — root seed 用)。
             empty_cells: EmptyCellsValue::Show,
+            // CSS Multi-column Layout 1: both longhands initially `auto`.
+            column_count: ColumnCountValue::Auto,
+            column_width: ComputedColumnWidth::Auto,
             custom_properties: empty_custom_properties(),
         }
     }
@@ -2482,6 +2490,10 @@ mod tests {
             // CSS Tables 3 §8: empty-cells は inherited なので initial
             // (`show`) と異なる値にしておく (同上)。
             empty_cells: EmptyCellsValue::Hide,
+            // CSS Multi-column Layout 1: non-inherited fields use non-initial
+            // values so `inherit_from` assertions exercise the reset.
+            column_count: ColumnCountValue::Count(3),
+            column_width: ComputedColumnWidth::Px(24.0),
             custom_properties: CustomPropertyEnvironment::from_map(HashMap::from([(
                 SmolStr::new("--fixture"),
                 SmolStr::new("1px"),
@@ -2588,6 +2600,9 @@ mod tests {
         assert_eq!(child.outline, initial.outline);
         assert_eq!(child.width, initial.width);
         assert_eq!(child.height, initial.height);
+        // CSS Multi-column Layout 1: both longhands are non-inherited.
+        assert_eq!(child.column_count, initial.column_count);
+        assert_eq!(child.column_width, initial.column_width);
         assert_eq!(child.box_sizing, initial.box_sizing);
         // CSS Overflow 3 §3.1: overflow-x/overflow-y は
         // non-inherited。

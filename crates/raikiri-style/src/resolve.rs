@@ -383,6 +383,15 @@ pub enum ComputedLengthPercentageOrAuto {
     Auto,
 }
 
+/// Computed `column-width`: an absolute length or `auto`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ComputedColumnWidth {
+    /// Automatic column width.
+    Auto,
+    /// Absolute used length in CSS pixels.
+    Px(f32),
+}
+
 /// Computed `<position>` の 1 軸分の offset ([`crate::property::CssPositionOffset`]
 /// の computed 版)。edge 情報 (`Start`/`End`) はここでも保持し続ける — 実 pixel
 /// 位置への最終変換 (`End` なら `100% - offset`) は background positioning
@@ -1784,6 +1793,21 @@ pub(crate) fn resolve_length(
         Length::Lh(v) => resolve_lh_multiplier(v, own_line_height).unwrap_or(ComputedLength::ZERO),
         Length::Rlh(v) => {
             resolve_lh_multiplier(v, ctx.root_line_height).unwrap_or(ComputedLength::ZERO)
+        }
+    }
+}
+
+/// Resolve the non-negative length-or-auto `column-width` value.
+pub fn resolve_column_width(
+    specified: crate::property::ColumnWidthValue,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedColumnWidth {
+    match specified {
+        crate::property::ColumnWidthValue::Auto => ComputedColumnWidth::Auto,
+        crate::property::ColumnWidthValue::Length(length) => {
+            ComputedColumnWidth::Px(resolve_length(length, font_size, own_line_height, ctx).px())
         }
     }
 }

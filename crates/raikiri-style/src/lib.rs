@@ -38,11 +38,12 @@ pub use style_dom::{
 pub mod property;
 pub use property::{
     BackgroundAttachment, BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, BasicShape,
-    BorderRadius, BoxShadowItem, CircleShape, ClipPath, CssColor, CssPosition, CssPositionOffset,
-    DisplayValue, EllipseShape, FillRule, GeometryBox, InsetBorderRadius, InsetShape, Length,
-    LengthOrAuto, LengthOrNormal, ListStylePosition, ListStyleType, ObjectFit, Outline,
-    OutlineColor, OutlineStyle, PathShape, PolygonShape, PropertyKey, PropertyValue, ShapeRadius,
-    Sides, TextShadowColor, TextShadowItem, VisualBox,
+    BorderRadius, BoxShadowItem, CircleShape, ClipPath, ColumnCountValue, ColumnWidthValue,
+    ColumnsShorthand, CssColor, CssPosition, CssPositionOffset, DisplayValue, EllipseShape,
+    FillRule, GeometryBox, InsetBorderRadius, InsetShape, Length, LengthOrAuto, LengthOrNormal,
+    ListStylePosition, ListStyleType, ObjectFit, Outline, OutlineColor, OutlineStyle, PathShape,
+    PolygonShape, PropertyKey, PropertyValue, ShapeRadius, Sides, TextShadowColor, TextShadowItem,
+    VisualBox,
 };
 
 pub mod rule;
@@ -84,8 +85,8 @@ pub use computed::{ChFontKey, ChLengthProvenance, ComputedValues};
 pub mod resolve;
 pub use resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
-    ComputedBoxShadowItem, ComputedCssPosition, ComputedCssPositionOffset, ComputedFlexBasis,
-    ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
+    ComputedBoxShadowItem, ComputedColumnWidth, ComputedCssPosition, ComputedCssPositionOffset,
+    ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
     ComputedGridTrackListComponent, ComputedGridTrackRepeat, ComputedGridTrackSize, ComputedLength,
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
     ComputedLengthPercentageWithCh, ComputedLengthWithCh, ComputedLineHeight, ComputedOutline,
@@ -93,13 +94,14 @@ pub use resolve::{
     lift_border_spacing, lift_font_size, lift_length_or_normal, lift_length_percentage,
     lift_line_height, lift_tab_size, lift_text_shadow_item, resolve_background_size,
     resolve_border, resolve_border_radius, resolve_border_spacing, resolve_box_shadow_item,
-    resolve_css_position, resolve_flex_basis, resolve_font_size, resolve_grid_auto_track_list,
-    resolve_grid_inflexible_breadth, resolve_grid_template_tracks, resolve_grid_track_breadth,
-    resolve_grid_track_list, resolve_grid_track_size, resolve_length_or_normal,
-    resolve_length_or_normal_with_ch, resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_length_percentage_or_normal, resolve_length_percentage_with_ch, resolve_line_height,
-    resolve_margin_length_or_auto, resolve_outline, resolve_tab_size, resolve_text_shadow_item,
-    resolve_transform_function, used_line_height_length,
+    resolve_column_width, resolve_css_position, resolve_flex_basis, resolve_font_size,
+    resolve_grid_auto_track_list, resolve_grid_inflexible_breadth, resolve_grid_template_tracks,
+    resolve_grid_track_breadth, resolve_grid_track_list, resolve_grid_track_size,
+    resolve_length_or_normal, resolve_length_or_normal_with_ch, resolve_length_percentage,
+    resolve_length_percentage_or_auto, resolve_length_percentage_or_normal,
+    resolve_length_percentage_with_ch, resolve_line_height, resolve_margin_length_or_auto,
+    resolve_outline, resolve_tab_size, resolve_text_shadow_item, resolve_transform_function,
+    used_line_height_length,
 };
 
 pub mod specified;

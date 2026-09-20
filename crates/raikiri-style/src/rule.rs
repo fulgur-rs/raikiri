@@ -452,7 +452,7 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// 持てば同じ trade-off が再発しうる) だが、**parse 側の delta 自体は
 /// 計測していない**。
 #[inline]
-pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaration)) {
+pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declaration)) {
     match d.value {
         PropertyValue::Margin(sides) => expand_margin(sides, d.important, push),
         PropertyValue::MarginInherit => expand_margin_inherit(d.important, push),
@@ -667,7 +667,18 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, push: impl FnMut(Declaratio
         | PropertyValue::LineBreak(_)
         | PropertyValue::TextJustify(_)
         | PropertyValue::TextAlignAll(_)
-        | PropertyValue::TextAlignLast(_) | PropertyValue::TextCombineUpright(_) | PropertyValue::TextOrientation(_) | PropertyValue::UnicodeBidi(_) | PropertyValue::Page(_) => expand_none(d, push),
+        | PropertyValue::TextAlignLast(_) | PropertyValue::TextCombineUpright(_) | PropertyValue::TextOrientation(_) | PropertyValue::UnicodeBidi(_) | PropertyValue::Page(_)
+        | PropertyValue::ColumnCount(_) | PropertyValue::ColumnWidth(_) => expand_none(d, push),
+        PropertyValue::Columns(shorthand) => {
+            push(Declaration {
+                value: PropertyValue::ColumnWidth(shorthand.width),
+                important: d.important,
+            });
+            push(Declaration {
+                value: PropertyValue::ColumnCount(shorthand.count),
+                important: d.important,
+            });
+        }
         PropertyValue::Flex(f) => expand_flex(f, d.important, push),
         PropertyValue::FlexFlow(f) => expand_flex_flow(f, d.important, push),
         PropertyValue::Gap(g) => expand_gap(g, d.important, push),
@@ -792,6 +803,7 @@ fn expand_deferred(
             PropertyKey::FlexBasis,
         ],
         PropertyKey::FlexFlow => &[PropertyKey::FlexDirection, PropertyKey::FlexWrap],
+        PropertyKey::Columns => &[PropertyKey::ColumnWidth, PropertyKey::ColumnCount],
         PropertyKey::Gap => &[PropertyKey::RowGap, PropertyKey::ColumnGap],
         PropertyKey::PlaceContent => &[PropertyKey::AlignContent, PropertyKey::JustifyContent],
         PropertyKey::GridRow => &[PropertyKey::GridRowStart, PropertyKey::GridRowEnd],
@@ -1642,6 +1654,10 @@ mod tests {
                     PropertyKey::FlexShrink,
                     PropertyKey::FlexBasis,
                 ],
+            ),
+            (
+                PropertyKey::Columns,
+                &[PropertyKey::ColumnWidth, PropertyKey::ColumnCount],
             ),
             (
                 PropertyKey::Gap,

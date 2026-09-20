@@ -300,11 +300,11 @@ fn extract_attr<'a>(tag: &'a str, tag_lower: &'a str, name: &str) -> Option<Stri
             let end = tag_lower[p + 1..].find(quote as char)? + p + 1;
             return Some(tag[p + 1..end].to_owned());
         } else {
-            // unquoted: read until whitespace or '>' or '/'
+            // unquoted: read until whitespace or '>'
             let mut end = p;
             while end < tag_lower.len() {
                 let c = tag_lower.as_bytes()[end];
-                if c.is_ascii_whitespace() || c == b'>' || c == b'/' {
+                if c.is_ascii_whitespace() || c == b'>' {
                     break;
                 }
                 end += 1;
@@ -597,8 +597,31 @@ fn absolutize_wpt_resource_urls(html: &str, resource_base: Option<&Path>) -> Str
         return html.to_owned();
     };
     let prefix = base_url.to_string();
-    html.replace("\"support/", &format!("\"{prefix}support/"))
-        .replace("'support/", &format!("'{prefix}support/"))
+    let mut html = html
+        .replace("\"support/", &format!("\"{prefix}support/"))
+        .replace("'support/", &format!("'{prefix}support/"));
+
+    // WPT URLs beginning with `/` are rooted at the checkout, not at the
+    // host filesystem root.  Convert the bundled Ahem stylesheet link to a
+    // file URL so the parser's ordinary external-stylesheet path can load it.
+    // The stylesheet keeps its `/fonts/Ahem.ttf` source URL; WptFontLoader
+    // resolves that URL against the same WPT checkout.
+    let wpt_root = resource_base.ancestors().find(|candidate| {
+        candidate.join("fonts").join("Ahem.ttf").is_file()
+            || candidate.join("fonts").join("ahem.css").is_file()
+    });
+    // cov:ignore: absolute WPT stylesheet URLs are exercised only by ignored resource-enabled runs.
+    if let Some(wpt_root) = wpt_root
+        // cov:ignore: absolute WPT stylesheet URLs are exercised only by ignored resource-enabled runs.
+        && let Ok(root_url) = raikiri::Url::from_directory_path(wpt_root)
+    // cov:ignore: absolute WPT stylesheet URLs are exercised only by ignored resource-enabled runs.
+    {
+        let fonts_prefix = root_url.to_string();
+        html = html
+            .replace("\"/fonts/", &format!("\"{fonts_prefix}fonts/"))
+            .replace("'/fonts/", &format!("'{fonts_prefix}fonts/"));
+    }
+    html
 }
 
 /// Warm the cache for URL backgrounds. The `<img>` side is resolved by the
@@ -1506,10 +1529,15 @@ fn render_raikiri_pages_inner(
 
     let image_resolver =
         resource_base.map(|_| raikiri_net::ImageResolver::new(raikiri_net::FileNetworkProvider));
+    let stylesheet_network = resource_base.map(|_| raikiri_net::FileNetworkProvider);
+    let stylesheet_base =
+        resource_base.and_then(|path| raikiri::Url::from_directory_path(path).ok());
     let opts = ParseOptions {
         extra_stylesheets: &[],
-        network: None,
-        base_url: None,
+        network: stylesheet_network
+            .as_ref()
+            .map(|provider| provider as &dyn raikiri_traits::NetworkProvider),
+        base_url: stylesheet_base,
     };
     let media_context = MediaContext::print();
     // WPT's print UA supplies a 0.5in default page margin when an authored
@@ -2461,6 +2489,16 @@ mod tests {
         assert_eq!(links[0].1, ReftestKind::Match);
         assert_eq!(links[1].0, "other-ref.html");
         assert_eq!(links[1].1, ReftestKind::Mismatch);
+
+        let unquoted = r#"<link href=../reference/ref-filled-green-100px-square.xht rel=match>"#;
+        let links = parse_reftest_links(unquoted);
+        assert_eq!(
+            links,
+            vec![(
+                "../reference/ref-filled-green-100px-square.xht".to_owned(),
+                ReftestKind::Match,
+            )]
+        );
     }
 
     #[test]

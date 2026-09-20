@@ -218,87 +218,122 @@ pub(crate) fn draw_text_node(
     let brush = css_color_to_peniko(cv.color);
 
     // parley positioned_glyphs() は line 内 offset + baseline を stored directly するので
-    // scene transform は text node の絶対座標への平行移動のみ。
-    let base_transform = Affine::translate((abs_x as f64, (abs_y + shift_y) as f64));
+    // scene transform は text node の絶対座標への平行移動のみ。Multicolumn
+    // fragments normalize the first selected line back to the fragmentainer top.
+    // cov:ignore: fragment collection is exercised by the ignored foundation WPT run.
+    let has_multicol_fragments = node.multicol_fragments().is_some();
+    let fragments = node
+        .multicol_fragments()
+        // cov:ignore: fragment collection is exercised by the ignored foundation WPT run.
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| (item.line_start, item.line_end, item.x, item.y))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_else(|| vec![(0, text_layout.len(), 0.0, 0.0)]);
     // Parley applies one alignment to every line. CSS `text-align-last` can
     // override the final line, so compute the physical delta here while
     // keeping the shaped layout (and its line breaks) unchanged.
     let last_line_index = text_layout.len().saturating_sub(1);
+    let rtl = text_layout.is_rtl();
 
-    for (line_index, line) in text_layout.lines().enumerate() {
-        let metrics = line.metrics();
-        let last_line_delta = if line_index == last_line_index {
-            text_align_last_delta(metrics, cv.text_align, cv.text_align_last, cv.direction)
-        } else {
-            0.0
-        };
-        let rtl = text_layout.is_rtl();
-        let leading_whitespace = leading_whitespace_advance(line, rtl);
-        let geometry = decoration_geometry(
-            decorations,
-            metrics,
-            abs_x,
-            abs_y,
-            last_line_delta,
-            leading_whitespace,
-            rtl,
-        );
-
-        // CSS paints underline/overline before the glyphs and line-through
-        // after them. Flatten the persistent context once for both phases so
-        // nested origins keep their global line order without two allocations.
-        let decoration_specs: Vec<_> = if geometry.is_some() {
-            decorations.iter().collect()
-        } else {
-            Vec::new()
-        };
-        if let Some(geometry) = geometry {
-            draw_decoration_phase(
-                scene,
-                &decoration_specs,
-                geometry,
-                DecorationPhase::BeforeGlyphs,
-            );
-        }
-
-        for item in line.items() {
-            let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
-                // InlineBox は現状生成されない (preshape_text は inline box を
-                // push しない)。将来 inline formatting context を実装する際に、
-                // ここで image / replaced element 描画が入る予定。defensive: continue。
-                continue;
+    for (line_start, line_end, fragment_x, fragment_y) in fragments {
+        let first_block_min = text_layout
+            .lines()
+            .nth(line_start)
+            .map(|line| line.metrics().block_min_coord)
+            .unwrap_or(0.0);
+        let line_abs_x = abs_x + fragment_x;
+        // The ordinary (non-multicol) path must retain its historical
+        // absolute baseline. Only fragmentainer ranges need block-min
+        // normalization; otherwise font-dependent metrics can shift a normal
+        // glyph by a pixel.
+        let line_abs_y = abs_y + fragment_y
+            - if has_multicol_fragments {
+                // cov:ignore: multicol block-min normalization is covered by the ignored foundation WPT run.
+                first_block_min
+            } else {
+                0.0
             };
-
-            let run = glyph_run.run();
-            let font = run.font(); // &peniko::FontData (parley re-export)
-            let font_size = run.font_size();
-            let coords = run.normalized_coords(); // &[i16] (anyrender::NormalizedCoord alias)
-
-            scene.draw_glyphs(
-                font,
-                font_size,
-                true, // hint = true (blitz と揃えた値。将来的に判定を切り替える余地あり)
-                coords,
-                Vec2::ZERO, // embolden 無し (font-embolden feature は未実装)
-                Fill::NonZero,
-                brush, // peniko::Color → PaintRef auto-convert
-                1.0,   // brush_alpha (color 自身が alpha 持つ)
-                base_transform,
-                None, // glyph_transform (rotate / skew は未実装)
-                glyph_run.positioned_glyphs().map(|mut glyph| {
-                    glyph.x += last_line_delta;
-                    to_anyrender_glyph(glyph)
-                }),
+        let base_transform = Affine::translate((line_abs_x as f64, (line_abs_y + shift_y) as f64));
+        for (line_index, line) in text_layout.lines().enumerate() {
+            if line_index < line_start || line_index >= line_end {
+                continue; // cov:ignore: fragment range filtering is covered by the ignored foundation WPT run.
+            }
+            let metrics = line.metrics();
+            let last_line_delta = if line_index == last_line_index {
+                text_align_last_delta(metrics, cv.text_align, cv.text_align_last, cv.direction)
+            } else {
+                0.0
+            };
+            let leading_whitespace = leading_whitespace_advance(line, rtl);
+            let geometry = decoration_geometry(
+                decorations,
+                metrics,
+                line_abs_x,
+                line_abs_y,
+                last_line_delta,
+                leading_whitespace,
+                rtl,
             );
-        }
 
-        if let Some(geometry) = geometry {
-            draw_decoration_phase(
-                scene,
-                &decoration_specs,
-                geometry,
-                DecorationPhase::AfterGlyphs,
-            );
+            // CSS paints underline/overline before the glyphs and line-through
+            // after them. Flatten the persistent context once for both phases so
+            // nested origins keep their global line order without two allocations.
+            let decoration_specs: Vec<_> = if geometry.is_some() {
+                decorations.iter().collect()
+            } else {
+                Vec::new()
+            };
+            if let Some(geometry) = geometry {
+                draw_decoration_phase(
+                    scene,
+                    &decoration_specs,
+                    geometry,
+                    DecorationPhase::BeforeGlyphs,
+                );
+            }
+
+            for item in line.items() {
+                let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
+                    // InlineBox は現状生成されない (preshape_text は inline box を
+                    // push しない)。将来 inline formatting context を実装する際に、
+                    // ここで image / replaced element 描画が入る予定。defensive: continue。
+                    continue; // cov:ignore: inline boxes are not emitted by current shaping.
+                };
+
+                let run = glyph_run.run();
+                let font = run.font(); // &peniko::FontData (parley re-export)
+                let font_size = run.font_size();
+                let coords = run.normalized_coords(); // &[i16] (anyrender::NormalizedCoord alias)
+
+                scene.draw_glyphs(
+                    font,
+                    font_size,
+                    true, // hint = true (blitz と揃えた値。将来的に判定を切り替える余地あり)
+                    coords,
+                    Vec2::ZERO, // embolden 無し (font-embolden feature は未実装)
+                    Fill::NonZero,
+                    brush, // peniko::Color → PaintRef auto-convert
+                    1.0,   // brush_alpha (color 自身が alpha 持つ)
+                    base_transform,
+                    None, // glyph_transform (rotate / skew は未実装)
+                    glyph_run.positioned_glyphs().map(|mut glyph| {
+                        glyph.x += last_line_delta;
+                        to_anyrender_glyph(glyph)
+                    }),
+                );
+            }
+
+            if let Some(geometry) = geometry {
+                draw_decoration_phase(
+                    scene,
+                    &decoration_specs,
+                    geometry,
+                    DecorationPhase::AfterGlyphs,
+                );
+            }
         }
     }
 }

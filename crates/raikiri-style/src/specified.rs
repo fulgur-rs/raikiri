@@ -32,19 +32,19 @@ use crate::property::{
     AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage,
     BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, Border, BorderCollapseValue,
     BorderColor, BorderRadius, BorderSpacingValue, BorderStyle, BoxShadowItem, BoxSizing,
-    BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ContentAlignmentValue,
-    ContentComponent, CssColor, CssPosition, CssPositionOffset, Direction, DisplayValue,
-    EmptyCellsValue, FilterFunction, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
-    FontStyle, FontVariantCaps, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
-    GridTemplateTracks, GridTrackSize, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal,
-    LineHeight, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline,
-    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue, PositionValue,
-    SelfAlignmentValue, Sides, TabSize, TableLayoutValue, TextAlign, TextAlignLast,
-    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextJustify, TextShadowItem,
-    TextTransform, TextWrapMode, TransformFunction, VerticalAlign, Visibility, VisualBox,
-    WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_box_shadow_list, empty_content_list,
-    empty_counter_entries, empty_filter_list, empty_quotes_entries, empty_string_set_entries,
-    empty_text_shadow_list, empty_transform_list, initial_font_family,
+    BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
+    ColumnWidthValue, ContentAlignmentValue, ContentComponent, CssColor, CssPosition,
+    CssPositionOffset, Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue,
+    FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue,
+    GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, Hyphens, Isolation,
+    Length, LengthOrAuto, LengthOrNormal, LineHeight, ListStylePosition, ListStyleType, MaskImage,
+    MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
+    OverflowXY, PageValue, PositionValue, SelfAlignmentValue, Sides, TabSize, TableLayoutValue,
+    TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine, TextDecorationStyle,
+    TextJustify, TextShadowItem, TextTransform, TextWrapMode, TransformFunction, VerticalAlign,
+    Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_box_shadow_list,
+    empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
+    empty_string_set_entries, empty_text_shadow_list, empty_transform_list, initial_font_family,
     initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
     resolve_text_align_match_parent, resolve_writing_mode,
 };
@@ -53,8 +53,8 @@ use crate::resolve::{
     empty_computed_box_shadow_list, empty_computed_text_shadow_list, lift_border_spacing,
     lift_font_size, lift_length_or_normal, lift_length_percentage, lift_line_height, lift_tab_size,
     lift_text_shadow_item, resolve_background_image, resolve_background_size, resolve_border,
-    resolve_border_radius, resolve_border_spacing, resolve_box_shadow_item, resolve_css_position,
-    resolve_flex_basis, resolve_font_size, resolve_grid_auto_track_list,
+    resolve_border_radius, resolve_border_spacing, resolve_box_shadow_item, resolve_column_width,
+    resolve_css_position, resolve_flex_basis, resolve_font_size, resolve_grid_auto_track_list,
     resolve_grid_template_tracks, resolve_length, resolve_length_or_normal_with_ch,
     resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_length_percentage_with_ch, resolve_line_height,
@@ -577,6 +577,10 @@ pub struct SpecifiedValues {
     /// は親の computed 値を seed する (素朴なコピー — keyword のため
     /// lift 不要、[`Self::visibility`] と同じ)。
     pub empty_cells: EmptyCellsValue,
+    /// `column-count` specified value; non-inherited.
+    pub column_count: ColumnCountValue,
+    /// `column-width` specified value; non-inherited.
+    pub column_width: ColumnWidthValue,
 }
 
 impl SpecifiedValues {
@@ -852,6 +856,8 @@ impl SpecifiedValues {
             // (inherited — 親を持つ node は `Self::inherit_from` が親値で
             // 上書きする)。
             empty_cells: EmptyCellsValue::Show,
+            column_count: ColumnCountValue::Auto,
+            column_width: ColumnWidthValue::Auto,
         }
     }
 
@@ -972,6 +978,9 @@ impl SpecifiedValues {
             // CSS Tables 3 §8: empty-cells は inherited。keyword のため
             // lift 不要の素朴なコピー (`visibility` と同じ扱い)。
             empty_cells: parent.empty_cells,
+            // CSS Multi-column Layout 1: both longhands are non-inherited.
+            column_count: ColumnCountValue::Auto,
+            column_width: ColumnWidthValue::Auto,
             // CSS Text 3 §5.3: hyphens は inherited。
             hyphens: parent.hyphens,
             // CSS Content 3 §2.4.1: quotes は inherited。Arc reference-count increment のみ
@@ -1919,6 +1928,10 @@ impl SpecifiedValues {
             // 参照、同上) — 自 node の winner 適用結果 (または inherit_from
             // で継承した親値) をそのまま素通し。
             empty_cells: self.empty_cells,
+            // CSS Multi-column Layout 1: non-inherited count passes through;
+            // width is absolutized against the element's own font metrics.
+            column_count: self.column_count,
+            column_width: resolve_column_width(self.column_width, font_size, own_line_height, ctx),
             custom_properties: crate::computed::empty_custom_properties(),
         }
     }
@@ -2402,6 +2415,8 @@ mod tests {
             // CSS Tables 3 §8: empty-cells は inherited なので initial
             // (`show`) と異なる値にしておく。
             empty_cells: EmptyCellsValue::Hide,
+            column_count: ColumnCountValue::Count(3),
+            column_width: crate::resolve::ComputedColumnWidth::Px(24.0),
             custom_properties: crate::computed::empty_custom_properties(),
         }
     }
@@ -2523,6 +2538,9 @@ mod tests {
         assert_eq!(child.border, initial.border);
         assert_eq!(child.width, LengthOrAuto::Auto);
         assert_eq!(child.height, LengthOrAuto::Auto);
+        // CSS Multi-column Layout 1: both longhands are non-inherited.
+        assert_eq!(child.column_count, initial.column_count);
+        assert_eq!(child.column_width, initial.column_width);
         assert_eq!(child.box_sizing, BoxSizing::ContentBox);
         // CSS Overflow 3 §3.1: overflow-x/overflow-y は
         // non-inherited。
