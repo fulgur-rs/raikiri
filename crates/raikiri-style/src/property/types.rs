@@ -109,8 +109,8 @@ pub(crate) fn initial_font_family() -> Arc<Vec<Atom>> {
 
 /// 空 `text-shadow` list (`none`) を表す shared Arc — [`empty_content_list`]
 /// 等と同じ `OnceLock` 保持の shared-slot pattern (per-node allocation
-/// regression 回避)。`none` = 空 list という表現は [`parse_content`] /
-/// [`parse_counter_property`] と同じ precedent
+/// regression 回避)。`none` = 空 list という表現は `parse_content` /
+/// `parse_counter_property` と同じ precedent
 /// ([`TextShadowItem`] doc 参照)。
 pub(crate) fn empty_text_shadow_list() -> Arc<Vec<TextShadowItem>> {
     static EMPTY: OnceLock<Arc<Vec<TextShadowItem>>> = OnceLock::new();
@@ -1640,7 +1640,7 @@ pub enum LeaderType {
     String(SmolStr),
 }
 
-/// [`parse_content_list_items`] の list vocabulary mode selector。
+/// `parse_content_list_items` の list vocabulary mode selector。
 ///
 /// CSS Content 3 §2 <https://www.w3.org/TR/css-content-3/#content-values> と
 /// CSS GCPM 3 §1.1.1 <https://www.w3.org/TR/css-gcpm-3/#content-list> は同名
