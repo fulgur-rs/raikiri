@@ -288,19 +288,14 @@ pub enum WarningKind {
 /// Consumer 側 iteration に関する契約なので、raikiri の `plan()` / `render_*`
 /// API 内では消費されない (Consumer が自身の loop で参照する)。
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ExhaustionPolicy {
     /// 未収束を error として上流に返す (保守的 default)。
+    #[default]
     Error,
     /// 最後の registry で render、`WarningKind::TargetConvergenceExhausted` を
     /// 必ず `summary.warnings` に記録。
     BestEffort,
-}
-
-impl Default for ExhaustionPolicy {
-    fn default() -> Self {
-        Self::Error
-    }
 }
 
 /// 未解決 target の詳細 (Finding #4 completion protocol)。

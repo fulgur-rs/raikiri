@@ -1468,9 +1468,10 @@ pub enum CounterStyle {
 /// Built-in counter styles and author-defined `@counter-style` names are kept
 /// as an identifier so the layout/paint side can resolve them at marker time.
 #[non_exhaustive]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum ListStyleType {
     /// `disc` — the initial value.
+    #[default]
     Disc,
     /// `none` — suppress the marker box.
     None,
@@ -1478,12 +1479,6 @@ pub enum ListStyleType {
     Named(SmolStr),
     /// An author-supplied marker string (`<string>`).
     String(SmolStr),
-}
-
-impl Default for ListStyleType {
-    fn default() -> Self {
-        Self::Disc
-    }
 }
 
 /// `list-style-position` の computed value。

@@ -35,7 +35,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Rust toolchain
-        # rustup が rust-toolchain.toml (1.89.0 + rustfmt + clippy) を尊重、
+        # rustup が rust-toolchain.toml (1.91.0 + rustfmt + clippy) を尊重、
         # first cargo 呼び出し前に explicit install する。dtolnay/rust-toolchain
         # の explicit version は two sources of truth 化を招くため使わない。
         # rustup ≥ 1.28 で `show` の implicit install が消えたため `|| rustup
