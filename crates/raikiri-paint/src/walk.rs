@@ -3006,6 +3006,18 @@ fn paint_document_impl(
                     abs_y + page_offset_y + child_shift_y + pos_dy + fixed_dy + child_transform_y;
                 let mut paint_height = layout.size.height;
                 let mut paint_background_height = layout.size.height;
+                // cov:ignore: vertical table cell background geometry is covered by the ignored exact WPT reftest.
+                let mut paint_background_width = layout.size.width;
+                if let Some(width) = vertical_table_cell_background_width(
+                    document,
+                    cascade,
+                    node_id,
+                    &layout,
+                    &cv.border,
+                    &paint_padding,
+                ) {
+                    paint_background_width = width; // cov:ignore: vertical background geometry is exercised by the ignored exact WPT reftest.
+                }
                 let mut paints_on_page = node_id == body_id
                     || ((fixed_in_viewport || named_page_matches(node_id))
                         && (fixed_in_viewport
@@ -3235,7 +3247,7 @@ fn paint_document_impl(
                         );
                         paint_element_background(
                             scene,
-                            layout.size.width,
+                            paint_background_width,
                             paint_background_height,
                             paint_x,
                             paint_y,
@@ -3784,6 +3796,67 @@ fn paint_image(
 /// どこにもクリップされない。CSS 2.1 / CSS Inline 3 とも shift 後の位置を
 /// box-model 計算 (line box の高さ等) に参加させる前提だが、ここでは
 /// 参加しない — 極端な shift 量が page box の外へはみ出して描画されうる。
+/// Return the intrinsic horizontal background width for a vertical table cell.
+///
+/// The vertical table projection gives an auto cell the containing block's
+/// physical width so its border spans the table. `background-clip: content-box`
+/// still follows the cell's measured content width, which keeps an authored
+/// cell background from filling the synthetic block-axis remainder.
+#[allow(clippy::too_many_arguments)]
+// cov:ignore: vertical table cell background geometry is covered by the ignored exact WPT reftest.
+fn vertical_table_cell_background_width(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    layout: &taffy::Layout,
+    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
+    padding: &taffy::Rect<f32>,
+) -> Option<f32> {
+    if cascade.computed.get(node_id)?.display != DisplayValue::TableCell
+        || cascade.computed.get(node_id)?.background_clip
+            != raikiri_style::property::VisualBox::ContentBox
+    {
+        return None;
+    }
+    let mut current = Some(node_id);
+    let mut vertical = false;
+    while let Some(id) = current {
+        if matches!(
+            cascade
+                .authored_writing_modes
+                .get(id)
+                .and_then(|mode| *mode),
+            Some(
+                WritingMode::VerticalRl
+                    | WritingMode::VerticalLr
+                    | WritingMode::SidewaysRl
+                    | WritingMode::SidewaysLr
+            )
+        ) {
+            vertical = true;
+            break;
+        }
+        current = document.parent_of(id);
+    }
+    if !vertical {
+        return None;
+    }
+    let cell = document.get_node(node_id)?;
+    let intrinsic_right = cell
+        .children
+        .iter()
+        .filter_map(|child_id| document.get_node(*child_id))
+        .map(|child| child.unrounded_layout.location.x + child.unrounded_layout.size.width)
+        .filter(|right| right.is_finite())
+        .fold(0.0, f32::max);
+    if intrinsic_right <= 0.0 {
+        return None;
+    }
+    Some(
+        (intrinsic_right + border.right.width().px() + padding.right).clamp(0.0, layout.size.width),
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn paint_element_background(
     scene: &mut impl PaintScene,

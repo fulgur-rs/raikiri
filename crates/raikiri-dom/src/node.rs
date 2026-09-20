@@ -10,7 +10,7 @@ use taffy::{Cache, Layout, Style};
 
 use crate::fragment::MulticolStyle;
 
-use raikiri_style::property::{BorderCollapseValue, DisplayValue, TableLayoutValue};
+use raikiri_style::property::{BorderCollapseValue, DisplayValue, TableLayoutValue, WritingMode};
 use raikiri_traits::NodeKind;
 
 bitflags::bitflags! {
@@ -266,6 +266,8 @@ pub struct Node {
     pub(crate) border_collapse: BorderCollapseValue,
     /// Computed multicolumn settings consumed by the custom Taffy dispatch.
     pub(crate) multicol: Option<MulticolStyle>,
+    /// Authored writing mode retained for layout features that need the logical axes.
+    pub(crate) authored_writing_mode: Option<WritingMode>,
     /// Child arena indices (`Document::nodes` の usize)。
     pub children: Vec<usize>,
     /// Taffy layout cache (per-node)。
@@ -327,6 +329,7 @@ impl Node {
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
             multicol: None,
+            authored_writing_mode: None,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -349,6 +352,7 @@ impl Node {
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
             multicol: None,
+            authored_writing_mode: None,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -372,6 +376,7 @@ impl Node {
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
             multicol: None,
+            authored_writing_mode: None,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -400,6 +405,7 @@ impl Node {
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
             multicol: None,
+            authored_writing_mode: None,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -418,6 +424,7 @@ impl Node {
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
             multicol: None,
+            authored_writing_mode: None,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -438,6 +445,7 @@ impl Node {
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
             multicol: None,
+            authored_writing_mode: None,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
