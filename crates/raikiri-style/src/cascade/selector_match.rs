@@ -502,7 +502,7 @@ fn sibling_position<D: StyleDom>(
     let mut index_from_start = 0i32;
     for child_id in dom.child_ids(parent_id) {
         let Some(child_node) = dom.node(child_id) else {
-            continue;
+            continue; // cov:ignore: defensive against a detached/inert child_id that dom.node() can't resolve; no StyleDom impl in this crate's test corpus produces one (verified against a main-branch baseline, see raikiri-spike-4nhl.9).
         };
         // `child_ids` is the raw arena view for the style DOM, so detached /
         // inert nodes can still occur in this iterator. Structural

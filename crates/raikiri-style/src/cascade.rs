@@ -291,10 +291,13 @@ mod tests {
     use crate::property::CssColor;
     use crate::property::DisplayValue;
     use crate::property::{
-        Border, BorderColor, BorderStyle, CalcLengthPercentage, ContentComponent, Length,
-        LengthOrAuto, ListStylePosition, ListStyleType, OutlineColor, OutlineStyle, OverflowValue,
-        OverflowXY, PropertyKey, PropertyValue, Sides, TextDecorationColor, TextDecorationLine,
+        Border, BorderColor, BorderStyle, CalcLengthPercentage, ContentComponent,
+        GridAreaShorthand, GridAutoFlowValue, GridLineValue, GridShorthand, GridTemplateAreasValue,
+        GridTemplateTracks, Length, LengthOrAuto, ListStylePosition, ListStyleType, Outline,
+        OutlineColor, OutlineStyle, OverflowValue, OverflowXY, PageValue, PositionValue,
+        PropertyKey, PropertyValue, Sides, TextDecorationColor, TextDecorationLine,
         TextDecorationShorthand, TextDecorationStyle, TextDecorationThickness, TextShadowColor,
+        empty_counter_entries, initial_grid_auto_track_list,
     };
     use crate::resolve::{
         ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedLength,
@@ -483,6 +486,25 @@ mod tests {
             r.computed[p].font_weight, 400.0,
             "initial, rule must not apply"
         );
+    }
+
+    #[test]
+    fn comma_separated_selector_list_uses_max_specificity_across_matches() {
+        // `match_complex_selector_list` tracks the *best* (highest)
+        // specificity across every selector in a comma-separated list that
+        // matches the element — not just the first hit. An element matched
+        // by 2+ selectors in the same rule's list must exercise the
+        // `Some(prev) => prev.max(spec)` fold, not just its `None => spec`
+        // base case.
+        let mut doc = TestDoc::new();
+        let s = doc.push_element(0, "style", None);
+        doc.push_text(s, ".a, div.b { font-weight: bold }");
+        let p = doc.push_element(0, "div", None);
+        doc.set_attr(p, "class", "a b");
+
+        let tree = build_rule_tree(&doc);
+        let r = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(r.computed[p].font_weight, 700.0);
     }
 
     #[test]
@@ -11415,6 +11437,477 @@ mod tests {
             None,
             "a lone `.` is not a leading digit"
         );
+    }
+
+    #[test]
+    fn apply_value_direct_counter_reset_inherit() {
+        // `counter-reset: revert`-class staging marker — never produced by
+        // the element parser's normal `counter-reset: <counter-name>? ...`
+        // grammar, but `apply_value` must still reset `target.counter_reset`
+        // to the empty entries sentinel if an internal caller supplies one.
+        let mut cv = SpecifiedValues::initial();
+        cv.counter_reset = std::sync::Arc::new(vec![(SmolStr::new("foo"), 1)]);
+        apply_value(PropertyValue::CounterResetInherit, &mut cv);
+        assert_eq!(cv.counter_reset, empty_counter_entries());
+    }
+
+    #[test]
+    fn apply_value_direct_position_sticky_and_fixed() {
+        let mut cv = SpecifiedValues::initial();
+        apply_value(PropertyValue::Position(PositionValue::Sticky), &mut cv);
+        assert_eq!(cv.position, PositionValue::Sticky);
+        apply_value(PropertyValue::Position(PositionValue::Fixed), &mut cv);
+        assert_eq!(cv.position, PositionValue::Fixed);
+    }
+
+    #[test]
+    fn apply_value_direct_padding_shorthand_direct_assign() {
+        let mut cv = SpecifiedValues::initial();
+        let sides = Sides {
+            top: Length::Px(1.0),
+            right: Length::Px(2.0),
+            bottom: Length::Px(3.0),
+            left: Length::Px(4.0),
+        };
+        apply_value(PropertyValue::Padding(sides), &mut cv);
+        assert_eq!(cv.padding, sides);
+    }
+
+    #[test]
+    fn apply_value_direct_margin_inherit_marker_is_panic_free() {
+        // Page-only inherit markers are never produced by the element
+        // parser; `apply_value` must stay a no-op (not panic) if an
+        // internal caller supplies one.
+        let mut cv = SpecifiedValues::initial();
+        let before = cv.margin;
+        apply_value(PropertyValue::MarginInherit, &mut cv);
+        assert_eq!(cv.margin, before);
+    }
+
+    #[test]
+    fn apply_value_direct_calc_length_percentage_keys() {
+        let value = CalcLengthPercentage {
+            percent: 50.0,
+            px: 10.0,
+        };
+        let expect_calc = LengthOrAuto::Calc(value);
+        let mut cv = SpecifiedValues::initial();
+        apply_value(
+            PropertyValue::CalcLengthPercentage {
+                key: PropertyKey::Height,
+                value,
+            },
+            &mut cv,
+        );
+        assert_eq!(cv.height, expect_calc);
+        apply_value(
+            PropertyValue::CalcLengthPercentage {
+                key: PropertyKey::MaxWidth,
+                value,
+            },
+            &mut cv,
+        );
+        assert_eq!(cv.max_width, expect_calc);
+        apply_value(
+            PropertyValue::CalcLengthPercentage {
+                key: PropertyKey::MaxHeight,
+                value,
+            },
+            &mut cv,
+        );
+        assert_eq!(cv.max_height, expect_calc);
+        apply_value(
+            PropertyValue::CalcLengthPercentage {
+                key: PropertyKey::MinWidth,
+                value,
+            },
+            &mut cv,
+        );
+        assert_eq!(cv.min_width, expect_calc);
+        apply_value(
+            PropertyValue::CalcLengthPercentage {
+                key: PropertyKey::MinHeight,
+                value,
+            },
+            &mut cv,
+        );
+        assert_eq!(cv.min_height, expect_calc);
+        apply_value(
+            PropertyValue::CalcLengthPercentage {
+                key: PropertyKey::Top,
+                value,
+            },
+            &mut cv,
+        );
+        assert_eq!(cv.top, expect_calc);
+        apply_value(
+            PropertyValue::CalcLengthPercentage {
+                key: PropertyKey::Right,
+                value,
+            },
+            &mut cv,
+        );
+        assert_eq!(cv.right, expect_calc);
+        apply_value(
+            PropertyValue::CalcLengthPercentage {
+                key: PropertyKey::Bottom,
+                value,
+            },
+            &mut cv,
+        );
+        assert_eq!(cv.bottom, expect_calc);
+        apply_value(
+            PropertyValue::CalcLengthPercentage {
+                key: PropertyKey::Left,
+                value,
+            },
+            &mut cv,
+        );
+        assert_eq!(cv.left, expect_calc);
+
+        // Non-matching key: the inner match's wildcard fallback is a no-op
+        // (this `key` has no `LengthOrAuto`-shaped field to project into).
+        let before = cv.clone();
+        apply_value(
+            PropertyValue::CalcLengthPercentage {
+                key: PropertyKey::Color,
+                value,
+            },
+            &mut cv,
+        );
+        assert_eq!(cv, before);
+    }
+
+    #[test]
+    fn apply_value_direct_inset_longhands() {
+        let mut cv = SpecifiedValues::initial();
+        apply_value(
+            PropertyValue::Top(LengthOrAuto::Length(Length::Px(1.0))),
+            &mut cv,
+        );
+        assert_eq!(cv.top, LengthOrAuto::Length(Length::Px(1.0)));
+        apply_value(
+            PropertyValue::Right(LengthOrAuto::Length(Length::Px(2.0))),
+            &mut cv,
+        );
+        assert_eq!(cv.right, LengthOrAuto::Length(Length::Px(2.0)));
+        apply_value(
+            PropertyValue::Bottom(LengthOrAuto::Length(Length::Px(3.0))),
+            &mut cv,
+        );
+        assert_eq!(cv.bottom, LengthOrAuto::Length(Length::Px(3.0)));
+    }
+
+    #[test]
+    fn apply_value_direct_border_radius_corner_longhands() {
+        let mut cv = SpecifiedValues::initial();
+        apply_value(PropertyValue::BorderRadiusTopLeft(Length::Px(1.0)), &mut cv);
+        assert_eq!(cv.border_radius.top_left, Length::Px(1.0));
+        apply_value(
+            PropertyValue::BorderRadiusTopRight(Length::Px(2.0)),
+            &mut cv,
+        );
+        assert_eq!(cv.border_radius.top_right, Length::Px(2.0));
+        apply_value(
+            PropertyValue::BorderRadiusBottomRight(Length::Px(3.0)),
+            &mut cv,
+        );
+        assert_eq!(cv.border_radius.bottom_right, Length::Px(3.0));
+        apply_value(
+            PropertyValue::BorderRadiusBottomLeft(Length::Px(4.0)),
+            &mut cv,
+        );
+        assert_eq!(cv.border_radius.bottom_left, Length::Px(4.0));
+    }
+
+    #[test]
+    fn apply_value_direct_outline_and_offset() {
+        let mut cv = SpecifiedValues::initial();
+        let outline = Outline {
+            width: Length::Px(3.0),
+            style: OutlineStyle::Dotted,
+            color: OutlineColor::CurrentColor,
+        };
+        apply_value(PropertyValue::Outline(outline), &mut cv);
+        assert_eq!(cv.outline, outline);
+        apply_value(PropertyValue::OutlineOffset(Length::Px(5.0)), &mut cv);
+        assert_eq!(cv.outline_offset, Length::Px(5.0));
+    }
+
+    #[test]
+    fn apply_value_direct_grid_area_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_margin_shorthand_fall_through`
+        // above: `apply_value`'s `PropertyValue::GridArea(area)` arm is
+        // unreachable via the cascade path (`expand_shorthand_into`
+        // expands it to the 4 `GridRowStart`/`GridColumnStart`/
+        // `GridRowEnd`/`GridColumnEnd` longhands before `apply_value` ever
+        // sees it) — not a safety net, a canary.
+        let mut cv = SpecifiedValues::initial();
+        let area = GridAreaShorthand {
+            row_start: GridLineValue::Line(1),
+            column_start: GridLineValue::Line(2),
+            row_end: GridLineValue::Line(3),
+            column_end: GridLineValue::Line(4),
+        };
+        apply_value(PropertyValue::GridArea(area.clone()), &mut cv);
+        assert_eq!(cv.grid_row_start, area.row_start);
+        assert_eq!(cv.grid_column_start, area.column_start);
+        assert_eq!(cv.grid_row_end, area.row_end);
+        assert_eq!(cv.grid_column_end, area.column_end);
+    }
+
+    #[test]
+    fn apply_value_direct_grid_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_grid_area_shorthand_fall_through`
+        // above: `apply_value`'s `PropertyValue::Grid(shorthand)` arm is
+        // unreachable via the cascade path for the same reason — not a
+        // safety net, a canary that also checks the shorthand's documented
+        // sub-property reset behavior.
+        let mut cv = SpecifiedValues::initial();
+        cv.grid_auto_flow = GridAutoFlowValue::Column;
+        cv.grid_row_start = GridLineValue::Line(9);
+        let shorthand = GridShorthand {
+            rows: GridTemplateTracks::None,
+            columns: GridTemplateTracks::None,
+        };
+        apply_value(PropertyValue::Grid(shorthand), &mut cv);
+        assert_eq!(cv.grid_template_rows, GridTemplateTracks::None);
+        assert_eq!(cv.grid_template_columns, GridTemplateTracks::None);
+        assert_eq!(cv.grid_template_areas, GridTemplateAreasValue::None);
+        assert_eq!(cv.grid_auto_columns, initial_grid_auto_track_list());
+        assert_eq!(cv.grid_auto_rows, initial_grid_auto_track_list());
+        assert_eq!(cv.grid_auto_flow, GridAutoFlowValue::Row);
+        assert_eq!(cv.grid_row_start, GridLineValue::Auto);
+        assert_eq!(cv.grid_row_end, GridLineValue::Auto);
+        assert_eq!(cv.grid_column_start, GridLineValue::Auto);
+        assert_eq!(cv.grid_column_end, GridLineValue::Auto);
+    }
+
+    #[test]
+    fn apply_value_direct_border_style_width_color_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_border_shorthand_fall_through`
+        // above: `apply_value`'s `PropertyValue::BorderStyle`/`BorderWidth`/
+        // `BorderColor` arms are unreachable via the cascade path
+        // (`expand_shorthand_into` expands each to its 4 side longhands
+        // before `apply_value` ever sees it) — not a safety net, a canary.
+        let mut cv = SpecifiedValues::initial();
+        let styles = Sides {
+            top: BorderStyle::Solid,
+            right: BorderStyle::Dashed,
+            bottom: BorderStyle::Dotted,
+            left: BorderStyle::Double,
+        };
+        apply_value(PropertyValue::BorderStyle(styles), &mut cv);
+        assert_eq!(cv.border.top.style, BorderStyle::Solid);
+        assert_eq!(cv.border.right.style, BorderStyle::Dashed);
+        assert_eq!(cv.border.bottom.style, BorderStyle::Dotted);
+        assert_eq!(cv.border.left.style, BorderStyle::Double);
+
+        let widths = Sides {
+            top: Length::Px(1.0),
+            right: Length::Px(2.0),
+            bottom: Length::Px(3.0),
+            left: Length::Px(4.0),
+        };
+        apply_value(PropertyValue::BorderWidth(widths), &mut cv);
+        assert_eq!(cv.border.top.width, Length::Px(1.0));
+        assert_eq!(cv.border.right.width, Length::Px(2.0));
+        assert_eq!(cv.border.bottom.width, Length::Px(3.0));
+        assert_eq!(cv.border.left.width, Length::Px(4.0));
+
+        let colors = Sides {
+            top: BorderColor::CurrentColor,
+            right: BorderColor::Resolved(CssColor::BLACK),
+            bottom: BorderColor::CurrentColor,
+            left: BorderColor::Resolved(CssColor::TRANSPARENT),
+        };
+        apply_value(PropertyValue::BorderColor(colors), &mut cv);
+        assert_eq!(cv.border.top.color, BorderColor::CurrentColor);
+        assert_eq!(
+            cv.border.right.color,
+            BorderColor::Resolved(CssColor::BLACK)
+        );
+        assert_eq!(cv.border.bottom.color, BorderColor::CurrentColor);
+        assert_eq!(
+            cv.border.left.color,
+            BorderColor::Resolved(CssColor::TRANSPARENT)
+        );
+    }
+
+    #[test]
+    fn apply_value_direct_page_named() {
+        use crate::Atom;
+        let mut cv = SpecifiedValues::initial();
+        apply_value(
+            PropertyValue::Page(PageValue::Named(Atom::from("chapter"))),
+            &mut cv,
+        );
+        assert_eq!(cv.page, PageValue::Named(Atom::from("chapter")));
+    }
+
+    #[test]
+    fn resolve_inheritance_grows_undersized_output_vectors() {
+        // Defensive safety net: `cascade()`'s normal pre-allocation always
+        // sizes `out`/`non_ua_margin_sides`/`authored_writing_modes` to
+        // `dom.node_count()` before calling `resolve_inheritance`, so this
+        // resize path is never exercised end-to-end. A direct call with
+        // deliberately undersized (empty) vectors verifies the safety net
+        // actually grows them instead of panicking on out-of-bounds writes.
+        let mut doc = TestDoc::new();
+        let e = doc.push_element(0, "div", None);
+        let id = StyleNodeId(e as u64);
+        let cascaded = CascadedArena::new();
+        let mut out: Vec<ComputedValues> = Vec::new();
+        let mut non_ua_margin_sides: Vec<Sides<bool>> = Vec::new();
+        let mut authored_writing_modes: Vec<Option<WritingMode>> = Vec::new();
+        let mut page_values = vec![PageValue::Auto; doc.node_count()];
+        let mut pseudo_out = HashMap::new();
+        resolve_inheritance(
+            &doc,
+            id,
+            &ComputedValues::initial(),
+            &cascaded,
+            &mut out,
+            &mut non_ua_margin_sides,
+            &mut authored_writing_modes,
+            &mut page_values,
+            &mut pseudo_out,
+        );
+        assert!(out.len() > e);
+        assert!(non_ua_margin_sides.len() > e);
+        assert!(authored_writing_modes.len() > e);
+    }
+
+    #[test]
+    #[should_panic(expected = "root_ctx == None は element 親が居ないことを意味するので")]
+    fn resolve_inheritance_panics_when_root_parent_font_size_is_not_initial() {
+        // The first stack entry `resolve_inheritance` pushes always has
+        // `root_ctx == None` (only `cascade()`'s own `dom.root_id()` entry
+        // point does this, and it always pairs `None` with
+        // `ComputedValues::initial()`). A direct call that violates that
+        // caller-side invariant — a non-initial `parent_computed` on the
+        // very first node — must trip the debug_assert_eq guarding it.
+        let mut doc = TestDoc::new();
+        let e = doc.push_element(0, "div", None);
+        let id = StyleNodeId(e as u64);
+        let cascaded = CascadedArena::new();
+        let mut out = vec![ComputedValues::initial(); doc.node_count()];
+        let mut non_ua_margin_sides = vec![Sides::all(false); doc.node_count()];
+        let mut authored_writing_modes = vec![None; doc.node_count()];
+        let mut page_values = vec![PageValue::Auto; doc.node_count()];
+        let mut pseudo_out = HashMap::new();
+        let mut non_initial_parent = ComputedValues::initial();
+        non_initial_parent.font_size = ComputedLength(999.0);
+        resolve_inheritance(
+            &doc,
+            id,
+            &non_initial_parent,
+            &cascaded,
+            &mut out,
+            &mut non_ua_margin_sides,
+            &mut authored_writing_modes,
+            &mut page_values,
+            &mut pseudo_out,
+        );
+    }
+
+    #[test]
+    fn apply_winners_direct_margin_shorthand_marks_all_sides_non_ua() {
+        // `apply_winners`'s `non_ua_margin_sides` tracking arm for the
+        // `Margin`/`MarginInline`/`MarginBlock` shorthand keys is
+        // unreachable via the cascade path (shorthand is expanded to the 4
+        // side longhands before candidates are collected) — not a safety
+        // net, a canary for the shorthand-payload shape.
+        let sides = Sides {
+            top: LengthOrAuto::Length(Length::Px(1.0)),
+            right: LengthOrAuto::Length(Length::Px(2.0)),
+            bottom: LengthOrAuto::Length(Length::Px(3.0)),
+            left: LengthOrAuto::Length(Length::Px(4.0)),
+        };
+        let candidates: Vec<CascadedDecl> =
+            vec![(PropertyValue::Margin(sides), false, Origin::Author, 0, 0)];
+        let mut winners: Vec<Option<RankedDecl>> = Vec::new();
+        let mut specified = SpecifiedValues::initial();
+        let inherited = ComputedValues::initial();
+        let custom_properties = CustomPropertyEnvironment::from_map(HashMap::new());
+        let mut non_ua_margin_sides = Sides::all(false);
+        apply_winners(
+            &candidates,
+            &mut winners,
+            &mut specified,
+            &inherited,
+            &custom_properties,
+            None,
+            Some(&mut non_ua_margin_sides),
+            None,
+        );
+        assert!(non_ua_margin_sides.top);
+        assert!(non_ua_margin_sides.right);
+        assert!(non_ua_margin_sides.bottom);
+        assert!(non_ua_margin_sides.left);
+    }
+
+    #[test]
+    fn apply_winners_direct_border_radius_inherit() {
+        let candidates: Vec<CascadedDecl> = vec![(
+            PropertyValue::BorderRadiusInherit,
+            false,
+            Origin::Author,
+            0,
+            0,
+        )];
+        let mut winners: Vec<Option<RankedDecl>> = Vec::new();
+        let mut specified = SpecifiedValues::initial();
+        let mut inherited = ComputedValues::initial();
+        inherited.border_radius = ComputedBorderRadius {
+            top_left: ComputedLengthPercentage::Percent(10.0),
+            top_right: ComputedLengthPercentage::Px(2.0),
+            bottom_right: ComputedLengthPercentage::Percent(30.0),
+            bottom_left: ComputedLengthPercentage::Px(4.0),
+        };
+        let custom_properties = CustomPropertyEnvironment::from_map(HashMap::new());
+        apply_winners(
+            &candidates,
+            &mut winners,
+            &mut specified,
+            &inherited,
+            &custom_properties,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(specified.border_radius.top_left, Length::Percent(10.0));
+        assert_eq!(specified.border_radius.top_right, Length::Px(2.0));
+        assert_eq!(specified.border_radius.bottom_right, Length::Percent(30.0));
+        assert_eq!(specified.border_radius.bottom_left, Length::Px(4.0));
+    }
+
+    #[test]
+    fn apply_winners_direct_page_value() {
+        use crate::Atom;
+        let candidates: Vec<CascadedDecl> = vec![(
+            PropertyValue::Page(PageValue::Named(Atom::from("chapter"))),
+            false,
+            Origin::Author,
+            0,
+            0,
+        )];
+        let mut winners: Vec<Option<RankedDecl>> = Vec::new();
+        let mut specified = SpecifiedValues::initial();
+        let inherited = ComputedValues::initial();
+        let custom_properties = CustomPropertyEnvironment::from_map(HashMap::new());
+        let mut page_value = PageValue::Auto;
+        apply_winners(
+            &candidates,
+            &mut winners,
+            &mut specified,
+            &inherited,
+            &custom_properties,
+            Some(&mut page_value),
+            None,
+            None,
+        );
+        assert_eq!(page_value, PageValue::Named(Atom::from("chapter")));
     }
 
     #[test]

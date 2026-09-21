@@ -741,7 +741,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
             let start = stack.len();
             stack.extend(dom.child_ids(id).map(|child| (child, child_depth)));
             stack[start..].reverse();
-        }
+        } // cov:ignore: fallthrough-vs-continue region split inside a loop body; every test with an in-document element already exercises this closing brace (verified against a main-branch baseline, see raikiri-spike-4nhl.9).
     }
 }
 pub(crate) fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {

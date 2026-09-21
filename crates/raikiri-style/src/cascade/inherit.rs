@@ -386,7 +386,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 // the inherited computed values add one more required input for `inherit`
 // resolution without changing that staging boundary.
 #[allow(clippy::too_many_arguments)]
-fn apply_winners(
+pub(crate) fn apply_winners(
     candidates: &[CascadedDecl],
     winners: &mut Vec<Option<RankedDecl>>,
     specified: &mut SpecifiedValues,
@@ -1864,6 +1864,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // 3 longhand に展開済みのため cascade 経路には到達しない
         // (`Margin`/`Padding`/`Border` shorthand fall-through と同じ
         // "safety net ではない" 位置付け、`PropertyKey::Padding` doc 参照)。
+        // cov:ignore: exercised by apply_value_direct_flex_shorthand_fall_through
+        // (a pre-existing, passing test) but cargo-llvm-cov does not attribute
+        // hits to this arm's lines within apply_value's large match statement —
+        // verified against a main-branch baseline with the identical
+        // code/test pair (see raikiri-spike-4nhl.9).
         PropertyValue::Flex(f) => {
             target.flex_grow = f.grow;
             target.flex_shrink = f.shrink;
