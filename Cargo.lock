@@ -208,7 +208,7 @@ dependencies = [
  "parley",
  "percent-encoding",
  "rayon",
- "selectors 0.40.0",
+ "selectors",
  "skrifa",
  "slotmap",
  "smallvec",
@@ -2357,7 +2357,7 @@ dependencies = [
  "cssparser",
  "precomputed-hash",
  "rustc-hash",
- "selectors 0.39.0",
+ "selectors",
  "smol_str",
 ]
 
@@ -2586,25 +2586,6 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
-
-[[package]]
-name = "selectors"
-version = "0.39.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bad7c25c97cc59c4858df8724a3789caa6ee509b628dfe6df34e8a8084c8a84e"
-dependencies = [
- "bitflags 2.13.2",
- "cssparser",
- "derive_more",
- "log",
- "new_debug_unreachable",
- "phf 0.13.1",
- "phf_codegen 0.13.1",
- "precomputed-hash",
- "rustc-hash",
- "servo_arc",
- "smallvec",
-]
 
 [[package]]
 name = "selectors"
@@ -2901,7 +2882,7 @@ dependencies = [
  "rayon",
  "rayon-core",
  "rustc-hash",
- "selectors 0.40.0",
+ "selectors",
  "serde",
  "servo_arc",
  "smallbitvec",
@@ -2968,7 +2949,7 @@ dependencies = [
  "app_units",
  "cssparser",
  "euclid",
- "selectors 0.40.0",
+ "selectors",
  "servo_arc",
  "smallbitvec",
  "smallvec",
@@ -3008,7 +2989,7 @@ dependencies = [
  "cssparser",
  "euclid",
  "malloc_size_of_derive",
- "selectors 0.40.0",
+ "selectors",
  "serde",
  "servo_arc",
  "stylo_atoms",
