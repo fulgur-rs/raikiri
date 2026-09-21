@@ -33,6 +33,13 @@ jobs:
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
     steps:
+      # dorny/paths-filter only has an API-based diff path for pull_request
+      # events; for push (direct commits/merges to main) it shells out to
+      # git against the job's own checkout, so one is required here too.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Determine whether non-doc paths changed
         id: filter
         uses: dorny/paths-filter@v3
