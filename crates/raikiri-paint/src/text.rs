@@ -13,13 +13,14 @@
 
 use std::sync::Arc;
 
+use anyrender::filters::{Filter, FilterEffect};
 use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
 use kurbo::{Affine, BezPath, Cap, Circle, Point, Rect, Stroke, Vec2};
 use parley::{
     Alignment, FontContext, FontFamily, FontStyle as ParleyFontStyle, FontWeight,
     Glyph as ParleyGlyph, LayoutContext, LineHeight, PositionedLayoutItem, StyleProperty,
 };
-use peniko::{Color, Fill};
+use peniko::{Color, Fill, Mix};
 use raikiri_dom::Node;
 use raikiri_style::property::{
     CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextAlign, TextAlignLast,
@@ -331,11 +332,11 @@ pub(crate) fn draw_text_node(
                     .collect::<Vec<_>>();
 
                 // CSS Text Decoration 3 §4 paints text shadows behind the
-                // glyphs.  Keep the first shadow on top of later shadows by
-                // drawing the comma-separated list in reverse order.  The
-                // scene API has no glyph blur primitive, so this minimal path
-                // preserves exact offsets/colors and treats blur as a
-                // zero-width shadow until a renderer blur primitive is added.
+                // glyphs. Keep the first shadow on top of later shadows by
+                // drawing the comma-separated list in reverse order. A
+                // non-zero blur is isolated in a filtered scene layer so the
+                // renderer applies Gaussian blur to the glyph mask without
+                // changing the regular glyph pass.
                 for shadow in cv.text_shadow.iter().rev() {
                     let color = match shadow.color {
                         TextShadowColor::CurrentColor => cv.color,
@@ -347,6 +348,31 @@ pub(crate) fn draw_text_node(
                             shadow.offset_x.px() as f64,
                             shadow.offset_y.px() as f64,
                         ));
+                    let blur = shadow.blur_radius.px();
+                    let use_blur_layer = blur.is_finite() && blur > 0.0;
+                    if use_blur_layer {
+                        let extent = (blur * 3.0).max(1.0) as f64;
+                        let clip = Rect::new(
+                            abs_x as f64 + shadow.offset_x.px() as f64 - extent,
+                            abs_y as f64 + shadow.offset_y.px() as f64 - extent,
+                            abs_x as f64
+                                + text_layout.width() as f64
+                                + shadow.offset_x.px() as f64
+                                + extent,
+                            abs_y as f64
+                                + text_layout.height() as f64
+                                + shadow.offset_y.px() as f64
+                                + extent,
+                        );
+                        scene.push_layer(
+                            Mix::Normal,
+                            1.0,
+                            Affine::IDENTITY,
+                            &clip,
+                            Some(Arc::new(Filter::single(FilterEffect::blur(blur)))),
+                            None,
+                        );
+                    }
                     scene.draw_glyphs(
                         font,
                         font_size,
@@ -360,6 +386,9 @@ pub(crate) fn draw_text_node(
                         glyph_transform,
                         glyphs.iter().cloned(),
                     );
+                    if use_blur_layer {
+                        scene.pop_layer();
+                    }
                 }
 
                 scene.draw_glyphs(
