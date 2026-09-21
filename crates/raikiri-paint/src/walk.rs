@@ -944,6 +944,49 @@ fn format_counter(value: i32, style: &CounterStyle, registry: &CounterStyleRegis
     }
 }
 
+fn element_string_value(document: &Document, root: usize) -> String {
+    let mut stack = vec![root];
+    let mut raw = String::new();
+    while let Some(idx) = stack.pop() {
+        let Some(node) = document.get_node(idx) else {
+            continue;
+        };
+        if let Some(text) = node.text_content() {
+            raw.push_str(text);
+        }
+        for &child in node.children.iter().rev() {
+            stack.push(child);
+        }
+    }
+    raw.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Resolve the last document-order `string-set` value for a page-margin
+/// `string()` reference. This is the minimal single-page bridge; paginated
+/// first/start/last scoping remains a PageContext follow-up.
+fn named_string_value(document: &Document, cascade: &CascadeResult, name: &str) -> String {
+    let mut resolved = String::new();
+    for (idx, computed) in cascade.computed.iter().enumerate() {
+        for (entry_name, components) in computed.string_set.iter() {
+            if entry_name.as_str() != name {
+                continue;
+            }
+            let mut value = String::new();
+            for component in components {
+                match component {
+                    ContentComponent::Literal(text) => value.push_str(text.as_str()),
+                    ContentComponent::Content { .. } => {
+                        value.push_str(&element_string_value(document, idx));
+                    }
+                    _ => {}
+                }
+            }
+            resolved = value;
+        }
+    }
+    resolved
+}
+
 #[allow(clippy::too_many_arguments)]
 fn resolved_margin_content(
     components: &[ContentComponent],
@@ -999,6 +1042,9 @@ fn resolved_margin_content(
                 // single-value fallback; nested author scopes are future work.
                 let _ = separator;
             }
+            ContentComponent::String { name, .. } => {
+                text.push_str(&named_string_value(document, cascade, name.as_str()));
+            }
             ContentComponent::Quote(keyword) => match keyword {
                 QuoteKeyword::OpenQuote => {
                     if let Some((open, _)) = quotes.get(quote_depth) {
@@ -1016,9 +1062,9 @@ fn resolved_margin_content(
                 QuoteKeyword::NoCloseQuote => quote_depth = quote_depth.saturating_sub(1),
                 _ => {}
             },
-            // Images, named strings, attributes, and target-dependent content
-            // need resources or a document-wide generated-content pass.  They
-            // remain absent rather than leaking their URL/function spelling.
+            // Images, attributes, and target-dependent content need resources
+            // or a document-wide generated-content pass. They remain absent
+            // rather than leaking their URL/function spelling.
             _ => {}
         }
     }
