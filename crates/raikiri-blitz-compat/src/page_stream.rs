@@ -481,3 +481,31 @@ fn table_rows_do_not_cross_page_boundaries() {
         vec![0.0, 60.0, 120.0]
     );
 }
+
+#[test]
+fn column_flex_items_do_not_cross_page_boundaries() {
+    let html = r#"<!DOCTYPE html><html><head><style>
+        @page { size: 100px 60px; margin: 0 }
+        html, body { margin: 0 }
+        .flex { display: flex; flex-direction: column }
+        .item { height: 40px }
+        .one { background: red }
+        .two { background: green }
+        .three { background: blue }
+    </style></head><body>
+        <div class="flex">
+            <div class="item one">one</div>
+            <div class="item two">two</div>
+            <div class="item three">three</div>
+        </div>
+    </body></html>"#;
+    let pages = html_to_page_scenes(html, PageBox::A4).expect("layout");
+    assert_eq!(pages.len(), 3);
+    assert_eq!(
+        pages
+            .iter()
+            .map(|page| page.content_origin_y)
+            .collect::<Vec<_>>(),
+        vec![0.0, 60.0, 120.0]
+    );
+}
