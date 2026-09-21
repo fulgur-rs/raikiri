@@ -8976,8 +8976,38 @@ pub fn layout_pages_with_page_geometry(
                 // candidate itself underflows into the preceding page.
                 let node_delta = node_target_y - effective_y;
                 let shift_delta = target_y - effective_y;
+                let row_flex_break_before = forced_before
+                    && parent_of[node_id].is_some_and(|parent_id| {
+                        matches!(
+                            cascade.computed[parent_id].display,
+                            DisplayValue::Flex | DisplayValue::InlineFlex
+                        ) && matches!(
+                            cascade.computed[parent_id].flex_direction,
+                            FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+                        )
+                    });
                 if node_delta.is_finite() && shift_delta.is_finite() {
                     document.nodes[node_id].unrounded_layout.location.y += node_delta;
+                    // A forced break on one wrapped row-flex item belongs to
+                    // its whole flex line. Move same-line siblings together;
+                    // other lines keep their existing flow coordinates.
+                    if row_flex_break_before && let Some(parent_id) = parent_of[node_id] {
+                        let siblings = document.nodes[parent_id].children.clone();
+                        for sibling_id in siblings {
+                            if sibling_id == node_id {
+                                continue;
+                            }
+                            let sibling_raw_y = current_abs_y(document, sibling_id, &parent_of);
+                            if (sibling_raw_y - raw_y).abs() <= 0.001 {
+                                materialize_y(
+                                    document,
+                                    sibling_id,
+                                    sibling_raw_y + shift_delta,
+                                    &parent_of,
+                                );
+                            }
+                        }
+                    }
                     if node_target_y < target_y {
                         flow_shift += node_delta;
                         pending_underflow = Some((node_id, shift_delta - node_delta));
