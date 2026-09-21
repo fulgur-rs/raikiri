@@ -1288,7 +1288,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Images gradients and CSS Page image-resource slices (+6).
         // + CSS Break forced page-break reftest (+1).
         // + CSS Break Flexbox print fragmentation slice (+9).
-        assert_eq!(set.baseline.entries.len(), 1142);
+        // + CSS Break Table reftest slice (+6).
+        assert_eq!(set.baseline.entries.len(), 1148);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
