@@ -34,8 +34,8 @@
 //!   optional trailing `format(...)` / `tech(...)` hints, and `local(...)`
 //!   with a string or ident-sequence name. A component that is neither is
 //!   dropped without invalidating the rule's other components; `format(...)`
-//!   is recorded on its preceding `url(...)` source (so a future fetcher can
-//!   skip `woff2` when only `ttf`/`otf` are supported), `tech(...)` is
+//!   is recorded on its preceding `url(...)` source so a resource consumer can
+//!   select the appropriate decoder, while `tech(...)` is
 //!   consumed and dropped (its arguments are font-technology predicates with
 //!   no bearing on the parse/registry use case this module serves).
 //! - Whole-rule validity — CSS Fonts 4 §4's descriptor table marks

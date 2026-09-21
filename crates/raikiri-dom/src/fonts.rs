@@ -4,7 +4,8 @@
 //! - Fetch は `scripts/wpt/fetch.sh` (dev prerequisite)、本 module は
 //!   fetch 済 `target/wpt/fonts/` を Path で受けるだけ
 //! - production runtime は `parley::FontContext::new()` を今のまま使う
-//! - 現状 scope: `.ttf` / `.otf` のみ、WOFF/WOFF2 は将来対応
+//! - bundled `.ttf` / `.otf` は直接登録し、`@font-face` URL sources の
+//!   WOFF/WOFF2 は `wuff` で sfnt に戻してから登録する
 //!
 //! 参考実装:
 //! - fulgur `crates/fulgur-wpt/src/fonts.rs::load_fonts_dir` (walker + sort)
@@ -1322,13 +1323,136 @@ pub struct FontFaceApplyReport {
     pub skipped: Vec<String>,
 }
 
-/// `format(...)` hints that name a container this module cannot register
-/// (module doc scope: `.ttf` / `.otf` only, WOFF/WOFF2 deferred). A source
-/// carrying one of these is skipped without consulting the loader — the
-/// bytes would be unusable, so fetching them is pure cost. Matching is
-/// ASCII case-insensitive against the hint's first argument as parsed by
-/// `raikiri-style` (e.g. `format("woff2")`).
-const UNSUPPORTED_FONT_FORMATS: &[&str] = &["woff", "woff2"];
+/// Read a big-endian `u16` without indexing beyond an untrusted container.
+fn woff_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+    Some(u16::from_be_bytes(
+        bytes.get(offset..offset.checked_add(2)?)?.try_into().ok()?,
+    ))
+}
+
+/// Read a big-endian `u32` without indexing beyond an untrusted container.
+fn woff_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+    Some(u32::from_be_bytes(
+        bytes.get(offset..offset.checked_add(4)?)?.try_into().ok()?,
+    ))
+}
+
+/// Validate the WOFF 1 table directory before calling the decoder.
+///
+/// The header's `totalSfntSize` alone is not sufficient as an allocation
+/// guard: a malformed table entry can claim a larger `origLength`. Recompute
+/// the output sfnt size from every table and require the declared file/table
+/// bounds to agree before decompression.
+fn woff1_within_cap(bytes: &[u8]) -> bool {
+    if !bytes.starts_with(b"wOFF") || bytes.len() < 44 {
+        return false;
+    }
+    let Some(length) = woff_u32(bytes, 8) else {
+        return false;
+    };
+    let Some(num_tables) = woff_u16(bytes, 12).map(usize::from) else {
+        return false;
+    };
+    let Some(directory_len) = num_tables.checked_mul(20) else {
+        return false;
+    };
+    let Some(directory_end) = 44usize.checked_add(directory_len) else {
+        return false;
+    };
+    let Some(declared_length) = usize::try_from(length).ok() else {
+        return false;
+    };
+    if directory_end > bytes.len()
+        || declared_length < directory_end
+        || declared_length > bytes.len()
+    {
+        return false;
+    }
+    let Some(directory_sfnt_len) = 16usize.checked_mul(num_tables) else {
+        return false;
+    };
+    let Some(mut sfnt_size) = 12usize.checked_add(directory_sfnt_len) else {
+        return false;
+    };
+    for index in 0..num_tables {
+        let Some(entry_offset) = index.checked_mul(20) else {
+            return false;
+        };
+        let Some(entry) = 44usize.checked_add(entry_offset) else {
+            return false;
+        };
+        let Some(offset) = woff_u32(bytes, entry + 4).and_then(|value| usize::try_from(value).ok())
+        else {
+            return false;
+        };
+        let Some(comp_length) =
+            woff_u32(bytes, entry + 8).and_then(|value| usize::try_from(value).ok())
+        else {
+            return false;
+        };
+        let Some(orig_length) =
+            woff_u32(bytes, entry + 12).and_then(|value| usize::try_from(value).ok())
+        else {
+            return false;
+        };
+        let Some(end) = offset.checked_add(comp_length) else {
+            return false;
+        };
+        if offset < directory_end || end > declared_length {
+            return false;
+        }
+        let Some(padded_length) = orig_length.checked_add(3).map(|value| value & !3) else {
+            return false;
+        };
+        let Some(next_size) = sfnt_size.checked_add(padded_length) else {
+            return false;
+        };
+        sfnt_size = next_size;
+    }
+    woff_u32(bytes, 16).and_then(|declared| usize::try_from(declared).ok()) == Some(sfnt_size)
+        && sfnt_size as u64 <= FONT_SIZE_CAP
+}
+
+/// Validate the WOFF 2 header's declared output and input bounds.
+fn woff2_within_cap(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"wOF2")
+        && bytes.len() >= 48
+        && woff_u32(bytes, 8)
+            .and_then(|length| usize::try_from(length).ok())
+            .is_some_and(|length| (48..=bytes.len()).contains(&length))
+        && woff_u32(bytes, 16).is_some_and(|size| size as u64 <= FONT_SIZE_CAP)
+}
+
+/// Decode a web-font container into the sfnt bytes understood by fontique.
+///
+/// The container signature selects the decoder. `format(...)` values are
+/// capability hints rather than byte-format assertions, so a valid sfnt is
+/// passed through even when a WOFF/WOFF2 hint is present (as required by CSS
+/// Fonts format-specifier tests). A matching WOFF signature is validated before
+/// decompression; malformed, oversized, or unsupported containers fail closed.
+fn decode_web_font(bytes: Vec<u8>) -> Option<Vec<u8>> {
+    let kind = if bytes.starts_with(b"wOFF") {
+        Some("woff")
+    } else if bytes.starts_with(b"wOF2") {
+        Some("woff2")
+    } else {
+        return Some(bytes);
+    };
+    let safe = match kind {
+        Some("woff") => woff1_within_cap(&bytes),
+        Some("woff2") => woff2_within_cap(&bytes),
+        _ => false,
+    };
+    if !safe {
+        return None;
+    }
+    let decoded = match kind {
+        Some("woff") => wuff::decompress_woff1(&bytes).ok()?,
+        Some("woff2") => wuff::decompress_woff2(&bytes).ok()?,
+        _ => return None,
+    };
+    (decoded.len() as u64 <= FONT_SIZE_CAP).then_some(decoded)
+}
 
 /// Map a [`FontFaceWeight`] descriptor to the fontique
 /// override. `Range` keeps its lower bound — registration records one face,
@@ -1370,12 +1494,13 @@ fn font_face_style_override(style: FontFaceStyle) -> parley::fontique::FontStyle
 /// can successfully activate" — the download half; full cascade-time
 /// matching stays deferred):
 ///
-/// - `url(...)`: skipped without loading when its `format(...)` hint names
-///   an [`UNSUPPORTED_FONT_FORMATS`] container; otherwise `loader.load(url)`
-///   bytes are size-capped ([`FONT_SIZE_CAP`]) and registered under the
+/// - `url(...)`: `loader.load(url)` bytes are size-capped
+///   ([`FONT_SIZE_CAP`]), decoded from WOFF/WOFF2 container signatures, and
+///   registered under the
 ///   `@font-face` family name (with weight/style descriptor overrides).
-///   Bytes fontique rejects (`register_fonts` returns empty) fall through
-///   to the next source — a corrupt download never poisons the collection.
+///   Decode failures and bytes fontique rejects (`register_fonts` returns
+///   empty) fall through to the next source — a corrupt download never
+///   poisons the collection.
 /// - `local(name)`: when `name` already resolves in `fonts`, the face family
 ///   is aliased by appending `name` to every computed `font-family` list
 ///   that mentions the face family (after it, so an actually-registered
@@ -1402,7 +1527,7 @@ fn font_face_style_override(style: FontFaceStyle) -> parley::fontique::FontStyle
 /// Rules are visited in family-name-sorted order (registry iteration itself
 /// is `HashMap` order — see [`apply_font_faces`]'s "Determinism" section).
 /// Returns the applied family names, sorted. Everything [`apply_font_faces`]
-/// documents about `format(...)` filtering, size capping, and fail-closed
+/// documents about WOFF/WOFF2 decoding, size capping, and fail-closed
 /// fall-through applies here; `local(...)` sources are ignored by this
 /// function (they need no bytes — see [`expand_font_face_aliases`]).
 pub fn register_font_face_sources(
@@ -1418,20 +1543,16 @@ pub fn register_font_face_sources(
         for source in &rule.src {
             match source {
                 FontFaceSource::Local(_) => {}
-                FontFaceSource::Url { url, format } => {
-                    if format.as_ref().is_some_and(|f| {
-                        UNSUPPORTED_FONT_FORMATS
-                            .iter()
-                            .any(|u| f.eq_ignore_ascii_case(u))
-                    }) {
-                        continue;
-                    }
+                FontFaceSource::Url { url, .. } => {
                     let Some(bytes) = loader.load(url.as_str()) else {
                         continue;
                     };
                     if bytes.len() as u64 > FONT_SIZE_CAP {
                         continue;
                     }
+                    let Some(bytes) = decode_web_font(bytes) else {
+                        continue;
+                    };
                     let blob = Blob::new(Arc::new(bytes) as _);
                     let registered = fonts.collection.register_fonts(
                         blob,
@@ -2993,7 +3114,7 @@ mod tests {
         let mut fonts = FontContext::new();
         let mut computed = vec![computed_with_family("Custom")];
         let faces = FontFaceRegistry::from_source(
-            "@font-face { font-family: Custom; src: url(custom.ttf); }",
+            "@font-face { font-family: Custom; src: url(custom.ttf) format(\"truetype\"); }",
         );
         let loader = MapLoader::serving(ahem);
         let report = super::apply_font_faces(&mut fonts, &mut computed, &faces, &loader);
@@ -3009,7 +3130,23 @@ mod tests {
     }
 
     #[test]
-    fn apply_font_faces_woff2_format_skips_without_loading() {
+    fn apply_font_faces_format_hint_does_not_force_container_decode() {
+        let Some(ahem) = wpt_ahem_bytes() else {
+            return;
+        };
+        let mut fonts = FontContext::new();
+        let mut computed = vec![computed_with_family("Hinted")];
+        let faces = FontFaceRegistry::from_source(
+            "@font-face { font-family: Hinted; src: url(ahem.ttf) format(\"woff2\"); }",
+        );
+        let loader = MapLoader::serving(ahem);
+        let report = super::apply_font_faces(&mut fonts, &mut computed, &faces, &loader);
+        assert_eq!(report.applied, vec!["Hinted".to_string()]);
+        assert!(fonts.collection.family_id("Hinted").is_some());
+    }
+
+    #[test]
+    fn apply_font_faces_malformed_woff2_is_rejected_after_loading() {
         let mut fonts = FontContext::new();
         let mut computed = vec![computed_with_family("Custom")];
         let faces = FontFaceRegistry::from_source(
@@ -3018,9 +3155,98 @@ mod tests {
         let loader = MapLoader::serving(b"unread".to_vec());
         let report = super::apply_font_faces(&mut fonts, &mut computed, &faces, &loader);
         assert_eq!(report.skipped, vec!["Custom".to_string()]);
-        assert!(
-            loader.seen.borrow().is_empty(),
-            "unsupported containers must not even be fetched"
+        assert_eq!(
+            loader.seen.borrow().as_slice(),
+            &["custom.woff2".to_string()]
+        );
+    }
+
+    #[test]
+    fn apply_font_faces_registers_woff_and_woff2_assets() {
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let root = std::path::PathBuf::from(manifest_dir)
+            .join("..")
+            .join("..")
+            .join("target")
+            .join("wpt")
+            .join("fonts");
+        let cases = [
+            ("WoffOne", "Revalia.woff", Some("woff")),
+            (
+                "WoffTwo",
+                "noto/NotoNaskhArabic-regular.woff2",
+                Some("woff2"),
+            ),
+            (
+                "WoffTwoVariations",
+                "noto/NotoNaskhArabic-regular.woff2",
+                Some("woff2-variations"),
+            ),
+            ("WoffTwoNoHint", "noto/NotoNaskhArabic-regular.woff2", None),
+        ];
+        for (family, relative, hint) in cases {
+            let path = root.join(relative);
+            let Ok(bytes) = std::fs::read(&path) else {
+                eprintln!(
+                    "skipping WOFF registration test: {} not found",
+                    path.display()
+                );
+                return;
+            };
+            let mut fonts = FontContext::new();
+            let mut computed = vec![computed_with_family(family)];
+            let source = match hint {
+                Some(format) => format!(
+                    "@font-face {{ font-family: {family}; src: url({relative}) format(\"{format}\"); }}"
+                ),
+                None => format!("@font-face {{ font-family: {family}; src: url({relative}); }}"),
+            };
+            let faces = FontFaceRegistry::from_source(&source);
+            let loader = MapLoader::serving(bytes);
+            let report = super::apply_font_faces(&mut fonts, &mut computed, &faces, &loader);
+            assert_eq!(report.applied, vec![family.to_string()]);
+            assert!(report.skipped.is_empty());
+            assert!(fonts.collection.family_id(family).is_some());
+            assert_eq!(loader.seen.borrow().as_slice(), &[relative.to_string()]);
+        }
+    }
+
+    #[test]
+    fn apply_font_faces_falls_through_from_bad_woff2_to_ttf() {
+        struct FallbackLoader {
+            good: Vec<u8>,
+            seen: std::cell::RefCell<Vec<String>>,
+        }
+
+        impl super::FontFaceLoader for FallbackLoader {
+            fn load(&self, url: &str) -> Option<Vec<u8>> {
+                self.seen.borrow_mut().push(url.to_string());
+                if url == "bad.woff2" {
+                    Some(b"not a web font".to_vec())
+                } else {
+                    Some(self.good.clone())
+                }
+            }
+        }
+
+        let Some(ahem) = wpt_ahem_bytes() else {
+            return;
+        };
+        let mut fonts = FontContext::new();
+        let mut computed = vec![computed_with_family("Fallback")];
+        let faces = FontFaceRegistry::from_source(
+            "@font-face { font-family: Fallback; src: url(bad.woff2) format(\"woff2\"), url(good.ttf) format(\"truetype\"); }",
+        );
+        let loader = FallbackLoader {
+            good: ahem,
+            seen: std::cell::RefCell::new(Vec::new()),
+        };
+        let report = super::apply_font_faces(&mut fonts, &mut computed, &faces, &loader);
+        assert_eq!(report.applied, vec!["Fallback".to_string()]);
+        assert!(fonts.collection.family_id("Fallback").is_some());
+        assert_eq!(
+            loader.seen.borrow().as_slice(),
+            &["bad.woff2".to_string(), "good.ttf".to_string()]
         );
     }
 

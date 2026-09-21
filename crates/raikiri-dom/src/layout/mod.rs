@@ -4986,8 +4986,8 @@ fn probe_ch_text_advance(
             registered && family_candidate_has_ch_glyphs(fonts, name, font_weight, font_style);
         if let Some(generic) = generic {
             // An unresolved named face may represent an @font-face source
-            // that the WPT loader could not activate (for example WOFF in a
-            // TTF-only context). Do not silently replace that unavailable
+            // that the WPT loader could not activate (for example a missing
+            // or malformed web-font resource). Do not silently replace that unavailable
             // face with a generic metric; the style-layer fallback is the
             // deterministic 0.5em result for this no-face case.
             if saw_unregistered_named
