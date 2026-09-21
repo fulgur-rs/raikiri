@@ -1290,7 +1290,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Break Flexbox print fragmentation slice (+9).
         // + CSS Break Table reftest slice (+6).
         // + CSS Break Grid reftest slice (+11).
-        assert_eq!(set.baseline.entries.len(), 1159);
+        // + CSS Break Flexbox additional exact slice (+37).
+        assert_eq!(set.baseline.entries.len(), 1196);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
