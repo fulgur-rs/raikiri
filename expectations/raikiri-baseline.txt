@@ -460,8 +460,8 @@ css/css-break/table/break-before-second-row.html
 css/css-break/table/caption-margin-002.html
 css/css-break/table/caption-margin-005.html
 css/css-break/table/monolithic-overflow-001.tentative.html
-css/css-break/table/repeated-section/abspos-uncontained-text.html
-css/css-break/table/table-cell-expansion-006.html
+css/css-break/table/table-cell-border-001.html
+css/css-break/table/table-cell-border-002.html
 # --- css-break grid reftests (exact, 800x600, 2026-09-21) ---
 css/css-break/grid/grid-item-fragmentation-010.html
 css/css-break/grid/grid-item-fragmentation-011.html

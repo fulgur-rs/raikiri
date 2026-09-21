@@ -18,8 +18,8 @@ fn css_break_table_pairs_are_pixel_exact_at_800x600() {
         "css/css-break/table/caption-margin-002.html",
         "css/css-break/table/caption-margin-005.html",
         "css/css-break/table/monolithic-overflow-001.tentative.html",
-        "css/css-break/table/repeated-section/abspos-uncontained-text.html",
-        "css/css-break/table/table-cell-expansion-006.html",
+        "css/css-break/table/table-cell-border-001.html",
+        "css/css-break/table/table-cell-border-002.html",
     ];
     let mut config = ReftestConfig::default();
     config.width = 800;
