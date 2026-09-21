@@ -1500,6 +1500,8 @@ css/css-values/calc-in-max.html
 css/css-values/calc-rounding-001.html
 css/css-values/calc-rounding-002.html
 css/css-values/calc-rounding-003.html
+css/css-display/display-contents-alignment-001.html
+css/css-display/display-contents-alignment-002.html
 css/css-images/gradient-button.html
 css/css-images/gradient-content-box.html
 css/css-images/gradients-with-border.html
