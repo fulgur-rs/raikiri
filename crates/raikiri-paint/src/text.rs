@@ -23,7 +23,7 @@ use peniko::{Color, Fill};
 use raikiri_dom::Node;
 use raikiri_style::property::{
     CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextAlign, TextAlignLast,
-    TextDecorationColor, TextDecorationLine, TextDecorationStyle,
+    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextShadowColor,
 };
 use raikiri_style::{CascadeResult, ComputedValues};
 
@@ -322,21 +322,58 @@ pub(crate) fn draw_text_node(
                     .skew()
                     .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
 
+                let glyphs = glyph_run
+                    .positioned_glyphs()
+                    .map(|mut glyph| {
+                        glyph.x += last_line_delta;
+                        to_anyrender_glyph(glyph)
+                    })
+                    .collect::<Vec<_>>();
+
+                // CSS Text Decoration 3 §4 paints text shadows behind the
+                // glyphs.  Keep the first shadow on top of later shadows by
+                // drawing the comma-separated list in reverse order.  The
+                // scene API has no glyph blur primitive, so this minimal path
+                // preserves exact offsets/colors and treats blur as a
+                // zero-width shadow until a renderer blur primitive is added.
+                for shadow in cv.text_shadow.iter().rev() {
+                    let color = match shadow.color {
+                        TextShadowColor::CurrentColor => cv.color,
+                        TextShadowColor::Resolved(color) => color,
+                        _ => cv.color, // cov:ignore: defensive fallback
+                    };
+                    let shadow_transform = base_transform
+                        * Affine::translate((
+                            shadow.offset_x.px() as f64,
+                            shadow.offset_y.px() as f64,
+                        ));
+                    scene.draw_glyphs(
+                        font,
+                        font_size,
+                        true,
+                        coords,
+                        embolden,
+                        Fill::NonZero,
+                        css_color_to_peniko(color),
+                        1.0,
+                        shadow_transform,
+                        glyph_transform,
+                        glyphs.iter().cloned(),
+                    );
+                }
+
                 scene.draw_glyphs(
                     font,
                     font_size,
-                    true, // hint = true (blitz と揃えた値。将来的に判定を切り替える余地あり)
+                    true,
                     coords,
                     embolden,
                     Fill::NonZero,
-                    brush, // peniko::Color → PaintRef auto-convert
-                    1.0,   // brush_alpha (color 自身が alpha 持つ)
+                    brush,
+                    1.0,
                     base_transform,
                     glyph_transform,
-                    glyph_run.positioned_glyphs().map(|mut glyph| {
-                        glyph.x += last_line_delta;
-                        to_anyrender_glyph(glyph)
-                    }),
+                    glyphs.into_iter(),
                 );
             }
 
