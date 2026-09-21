@@ -7064,6 +7064,10 @@ fn float_parse_all_keywords() {
         parse("right", "float"),
         Some(PropertyValue::Float(FloatValue::Right))
     );
+    assert_eq!(
+        parse("footnote", "float"),
+        Some(PropertyValue::Float(FloatValue::Footnote))
+    );
 }
 
 #[test]

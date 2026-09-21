@@ -8410,6 +8410,30 @@ pub fn layout_pages_with_page_geometry(
         false
     }
 
+    fn has_footnote_ancestor(
+        cascade: &CascadeResult,
+        node_id: usize,
+        parent_of: &[Option<usize>],
+    ) -> bool {
+        let mut current = parent_of.get(node_id).copied().flatten();
+        let mut guard = 0_usize;
+        while let Some(id) = current {
+            if cascade
+                .computed
+                .get(id)
+                .is_some_and(|computed| matches!(computed.float, FloatValue::Footnote))
+            {
+                return true;
+            }
+            current = parent_of.get(id).copied().flatten();
+            guard += 1;
+            if guard > parent_of.len() {
+                break;
+            }
+        }
+        false
+    }
+
     #[derive(Clone)]
     struct PageCandidate {
         node_id: usize,
@@ -8679,6 +8703,10 @@ pub fn layout_pages_with_page_geometry(
     // first text child so a block is not reflowed repeatedly for later lines.
     let mut checked_block_text = HashSet::new();
     let mut checked_orphans_widows = HashSet::new();
+    // Footnotes are collected in source order and stacked upward from the
+    // bottom edge of their anchor page. The normal-flow height is removed
+    // from `flow_shift`, leaving the box only in this page-local area.
+    let mut footnote_heights: HashMap<u32, f32> = HashMap::new();
     let mut current_page_name =
         selected_page_name(cascade, body_id).or_else(|| first_page_name(document, cascade));
     let mut page_names = vec![current_page_name.clone()];
@@ -8705,6 +8733,13 @@ pub fn layout_pages_with_page_geometry(
             0.0
         };
         if candidate.is_text {
+            // A footnote's descendants follow the moved footnote box. They are
+            // deliberately not paginated independently, otherwise the stale
+            // pre-pagination coordinates would move them back into normal flow.
+            if candidate.is_float_descendant && has_footnote_ancestor(cascade, node_id, &parent_of)
+            {
+                continue;
+            }
             // Text is not itself a class-A box, but non-empty text can be the
             // content that follows a nested named box.  Carry the containing
             // box's page type so that content after `page:b` inside a
@@ -8870,6 +8905,29 @@ pub fn layout_pages_with_page_geometry(
 
         let computed = &cascade.computed[node_id];
         let candidate_page_name = candidate.page_name.clone();
+        // `float: footnote` is a page-local out-of-flow placement. Keep the
+        // anchor's page, stack multiple notes from the bottom, and remove the
+        // note's ordinary-flow footprint so following content can continue.
+        if matches!(computed.float, FloatValue::Footnote) {
+            let raw_y = candidate.raw_y;
+            let height = candidate.height;
+            let effective_y = raw_y + flow_shift + descendant_margin;
+            let anchor_page = if effective_y.is_finite() && effective_y >= 0.0 {
+                page_index_for_y(effective_y)
+            } else {
+                current_page
+            };
+            let note_page = current_page.max(anchor_page);
+            let used = footnote_heights.entry(note_page).or_insert(0.0);
+            let target_y = (page_origin(note_page) + page_step_at(note_page) - *used - height)
+                .max(page_origin(note_page));
+            materialize_y(document, node_id, target_y, &parent_of);
+            *used += height;
+            flow_shift -= height;
+            max_page = max_page.max(note_page);
+            saw_child = true;
+            continue;
+        }
         // Copy layout data before any break adjustment so the immutable node
         // borrow does not overlap the in-place location update below.
         let raw_y = candidate.raw_y;
@@ -17254,6 +17312,45 @@ mod tests {
         .expect("layout Ok");
 
         assert_eq!(doc.nodes[img].image_intrinsic_size(), None);
+    }
+
+    #[test]
+    fn layout_pages_places_footnote_at_page_bottom_without_flow_footprint() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let lead = doc.append_element(Some(body), "div", Style::default(), Some("height:20px"));
+        let note = doc.append_element(
+            Some(body),
+            "aside",
+            Style::default(),
+            Some("float:footnote;height:10px;width:50px"),
+        );
+        doc.append_text(note, "note");
+        let following =
+            doc.append_element(Some(body), "div", Style::default(), Some("height:10px"));
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        assert!(matches!(cascade.computed[note].float, FloatValue::Footnote));
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 50.0;
+        let slices =
+            layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+
+        assert_eq!(slices.len(), 1);
+        let note_y = doc.nodes[note].unrounded_layout.location.y;
+        let following_y = doc.nodes[following].unrounded_layout.location.y;
+        assert!((note_y - 40.0).abs() < 0.01, "note y={note_y}");
+        assert!(
+            following_y < note_y,
+            "following flow content should not be pushed below the footnote: following y={following_y}, note y={note_y}"
+        );
+        assert!(doc.nodes[lead].unrounded_layout.size.height > 0.0);
     }
 
     #[test]

@@ -6586,6 +6586,7 @@ fn parse_float(input: &mut Parser<'_, '_>) -> Option<FloatValue> {
         "right" => Some(FloatValue::Right),
         "inline-start" => Some(FloatValue::InlineStart),
         "inline-end" => Some(FloatValue::InlineEnd),
+        "footnote" => Some(FloatValue::Footnote),
         _ => None,
     }
 }
