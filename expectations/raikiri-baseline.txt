@@ -1500,3 +1500,7 @@ css/css-values/calc-in-max.html
 css/css-values/calc-rounding-001.html
 css/css-values/calc-rounding-002.html
 css/css-values/calc-rounding-003.html
+css/css-overflow/clip-001.html
+css/css-overflow/overflow-canvas.html
+css/css-overflow/overflow-body-propagation-001.html
+css/css-overflow/overflow-body-propagation-002.html
