@@ -1450,3 +1450,10 @@ css/css-break/grid/subgrid/subgrid-container-fragmentation-002.html
 css/css-break/grid/subgrid/subgrid-item-fragmentation-001.html
 css/css-break/grid/subgrid/subgrid-item-fragmentation-002.html
 css/css-break/grid/subgrid/subgrid-item-fragmentation-003.html
+
+# --- css-text white-space/line-breaking resource exact slice (800x600) ---
+css/css-text/white-space/break-spaces-002.html
+css/css-text/white-space/break-spaces-004.html
+css/css-text/white-space/break-spaces-006.html
+css/css-text/white-space/break-spaces-007.html
+css/css-text/line-breaking/line-breaking-001.html
