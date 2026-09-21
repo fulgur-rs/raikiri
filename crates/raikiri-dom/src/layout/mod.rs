@@ -678,6 +678,7 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         // has no table layout), carried Node-side like `display` above.
         doc.nodes[idx].table_layout = cv.table_layout;
         doc.nodes[idx].border_collapse = cv.border_collapse;
+        doc.nodes[idx].border_spacing = cv.border_spacing;
         doc.nodes[idx].authored_writing_mode = cascade
             .authored_writing_modes
             .get(idx)
@@ -8922,6 +8923,7 @@ pub fn layout_pages_with_page_geometry(
         // repeated header groups, and cell-internal breaks remain out of this
         // narrow row-boundary pass.
         let table_row_overflow = candidate.is_table_row
+            && height <= page_step_at(current_page) + 0.001
             && effective_y.is_finite()
             && effective_y >= page_origin(current_page)
             && effective_y < page_origin(current_page) + page_step_at(current_page)

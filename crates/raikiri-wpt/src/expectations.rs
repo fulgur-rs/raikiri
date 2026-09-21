@@ -1296,7 +1296,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Break Flexbox row-line break propagation slice (+2).
         // + CSS Break Table cell border fragment paint slice (+2, replacing 2 stale pins).
         // + CSS Multi-column nested block-flow exact slice (+4).
-        assert_eq!(set.baseline.entries.len(), 1234);
+        // + CSS Break Table cell-internal fragmentation slice (+1).
+        assert_eq!(set.baseline.entries.len(), 1235);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
