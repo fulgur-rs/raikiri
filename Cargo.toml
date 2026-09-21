@@ -72,6 +72,9 @@ url        = "2.5"
 # pixels; PNG is the only format in scope so far.
 png = "0.18"
 
+# Pure-Rust WOFF/WOFF2 decompression for @font-face resources.
+wuff = "0.2.9"
+
 # ── Date/time (validate-expectations lint, raikiri-spike-yps) ──────────
 time = { version = "0.3", default-features = false, features = ["std", "parsing", "macros"] }
 

@@ -668,7 +668,7 @@ pub fn render_raikiri_pages(
     width: u32,
     height: u32,
 ) -> Result<RenderedDocument, ReftestError> {
-    render_raikiri_pages_inner(html, width, height, None)
+    render_raikiri_pages_inner(html, width, height, None, None)
         .map_err(|e| ReftestError::RaikiriRender(e.to_string()))
 }
 
@@ -677,7 +677,7 @@ fn render_raikiri_inner(
     width: u32,
     height: u32,
 ) -> Result<RenderedImage, Box<dyn std::error::Error>> {
-    let document = render_raikiri_pages_inner(html, width, height, None)?;
+    let document = render_raikiri_pages_inner(html, width, height, None, None)?;
     document
         .pages
         .into_iter()
@@ -1513,6 +1513,7 @@ fn render_raikiri_pages_inner(
     width: u32,
     height: u32,
     resource_base: Option<&Path>,
+    font_base: Option<&Path>,
 ) -> Result<RenderedDocument, Box<dyn std::error::Error>> {
     use anyrender::render_to_buffer;
     use anyrender_vello_cpu::VelloCpuImageRenderer;
@@ -1526,6 +1527,14 @@ fn render_raikiri_pages_inner(
         relayout_text_for_width,
     };
     use raikiri_html::parse;
+
+    // URL construction requires an absolute directory. Normalize caller
+    // paths here so resource and stylesheet loading work for relative test
+    // paths as well as the absolute paths used by the WPT runner.
+    let resource_base_owned = resource_base.and_then(|base| std::fs::canonicalize(base).ok());
+    let font_base_owned = font_base.and_then(|base| std::fs::canonicalize(base).ok());
+    let resource_base = resource_base_owned.as_deref();
+    let font_base = font_base_owned.as_deref();
 
     let image_resolver =
         resource_base.map(|_| raikiri_net::ImageResolver::new(raikiri_net::FileNetworkProvider));
@@ -1559,7 +1568,7 @@ fn render_raikiri_pages_inner(
     // are no-ops (empty registry early-returns).
     let font_face_tree = raikiri::build_rule_tree(&uncascaded);
     let mut font_ctx = resolve_font_ctx();
-    if let Some(loader) = WptFontLoader::discover() {
+    if let Some(loader) = WptFontLoader::discover(font_base.or(resource_base)) {
         raikiri_dom::register_font_face_sources(
             &mut font_ctx,
             font_face_tree.font_faces(),
@@ -1867,24 +1876,24 @@ fn render_raikiri_pages_inner(
 }
 /// Load `@font-face` `src: url(...)` bytes from the WPT tree.
 ///
-/// Only server-absolute URLs (`/fonts/Ahem.ttf`) resolve: relative URLs
-/// need the test file's base URL, which the `render_*` entry points don't
-/// carry, and `data:` URLs need a decoder this test setup doesn't have — both
-/// stay `None` (fail-closed, recorded as `skipped` by the caller). Reads
-/// are containment-checked (canonical path must stay under `root`) and
-/// size-gated; the final cap is enforced again by
-/// `raikiri_dom::apply_font_faces`' caller contract.
+/// Server-absolute WPT URLs, resource-base-relative URLs, and the `file://`
+/// URLs produced by resource absolutization are accepted. `data:` and remote
+/// URLs stay `None` (fail-closed, recorded as `skipped` by the caller). Every
+/// resolved path is canonicalized and containment-checked under `root`; the
+/// final byte cap is enforced again by `raikiri_dom` after the read.
 struct WptFontLoader {
     root: PathBuf,
+    base: Option<PathBuf>,
 }
 
 impl WptFontLoader {
     /// Find the WPT root: first candidate containing `fonts/Ahem.ttf`.
-    /// The manifest-based `target/wpt` candidate comes first (same anchor
-    /// `hello_world_vrt` uses); CWD-relative candidates cover ad-hoc runs.
-    /// `None` when no candidate resolves — the caller then skips
-    /// registration entirely (today's behavior, unchanged).
-    fn discover() -> Option<Self> {
+    /// The page resource base is preferred when it belongs to a WPT checkout;
+    /// manifest/CWD-relative candidates cover ad-hoc runs without a base.
+    /// `None` when no candidate resolves — the caller then skips registration.
+    fn discover(resource_base: Option<&Path>) -> Option<Self> {
+        let has_anchor = |root: &Path| root.join("fonts").join("Ahem.ttf").is_file();
+        let resource_base = resource_base.and_then(|base| std::fs::canonicalize(base).ok());
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let candidates = [
             manifest.join("../../target/wpt"),
@@ -1894,13 +1903,38 @@ impl WptFontLoader {
             PathBuf::from("../../wpt"),
             manifest.join("../../wpt"),
         ];
-        candidates.into_iter().find_map(|root| {
-            if root.join("fonts").join("Ahem.ttf").is_file() {
-                Some(Self { root })
-            } else {
-                None
-            }
+        let root = resource_base
+            .as_deref()
+            .and_then(|base| base.ancestors().find(|candidate| has_anchor(candidate)))
+            .map(Path::to_path_buf)
+            .or_else(|| {
+                candidates
+                    .into_iter()
+                    .find(|candidate| has_anchor(candidate))
+            })?;
+        Some(Self {
+            root,
+            base: resource_base,
         })
+    }
+
+    fn candidate_path(&self, url: &str) -> Option<PathBuf> {
+        if let Some(rel) = url.strip_prefix('/') {
+            if rel.is_empty() {
+                return None;
+            }
+            let root_url = raikiri::Url::from_directory_path(&self.root).ok()?;
+            return root_url.join(rel).ok()?.to_file_path().ok();
+        }
+        if let Ok(parsed) = raikiri::Url::parse(url) {
+            if !parsed.scheme().eq_ignore_ascii_case("file") {
+                return None;
+            }
+            return parsed.to_file_path().ok();
+        }
+        let base = self.base.as_deref()?;
+        let base_url = raikiri::Url::from_directory_path(base).ok()?;
+        base_url.join(url).ok()?.to_file_path().ok()
     }
 }
 
@@ -1910,12 +1944,8 @@ impl raikiri_dom::FontFaceLoader for WptFontLoader {
         /// enforces it again post-load; this pre-check avoids allocating a
         /// huge buffer for a file that would be rejected anyway).
         const LOADER_SIZE_CAP: u64 = 100 * 1024 * 1024;
-        let rel = url.strip_prefix('/')?;
-        if rel.is_empty() {
-            return None;
-        }
         let root = std::fs::canonicalize(&self.root).ok()?;
-        let path = std::fs::canonicalize(self.root.join(rel)).ok()?;
+        let path = std::fs::canonicalize(self.candidate_path(url)?).ok()?;
         if !path.starts_with(&root) {
             return None;
         }
@@ -2215,6 +2245,7 @@ where
         } else {
             None
         },
+        pair.test.parent(),
     )
     .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
     let ref_doc = render_raikiri_pages_inner(
@@ -2226,6 +2257,7 @@ where
         } else {
             None
         },
+        pair.reference.parent(),
     )
     .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
     let (test_selection, reference_selection) =
@@ -2384,11 +2416,12 @@ mod tests {
             @page { size: 120px 120px; margin: 0 }
             body { margin: 0 }
         </style><div style="height:180px"><img src="support/tiny.png" style="display:block;width:1px;height:1px"></div>"#;
-        let rendered = render_raikiri_pages_inner(html, 120, 120, Some(temp.path()))
-            .expect("geometry-varying image document should render");
+        let rendered =
+            render_raikiri_pages_inner(html, 120, 120, Some(temp.path()), Some(temp.path()))
+                .expect("geometry-varying image document should render");
         assert!(rendered.pages.len() >= 2);
         assert_eq!(rendered.pages[0].width, 100);
-        let rendered_without_resolver = render_raikiri_pages_inner(html, 120, 120, None)
+        let rendered_without_resolver = render_raikiri_pages_inner(html, 120, 120, None, None)
             .expect("geometry-varying document without images should render");
         assert!(rendered_without_resolver.pages.len() >= 2);
     }
@@ -2775,5 +2808,46 @@ mod tests {
         assert_eq!(diff.mismatched_pixels, 0);
         assert_eq!(diff.left_pages, 1);
         assert_eq!(diff.right_pages, 1);
+    }
+
+    #[test]
+    fn wpt_font_loader_resolves_local_url_forms_with_containment() {
+        use raikiri_dom::FontFaceLoader;
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("wpt");
+        let base = root.join("css").join("fonts");
+        let absolute = root.join("fonts");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&absolute).unwrap();
+        let relative_path = base.join("relative.woff2");
+        let absolute_path = absolute.join("absolute.woff");
+        std::fs::write(&relative_path, b"relative-font").unwrap();
+        std::fs::write(&absolute_path, b"absolute-font").unwrap();
+        let loader = WptFontLoader {
+            root: root.clone(),
+            base: Some(base.clone()),
+        };
+
+        assert_eq!(
+            loader.load("relative.woff2"),
+            Some(b"relative-font".to_vec())
+        );
+        assert_eq!(
+            loader.load("/fonts/absolute.woff?pipe=trickle"),
+            Some(b"absolute-font".to_vec())
+        );
+        let file_url = raikiri::Url::from_file_path(&absolute_path).unwrap();
+        assert_eq!(
+            loader.load(&format!("{file_url}#font")),
+            Some(b"absolute-font".to_vec())
+        );
+        let uppercase_file_url = file_url.to_string().replacen("file:", "FILE:", 1);
+        assert_eq!(
+            loader.load(&uppercase_file_url),
+            Some(b"absolute-font".to_vec())
+        );
+        assert!(loader.load("file:///outside/font.woff2").is_none());
+        assert!(loader.load("../../outside.woff2").is_none());
     }
 }

@@ -440,6 +440,14 @@ css/css-images/parsing/image-resolution-invalid.html
 css/css-images/parsing/object-fit-invalid.html
 css/css-images/parsing/object-position-invalid.html
 css/css-images/parsing/object-position-valid.html
+# --- css-images focused exact reftests (800x600, 2026-09-21) ---
+css/css-images/gradients-with-transparent.html
+css/css-images/gradient-border-box.html
+# --- css-page image-resource remeasurement (exact, 800x600, 2026-09-21) ---
+css/css-page/background-image-only-for-print.html
+css/css-page/page-background-image-print.html
+css/css-page/page-background-005-print.html
+css/css-page/margin-boxes/background-001-print.html
 # --- css-lists marker foundation (exact static reftest, 800x600) ---
 css/css-display/display-flow-root-002.html
 # --- css-inline minimal line-box foundation (exact static reftest, 800x600) ---
