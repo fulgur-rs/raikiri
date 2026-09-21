@@ -2,8 +2,10 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use cssparser::{Parser, ParserInput};
+use selectors::parser::Selector;
 
 use crate::PseudoElem;
+use crate::RaikiriSelectorImpl;
 use crate::media::MediaContext;
 use crate::property::{CustomProperty, PropertyValue};
 use crate::rule::{expand_shorthand_into, parse_declaration_block};
@@ -12,7 +14,7 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNode
 
 use super::{
     match_complex_selector_list, push_img_dimension_hints,
-    push_margin_collapsing_quirk_declarations, selector_matches_pseudo_element, specificity_of,
+    push_margin_collapsing_quirk_declarations, selector_matches_pseudo_element,
 };
 
 /// selectors 由来の 32-bit specificity。u32 で完全順序比較。
@@ -743,4 +745,8 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
             stack[start..].reverse();
         }
     }
+}
+pub(crate) fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
+    // selectors crate の Selector::specificity は 32-bit packed integer を返す。
+    selector.specificity()
 }
