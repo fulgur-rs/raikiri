@@ -164,7 +164,7 @@ assert_cmd = "2"
 # crate であり (raikiri-vrt / raikiri-wpt と同じ posture、いずれも wasm32
 # check を持たない)、そのものが WASM 対象 surface に入らないため。この
 # 判断が甘いと思う場合は raikiri-spike-vvf6 に追記して再検討すること。
-criterion = { version = "0.7", default-features = false, features = [
+criterion = { version = "0.8", default-features = false, features = [
     "cargo_bench_support",
 ] }
 
