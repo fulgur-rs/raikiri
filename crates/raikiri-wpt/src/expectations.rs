@@ -1298,8 +1298,9 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Multi-column nested block-flow exact slice (+4).
         // + CSS Break Table cell-internal fragmentation slice (+1).
         // + CSS Text white-space/line-breaking resource exact slice (+5).
+        // + CSS Transforms exact 2D transform-origin/skew slice (+5).
         // + CSS Borders exact current-color and sub-unit slice (+2).
-        assert_eq!(set.baseline.entries.len(), 1248);
+        assert_eq!(set.baseline.entries.len(), 1253);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
