@@ -3751,13 +3751,27 @@ fn paint_document_impl(
                 // position but paint at offset position.
                 let child_parent_x = abs_x + pos_dx + fixed_dx;
                 let child_parent_y = abs_y + pos_dy + fixed_dy;
-                let child_fragment_clip_height = match cv.column_count {
+                let own_multicol_clip_height = match cv.column_count {
                     ColumnCountValue::Count(count) if count > 1 && layout.size.height > 0.0 => {
                         Some(layout.size.height)
                     }
-                    _ => fragment_clip_height,
+                    _ => None,
                 };
                 for child in children.into_iter().rev() {
+                    let child_fragment_clip_height = match own_multicol_clip_height {
+                        Some(clip_height)
+                            if document.get_node(child).is_some_and(|child_node| {
+                                matches!(
+                                    cascade.computed[child].display,
+                                    DisplayValue::Grid | DisplayValue::InlineGrid
+                                ) && child_node.kind() == NodeKind::Element
+                            }) =>
+                        {
+                            Some(clip_height)
+                        }
+                        Some(_) => None,
+                        None => fragment_clip_height,
+                    };
                     let is_direct_text = document
                         .get_node(child)
                         .is_some_and(|node| node.kind() == NodeKind::Text);
