@@ -12,10 +12,8 @@ use crate::rule::{expand_shorthand_into, parse_declaration_block};
 use crate::ruletree::{Origin, RuleTree};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 
-use super::{
-    match_complex_selector_list, push_img_dimension_hints,
-    push_margin_collapsing_quirk_declarations, selector_matches_pseudo_element,
-};
+use super::html_quirks::{push_img_dimension_hints, push_margin_collapsing_quirk_declarations};
+use super::selector_match::{match_complex_selector_list, selector_matches_pseudo_element};
 
 /// selectors 由来の 32-bit specificity。u32 で完全順序比較。
 pub(crate) type Specificity = u32;
