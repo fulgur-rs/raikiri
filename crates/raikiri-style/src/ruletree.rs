@@ -8,8 +8,9 @@
 //! `@counter-style` も raw/source order の確認用にこの viewへ記録し、`@page`
 //! は既存の page view に保持する。
 
-use cssparser::{Parser, ParserInput, StyleSheetParser, Token};
-use selectors::parser::{ParseRelative, Selector, SelectorList};
+use cssparser::{Parser, ParserInput, SourceLocation, StyleSheetParser, Token};
+use selectors::parser::{ParseRelative, Parser as SelectorParser, Selector, SelectorList};
+use std::collections::HashMap;
 
 use crate::counter_style::{CounterStyleRegistry, parse_counter_style_rules};
 use crate::font_face::{FontFaceRegistry, parse_font_face_rules};
@@ -19,7 +20,7 @@ use crate::page::{
 };
 use crate::rule::{Declaration, StyleRule, parse_declaration_block};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
-use crate::{PseudoClass, PseudoElem, RaikiriSelectorImpl, RaikiriSelectorParser};
+use crate::{Atom, PseudoClass, PseudoElem, RaikiriSelectorImpl, RaikiriSelectorParser};
 
 /// Flatten the subset of cascade layers that the rule parser can evaluate.
 ///
@@ -673,9 +674,11 @@ impl RuleTree {
     fn add_stylesheet_chunk(&mut self, source: &str, origin: Origin, layer_order: u32) {
         let mut input = ParserInput::new(source);
         let mut parser = Parser::new(&mut input);
+        let mut namespaces = NamespaceMap::new();
         let mut rule_parser = StyleRuleParser {
             source,
             opaque_body_budget: &mut self.opaque_body_budget,
+            namespaces: &mut namespaces,
         };
         let mut style_order = self.next_style_order;
         let mut page_order = self.page_rules.len() as u32;
@@ -1372,7 +1375,15 @@ fn collect_media_style_rules(
 /// component-value prelude so a later semantic pass can reinterpret it.
 enum ParsedAtRulePrelude {
     Page(PageSelector),
-    Opaque { name: String, prelude: String },
+    Namespace {
+        prefix: Option<Atom>,
+        uri: Atom,
+        prelude: String,
+    },
+    Opaque {
+        name: String,
+        prelude: String,
+    },
 }
 
 /// Top-level parsed rule shape emitted by [`StyleRuleParser`].
@@ -1388,9 +1399,66 @@ enum ParsedRule {
 
 /// StyleSheetParser 実装。qualified rule + `@page` を受理し、その他の at-rule
 /// は意味論を実行せず opaque record として保持する。
+type NamespaceMap = HashMap<Atom, Atom>;
+
+struct NamespacedSelectorParser<'a> {
+    namespaces: &'a NamespaceMap,
+}
+
+impl<'i, 'a> SelectorParser<'i> for NamespacedSelectorParser<'a> {
+    type Impl = RaikiriSelectorImpl;
+    type Error = selectors::parser::SelectorParseErrorKind<'i>;
+
+    fn parse_nth_child_of(&self) -> bool {
+        true
+    }
+
+    fn parse_is_and_where(&self) -> bool {
+        true
+    }
+
+    fn parse_has(&self) -> bool {
+        true
+    }
+
+    fn parse_non_ts_pseudo_class(
+        &self,
+        location: SourceLocation,
+        name: cssparser::CowRcStr<'i>,
+    ) -> Result<PseudoClass, cssparser::ParseError<'i, Self::Error>> {
+        RaikiriSelectorParser.parse_non_ts_pseudo_class(location, name)
+    }
+
+    fn parse_non_ts_functional_pseudo_class<'t>(
+        &self,
+        name: cssparser::CowRcStr<'i>,
+        parser: &mut Parser<'i, 't>,
+        after_part: bool,
+    ) -> Result<PseudoClass, cssparser::ParseError<'i, Self::Error>> {
+        RaikiriSelectorParser.parse_non_ts_functional_pseudo_class(name, parser, after_part)
+    }
+
+    fn parse_pseudo_element(
+        &self,
+        location: SourceLocation,
+        name: cssparser::CowRcStr<'i>,
+    ) -> Result<PseudoElem, cssparser::ParseError<'i, Self::Error>> {
+        RaikiriSelectorParser.parse_pseudo_element(location, name)
+    }
+
+    fn default_namespace(&self) -> Option<Atom> {
+        self.namespaces.get(&Atom::from("")).cloned()
+    }
+
+    fn namespace_for_prefix(&self, prefix: &Atom) -> Option<Atom> {
+        self.namespaces.get(prefix).cloned()
+    }
+}
+
 struct StyleRuleParser<'s, 'b> {
     source: &'s str,
     opaque_body_budget: &'b mut usize,
+    namespaces: &'b mut NamespaceMap,
 }
 
 impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
@@ -1405,6 +1473,29 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
         if name.eq_ignore_ascii_case("page") {
             return parse_page_prelude(input).map(ParsedAtRulePrelude::Page);
+        }
+        if name.eq_ignore_ascii_case("namespace") {
+            let prefix = input
+                .try_parse(|input| {
+                    input
+                        .expect_ident()
+                        .map(|prefix| prefix.as_ref().to_owned())
+                })
+                .ok()
+                .map(|prefix| Atom::from(prefix.as_str()));
+            let uri = input
+                .expect_url()
+                .map(|uri| Atom::from(uri.as_ref()))
+                .map_err(|_| input.new_custom_error(()))?;
+            let prelude = match &prefix {
+                Some(prefix) => format!(" {} url({})", prefix.0.as_str(), uri.0.as_str()),
+                None => format!(" url({})", uri.0.as_str()),
+            };
+            return Ok(ParsedAtRulePrelude::Namespace {
+                prefix,
+                uri,
+                prelude,
+            });
         }
 
         // cssparser gives this closure a parser delimited at `;`, `{`, or the
@@ -1424,6 +1515,22 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
     ) -> Result<Self::AtRule, ()> {
         match prelude {
             ParsedAtRulePrelude::Page(_) => Err(()),
+            ParsedAtRulePrelude::Namespace {
+                prefix,
+                uri,
+                prelude,
+            } => {
+                self.namespaces
+                    .insert(prefix.unwrap_or_else(|| Atom::from("")), uri);
+                Ok(ParsedRule::OpaqueAtRule(AtRuleRecord {
+                    name: "namespace".to_owned(),
+                    prelude,
+                    body: AtRuleBody::Statement,
+                    children: Vec::new(),
+                    source_order: 0,
+                    origin: Origin::Author,
+                }))
+            }
             ParsedAtRulePrelude::Opaque { name, prelude } => {
                 Ok(ParsedRule::OpaqueAtRule(AtRuleRecord {
                     name,
@@ -1457,6 +1564,20 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                 }
                 Ok(ParsedRule::Page(selector, body))
             }
+            ParsedAtRulePrelude::Namespace { prelude, .. } => {
+                let body = consume_raw_component_values(input)?;
+                if !nested_block_has_closing_brace(self.source, input) {
+                    return Err(input.new_custom_error(()));
+                }
+                Ok(ParsedRule::OpaqueAtRule(AtRuleRecord {
+                    name: "namespace".to_owned(),
+                    prelude,
+                    body: AtRuleBody::Block(body),
+                    children: Vec::new(),
+                    source_order: 0,
+                    origin: Origin::Author,
+                }))
+            }
             ParsedAtRulePrelude::Opaque { name, prelude } => {
                 let body = consume_raw_component_values(input)?;
                 if !nested_block_has_closing_brace(self.source, input) {
@@ -1485,8 +1606,14 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
         &mut self,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
-        SelectorList::parse(&RaikiriSelectorParser, input, ParseRelative::No)
-            .map_err(|_| input.new_custom_error(()))
+        SelectorList::parse(
+            &NamespacedSelectorParser {
+                namespaces: self.namespaces,
+            },
+            input,
+            ParseRelative::No,
+        )
+        .map_err(|_| input.new_custom_error(()))
     }
 
     fn parse_block<'t>(
@@ -1696,6 +1823,7 @@ fn is_supported_selector_with_relative_anchor(
             | Component::ExplicitAnyNamespace
             | Component::ExplicitNoNamespace
             | Component::DefaultNamespace(_)
+            | Component::Namespace(_, _)
             | Component::ID(_)
             | Component::Class(_)
             | Component::AttributeInNoNamespaceExists { .. }
@@ -3530,6 +3658,22 @@ mod tests {
         assert_eq!(tree.opaque_at_rules().len(), 1);
         assert_eq!(tree.opaque_at_rules()[0].name, "charset");
         assert_eq!(tree.rules()[1].kind, CssRuleKind::Style { index: 0 });
+    }
+
+    #[test]
+    fn namespace_at_rules_feed_prefixed_and_default_selectors() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@namespace svg url(http://www.w3.org/2000/svg); \
+             @namespace url(http://www.w3.org/1999/xhtml); \
+             svg|a { color: red } a { color: blue }",
+            Origin::Author,
+        );
+
+        assert_eq!(tree.style_rules.len(), 2);
+        assert_eq!(tree.opaque_at_rules().len(), 2);
+        assert_eq!(tree.opaque_at_rules()[0].name, "namespace");
+        assert_eq!(tree.opaque_at_rules()[1].name, "namespace");
     }
 
     #[test]
