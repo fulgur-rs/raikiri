@@ -36,7 +36,7 @@ raikiri-js           = { version = "0.1.0", path = "./crates/raikiri-js" }
 
 # ── Servo (cssparser + selectors) ──────────────────────────────────────
 cssparser = "0.37"
-selectors = "0.39"
+selectors = "0.40"
 
 # ── HTML5ever ──────────────────────────────────────────────────────────
 html5ever   = "0.40"
