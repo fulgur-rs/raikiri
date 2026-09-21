@@ -8100,6 +8100,8 @@ fn selected_page_name(cascade: &CascadeResult, node_id: usize) -> Option<String>
 /// header/footer groups, and cell-internal breaks remain outside this pass.
 /// Column-direction flex containers likewise keep a direct flex item together;
 /// row-direction flex, wrapping-line, and intrinsic-item fragmentation remain
+/// outside this pass. A single explicit-column grid likewise keeps direct
+/// non-spanning items together; multi-column placement and spanning items are
 /// outside this pass.
 /// For an ordinary direct-body block whose complete text layout fits within one
 /// fragmentainer, `orphans` / `widows` can move the block intact when the
@@ -8406,6 +8408,7 @@ pub fn layout_pages_with_page_geometry(
         is_direct_body_element: bool,
         is_table_row: bool,
         is_flex_item: bool,
+        is_grid_item: bool,
         is_named: bool,
         is_float_descendant: bool,
         /// Page type inherited from the nearest containing class-A box.
@@ -8452,6 +8455,7 @@ pub fn layout_pages_with_page_geometry(
         inherited_page_name: Option<String>,
         inside_table: bool,
         flex_column_parent: bool,
+        grid_single_column_parent: bool,
         inside_flex: bool,
         inside_float: bool,
         out: &mut Vec<PageCandidate>,
@@ -8479,6 +8483,7 @@ pub fn layout_pages_with_page_geometry(
                         is_direct_body_element: false,
                         is_table_row: false,
                         is_flex_item: false,
+                        is_grid_item: false,
                         is_named: false,
                         is_float_descendant: inside_float,
                         page_name: inherited_page_name,
@@ -8520,6 +8525,7 @@ pub fn layout_pages_with_page_geometry(
                     && !inside_float
                     && !inside_flex;
                 let flex_item_candidate = flex_column_parent && !inside_float;
+                let grid_item_candidate = grid_single_column_parent && !inside_float;
                 // The table engine stores row geometry on its cells rather
                 // than on the anonymous row box. Derive the row border box
                 // from those direct cells so pagination can keep the row
@@ -8551,6 +8557,7 @@ pub fn layout_pages_with_page_geometry(
                         || is_tall_direct_absolute
                         || table_row_candidate
                         || flex_item_candidate
+                        || grid_item_candidate
                         || own_page_name.is_some()
                         || page_break_is_forced(computed.break_before)
                         || page_break_is_forced(computed.break_after));
@@ -8564,6 +8571,7 @@ pub fn layout_pages_with_page_geometry(
                         is_direct_body_element: direct_body_child,
                         is_table_row: table_row_candidate,
                         is_flex_item: flex_item_candidate,
+                        is_grid_item: grid_item_candidate,
                         is_named: own_page_name.is_some(),
                         is_float_descendant: inside_float,
                         page_name: page_name.clone(),
@@ -8599,6 +8607,18 @@ pub fn layout_pages_with_page_geometry(
                             computed.flex_direction,
                             FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
                         ),
+                        matches!(
+                            computed.display,
+                            DisplayValue::Grid | DisplayValue::InlineGrid
+                        ) && matches!(
+                            &computed.grid_template_columns,
+                            ComputedGridTemplateTracks::List(list)
+                                if list.components.len() == 1
+                                    && matches!(
+                                        list.components.first(),
+                                        Some(ComputedGridTrackListComponent::Size(_))
+                                    )
+                        ),
                         inside_flex || matches!(computed.display, DisplayValue::Flex),
                         float_subtree,
                         out,
@@ -8620,6 +8640,7 @@ pub fn layout_pages_with_page_geometry(
         0.0,
         page_step,
         None,
+        false,
         false,
         false,
         false,
@@ -8910,6 +8931,11 @@ pub fn layout_pages_with_page_geometry(
             && effective_y >= page_origin(current_page)
             && effective_y < page_origin(current_page) + page_step_at(current_page)
             && effective_y + height > page_origin(current_page) + page_step_at(current_page);
+        let grid_item_overflow = candidate.is_grid_item
+            && effective_y.is_finite()
+            && effective_y >= page_origin(current_page)
+            && effective_y < page_origin(current_page) + page_step_at(current_page)
+            && effective_y + height > page_origin(current_page) + page_step_at(current_page);
 
         let page_transition = saw_child
             && (pending_break
@@ -8917,7 +8943,8 @@ pub fn layout_pages_with_page_geometry(
                 || named_page_change
                 || page_overflow
                 || table_row_overflow
-                || flex_item_overflow);
+                || flex_item_overflow
+                || grid_item_overflow);
         if saw_child {
             // A break-after on the preceding box and a break-before (or named
             // page transition) on this box describe the same boundary, not two
