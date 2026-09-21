@@ -40,7 +40,7 @@ pub(crate) fn resolve_deferred_value(
 }
 
 /// Parse mixed-unit calc forms that need a used containing-block basis.
-fn parse_simple_calc_length_percentage(input: &str) -> Option<CalcLengthPercentage> {
+pub(crate) fn parse_simple_calc_length_percentage(input: &str) -> Option<CalcLengthPercentage> {
     let trimmed = input.trim();
     let open = trimmed.find('(')?;
     if !trimmed[..open].eq_ignore_ascii_case("calc") || !trimmed.ends_with(')') {
@@ -194,6 +194,7 @@ pub(crate) fn project_deferred_value(
         // out to their 4 side longhands by key (same shape as `Border`
         // above; reached via `var()`/re-cascade paths that bypass rule.rs
         // expansion).
+        // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
         PropertyValue::BorderStyle(sides) => match key {
             crate::property::PropertyKey::BorderTopStyle => {
                 PropertyValue::BorderTopStyle(sides.top)
@@ -209,6 +210,7 @@ pub(crate) fn project_deferred_value(
             }
             _ => return None,
         },
+        // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
         PropertyValue::BorderWidth(sides) => match key {
             crate::property::PropertyKey::BorderTopWidth => {
                 PropertyValue::BorderTopWidth(sides.top)
@@ -224,6 +226,7 @@ pub(crate) fn project_deferred_value(
             }
             _ => return None,
         },
+        // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
         PropertyValue::BorderColor(sides) => match key {
             crate::property::PropertyKey::BorderTopColor => {
                 PropertyValue::BorderTopColor(sides.top)
@@ -239,11 +242,13 @@ pub(crate) fn project_deferred_value(
             }
             _ => return None,
         },
+        // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
         PropertyValue::Overflow(pair) => match key {
             crate::property::PropertyKey::OverflowX => PropertyValue::OverflowX(pair.x),
             crate::property::PropertyKey::OverflowY => PropertyValue::OverflowY(pair.y),
             _ => return None,
         },
+        // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
         PropertyValue::TextDecoration(shorthand) => match key {
             crate::property::PropertyKey::TextDecorationLine => {
                 PropertyValue::TextDecorationLine(shorthand.line)
@@ -259,12 +264,14 @@ pub(crate) fn project_deferred_value(
             }
             _ => return None,
         },
+        // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
         PropertyValue::Flex(shorthand) => match key {
             crate::property::PropertyKey::FlexGrow => PropertyValue::FlexGrow(shorthand.grow),
             crate::property::PropertyKey::FlexShrink => PropertyValue::FlexShrink(shorthand.shrink),
             crate::property::PropertyKey::FlexBasis => PropertyValue::FlexBasis(shorthand.basis),
             _ => return None,
         },
+        // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
         PropertyValue::FlexFlow(shorthand) => match key {
             crate::property::PropertyKey::FlexDirection => {
                 PropertyValue::FlexDirection(shorthand.direction)

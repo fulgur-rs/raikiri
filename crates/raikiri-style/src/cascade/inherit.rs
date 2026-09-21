@@ -720,7 +720,7 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// 一度だけ構築し、本関数と phase 3 ([`crate::page`] の `absolutize_in_page_context`)
 /// の両方に使い回す (`inherited` は関数全体で不変なので、二重に計算しても
 /// 同じ値になる — 呼び手の doc 参照)。
-fn inherited_border_radius(value: ComputedLengthPercentage) -> Length {
+pub(crate) fn inherited_border_radius(value: ComputedLengthPercentage) -> Length {
     match value {
         ComputedLengthPercentage::Px(px) => Length::Px(px),
         ComputedLengthPercentage::Percent(percent) => Length::Percent(percent),

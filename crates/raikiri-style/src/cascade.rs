@@ -13803,6 +13803,81 @@ mod tests {
     }
 
     #[test]
+    fn parse_simple_calc_length_percentage_rejects_non_calc_prefix() {
+        assert_eq!(parse_simple_calc_length_percentage("foo(50%)"), None);
+    }
+
+    #[test]
+    fn parse_simple_calc_length_percentage_rejects_missing_closing_paren() {
+        assert_eq!(parse_simple_calc_length_percentage("calc(50%"), None);
+    }
+
+    #[test]
+    fn parse_simple_calc_length_percentage_handles_nested_parens() {
+        assert_eq!(
+            parse_simple_calc_length_percentage("calc((50%) + 10px)"),
+            Some(CalcLengthPercentage {
+                percent: 50.0,
+                px: 10.0
+            })
+        );
+    }
+
+    #[test]
+    fn parse_simple_calc_length_percentage_handles_single_term() {
+        assert_eq!(
+            parse_simple_calc_length_percentage("calc(50%)"),
+            Some(CalcLengthPercentage {
+                percent: 50.0,
+                px: 0.0
+            })
+        );
+    }
+
+    #[test]
+    fn parse_simple_calc_length_percentage_rejects_unknown_unit() {
+        assert_eq!(
+            parse_simple_calc_length_percentage("calc(50deg + 10px)"),
+            None
+        );
+    }
+
+    #[test]
+    fn inherited_border_radius_handles_percent() {
+        assert_eq!(
+            inherited_border_radius(ComputedLengthPercentage::Percent(25.0)),
+            Length::Percent(25.0)
+        );
+        assert_eq!(
+            inherited_border_radius(ComputedLengthPercentage::Px(4.0)),
+            Length::Px(4.0)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "pick_winners は空の scratch buffer を要求する")]
+    fn pick_winners_panics_on_non_empty_scratch_buffer() {
+        let mut winners: Vec<Option<RankedDecl>> = vec![Some(RankedDecl {
+            rank: 0,
+            specificity: 0,
+            source_order: 0,
+            idx: 0,
+        })];
+        pick_winners(&[], &mut winners);
+    }
+
+    #[test]
+    fn parse_simple_calc_length_percentage_rejects_non_finite_term() {
+        // `1e40` overflows f32 to infinity — the parsed term's `number` is
+        // no longer finite, which must be rejected rather than propagated
+        // into a `CalcLengthPercentage`.
+        assert_eq!(
+            parse_simple_calc_length_percentage("calc(1e40% + 10px)"),
+            None
+        );
+    }
+
+    #[test]
     fn invalid_math_declaration_is_dropped_before_cascade() {
         let cv = cascade_doc("", "div", Some("width: 10px; width: calc(foo)"));
         assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(10.0));
