@@ -1458,3 +1458,4 @@ css/css-text/white-space/break-spaces-006.html
 css/css-text/white-space/break-spaces-007.html
 css/css-text/line-breaking/line-breaking-001.html
 css/css-fonts/synthetic-oblique-out-of-capabilities-range.html
+css/css-text-decor/text-decoration-line.html
