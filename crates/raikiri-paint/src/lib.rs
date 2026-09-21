@@ -578,6 +578,38 @@ mod tests {
     }
 
     #[test]
+    fn paint_single_page_blurred_text_shadow_uses_a_filtered_layer() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("color: black; text-shadow: 3px 4px 5px red"),
+        );
+        doc.append_text(p, "blur");
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+
+        let filtered_layers = scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::PushLayer(layer) if layer.filter.is_some() => Some(layer),
+                _ => None,
+            })
+            .count();
+        assert_eq!(
+            filtered_layers, 1,
+            "blurred text-shadow should paint its glyph mask through one filtered layer"
+        );
+    }
+
+    #[test]
     fn paint_single_page_compiles_and_returns_unit() {
         let doc = Document::new();
         let rules = build_rule_tree(&doc);
