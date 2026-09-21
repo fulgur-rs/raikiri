@@ -1682,6 +1682,7 @@ pub(crate) enum ContentListMode {
 /// - Counter / Counters: CSS Lists 3 §4.7
 ///   <https://www.w3.org/TR/css-lists-3/#counter-functions>
 /// - String: CSS Content 3 §2.7.2 <https://www.w3.org/TR/css-content-3/#string-function>
+/// - Element: CSS GCPM 3 §1.2.2 <https://www.w3.org/TR/css-gcpm-3/#element-syntax>
 /// - Attr: CSS Content 3 §2.1 <https://www.w3.org/TR/css-content-3/#strings>
 /// - Target*: CSS Content 3 §2.6.1-3
 ///   <https://www.w3.org/TR/css-content-3/#target-counter>,
@@ -1741,6 +1742,12 @@ pub enum ContentComponent {
         name: SmolStr,
         fetch: StringFetchMode,
     },
+    /// `element(<custom-ident>)` — CSS GCPM 3 §1.2.2.
+    ///
+    /// The running-element name is retained for the downstream margin-box
+    /// resolver. Page-scoped first/start/last selection remains outside this
+    /// minimal single-page bridge.
+    Element { name: SmolStr },
     /// `attr(<attribute-name>)` (§2.1)。
     ///
     /// The legacy untyped form resolves a missing attribute to an empty

@@ -7911,7 +7911,7 @@ fn parse_string_set(input: &mut Parser<'_, '_>) -> Option<Vec<(SmolStr, Vec<Cont
 ///   `<content-list>` 0 items → `None`)。`counter` / `counters` / `content` /
 ///   `attr` は両 mode で spec grammar に含まれるため gate なし。
 ///
-/// `<image>` (`url()`) / `contents` / `<quote>` は function 名 dispatch では
+/// `element()` / `<image>` (`url()`) / `contents` / `<quote>` は function 名 dispatch では
 /// なく [`parse_content_list_items`] 側の bare-token branch で扱う (`<image>`
 /// は url token、`contents`/`<quote>` は bare ident であり `expect_function`
 /// にヒットしないため)。
@@ -7927,6 +7927,7 @@ fn parse_content_function(
 ) -> Option<ContentComponent> {
     match name.to_ascii_lowercase().as_str() {
         "string" if matches!(mode, ContentListMode::CssContent3) => parse_string_fn(input),
+        "element" if matches!(mode, ContentListMode::CssContent3) => parse_element_fn(input),
         "counter" => parse_counter_fn(input),
         "counters" => parse_counters_fn(input),
         "attr" => parse_attr_fn(input),
@@ -8018,6 +8019,12 @@ fn parse_string_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
         StringFetchMode::default()
     };
     Some(ContentComponent::String { name, fetch })
+}
+
+fn parse_element_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
+    Some(ContentComponent::Element {
+        name: parse_custom_ident(input)?,
+    })
 }
 
 fn parse_string_fetch(input: &mut Parser<'_, '_>) -> Option<StringFetchMode> {

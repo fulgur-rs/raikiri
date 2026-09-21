@@ -553,6 +553,9 @@ pub(crate) fn detect_dynamic_flags(content: &[ContentComponent]) -> DynamicFlags
             ContentComponent::String { .. } => {
                 has_string = true;
             }
+            ContentComponent::Element { .. } => {
+                has_content_variant = true;
+            }
             ContentComponent::TargetCounter { .. }
             | ContentComponent::TargetCounters { .. }
             | ContentComponent::TargetText { .. } => {

@@ -961,6 +961,19 @@ fn element_string_value(document: &Document, root: usize) -> String {
     raw.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+fn running_element_value(document: &Document, cascade: &CascadeResult, name: &str) -> String {
+    for (idx, computed) in cascade.computed.iter().enumerate().rev() {
+        if computed
+            .running_templates
+            .iter()
+            .any(|template| template.name.as_str() == name)
+        {
+            return element_string_value(document, idx);
+        }
+    }
+    String::new()
+}
+
 /// Resolve the last document-order `string-set` value for a page-margin
 /// `string()` reference. This is the minimal single-page bridge; paginated
 /// first/start/last scoping remains a PageContext follow-up.
@@ -1041,6 +1054,9 @@ fn resolved_margin_content(
                 // implementation.  The separator is retained for the
                 // single-value fallback; nested author scopes are future work.
                 let _ = separator;
+            }
+            ContentComponent::Element { name } => {
+                text.push_str(&running_element_value(document, cascade, name.as_str()));
             }
             ContentComponent::String { name, .. } => {
                 text.push_str(&named_string_value(document, cascade, name.as_str()));
