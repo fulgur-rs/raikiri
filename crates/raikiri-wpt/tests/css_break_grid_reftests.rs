@@ -38,6 +38,8 @@ fn css_break_grid_pairs_are_pixel_exact_at_800x600() {
         "css/css-break/grid/grid-item-infinite-expansion.html",
         "css/css-break/grid/monolithic-overflow-005.html",
         "css/css-break/grid/monolithic-overflow-006.html",
+        "css/css-break/grid/monolithic-overflow-007.html",
+        "css/css-break/grid/monolithic-overflow-008.html",
         "css/css-break/grid/monolithic-overflow-009.html",
         "css/css-break/grid/subgrid/subgrid-container-fragmentation-001.html",
         "css/css-break/grid/subgrid/subgrid-container-fragmentation-002.html",
