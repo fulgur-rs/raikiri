@@ -4501,6 +4501,10 @@ pub enum FloatValue {
     InlineStart,
     /// `inline-end` — logical equivalent of `left`/`right` (CSS Logical Properties §3).
     InlineEnd,
+    /// `footnote` — removes the box from normal flow and places it in the
+    /// footnote area of the page containing its anchor (CSS Generated Content
+    /// for Paged Media).
+    Footnote,
 }
 
 /// `clear` property の value。

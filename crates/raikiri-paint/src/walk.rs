@@ -2875,6 +2875,7 @@ fn paint_document_impl(
                         | FloatValue::Right
                         | FloatValue::InlineStart
                         | FloatValue::InlineEnd
+                        | FloatValue::Footnote
                 ) {
                     true
                 } else {
