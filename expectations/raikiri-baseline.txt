@@ -1465,3 +1465,8 @@ css/css-color/background-color-rgb-001.html
 css/css-color/background-color-hsl-001.html
 css/css-borders/border-radius-currentcolor.html
 css/css-borders/borders-on-sub-unit-sized-elements.html
+css/css-transforms/change-transform-origin-property.html
+css/css-transforms/css-skew-002.html
+css/css-transforms/transform-origin-003.html
+css/css-transforms/transform-origin-004.html
+css/css-transforms/transform-origin-005.html
