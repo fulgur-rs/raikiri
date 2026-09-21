@@ -3763,7 +3763,10 @@ fn paint_document_impl(
                             if document.get_node(child).is_some_and(|child_node| {
                                 matches!(
                                     cascade.computed[child].display,
-                                    DisplayValue::Grid | DisplayValue::InlineGrid
+                                    DisplayValue::Grid
+                                        | DisplayValue::InlineGrid
+                                        | DisplayValue::Table
+                                        | DisplayValue::InlineTable
                                 ) && child_node.kind() == NodeKind::Element
                             }) =>
                         {

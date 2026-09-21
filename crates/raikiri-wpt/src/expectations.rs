@@ -1294,6 +1294,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Break Grid multicolumn fragmentainer paint slice (+30).
         // + CSS Break Grid exact follow-up sweep (+2).
         // + CSS Break Flexbox row-line break propagation slice (+2).
+        // + CSS Break Table cell border fragment paint slice (+2, replacing 2 stale pins).
         assert_eq!(set.baseline.entries.len(), 1230);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
