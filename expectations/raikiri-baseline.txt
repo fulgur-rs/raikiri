@@ -1470,3 +1470,5 @@ css/css-transforms/css-skew-002.html
 css/css-transforms/transform-origin-003.html
 css/css-transforms/transform-origin-004.html
 css/css-transforms/transform-origin-005.html
+css/css-pseudo/active-selection-056.html
+css/css-pseudo/first-letter-003.html
