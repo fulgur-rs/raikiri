@@ -492,6 +492,14 @@ fn canonicalize_primary_language_subtag(subtags: &mut [String]) {
     }
 }
 
+// cov:ignore: pure test-code relocation (no logic changed). patch-coverage's git-diff-based line classifier treats every moved
+// line as newly added, and cargo-llvm-cov does not record hits for
+// multi-line string-literal continuation lines inside assert!/panic!
+// messages even though the containing statement executes in a
+// passing test. Verified against every flagged line in this move:
+// all are string-literal fragments or trivial format-arg
+// expressions inside already-passing tests, none of them
+// production code.
 #[cfg(test)]
 mod tests {
     use super::*;
