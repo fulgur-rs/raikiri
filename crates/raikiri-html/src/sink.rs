@@ -70,7 +70,7 @@ impl RaikiriTreeSink {
     /// ここでは Document への tag + default Style 登録と
     /// metadata table への full-fidelity 保存のみ行う。
     fn make_element(&self, name: QualName, attrs: Vec<Attribute>) -> usize {
-        let tag: SmolStr = name.local.as_ref().into();
+        let tag: SmolStr = AsRef::<str>::as_ref(&name.local).into();
         let idx =
             self.document
                 .borrow_mut()
@@ -390,7 +390,7 @@ impl TreeSink for RaikiriTreeSink {
         let Some(name) = qual_names.get(handle) else {
             return false;
         };
-        if name.ns != ns!(mathml) || name.local.as_ref() != "annotation-xml" {
+        if name.ns != ns!(mathml) || AsRef::<str>::as_ref(&name.local) != "annotation-xml" {
             return false;
         }
         let attributes = self.attributes.borrow();
@@ -403,7 +403,7 @@ impl TreeSink for RaikiriTreeSink {
         // null-ns encoding attr を取り、その value のみで判定する。
         let Some(encoding) = attrs
             .iter()
-            .find(|a| a.name.ns == ns!() && a.name.local.as_ref() == "encoding")
+            .find(|a| a.name.ns == ns!() && AsRef::<str>::as_ref(&a.name.local) == "encoding")
         else {
             return false;
         };
@@ -764,7 +764,7 @@ fn wire_side_tables(
         // HTML default namespace は Node.namespace = None のまま (optimized path)。
         // それ以外の svg / mathml / xml / ... は URI string を SmolStr で格納。
         if name.ns != ns!(html) {
-            doc.set_element_namespace(*idx, Some(SmolStr::new(name.ns.as_ref())));
+            doc.set_element_namespace(*idx, Some(SmolStr::new(AsRef::<str>::as_ref(&name.ns))));
         }
     }
     for (idx, attrs) in attributes {
@@ -776,7 +776,7 @@ fn wire_side_tables(
             if a.name.ns != ns!() {
                 continue;
             }
-            let local = a.name.local.as_ref();
+            let local = AsRef::<str>::as_ref(&a.name.local);
             if local == "style" {
                 // 空文字列 `style=""` は Element trait contract 上 None なので
                 // ここでは boundary 正規化せず raw 値のまま Node に格納
