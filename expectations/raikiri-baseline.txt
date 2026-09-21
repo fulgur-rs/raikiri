@@ -1533,4 +1533,5 @@ css/css-page/layers-001-print.html
 css/css-page/layers-002-print.html
 css/css-page/layers-003-print.html
 css/css-page/layers-004-print.html
+css/css-break/ruby-003.html
 css/css-images/image-orientation/image-orientation-list-style-image.html
