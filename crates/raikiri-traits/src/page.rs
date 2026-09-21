@@ -454,13 +454,12 @@ pub enum GcpmDirective {
 ///   は `separator`。design doc に verbatim 従い `sep` を使う。[`TryFrom`] impl
 ///   で `separator → sep` を map。
 ///
-/// # `Element` variant — [`TryFrom<ContentComponent>`] impl gap
+/// # `Element` variant
 ///
-/// `ContentValueItem::Element` は design doc §7.1 line 1931 の
-/// canonical variant だが、`ContentComponent::Element` は raikiri-style に
-/// 未実装。ゆえに [`TryFrom`] impl 経路では現在到達不能で、raikiri-dom 内部の
-/// running-template pipeline producer が直接 construct する。
-/// `ContentComponent::Element` 実装後に bridge arm を追加予定。
+/// `ContentValueItem::Element` is the design doc §7.1 line 1931
+/// canonical representation of `element(name)`. The style parser and
+/// bridge retain this name so the paint-side running-template resolver
+/// can select the matching `position: running(name)` element.
 ///
 /// (design doc §7.1 line 1926-1937 の canonical 10 variant で、以前の
 /// uninhabited placeholder を置き換え済み。
@@ -724,6 +723,9 @@ impl TryFrom<ContentComponent> for ContentValueItem {
             ContentComponent::String { name, fetch } => Self::String {
                 name: Symbol::new(name),
                 fetch,
+            },
+            ContentComponent::Element { name } => Self::Element {
+                name: Symbol::new(name),
             },
             ContentComponent::Attr { name } => Self::Attr {
                 name: Symbol::new(name),

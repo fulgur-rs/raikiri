@@ -532,6 +532,15 @@ impl Node {
             .map(|attribute| attribute.value.as_str())
     }
 
+    /// Return the raw character data for a text node.
+    #[inline]
+    pub fn text_content(&self) -> Option<&str> {
+        match &self.data {
+            NodeData::Text(text) => Some(text.text_content.as_str()),
+            _ => None,
+        }
+    }
+
     /// Text の場合 text_layout を、それ以外は `None` を返す。
     ///
     /// 旧 `pub text_layout: Option<parley::Layout<()>>` field の accessor 版。

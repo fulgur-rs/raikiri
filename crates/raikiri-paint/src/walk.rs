@@ -944,6 +944,36 @@ fn format_counter(value: i32, style: &CounterStyle, registry: &CounterStyleRegis
     }
 }
 
+fn element_string_value(document: &Document, root: usize) -> String {
+    let mut stack = vec![root];
+    let mut raw = String::new();
+    while let Some(idx) = stack.pop() {
+        let Some(node) = document.get_node(idx) else {
+            continue;
+        };
+        if let Some(text) = node.text_content() {
+            raw.push_str(text);
+        }
+        for &child in node.children.iter().rev() {
+            stack.push(child);
+        }
+    }
+    raw.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn running_element_value(document: &Document, cascade: &CascadeResult, name: &str) -> String {
+    for (idx, computed) in cascade.computed.iter().enumerate().rev() {
+        if computed
+            .running_templates
+            .iter()
+            .any(|template| template.name.as_str() == name)
+        {
+            return element_string_value(document, idx);
+        }
+    }
+    String::new()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn resolved_margin_content(
     components: &[ContentComponent],
@@ -998,6 +1028,9 @@ fn resolved_margin_content(
                 // implementation.  The separator is retained for the
                 // single-value fallback; nested author scopes are future work.
                 let _ = separator;
+            }
+            ContentComponent::Element { name } => {
+                text.push_str(&running_element_value(document, cascade, name.as_str()));
             }
             ContentComponent::Quote(keyword) => match keyword {
                 QuoteKeyword::OpenQuote => {
