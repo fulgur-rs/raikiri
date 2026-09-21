@@ -111,17 +111,13 @@ pub fn viewport_to_page_box(viewport: &Viewport) -> PageBox {
     pb
 }
 
-/// `html` を `PageBox` でレイアウトし `Vec<PageScene>` を生成する low-level helper.
-///
-/// `layout_single_page` + `build_page_scene` の薄いラップ。将来 `plan` /
-/// `render_streaming` が実装された際に本関数の内部を差し替えることで
-/// `PageStream` streaming pipeline への段階的移行が可能になる。
-///
-/// # Errors
-/// - `RenderError::Parse` — HTML parse 失敗
-/// - `RenderError::Layout` — layout 失敗 ( body 欠落 / taffy error / parley shape error )
+struct PageRenderData {
+    dom: raikiri_dom::Document,
+    pages: Vec<(PageScene, raikiri::CascadeResult, PageBox)>,
+}
+
 #[allow(clippy::result_large_err)]
-pub fn html_to_page_scenes(html: &str, page_box: PageBox) -> Result<Vec<PageScene>, RenderError> {
+fn layout_page_render_data(html: &str, page_box: PageBox) -> Result<PageRenderData, RenderError> {
     let opts = ParseOptions {
         extra_stylesheets: &[],
         network: None,
@@ -145,12 +141,11 @@ pub fn html_to_page_scenes(html: &str, page_box: PageBox) -> Result<Vec<PageScen
     } else {
         page_box
     };
-    let font_ctx = FontContext::new();
     let slices = raikiri_dom::layout_pages(
         &mut uncascaded.dom,
         &first_cascade,
         first_page_box,
-        font_ctx,
+        FontContext::new(),
     )
     .map_err(RenderError::Layout)?;
 
@@ -170,16 +165,55 @@ pub fn html_to_page_scenes(html: &str, page_box: PageBox) -> Result<Vec<PageScen
         } else {
             first_page_box
         };
-        pages.push(build_page_scene_for_page_named(
+        let scene = build_page_scene_for_page_named(
             &uncascaded.dom,
             &cascade,
             effective_page_box,
             slice.page_index,
             slice.content_origin_y,
             slice.page_name,
-        ));
+        );
+        pages.push((scene, cascade, effective_page_box));
     }
-    Ok(pages)
+    Ok(PageRenderData {
+        dom: uncascaded.dom,
+        pages,
+    })
+}
+
+/// `html` を `PageBox` でレイアウトし、ページごとの `PageScene` を生成する。
+///
+/// 既存の single-page caller は先頭 scene を使える。複数ページ caller は
+/// returned vector を順番に処理する。
+///
+/// # Errors
+/// - `RenderError::Parse` — HTML parse 失敗
+/// - `RenderError::Layout` — layout 失敗 ( body 欠落 / taffy error / parley shape error )
+#[allow(clippy::result_large_err)]
+pub fn html_to_page_scenes(html: &str, page_box: PageBox) -> Result<Vec<PageScene>, RenderError> {
+    Ok(layout_page_render_data(html, page_box)?
+        .pages
+        .into_iter()
+        .map(|(scene, _, _)| scene)
+        .collect())
+}
+
+/// Render every paginated page as a separate PNG.
+///
+/// The existing [`html_to_png_via_page_stream`] remains a compatibility helper
+/// that returns only the first page. New consumers should use this function
+/// when the document may contain forced page breaks.
+#[allow(clippy::result_large_err)]
+pub fn html_to_png_pages_via_page_stream(
+    html: &str,
+    page_box: PageBox,
+) -> Result<Vec<Vec<u8>>, RenderError> {
+    let data = layout_page_render_data(html, page_box)?;
+    Ok(data
+        .pages
+        .iter()
+        .map(|(scene, cascade, page_box)| scene.rasterize(&data.dom, cascade, *page_box))
+        .collect())
 }
 
 /// `blitz_adapter::parse_and_layout` 相当を raikiri で置換する 実装関数。
@@ -256,6 +290,45 @@ mod tests {
         <p>Thank you for your purchase.</p>
         <table><tr><td>Item</td><td>Price</td></tr><tr><td>Widget</td><td>$10</td></tr></table>
     </body></html>"#;
+
+    const TWO_PAGE_BREAK_HTML: &str = r#"<!DOCTYPE html><html><head><style>
+        @page { margin: 0 }
+        body { margin: 0 }
+        .first { height: 20px; break-after: page }
+        .second { height: 20px }
+    </style></head><body>
+        <div class="first">first</div><div class="second">second</div>
+    </body></html>"#;
+
+    #[test]
+    fn forced_break_after_emits_two_page_scenes() {
+        let pages = html_to_page_scenes(TWO_PAGE_BREAK_HTML, PageBox::A4).expect("layout");
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0].page_metadata.page_index, 0);
+        assert_eq!(pages[1].page_metadata.page_index, 1);
+        assert!(pages[1].content_origin_y > pages[0].content_origin_y);
+    }
+
+    #[test]
+    fn forced_break_after_renders_two_png_pages() {
+        let pages = html_to_png_pages_via_page_stream(TWO_PAGE_BREAK_HTML, PageBox::A4)
+            .expect("render pages");
+        assert_eq!(pages.len(), 2);
+        for png in pages {
+            assert!(png.len() > 8);
+            assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        }
+    }
+
+    #[test]
+    fn legacy_page_break_before_emits_two_page_scenes() {
+        let html = TWO_PAGE_BREAK_HTML.replace(
+            ".second { height: 20px }",
+            ".second { height: 20px; page-break-before: always }",
+        );
+        let pages = html_to_page_scenes(&html, PageBox::A4).expect("layout");
+        assert_eq!(pages.len(), 2);
+    }
 
     #[test]
     fn receipt_html_to_page_scenes_produces_one_page() {

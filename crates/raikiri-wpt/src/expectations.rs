@@ -1286,7 +1286,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Text shaping slice (+18).
         // + CSS Text text-autospace slice (+4).
         // + CSS Images gradients and CSS Page image-resource slices (+6).
-        assert_eq!(set.baseline.entries.len(), 1132);
+        // + CSS Break forced page-break reftest (+1).
+        assert_eq!(set.baseline.entries.len(), 1133);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
