@@ -332,16 +332,16 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 /// が spec 違反になる。正しい fix は「shorthand を cascade 段に**到達させない**」
 /// 方向にしかなく、実装はそちらを採っている:
 ///
-/// - **inline style** — [`collect_cascaded`] が
+/// - **inline style** — [`super::collect::collect_cascaded`] が
 ///   [`crate::rule::parse_declaration_block`] を通すので parse 出口で展開済み。
-/// - **stylesheet rule** — [`collect_cascaded`] が candidate に積む直前に
+/// - **stylesheet rule** — [`super::collect::collect_cascaded`] が candidate に積む直前に
 ///   [`crate::rule::expand_shorthand_into`] を通す。
 ///   parse 出口の展開だけでは post-parse mutation 経路を守れないため
 ///   (この経路は crate 内限定 — 根拠は
 ///   [`crate::rule::expand_shorthand_into`] doc が canonical)。**shorthand が
 ///   到達したら既に bug** なので削除可能な dead defensive code ではない。
 ///
-/// 展開後は同一 key の longhand が複数 candidate になるが、[`beats`] の `>=`
+/// 展開後は同一 key の longhand が複数 candidate になるが、[`super::collect::beats`] の `>=`
 /// が「同 rank/spec/order なら後方勝ち」を与えるので §6.1 の order of appearance
 /// がそのまま成立する。
 ///

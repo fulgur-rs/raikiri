@@ -67,7 +67,7 @@ use super::resolve_directionality;
 ///   コメント)。値付き形態の case-sensitivity 解決は
 ///   [`resolve_case_sensitivity`] 参照
 /// - `Component::NonTSPseudoClass(PseudoClass::Lang(_) | PseudoClass::Dir(_))`
-///   — [`language_range_matches`] /
+///   — [`super::lang::language_range_matches`] /
 ///   [`resolve_directionality`] 経由、`dom` + `ancestors` (自身の祖先 chain)
 ///   を使って ancestor-inherited な effective language / directionality を
 ///   解決する。`PseudoClass::Hover` / `PseudoClass::Active` はこの arm 内で
@@ -77,7 +77,7 @@ use super::resolve_directionality;
 ///   iff `ancestors.is_empty()`. Both call sites
 ///   ([`match_complex_selector_list`] for the rightmost compound,
 ///   [`match_from_element`] for compounds reached by crossing a combinator)
-///   pass `ancestors` root-first/immediate-parent-last — [`collect_cascaded`]'s
+///   pass `ancestors` root-first/immediate-parent-last — [`super::collect::collect_cascaded`]'s
 ///   doc establishes that only `StyleNodeKind::Element` nodes are ever
 ///   pushed onto `ancestor_path`, so an empty `ancestors` slice means "no
 ///   element ancestor", i.e. this element is the root element of the
@@ -126,7 +126,7 @@ use super::resolve_directionality;
 /// `ruletree.rs` `is_supported_selector_list` のコメント) は
 /// `is_supported_selector_list` が rule tree 構築時点で drop 済のはずだが、
 /// safety net として引き続き match fail する。
-fn compound_matches<D: StyleDom, E: StyleElement>(
+pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
     dom: &D,
     iter: &mut SelectorIter<'_, RaikiriSelectorImpl>,
     elem: &E,
@@ -427,7 +427,7 @@ fn is_document_white_space(c: char) -> bool {
 /// here regardless) fall through to "does not affect emptiness", matching
 /// the spec text's "comments, processing instructions, and other nodes
 /// must not affect" clause.
-fn matches_empty<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> bool {
+pub(crate) fn matches_empty<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> bool {
     dom.child_ids(elem_id)
         .all(|child_id| match dom.node(child_id) {
             Some(node) => match node.kind() {
@@ -452,7 +452,7 @@ fn matches_empty<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> bool {
 }
 
 #[derive(Clone, Copy)]
-struct SiblingMatchContext<'a> {
+pub(crate) struct SiblingMatchContext<'a> {
     selector_filter: Option<&'a [Selector<RaikiriSelectorImpl>]>,
     ancestors: &'a [StyleNodeId],
     quirks_mode: StyleQuirksMode,
@@ -490,7 +490,7 @@ struct SiblingMatchContext<'a> {
 /// at least one selector in that list. The candidate is evaluated with the
 /// same `ancestors` and `quirks_mode` as the element being matched, because
 /// all direct siblings share that parent context.
-fn sibling_position<D: StyleDom>(
+pub(crate) fn sibling_position<D: StyleDom>(
     dom: &D,
     parent_id: StyleNodeId,
     elem_id: StyleNodeId,
@@ -701,7 +701,7 @@ fn matches_nth_position(
 ///      兄弟) に沿って次の compound を判定する。
 ///
 /// `ancestors` は root 側が先頭、直近の親が末尾の順 (`ancestors.last()` ==
-/// `elem` の親) — [`collect_cascaded`] の DFS 訪問順から構築される
+/// `elem` の親) — [`super::collect::collect_cascaded`] の DFS 訪問順から構築される
 /// (同関数の doc 参照)。`elem_id` は `elem` 自身の id — sibling combinator
 /// が「`elem` の親の子リストの中で `elem` より前にいる
 /// のは誰か」を [`StyleDom::child_ids`] から直接求める際の探索終端として
@@ -1152,7 +1152,7 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 /// # 親の解決: `ancestors.last()` の空スライス fallback
 ///
 /// `ancestor_path` は **Element kind の node のみ**を積む
-/// ([`collect_cascaded`] doc 参照) ので、`current_id` の親が
+/// ([`super::collect::collect_cascaded`] doc 参照) ので、`current_id` の親が
 /// [`StyleNodeKind::Document`] root 自身であるとき (= document 直下の
 /// element、`<html>` 等) `ancestors` は空になる — `Child`/`Descendant` は
 /// この場合を「親が compound に一致し得ない」= 不一致として正しく扱う
@@ -1176,7 +1176,7 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 /// [`Combinator::PseudoElement`] (`::before`/`::after`) は事情が異なる —
 /// 今はもう parse error ではなく、`SelectorList` に普通に乗って rule tree
 /// にも残る (`ruletree.rs` `is_supported_selector` が受理する) が、
-/// [`collect_cascaded`] が [`selector_matches_pseudo_element`] という
+/// [`super::collect::collect_cascaded`] が [`selector_matches_pseudo_element`] という
 /// 独立した matcher へ**この関数を経由させる前に**振り分けるため、
 /// [`match_combinator_chain`] のどちらの呼び出し元 ([`selector_matches`] /
 /// [`match_from_element`] 自身の再帰) もこの combinator を渡すことは無い。
@@ -1186,7 +1186,7 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 ///
 /// # Spec provenance note
 ///
-/// この doc および [`match_complex_selector_list`] / [`collect_cascaded`]
+/// この doc および [`match_complex_selector_list`] / [`super::collect::collect_cascaded`]
 /// が引用する verbatim 文言はすべて、`https://www.w3.org/TR/selectors-4/`
 /// への直接 WebFetch がページ全体の大きさのため section 14 (Combinators) は
 /// おろか `#complex` (§4) にすら到達する前に繰り返し切り詰められたことを
@@ -1676,7 +1676,7 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
 /// `parent_id`'s direct children (document order) が `Element` kind かつ
 /// [`StyleNode::is_in_document`] であるかを判定する共有述語。
 /// [`immediate_preceding_sibling`] と [`match_combinator_chain`] の
-/// `LaterSibling` arm の両方から使う — [`collect_cascaded`] が
+/// `LaterSibling` arm の両方から使う — [`super::collect::collect_cascaded`] が
 /// `ancestor_path` に積む前に行う `!node.is_in_document() => continue` gate
 /// (同関数の doc 参照) と同じ基準を、sibling 側の候補選定でも揃えるための
 /// 抽出 — 揃えないと `<template>` 子孫のような
@@ -1746,7 +1746,7 @@ fn immediate_preceding_sibling<D: StyleDom>(
 /// 設計: `StyleElement` は [`StyleDom::NodeRef`]/[`StyleNode::Element`] と
 /// いう GAT 経由の型で、呼び出しをまたいで別の借用ライフタイムの値を
 /// 持ち回るにはシグネチャが煩雑になる — id は `Copy` なのでこの受け渡しには
-/// 明らかに軽量。[`collect_cascaded`] 側で既に解決済みの `elem` を再利用
+/// 明らかに軽量。[`super::collect::collect_cascaded`] 側で既に解決済みの `elem` を再利用
 /// しない分、候補 1 段ごとに `dom.node()`/`as_element()` を 1 回余分に
 /// 呼ぶが、raikiri-style crate-internal な `#[cfg(test)]` 限定 mock
 /// (`TestDoc`) / raikiri-dom の実装いずれも arena index 参照相当の安価な

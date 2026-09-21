@@ -27,27 +27,43 @@
 //! winner 適用の途中で絶対化することはできない)。
 
 use std::collections::HashMap;
+// The following imports are consumed only by `mod tests` below (via its
+// `use super::*;`), never by this module's own top-level API
+// (`CascadeResult`/`cascade`/`cascade_with_media_context*`). `cargo clippy
+// --all-targets` lints the plain (non-test) lib target separately from the
+// test target, where these are genuinely unused — `cfg_attr` scopes the
+// allow to exactly that target rather than masking a real future gap.
+#[cfg_attr(not(test), allow(unused_imports))]
 use std::collections::HashSet;
 
+#[cfg_attr(not(test), allow(unused_imports))]
 use cssparser::{Parser, ParserInput};
+#[cfg_attr(not(test), allow(unused_imports))]
 use selectors::parser::SelectorList;
 
+#[cfg_attr(not(test), allow(unused_imports))]
 use crate::computed::{ComputedValues, CustomPropertyEnvironment};
 use crate::counter_style::CounterStyleRegistry;
 use crate::error::CascadeError;
 use crate::media::MediaContext;
 use crate::page::{PageCascadeResult, PageContextQuery, PageInheritance, cascade_page};
+#[cfg_attr(not(test), allow(unused_imports))]
 use crate::property::{
     CustomProperty, DeferredValue, FontWeightValue, MAX_SUBSTITUTED_VALUE_BYTES, RelativeFontSize,
     Sides, WritingMode, parse_value,
 };
+#[cfg_attr(not(test), allow(unused_imports))]
 use crate::resolve::ResolveContext;
+#[cfg_attr(not(test), allow(unused_imports))]
 use crate::ruletree::Origin;
 use crate::ruletree::RuleTree;
+#[cfg_attr(not(test), allow(unused_imports))]
 use crate::specified::SpecifiedValues;
+#[cfg_attr(not(test), allow(unused_imports))]
 use crate::style_dom::{
     StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind, StyleQuirksMode,
 };
+#[cfg_attr(not(test), allow(unused_imports))]
 use crate::{PseudoElem, RaikiriSelectorImpl};
 
 /// Cascade 結果。
@@ -272,12 +288,19 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
 mod collect;
 pub(crate) use collect::*;
 mod selector_match;
+// Re-exported purely so `mod tests`'s `use super::*;` can reach these by
+// bare name — this module's own top-level API never calls into
+// selector_match directly (that traffic all flows through collect.rs and
+// html_quirks.rs's own direct `use super::selector_match::{...};` imports).
+#[cfg_attr(not(test), allow(unused_imports))]
 pub(crate) use selector_match::*;
 mod lang;
+#[cfg_attr(not(test), allow(unused_imports))]
 pub(crate) use lang::*;
 mod directionality;
 pub(crate) use directionality::*;
 mod html_quirks;
+#[cfg_attr(not(test), allow(unused_imports))]
 pub(crate) use html_quirks::*;
 mod custom_property;
 pub(crate) use custom_property::*;

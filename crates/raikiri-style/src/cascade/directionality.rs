@@ -1,7 +1,7 @@
 use crate::Direction;
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 
-/// `PseudoClass::Dir` arm of [`compound_matches`] — resolves the element's
+/// `PseudoClass::Dir` arm of [`super::selector_match::compound_matches`] — resolves the element's
 /// **directionality** per HTML Living Standard §3.2.6.4 "The `dir`
 /// attribute" (<https://html.spec.whatwg.org/multipage/dom.html#the-directionality>)
 /// simplified as documented in the sections below:
@@ -84,12 +84,12 @@ pub(crate) fn resolve_directionality<D: StyleDom, E: StyleElement>(
 /// enumerated attribute with the following keywords and states`, same
 /// fetch) — same posture as this crate's other HTML-enumerated-value
 /// comparisons (e.g. `elem.tag_name()`'s `eq_ignore_ascii_case` in
-/// [`compound_matches`]). Missing or invalid values (anything other than
+/// [`super::selector_match::compound_matches`]). Missing or invalid values (anything other than
 /// `ltr`/`rtl`/`auto`) both resolve to `Undefined` per HTML LS's own
 /// "missing value default and invalid value default are both the Undefined
 /// state".
 ///
-/// # HTML-namespace-only, unlike [`effective_language`]'s `lang` reads
+/// # HTML-namespace-only, unlike [`super::lang::effective_language`]'s `lang` reads
 ///
 /// The same fetch continues, immediately after the quoted algorithm:
 ///
@@ -108,13 +108,13 @@ pub(crate) fn resolve_directionality<D: StyleDom, E: StyleElement>(
 /// This is a *narrower* allowlist than HTML's `lang` step in the same
 /// algorithm ("If the node is an HTML element **or an element in the SVG
 /// namespace**, and it has a lang in no namespace attribute set" — quoted in
-/// full on [`effective_language`]'s doc, gated by that function's own
-/// [`own_html_or_svg_lang_attribute`] helper): both `dir` (here) and `lang`
+/// full on [`super::lang::effective_language`]'s doc, gated by that function's own
+/// [`super::lang::own_html_or_svg_lang_attribute`] helper): both `dir` (here) and `lang`
 /// gate on `elem.namespace_uri()`, but `dir` is HTML-only (1-element
 /// allowlist — the "only defined for HTML elements" quote above has no SVG
 /// carve-out) while `lang` is HTML-**or**-SVG (2-element allowlist). The
 /// difference is allowlist *size*, not gate-vs-no-gate — do not widen this
-/// function's allowlist to match [`own_html_or_svg_lang_attribute`]'s; `dir`
+/// function's allowlist to match [`super::lang::own_html_or_svg_lang_attribute`]'s; `dir`
 /// genuinely has no SVG exception in the quoted algorithm.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DirAttributeState {
@@ -149,7 +149,7 @@ fn own_dir_attribute_state<E: StyleElement>(elem: &E) -> DirAttributeState {
 /// winner (the walk keeps going past it toward that ancestor's own parent).
 /// See [`own_dir_attribute_state`]'s doc for the full 4-state read this
 /// delegates to, including the namespace gate and case-insensitivity.
-fn own_explicit_direction<E: StyleElement>(elem: &E) -> Option<Direction> {
+pub(crate) fn own_explicit_direction<E: StyleElement>(elem: &E) -> Option<Direction> {
     match own_dir_attribute_state(elem) {
         DirAttributeState::Ltr => Some(Direction::Ltr),
         DirAttributeState::Rtl => Some(Direction::Rtl),
@@ -238,7 +238,7 @@ fn contained_text_auto_directionality<D: StyleDom>(
 /// and applies [`text_node_first_strong_direction`] to text nodes. Comment /
 /// processing-instruction / document-fragment / document nodes are none of
 /// "text node" or "element node" and so never contribute, matching how
-/// [`matches_empty`] / [`is_substantial_node`] treat the same node kinds.
+/// [`super::selector_match::matches_empty`] / [`super::html_quirks::is_substantial_node`] treat the same node kinds.
 fn auto_text_scan_subtree<D: StyleDom>(dom: &D, node_id: StyleNodeId) -> Option<Direction> {
     let node = dom.node(node_id)?;
     match node.kind() {
@@ -1161,7 +1161,7 @@ pub(crate) const STRONG_L_NON_ALPHABETIC_RANGES: &[(u32, u32)] = &[
 /// <https://www.unicode.org/Public/UCD/latest/ucd/extracted/DerivedBidiClass.txt>)
 /// — implementing that in full is a multi-thousand-range data table on its
 /// own, comparable in scope to the RFC4647/BCP47 canonicalization table
-/// [`language_range_matches`]'s doc similarly declines to bring in for a
+/// [`super::lang::language_range_matches`]'s doc similarly declines to bring in for a
 /// different feature. This function instead hard-codes exactly the ranges
 /// that same UCD file's own "`@missing`" comments give as the **default**
 /// Bidi_Class for every script block the Unicode Standard reserves for

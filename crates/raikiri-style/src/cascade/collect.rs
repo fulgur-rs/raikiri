@@ -105,7 +105,7 @@ pub(crate) type CustomCascadedDecl = (CustomProperty, bool, Origin, Specificity,
 /// **1,020 allocs / 64,744 bytes は本 struct が触れていない
 /// `dom.child_ids(id).collect()` 行**に由来していた (同じ doc でその行だけを
 /// 単独実行して確認、当時は本 struct の対象外)。この残差は、
-/// [`collect_cascaded`] / [`resolve_inheritance`] 双方の呼び出し箇所を「捨て
+/// [`collect_cascaded`] / [`super::inherit::resolve_inheritance`] 双方の呼び出し箇所を「捨て
 /// `Vec` へ `collect` して `rev()`」から「`stack` へ直接 `extend` してから
 /// 追加分だけ in-place `reverse()`」に書き換えることで解消済み — 中間
 /// allocation はもう存在しない (同じ形の第 3 の call site だった
@@ -122,7 +122,7 @@ pub(crate) type CustomCascadedDecl = (CustomProperty, bool, Origin, Specificity,
 /// あり、**範囲外にならず静かに別 node の宣言を読む** 経路がある。arena 化で新たに生まれる同型の
 /// 危険は「[`candidates`](Self::candidates) を経由せず、`decls` 全体や
 /// `decls[range.start..]` のような**部分的に間違ったスライス**を
-/// [`apply_winners`] に渡してしまう」こと — この場合も範囲外にはならず、
+/// [`super::inherit::apply_winners`] に渡してしまう」こと — この場合も範囲外にはならず、
 /// 別 node の候補を静かに拾う。通常の呼び出し側 (実装コード) には
 /// [`candidates`](Self::candidates) だけを使わせることで、
 /// 「この node 自身の区間ちょうど」以外のスライスを組み立てさせない。
@@ -132,9 +132,9 @@ pub(crate) type CustomCascadedDecl = (CustomProperty, bool, Origin, Specificity,
 /// (常に `candidates`/`custom_candidates`/`pseudo_candidates`/
 /// `pseudo_custom_candidates` 経由)。
 ///
-/// `pub(crate)` は [`resolve_inheritance`] 自身が `pub(crate)` (他 module の
+/// `pub(crate)` は [`super::inherit::resolve_inheritance`] 自身が `pub(crate)` (他 module の
 /// doc からの intra-doc link のため) であることに追随するだけで、他 module
-/// から構築/操作されることは想定していない — 構築は [`cascade`] が行い、
+/// から構築/操作されることは想定していない — 構築は [`super::cascade`] が行い、
 /// 内容の書き込みは [`collect_cascaded`] に閉じている (いずれも本 module)。
 pub(crate) struct CascadedArena {
     /// 全 node の candidate を document 内 visit 順で連結した flat 領域。
@@ -248,7 +248,7 @@ fn push_cascaded_decl(
 /// - slot が `Copy` になり `Drop` を持たないので、slot の reset が
 ///   [`Option::take`] だけで済む (buffer 全体を drop / 再確保しなくてよい)。
 /// - 敗者を clone しなくなる。従来は候補 1 つごとに `value.clone()` してから
-///   比較で捨てていたが、clone は winner を [`apply_value`] に渡す 1 回だけになる。
+///   比較で捨てていたが、clone は winner を [`super::inherit::apply_value`] に渡す 1 回だけになる。
 ///
 /// sibling の [`CascadedDecl`] は tuple alias のままだが、そちらは常に named
 /// binding へ destructure され positional access されない。本型は [`beats`] が
@@ -436,7 +436,7 @@ pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
 /// その node の区間として登録する。次の node の処理が始まるまで他の push が
 /// 割り込まないことが「区間が連続」の根拠であり、
 /// [`CascadedArena::candidates`] が返す slice の index が
-/// [`pick_winners`]/[`apply_winners`] にとって**その node 自身の**
+/// [`pick_winners`]/[`super::inherit::apply_winners`] にとって**その node 自身の**
 /// `candidates` 内 index であり続ける前提そのもの (global index space を
 /// そのまま渡すと壊れる、という点に注意)。
 // Keep the default-context helper as the stable internal entry point named by
@@ -763,15 +763,15 @@ pub(crate) fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specif
 /// slot 配列にすると allocation は buffer が最大 index まで育つ最初の数 node
 /// だけで済み、以降の node は再利用で 0 alloc になる。
 ///
-/// 唯一の caller は [`apply_winners`]。buffer の確保と使い回しは
-/// [`resolve_inheritance`] の walk loop が持つ。
+/// 唯一の caller は [`super::inherit::apply_winners`]。buffer の確保と使い回しは
+/// [`super::inherit::resolve_inheritance`] の walk loop が持つ。
 ///
 /// # 呼び出し契約
 ///
 /// - **entry**: `winners` の全 slot が `None` であること (debug_assert で検査)。
 /// - **exit**: 出現した key の slot だけが `Some`。
 ///
-/// [`apply_winners`] が fill と drain を対で行うので、通常この契約は自明に
+/// [`super::inherit::apply_winners`] が fill と drain を対で行うので、通常この契約は自明に
 /// 満たされる。debug_assert を残してあるのは、drain loop が unwind
 /// (`apply_value` 内 panic) 等で途中終了した場合に slot が生き残る経路が
 /// あるため — 次 node がその残骸を拾うと **別 node の declaration を適用**して

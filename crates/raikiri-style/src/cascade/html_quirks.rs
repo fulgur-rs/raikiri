@@ -60,9 +60,9 @@ use super::collect::{
 /// hints entering the cascade as author presentational hint origin rules
 /// can be overridden by author-origin styles, but not by non-important
 /// user-origin styles" と続ける。本関数は専用 variant
-/// [`Origin::AuthorPresentationalHint`] を採る — [`cascade_rank`] はこれを
+/// [`Origin::AuthorPresentationalHint`] を採る — [`super::collect::cascade_rank`] はこれを
 /// `(User, false) => 1` より上、`(Author, false) => 3` より下に置く
-/// ([`Origin::User`] 挿入後の値 — [`cascade_rank`] doc
+/// ([`Origin::User`] 挿入後の値 — [`super::collect::cascade_rank`] doc
 /// 参照)。この rank 差は `beats` の tuple compare `(rank, specificity, source_order)` の
 /// **第一要素**なので、真の UA-origin rule には specificity/source_order を
 /// 問わず常に勝ち、real author-origin 宣言 (stylesheet rule でも inline
@@ -75,8 +75,8 @@ use super::collect::{
 /// 解消され、origin rank だけで無条件に決着する。[`Origin::User`] の挿入は
 /// この結論を変えない — hint の rank は挿入後も
 /// 依然として real `Author` rank と等しくなることが無い (`AuthorPresentationalHint`
-/// と `Author` は常に隣接する別 rank 値のまま、[`cascade_rank`] doc の rank
-/// 表参照) ため、[`collect_cascaded`] が今も stylesheet rule matching /
+/// と `Author` は常に隣接する別 rank 値のまま、[`super::collect::cascade_rank`] doc の rank
+/// 表参照) ため、[`super::collect::collect_cascaded`] が今も stylesheet rule matching /
 /// inline style より先にこの関数を push する呼び出し順は残っているが、
 /// 上記の通りもう correctness の必要条件ではない (無害な残置、re-verify 済み)。
 ///
@@ -88,7 +88,7 @@ use super::collect::{
 /// し続ける)。
 ///
 /// `Origin::User` no-producer 残差の解消: raikiri-style 内の
-/// [`Origin::User`] variant 自体を追加した時点 ([`cascade_rank`] の 4-tier
+/// [`Origin::User`] variant 自体を追加した時点 ([`super::collect::cascade_rank`] の 4-tier
 /// 化) では、consumer が渡す `extra_stylesheets` を実際に [`Origin::User`]
 /// へ route する producer がまだ無く、今も `StylesheetKind::Author` 経由で
 /// [`Origin::Author`] として届いていた。spec の完全な順序では hint は
@@ -112,7 +112,7 @@ use super::collect::{
 /// "DOM `<style>` vs `extra_stylesheets`" 節参照)。ただし
 /// `extra_stylesheets` 側が `!important` を持つ場合はこの勝敗も反転する:
 /// [`Origin::User`] の important rank (6) は hint の (常に normal で push
-/// される、[`cascade_rank`] doc 参照) rank (2) より高いため、`!important`
+/// される、[`super::collect::cascade_rank`] doc 参照) rank (2) より高いため、`!important`
 /// 付きの `extra_stylesheets` 宣言は hint に specificity を問わず勝つ。この
 /// normal-tier の振る舞いの umbrella 越し end-to-end check は
 /// `crates/raikiri/tests/build_cascaded.rs`'s
@@ -161,7 +161,7 @@ pub(crate) fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec
 ///
 /// `eq_ignore_ascii_case`, not plain `==` — matched against a *hardcoded
 /// literal* set, not against another DOM-sourced tag name (unlike
-/// [`sibling_position`]'s sibling-vs-sibling comparison, whose "html5ever
+/// [`super::selector_match::sibling_position`]'s sibling-vs-sibling comparison, whose "html5ever
 /// already normalises" reasoning only covers two DOM-sourced tag names
 /// meeting each other). Nothing in [`StyleElement::tag_name`]'s own
 /// contract requires lower-casing — the crate's own test-only `TestDoc`
@@ -211,20 +211,20 @@ fn is_element_with_default_margins(tag_name: &str) -> bool {
 /// ([`parse_html_dimension_value`]).
 ///
 /// This is deliberately a *different* character set from CSS Selectors
-/// L4's `:empty` "document white space characters" ([`matches_empty`]
+/// L4's `:empty` "document white space characters" ([`super::selector_match::matches_empty`]
 /// doc) — that set is {space, tab, segment break/LF} and excludes form
 /// feed; HTML LS's "ASCII whitespace" includes form feed and carriage
-/// return too. The two predicates ([`matches_empty`] for `:empty`, this
+/// return too. The two predicates ([`super::selector_match::matches_empty`] for `:empty`, this
 /// function's caller [`is_blank_element`] for HTML LS "blank") are
 /// spec-distinct features and must not share one whitespace set even
 /// though they look similar.
 ///
 /// Comment / processing-instruction / document-fragment / document nodes
 /// are none of "text node" or "element node", so they are never
-/// substantial — matching how [`matches_empty`] treats the same kinds as
+/// substantial — matching how [`super::selector_match::matches_empty`] treats the same kinds as
 /// not affecting `:empty` (verbatim spec text quoted on that function:
 /// "comments, processing instructions, and other nodes must not affect").
-fn is_substantial_node<D: StyleDom>(dom: &D, id: StyleNodeId) -> bool {
+pub(crate) fn is_substantial_node<D: StyleDom>(dom: &D, id: StyleNodeId) -> bool {
     match dom.node(id) {
         Some(node) => match node.kind() {
             StyleNodeKind::Element => true,
@@ -272,15 +272,15 @@ fn is_blank_element<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> bool {
 /// siblings" / "has no substantial following siblings" conditions,
 /// <https://html.spec.whatwg.org/multipage/rendering.html#margin-collapsing-quirks>).
 /// Single pass over `parent_id`'s children — same shape as
-/// [`sibling_position`]'s combined start/end computation.
+/// [`super::selector_match::sibling_position`]'s combined start/end computation.
 ///
 /// `target_id` not found among `parent_id`'s children never happens for
 /// this function's only caller
 /// ([`push_margin_collapsing_quirk_declarations`]): `parent_id` there is
 /// always `ancestor_path.last()`, i.e. the real DOM parent
-/// [`collect_cascaded`] walked through `dom.child_ids(parent_id)` to reach
+/// [`super::collect::collect_cascaded`] walked through `dom.child_ids(parent_id)` to reach
 /// `target_id` in the first place — the same ancestor-path invariant
-/// [`sibling_position`]'s own callers rely on.
+/// [`super::selector_match::sibling_position`]'s own callers rely on.
 fn substantial_sibling_bounds<D: StyleDom>(
     dom: &D,
     parent_id: StyleNodeId,
@@ -308,7 +308,7 @@ fn substantial_sibling_bounds<D: StyleDom>(
 /// Margin-collapsing quirks (HTML LS §15.3.9 "Margin collapsing quirks",
 /// <https://html.spec.whatwg.org/multipage/rendering.html#margin-collapsing-quirks>
 /// — fetched as raw spec HTML directly rather than through a summarizing
-/// fetch, the same precaution [`matches_empty`]'s doc explains: this
+/// fetch, the same precaution [`super::selector_match::matches_empty`]'s doc explains: this
 /// section sits deep inside one very long single-page spec, where
 /// summarized fetches have been observed to truncate before reaching the
 /// relevant section).
@@ -344,10 +344,10 @@ fn substantial_sibling_bounds<D: StyleDom>(
 /// margin again; zeroing the resolved computed value after cascade
 /// (bypassing origin/specificity entirely) would incorrectly clobber
 /// that. So this function pushes an [`Origin::UserAgent`] candidate
-/// declaration into the same flat candidate list [`collect_cascaded`]
+/// declaration into the same flat candidate list [`super::collect::collect_cascaded`]
 /// already builds for this node from stylesheet rules and inline style,
-/// and lets the normal [`pick_winners`]/[`beats`] machinery decide —
-/// [`cascade_rank`] guarantees any `Origin::Author` declaration for the
+/// and lets the normal [`super::collect::pick_winners`]/[`super::collect::beats`] machinery decide —
+/// [`super::collect::cascade_rank`] guarantees any `Origin::Author` declaration for the
 /// same property outranks this regardless of specificity. See
 /// [`MARGIN_COLLAPSING_QUIRK_SPECIFICITY`]'s own doc for why this
 /// declaration's specificity still needs to be chosen carefully (to
@@ -359,7 +359,7 @@ fn substantial_sibling_bounds<D: StyleDom>(
 /// "No substantial previous/following sibling" counts text-node content
 /// (ignoring only inter-element whitespace), which CSS Selectors L4's
 /// `:first-child`/`:last-child` do not — those ignore *all* non-element
-/// siblings regardless of text content ([`sibling_position`] doc,
+/// siblings regardless of text content ([`super::selector_match::sibling_position`] doc,
 /// verbatim: "Standalone text and other non-element nodes are not counted
 /// \[...\]"). A document like `<body>Hello<p>...</p></body>` has `<p>` as
 /// CSS's `:first-child` (no earlier *element* sibling) but HTML LS denies

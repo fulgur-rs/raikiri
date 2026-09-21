@@ -1,6 +1,6 @@
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId};
 
-/// `PseudoClass::Lang` arm of [`compound_matches`] — CSS Selectors L4 §7.2
+/// `PseudoClass::Lang` arm of [`super::selector_match::compound_matches`] — CSS Selectors L4 §7.2
 /// <https://www.w3.org/TR/selectors-4/#the-lang-pseudo>: "represents an
 /// element whose content language is one of the languages listed in its
 /// argument" (bikeshed source verbatim, see [`language_range_matches`] doc
@@ -24,7 +24,7 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId};
 /// source `selectors-4/Overview.bs` `#the-lang-pseudo` (direct raw fetch of
 /// `raw.githubusercontent.com/w3c/csswg-drafts/main/selectors-4/Overview.bs`,
 /// bypassing WebFetch's truncation on this TR page the same way
-/// [`matches_empty`]'s `:empty` doc note does), verbatim: "For this
+/// [`super::selector_match::matches_empty`]'s `:empty` doc note does), verbatim: "For this
 /// purpose, a wildcard language range (\"*\") does not match elements
 /// whose language is not tagged (e.g. `lang=\"\"`), but does match elements
 /// whose language is tagged as undetermined (`lang=und`). A language range
@@ -72,7 +72,7 @@ pub(crate) fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
 /// stopping inheritance" section below for how this converges with the
 /// explicit-`lang=\"\"` case).
 ///
-/// Like [`own_explicit_direction`]'s `dir` reads, the **own**-attribute
+/// Like [`super::directionality::own_explicit_direction`]'s `dir` reads, the **own**-attribute
 /// step gates on `elem.namespace_uri()` — but a 2-element allowlist (HTML
 /// *or* SVG) rather than `dir`'s HTML-only 1-element one, per the quoted
 /// step's explicit "an HTML element or an element in the SVG namespace"
@@ -119,7 +119,7 @@ pub(crate) fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
 /// quoted algorithm's own final "the corresponding language tag is the
 /// empty string" fallback — even though it is reached via a different step
 /// (running out of ancestors, not an explicit `lang=""` short-circuit).
-fn effective_language<D: StyleDom, E: StyleElement>(
+pub(crate) fn effective_language<D: StyleDom, E: StyleElement>(
     dom: &D,
     elem: &E,
     ancestors: &[StyleNodeId],
@@ -151,7 +151,7 @@ fn effective_language<D: StyleDom, E: StyleElement>(
 /// The **own**-attribute half of HTML LS §3.2.6.2's "determine the language
 /// of a node" step (quoted in full on [`effective_language`]'s doc), gated
 /// to HTML-namespace (`elem.namespace_uri() == None`, this crate's
-/// established "is HTML" proxy — see [`own_explicit_direction`]'s doc) or
+/// established "is HTML" proxy — see [`super::directionality::own_explicit_direction`]'s doc) or
 /// SVG-namespace elements. Any other namespace (MathML concretely, but the
 /// gate is namespace-allowlist shaped so it excludes any future foreign
 /// namespace equally) returns `None` regardless of whether `lang` is
@@ -159,7 +159,7 @@ fn effective_language<D: StyleDom, E: StyleElement>(
 /// to the ancestor walk exactly as if `lang` were absent — matching the
 /// quoted algorithm's own next step ("If the node's parent element is not
 /// null — Use the language of that parent element").
-fn own_html_or_svg_lang_attribute<E: StyleElement>(elem: &E) -> Option<&str> {
+pub(crate) fn own_html_or_svg_lang_attribute<E: StyleElement>(elem: &E) -> Option<&str> {
     match elem.namespace_uri() {
         None | Some("http://www.w3.org/2000/svg") => elem.attr("lang"),
         Some(_) => None,
@@ -170,7 +170,7 @@ fn own_html_or_svg_lang_attribute<E: StyleElement>(elem: &E) -> Option<&str> {
 /// `content_language` (the resolved [`effective_language`])? Implements RFC
 /// 4647 §3.3.2 "Extended Filtering"
 /// (<https://www.rfc-editor.org/rfc/rfc4647.html#section-3.3.2>), which CSS Selectors L4 §7.2 cites verbatim (bikeshed
-/// source `selectors-4/Overview.bs`, same fetch as [`Direction`]'s doc —
+/// source `selectors-4/Overview.bs`, same fetch as [`crate::Direction`]'s doc —
 /// the published TR page truncated before §7.2 for this crate's WebFetch
 /// tool):
 ///
