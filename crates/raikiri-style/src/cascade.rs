@@ -12205,6 +12205,24 @@ mod tests {
     }
 
     #[test]
+    fn apply_value_direct_flex_flow_shorthand_fall_through() {
+        // Sibling of `apply_value_direct_flex_shorthand_fall_through`
+        // above: `apply_value`'s `PropertyValue::FlexFlow(f)` arm is
+        // unreachable via the cascade path (`expand_shorthand_into`
+        // expands it to the 2 `FlexDirection`/`FlexWrap` longhands before
+        // `apply_value` ever sees it) — not a safety net, a canary.
+        use crate::property::{FlexDirectionValue, FlexFlow, FlexWrapValue};
+        let mut cv = SpecifiedValues::initial();
+        let f = FlexFlow {
+            direction: FlexDirectionValue::RowReverse,
+            wrap: FlexWrapValue::Wrap,
+        };
+        apply_value(PropertyValue::FlexFlow(f), &mut cv);
+        assert_eq!(cv.flex_direction, FlexDirectionValue::RowReverse);
+        assert_eq!(cv.flex_wrap, FlexWrapValue::Wrap);
+    }
+
+    #[test]
     fn apply_value_direct_gap_shorthand_fall_through() {
         // Sibling of `apply_value_direct_margin_shorthand_fall_through`
         // above: `apply_value`'s `PropertyValue::Gap(g)` arm is
