@@ -1355,6 +1355,10 @@ css/css-multicol/balance-break-avoidance-001.html
 css/css-multicol/multicol-span-all-004.html
 css/css-multicol/multicol-under-vertical-rl-scroll.html
 css/css-multicol/change-fragmentainer-size-000.html
+css/css-multicol/multicol-nested-025.html
+css/css-multicol/multicol-nested-027.html
+css/css-multicol/multicol-nested-029.html
+css/css-multicol/multicol-nested-033.html
 
 # --- CSS Text writing-system exact 800x600 PASS-only pin 2026-09-20 ---
 css/css-text/writing-system/writing-system-font-001.html
