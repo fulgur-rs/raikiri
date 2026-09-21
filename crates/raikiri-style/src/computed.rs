@@ -19,7 +19,7 @@ use crate::property::{
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue, EmptyCellsValue,
     FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps,
-    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Hyphens, Isolation,
+    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Hyphens, Isolation, LineBreak,
     ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, OutlineColor,
     OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue, SelfAlignmentValue,
     Sides, TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine,
@@ -966,6 +966,10 @@ pub struct ComputedValues {
     /// grammar — the deprecated `break-word` value is not represented, see
     /// [`WordBreak`] doc's "Scope carving" section.
     pub word_break: WordBreak,
+    /// `line-break`. **inherited**, initial: [`LineBreak::Auto`] (CSS Text
+    /// Module Level 3 §5.3). The layout sink uses `anywhere` as an
+    /// emergency opportunity between typographic units.
+    pub line_break: LineBreak,
     /// `overflow-wrap` (legacy name alias: `word-wrap`). **inherited**,
     /// initial: [`OverflowWrap::Normal`] (CSS Text Module Level 3 §5.4
     /// "Overflow Wrapping: the overflow-wrap (word-wrap) property"
@@ -1732,6 +1736,8 @@ impl ComputedValues {
             z_index: ZIndexValue::Auto,
             // CSS Text 3 §5.1: word-break initial は `normal`。
             word_break: WordBreak::Normal,
+            // CSS Text 3 §5.3: line-break initial is `auto`.
+            line_break: LineBreak::Auto,
             // CSS Text 3 §5.4: overflow-wrap initial は `normal`。
             overflow_wrap: OverflowWrap::Normal,
             // CSS Text 3 §7.2 / §7.1: letter-spacing / word-spacing の
@@ -2310,6 +2316,7 @@ mod tests {
             // CSS Text 3 §5.1: `KeepAll` — initial (`Normal`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             word_break: WordBreak::KeepAll,
+            line_break: LineBreak::Auto,
             // CSS Text 3 §5.4: `Anywhere` — initial (`Normal`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             overflow_wrap: OverflowWrap::Anywhere,
