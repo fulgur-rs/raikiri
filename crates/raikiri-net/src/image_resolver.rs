@@ -288,6 +288,18 @@ mod tests {
     }
 
     #[test]
+    fn non_data_provider_errors_are_propagated() {
+        let resolver = ImageResolver::new(RejectingProvider);
+        let url = url::Url::parse("file:///fixture.png").unwrap();
+        let error = resolver.resolve(ResolverRequest::new(&url)).unwrap_err();
+        assert!(matches!(
+            error,
+            raikiri_traits::ResolverError::Network(raikiri_traits::NetworkError::Other(message))
+                if message == "data URL must not reach the provider"
+        ));
+    }
+
+    #[test]
     fn decodes_base64_data_url_without_calling_network_provider() {
         let resolver = ImageResolver::new(RejectingProvider);
         let url = url::Url::parse(concat!(
@@ -323,9 +335,10 @@ mod tests {
         let resolver = ImageResolver::new(RejectingProvider);
         let url = url::Url::parse("data:image/png;base64,not-valid").unwrap();
         let error = resolver.resolve(ResolverRequest::new(&url)).unwrap_err();
-        let raikiri_traits::ResolverError::Decode(message) = error else {
-            panic!("expected data URL decode error");
-        };
-        assert!(message.contains("invalid data URL payload"), "{message}");
+        assert!(matches!(
+            error,
+            raikiri_traits::ResolverError::Decode(message)
+                if message.contains("invalid data URL payload")
+        ));
     }
 }

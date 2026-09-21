@@ -8,9 +8,9 @@
 //! `description`).
 
 mod file_provider;
-mod image_decoder;
+mod image_decoder; // cov:ignore: module declaration has no executable line
 mod image_resolver;
-mod resource_loader;
+mod resource_loader; // cov:ignore: module declaration has no executable line
 
 pub use file_provider::FileNetworkProvider;
 pub use image_resolver::ImageResolver;

@@ -155,6 +155,19 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn invalid_data_url_image_bytes_are_decode_errors() {
+        let resolver = ResourceLoader::new(RejectingProvider);
+        let url = Url::parse("data:image/png,not-an-image").unwrap();
+        let error = resolver.load(&url).unwrap_err();
+
+        assert!(matches!(
+            error,
+            ResolverError::Decode(message)
+                if message.contains("data URL image decode failed")
+        ));
+    }
+
     struct RecordingProvider {
         fetch_count: AtomicUsize,
         bytes: &'static [u8],
@@ -172,6 +185,18 @@ mod tests {
                 encoding: None,
             })
         }
+    }
+
+    #[test]
+    fn fetched_invalid_image_bytes_are_decode_errors() {
+        let resolver = ResourceLoader::new(RecordingProvider {
+            fetch_count: AtomicUsize::new(0),
+            bytes: b"not an image",
+        });
+        let url = Url::parse("file:///fixture.png").unwrap();
+        let error = resolver.load(&url).unwrap_err();
+
+        assert!(matches!(error, ResolverError::Decode(message) if !message.is_empty()));
     }
 
     #[test]

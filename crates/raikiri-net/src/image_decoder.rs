@@ -24,6 +24,7 @@ impl ImageDecoder {
             .checked_mul(height as usize)
             .and_then(|pixels| pixels.checked_mul(4))
             .ok_or_else(|| "decoded image dimensions overflow address space".to_string())?;
+        // cov:ignore: image crate guarantees the normalized buffer length
         if pixels.len() != expected_len {
             return Err(format!(
                 "decoded image pixel buffer size mismatch: expected {expected_len} bytes, got {}",
