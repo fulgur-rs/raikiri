@@ -33,6 +33,8 @@ fn additional_css_break_flexbox_pairs_are_pixel_exact_at_800x600() {
         "css/css-break/flexbox/multi-line-row-flex-fragmentation-038.html",
         "css/css-break/flexbox/multi-line-row-flex-fragmentation-045.html",
         "css/css-break/flexbox/multi-line-row-flex-fragmentation-061.html",
+        "css/css-break/flexbox/multi-line-row-flex-fragmentation-081a-print.html",
+        "css/css-break/flexbox/multi-line-row-flex-fragmentation-081b-print.html",
         "css/css-break/flexbox/multi-line-row-flex-fragmentation-083a.html",
         "css/css-break/flexbox/multi-line-row-flex-fragmentation-083b.html",
         "css/css-break/flexbox/multi-line-row-flex-fragmentation-083c.html",

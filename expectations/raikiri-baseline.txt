@@ -453,6 +453,8 @@ css/css-break/flexbox/single-line-column-flex-fragmentation-069a-print.html
 css/css-break/flexbox/single-line-column-flex-fragmentation-069d-print.html
 css/css-break/flexbox/single-line-row-flex-fragmentation-045-print.html
 css/css-break/flexbox/single-line-row-flex-fragmentation-046-print.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-081a-print.html
+css/css-break/flexbox/multi-line-row-flex-fragmentation-081b-print.html
 # --- css-break table reftests (exact, 800x600, 2026-09-21) ---
 css/css-break/table/break-before-second-row.html
 css/css-break/table/caption-margin-002.html
