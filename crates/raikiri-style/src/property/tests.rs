@@ -188,6 +188,14 @@ fn color_parse_color_srgb_and_linear_srgb() {
 }
 
 #[test]
+fn line_break_anywhere_parses_as_a_cascadable_keyword() {
+    assert_eq!(
+        parse_entire("anywhere", "line-break"),
+        Some(PropertyValue::LineBreak(LineBreak::Anywhere)),
+    );
+}
+
+#[test]
 fn color_mix_retains_out_of_range_authored_srgb_endpoint() {
     let source = "color-mix(in srgb-linear, color(srgb 2 0 0), black)";
     let parsed = parse_parsed_color_entire(source).expect(source);

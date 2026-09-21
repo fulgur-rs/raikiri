@@ -1782,6 +1782,8 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // computed value = specified value (相対解決なし) — sibling
         // `FontStyle` と同じく単純代入で十分。
         PropertyValue::WordBreak(wb) => target.word_break = wb,
+        // line-break is inherited and its keyword is already computed-equivalent.
+        PropertyValue::LineBreak(lb) => target.line_break = lb,
         // overflow-wrap (legacy alias 名 word-wrap も同じ variant/field に
         // 落ちる、`OverflowWrap` doc 参照) は CSS Text 3 §5.4。
         // inherited property、computed value = specified value
@@ -2151,8 +2153,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // staging-less — their absolutization lives only on the `@page`
         // path (`crate::page::absolutize_in_page_context`'s arms), same
         // split as the phase-2/phase-3 division above.
-        PropertyValue::LineBreak(_)
-        | PropertyValue::TextAlignAll(_)
+        PropertyValue::TextAlignAll(_)
         | PropertyValue::TextCombineUpright(_)
         | PropertyValue::TextOrientation(_)
         | PropertyValue::UnicodeBidi(_)
