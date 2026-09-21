@@ -10,8 +10,7 @@ use crate::property::{
     MAX_SUBSTITUTED_VALUE_BYTES, PropertyValue, is_custom_property_name, parse_value,
 };
 
-use super::beats;
-use super::collect::{CustomCascadedDecl, RankedDecl, cascade_rank};
+use super::collect::{CustomCascadedDecl, RankedDecl, beats, cascade_rank};
 
 /// Resolve a deferred declaration for either the element or page cascade.
 ///

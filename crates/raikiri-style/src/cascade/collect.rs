@@ -748,3 +748,80 @@ pub(crate) fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specif
     // selectors crate の Selector::specificity は 32-bit packed integer を返す。
     selector.specificity()
 }
+/// property key ごとに勝者 declaration を pick (specificity + !important + source order)。
+///
+/// 結果は返さず `best` に書く。`best` は [`PropertyKey`] の discriminant を
+/// そのまま index にした **direct-address table** で、`best[k as usize]` が
+/// key `k` の勝者 (= `candidates` 内 index) を持つ。
+///
+/// # なぜ `HashMap` を返さないのか
+///
+/// [`PropertyKey`] は payload を持たない ~40 variant の 1-byte enum、すなわち
+/// **既に密な小整数**であり、hash して bucket を引く価値がない。従来実装は
+/// per-node に `HashMap` を 2 つ (作業用と戻り値) 建てており、n=1000 node の
+/// cascade で 3,667 allocs / 3.0 MB — 全 heap traffic の 56.7% を占めていた。
+/// slot 配列にすると allocation は buffer が最大 index まで育つ最初の数 node
+/// だけで済み、以降の node は再利用で 0 alloc になる。
+///
+/// 唯一の caller は [`apply_winners`]。buffer の確保と使い回しは
+/// [`resolve_inheritance`] の walk loop が持つ。
+///
+/// # 呼び出し契約
+///
+/// - **entry**: `winners` の全 slot が `None` であること (debug_assert で検査)。
+/// - **exit**: 出現した key の slot だけが `Some`。
+///
+/// [`apply_winners`] が fill と drain を対で行うので、通常この契約は自明に
+/// 満たされる。debug_assert を残してあるのは、drain loop が unwind
+/// (`apply_value` 内 panic) 等で途中終了した場合に slot が生き残る経路が
+/// あるため — 次 node がその残骸を拾うと **別 node の declaration を適用**して
+/// しまう。安いので保険として置いてある。
+///
+/// [`PropertyKey`]: crate::property::PropertyKey
+pub(crate) fn pick_winners(candidates: &[CascadedDecl], winners: &mut Vec<Option<RankedDecl>>) {
+    debug_assert!(
+        winners.iter().all(Option::is_none),
+        "pick_winners は空の scratch buffer を要求する — \
+         前 node の winner slot が生き残っている (drain の unwind 等)"
+    );
+
+    for (idx, (value, important, origin, spec, order)) in candidates.iter().enumerate() {
+        // fieldless enum の discriminant をそのまま slot index に使う。
+        // variant が増えても `resize` が追随するので上限定数は持たない。
+        let slot = value.key() as usize;
+        if winners.len() <= slot {
+            winners.resize(slot + 1, None);
+        }
+        let candidate = RankedDecl {
+            rank: cascade_rank(*origin, *important),
+            specificity: *spec,
+            source_order: *order,
+            idx,
+        };
+        if winners[slot].is_none_or(|existing| beats(candidate, existing)) {
+            winners[slot] = Some(candidate);
+        }
+    }
+}
+
+pub(crate) fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
+    // Tuple compare: (rank, specificity, source_order)
+    // - rank 高い方が勝つ (順序と正確な値は `cascade_rank` doc 参照 — 当初の
+    //   UA/Author の 2 段から現在の UA/User/AuthorPresentationalHint/Author
+    //   の 4 段まで拡張済み)
+    // - 同 rank なら specificity 高い方が勝つ
+    // - 同 rank + spec なら source_order 大 (=後ろ) が勝つ
+    // `>=` は同一 rule 内 duplicate property の後方勝ち (CSS Cascading L4 §6.1
+    // "Order of Appearance" <https://www.w3.org/TR/css-cascade-4/#cascade-sort>
+    // の "the last declaration in document order wins") のため意図的。
+    // cross-rule では source_order が異なるので `>=` でも安全。
+    //
+    // `idx` を比較 key に**入れないこと** — `idx` は candidates 走査順に単調
+    // 増加するので第 4 key に足しても結果は変わらないが、tie-break 規則が
+    // 「同 rank/spec/order なら後方勝ち」であることが code から読めなくなる。
+    (
+        candidate.rank,
+        candidate.specificity,
+        candidate.source_order,
+    ) >= (existing.rank, existing.specificity, existing.source_order)
+}
