@@ -1509,6 +1509,10 @@ css/css-images/linear-gradient-1.html
 css/css-images/linear-gradient-2.html
 css/css-images/conic-gradient-center.html
 css/css-images/conic-gradient-angle.html
+css/css-overflow/clip-001.html
+css/css-overflow/overflow-canvas.html
+css/css-overflow/overflow-body-propagation-001.html
+css/css-overflow/overflow-body-propagation-002.html
 css/css-position/position-absolute-center-003.html
 css/css-position/position-absolute-center-004.html
 css/css-position/fixed-z-index-blend.html
