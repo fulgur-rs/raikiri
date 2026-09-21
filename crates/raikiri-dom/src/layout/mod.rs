@@ -8095,6 +8095,9 @@ fn selected_page_name(cascade: &CascadeResult, node_id: usize) -> Option<String>
 /// breaks, and keeps an empty explicitly-created page.  A block that is taller
 /// than a page is exposed on each intersecting slice; splitting its internal
 /// line/child fragments is deliberately left to the next fragmentation pass.
+/// Direct tables additionally keep a row whose cell boxes would cross a page
+/// together by moving that row to the next fragmentainer. Rowspans, repeated
+/// header/footer groups, and cell-internal breaks remain outside this pass.
 /// For an ordinary direct-body block whose complete text layout fits within one
 /// fragmentainer, `orphans` / `widows` can move the block intact when the
 /// natural split would leave too few line boxes on either side. Oversized or
@@ -8398,6 +8401,7 @@ pub fn layout_pages_with_page_geometry(
         is_text: bool,
         is_direct_body_text: bool,
         is_direct_body_element: bool,
+        is_table_row: bool,
         is_named: bool,
         is_float_descendant: bool,
         /// Page type inherited from the nearest containing class-A box.
@@ -8442,6 +8446,7 @@ pub fn layout_pages_with_page_geometry(
         parent_height: f32,
         page_step: f32,
         inherited_page_name: Option<String>,
+        inside_table: bool,
         inside_flex: bool,
         inside_float: bool,
         out: &mut Vec<PageCandidate>,
@@ -8467,6 +8472,7 @@ pub fn layout_pages_with_page_geometry(
                         is_text: true,
                         is_direct_body_text: direct_body_child,
                         is_direct_body_element: false,
+                        is_table_row: false,
                         is_named: false,
                         is_float_descendant: inside_float,
                         page_name: inherited_page_name,
@@ -8503,23 +8509,52 @@ pub fn layout_pages_with_page_geometry(
                 let is_tall_direct_absolute = direct_body_child
                     && matches!(computed.position, PositionValue::Absolute)
                     && node.unrounded_layout.size.height > page_step;
+                let table_row_candidate = inside_table
+                    && matches!(computed.display, DisplayValue::TableRow)
+                    && !inside_float
+                    && !inside_flex;
+                // The table engine stores row geometry on its cells rather
+                // than on the anonymous row box. Derive the row border box
+                // from those direct cells so pagination can keep the row
+                // together without changing table sizing.
+                let (candidate_raw_y, candidate_height) = if table_row_candidate {
+                    let mut row_top = f32::INFINITY;
+                    let mut row_bottom = f32::NEG_INFINITY;
+                    for &child_id in &node.children {
+                        let Some(child) = document.get_node(child_id) else {
+                            continue;
+                        };
+                        let child_top = child.unrounded_layout.location.y;
+                        row_top = row_top.min(child_top);
+                        row_bottom = row_bottom.max(child_top + child.unrounded_layout.size.height);
+                    }
+                    if row_top.is_finite() && row_bottom.is_finite() && row_bottom > row_top {
+                        (raw_y + row_top, row_bottom - row_top)
+                    } else {
+                        (raw_y, node.unrounded_layout.size.height.max(0.0))
+                    }
+                } else {
+                    (raw_y, node.unrounded_layout.size.height.max(0.0))
+                };
                 let is_break_candidate = !is_body
                     && !inside_float
                     && ((participates_in_flow
                         && direct_body_child
                         && explicit_page_name.is_none())
                         || is_tall_direct_absolute
+                        || table_row_candidate
                         || own_page_name.is_some()
                         || page_break_is_forced(computed.break_before)
                         || page_break_is_forced(computed.break_after));
                 if is_break_candidate {
                     out.push(PageCandidate {
                         node_id,
-                        raw_y,
-                        height: node.unrounded_layout.size.height.max(0.0),
+                        raw_y: candidate_raw_y,
+                        height: candidate_height,
                         is_text: false,
                         is_direct_body_text: false,
                         is_direct_body_element: direct_body_child,
+                        is_table_row: table_row_candidate,
                         is_named: own_page_name.is_some(),
                         is_float_descendant: inside_float,
                         page_name: page_name.clone(),
@@ -8538,6 +8573,16 @@ pub fn layout_pages_with_page_geometry(
                         node.unrounded_layout.size.height.max(0.0),
                         page_step,
                         page_name.clone(),
+                        inside_table
+                            || matches!(
+                                computed.display,
+                                DisplayValue::Table
+                                    | DisplayValue::InlineTable
+                                    | DisplayValue::TableRowGroup
+                                    | DisplayValue::TableHeaderGroup
+                                    | DisplayValue::TableFooterGroup
+                                    | DisplayValue::TableRow
+                            ),
                         inside_flex || matches!(computed.display, DisplayValue::Flex),
                         float_subtree,
                         out,
@@ -8559,6 +8604,7 @@ pub fn layout_pages_with_page_geometry(
         0.0,
         page_step,
         None,
+        false,
         false,
         false,
         &mut candidates,
@@ -8832,12 +8878,23 @@ pub fn layout_pages_with_page_geometry(
         // next page origin.
         let forced_break_at_page_start =
             forced_before && (at_page_start || natural_page_at_position > current_page);
+        // Keep an ordinary table row intact when it would cross the current
+        // page. The row is a class-A boundary owned by the table engine; its
+        // cells and descendants follow the same flow shift below. Rowspans,
+        // repeated header groups, and cell-internal breaks remain out of this
+        // narrow row-boundary pass.
+        let table_row_overflow = candidate.is_table_row
+            && effective_y.is_finite()
+            && effective_y >= page_origin(current_page)
+            && effective_y < page_origin(current_page) + page_step_at(current_page)
+            && effective_y + height > page_origin(current_page) + page_step_at(current_page);
 
         let page_transition = saw_child
             && (pending_break
                 || (forced_before && !forced_break_at_page_start)
                 || named_page_change
-                || page_overflow);
+                || page_overflow
+                || table_row_overflow);
         if saw_child {
             // A break-after on the preceding box and a break-before (or named
             // page transition) on this box describe the same boundary, not two
