@@ -34,7 +34,7 @@ use raikiri_dom::{CounterSnapshot, Document};
 use raikiri_style::property::{
     BackgroundImage, Border, BorderColor, BorderStyle, ColumnCountValue, ContentComponent,
     CounterStyle, CssColor, DisplayValue, FloatValue, Gradient, GradientStopColor, Length,
-    LengthOrAuto, ListStyleType, ObjectFit, OutlineColor, OutlineStyle, OverflowValue,
+    LengthOrAuto, LineBreak, ListStyleType, ObjectFit, OutlineColor, OutlineStyle, OverflowValue,
     PositionValue, PropertyKey, PropertyValue, QuoteKeyword, Sides, TextAlign, TextShadowColor,
     VerticalAlign, WritingMode, ZIndexValue,
 };
@@ -3946,13 +3946,33 @@ fn paint_document_impl(
                         );
                         scene.push_clip_layer(Affine::IDENTITY, &clip);
                     }
+                    // The current walker gives each text node its Taffy
+                    // sibling advance, while Parley already positions the
+                    // first glyph of an `anywhere` run at that run's line
+                    // width. Remove that duplicate advance so separate text
+                    // runs (including the runs around an inline span) share
+                    // the same one-character line origin.
+                    let anywhere_text_width = node
+                        .text_layout()
+                        .map(|text_layout| text_layout.width())
+                        .filter(|width| width.is_finite() && *width > 0.0);
+                    let anywhere_text_run =
+                        matches!(cascade.computed[node_id].line_break, LineBreak::Anywhere)
+                            && anywhere_text_width.is_some();
                     text::draw_text_node(
                         scene,
                         node,
                         cascade,
                         node_id,
                         text::TextPosition {
-                            abs_x: abs_x + page_offset_x + transform_x,
+                            abs_x: abs_x
+                                - if anywhere_text_run {
+                                    anywhere_text_width.unwrap_or(0.0)
+                                } else {
+                                    0.0
+                                }
+                                + page_offset_x
+                                + transform_x,
                             abs_y: abs_y + page_offset_y + transform_y,
                             shift_y,
                         },
@@ -5394,9 +5414,12 @@ fn vertical_align_shift_px(
 fn paint_order_key(cascade: &CascadeResult, node_id: usize) -> (u8, i32) {
     let computed = &cascade.computed[node_id];
     match (&computed.position, computed.z_index) {
-        // An integer z-index applies to positioned boxes.  Keep ordinary
-        // in-flow boxes in the auto/source-order bucket.
-        (PositionValue::Static, _) | (_, ZIndexValue::Auto) => (1, 0),
+        // In-flow boxes paint before positioned descendants with an auto
+        // z-index. Keep static boxes in the normal bucket, but place
+        // absolute/fixed (and relative) auto-z siblings after them so a
+        // positioned cover can correctly occlude later in-flow content.
+        (PositionValue::Static, _) => (1, 0),
+        (_, ZIndexValue::Auto) => (2, 0),
         (_, ZIndexValue::Integer(value)) if value < 0 => (0, value),
         (_, ZIndexValue::Integer(value)) => (2, value),
         // PositionValue and ZIndexValue are non-exhaustive.  New variants

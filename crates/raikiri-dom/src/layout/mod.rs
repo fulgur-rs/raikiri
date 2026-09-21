@@ -6358,7 +6358,14 @@ fn parley_word_break(value: WordBreak, line_break: LineBreak) -> ParleyWordBreak
     }
 }
 
-fn parley_overflow_wrap(word_break: WordBreak, value: OverflowWrap) -> ParleyOverflowWrap {
+fn parley_overflow_wrap(
+    word_break: WordBreak,
+    line_break: LineBreak,
+    value: OverflowWrap,
+) -> ParleyOverflowWrap {
+    if matches!(line_break, LineBreak::Anywhere) {
+        return ParleyOverflowWrap::Anywhere;
+    }
     if matches!(word_break, WordBreak::BreakWord) {
         return ParleyOverflowWrap::BreakWord;
     }
@@ -7633,6 +7640,7 @@ fn preshape_text(
             )));
             builder.push_default(StyleProperty::OverflowWrap(parley_overflow_wrap(
                 job.word_break,
+                job.line_break,
                 job.overflow_wrap,
             )));
             builder.push_default(StyleProperty::TextWrapMode(parley_text_wrap_mode(
@@ -7712,6 +7720,7 @@ fn preshape_text(
                 )));
                 builder.push_default(StyleProperty::OverflowWrap(parley_overflow_wrap(
                     job.word_break,
+                    job.line_break,
                     job.overflow_wrap,
                 )));
                 builder.push_default(StyleProperty::TextWrapMode(parley_text_wrap_mode(
