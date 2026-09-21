@@ -18,6 +18,7 @@ use crate::media::{MediaCondition, MediaRule, parse_media_condition};
 use crate::page::{
     PageBlockBody, PageRule, PageSelector, parse_page_declaration_block, parse_page_prelude,
 };
+use crate::property::parse_value;
 use crate::rule::{Declaration, StyleRule, parse_declaration_block};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 use crate::{Atom, PseudoClass, PseudoElem, RaikiriSelectorImpl, RaikiriSelectorParser};
@@ -31,6 +32,153 @@ use crate::{Atom, PseudoClass, PseudoElem, RaikiriSelectorImpl, RaikiriSelectorP
 /// appended last, as required by the normal cascade.  This is intentionally a
 /// small source-level pass; nested blocks, strings, and comments are skipped
 /// while locating only top-level layer blocks.
+/// Remove supported `@supports` blocks before the generic stylesheet parser.
+///
+/// The rule tree intentionally retains unknown at-rules as opaque records, but a
+/// supported condition must expose its qualified rules to the normal cascade.
+/// This small source pass handles declaration conditions and `not`/`and`/`or`
+/// combinations while preserving unsupported blocks verbatim for inspection.
+fn expand_supports(source: &str) -> String {
+    let mut output = String::with_capacity(source.len());
+    let mut plain_start = 0;
+    let mut cursor = 0;
+    while let Some(start) = find_top_level_at_rule(source, cursor, "supports") {
+        let Some((delimiter, delimiter_index)) = find_layer_delimiter(source, start + 9) else {
+            break;
+        };
+        if delimiter != b'{' {
+            break;
+        }
+        let Some(close) = matching_brace(source, delimiter_index) else {
+            break;
+        };
+        output.push_str(&source[plain_start..start]);
+        let condition = &source[start + 9..delimiter_index];
+        let body = &source[delimiter_index + 1..close];
+        if supports_condition(condition) && !body.trim_start().starts_with('@') {
+            // Keep the opaque record for inspection, and prepend its qualified
+            // rules as ordinary stylesheet input for the cascade.
+            output.push_str(&expand_supports(body));
+            output.push_str(&source[start..=close]);
+        } else {
+            output.push_str(&source[start..=close]);
+        }
+        cursor = close + 1;
+        plain_start = cursor;
+    }
+    output.push_str(&source[plain_start..]);
+    output
+}
+
+fn supports_condition(raw: &str) -> bool {
+    let condition = raw.trim();
+    if let Some(rest) = condition.strip_prefix("not ") {
+        return !supports_condition(rest);
+    }
+    if let Some((left, right)) = split_supports_operator(condition, " or ") {
+        return supports_condition(left) || supports_condition(right);
+    }
+    if let Some((left, right)) = split_supports_operator(condition, " and ") {
+        return supports_condition(left) && supports_condition(right);
+    }
+    let condition = condition
+        .strip_prefix('(')
+        .and_then(|value| value.strip_suffix(')'))
+        .map(str::trim)
+        .unwrap_or(condition);
+    let Some((name, value)) = condition.split_once(':') else {
+        return false;
+    };
+    let name = name.trim();
+    let value = value.trim();
+    if name.is_empty() || value.is_empty() {
+        return false;
+    }
+    let mut input = ParserInput::new(value);
+    let mut parser = Parser::new(&mut input);
+    parser
+        .parse_entirely(|input| {
+            parse_value(name, input).ok_or_else(|| input.new_custom_error::<_, ()>(()))
+        })
+        .is_ok()
+}
+
+fn split_supports_operator<'a>(value: &'a str, operator: &str) -> Option<(&'a str, &'a str)> {
+    let mut depth = 0_u32;
+    let mut index = 0;
+    while index + operator.len() <= value.len() {
+        match value.as_bytes()[index] {
+            b'(' => depth = depth.saturating_add(1),
+            b')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if depth == 0 && value[index..].starts_with(operator) {
+            return Some((&value[..index], &value[index + operator.len()..]));
+        }
+        index += 1;
+    }
+    None
+}
+
+fn find_top_level_at_rule(source: &str, from: usize, name: &str) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut index = from;
+    let mut depth = 0_u32;
+    let mut quote = None;
+    let mut comment = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if comment {
+            if byte == b'*' && bytes.get(index + 1) == Some(&b'/') {
+                comment = false;
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if let Some(delimiter) = quote {
+            if byte == b'\\' {
+                index = index.saturating_add(2);
+            } else {
+                if byte == delimiter {
+                    quote = None;
+                }
+                index += 1;
+            }
+            continue;
+        }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            comment = true;
+            index += 2;
+            continue;
+        }
+        if byte == b'\'' || byte == b'"' {
+            quote = Some(byte);
+            index += 1;
+            continue;
+        }
+        match byte {
+            b'{' => depth = depth.saturating_add(1),
+            b'}' => depth = depth.saturating_sub(1),
+            b'@' if depth == 0
+                && bytes[index + 1..].len() >= name.len()
+                && bytes[index + 1..]
+                    .get(..name.len())
+                    .is_some_and(|candidate| candidate.eq_ignore_ascii_case(name.as_bytes()))
+                && bytes
+                    .get(index + 1 + name.len())
+                    .is_none_or(|next| !next.is_ascii_alphanumeric() && *next != b'-') =>
+            {
+                return Some(index);
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
 fn expand_cascade_layers(source: &str) -> Vec<(u32, String)> {
     let mut cursor = 0;
     let mut plain_start = 0;
@@ -666,7 +814,8 @@ impl RuleTree {
     ///   gate により無条件 drop されていたが) `counter_styles` に反映される
     ///   ようになった。
     pub fn add_stylesheet(&mut self, source: &str, origin: Origin) {
-        for (layer_order, chunk) in expand_cascade_layers(source) {
+        let source = expand_supports(source);
+        for (layer_order, chunk) in expand_cascade_layers(&source) {
             self.add_stylesheet_chunk(&chunk, origin, layer_order);
         }
     }
@@ -3687,15 +3836,16 @@ mod tests {
         );
 
         assert_eq!(tree.page_rules.len(), 0);
-        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.style_rules.len(), 2);
         assert_eq!(tree.media_rules.len(), 1);
         assert_eq!(tree.media_rules[0].rule.source_order, 0);
         assert_eq!(tree.style_rules[0].source_order, 1);
+        assert_eq!(tree.style_rules[1].source_order, 2);
         assert_eq!(tree.opaque_at_rules().len(), 2);
         assert_eq!(tree.opaque_at_rules()[0].name, "media");
         assert_eq!(tree.opaque_at_rules()[1].name, "supports");
         assert_eq!(tree.opaque_at_rules()[0].source_order, 0);
-        assert_eq!(tree.opaque_at_rules()[1].source_order, 1);
+        assert_eq!(tree.opaque_at_rules()[1].source_order, 2);
 
         let media = &tree.opaque_at_rules()[0];
         assert_eq!(
@@ -3710,6 +3860,23 @@ mod tests {
         assert_eq!(nested.name, "nested");
         assert_eq!(nested.body, AtRuleBody::Statement);
         assert_eq!(nested.source_order, 1);
+    }
+
+    #[test]
+    fn supports_exposes_supported_qualified_rules_but_keeps_opaque_record() {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@supports (display: block) { p { color: red } } \
+             @supports (display: definitely-unsupported) { p { color: blue } } \
+             @supports not (display: definitely-unsupported) { p { color: green } }",
+            Origin::Author,
+        );
+
+        assert_eq!(tree.style_rules.len(), 2);
+        assert_eq!(tree.opaque_at_rules().len(), 3);
+        assert_eq!(tree.opaque_at_rules()[0].name, "supports");
+        assert_eq!(tree.opaque_at_rules()[1].name, "supports");
+        assert_eq!(tree.opaque_at_rules()[2].name, "supports");
     }
 
     #[test]
