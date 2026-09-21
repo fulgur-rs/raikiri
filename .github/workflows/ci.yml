@@ -1,22 +1,18 @@
 name: CI
 
-# NOTE: paths-ignore を GitHub Branch Protection で "CI" を required check にした
-# 状態と組み合わせると、docs / .beads / *.md-only PR は status が post されず
-# merge が block される (GHA の documented footgun)。branch protection 導入時に
-# paths + fallback success job pattern への切り替えを検討する (別 bd issue 化予定)。
+# `on:` に paths-ignore を付けると、docs/.beads/*.md-only の push・PR では
+# ワークフロー自体がキューされず check run が一切 post されない。branch
+# protection でこの job を required status check にすると、そうした PR は
+# 判定待ちのまま永久に merge 不可になる (GitHub Actions の既知の footgun)。
+# そのため trigger 側の paths-ignore は使わず、常にワークフローを起動した
+# 上で `changes` job が実際の diff を見て `ci` job の `if:` を切り替える。
+# job が `if:` で skip された場合は check run が "skipped" (=成功扱い) で
+# post されるため、required status check でも正しく通過する。
 
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '.beads/**'
-      - '*.md'
   pull_request:
-    paths-ignore:
-      - 'docs/**'
-      - '.beads/**'
-      - '*.md'
 
 permissions:
   contents: read
@@ -26,8 +22,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: detect relevant changes
+    runs-on: ubuntu-latest
+    # dorny/paths-filter queries the PR's changed files via the GitHub API,
+    # which needs pull-requests: read beyond the repo-wide contents: read.
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      relevant: ${{ steps.filter.outputs.relevant }}
+    steps:
+      - name: Determine whether non-doc paths changed
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            relevant:
+              - '**'
+              - '!docs/**'
+              - '!.beads/**'
+              - '!*.md'
+
   ci:
     name: fmt + test + clippy
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
