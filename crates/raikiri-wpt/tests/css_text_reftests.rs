@@ -203,3 +203,48 @@ fn boundary_shaping_unpinned_exact_passes() {
     ];
     assert_exact_passes(&root, &candidates);
 }
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_encoding_unpinned_diagnostics() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let candidates = [
+        ("css/css-text/text-encoding/shaping-join-001.html", 32),
+        ("css/css-text/text-encoding/shaping-join-002.html", 32),
+        ("css/css-text/text-encoding/shaping-join-003.html", 1),
+        ("css/css-text/text-encoding/shaping-no-join-001.html", 1),
+        ("css/css-text/text-encoding/shaping-no-join-002.html", 1),
+        ("css/css-text/text-encoding/shaping-no-join-003.html", 1),
+        ("css/css-text/text-encoding/shaping-tatweel-001.html", 1),
+        ("css/css-text/text-encoding/shaping-tatweel-002.html", 1),
+        ("css/css-text/text-encoding/shaping-tatweel-003.html", 1),
+    ];
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    for (relative, expected_minimum) in candidates {
+        let test = root.join(relative);
+        let pairs =
+            discover_pairs_for_file_with_wpt_root(&test, Some(&root)).expect("discover WPT pair");
+        assert_eq!(pairs.len(), 1, "{relative}");
+        let result = run_pair(&pairs[0], config).expect("run WPT pair");
+        assert!(
+            matches!(&result.outcome, TestOutcome::Fail(_)),
+            "{relative}: unexpectedly became {:?}; decide whether to baseline it",
+            result.outcome
+        );
+        if expected_minimum == 32 {
+            assert_eq!(
+                result.mismatched_pixels, 32,
+                "{relative}: diagnostic near-miss changed"
+            );
+        } else {
+            assert!(
+                result.mismatched_pixels > 0,
+                "{relative}: expected an unpinned mismatch"
+            );
+        }
+    }
+}
