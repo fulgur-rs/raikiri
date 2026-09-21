@@ -32,11 +32,11 @@ use kurbo::{Affine, Arc, BezPath, Point, Rect, RoundedRectRadii, Vec2};
 use peniko::{Color, Fill, Mix};
 use raikiri_dom::{CounterSnapshot, Document};
 use raikiri_style::property::{
-    BackgroundImage, Border, BorderColor, BorderStyle, ContentComponent, CounterStyle, CssColor,
-    DisplayValue, FloatValue, Gradient, GradientStopColor, Length, LengthOrAuto, ListStyleType,
-    ObjectFit, OutlineColor, OutlineStyle, OverflowValue, PositionValue, PropertyKey,
-    PropertyValue, QuoteKeyword, Sides, TextAlign, TextShadowColor, VerticalAlign, WritingMode,
-    ZIndexValue,
+    BackgroundImage, Border, BorderColor, BorderStyle, ColumnCountValue, ContentComponent,
+    CounterStyle, CssColor, DisplayValue, FloatValue, Gradient, GradientStopColor, Length,
+    LengthOrAuto, ListStyleType, ObjectFit, OutlineColor, OutlineStyle, OverflowValue,
+    PositionValue, PropertyKey, PropertyValue, QuoteKeyword, Sides, TextAlign, TextShadowColor,
+    VerticalAlign, WritingMode, ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderRadius, ComputedCssPosition,
@@ -2858,6 +2858,7 @@ fn paint_document_impl(
             shift_y: f32,
             transform_x: f32,
             transform_y: f32,
+            fragment_clip_height: Option<f32>,
             inside_fixed: bool,
             inside_fixed_containing_block: bool,
             decorations: text::DecorationContext,
@@ -2993,6 +2994,7 @@ fn paint_document_impl(
         shift_y: 0.0,
         transform_x: 0.0,
         transform_y: 0.0,
+        fragment_clip_height: None,
         inside_fixed: false,
         inside_fixed_containing_block: false,
         decorations: root_decorations,
@@ -3006,6 +3008,7 @@ fn paint_document_impl(
             shift_y,
             transform_x,
             transform_y,
+            fragment_clip_height,
             inside_fixed,
             inside_fixed_containing_block,
             decorations,
@@ -3045,6 +3048,7 @@ fn paint_document_impl(
                 shift_y,
                 transform_x,
                 transform_y,
+                fragment_clip_height,
                 inside_fixed,
                 inside_fixed_containing_block,
                 decorations,
@@ -3056,6 +3060,7 @@ fn paint_document_impl(
                 shift_y,
                 transform_x,
                 transform_y,
+                fragment_clip_height,
                 inside_fixed,
                 inside_fixed_containing_block,
                 decorations,
@@ -3144,6 +3149,23 @@ fn paint_document_impl(
                     abs_y + page_offset_y + child_shift_y + pos_dy + fixed_dy + child_transform_y;
                 let mut paint_height = layout.size.height;
                 let mut paint_background_height = layout.size.height;
+                let mut multicol_clip_pushed = false;
+                if let Some(clip_height) =
+                    fragment_clip_height.filter(|height| height.is_finite() && *height > 0.0)
+                {
+                    paint_y = paint_y.floor();
+                    paint_height = paint_height.min(clip_height);
+                    paint_background_height = paint_background_height.min(clip_height);
+                    let clip_origin_y = paint_y.floor();
+                    let clip = Rect::new(
+                        paint_x as f64,
+                        clip_origin_y as f64,
+                        (paint_x + layout.size.width) as f64,
+                        (clip_origin_y + clip_height) as f64,
+                    );
+                    scene.push_clip_layer(Affine::IDENTITY, &clip);
+                    multicol_clip_pushed = true;
+                }
                 // cov:ignore: vertical table cell background geometry is covered by the ignored exact WPT reftest.
                 let mut paint_background_width = layout.size.width;
                 if let Some(width) = vertical_table_cell_background_width(
@@ -3564,6 +3586,11 @@ fn paint_document_impl(
                         0.0 // cov:ignore: absolute continuation intentionally omits first pseudo paint
                     };
                 }
+                // The fragmentainer clip encloses the element and its children;
+                // close it after any element-local overflow clip.
+                if multicol_clip_pushed {
+                    stack.push(PaintFrame::PopClip);
+                }
                 // CSS Overflow 3 §3.1: non-visible overflow clips descendants to
                 // the padding box. The current WPT coverage uses `overflow:hidden`
                 // with no padding or border, so the border-box geometry is the
@@ -3724,6 +3751,12 @@ fn paint_document_impl(
                 // position but paint at offset position.
                 let child_parent_x = abs_x + pos_dx + fixed_dx;
                 let child_parent_y = abs_y + pos_dy + fixed_dy;
+                let child_fragment_clip_height = match cv.column_count {
+                    ColumnCountValue::Count(count) if count > 1 && layout.size.height > 0.0 => {
+                        Some(layout.size.height)
+                    }
+                    _ => fragment_clip_height,
+                };
                 for child in children.into_iter().rev() {
                     let is_direct_text = document
                         .get_node(child)
@@ -3764,6 +3797,7 @@ fn paint_document_impl(
                         shift_y: child_shift_y,
                         transform_x: child_transform_x,
                         transform_y: child_transform_y,
+                        fragment_clip_height: child_fragment_clip_height,
                         inside_fixed: inside_fixed || fixed_in_viewport,
                         inside_fixed_containing_block: inside_fixed_containing_block
                             || establishes_fixed_containing_block,
