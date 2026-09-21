@@ -1529,3 +1529,7 @@ css/css-page/margin-boxes/content-004-print.html
 css/css-page/margin-boxes/content-005-print.html
 css/css-page/margin-boxes/content-008-print.html
 css/css-page/margin-boxes/content-009-print.html
+css/css-page/layers-001-print.html
+css/css-page/layers-002-print.html
+css/css-page/layers-003-print.html
+css/css-page/layers-004-print.html
