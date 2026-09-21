@@ -184,6 +184,8 @@ pub struct SpecifiedValues {
     pub list_style_type: ListStyleType,
     /// [`ComputedValues::list_style_position`] の staging。inherited。
     pub list_style_position: ListStylePosition,
+    /// [`ComputedValues::list_style_image`] の staging。inherited。
+    pub list_style_image: BackgroundImage,
     /// [`ComputedValues::counter_reset`] の staging。層は computed-equivalent。
     pub counter_reset: Arc<Vec<(SmolStr, i32)>>,
     /// [`ComputedValues::counter_increment`] の staging。層は computed-equivalent。
@@ -608,6 +610,7 @@ impl SpecifiedValues {
             display: DisplayValue::Inline,
             list_style_type: ListStyleType::Disc,
             list_style_position: ListStylePosition::Outside,
+            list_style_image: BackgroundImage::None,
             counter_reset: empty_counter_entries(),
             counter_increment: empty_counter_entries(),
             counter_set: empty_counter_entries(),
@@ -911,6 +914,7 @@ impl SpecifiedValues {
             // CSS Lists 3 §3: both list-style longhands are inherited.
             list_style_type: parent.list_style_type.clone(),
             list_style_position: parent.list_style_position,
+            list_style_image: parent.list_style_image.clone(),
             // `match-parent` はここでは解決しない (素朴なコピー) — 解決は
             // `finalize` / `finalize_as_root` が全 winner 適用後に親の
             // `ComputedValues` を明示的に受け取って行う (`Self` doc の
@@ -1481,6 +1485,7 @@ impl SpecifiedValues {
             display: resolve_display_for_float(self.display, self.float),
             list_style_type: self.list_style_type,
             list_style_position: self.list_style_position,
+            list_style_image: self.list_style_image,
             counter_reset: self.counter_reset,
             counter_increment: self.counter_increment,
             counter_set: self.counter_set,
@@ -2186,6 +2191,7 @@ mod tests {
             display: DisplayValue::Block,
             list_style_type: ListStyleType::Named(SmolStr::new("upper-roman")),
             list_style_position: ListStylePosition::Inside,
+            list_style_image: BackgroundImage::Url("marker.png".into()),
             counter_reset: Arc::new(vec![(SmolStr::new("chapter"), 3)]),
             counter_increment: Arc::new(vec![(SmolStr::new("section"), 2)]),
             counter_set: Arc::new(vec![(SmolStr::new("page"), 5)]),

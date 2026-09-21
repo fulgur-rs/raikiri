@@ -2601,6 +2601,24 @@ fn list_style_type_parses_builtin_custom_and_string_values() {
 }
 
 #[test]
+fn list_style_image_parses_none_and_url() {
+    assert_eq!(
+        parse_entire("none", "list-style-image"),
+        Some(PropertyValue::ListStyleImage(BackgroundImage::None))
+    );
+    assert_eq!(
+        parse_entire("url(marker.png)", "list-style-image"),
+        Some(PropertyValue::ListStyleImage(BackgroundImage::Url(
+            "marker.png".to_string()
+        )))
+    );
+    assert_eq!(
+        parse_entire("url(marker.png) none", "list-style-image"),
+        None
+    );
+}
+
+#[test]
 fn list_style_type_rejects_reserved_or_trailing_values() {
     for value in [
         "inherit",

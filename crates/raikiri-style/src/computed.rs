@@ -389,6 +389,8 @@ pub struct ComputedValues {
     pub list_style_type: ListStyleType,
     /// `list-style-position`。**inherited**、initial: `outside` (CSS Lists 3 §3.2)。
     pub list_style_position: ListStylePosition,
+    /// `list-style-image`。**inherited**、initial: `none` (CSS Lists 3 §3.3)。
+    pub list_style_image: BackgroundImage,
     /// `counter-reset`。**non-inherited**。spec initial は `none`
     /// (CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#counter-reset>)、
     /// 本 impl はそれを空 list で表現する。
@@ -1611,6 +1613,7 @@ impl ComputedValues {
             display: DisplayValue::Inline,
             list_style_type: ListStyleType::Disc,
             list_style_position: ListStylePosition::Outside,
+            list_style_image: BackgroundImage::None,
             // CSS Lists 3 §4: counter-* の spec initial は `none`、本 impl は
             // 空 list で表現する (anchor は field doc 参照)。
             // shared empty Arc slot — per-node allocation 回避
@@ -2187,6 +2190,7 @@ mod tests {
             display: DisplayValue::Block,
             list_style_type: ListStyleType::Named(SmolStr::new("upper-roman")),
             list_style_position: ListStylePosition::Inside,
+            list_style_image: BackgroundImage::Url("marker.png".into()),
             counter_reset: Arc::new(vec![(SmolStr::new("chapter"), 3)]),
             counter_increment: Arc::new(vec![(SmolStr::new("section"), 2)]),
             counter_set: Arc::new(vec![(SmolStr::new("page"), 5)]),
