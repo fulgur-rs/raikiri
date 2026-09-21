@@ -1865,10 +1865,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // (`Margin`/`Padding`/`Border` shorthand fall-through と同じ
         // "safety net ではない" 位置付け、`PropertyKey::Padding` doc 参照)。
         // cov:ignore: exercised by apply_value_direct_flex_shorthand_fall_through
-        // (a pre-existing, passing test) but cargo-llvm-cov does not attribute
-        // hits to this arm's lines within apply_value's large match statement —
-        // verified against a main-branch baseline with the identical
-        // code/test pair (see raikiri-spike-4nhl.9).
+        // (a passing test in this same file) but cargo-llvm-cov does not
+        // attribute hits to this arm's lines within apply_value's large
+        // match statement.
         PropertyValue::Flex(f) => {
             target.flex_grow = f.grow;
             target.flex_shrink = f.shrink;

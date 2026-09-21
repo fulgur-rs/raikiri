@@ -1,9 +1,7 @@
-//! `#[cfg(test)]`-only helpers shared by 3+ of cascade's submodule test
-//! modules (raikiri-spike-4nhl.8 Phase B). Anything used by only one
-//! submodule's tests lives directly in that submodule's own `mod tests`
-//! instead — see docs/superpowers/plans/2026-09-21-cascade-phase-b.md for
-//! the full per-helper placement rationale.
-#![cfg(test)]
+//! `#[cfg(test)]`-only helpers shared by 3 or more of `cascade`'s submodule
+//! test modules. A helper used by only one submodule's tests lives directly
+//! in that submodule's own `mod tests` instead — this module exists purely
+//! to avoid duplicating a helper body across multiple files.
 
 use crate::computed::ComputedValues;
 use crate::property::CssColor;

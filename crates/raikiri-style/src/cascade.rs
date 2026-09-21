@@ -12,7 +12,7 @@
 //! 2 / 2.5 / 3 と呼ぶ):
 //!
 //! - **phase 1: winner の staging** — 親の [`ComputedValues`] から
-//!   [`SpecifiedValues`] を seed し、その node の全 winner を `apply_value` で
+//!   [`crate::specified::SpecifiedValues`] を seed し、その node の全 winner を `apply_value` で
 //!   適用する。この段では length は specified 表現のまま。
 //! - **phase 2: font-size の絶対化** — **親の** computed font-size 基準。
 //! - **phase 2.5: line-height の絶対化** — 自 node の (今確定した) font-size
@@ -21,7 +21,7 @@
 //! - **phase 3: 残り全 length の絶対化** — **自 node の** computed font-size /
 //!   line-height 基準。
 //!
-//! 2 / 2.5 / 3 は [`SpecifiedValues::finalize`] に閉じている。分離が必要な理由は
+//! 2 / 2.5 / 3 は [`crate::specified::SpecifiedValues::finalize`] に閉じている。分離が必要な理由は
 //! [`crate::specified`] の module doc を参照 (`padding: 2em` の基準となる
 //! `font-size` はその node の**全** winner を適用し終えるまで確定しないため、
 //! winner 適用の途中で絶対化することはできない)。
