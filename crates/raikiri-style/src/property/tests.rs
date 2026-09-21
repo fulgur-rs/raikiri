@@ -5386,6 +5386,28 @@ fn direction_key_maps_to_direction_property_key() {
 // 4 non-`horizontal-tb` keywords (`WritingMode` doc's Non-goal section,
 // `resolve_writing_mode` tests below).
 
+#[test] // cov:ignore: unit-test module is not emitted as an lcov source record.
+// cov:ignore: unit-test module is not emitted as an lcov source record.
+fn ruby_position_parses_all_keywords_and_maps_key() {
+    assert_eq!(
+        parse("over", "ruby-position"),
+        Some(PropertyValue::RubyPosition(RubyPosition::Over))
+    );
+    assert_eq!(
+        parse("under", "ruby-position"),
+        Some(PropertyValue::RubyPosition(RubyPosition::Under))
+    );
+    assert_eq!(
+        parse("inter-character", "ruby-position"),
+        Some(PropertyValue::RubyPosition(RubyPosition::InterCharacter))
+    );
+    assert_eq!(
+        PropertyValue::RubyPosition(RubyPosition::Under).key(),
+        PropertyKey::RubyPosition
+    );
+    assert_eq!(parse("sideways", "ruby-position"), None);
+}
+
 #[test]
 fn writing_mode_parse_all_five_keywords() {
     // All 5 keywords parse successfully (`Some`, not `None`) — this

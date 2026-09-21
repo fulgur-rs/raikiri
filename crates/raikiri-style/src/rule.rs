@@ -628,6 +628,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         // writing-mode (CSS Writing Modes 4 §3.2) — 同じく展開先の longhand を
         // 持たない。
         | PropertyValue::WritingMode(_)
+        | PropertyValue::RubyPosition(_)
         // background-repeat / background-attachment / background-clip /
         // background-origin / background-size / background-position /
         // background-image (CSS Backgrounds and Borders 3 §2.3-§2.9) —

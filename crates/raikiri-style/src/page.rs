@@ -3890,6 +3890,7 @@ fn absolutize_in_page_context(
         // Non-goal section and `resolve_writing_mode` doc for why every
         // non-`horizontal-tb` keyword collapses here.
         PropertyValue::WritingMode(v) => PropertyValue::WritingMode(resolve_writing_mode(v)),
+        PropertyValue::RubyPosition(v) => PropertyValue::RubyPosition(v),
         // ── letter-spacing / word-spacing ───────────────────────────────────
         // CSS Text 3 §7.2 / §7.1: `normal | <length>`, absolutized the same
         // way `crate::specified::SpecifiedValues::absolutize_with` does
@@ -4226,9 +4227,9 @@ mod tests {
         Length, LengthOrAuto, LengthOrNormal, LineBreak, LineHeight, ListStylePosition,
         ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineStyle, OverflowValue,
         OverflowWrap, OverflowXY, PageValue, PlaceContentShorthand, PlaceItemsShorthand,
-        PlaceSelfShorthand, PositionValue, RelativeFontSize, SelfAlignmentValue, StartEnd, TabSize,
-        TextAlign, TextAlignAll, TextAlignLast, TextDecorationColor, TextDecorationInset,
-        TextDecorationLine, TextDecorationShorthand, TextDecorationSkipInk,
+        PlaceSelfShorthand, PositionValue, RelativeFontSize, RubyPosition, SelfAlignmentValue,
+        StartEnd, TabSize, TextAlign, TextAlignAll, TextAlignLast, TextDecorationColor,
+        TextDecorationInset, TextDecorationLine, TextDecorationShorthand, TextDecorationSkipInk,
         TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge,
         TextEmphasisPosition, TextEmphasisVEdge, TextJustify, TextShadowColor, TextTransform,
         TextUnderlinePosition, TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace,
@@ -7267,7 +7268,7 @@ mod tests {
     /// この値は `page_corpus` の現在の identity/pass-through arms と同期する。
     // Includes the five page-only inherit markers, which phase 3 leaves
     // untouched as a defensive no-op after phase 2 has normally resolved them.
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 119;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 120;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -7862,6 +7863,7 @@ mod tests {
         // worst-case 理由付けと `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE` を
         // 同時に見直すこと。
         WritingMode => PropertyValue::WritingMode(WritingMode::VerticalRl),
+        RubyPosition => PropertyValue::RubyPosition(RubyPosition::Over),
         // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.7/§2.8 — keyword-only,
         // carry no length (`x`/`y` intentionally asymmetric to catch a
         // swapped-axis regression, same reasoning as `OverflowXY`'s
@@ -8317,6 +8319,7 @@ mod tests {
         Orphans,
         Widows,
         WritingMode,
+        RubyPosition,
         BackgroundRepeat,
         BackgroundAttachment,
         BackgroundClip,
@@ -8911,6 +8914,7 @@ mod tests {
             // above — but that collapse has nothing to do with *length*
             // residue, which is all this detector checks.
             | PropertyValue::WritingMode(_)
+            | PropertyValue::RubyPosition(_)
             // `background-repeat`/`background-attachment`/`background-clip`/
             // `background-origin` carry no length either — keyword-only
             // payloads (`BackgroundSize`/`BackgroundPosition` below do carry

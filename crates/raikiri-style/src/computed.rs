@@ -21,12 +21,12 @@ use crate::property::{
     FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps,
     GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Hyphens, Isolation, LineBreak,
     ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, OutlineColor,
-    OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue, SelfAlignmentValue,
-    Sides, TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine,
-    TextDecorationStyle, TextJustify, TextTransform, TextWrapMode, VerticalAlign, Visibility,
-    VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_content_list,
-    empty_counter_entries, empty_filter_list, empty_quotes_entries, empty_string_set_entries,
-    initial_font_family,
+    OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue, RubyPosition,
+    SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor,
+    TextDecorationLine, TextDecorationStyle, TextJustify, TextTransform, TextWrapMode,
+    VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue,
+    empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
+    empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
@@ -548,6 +548,8 @@ pub struct ComputedValues {
     /// Future work: vertical writing-mode 実装時に本 collapse を
     /// 削除し、本 doc の「観測されることは無い」記述を撤回すること。
     pub writing_mode: WritingMode,
+    /// `ruby-position` — inherited annotation placement.
+    pub ruby_position: RubyPosition,
     /// `text-indent` — first-line indentation of a block container.
     /// **inherited**、initial: [`ComputedLengthPercentage::Px`]`(0.0)` (CSS
     /// Text 3 §8.1 "First Line Indentation: the text-indent property"
@@ -1650,6 +1652,7 @@ impl ComputedValues {
             // `horizontal-tb` (`WritingMode` doc's Non-goal section — the
             // other 4 keywords never appear in this field regardless).
             writing_mode: WritingMode::HorizontalTb,
+            ruby_position: RubyPosition::Over,
             // CSS Text 3 §8.1: text-indent initial is `0`。
             text_indent: ComputedLengthPercentage::Px(0.0),
             text_indent_ch_factor: None,
@@ -2228,6 +2231,7 @@ mod tests {
             // 到達不能コメントと下記 `HorizontalTb` assertion を `VerticalRl` へ
             // 戻すこと。
             writing_mode: WritingMode::VerticalRl,
+            ruby_position: RubyPosition::Under,
             // CSS Text 3 §8.1: initial (`0`) と異なる値
             // (non_initial_parent の趣旨どおり全 field を非 initial に)。
             text_indent: ComputedLengthPercentage::Px(9.0),

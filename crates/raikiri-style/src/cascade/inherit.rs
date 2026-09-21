@@ -944,6 +944,7 @@ pub(crate) fn resolve_against_inherited(
         // mirroring the element path's `SpecifiedValues::absolutize_with`).
         // See `WritingMode` doc's Non-goal section.
         | PropertyValue::WritingMode(_)
+        | PropertyValue::RubyPosition(_)
         // `text-decoration-line`/`-style`/`-color` (and the `text-decoration`
         // shorthand, structurally unreachable here per
         // `crate::rule::expand_shorthand_into`) carry no length and do not
@@ -2014,6 +2015,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // is a `SpecifiedValues` field, not `ComputedValues` — see
         // `WritingMode` doc's Non-goal section.
         PropertyValue::WritingMode(v) => target.writing_mode = v,
+        PropertyValue::RubyPosition(v) => target.ruby_position = v,
         // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.7/§2.8. non-inherited,
         // computed value = specified keyword(s) — simple assignment, no
         // length payload (`BackgroundColor`/`Orphans` arm と同じ shape)。
@@ -5088,6 +5090,18 @@ mod tests {
         // Future work: vertical writing 実装時に
         // `HorizontalTb` 期待値を `VerticalRl` へ戻すこと。
         assert_eq!(cv.writing_mode, WritingMode::HorizontalTb);
+    }
+
+    #[test]
+    fn ruby_position_wired_through_cascade_and_inheritance() {
+        use crate::property::RubyPosition;
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(0, "p", Some("ruby-position: under"));
+        let child = doc.push_element(parent, "ruby", None);
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(result.computed[parent].ruby_position, RubyPosition::Under);
+        assert_eq!(result.computed[child].ruby_position, RubyPosition::Under);
     }
 
     #[test]
