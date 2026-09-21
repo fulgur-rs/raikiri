@@ -1329,3 +1329,8 @@ css/css-text/shaping/shaping-023.html
 css/css-text/shaping/shaping-024.html
 css/css-text/shaping/shaping-025.html
 css/css-text/shaping/shaping-arabic-diacritics-001.html
+# --- CSS Text text-autospace exact 800x600 PASS-only pins 2026-09-21 ---
+css/css-text/text-autospace/text-autospace-vertical-combine-001.html
+css/css-text/text-autospace/text-autospace-vertical-upright-001.html
+css/css-text/text-autospace/text-autospace-vs-001.html
+css/css-text/text-autospace/text-autospace-zh-001.html

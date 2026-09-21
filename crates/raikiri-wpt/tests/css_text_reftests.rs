@@ -177,3 +177,16 @@ fn shaping_unpinned_exact_passes() {
     ];
     assert_exact_passes(&root, &candidates);
 }
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_autospace_unpinned_exact_passes() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let candidates = [
+        "css/css-text/text-autospace/text-autospace-vertical-combine-001.html",
+        "css/css-text/text-autospace/text-autospace-vertical-upright-001.html",
+        "css/css-text/text-autospace/text-autospace-vs-001.html",
+        "css/css-text/text-autospace/text-autospace-zh-001.html",
+    ];
+    assert_exact_passes(&root, &candidates);
+}
