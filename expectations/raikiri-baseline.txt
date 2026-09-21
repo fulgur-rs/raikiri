@@ -1495,3 +1495,8 @@ css/selectors/nth-child-specificity-1.html
 css/selectors/nth-child-specificity-2.html
 css/selectors/nth-child-specificity-3.html
 css/selectors/nth-child-specificity-4.html
+css/css-values/calc-in-calc.html
+css/css-values/calc-in-max.html
+css/css-values/calc-rounding-001.html
+css/css-values/calc-rounding-002.html
+css/css-values/calc-rounding-003.html
