@@ -143,3 +143,35 @@ css/css-multicol/multicol-nested-033-ref.html
 css/css-multicol/multicol-nested-025.html
 css/css-multicol/multicol-nested-027.html
 css/support
+
+# CSS Images focused visual slice: gradients, EXIF orientation diagnostic, and
+# contain-intrinsic-size PNG diagnostic. The root green image is also used by
+# css-page image remeasurement cases.
+images/green.png
+css/css-images/gradients-with-transparent.html
+css/css-images/gradients-with-transparent-ref.html
+css/css-images/gradient-border-box.html
+css/css-images/gradient-border-box-ref.html
+css/css-images/image-orientation/image-orientation-default.html
+css/css-images/image-orientation/reference/image-orientation-default-ref.html
+css/css-images/image-orientation/support/exif-orientation-1-ul.jpg
+css/css-images/image-orientation/support/exif-orientation-1-ul-pre-rotated.jpg
+css/css-images/image-orientation/support/exif-orientation-2-ur.jpg
+css/css-images/image-orientation/support/exif-orientation-2-ur-pre-rotated.jpg
+css/css-images/image-orientation/support/exif-orientation-3-lr.jpg
+css/css-images/image-orientation/support/exif-orientation-3-lr-pre-rotated.jpg
+css/css-images/image-orientation/support/exif-orientation-4-lol.jpg
+css/css-images/image-orientation/support/exif-orientation-4-lol-pre-rotated.jpg
+css/css-images/image-orientation/support/exif-orientation-5-lu.jpg
+css/css-images/image-orientation/support/exif-orientation-5-lu-pre-rotated.jpg
+css/css-images/image-orientation/support/exif-orientation-6-ru.jpg
+css/css-images/image-orientation/support/exif-orientation-6-ru-pre-rotated.jpg
+css/css-images/image-orientation/support/exif-orientation-7-rl.jpg
+css/css-images/image-orientation/support/exif-orientation-7-rl-pre-rotated.jpg
+css/css-images/image-orientation/support/exif-orientation-8-llo.jpg
+css/css-images/image-orientation/support/exif-orientation-8-llo-pre-rotated.jpg
+css/css-images/image-orientation/support/exif-orientation-9-u.jpg
+css/css-images/image-orientation/support/exif-orientation-9-u-pre-rotated.jpg
+css/css-images/object-fit-containcontainintrinsicsize-png-001i.tentative.html
+css/css-images/object-fit-containsize-png-001-ref.tentative.html
+css/css-images/support/colors-16x8.png

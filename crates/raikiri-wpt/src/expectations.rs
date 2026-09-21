@@ -1071,6 +1071,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
                 "css/css-fonts/",
                 "css/css-color/",
                 "css/css-backgrounds/",
+                "css/css-images/",
                 "css/css-values/",
                 "css/css-text/",
                 "css/css-text-decor/",
@@ -1284,7 +1285,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Text text-group-align/text-spacing-trim/hanging-punctuation slice (+28).
         // + CSS Text shaping slice (+18).
         // + CSS Text text-autospace slice (+4).
-        assert_eq!(set.baseline.entries.len(), 1126);
+        // + CSS Images gradients and CSS Page image-resource slices (+6).
+        assert_eq!(set.baseline.entries.len(), 1132);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
