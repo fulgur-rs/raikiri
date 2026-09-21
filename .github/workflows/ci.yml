@@ -25,6 +25,11 @@ jobs:
   changes:
     name: detect relevant changes
     runs-on: ubuntu-latest
+    # dorny/paths-filter queries the PR's changed files via the GitHub API,
+    # which needs pull-requests: read beyond the repo-wide contents: read.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
     steps:
