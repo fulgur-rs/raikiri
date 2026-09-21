@@ -533,6 +533,9 @@ impl Node {
     }
 
     /// Return the raw character data for a text node.
+    ///
+    /// Paint-side generated-content resolution uses this accessor while
+    /// walking an element's descendant string value.
     #[inline]
     pub fn text_content(&self) -> Option<&str> {
         match &self.data {

@@ -37,16 +37,17 @@ use crate::property::{
     CssPositionOffset, Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue,
     FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue,
     GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, Hyphens, Isolation,
-    Length, LengthOrAuto, LengthOrNormal, LineHeight, ListStylePosition, ListStyleType, MaskImage,
-    MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
-    OverflowXY, PageValue, PositionValue, SelfAlignmentValue, Sides, TabSize, TableLayoutValue,
-    TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine, TextDecorationStyle,
-    TextJustify, TextShadowItem, TextTransform, TextWrapMode, TransformFunction, VerticalAlign,
-    Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_box_shadow_list,
-    empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
-    empty_string_set_entries, empty_text_shadow_list, empty_transform_list, initial_font_family,
-    initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
-    resolve_text_align_match_parent, resolve_writing_mode,
+    Length, LengthOrAuto, LengthOrNormal, LineBreak, LineHeight, ListStylePosition, ListStyleType,
+    MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle, OverflowValue,
+    OverflowWrap, OverflowXY, PageValue, PositionValue, SelfAlignmentValue, Sides, TabSize,
+    TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine,
+    TextDecorationStyle, TextJustify, TextShadowItem, TextTransform, TextWrapMode,
+    TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode,
+    ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
+    empty_filter_list, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
+    empty_transform_list, initial_font_family, initial_grid_auto_track_list,
+    resolve_display_for_float, resolve_overflow, resolve_text_align_match_parent,
+    resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ResolveContext,
@@ -325,6 +326,8 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::word_break`] の staging。層は computed-equivalent
     /// (`WordBreak` は length を運ばない)。
     pub word_break: WordBreak,
+    /// [`ComputedValues::line_break`] の staging。層は computed-equivalent。
+    pub line_break: LineBreak,
     /// [`ComputedValues::overflow_wrap`] の staging。層は computed-equivalent
     /// (`OverflowWrap` は length を運ばない)。`word-wrap` legacy alias もこの
     /// 同じ field に落ちる ([`ComputedValues::overflow_wrap`] doc 参照)。
@@ -693,6 +696,8 @@ impl SpecifiedValues {
             z_index: ZIndexValue::Auto,
             // CSS Text 3 §5.1: word-break initial は `normal`。
             word_break: WordBreak::Normal,
+            // CSS Text 3 §5.3: line-break initial は `auto`。
+            line_break: LineBreak::Auto,
             // CSS Text 3 §5.4: overflow-wrap initial は `normal`。
             overflow_wrap: OverflowWrap::Normal,
             // CSS Text 3 §7.2 / §7.1: letter-spacing / word-spacing の
@@ -952,6 +957,8 @@ impl SpecifiedValues {
             visibility: parent.visibility,
             // CSS Text 3 §5.1: word-break は inherited。
             word_break: parent.word_break,
+            // CSS Text 3 §5.3: line-break は inherited。
+            line_break: parent.line_break,
             // CSS Text 3 §5.4: overflow-wrap は inherited。
             overflow_wrap: parent.overflow_wrap,
             // CSS Text 3 §7.2 / §7.1: letter-spacing / word-spacing は共に
@@ -1684,6 +1691,8 @@ impl SpecifiedValues {
             // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
             // そのまま素通し。
             word_break: self.word_break,
+            // computed value = specified keyword (`LineBreak` doc).
+            line_break: self.line_break,
             // computed value = specified keyword (`OverflowWrap` doc 参照、
             // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
             // そのまま素通し。`word-wrap` legacy alias も同じ field に落ちる。
@@ -2274,6 +2283,7 @@ mod tests {
             visibility: Visibility::Hidden,
             z_index: ZIndexValue::Integer(3),
             word_break: WordBreak::KeepAll,
+            line_break: LineBreak::Auto,
             overflow_wrap: OverflowWrap::Anywhere,
             letter_spacing: ComputedLength(2.0),
             letter_spacing_ch_factor: None,

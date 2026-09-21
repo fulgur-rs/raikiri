@@ -24,9 +24,9 @@ use raikiri_style::property::{
     CalcLengthPercentage, ClearValue, ColumnCountValue, ContentAlignmentValue, Direction,
     DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle as StyleFontStyle,
     GridAutoFlowValue, GridLineValue, GridRepeatCount, GridTemplateAreasValue, Hyphens, Length,
-    LengthOrAuto, OverflowValue, OverflowWrap, PositionValue, PropertyKey, PropertyValue,
-    SelfAlignmentValue, TextAlign, TextJustify, TextTransform, TextWrapMode, VerticalAlign,
-    WhiteSpace, WordBreak, WritingMode,
+    LengthOrAuto, LineBreak, OverflowValue, OverflowWrap, PositionValue, PropertyKey,
+    PropertyValue, SelfAlignmentValue, TextAlign, TextJustify, TextTransform, TextWrapMode,
+    VerticalAlign, WhiteSpace, WordBreak, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ChLengthProvenance, ComputedColumnWidth, ComputedFlexBasis,
@@ -6341,7 +6341,10 @@ fn is_leading_body_text(document: &Document, body_id: Option<usize>, node_id: us
     false
 }
 
-fn parley_word_break(value: WordBreak) -> ParleyWordBreak {
+fn parley_word_break(value: WordBreak, line_break: LineBreak) -> ParleyWordBreak {
+    if matches!(line_break, LineBreak::Anywhere) {
+        return ParleyWordBreak::BreakAll;
+    }
     match value {
         WordBreak::BreakAll => ParleyWordBreak::BreakAll,
         WordBreak::KeepAll => ParleyWordBreak::KeepAll,
@@ -7175,6 +7178,7 @@ fn preshape_text(
         tab_size: ComputedTabSize,
         white_space: WhiteSpace,
         word_break: WordBreak,
+        line_break: LineBreak,
         overflow_wrap: OverflowWrap,
         text_wrap_mode: TextWrapMode,
         // Soft wrapping suppressed (`white-space: nowrap` or
@@ -7505,6 +7509,7 @@ fn preshape_text(
             tab_size: cv.tab_size,
             white_space: cv.white_space,
             word_break: cv.word_break,
+            line_break: cv.line_break,
             overflow_wrap: cv.overflow_wrap,
             text_wrap_mode: cv.text_wrap,
             nowrap: cv.white_space == WhiteSpace::Nowrap || cv.text_wrap == TextWrapMode::Nowrap,
@@ -7622,7 +7627,10 @@ fn preshape_text(
             if job.word_spacing_ch_factor.is_some() {
                 builder.push_default(StyleProperty::WordSpacing(word_spacing));
             }
-            builder.push_default(StyleProperty::WordBreak(parley_word_break(job.word_break)));
+            builder.push_default(StyleProperty::WordBreak(parley_word_break(
+                job.word_break,
+                job.line_break,
+            )));
             builder.push_default(StyleProperty::OverflowWrap(parley_overflow_wrap(
                 job.word_break,
                 job.overflow_wrap,
@@ -7698,7 +7706,10 @@ fn preshape_text(
                 if job.word_spacing_ch_factor.is_some() {
                     builder.push_default(StyleProperty::WordSpacing(word_spacing));
                 }
-                builder.push_default(StyleProperty::WordBreak(parley_word_break(job.word_break)));
+                builder.push_default(StyleProperty::WordBreak(parley_word_break(
+                    job.word_break,
+                    job.line_break,
+                )));
                 builder.push_default(StyleProperty::OverflowWrap(parley_overflow_wrap(
                     job.word_break,
                     job.overflow_wrap,
