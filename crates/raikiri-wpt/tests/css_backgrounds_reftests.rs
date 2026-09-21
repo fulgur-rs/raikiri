@@ -63,3 +63,31 @@ fn border_radius_basic_pairs_are_pixel_exact_at_800x600() {
         );
     }
 }
+
+/// Background clipping of the padding and content boxes matches the reference pixels.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn background_clip_box_pairs_are_pixel_exact_at_800x600() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let dir = root.join("css/css-backgrounds");
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    for number in [7, 8] {
+        let test = dir.join(format!("background-clip-{number:03}.html"));
+        let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
+            .unwrap_or_else(|error| panic!("discover {}: {error}", test.display()));
+        assert_eq!(pairs.len(), 1, "expected one pair for {}", test.display());
+        let result = run_pair(&pairs[0], config)
+            .unwrap_or_else(|error| panic!("run {}: {error}", test.display()));
+        assert!(
+            matches!(result.outcome, TestOutcome::Pass),
+            "{}: {:?} ({} mismatched pixels)",
+            test.display(),
+            result.outcome,
+            result.mismatched_pixels
+        );
+    }
+}
