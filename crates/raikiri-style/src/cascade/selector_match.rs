@@ -12,7 +12,8 @@ use crate::style_dom::{
 use crate::{PseudoElem, RaikiriSelectorImpl};
 
 use super::collect::{Specificity, specificity_of};
-use super::{lang_pseudo_matches, resolve_directionality};
+use super::lang::lang_pseudo_matches;
+use super::resolve_directionality;
 
 /// 1 compound selector 分 — `iter` が次の combinator に達する (または
 /// selector 全体の終端に達する) まで — を `elem` 単体に対して判定する。
