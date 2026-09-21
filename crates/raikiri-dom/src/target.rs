@@ -697,6 +697,24 @@ mod tests {
     use smol_str::SmolStr;
     use taffy::Style;
 
+    #[test]
+    fn target_counter_page_style_resolution_smoke() {
+        let mut registry = TargetRegistry::default();
+        let directive = synthesize_register_target("chapter-2");
+        let mut info = TargetInfo::default();
+        info.counters.insert(Symbol::new("page"), vec![2]);
+        apply_register_target(directive, info, &mut registry);
+
+        assert_eq!(
+            registry.resolve_target_counter(
+                "#chapter-2",
+                Symbol::new("page"),
+                raikiri_style::property::CounterStyle::Decimal,
+            ),
+            raikiri_traits::ResolveOutcome::Resolved("2".to_owned())
+        );
+    }
+
     // ── synthesize_register_target / apply_register_target ─────────
 
     #[test]
