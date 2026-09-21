@@ -129,3 +129,38 @@ fn contain_intrinsic_size_png_is_measured_without_baselining() {
         Err(error) => eprintln!("{}: unsupported ({error}); diagnostic only", test.display()),
     }
 }
+
+/// Basic linear, radial, and conic gradient cases match their references exactly.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn additional_gradient_pairs_are_pixel_exact_at_800x600() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    for name in [
+        "gradient-button.html",
+        "gradient-content-box.html",
+        "gradients-with-border.html",
+        "linear-gradient-1.html",
+        "linear-gradient-2.html",
+        "conic-gradient-center.html",
+        "conic-gradient-angle.html",
+    ] {
+        let test = root.join("css/css-images").join(name);
+        let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
+            .unwrap_or_else(|error| panic!("discover {}: {error}", test.display()));
+        assert_eq!(pairs.len(), 1, "expected one pair for {}", test.display());
+        let result = run_pair_with_images(&pairs[0], config)
+            .unwrap_or_else(|error| panic!("run {}: {error}", test.display()));
+        assert!(
+            matches!(result.outcome, TestOutcome::Pass),
+            "{}: {:?} ({} mismatched pixels)",
+            test.display(),
+            result.outcome,
+            result.mismatched_pixels
+        );
+    }
+}

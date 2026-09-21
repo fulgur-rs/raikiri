@@ -1502,6 +1502,13 @@ css/css-values/calc-rounding-002.html
 css/css-values/calc-rounding-003.html
 css/css-display/display-contents-alignment-001.html
 css/css-display/display-contents-alignment-002.html
+css/css-images/gradient-button.html
+css/css-images/gradient-content-box.html
+css/css-images/gradients-with-border.html
+css/css-images/linear-gradient-1.html
+css/css-images/linear-gradient-2.html
+css/css-images/conic-gradient-center.html
+css/css-images/conic-gradient-angle.html
 css/css-overflow/clip-001.html
 css/css-overflow/overflow-canvas.html
 css/css-overflow/overflow-body-propagation-001.html
