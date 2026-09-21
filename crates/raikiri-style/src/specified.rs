@@ -39,8 +39,8 @@ use crate::property::{
     GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, Hyphens, Isolation,
     Length, LengthOrAuto, LengthOrNormal, LineBreak, LineHeight, ListStylePosition, ListStyleType,
     MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle, OverflowValue,
-    OverflowWrap, OverflowXY, PageValue, PositionValue, SelfAlignmentValue, Sides, TabSize,
-    TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine,
+    OverflowWrap, OverflowXY, PageValue, PositionValue, RubyPosition, SelfAlignmentValue, Sides,
+    TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine,
     TextDecorationStyle, TextJustify, TextShadowItem, TextTransform, TextWrapMode,
     TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode,
     ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
@@ -221,6 +221,8 @@ pub struct SpecifiedValues {
     /// [`Self`] でなく `finalize`/`absolutize_with` 側で解決されるのと同じ
     /// 「staging はまだ解決しない」形、[`WritingMode`] doc の Non-goal 節参照)。
     pub writing_mode: WritingMode,
+    /// `ruby-position` — inherited annotation placement.
+    pub ruby_position: RubyPosition,
     /// `text-indent` の **specified** value。phase 3
     /// ([`resolve_length_percentage`]) で絶対化される (percentage は素通し) —
     /// [`Self::padding`] と同じ絶対化 shape だが、こちらは **inherited**
@@ -631,6 +633,7 @@ impl SpecifiedValues {
             // CSS Writing Modes 4 §3.2: writing-mode initial は
             // `horizontal-tb`。
             writing_mode: WritingMode::HorizontalTb,
+            ruby_position: RubyPosition::Over,
             // CSS Text 3 §8.1: text-indent initial は `0`。
             text_indent: Length::Px(0.0),
             text_indent_ch_factor: None,
@@ -936,6 +939,7 @@ impl SpecifiedValues {
             // `text_align`/`direction` と同じ「もう resolve 済みの値をそのまま
             // 運ぶ」形になる。
             writing_mode: parent.writing_mode,
+            ruby_position: parent.ruby_position,
             // CSS Text 3 §8.1: text-indent は inherited。computed
             // `<length-percentage>` → specified `Length` の lift (lossless、
             // `Px` / `Percent` どちらも不動点、`lift_length_percentage` doc
@@ -1516,6 +1520,7 @@ impl SpecifiedValues {
             // `WritingMode` doc の Non-goal 節と `resolve_writing_mode` doc が
             // canonical rationale。
             writing_mode: resolve_writing_mode(self.writing_mode),
+            ruby_position: self.ruby_position,
             // `text-indent` — same absolutization shape as `padding` (`%` is
             // passed through, `em`/`rem`/`pt`/etc. resolve against the own
             // `font_size`/`own_line_height` basis established above), but
@@ -2220,6 +2225,7 @@ mod tests {
             // in `SpecifiedValues::absolutize_with`, run later). See
             // `WritingMode` doc's Non-goal section.
             writing_mode: WritingMode::VerticalRl,
+            ruby_position: RubyPosition::Under,
             text_indent: ComputedLengthPercentage::Px(9.0),
             text_indent_ch_factor: None,
             text_indent_ch_font: None,

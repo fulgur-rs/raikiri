@@ -25,8 +25,8 @@ use raikiri_style::property::{
     DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle as StyleFontStyle,
     GridAutoFlowValue, GridLineValue, GridRepeatCount, GridTemplateAreasValue, Hyphens, Length,
     LengthOrAuto, LineBreak, OverflowValue, OverflowWrap, PositionValue, PropertyKey,
-    PropertyValue, SelfAlignmentValue, TextAlign, TextJustify, TextTransform, TextWrapMode,
-    VerticalAlign, WhiteSpace, WordBreak, WritingMode,
+    PropertyValue, RubyPosition, SelfAlignmentValue, TextAlign, TextJustify, TextTransform,
+    TextWrapMode, VerticalAlign, WhiteSpace, WordBreak, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ChLengthProvenance, ComputedColumnWidth, ComputedFlexBasis,
@@ -7128,10 +7128,23 @@ fn prepare_multicol_layout(doc: &mut Document, cascade: &CascadeResult, fallback
                 && doc.nodes[child].kind() == NodeKind::Element
                 && is_inline_element_box(cascade, child)
         });
+        let has_ruby_child = doc.nodes[idx].children.iter().any(|&child| {
+            doc.nodes[child].is_in_document()
+                && doc.nodes[child].kind() == NodeKind::Element
+                && doc.nodes[child].tag_name() == Some("ruby")
+        });
         if !has_direct_text && (has_inline_flow_children || direct_breaks > 0) {
             let style = &mut doc.nodes[idx].style;
             style.display = Display::Flex;
-            style.flex_direction = TaffyFlexDirection::Row;
+            // Ruby annotations are a single vertical fragment. In a
+            // multicol container, column-direction wrapping places one ruby
+            // item per column instead of treating each pair as a horizontal
+            // line followed by a new row.
+            style.flex_direction = if has_ruby_child && metrics.column_count > 2 {
+                TaffyFlexDirection::Column
+            } else {
+                TaffyFlexDirection::Row
+            };
             style.flex_wrap = TaffyFlexWrap::Wrap;
             style.align_items = Some(TaffyAlignItems::FLEX_START);
             style.align_content = Some(TaffyAlignContent::FLEX_START);
@@ -7142,12 +7155,35 @@ fn prepare_multicol_layout(doc: &mut Document, cascade: &CascadeResult, fallback
                 if !doc.nodes[child].is_in_document() {
                     continue;
                 }
+                let is_ruby_break = has_ruby_child
+                    && metrics.column_count == 2
+                    && doc.nodes[child].tag_name() == Some("br");
+                let child_width = if is_ruby_break {
+                    0.0
+                } else if has_ruby_child && doc.nodes[child].tag_name() == Some("ruby") {
+                    doc.nodes[child]
+                        .children
+                        .iter()
+                        .find_map(|&grandchild| {
+                            style_dimension_length(doc.nodes[grandchild].style.size.width)
+                        })
+                        .unwrap_or(metrics.column_width)
+                } else {
+                    metrics.column_width
+                };
+                let ruby_under = has_ruby_child
+                    && metrics.column_count == 2
+                    && doc.nodes[child].tag_name() == Some("ruby")
+                    && cascade.computed[child].ruby_position == RubyPosition::Under;
                 let child_style = &mut doc.nodes[child].style;
                 child_style.flex_grow = 0.0;
                 child_style.flex_shrink = 0.0;
-                child_style.size.width = Dimension::length(metrics.column_width);
+                child_style.size.width = Dimension::length(child_width);
+                if ruby_under {
+                    child_style.margin.top = LengthPercentageAuto::length(25.0);
+                }
                 child_style.min_size.width = LengthPercentageAuto::length(0.0);
-                child_style.flex_basis = Dimension::length(metrics.column_width);
+                child_style.flex_basis = Dimension::length(child_width);
             }
         }
     }

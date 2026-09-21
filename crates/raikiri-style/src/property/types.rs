@@ -3304,6 +3304,18 @@ pub(crate) fn resolve_overflow(specified: OverflowXY) -> OverflowXY {
     }
 }
 
+/// `ruby-position` controls whether ruby annotations are placed above or below
+/// their base. It is inherited and defaults to `over`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RubyPosition {
+    /// Place annotations above the base.
+    Over,
+    /// Place annotations below the base.
+    Under,
+    /// Place annotations between vertical glyphs.
+    InterCharacter,
+}
+
 /// [`WritingMode`]'s specified→computed collapse ([`WritingMode`] doc の
 /// Non-goal 節参照)。
 ///
@@ -7787,6 +7799,8 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     WritingMode(WritingMode),
+    /// `ruby-position` — inherited, initial: [`RubyPosition::Over`].
+    RubyPosition(RubyPosition),
     /// `background-repeat` — **non-inherited**、initial:
     /// [`BackgroundRepeat`]`{x: Repeat, y: Repeat}` (CSS Backgrounds 3 §2.4
     /// [`BackgroundRepeat`] doc 参照)。末尾に追加 (1:1 disjoint な新 field、
@@ -8337,6 +8351,8 @@ pub enum PropertyKey {
     // no per-variant docs per crate convention). 末尾配置の理由は
     // PropertyValue::WritingMode の doc 参照。
     WritingMode,
+    /// `ruby-position` inherited annotation placement.
+    RubyPosition,
     // background-repeat / background-attachment / background-clip /
     // background-origin / background-size / background-position (CSS
     // Backgrounds and Borders 3 §2.4-§2.9、semantics on the matching
@@ -8638,6 +8654,7 @@ impl PropertyValue {
             PropertyValue::OutlineColor(_) => PropertyKey::OutlineColor,
             PropertyValue::OutlineOffset(_) => PropertyKey::OutlineOffset,
             PropertyValue::WritingMode(_) => PropertyKey::WritingMode,
+            PropertyValue::RubyPosition(_) => PropertyKey::RubyPosition,
             PropertyValue::BackgroundRepeat(_) => PropertyKey::BackgroundRepeat,
             PropertyValue::BackgroundAttachment(_) => PropertyKey::BackgroundAttachment,
             PropertyValue::BackgroundClip(_) => PropertyKey::BackgroundClip,
@@ -9805,6 +9822,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "orphans" => PropertyKey::Orphans,
         "widows" => PropertyKey::Widows,
         "writing-mode" => PropertyKey::WritingMode,
+        "ruby-position" => PropertyKey::RubyPosition,
         "background-repeat" => PropertyKey::BackgroundRepeat,
         "background-attachment" => PropertyKey::BackgroundAttachment,
         "background-clip" => PropertyKey::BackgroundClip,

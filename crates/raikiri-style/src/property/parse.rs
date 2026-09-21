@@ -791,6 +791,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // `resolve_writing_mode` (`WritingMode` doc's Non-goal section), not
         // here.
         "writing-mode" => parse_writing_mode(input).map(PropertyValue::WritingMode),
+        "ruby-position" => parse_ruby_position(input).map(PropertyValue::RubyPosition),
         // CSS Backgrounds and Borders 3 §2.4-§2.9. `background-clip` /
         // `background-origin` share the `<visual-box>` keyword parser
         // (`VisualBox` doc — the two differ only in initial value, handled
@@ -7047,6 +7048,17 @@ fn parse_writing_mode(input: &mut Parser<'_, '_>) -> Option<WritingMode> {
         "vertical-lr" => Some(WritingMode::VerticalLr),
         "sideways-rl" => Some(WritingMode::SidewaysRl),
         "sideways-lr" => Some(WritingMode::SidewaysLr),
+        _ => None,
+    }
+}
+
+/// Parse `ruby-position` keywords (CSS Ruby Layout 1 §3).
+fn parse_ruby_position(input: &mut Parser<'_, '_>) -> Option<RubyPosition> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "over" => Some(RubyPosition::Over),
+        "under" => Some(RubyPosition::Under),
+        "inter-character" => Some(RubyPosition::InterCharacter),
         _ => None,
     }
 }
