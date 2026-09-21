@@ -1291,7 +1291,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Break Table reftest slice (+6).
         // + CSS Break Grid reftest slice (+11).
         // + CSS Break Flexbox additional exact slice (+37).
-        assert_eq!(set.baseline.entries.len(), 1196);
+        // + CSS Break Grid multicolumn fragmentainer paint slice (+30).
+        assert_eq!(set.baseline.entries.len(), 1226);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
