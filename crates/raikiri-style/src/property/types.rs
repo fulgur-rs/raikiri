@@ -6740,6 +6740,8 @@ pub enum PropertyValue {
     /// `list-style-position: inside | outside` — inherited, initial: `outside`
     /// (CSS Lists 3 §3.2).
     ListStylePosition(ListStylePosition),
+    /// `list-style-image: none | <url>` — inherited, initial: `none`.
+    ListStyleImage(BackgroundImage),
     /// `counter-reset: [ <counter-name> <integer>? ]+ | none` —
     /// non-inherited。spec initial は `none` (CSS Lists 3 §4.1)、本 impl はそれを
     /// 空 list で表現する。
@@ -8450,6 +8452,7 @@ pub enum PropertyKey {
     // discriminants of existing keys used by the winner scratch slots.
     ListStyleType,
     ListStylePosition,
+    ListStyleImage,
     // CSS Multi-column Layout Module Level 1.
     ColumnCount,
     ColumnWidth,
@@ -8482,6 +8485,7 @@ impl PropertyValue {
             PropertyValue::Display(_) => PropertyKey::Display,
             PropertyValue::ListStyleType(_) => PropertyKey::ListStyleType,
             PropertyValue::ListStylePosition(_) => PropertyKey::ListStylePosition,
+            PropertyValue::ListStyleImage(_) => PropertyKey::ListStyleImage,
             PropertyValue::CounterReset(_) | PropertyValue::CounterResetInherit => {
                 PropertyKey::CounterReset
             }
@@ -9632,6 +9636,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "display" => PropertyKey::Display,
         "list-style-type" => PropertyKey::ListStyleType,
         "list-style-position" => PropertyKey::ListStylePosition,
+        "list-style-image" => PropertyKey::ListStyleImage,
         "counter-reset" => PropertyKey::CounterReset,
         "counter-increment" => PropertyKey::CounterIncrement,
         "counter-set" => PropertyKey::CounterSet,

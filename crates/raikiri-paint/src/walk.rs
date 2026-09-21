@@ -1531,6 +1531,7 @@ fn paint_list_marker(
         height,
         padding_left,
         &snapshots,
+        None,
     );
 }
 
@@ -1547,13 +1548,50 @@ fn paint_list_marker_with_snapshots(
     height: f32,                 // cov:ignore: signature line has no executable mapping
     padding_left: f32,           // cov:ignore: signature line has no executable mapping
     snapshots: &[CounterSnapshot],
+    pixel_source: Option<&dyn ImagePixelSource>,
 ) {
     let Some((computed, content)) =
         marker_render_info_with_snapshots(document, cascade, node_id, snapshots)
     else {
         return;
     };
-    if content.is_empty() || width <= 0.0 || height <= 0.0 {
+    if width <= 0.0 || height <= 0.0 {
+        return;
+    }
+    if let (BackgroundImage::Url(raw_url), Some(source)) =
+        (&computed.list_style_image, pixel_source)
+        && let Ok(url) = url::Url::parse(raw_url)
+        && let Some(decoded) = source.get_decoded(&url)
+        && decoded.width > 0
+        && decoded.height > 0
+    {
+        let marker_width = decoded.width as f32;
+        let marker_height = decoded.height as f32;
+        let marker_x = match computed.list_style_position {
+            raikiri_style::ListStylePosition::Outside => {
+                paint_x + padding_left - marker_width - 4.0
+            }
+            raikiri_style::ListStylePosition::Inside => paint_x + padding_left - marker_width - 4.0,
+            _ => paint_x + padding_left - marker_width - 4.0,
+        };
+        let image_data = peniko::ImageData {
+            data: peniko::Blob::from(decoded.rgba.clone()),
+            format: peniko::ImageFormat::Rgba8,
+            alpha_type: peniko::ImageAlphaType::Alpha,
+            width: decoded.width,
+            height: decoded.height,
+        };
+        let brush = peniko::ImageBrush::new(image_data);
+        scene.fill(
+            peniko::Fill::NonZero,
+            Affine::translate((marker_x as f64, paint_y as f64)),
+            brush.as_ref(),
+            None,
+            &Rect::new(0.0, 0.0, marker_width as f64, marker_height as f64),
+        );
+        return;
+    }
+    if content.is_empty() {
         return;
     }
     let family = computed
@@ -3560,6 +3598,7 @@ fn paint_document_impl(
                             layout.size.height,
                             layout.padding.left,
                             &counter_snapshots,
+                            pixel_source,
                         );
                     }
                     // Generated content is an immediate child of its

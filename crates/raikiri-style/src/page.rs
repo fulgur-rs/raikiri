@@ -3172,6 +3172,7 @@ fn absolutize_in_page_context(
         | PropertyValue::FontWeight(_)
         | PropertyValue::Display(_)
         | PropertyValue::ListStyleType(_)
+        | PropertyValue::ListStyleImage(_)
         | PropertyValue::ListStylePosition(_)
         | PropertyValue::CounterReset(_)
         | PropertyValue::CounterResetInherit
@@ -7266,7 +7267,7 @@ mod tests {
     /// この値は `page_corpus` の現在の identity/pass-through arms と同期する。
     // Includes the five page-only inherit markers, which phase 3 leaves
     // untouched as a defensive no-op after phase 2 has normally resolved them.
-    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 118;
+    const PHASE_3_PASS_THROUGH_VARIANTS: usize = 119;
 
     /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
     /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
@@ -8023,6 +8024,7 @@ mod tests {
         Page => PropertyValue::Page(PageValue::Named(Atom::from("cover"))),
         ListStyleType => PropertyValue::ListStyleType(ListStyleType::Named("decimal".into())),
         ListStylePosition => PropertyValue::ListStylePosition(ListStylePosition::Inside),
+        ListStyleImage => PropertyValue::ListStyleImage(BackgroundImage::Url("marker.png".into())),
         ColumnCount => PropertyValue::ColumnCount(ColumnCountValue::Count(3)),
         ColumnWidth => PropertyValue::ColumnWidth(ColumnWidthValue::Length(Length::Em(2.0))),
         Columns => PropertyValue::Columns(ColumnsShorthand {
@@ -8187,6 +8189,7 @@ mod tests {
         Display,
         ListStyleType,
         ListStylePosition,
+        ListStyleImage,
         CounterReset,
         CounterIncrement,
         CounterSet,
@@ -8767,6 +8770,7 @@ mod tests {
             | PropertyValue::FontFamily(_)
             | PropertyValue::Display(_)
             | PropertyValue::ListStyleType(_)
+        | PropertyValue::ListStyleImage(_)
             | PropertyValue::ListStylePosition(_)
             | PropertyValue::CounterReset(_)
             | PropertyValue::CounterResetInherit

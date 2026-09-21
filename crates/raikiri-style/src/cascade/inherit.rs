@@ -866,6 +866,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::LineHeight(_)
         | PropertyValue::Display(_)
         | PropertyValue::ListStyleType(_)
+        | PropertyValue::ListStyleImage(_)
         | PropertyValue::ListStylePosition(_)
         | PropertyValue::CounterReset(_)
         | PropertyValue::CounterResetInherit
@@ -1456,6 +1457,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::LineHeight(lh) => target.line_height = lh,
         PropertyValue::Display(d) => target.display = d,
         PropertyValue::ListStyleType(v) => target.list_style_type = v,
+        PropertyValue::ListStyleImage(v) => target.list_style_image = v,
         PropertyValue::ListStylePosition(v) => target.list_style_position = v,
         // counter-* は将来の GCPM (paged media generated content) 対応に
         // 向けた足場 — parse 結果をそのまま computed value に格納。counter

@@ -160,6 +160,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "list-style-position" => {
             parse_list_style_position(input).map(PropertyValue::ListStylePosition)
         }
+        "list-style-image" => parse_list_style_image(input).map(PropertyValue::ListStyleImage),
         // CSS Lists 3 §4 counter properties。
         // spec default: reset = 0、increment = 1、set = 0。
         // Arc wrap は cascade memory DoS 対策 (per-element
@@ -6905,6 +6906,14 @@ fn parse_display(input: &mut Parser<'_, '_>) -> Option<DisplayValue> {
         "table-caption" => Some(DisplayValue::TableCaption),
         _ => None,
     }
+}
+
+fn parse_list_style_image(input: &mut Parser<'_, '_>) -> Option<BackgroundImage> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(BackgroundImage::None);
+    }
+    let url = input.expect_url().ok()?;
+    Some(BackgroundImage::Url(url.as_ref().to_string()))
 }
 
 /// Parse `list-style-type`'s `<counter-style-name> | <string>` grammar.

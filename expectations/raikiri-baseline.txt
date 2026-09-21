@@ -1516,3 +1516,4 @@ css/css-overflow/overflow-body-propagation-002.html
 css/css-position/position-absolute-center-003.html
 css/css-position/position-absolute-center-004.html
 css/css-position/fixed-z-index-blend.html
+css/css-images/image-orientation/image-orientation-list-style-image.html
