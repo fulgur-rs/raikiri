@@ -40,7 +40,7 @@ selectors = "0.39"
 
 # ── HTML5ever ──────────────────────────────────────────────────────────
 html5ever   = "0.39"
-markup5ever = "0.39"
+markup5ever = "0.40"
 
 # ── Layout (taffy) ─────────────────────────────────────────────────────
 taffy = { version = "0.14", default-features = false, features = [
