@@ -193,6 +193,15 @@ pub(crate) struct TextPosition {
     pub(crate) shift_y: f32,
 }
 
+fn synthetic_embolden(enabled: bool, font_size: f32) -> Vec2 {
+    if enabled {
+        let size = font_size as f64;
+        Vec2::new((0.015125 * size).min(0.3), (0.0121 * size).min(0.3))
+    } else {
+        Vec2::ZERO
+    }
+}
+
 pub(crate) fn draw_text_node(
     scene: &mut impl PaintScene,
     node: &Node,
@@ -307,18 +316,23 @@ pub(crate) fn draw_text_node(
                 let font = run.font(); // &peniko::FontData (parley re-export)
                 let font_size = run.font_size();
                 let coords = run.normalized_coords(); // &[i16] (anyrender::NormalizedCoord alias)
+                let synthesis = run.synthesis();
+                let embolden = synthetic_embolden(synthesis.embolden(), font_size);
+                let glyph_transform = synthesis
+                    .skew()
+                    .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
 
                 scene.draw_glyphs(
                     font,
                     font_size,
                     true, // hint = true (blitz と揃えた値。将来的に判定を切り替える余地あり)
                     coords,
-                    Vec2::ZERO, // embolden 無し (font-embolden feature は未実装)
+                    embolden,
                     Fill::NonZero,
                     brush, // peniko::Color → PaintRef auto-convert
                     1.0,   // brush_alpha (color 自身が alpha 持つ)
                     base_transform,
-                    None, // glyph_transform (rotate / skew は未実装)
+                    glyph_transform,
                     glyph_run.positioned_glyphs().map(|mut glyph| {
                         glyph.x += last_line_delta;
                         to_anyrender_glyph(glyph)
@@ -399,17 +413,22 @@ pub(crate) fn draw_margin_text(
                 continue;
             };
             let run = glyph_run.run();
+            let font_size = run.font_size();
+            let synthesis = run.synthesis();
+            let glyph_transform = synthesis
+                .skew()
+                .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
             scene.draw_glyphs(
                 run.font(),
-                run.font_size(),
+                font_size,
                 true,
                 run.normalized_coords(),
-                Vec2::ZERO,
+                synthetic_embolden(synthesis.embolden(), font_size),
                 Fill::NonZero,
                 color,
                 1.0,
                 base_transform,
-                None,
+                glyph_transform,
                 glyph_run.positioned_glyphs().map(to_anyrender_glyph),
             );
         }
@@ -841,9 +860,10 @@ mod tests {
     use super::{
         DecorationContext, MAX_DECORATION_SEGMENTS, dashed_lengths, decoration_line_width,
         decorations_for_element, measure_margin_text_advance, measure_margin_text_height,
-        paint_decoration_style, text_align_last_delta,
+        paint_decoration_style, synthetic_embolden, text_align_last_delta,
     };
     use anyrender::{Scene, recording::RenderCommand};
+    use kurbo::Vec2;
     use parley::LineMetrics;
     use raikiri_style::ComputedValues;
     use raikiri_style::property::{
@@ -1151,5 +1171,15 @@ mod tests {
                 .line,
             TextDecorationLine::OVERLINE
         );
+    }
+    #[test]
+    fn synthetic_embolden_uses_zero_without_synthesis() {
+        assert_eq!(synthetic_embolden(false, 32.0), Vec2::ZERO);
+    }
+
+    #[test]
+    fn synthetic_embolden_scales_and_caps_stroke_offset() {
+        assert_eq!(synthetic_embolden(true, 10.0), Vec2::new(0.15125, 0.121));
+        assert_eq!(synthetic_embolden(true, 100.0), Vec2::new(0.3, 0.3));
     }
 }
