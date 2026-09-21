@@ -6,7 +6,9 @@
 
 use std::path::PathBuf;
 
-use raikiri_wpt::reftest::{ReftestConfig, discover_pairs_for_file_with_wpt_root, run_pair};
+use raikiri_wpt::reftest::{
+    ReftestConfig, discover_pairs_for_file_with_wpt_root, run_pair, run_pair_with_images,
+};
 use raikiri_wpt::runner::{TestOutcome, Tolerance};
 
 /// Nested content under opacity must composite as one element group at 800x600.
