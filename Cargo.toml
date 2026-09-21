@@ -68,8 +68,11 @@ bytes      = "1"
 url        = "2.5"
 
 # ── Image decode (Pure Rust) ────────────────────────────────────────────
-# raikiri-net's ImageResolver decodes fetched <img> bytes to raw RGBA8
-# pixels; PNG is the only format in scope so far.
+# raikiri-net's ImageResolver decodes fetched or data: <img> bytes to raw
+# RGBA8 pixels. Keep the format set explicit so the dependency remains
+# deterministic and WASM-friendly.
+image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
+data-url = "0.3"
 png = "0.18"
 
 # ── Date/time (validate-expectations lint, raikiri-spike-yps) ──────────

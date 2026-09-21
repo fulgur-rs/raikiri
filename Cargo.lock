@@ -2289,6 +2289,8 @@ dependencies = [
 name = "raikiri-net"
 version = "0.1.0"
 dependencies = [
+ "data-url",
+ "image",
  "png 0.18.1",
  "raikiri-traits",
  "tempfile",
