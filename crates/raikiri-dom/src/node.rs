@@ -10,6 +10,7 @@ use taffy::{Cache, Layout, Style};
 
 use crate::fragment::MulticolStyle;
 
+use raikiri_style::ComputedBorderSpacing;
 use raikiri_style::property::{BorderCollapseValue, DisplayValue, TableLayoutValue, WritingMode};
 use raikiri_traits::NodeKind;
 
@@ -264,6 +265,8 @@ pub struct Node {
     /// is inherited — the value here is already the post-inheritance
     /// computed value, seed handling lives in raikiri-style).
     pub(crate) border_collapse: BorderCollapseValue,
+    /// Computed `border-spacing` used by the separate-border table layout.
+    pub(crate) border_spacing: ComputedBorderSpacing,
     /// Computed multicolumn settings consumed by the custom Taffy dispatch.
     pub(crate) multicol: Option<MulticolStyle>,
     /// Authored writing mode retained for layout features that need the logical axes.
@@ -328,6 +331,10 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            border_spacing: ComputedBorderSpacing {
+                horizontal: raikiri_style::ComputedLength(0.0),
+                vertical: raikiri_style::ComputedLength(0.0),
+            },
             multicol: None,
             authored_writing_mode: None,
             children: Vec::new(),
@@ -351,6 +358,10 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            border_spacing: ComputedBorderSpacing {
+                horizontal: raikiri_style::ComputedLength(0.0),
+                vertical: raikiri_style::ComputedLength(0.0),
+            },
             multicol: None,
             authored_writing_mode: None,
             children: Vec::new(),
@@ -375,6 +386,10 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            border_spacing: ComputedBorderSpacing {
+                horizontal: raikiri_style::ComputedLength(0.0),
+                vertical: raikiri_style::ComputedLength(0.0),
+            },
             multicol: None,
             authored_writing_mode: None,
             children: Vec::new(),
@@ -404,6 +419,10 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            border_spacing: ComputedBorderSpacing {
+                horizontal: raikiri_style::ComputedLength(0.0),
+                vertical: raikiri_style::ComputedLength(0.0),
+            },
             multicol: None,
             authored_writing_mode: None,
             children: Vec::new(),
@@ -423,6 +442,10 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            border_spacing: ComputedBorderSpacing {
+                horizontal: raikiri_style::ComputedLength(0.0),
+                vertical: raikiri_style::ComputedLength(0.0),
+            },
             multicol: None,
             authored_writing_mode: None,
             children: Vec::new(),
@@ -444,6 +467,10 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
+            border_spacing: ComputedBorderSpacing {
+                horizontal: raikiri_style::ComputedLength(0.0),
+                vertical: raikiri_style::ComputedLength(0.0),
+            },
             multicol: None,
             authored_writing_mode: None,
             children: Vec::new(),

@@ -247,6 +247,14 @@ pub fn compute_table_layout(
     } else {
         CollapsedLines::separate(&table_border)
     };
+    let border_spacing = if collapse {
+        (0.0, 0.0)
+    } else {
+        (
+            doc.nodes[table_idx].border_spacing.horizontal.0.max(0.0),
+            doc.nodes[table_idx].border_spacing.vertical.0.max(0.0),
+        )
+    };
 
     let padding_border_size = Size {
         width: pad.left + pad.right + collapsed.outer_left + collapsed.outer_right,
@@ -384,6 +392,11 @@ pub fn compute_table_layout(
     } else {
         resolve_column_widths(doc, &grid, inputs_for_columns, distrib_insets)
     };
+    // A single separate-border cell needs the two outer spacing gaps in its
+    // used track width. General multi-track distribution remains deferred.
+    if !collapse && grid.n_cols == 1 && border_spacing.0 > 0.0 {
+        column_widths[0] += border_spacing.0 * 2.0;
+    }
 
     // min/max authored values + box-sizing (CSS Sizing 3 §3.3/§4/§5, WPT
     // min-height-table-*, min-max-size-table-content-box). Percentages
@@ -467,14 +480,23 @@ pub fn compute_table_layout(
     // Auto tables without a specified width size to content
     // (shrink-wrap); specified widths (and fixed layout) keep the previous
     // fill basis.
-    let table_width_basis = match table_layout {
-        TableLayoutValue::Fixed => effective_known.width,
-        _ => match specified_width {
-            Some(_) => effective_known.width,
-            None => None,
-        },
+    let table_width_basis = if border_spacing.0 > 0.0 || border_spacing.1 > 0.0 {
+        specified_width.or(effective_known.width)
+    } else {
+        match table_layout {
+            TableLayoutValue::Fixed => effective_known.width,
+            _ => match specified_width {
+                Some(_) => effective_known.width,
+                None => None,
+            },
+        }
     };
     let vertical_content_height = row_heights.iter().sum::<f32>() * grid.n_cols as f32;
+    let separate_single_cell_extra_height = if !collapse && grid.n_cols == 1 {
+        border_spacing.1 * 2.0
+    } else {
+        0.0
+    };
     let final_size = Size {
         width: if vertical_writing {
             effective_known
@@ -504,6 +526,7 @@ pub fn compute_table_layout(
                         max_h_outer,
                     )
                 })
+                + separate_single_cell_extra_height
         },
     };
 
@@ -512,8 +535,8 @@ pub fn compute_table_layout(
     }
 
     // Position cells: origin includes padding + collapsed outer border.
-    let x_origin = pad.left + collapsed.outer_left;
-    let y_origin = pad.top + collapsed.outer_top;
+    let x_origin = pad.left + collapsed.outer_left + border_spacing.0;
+    let y_origin = pad.top + collapsed.outer_top + border_spacing.1;
     let col_origins = track_origins(&column_widths, &collapsed.col_overlaps, x_origin);
     let row_origins = track_origins(&row_heights, &collapsed.row_overlaps, y_origin);
     place_cells(
