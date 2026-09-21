@@ -1283,7 +1283,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Text writing-system font slice (+1).
         // + CSS Text text-group-align/text-spacing-trim/hanging-punctuation slice (+28).
         // + CSS Text shaping slice (+18).
-        assert_eq!(set.baseline.entries.len(), 1122);
+        // + CSS Text text-autospace slice (+4).
+        assert_eq!(set.baseline.entries.len(), 1126);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
