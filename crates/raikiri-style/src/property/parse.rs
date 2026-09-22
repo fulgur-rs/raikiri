@@ -229,6 +229,12 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // spec 上 shorthand (text-align-all + text-align-last) だが単一 field で保持
         // ((b) 非対応、`TextAlign` doc-comment 参照)。
         "text-align" => parse_text_align(input).map(PropertyValue::TextAlign),
+        // CSS Text 3 §8.2.1. This milestone accepts the inherited `none | first`
+        // subset; unsupported valid grammar arms are dropped until their line
+        // layout behavior is implemented.
+        "hanging-punctuation" => {
+            parse_hanging_punctuation(input).map(PropertyValue::HangingPunctuation)
+        }
         // CSS Text 3 §8.1 text-indent — `<length-percentage>` component only
         // (`hanging`/`each-line` out of scope, `PropertyValue::TextIndent` doc).
         "text-indent" => parse_text_indent(input).map(PropertyValue::TextIndent),
@@ -6939,6 +6945,16 @@ fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> {
         "justify" => Some(TextAlign::Justify),
         "match-parent" => Some(TextAlign::MatchParent),
         "justify-all" => Some(TextAlign::JustifyAll),
+        _ => None,
+    }
+}
+
+/// Parses the implemented `hanging-punctuation` subset from CSS Text 3 §8.2.1.
+fn parse_hanging_punctuation(input: &mut Parser<'_, '_>) -> Option<HangingPunctuation> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "none" => Some(HangingPunctuation::None),
+        "first" => Some(HangingPunctuation::First),
         _ => None,
     }
 }

@@ -19,14 +19,14 @@ use crate::property::{
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue, EmptyCellsValue,
     FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps,
-    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Hyphens, Isolation, LineBreak,
-    ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, OutlineColor,
-    OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue, RubyPosition,
-    SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor,
-    TextDecorationLine, TextDecorationStyle, TextJustify, TextTransform, TextWrapMode,
-    VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue,
-    empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
-    empty_string_set_entries, initial_font_family,
+    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, HangingPunctuation, Hyphens,
+    Isolation, LineBreak, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit,
+    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
+    RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextAlignLast,
+    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextJustify, TextTransform,
+    TextWrapMode, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode,
+    ZIndexValue, empty_content_list, empty_counter_entries, empty_filter_list,
+    empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
@@ -245,7 +245,7 @@ pub struct ChLengthProvenance {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / direction / writing_mode / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows / list_style_type / list_style_position、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows / list_style_type / list_style_position、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing /
 /// overflow / text_decoration / vertical_align / z_index / float / clear)。
@@ -474,6 +474,9 @@ pub struct ComputedValues {
     /// ([`crate::cascade::resolve_against_inherited`]) — から同じ関数へ
     /// funnel する。
     pub text_align: TextAlign,
+    /// `hanging-punctuation`. **inherited**, initial `none` (CSS Text 3
+    /// §8.2.1). The consumer currently uses the `first` subset.
+    pub hanging_punctuation: HangingPunctuation,
     /// `text-justify` (CSS Text 3 §6.2)。**inherited**、initial: `auto`。
     /// keyword のため computed = specified (by-value copy、`Copy`)。
     /// `distribute` は legacy 値として受理し parley 側では `Justify` と
@@ -1634,6 +1637,8 @@ impl ComputedValues {
             position: PositionValue::Static,
             // CSS Text 3 §6.1: text-align initial is `start`
             text_align: TextAlign::Start,
+            // CSS Text 3 §8.2.1: hanging-punctuation initial is `none`.
+            hanging_punctuation: HangingPunctuation::None,
             // CSS Text 3 §6.2: text-justify initial is `auto`.
             text_justify: TextJustify::Auto,
             // CSS Text 3 §6.1: text-align-last initial is `auto`.
@@ -1915,7 +1920,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout)。
     ///
@@ -2158,6 +2163,7 @@ mod tests {
                 name: SmolStr::new("hdr"),
             }],
             text_align: TextAlign::Center,
+            hanging_punctuation: HangingPunctuation::First,
             // non-initial 値 (上記 fixture doc の全 field 非 initial 方針)。
             text_justify: TextJustify::InterWord,
             text_align_last: TextAlignLast::Justify,
@@ -2488,6 +2494,8 @@ mod tests {
         assert_eq!(child.list_style_type, parent.list_style_type);
         assert_eq!(child.list_style_position, parent.list_style_position);
         assert_eq!(child.text_align, parent.text_align);
+        // CSS Text 3 §8.2.1: hanging-punctuation は inherited。
+        assert_eq!(child.hanging_punctuation, parent.hanging_punctuation);
         // CSS Writing Modes 4 §2.1: direction は inherited。
         assert_eq!(child.direction, parent.direction);
         // CSS Writing Modes 4 §3.2: writing-mode は inherited だが、

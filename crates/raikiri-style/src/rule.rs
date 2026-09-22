@@ -234,6 +234,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::StringSet(_)
         | PropertyValue::Position(_)
         | PropertyValue::TextAlign(_)
+        | PropertyValue::HangingPunctuation(_)
         | PropertyValue::TextIndent(_)
         | PropertyValue::PaddingTop(_)
         | PropertyValue::PaddingRight(_)

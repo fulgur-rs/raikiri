@@ -2871,6 +2871,24 @@ pub enum BoxSizing {
     BorderBox,
 }
 
+/// `hanging-punctuation` property value.
+///
+/// CSS Text 3 §8.2.1
+/// <https://drafts.csswg.org/css-text-3/#hanging-punctuation-property>.
+/// The full grammar also has `last`, `force-end`, and `allow-end`; this
+/// milestone carries only the inherited `none | first` subset needed by the
+/// leading U+3000 WPT slice. Unsupported valid keywords are dropped until a
+/// matching line-layout implementation lands.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HangingPunctuation {
+    /// No punctuation hangs. This is the initial value.
+    None,
+    /// A leading opening mark, quote, or U+3000 IDEOGRAPHIC SPACE hangs on
+    /// the first formatted line.
+    First,
+}
+
 /// `text-align` property の value。
 ///
 /// CSS Text 3 §6.1 "Text Alignment: the text-align shorthand"
@@ -6803,6 +6821,10 @@ pub enum PropertyValue {
     /// 単一 field に保持 (**(b) 非対応**、longhand 分離は
     /// 後続 task で defer)。詳細は [`TextAlign`] doc-comment。
     TextAlign(TextAlign),
+    /// `hanging-punctuation: none | first` — inherited, initial `none`.
+    /// The line-layout consumer currently implements only a leading U+3000
+    /// hang for `first`; other valid grammar arms remain outside this slice.
+    HangingPunctuation(HangingPunctuation),
     /// `text-indent` — the full grammar is
     /// `<length-percentage> && hanging? && each-line?`; this variant covers
     /// **only** the `<length-percentage>` component (`hanging` / `each-line`
@@ -8440,6 +8462,8 @@ pub enum PropertyKey {
     MinBlockSize,
     // CSS Text Decoration 4 §2.8; appended to preserve existing key slots.
     TextUnderlineOffset,
+    // CSS Text 3 §8.2.1; appended to preserve existing key slots.
+    HangingPunctuation,
 }
 
 impl PropertyValue {
@@ -8482,6 +8506,7 @@ impl PropertyValue {
             PropertyValue::Bottom(_) => PropertyKey::Bottom,
             PropertyValue::Left(_) => PropertyKey::Left,
             PropertyValue::TextAlign(_) => PropertyKey::TextAlign,
+            PropertyValue::HangingPunctuation(_) => PropertyKey::HangingPunctuation,
             PropertyValue::TextIndent(_) => PropertyKey::TextIndent,
             PropertyValue::PaddingTop(_) => PropertyKey::PaddingTop,
             PropertyValue::PaddingRight(_) => PropertyKey::PaddingRight,
@@ -9634,6 +9659,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "bottom" => PropertyKey::Bottom,
         "left" => PropertyKey::Left,
         "text-align" => PropertyKey::TextAlign,
+        "hanging-punctuation" => PropertyKey::HangingPunctuation,
         "text-indent" => PropertyKey::TextIndent,
         "padding-top" => PropertyKey::PaddingTop,
         "padding-right" => PropertyKey::PaddingRight,

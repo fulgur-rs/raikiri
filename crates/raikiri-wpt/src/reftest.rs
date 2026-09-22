@@ -1303,14 +1303,32 @@ fn expand_viewport_units(input: &str, width: f32, height: f32) -> String {
     let mut quote = None;
     while i < bytes.len() {
         if let Some(delimiter) = quote {
-            result.push(bytes[i] as char);
-            if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            if bytes[i] == b'\\' {
+                result.push('\\');
                 i += 1;
-                result.push(bytes[i] as char);
+                if i < bytes.len() {
+                    let escaped = input[i..]
+                        .chars()
+                        .next()
+                        .expect("byte index remains on a UTF-8 boundary");
+                    result.push(escaped);
+                    i += escaped.len_utf8();
+                }
             } else if bytes[i] == delimiter {
+                result.push(bytes[i] as char);
+                i += 1;
                 quote = None;
+            } else if bytes[i].is_ascii() {
+                result.push(bytes[i] as char);
+                i += 1;
+            } else {
+                let character = input[i..]
+                    .chars()
+                    .next()
+                    .expect("byte index remains on a UTF-8 boundary");
+                result.push(character);
+                i += character.len_utf8();
             }
-            i += 1;
             continue;
         }
         if bytes[i] == b'"' || bytes[i] == b'\'' {
@@ -1327,6 +1345,19 @@ fn expand_viewport_units(input: &str, width: f32, height: f32) -> String {
             }
             i = (i + 2).min(bytes.len());
             result.push_str(&input[start..i]);
+            continue;
+        }
+
+        // This scanner works in byte indices so it can preserve CSS slices.
+        // Copy non-ASCII characters as complete UTF-8 scalars instead of
+        // turning each byte into mojibake while looking for viewport units.
+        if !bytes[i].is_ascii() {
+            let character = input[i..]
+                .chars()
+                .next()
+                .expect("byte index remains on a UTF-8 boundary");
+            result.push(character);
+            i += character.len_utf8();
             continue;
         }
 
@@ -2362,6 +2393,16 @@ pub fn run_all_pairs(pairs: &[ReftestPair], config: ReftestConfig) -> Vec<Reftes
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expand_viewport_units_preserves_utf8_text() {
+        let input = "<body>\u{3000}↓</body><style>.box { width: 10vw }</style>";
+        let expanded = expand_viewport_units(input, 800.0, 600.0);
+        assert_eq!(
+            expanded,
+            "<body>\u{3000}↓</body><style>.box { width: 80.000000px }</style>"
+        );
+    }
 
     #[test]
     fn resource_url_absolutization_handles_optional_and_invalid_bases() {

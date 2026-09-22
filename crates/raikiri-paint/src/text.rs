@@ -23,8 +23,8 @@ use parley::{
 use peniko::{Color, Fill, Mix};
 use raikiri_dom::Node;
 use raikiri_style::property::{
-    CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextAlign, TextAlignLast,
-    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextShadowColor,
+    CssColor, Direction, DisplayValue, FloatValue, HangingPunctuation, PositionValue, TextAlign,
+    TextAlignLast, TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextShadowColor,
 };
 use raikiri_style::{
     CascadeResult, ComputedTextDecorationInset, ComputedTextUnderlineOffset, ComputedValues,
@@ -232,6 +232,66 @@ fn synthetic_embolden(enabled: bool, font_size: f32) -> Vec2 {
     }
 }
 
+/// Return the paint-time baseline correction needed when the leading hanging
+/// glyph would otherwise contribute a larger font metric to the line box.
+///
+/// The layout builders currently request quantized line metrics. The
+/// unquantized branch keeps this helper correct for a layout supplied by a
+/// future caller with different shaping settings.
+fn hanging_baseline_delta(
+    line: parley::Line<'_, ()>,
+    metrics: &parley::LineMetrics,
+    hanging_glyph_count: usize,
+) -> f32 {
+    let mut first_glyph_run = true;
+    let mut remaining_ascent = 0.0_f32;
+    let mut remaining_descent = 0.0_f32;
+    let mut has_remaining_metrics = false;
+
+    for item in line.items() {
+        let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
+            continue;
+        };
+        let glyph_count = glyph_run.positioned_glyphs().count();
+        if glyph_count == 0 {
+            continue;
+        }
+        let is_hanging_run = first_glyph_run && glyph_count <= hanging_glyph_count;
+        first_glyph_run = false;
+        if is_hanging_run {
+            continue;
+        }
+        let run_metrics = glyph_run.run().metrics();
+        remaining_ascent = remaining_ascent.max(run_metrics.ascent);
+        remaining_descent = remaining_descent.max(run_metrics.descent);
+        has_remaining_metrics = true;
+    }
+
+    if !has_remaining_metrics {
+        return 0.0;
+    }
+
+    let quantized_baseline = |ascent: f32, descent: f32| {
+        let ascent = ascent.round();
+        let descent = descent.round();
+        let leading = metrics.line_height - ascent - descent;
+        ascent + (leading * 0.5).floor()
+    };
+    let unquantized_baseline =
+        |ascent: f32, descent: f32| ascent + (metrics.line_height - ascent - descent) * 0.5;
+    let current_quantized = quantized_baseline(metrics.ascent, metrics.descent);
+    let current_unquantized = unquantized_baseline(metrics.ascent, metrics.descent);
+    let quantize = (metrics.baseline - current_quantized).abs()
+        <= (metrics.baseline - current_unquantized).abs();
+    let remaining_baseline = if quantize {
+        quantized_baseline(remaining_ascent, remaining_descent)
+    } else {
+        unquantized_baseline(remaining_ascent, remaining_descent)
+    };
+    let delta = remaining_baseline - metrics.baseline;
+    if delta.is_finite() { delta } else { 0.0 }
+}
+
 pub(crate) fn draw_text_node(
     scene: &mut impl PaintScene,
     node: &Node,
@@ -276,6 +336,18 @@ pub(crate) fn draw_text_node(
     // keeping the shaped layout (and its line breaks) unchanged.
     let last_line_index = text_layout.len().saturating_sub(1);
     let rtl = text_layout.is_rtl();
+    // The first milestone of `hanging-punctuation` is deliberately narrow:
+    // only an authored leading U+3000 in an LTR text node hangs. Keep the
+    // shaped glyphs and move the first line left by that glyph's advance;
+    // this preserves the glyph while making the following content start at
+    // the line origin. Other punctuation, `last`, and bidi remain deferred.
+    let hanging_glyph_count =
+        if cv.hanging_punctuation == HangingPunctuation::First && cv.direction == Direction::Ltr {
+            node.text_content()
+                .and_then(|text| text.starts_with('\u{3000}').then_some(1))
+        } else {
+            None
+        };
 
     for (line_start, line_end, fragment_x, fragment_y) in fragments {
         let first_block_min = text_layout
@@ -295,7 +367,6 @@ pub(crate) fn draw_text_node(
             } else {
                 0.0
             };
-        let base_transform = Affine::translate((line_abs_x as f64, (line_abs_y + shift_y) as f64));
         for (line_index, line) in text_layout.lines().enumerate() {
             if line_index < line_start || line_index >= line_end {
                 continue; // cov:ignore: fragment range filtering is covered by the ignored foundation WPT run.
@@ -306,12 +377,22 @@ pub(crate) fn draw_text_node(
             } else {
                 0.0
             };
+            let baseline_delta = if line_index == 0 {
+                hanging_glyph_count
+                    .map(|count| hanging_baseline_delta(line, metrics, count))
+                    .unwrap_or(0.0)
+            } else {
+                0.0
+            };
+            let paint_line_abs_y = line_abs_y + baseline_delta;
+            let base_transform =
+                Affine::translate((line_abs_x as f64, (paint_line_abs_y + shift_y) as f64));
             let leading_whitespace = leading_whitespace_advance(line, rtl);
             let geometry = decoration_geometry(
                 decorations,
                 metrics,
                 line_abs_x,
-                line_abs_y,
+                paint_line_abs_y,
                 last_line_delta,
                 leading_whitespace,
                 rtl,
@@ -334,6 +415,12 @@ pub(crate) fn draw_text_node(
                 );
             }
 
+            // The offset is discovered from the first shaped glyph because
+            // fallback fonts may give U+3000 a different advance from the
+            // element's nominal font metrics. It then applies to every glyph
+            // in this first line, including the U+3000 glyph itself.
+            let mut hanging_offset = 0.0_f32;
+            let mut find_hanging_offset = hanging_glyph_count.is_some() && line_index == 0;
             for item in line.items() {
                 let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
                     // InlineBox は現状生成されない (preshape_text は inline box を
@@ -352,9 +439,20 @@ pub(crate) fn draw_text_node(
                     .skew()
                     .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
 
-                let glyphs = glyph_run
-                    .positioned_glyphs()
+                let positioned_glyphs = glyph_run.positioned_glyphs().collect::<Vec<_>>();
+                if find_hanging_offset {
+                    find_hanging_offset = false;
+                    let count = hanging_glyph_count.unwrap_or(0);
+                    hanging_offset = positioned_glyphs
+                        .iter()
+                        .take(count)
+                        .map(|glyph| glyph.advance.max(0.0))
+                        .sum();
+                }
+                let glyphs = positioned_glyphs
+                    .into_iter()
                     .map(|mut glyph| {
+                        glyph.x -= hanging_offset;
                         glyph.x += last_line_delta;
                         to_anyrender_glyph(glyph)
                     })
