@@ -1,12 +1,13 @@
-//! Per-page immutable snapshot consumed by raikiri downstream consumers
-//! (fulgur PDF translator が想定 primary consumer).
+//! Per-page immutable snapshot used by the `raikiri` crate's dogfooding and
+//! validation paths. It is **not** the fulgur-facing contract: that surface is
+//! produced and owned primarily by `raikiri-dom`.
 //!
-//! # Consumer contract
+//! # Internal dogfooding contract
 //!
 //! [`PageScene`] は raikiri 内部 pipeline (fragmentation + reflow +
 //! LayoutBuffer) を通り抜けた後の **1 page 分の immutable snapshot**。
-//! Consumer 側は forward iterate + batch operation で消費し、reflow /
-//! re-fragmentation の concern は持たない (raikiri 内部完結)。
+//! 内部の validation / raster paths は forward iterate + batch operation で
+//! 消費し、reflow / re-fragmentation の concern は持たない (raikiri 内部完結)。
 //!
 //! # Node identity
 //!
@@ -57,13 +58,12 @@ use raikiri_style::{CascadeResult, PageMarginBoxCascadeResult};
 use raikiri_traits::{NodeId, NodeKind, PageBox};
 use std::collections::BTreeMap;
 
-/// Pt (PDF point、1/72 inch) を表す type alias。
+/// `PageScene` 内部の座標に使う type alias。
 ///
-/// Fulgur units::Pt (下流 consumer の point 型) と同じ underlying を持たせ、
-/// consumer が Length / coordinate を conversion なしで扱えるようにする。
-/// Newtype ではなく alias とし、arithmetic は Rust の primitive f32 operator
-/// を直接使えるようにする (初期の minimal surface 判断、将来
-/// unit-safety を強化する場合は newtype 化が別 decision)。
+/// これは `raikiri` crate の dogfooding snapshot 用であり、fulgur-facing
+/// coordinate contract ではない。Newtype ではなく alias とし、arithmetic は
+/// Rust の primitive f32 operator を直接使えるようにする (初期の minimal
+/// surface 判断、将来 unit-safety を強化する場合は newtype 化が別 decision)。
 ///
 /// # Unit contract issue: `Pt` currently carries CSS px, not PDF pt
 ///
@@ -145,8 +145,11 @@ pub struct Fragment {
     pub height: Pt,
 }
 
-/// 1 page 分の immutable snapshot。Consumer が page 単位で forward iterate
-/// して消費する raikiri の primary consumer-facing pub 型。
+/// 1 page 分の immutable snapshot。`raikiri` crate 内の dogfooding / validation
+/// path が page 単位で forward iterate して消費する pub 型。
+///
+/// Fulgur-facing page output は `raikiri-dom` を中心に設計され、この型はその
+/// 外部契約ではない。
 ///
 /// # Field 意味
 ///

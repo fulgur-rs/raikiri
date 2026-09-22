@@ -1,9 +1,11 @@
-//! raikiri — umbrella crate: primary consumer API and re-exports.
+//! raikiri — umbrella facade, re-exports, and internal dogfooding APIs.
 //!
 //! umbrella-facade slice。Consumer が単一 `raikiri` crate だけを dep に
 //! 追加すれば HTML parse → cascade された ComputedValues まで得られるように
 //! sub-crate から必要な type / trait / function を re-export し、cascade
-//! orchestration entry point `build_cascaded` を提供する。
+//! orchestration entry point `build_cascaded` を提供する。ページ出力については
+//! `PageScene` / `PageDrawables` を dogfooding / validation 用に提供するが、
+//! fulgur-facing contract の中心は `raikiri-dom` にある。
 //!
 //! # Example
 //!
@@ -29,9 +31,10 @@ pub use stubs::{plan, render_streaming};
 mod html_to_png;
 pub use html_to_png::{html_to_png, html_to_png_with_fonts, html_to_png_with_resolver};
 
-// ── PageScene + PageDrawables consumer surface ────────
-// 実装 body は placeholder (empty struct + Default)、
-// consumer facade の pub type surface のみを landing する。
+// ── PageScene + PageDrawables dogfooding surface ───────
+// 実装 body は placeholder (empty struct + Default) から段階的に拡張中。
+// これは raikiri crate 内の dogfooding / validation 用 pub type surface であり、
+// fulgur-facing page output contract は raikiri-dom を中心に定義する。
 // `NodeId` は既存 `raikiri_traits::NodeId` (re-export 済み) を再利用し
 // PageScene と Document 間で node identity を統一する。
 mod page_scene;
