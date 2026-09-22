@@ -80,10 +80,11 @@ Use this workflow only for visual WPT reftests with `rel=match` or
 
 1. Create the dedicated worktree under `.worktrees/`. Confirm its status is
    clean before editing. Do not change `scripts/wpt/subset.txt` for a theme:
-   `css/`, `fonts/`, and `images/` are stable shared roots. `fetch.sh` reapplies
-   sparse patterns to the shared WPT checkout, so a narrow per-task edit can
-   hide tests from another branch. If a selected test needs files outside those
-   roots, stop and request a shared checkout-scope change; do not mutate the
+   `css/`, `fonts/`, and `images/` are stable shared roots. `fetch.sh` validates
+   them and locks the shared sparse file. A stale branch's old fetch script
+   fails instead of hiding tests; update the worktree from current main before
+   retrying. If a selected test needs files outside those roots, stop and request
+   a shared checkout-scope change; do not mutate the
    sparse set for this PR.
 2. Establish the pre-change result for the selected tests. The survey itself is
    not an execution command. Use or add `raikiri-wpt` integration tests that

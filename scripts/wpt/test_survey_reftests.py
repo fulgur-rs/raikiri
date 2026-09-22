@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import io
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -144,6 +146,40 @@ class SurveyReftestsTests(unittest.TestCase):
             self.assertEqual(status, 2)
             self.assertIn("must not overwrite the baseline", errors.getvalue())
             self.assertEqual(self.baseline_path.read_bytes(), original)
+
+    def test_git_wpt_scan_ignores_untracked_fixtures(self) -> None:
+        self.git(["init", "-q"])
+        self.git(["config", "user.name", "Survey Test"])
+        self.git(["config", "user.email", "survey@example.invalid"])
+        self.git(["add", "-A"])
+        self.git(["commit", "-qm", "fixture WPT tree"])
+        self.write(
+            "css/css-text/untracked-case.html",
+            '<link rel="match" href="reference/ref.html">',
+        )
+
+        entries, errors = scan_reftests(self.root, set())
+        self.assertFalse(errors)
+        self.assertNotIn("css/css-text/untracked-case.html", {entry["test_id"] for entry in entries})
+        self.assertNotEqual(checkout_revision(self.root), "unknown")
+
+    def test_readonly_sparse_file_rejects_stale_branch_write(self) -> None:
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root can bypass file mode permissions")
+        sparse_file = Path(self.temp.name) / "sparse-checkout"
+        sparse_file.write_text("css\nfonts\nimages\n", encoding="utf-8")
+        sparse_file.chmod(0o444)
+
+        stale_writer = subprocess.run(
+            ["bash", "-c", 'printf "css/css-text\n" > "$1"', "bash", str(sparse_file)],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(stale_writer.returncode, 0)
+        self.assertEqual(sparse_file.read_text(encoding="utf-8"), "css\nfonts\nimages\n")
+
+    def git(self, args: list[str]) -> None:
+        subprocess.run(["git", "-C", str(self.root), *args], check=True, capture_output=True)
 
     def test_revision_is_unknown_for_non_git_wpt_root_inside_parent_repo(self) -> None:
         repository_root = Path(__file__).resolve().parents[2]

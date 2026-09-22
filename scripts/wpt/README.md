@@ -3,14 +3,15 @@
 `fetch.sh` executes a sparse, shallow clone of the W3C web-platform-tests
 repository into `target/wpt/`, pinned to the SHA in `pinned_sha.txt`.
 
-The set of fetched paths is controlled by `subset.txt` (one pattern per line,
-Git sparse-checkout syntax). The shared checkout materializes all of `css/`,
-`fonts/`, and `images/`. `fetch.sh` symlinks this one checkout into task
-worktrees, so **do not narrow or add per-task paths to `subset.txt`**: another
-branch would reapply its patterns to the shared Git checkout and make tests
-invisible in sibling worktrees. Use the survey's category/theme filters to
-focus work instead. The broad CSS tree is intentional so category surveys do
-not need branch-specific fetch rules.
+`subset.txt` defines the shared sparse roots: all of `css/`, `fonts/`, and
+`images/`. `fetch.sh` validates this exact set, symlinks one checkout into task
+worktrees, and makes its local sparse-pattern file read-only. A stale branch's
+older `fetch.sh` therefore fails instead of narrowing the shared checkout and
+hiding tests from sibling worktrees. Do not narrow or add per-task paths; use
+the survey's category/theme filters. To change shared roots, use a reviewed
+project-level change that updates both `subset.txt` and the guard in `fetch.sh`.
+Only then should a maintainer unlock `target/wpt/.git/info/sparse-checkout`
+with `chmod u+w` before rerunning the fetch.
 
 ## Usage
 
@@ -40,11 +41,11 @@ Steps:
 
 ## Relation to `raikiri-wpt`
 
-`raikiri-wpt` (WPT test runner) does not currently discover the
-whole `target/wpt/` tree. The css-page subset is used as a focused source pin;
-its equivalent reftest is covered by the `raikiri-wpt` unit suite. When the
-runner starts consuming the full WPT tree, extend `subset.txt` and update this
-README.
+`raikiri-wpt` (WPT test runner) does not currently discover the whole
+`target/wpt/` tree. The broad CSS checkout is for survey and test selection; it
+does not mean every file is supported by the runner. Keep the shared roots
+stable while runner coverage grows; use a reviewed project-level change if the
+shared checkout scope must expand.
 
 ## Surveying WPT reftests
 
@@ -59,10 +60,11 @@ patterns, and the standard 800x600 CSS-pixel viewport.
 
 The survey only sees files materialized in the current checkout. It records
 the WPT revision and sparse patterns, so an absent category in a sparse
-checkout is absent, not empty. CSS categories are covered by the stable `css/`
-root; categories outside the fixed roots need an explicit shared checkout-scope
-change, not a task-specific edit to `subset.txt`. Use `target/wpt` as the stable
-working-tree path.
+checkout is absent, not empty. For a Git WPT checkout the survey scans
+tracked, materialized test files and ignores untracked local fixtures. CSS
+categories are covered by the stable `css/` root; categories outside the fixed
+roots need an explicit shared checkout-scope change, not a task-specific edit
+to `subset.txt`. Use `target/wpt` as the stable working-tree path.
 
 ```sh
 scripts/wpt/fetch.sh
