@@ -3995,12 +3995,11 @@ fn paint_document_impl(
                         );
                         scene.push_clip_layer(Affine::IDENTITY, &clip);
                     }
-                    // The current walker gives each text node its Taffy
-                    // sibling advance, while Parley already positions the
-                    // first glyph of an `anywhere` run at that run's line
-                    // width. Remove that duplicate advance so separate text
-                    // runs (including the runs around an inline span) share
-                    // the same one-character line origin.
+                    // The current walker carries two copies of the
+                    // one-character advance into an `anywhere` text node: the
+                    // Taffy sibling offset and Parley's run line origin.
+                    // Remove both copies so separate text runs (including
+                    // runs around an inline span) share the same line origin.
                     let anywhere_text_width = node
                         .text_layout()
                         .map(|text_layout| text_layout.width())
@@ -4016,7 +4015,7 @@ fn paint_document_impl(
                         text::TextPosition {
                             abs_x: abs_x
                                 - if anywhere_text_run {
-                                    anywhere_text_width.unwrap_or(0.0)
+                                    anywhere_text_width.unwrap_or(0.0) * 2.0
                                 } else {
                                     0.0
                                 }
