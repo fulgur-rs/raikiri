@@ -731,6 +731,10 @@ pub struct ComputedValues {
     /// `min-height` — **non-inherited**, initial `auto` (CSS Sizing 3 §4
     /// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>).
     pub min_height: ComputedLengthPercentageOrAuto,
+    /// Authored logical `min-block-size`, retained so layout can distinguish
+    /// its fragmentation behavior from a physical `min-height` declaration.
+    /// The used value is already mapped into `min_width`/`min_height`.
+    pub min_block_size: Option<ComputedLengthPercentageOrAuto>,
     /// `top`。**non-inherited**、initial: `auto`.
     pub top: ComputedLengthPercentageOrAuto,
     /// `right`。**non-inherited**、initial: `auto`.
@@ -1687,6 +1691,7 @@ impl ComputedValues {
             max_height: ComputedLengthPercentageOrAuto::Auto,
             min_width: ComputedLengthPercentageOrAuto::Auto,
             min_height: ComputedLengthPercentageOrAuto::Auto,
+            min_block_size: None,
             top: ComputedLengthPercentageOrAuto::Auto,
             right: ComputedLengthPercentageOrAuto::Auto,
             bottom: ComputedLengthPercentageOrAuto::Auto,
@@ -2206,6 +2211,7 @@ mod tests {
             max_height: ComputedLengthPercentageOrAuto::Px(200.0),
             min_width: ComputedLengthPercentageOrAuto::Px(200.0),
             min_height: ComputedLengthPercentageOrAuto::Px(200.0),
+            min_block_size: None,
             top: ComputedLengthPercentageOrAuto::Px(10.0),
             right: ComputedLengthPercentageOrAuto::Px(20.0),
             bottom: ComputedLengthPercentageOrAuto::Px(30.0),

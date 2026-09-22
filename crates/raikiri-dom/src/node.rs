@@ -277,6 +277,11 @@ pub struct Node {
     pub(crate) multicol: Option<MulticolStyle>,
     /// Authored writing mode retained for layout features that need the logical axes.
     pub(crate) authored_writing_mode: Option<WritingMode>,
+    /// Whether this node has an authored logical `min-block-size` constraint
+    /// paired with a non-auto `break-inside` value. The used value is bridged
+    /// to Taffy's physical min-size fields, while fragmentation needs the
+    /// provenance to avoid changing physical `min-height` behavior.
+    pub(crate) has_logical_min_block_size: bool,
     /// Child arena indices (`Document::nodes` の usize)。
     pub children: Vec<usize>,
     /// Taffy layout cache (per-node)。
@@ -345,6 +350,7 @@ impl Node {
             break_after: BreakBetween::Auto,
             multicol: None,
             authored_writing_mode: None,
+            has_logical_min_block_size: false,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -374,6 +380,7 @@ impl Node {
             break_after: BreakBetween::Auto,
             multicol: None,
             authored_writing_mode: None,
+            has_logical_min_block_size: false,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -404,6 +411,7 @@ impl Node {
             break_after: BreakBetween::Auto,
             multicol: None,
             authored_writing_mode: None,
+            has_logical_min_block_size: false,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -439,6 +447,7 @@ impl Node {
             break_after: BreakBetween::Auto,
             multicol: None,
             authored_writing_mode: None,
+            has_logical_min_block_size: false,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -464,6 +473,7 @@ impl Node {
             break_after: BreakBetween::Auto,
             multicol: None,
             authored_writing_mode: None,
+            has_logical_min_block_size: false,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -491,6 +501,7 @@ impl Node {
             break_after: BreakBetween::Auto,
             multicol: None,
             authored_writing_mode: None,
+            has_logical_min_block_size: false,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),

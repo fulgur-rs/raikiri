@@ -2123,6 +2123,7 @@ fn absolutize_in_page_context(
         PropertyValue::MaxHeight(v) => PropertyValue::MaxHeight(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::MinWidth(v) => PropertyValue::MinWidth(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::MinHeight(v) => PropertyValue::MinHeight(lpa(v, font_size, own_line_height, ctx)),
+        PropertyValue::MinBlockSize(v) => PropertyValue::MinBlockSize(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Top(v) => PropertyValue::Top(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Right(v) => PropertyValue::Right(lpa(v, font_size, own_line_height, ctx)),
         PropertyValue::Bottom(v) => PropertyValue::Bottom(lpa(v, font_size, own_line_height, ctx)),
@@ -5521,6 +5522,7 @@ mod tests {
         MaxHeight => PropertyValue::MaxHeight(LengthOrAuto::Length(Length::Em(6.0))),
         MinWidth => PropertyValue::MinWidth(LengthOrAuto::Length(Length::Em(7.0))),
         MinHeight => PropertyValue::MinHeight(LengthOrAuto::Length(Length::Em(8.0))),
+        MinBlockSize => PropertyValue::MinBlockSize(LengthOrAuto::Length(Length::Em(9.0))),
         BoxSizing => PropertyValue::BoxSizing(BoxSizing::BorderBox),
         // No specified/computed distinction for `direction` (computed
         // value = specified value) — any value is "worst case".
@@ -6259,6 +6261,7 @@ mod tests {
         MaxHeight,
         MinWidth,
         MinHeight,
+        MinBlockSize,
         BoxSizing,
         Direction,
         OverflowX,
@@ -6754,7 +6757,8 @@ mod tests {
             | PropertyValue::MaxWidth(l)
             | PropertyValue::MaxHeight(l)
             | PropertyValue::MinWidth(l)
-            | PropertyValue::MinHeight(l) => length_or_auto(*l),
+            | PropertyValue::MinHeight(l)
+            | PropertyValue::MinBlockSize(l) => length_or_auto(*l),
             PropertyValue::Padding(s) => sides(*s, length),
             PropertyValue::Margin(s) => sides(*s, length_or_auto),
             PropertyValue::PaddingInline(p) | PropertyValue::PaddingBlock(p) => {
