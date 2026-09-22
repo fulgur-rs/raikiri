@@ -457,74 +457,23 @@ css/css-break/block-min-height-001b.html
 css/css-break/border-image-000.html
 css/css-break/overflowed-abs-pos-with-percentage-height-print.html
 css/css-break/widows-block-in-inline-001.html
-# --- css-break flexbox print fragmentation (exact, 800x600, 2026-09-21) ---
+# --- css-break min-block-size Fulgur v0.40.0 PASS slice (exact, 800x600, 2026-09-22) ---
+css/css-break/break-inside-avoid-min-block-size-1.html
+css/css-break/break-inside-avoid-min-block-size-2.html
+# --- css-break flexbox print Fulgur v0.40.0 PASS slice (exact, 800x600, 2026-09-22) ---
 css/css-break/flexbox/multi-line-row-flex-fragmentation-080-print.html
 css/css-break/flexbox/single-line-column-flex-fragmentation-065-print.html
 css/css-break/flexbox/single-line-column-flex-fragmentation-066-print.html
 css/css-break/flexbox/single-line-column-flex-fragmentation-068a-print.html
-css/css-break/flexbox/single-line-column-flex-fragmentation-068b-print.html
 css/css-break/flexbox/single-line-column-flex-fragmentation-069a-print.html
-css/css-break/flexbox/single-line-column-flex-fragmentation-069d-print.html
 css/css-break/flexbox/single-line-row-flex-fragmentation-045-print.html
 css/css-break/flexbox/single-line-row-flex-fragmentation-046-print.html
-css/css-break/flexbox/multi-line-row-flex-fragmentation-081a-print.html
-css/css-break/flexbox/multi-line-row-flex-fragmentation-081b-print.html
-# --- css-break table reftests (exact, 800x600, 2026-09-21) ---
-css/css-break/table/break-before-second-row.html
-css/css-break/table/caption-margin-002.html
-css/css-break/table/caption-margin-005.html
-css/css-break/table/monolithic-overflow-001.tentative.html
-css/css-break/table/table-fragmentation-001a-print.html
-css/css-break/table/table-cell-border-001.html
-css/css-break/table/table-cell-border-002.html
-# --- css-break grid reftests (exact, 800x600, 2026-09-21) ---
-css/css-break/grid/grid-item-fragmentation-010.html
-css/css-break/grid/grid-item-fragmentation-011.html
-css/css-break/grid/grid-item-fragmentation-012.html
-css/css-break/grid/grid-item-fragmentation-013.html
-css/css-break/grid/grid-item-fragmentation-015.html
-css/css-break/grid/grid-item-fragmentation-018.html
-css/css-break/grid/grid-item-fragmentation-028.html
-css/css-break/grid/grid-item-fragmentation-029.html
-css/css-break/grid/grid-item-overflow-001.html
-css/css-break/grid/monolithic-overflow-001.tentative.html
-css/css-break/grid/monolithic-overflow-002.tentative.html
-# --- css-break flexbox additional exact reftests (800x600, 2026-09-21) ---
-css/css-break/flexbox/flex-container-fragmentation-008.html
-css/css-break/flexbox/flex-container-fragmentation-009.html
+# --- css-break flexbox additional Fulgur v0.40.0 PASS slice (exact, 800x600, 2026-09-22) ---
 css/css-break/flexbox/flex-item-content-overflow-001a.html
 css/css-break/flexbox/flex-item-content-overflow-001b.html
 css/css-break/flexbox/flex-item-content-overflow-002a.html
 css/css-break/flexbox/flex-item-content-overflow-002b.html
-css/css-break/flexbox/flex-item-content-overflow-003.html
-css/css-break/flexbox/increase-fragmentainer-size-flex-item-trailing-margin.html
-css/css-break/flexbox/monolithic-overflow-001.tentative.html
-css/css-break/flexbox/monolithic-overflow-002.tentative.html
-css/css-break/flexbox/multi-line-column-flex-fragmentation-012.html
-css/css-break/flexbox/multi-line-column-flex-fragmentation-041.html
-css/css-break/flexbox/multi-line-column-flex-fragmentation-050.html
-css/css-break/flexbox/multi-line-row-flex-fragmentation-009.html
-css/css-break/flexbox/multi-line-row-flex-fragmentation-018.html
-css/css-break/flexbox/multi-line-row-flex-fragmentation-022.html
-css/css-break/flexbox/multi-line-row-flex-fragmentation-023.html
-css/css-break/flexbox/multi-line-row-flex-fragmentation-024.html
-css/css-break/flexbox/multi-line-row-flex-fragmentation-037.html
-css/css-break/flexbox/multi-line-row-flex-fragmentation-038.html
-css/css-break/flexbox/multi-line-row-flex-fragmentation-045.html
-css/css-break/flexbox/multi-line-row-flex-fragmentation-061.html
-css/css-break/flexbox/multi-line-row-flex-fragmentation-083a.html
-css/css-break/flexbox/multi-line-row-flex-fragmentation-083b.html
-css/css-break/flexbox/multi-line-row-flex-fragmentation-083c.html
-css/css-break/flexbox/multi-line-row-flex-fragmentation-083d.html
-css/css-break/flexbox/multi-line-row-flex-fragmentation-091.html
-css/css-break/flexbox/single-line-column-flex-fragmentation-007.html
-css/css-break/flexbox/single-line-column-flex-fragmentation-008.html
-css/css-break/flexbox/single-line-column-flex-fragmentation-009.html
-css/css-break/flexbox/single-line-column-flex-fragmentation-040.html
-css/css-break/flexbox/single-line-column-flex-fragmentation-056.html
-css/css-break/flexbox/single-line-row-flex-fragmentation-009.html
 css/css-break/flexbox/single-line-row-flex-fragmentation-021.html
-css/css-break/flexbox/single-line-row-flex-fragmentation-038.html
 css/css-break/flexbox/single-line-row-flex-fragmentation-049.html
 css/css-break/flexbox/single-line-row-flex-fragmentation-050.html
 # --- css-break multicol block projection (exact, 800x600, 2026-09-22) ---
@@ -1441,40 +1390,6 @@ css/css-text/text-autospace/text-autospace-vertical-combine-001.html
 css/css-text/text-autospace/text-autospace-vertical-upright-001.html
 css/css-text/text-autospace/text-autospace-vs-001.html
 css/css-text/text-autospace/text-autospace-zh-001.html
-# --- CSS Break grid fragmentainer paint exact 800x600 PASS-only pins 2026-09-21 ---
-css/css-break/grid/grid-container-fragmentation-001.html
-css/css-break/grid/grid-item-fragmentation-001.html
-css/css-break/grid/grid-item-fragmentation-002.html
-css/css-break/grid/grid-item-fragmentation-003.html
-css/css-break/grid/grid-item-fragmentation-014.html
-css/css-break/grid/grid-item-fragmentation-016.html
-css/css-break/grid/grid-item-fragmentation-017.html
-css/css-break/grid/grid-item-fragmentation-019.html
-css/css-break/grid/grid-item-fragmentation-020.html
-css/css-break/grid/grid-item-fragmentation-030.html
-css/css-break/grid/grid-item-fragmentation-031.html
-css/css-break/grid/grid-item-fragmentation-035.html
-css/css-break/grid/grid-item-fragmentation-036.html
-css/css-break/grid/grid-item-fragmentation-037.html
-css/css-break/grid/grid-item-fragmentation-038.html
-css/css-break/grid/grid-item-fragmentation-043.html
-css/css-break/grid/grid-item-fragmentation-044.html
-css/css-break/grid/grid-item-fragmentation-045.html
-css/css-break/grid/grid-item-fragmentation-046.html
-css/css-break/grid/grid-item-fragmentation-047.html
-css/css-break/grid/grid-item-fragmentation-048.html
-css/css-break/grid/grid-item-infinite-expansion.html
-css/css-break/grid/monolithic-overflow-005.html
-css/css-break/grid/monolithic-overflow-006.html
-css/css-break/grid/monolithic-overflow-007.html
-css/css-break/grid/monolithic-overflow-008.html
-css/css-break/grid/monolithic-overflow-009.html
-css/css-break/grid/subgrid/subgrid-container-fragmentation-001.html
-css/css-break/grid/subgrid/subgrid-container-fragmentation-002.html
-css/css-break/grid/subgrid/subgrid-item-fragmentation-001.html
-css/css-break/grid/subgrid/subgrid-item-fragmentation-002.html
-css/css-break/grid/subgrid/subgrid-item-fragmentation-003.html
-
 # --- css-text white-space/line-breaking resource exact slice (800x600) ---
 css/css-text/white-space/break-spaces-002.html
 css/css-text/white-space/break-spaces-004.html
