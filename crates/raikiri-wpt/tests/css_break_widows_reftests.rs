@@ -17,6 +17,7 @@ fn css_break_widows_cases_are_pixel_exact_at_800x600() {
     let cases = [
         "css/css-break/widows-001.html",
         "css/css-break/widows-block-in-inline-001.html",
+        "css/css-break/widows-orphans-017.html",
     ];
     let mut config = ReftestConfig::default();
     config.width = 800;
