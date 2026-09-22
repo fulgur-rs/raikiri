@@ -50,6 +50,24 @@ fn page_counter_pairs_are_pixel_exact_at_800x600() {
     }
 }
 
+/// Spread-pseudo side margins constrain the page content width exactly.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn page_left_right_spread_pseudo_pair_is_pixel_exact_at_800x600() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    run_exact_pair(
+        &root,
+        "css/css-page",
+        "page-left-right-001-print.html",
+        config,
+    );
+}
+
 fn run_exact_pair(root: &std::path::Path, dir: &str, name: &str, config: ReftestConfig) {
     let test = root.join(dir).join(name);
     let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(root))
