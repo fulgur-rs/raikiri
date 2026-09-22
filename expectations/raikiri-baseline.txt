@@ -1142,6 +1142,8 @@ css/css-tables/table-as-item-cell-percentage-001.html
 # the test side needs vertical-rl row stacking (block axis horizontal) plus
 # transform:rotate on the reference — full vertical-table support. Re-pin
 # when that lands. Net of this swap: +1-1 = 0 (count assert unchanged).
+# --- css-tables reftest pin 2026-09-22 (body stylesheet extraction + subpixel cell padding) ---
+css/css-tables/height-distribution/td-different-subpixel-padding-in-same-row.html
 # --- css-tables reftest pin 2026-09-16 (whitespace segment-break collapse, CSS Text 3 §4.1) ---
 css/css-tables/absolute-tables-008.tentative.html
 css/css-tables/absolute-tables-011.tentative.html

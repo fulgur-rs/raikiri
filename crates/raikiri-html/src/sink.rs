@@ -454,7 +454,7 @@ pub(crate) fn collect_head_stylesheet_sources(doc: &Document) -> Vec<HeadStylesh
         }
 
         if let Some(el) = node.as_element()
-            && el.tag_name() == "style"
+            && is_stylesheet_style_element(&el)
         {
             if inline_stylesheet_has_content(doc, id) {
                 out.push(HeadStylesheetSource::Inline { node_id: id });
@@ -514,6 +514,19 @@ fn strip_xhtml_cdata_wrapper(text: &str) -> String {
         .map_or_else(|| text.to_owned(), ToOwned::to_owned)
 }
 
+/// Return whether an element is a stylesheet-bearing `<style>` element.
+///
+/// HTML/XHTML and SVG define stylesheet-bearing style elements. A same-named
+/// MathML element is not a CSS stylesheet source, so namespace must be part of
+/// this predicate rather than relying on the local tag name alone.
+fn is_stylesheet_style_element(element: &impl raikiri_traits::Element) -> bool {
+    element.tag_name() == "style"
+        && matches!(
+            element.namespace_uri(),
+            None | Some("http://www.w3.org/1999/xhtml") | Some("http://www.w3.org/2000/svg")
+        )
+}
+
 fn inline_stylesheet_has_content(doc: &Document, node_id: raikiri_traits::NodeId) -> bool {
     use raikiri_traits::{Dom, Node};
 
@@ -526,13 +539,56 @@ fn inline_stylesheet_has_content(doc: &Document, node_id: raikiri_traits::NodeId
 }
 
 fn extract_inline_stylesheets(doc: &Document) -> Vec<String> {
-    collect_head_stylesheet_sources(doc)
+    let mut sources = collect_head_stylesheet_sources(doc)
         .into_iter()
         .filter_map(|source| match source {
             HeadStylesheetSource::Inline { node_id } => Some(inline_stylesheet_text(doc, node_id)),
             HeadStylesheetSource::External { .. } => None,
         })
-        .collect()
+        .collect::<Vec<_>>();
+
+    // WPT and browser HTML commonly place metadata `<style>` after the implicit
+    // head, including directly in the body. Keep the existing head projection
+    // first, then append body/outside-head styles in document order.
+    sources.extend(
+        collect_body_inline_stylesheet_ids(doc)
+            .into_iter()
+            .map(|node_id| inline_stylesheet_text(doc, node_id)),
+    );
+    sources
+}
+
+fn collect_body_inline_stylesheet_ids(doc: &Document) -> Vec<raikiri_traits::NodeId> {
+    use raikiri_traits::{Dom, Node};
+
+    let head_id = find_head_element(doc);
+    let mut out = Vec::new();
+    let mut stack = vec![doc.root_id()];
+    while let Some(id) = stack.pop() {
+        if head_id == Some(id) {
+            continue;
+        }
+        let Some(node) = doc.node(id) else {
+            continue;
+        };
+        if !node.is_in_document() {
+            continue;
+        }
+        if node
+            .as_element()
+            .is_some_and(|element| is_stylesheet_style_element(&element))
+        {
+            if inline_stylesheet_has_content(doc, id) {
+                out.push(id);
+            }
+            continue;
+        }
+        let children: Vec<_> = doc.child_ids(id).collect();
+        for child_id in children.into_iter().rev() {
+            stack.push(child_id);
+        }
+    }
+    out
 }
 
 /// Document tree の `<head>` element を DFS (iterative) で探す。
@@ -622,8 +678,8 @@ pub(crate) fn find_document_base_href(doc: &Document) -> Option<String> {
 /// `<head>` 内の `<link rel="stylesheet" href="...">` を document order で
 /// 収集する。
 ///
-/// `extract_inline_stylesheets` と同じ head-only DFS scope — `<body>` 内
-/// `<link>` は `<style>` と同じ理由で defer。実際の fetch
+/// 外部 link の収集は head-only DFS scope のまま — `<body>` 内 `<link>` は
+/// inline `<style>` の body 対応とは別に defer。実際の fetch
 /// (`NetworkProvider` 経由の I/O) はここでは行わない: `TreeSink::finish()`
 /// (このモジュール) は I/O を持たない契約を保つ必要がある (sink 実装が
 /// 観測可能な副作用を追加すると wall/sink 対象)。href の収集のみ行い、実

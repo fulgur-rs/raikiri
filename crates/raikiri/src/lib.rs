@@ -265,9 +265,9 @@ pub use url::Url;
 pub use bytes::Bytes;
 
 /// UA + Consumer 提供 stylesheet を Document から取り出し、Origin を割り当てて
-/// RuleTree を組み、raikiri-html が parse 時に集約した head 配下の `<style>`
-/// element の text を Author として追加した上で cascade を実行する umbrella
-/// orchestration entry point。
+/// RuleTree を組み、raikiri-html が parse 時に集約した inline `<style>` element
+/// と fetched `<link rel="stylesheet">` source を Author として追加した上で cascade
+/// を実行する umbrella orchestration entry point。
 ///
 /// 現状 `raikiri_style::cascade` は常に `Ok` を返すため、内部で `expect` する
 /// (将来 Result 反映を検討)。
@@ -279,17 +279,17 @@ pub use bytes::Bytes;
 ///
 /// `UncascadedDocument::stylesheet_sources` を Author として消費する。
 /// この Vec は parse 時に [`raikiri_html::parse`] 内の `extract_inline_stylesheets`
-/// が **head 配下** の `<style>` element の text を document order で集約し、
+/// が head の stylesheet-bearing elements を元の順序で集約し、その後に
+/// head 外の inline `<style>` elements を document order で追加する。
+/// HTML/XHTML と SVG の `<style>` は対象だが、MathML の同名 element は対象外。
 /// `<template>` subtree は spec §14.1 の inertness に従って skip 済み。
-/// `<body>` 内の `<style>` は position-aware semantics が必要なため現状
-/// 未対応 (将来拡張予定、`raikiri-html/src/sink.rs::extract_inline_stylesheets`
-/// の invariant に一致)。
 ///
 /// # DOM `<style>` (Author) vs `extra_stylesheets` (User)
 ///
 /// `Document.stylesheets()` (parse 時に注入された UA + `extra_stylesheets`) が
-/// 先に RuleTree に流し込まれ、次に `stylesheet_sources` (head 配下 `<style>`)
-/// が Author として追加される。従来は `extra_stylesheets`
+/// 先に RuleTree に流し込まれ、次に `stylesheet_sources` (head/body の inline
+/// styles と head の fetched links) が Author として追加される。従来は
+/// `extra_stylesheets`
 /// も `Author` としてタグされており、DOM `<style>` との勝敗は同一 origin 内の
 /// source_order tie-break (後から来た方が勝つ) に依存していた。その後
 /// `extra_stylesheets` は [`Origin::User`] に retag された
@@ -408,8 +408,8 @@ pub fn build_rule_tree_with_consumer_properties(
         tree.add_stylesheet(source, origin);
     }
 
-    // raikiri-html が parse 時に head 配下 / template-inert filter 越しに集約した
-    // `<style>` element の text を Author として追加。<body> style は現状未対応。
+    // raikiri-html が parse 時に template-inert filter 越しに集約した
+    // head/body inline style と fetched head links を Author として追加。
     for source in &doc.stylesheet_sources {
         tree.add_stylesheet(source, Origin::Author);
     }

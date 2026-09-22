@@ -1304,7 +1304,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Text Decoration inset endpoint smoke (+1).
         // + CSS Text Decoration fixed underline-offset horizontal smoke (+1).
         // + CSS Inline block-in-inline margin-collapse smoke (+1).
-        assert_eq!(set.baseline.entries.len(), 1266);
+        // + CSS Tables body stylesheet/subpixel padding exact slice (+1).
+        assert_eq!(set.baseline.entries.len(), 1267);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
