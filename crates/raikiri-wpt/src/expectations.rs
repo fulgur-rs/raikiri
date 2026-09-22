@@ -1287,6 +1287,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Text text-autospace slice (+4).
         // + CSS Images gradients and CSS Page image-resource slices (+6).
         // + CSS Page :left/:right spread-pseudo content-width slice (+1).
+        // + CSS Page named-page column-flex propagation slice (+2).
         // + CSS Break forced page-break reftest (+1).
         // + CSS Break Flexbox print Fulgur v0.40.0 PASS slice (+7).
         // + CSS Break Flexbox additional Fulgur v0.40.0 PASS slice (+7).
@@ -1301,7 +1302,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Text Decoration inset endpoint smoke (+1).
         // + CSS Text Decoration fixed underline-offset horizontal smoke (+1).
         // + CSS Inline block-in-inline margin-collapse smoke (+1).
-        assert_eq!(set.baseline.entries.len(), 1259);
+        assert_eq!(set.baseline.entries.len(), 1261);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
