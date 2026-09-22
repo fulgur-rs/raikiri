@@ -76,6 +76,19 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         // can produce the same `CssColor`).
         PropertyValue::BorderColor(_) => None,
 
+        PropertyValue::TextDecorationInset(inset) => Some(match inset {
+            TextDecorationInset::Auto => "auto".to_owned(),
+            TextDecorationInset::Lengths { start, end } => {
+                let start = serialize_length(start);
+                let end = serialize_length(end);
+                if start == end {
+                    start
+                } else {
+                    format!("{start} {end}")
+                }
+            }
+        }),
+
         _ => None,
     }
 }

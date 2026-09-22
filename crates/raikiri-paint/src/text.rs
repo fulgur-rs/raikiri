@@ -26,7 +26,7 @@ use raikiri_style::property::{
     CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextAlign, TextAlignLast,
     TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextShadowColor,
 };
-use raikiri_style::{CascadeResult, ComputedValues};
+use raikiri_style::{CascadeResult, ComputedTextDecorationInset, ComputedValues};
 
 /// A decoration line carried from the element that originated it.
 ///
@@ -48,6 +48,10 @@ pub(crate) struct DecorationSpec {
     ///
     /// Descendant shifts must not change the decoration's initial position.
     origin_shift_y: f32,
+    /// Inline-start/end endpoint offsets from `text-decoration-inset`.
+    inset_start: f64,
+    inset_end: f64,
+    origin_rtl: bool,
 }
 
 /// Return whether an element is a boundary for decoration propagation.
@@ -135,6 +139,13 @@ fn element_decoration(cv: &ComputedValues, origin_shift_y: f32) -> Option<Decora
         // pinned implementation; this arm is a non-exhaustive forward guard.
         _ => cv.color,
     };
+    let (inset_start, inset_end) = match cv.text_decoration_inset {
+        // `auto` remains distinct in computed style. The current per-text-node
+        // paint segmentation already supplies the automatic boundary behavior,
+        // so no additional endpoint offset is needed here.
+        ComputedTextDecorationInset::Auto => (0.0, 0.0),
+        ComputedTextDecorationInset::Lengths { start, end } => (start.px() as f64, end.px() as f64),
+    };
     let raw_font_size = cv.font_size.px() as f64;
     let origin_font_size = if raw_font_size.is_finite() {
         raw_font_size.max(1.0)
@@ -153,6 +164,9 @@ fn element_decoration(cv: &ComputedValues, origin_shift_y: f32) -> Option<Decora
         origin_ascent: origin_font_size * 0.8,
         origin_descent: origin_font_size * 0.2,
         origin_shift_y,
+        inset_start,
+        inset_end,
+        origin_rtl: matches!(cv.direction, Direction::Rtl),
     })
 }
 
@@ -707,6 +721,26 @@ fn draw_decoration_phase(
     }
 }
 
+fn decoration_span(x0: f64, x1: f64, decoration: &DecorationSpec) -> Option<(f64, f64)> {
+    let (start, end) = if decoration.origin_rtl {
+        (decoration.inset_end, decoration.inset_start)
+    } else {
+        (decoration.inset_start, decoration.inset_end)
+    };
+    let line_x0 = x0 + start;
+    let line_x1 = x1 - end;
+    if !start.is_finite()
+        || !end.is_finite()
+        || !line_x0.is_finite()
+        || !line_x1.is_finite()
+        || line_x1 <= line_x0
+    {
+        None
+    } else {
+        Some((line_x0, line_x1))
+    }
+}
+
 fn paint_decoration_line(
     scene: &mut impl PaintScene,
     decorations: &[&DecorationSpec],
@@ -728,6 +762,9 @@ fn paint_decoration_line(
         if !enabled {
             continue;
         }
+        let Some((line_x0, line_x1)) = decoration_span(x0, x1, decoration) else {
+            continue;
+        };
         let color = css_color_to_peniko(decoration.color);
         let baseline =
             abs_y + line_top as f64 + decoration.origin_ascent + decoration.origin_shift_y as f64;
@@ -737,7 +774,15 @@ fn paint_decoration_line(
             DecorationLineKind::Overline => baseline - decoration.origin_ascent + thickness * 0.5,
             DecorationLineKind::LineThrough => baseline - decoration.origin_ascent * 0.35,
         };
-        paint_decoration_style(scene, decoration.style, color, x0, x1, center, thickness);
+        paint_decoration_style(
+            scene,
+            decoration.style,
+            color,
+            line_x0,
+            line_x1,
+            center,
+            thickness,
+        );
     }
 }
 
@@ -924,16 +969,17 @@ fn css_color_to_peniko(c: CssColor) -> Color {
 #[cfg(test)]
 mod tests {
     use super::{
-        DecorationContext, MAX_DECORATION_SEGMENTS, dashed_lengths, decoration_line_width,
-        decorations_for_element, measure_margin_text_advance, measure_margin_text_height,
-        paint_decoration_style, synthetic_embolden, text_align_last_delta,
+        DecorationContext, DecorationSpec, MAX_DECORATION_SEGMENTS, dashed_lengths,
+        decoration_line_width, decoration_span, decorations_for_element,
+        measure_margin_text_advance, measure_margin_text_height, paint_decoration_style,
+        synthetic_embolden, text_align_last_delta,
     };
     use anyrender::{Scene, recording::RenderCommand};
     use kurbo::Vec2;
     use parley::LineMetrics;
     use raikiri_style::ComputedValues;
     use raikiri_style::property::{
-        Direction, DisplayValue, FloatValue, PositionValue, TextAlign, TextAlignLast,
+        CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextAlign, TextAlignLast,
         TextDecorationLine, TextDecorationStyle,
     };
 
@@ -944,6 +990,46 @@ mod tests {
             inline_max_coord: 100.0,
             ..LineMetrics::default()
         }
+    }
+
+    #[test]
+    fn decoration_span_applies_logical_insets_from_origin_direction() {
+        let mut spec = DecorationSpec {
+            line: TextDecorationLine::UNDERLINE,
+            style: TextDecorationStyle::Solid,
+            color: CssColor::BLACK,
+            origin_thickness: 1.0,
+            origin_ascent: 8.0,
+            origin_descent: 2.0,
+            origin_shift_y: 0.0,
+            inset_start: 10.0,
+            inset_end: -10.0,
+            origin_rtl: false,
+        };
+        assert_eq!(decoration_span(100.0, 200.0, &spec), Some((110.0, 210.0)));
+
+        spec.origin_rtl = true;
+        assert_eq!(decoration_span(100.0, 200.0, &spec), Some((90.0, 190.0)));
+    }
+
+    #[test]
+    fn decoration_span_rejects_empty_or_nonfinite_ranges() {
+        let spec = DecorationSpec {
+            line: TextDecorationLine::UNDERLINE,
+            style: TextDecorationStyle::Solid,
+            color: CssColor::BLACK,
+            origin_thickness: 1.0,
+            origin_ascent: 8.0,
+            origin_descent: 2.0,
+            origin_shift_y: 0.0,
+            inset_start: 60.0,
+            inset_end: 50.0,
+            origin_rtl: false,
+        };
+        assert_eq!(decoration_span(100.0, 200.0, &spec), None);
+        let mut nonfinite = spec;
+        nonfinite.inset_start = f64::NAN;
+        assert_eq!(decoration_span(100.0, 200.0, &nonfinite), None);
     }
 
     #[test]

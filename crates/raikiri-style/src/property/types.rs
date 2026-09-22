@@ -3732,7 +3732,8 @@ pub enum TextDecorationThickness {
 /// 乖離としてここに記録する)。
 /// Initial: `0`、Inherited: **no**。2 値目は省略時に 1 値目を複製する
 /// (margin/padding の 2-value 規則と同型)。
-/// parsing-only ([`PropertyValue::TextDecorationInset`] doc 参照)。
+/// The cascade and paint pipeline carries this value through computed style;
+/// [`PropertyValue::TextDecorationInset`] is the specified-stage representation.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TextDecorationInset {
@@ -7915,8 +7916,9 @@ pub enum PropertyValue {
     /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
     TextDecorationThickness(TextDecorationThickness),
     /// `text-decoration-inset` — **non-inherited**、initial: `0`
-    /// (ED)。parsing-only (同上 — 2 `<length>` を運ぶが element 経路では
-    /// 絶対化しない。`@page` 経路のみ同名 arm で absolutize)。
+    /// (ED)。element 経路は [`crate::specified::SpecifiedValues`] へ staging
+    /// し、[`crate::resolve::resolve_text_decoration_inset`] で declaring
+    /// node の font metrics に対して絶対化して paint へ渡す。
     /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
     TextDecorationInset(TextDecorationInset),
     /// `text-emphasis-position` — **inherited**、initial: `over right`

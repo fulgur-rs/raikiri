@@ -1398,6 +1398,7 @@ css/css-text/white-space/break-spaces-007.html
 css/css-text/line-breaking/line-breaking-001.html
 css/css-fonts/synthetic-oblique-out-of-capabilities-range.html
 css/css-text-decor/text-decoration-line.html
+css/css-text-decor/text-decoration-inset-001.html
 css/css-writing-modes/abs-pos-border-offset-001.html
 css/css-writing-modes/abs-pos-border-offset-002.html
 css/css-color/background-color-rgb-001.html

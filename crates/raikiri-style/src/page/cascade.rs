@@ -4748,6 +4748,26 @@ mod tests {
             ),
             PropertyValue::TextDecorationInset(TextDecorationInset::Auto),
         );
+        assert_eq!(
+            absolutize_in_page_context(
+                ResolvedAgainstInherited::for_test(PropertyValue::TextDecorationInset(
+                    TextDecorationInset::Lengths {
+                        start: Length::Em(1.5),
+                        end: Length::Rem(2.0),
+                    },
+                )),
+                fs,
+                None,
+                &ctx,
+                styles,
+                OutlineStyle::None,
+                OverflowXY::both(OverflowValue::Visible),
+            ),
+            PropertyValue::TextDecorationInset(TextDecorationInset::Lengths {
+                start: Length::Px(30.0),
+                end: Length::Px(32.0),
+            }),
+        );
         // `flex-basis` intrinsic keywords round-trip as keywords through
         // the `fb` helper (same shape as `Content`, which the corpus pins
         // via its own sample).
