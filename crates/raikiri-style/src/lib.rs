@@ -219,10 +219,7 @@ pub enum PseudoClass {
 /// Explicit directionality value accepted by [`PseudoClass::Dir`] (CSS
 /// Selectors L4 §7.1 <https://www.w3.org/TR/selectors-4/#the-dir-pseudo>,
 /// CSSWG bikeshed source `selectors-4/Overview.bs` §"The Directionality
-/// Pseudo-class: :dir()" — the published TR page
-/// truncates before reaching this section for this crate's WebFetch tool,
-/// same truncation `mod@crate::cascade`'s combinator doc already notes for
-/// this spec):
+/// Pseudo-class: :dir()":
 ///
 /// > The argument to `:dir()` must be a single identifier, otherwise the
 /// > selector is invalid. \[...\] Values other than `ltr` and `rtl` are not
@@ -319,12 +316,6 @@ impl NonTSPseudoClass for PseudoClass {
 /// the downstream layout/paint layer, while author `::marker` declarations are
 /// still cascaded here.
 ///
-/// Variant shape mirrors the `selectors` crate's own reference test
-/// implementation (`selectors` v0.39.0 `parser.rs`, its `#[cfg(test)]`
-/// module's `PseudoElement::Before`/`::After`/`::Marker`/`::DetailsContent`)
-/// — that crate models exactly this kind of enum for its own test suite, so
-/// this shape is the crate author's own intended usage pattern for
-/// `selectors::parser::PseudoElement`, not a Stylo-derived shape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PseudoElem {
     /// `::before` (also accepted as legacy `:before`).
@@ -348,12 +339,8 @@ impl ToCss for PseudoElem {
 impl PseudoElement for PseudoElem {
     type Impl = RaikiriSelectorImpl;
 
-    // Every other `PseudoElement` trait method keeps its `false`/default
-    // value deliberately — fail-closed posture matching this parser's
-    // pseudo-class handling: no state pseudo-class, no other pseudo-element,
-    // and no `::slotted()`/`::part()` context is accepted after `::before`/
-    // `::after` (verified empirically — see `lib.rs`'s
-    // `parse_pseudo_element_rejects_chaining_after_before_or_after` test).
+    // Other `PseudoElement` methods keep their default false values, so
+    // unsupported pseudo-element states remain rejected.
 }
 
 // ---------------------------------------------------------------------------

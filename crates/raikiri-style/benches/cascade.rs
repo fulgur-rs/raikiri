@@ -1,277 +1,14 @@
-//! Cascade hot-loop benchmark — guards the **per-declaration constant**.
+//! Benchmarks the cascade and selector-matching hot paths.
 //!
-//! # Why this benchmark exists
+//! Rule-tree construction stays outside the timed closure. The workload
+//! probes check the resulting values so the benchmark does not silently time
+//! an empty or partial cascade.
 //!
-//! A shorthand-expansion guard was added to
-//! `cascade::collect_cascaded` and, in doing so, started moving a
-//! `Declaration` (72 bytes) by value once per declaration. The declaration
-//! *count* did not change — `collect_cascaded` is a single whole-tree walk
-//! either way — only the cost of one loop iteration did (see below for the
-//! per-declaration figures, which differ by source). That is
-//! a regression class neither `cargo test` nor `cargo clippy` can see: the
-//! output is bit-identical and no lint fires. It was caught only because a
-//! reviewer hand-rolled a throwaway timing harness (confirmed at +22% / +16%).
-//!
-//! This file makes that harness a repo artifact so the same class is
-//! measurable on demand instead of by luck.
-//!
-//! # Reference numbers
-//!
-//! From that review, default release profile, wall-clock per
-//! `cascade()` call. Note that review recorded the harness **twice**: this table is
-//! the review's run, and the landing commit (`7ae92e9`) reports a re-run at
-//! min-of-30 × 2 rounds giving +25% / +14% for the same two configs. Both are
-//! the origin's; neither closes the gap discussed below, since which pairing
-//! you take drives the light config's answer (+12.2% or +18.0%).
-//!
-//! | workload                            | good     | regressed | delta |
-//! |-------------------------------------|----------|-----------|-------|
-//! | 50 rule × 500 elem × 10 decl (250k) | ≈4.9 ms  | ≈6.0 ms   | +22%  |
-//! | 5 rule × 2000 elem × 10 decl (100k) | ≈3.1 ms  | ≈3.6 ms   | +16%  |
-//!
-//! What moved is the *delta*, not the absolute per-declaration cost — and the
-//! absolute is **not** comparable between the configs anyway (see the note on
-//! [`Throughput`] at the call site). Per declaration these rows give roughly
-//! 4 ns (rule_heavy) and 5 ns (element_heavy) — one significant figure,
-//! because the origin recorded spreads (4.87–4.96 → 5.96–6.13 and
-//! 3.06–3.10 → 3.62 ms) that this table has already rounded. The ≈4 ns figure
-//! quoted elsewhere in this file is from the **validated** table below (4.46
-//! and 3.63 ns), not from these rows — see the note directly beneath.
-//!
-//! The validated table further down reproduces +22.1% for rule_heavy but
-//! **+10.7% rather than +16%** for element_heavy, and that gap is **not
-//! reconciled**. The obvious candidate does not survive arithmetic: the origin
-//! harness built its DOM through `raikiri::parse`, so it carried the UA sheet
-//! too — but of its ten rules exactly one matches a `div`, adding 2000
-//! declarations to element_heavy's 100k (+2%) while adding selector-matching
-//! work to every element, which moves the *relative* delta down, not up. So it
-//! has both the wrong magnitude and the wrong sign. Resist the temptation to
-//! explain the gap away: the origin was a single throwaway harness measuring a
-//! quantity this file goes on to show contention can inflate by up to 40%.
-//! Treat the numbers below as this file's baseline, at whichever base each
-//! one names.
-//!
-//! **Absolute numbers here are host-relative.** Everything below was measured
-//! on an AMD Ryzen 5 5600G (12 threads). Quote the host whenever you add a
-//! number, and compare against a baseline you took on the same machine —
-//! never against these.
-//!
-//! Healthy baseline at the base this landed on (`832500e`): **4.955 ms**
-//! (rule_heavy) and **3.276 ms** (element_heavy) — minimum of 6 runs on an
-//! idle machine. That is a single-variant minimum, not the two-variant
-//! interleaved protocol below, which needs a second tree to alternate against.
-//! The sensitivity A/B was measured one base earlier (`2cca455`) at
-//! 5.054 / 3.387 ms; the two bases agree to 2.0% and 3.3% respectively, so the
-//! +22.1% and +10.7% figures remain representative of the committed workload.
-//!
-//! # Measurement noise — read this before believing any number
-//!
-//! Several worktree sessions work this repo in parallel, and a concurrent
-//! `rustc` moves these numbers by 10–40%: the same order as the regression
-//! they exist to detect. On a tree with **zero** source changes, measured
-//! against a baseline saved minutes earlier, criterion reported
-//! `+18.777%` and `+11.450%`, both at `p = 0.00 < 0.05`, both labelled
-//! "Performance has regressed".
-//!
-//! Nothing had regressed; four `rustc` processes had started. criterion's
-//! p-value only asks whether two sample sets came from the same
-//! distribution, so it cannot tell contention from a code change — **`p <
-//! 0.05` is not evidence of a regression here**.
-//!
-//! ## The protocol that does work: interleaved min-of-N
-//!
-//! Contention only ever *adds* time, so the minimum over repeated runs
-//! converges on the true cost while the mean and the p-value do not.
-//! Interleaving matters as much as the minimum: it stops a slow stretch of
-//! machine landing entirely on one side.
-//!
-//! ```text
-//! # build each tree, save target/release/deps/cascade-<hash> aside
-//! for i in $(seq 8); do
-//!   for v in good bad; do
-//!     ./cascade_$v --bench --warm-up-time 0.5 --measurement-time 1.2 \
-//!                  --sample-size 10 --noplot
-//!   done
-//! done
-//! # then compare the per-benchmark minimum across runs
-//! ```
-//!
-//! # Does it actually catch the thing? (validated, not assumed)
-//!
-//! A benchmark whose sensitivity was never tested is decoration. This one was
-//! checked by reintroducing the original regression — `expand_shorthand_into`
-//! back to `d: Declaration` by value, `expand_none` likewise, call sites
-//! passing `decl.clone()` — and running the protocol above, n = 8
-//! interleaved:
-//!
-//! | workload      | good (min) | regressed (min) | delta  | per declaration |
-//! |---------------|-----------:|----------------:|-------:|----------------:|
-//! | rule_heavy    |   5.054 ms |        6.169 ms | +22.1% |       4.46 ns   |
-//! | element_heavy |   3.387 ms |        3.750 ms | +10.7% |       3.63 ns   |
-//!
-//! rule_heavy's +22.1% reproduces the origin's +22% directly.
-//!
-//! **What the cross-config agreement establishes, and what it does not.** The
-//! configs differ 4× in node count, 4× in element count, and 2.5× in
-//! declaration count. If the delta were proportional to nodes rather than to
-//! declarations, the per-declaration figures above would differ by
-//! `(4001/100k) / (1001/250k)` ≈ **10×** — and by the same 10× under an
-//! element-count hypothesis. They in fact agree within **23%**, so the delta
-//! demonstrably does not scale with node or element count.
-//!
-//! What the agreement does **not** do is separate "per declaration" from
-//! "per rule-match": both configs fix `DECLS_PER_RULE`, so
-//! declarations are exactly 10× rule-matches in each and the two hypotheses
-//! predict identical numbers. Breaking that ratio needs a third config, e.g.
-//! 500 rules × 500 elements × 1 declaration — which holds *declarations*
-//! fixed at 250k against rule_heavy while multiplying *rule-matches* by 10,
-//! so a per-match cost would show up as a ~10× larger delta and a
-//! per-declaration cost as an unchanged one. Not implemented yet;
-//! until it is, read the ≈4 ns as
-//! *consistent with* a per-declaration constant rather than as proof of one.
-//! Note it is not a drop-in. `DECLS_PER_RULE` is read by the per-rule parse
-//! assertion and by the throughput denominator, and is *duplicated* as a
-//! hardcoded ten-declaration rule body in [`stylesheet`] — which is exactly
-//! why that parse assertion exists, since it is the only thing tying the
-//! literal to the constant. Beyond those, the probe's ten-property comparison
-//! and the [`Winners`] vacuity guard both assume the ten-longhand body: with a
-//! one-declaration rule, nine of the ten comparisons would be against values
-//! the stylesheet never set, so the probe does not merely weaken — it fails.
-//! Every one of those sites has to move together.
-//!
-//! Gate integration has to solve the noise problem
-//! before any threshold means anything; a naive 10% trigger on this machine
-//! fires on an unmodified tree.
-//!
-//! # Design constraints (do not "simplify" these away)
-//!
-//! - **Only `cascade()` is timed.** The `RuleTree` is parsed once, outside
-//!   the measured closure. Parsing is far more expensive per declaration
-//!   than cascading is, so folding it in would bury a 4 ns/declaration
-//!   change under noise.
-//! - **The result is dropped outside the timed region**
-//!   (`Bencher::iter_with_large_drop`). `CascadeResult` owns a
-//!   `Vec<ComputedValues>` sized to the node count; freeing it is real work
-//!   that is not part of the loop under study, and the reference numbers
-//!   above excluded it.
-//! - **Two configs varying the ratios.** At fixed `DECLS_PER_RULE` they
-//!   differ 10× in rules-per-element and 4× in node count, which is what lets
-//!   cross-config agreement rule out node- and element-count scaling. It is
-//!   *not* a clean phase split: `collect_cascaded` is `O(element × matching
-//!   rule × declaration)`, and `resolve_inheritance` is **not** `O(node)` —
-//!   it calls `pick_winners`, which rescans every candidate declaration of
-//!   every node, so it is `O(node + element × matching rule × declaration)`
-//!   too. Both phases carry a per-declaration term.
-//! - **Longhand declarations only.** This is bookkeeping, not code-path
-//!   selection: `parse_declaration_block` already routes through
-//!   `expand_shorthand_into`, so `margin: 1px` would land the same four
-//!   longhands and the cascade would see an identical declaration list. What
-//!   a shorthand would break is the accounting — one source declaration
-//!   becomes four, desyncing `DECLS_PER_RULE` from reality.
-//! - **Every rule matches every element** (bare `div` type selector), which
-//!   is what makes rule count multiply into the inner loop.
-//!
-//! # What the setup guards do and do not prove
-//!
-//! `workload()` sweeps the whole arena, comparing against the **exact** values
-//! the winning (last) rule sets: all ten declarations on every element, and
-//! the two inherited ones (`font-size`, `color`) on every text child — the
-//! eight box longhands are non-inherited, so text nodes legitimately do not
-//! carry them. That proves every element matched, every text child inherited,
-//! and each property resolved to the final rule's value rather than to an
-//! initial or an intermediate one. A change that skipped nodes, processed only
-//! some properties, or stopped at an earlier rule for some property is caught:
-//! the benchmark cannot silently time an empty or shrunken loop on those axes.
-//!
-//! It does **not** prove that all `n_rules` rules were *processed*. The
-//! cascade keeps one winner per property, so under last-declaration-wins the
-//! losing rules leave no trace in `ComputedValues` — a change that pushed only
-//! the final rule's declarations as candidates would produce identical output,
-//! while the throughput denominator (`n_rules × n_elems × DECLS_PER_RULE`)
-//! kept claiming the full count. That property is not observable through
-//! `cascade()`'s public output, and pinning it is the job of the cascade's own
-//! unit tests in `crates/raikiri-style/src/cascade.rs`, which assert
-//! specificity, origin and source-order resolution directly. If you are
-//! reading a suspiciously large improvement, check those tests still pass
-//! before believing it.
-//!
-//! # Combinator-chain workload
-//!
-//! `match_complex_selector_list` (`crates/raikiri-style/src/cascade.rs`)
-//! matches a selector's rightmost compound against the element directly, and
-//! only calls into `match_combinator_chain` once `iter.next_sequence()`
-//! reports a combinator remaining further left. Both configs above generate
-//! bare-tag, zero-combinator rules (`div { … }`), so `next_sequence()`
-//! returns `None` immediately for every one of them and
-//! `match_combinator_chain` is never invoked at all — neither config can see
-//! a change to that function's cost.
-//!
-//! `match_combinator_chain` walks its choice points on an explicit
-//! `Vec<Frame>` stack (one heap allocation per top-level call) rather than
-//! native recursion, so a chain of ancestor/sibling combinators has a real
-//! per-call allocation cost that this file's other two configs cannot
-//! exercise. The `combinator_chain_5000x4` config gives that allocation a
-//! workload: a single rule with a 5-compound, 4-child-combinator selector
-//! (`div > div > div > div > div`) matched against a straight 5000-deep
-//! parent-child chain of `div`s ([`BenchDoc::chain`]). The rightmost compound
-//! is a bare `div`, so every element in the chain triggers exactly one
-//! top-level `match_combinator_chain` call — that element count is this
-//! config's throughput unit (see the `group.throughput` call site), not
-//! declarations, since most calls do not go on to produce any.
-//!
-//! 4 combinators sits within the 2–5 combinator range typical of real-world
-//! selectors. A deeper chain would still allocate on every call (the `Vec`
-//! grows via push-triggered doubling with no cap), but would stop
-//! representing a typical selector shape.
-//!
-//! [`combinator_chain_workload`]'s probe checks both directions: elements at
-//! chain position `selector_depth` or deeper carry the winning rule's
-//! values, and — unlike [`workload`]'s single-direction check — the
-//! `selector_depth - 1` elements nearest the root keep their *initial*
-//! values, since they run out of ancestors before the selector's combinators
-//! do. A matcher that ignored ancestor structure and returned true
-//! unconditionally would pass every other assertion in this file while
-//! failing only this one.
-//!
-//! `combinator_chain_5000x4`'s selector is pure child combinators
-//! (`Combinator::Child`), which never backtrack — `PendingCandidates::Child`
-//! has exactly one candidate, so `match_combinator_chain` either matches it
-//! or gives up immediately. It cannot exercise the retry
-//! `Combinator::Descendant` needs when a closer candidate matches the
-//! `Descendant` step but then fails a `Combinator::Child` step further left
-//! (see `match_combinator_chain`'s own doc, "load-bearing" retry note, and
-//! the regression test `descendant_retry_past_a_failed_child_combinator_candidate_is_required`
-//! in `crates/raikiri-style/src/cascade.rs`) — each such failure pops one
-//! choice-point frame and resumes the outer `Descendant` search, real stack
-//! churn a pure child chain never triggers.
-//!
-//! `mixed_combinator_chain_300` gives that path a workload:
-//! [`BenchDoc::mixed_chain`] builds a `section` followed by a straight
-//! 300-deep parent-child chain of `article`s, each with its own `div` child,
-//! matched against `section > article div`. The `div` under `article` level
-//! `k` (1-indexed, closest to `section` = 1) only matches once the
-//! `Descendant` search reaches level 1 — every closer `article` candidate
-//! matches the `Descendant` step but fails the following `Child` step (its
-//! own immediate parent is another `article`, not `section`), so level `k`
-//! costs `k` push-then-pop retry cycles, not 1. [`mixed_combinator_workload`]
-//! also matches against an `article` → `article` → `div` subtree with no
-//! `section` ancestor anywhere at all, which must not match — the same
-//! both-directions guard `combinator_chain_workload` uses.
-//!
-//! # Running it
+//! Run with:
 //!
 //! ```text
 //! cargo bench -p raikiri-style --bench cascade
 //! ```
-//!
-//! On a second run this prints criterion's `change:` and p-value lines.
-//! **Those are not evidence for this regression class** — see the noise
-//! section above, and use the interleaved min-of-N protocol instead.
-//!
-//! Nothing in the merge gate runs this: `cargo test` does not build the bench
-//! target and `cargo clippy --all-targets` compiles it without executing it.
-//! Wiring it into the discipline is future work (a process change, requiring
-//! review and approval before adoption).
 
 use criterion::{Criterion, Throughput};
 use raikiri_style::{
@@ -279,44 +16,33 @@ use raikiri_style::{
     RuleTree, StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind, cascade,
 };
 
-/// Declarations emitted per generated rule. Kept at 10 to match the
-/// reference numbers in the module doc.
+/// Declarations emitted per generated rule in the benchmark workload.
 const DECLS_PER_RULE: usize = 10;
 
-/// Shared `.expect()` message for every `cascade()` call site in this file —
-/// see [`cascade`]'s own doc: it always returns `Ok` in the current
-/// implementation.
+/// Shared message for the benchmark's infallible cascade calls.
 // cov:ignore: bench harness constant — `cargo test`/`cargo llvm-cov
 // --workspace` never build this bench target, so nothing in this file has
 // coverage instrumentation to attribute to.
 const CASCADE_NEVER_ERRS: &str = "cascade never returns Err in the current implementation";
 
-/// Compound count of the `combinator_chain` config's selector — see the
-/// module doc's "Combinator-chain workload" section.
+/// Compound count of the selector used by the combinator-chain workload.
 // cov:ignore: bench harness constant — `cargo test`/`cargo llvm-cov
 // --workspace` never build this bench target, so nothing in this file has
 // coverage instrumentation to attribute to.
 const COMBINATOR_CHAIN_SELECTOR_DEPTH: usize = 5;
 
-/// Depth of the `combinator_chain` config's `div` chain — see the module
-/// doc's "Combinator-chain workload" section.
+/// Depth of the `div` chain used by the combinator-chain workload.
 // cov:ignore: same reason as the constant above.
 const COMBINATOR_CHAIN_DOC_DEPTH: usize = 5000;
 
-/// `article` level count of the `mixed_combinator_chain` config — see
-/// [`BenchDoc::mixed_chain`]'s doc. Total retry cycles across the whole
-/// config scale roughly with the square of this count (level `k`'s `div`
-/// costs `k` cycles), so this is kept an order of magnitude below
-/// [`COMBINATOR_CHAIN_DOC_DEPTH`].
+/// Number of `article` levels in the mixed-combinator workload.
 // cov:ignore: same reason as the constant above.
 const MIXED_CHAIN_ARTICLES: usize = 300;
 
 // ── Minimal DOM ───────────────────────────────────────────────────────────
 //
-// `crate::test_dom::TestDoc` is `pub(crate)` and a benchmark compiles as a
-// separate crate, so it is out of reach. Widening its visibility to serve a
-// bench would grow raikiri-style's public surface for a test-only helper;
-// duplicating a ~60-line mock here is the cheaper trade.
+// Keep the benchmark's small DOM local so the test-only helper is not part
+// of the crate's public surface.
 
 /// One node of [`BenchDoc`]: either the document root, a `div`, or a text
 /// child. `tag` is empty for non-elements.
@@ -330,9 +56,7 @@ struct BenchNode {
 /// Flat arena implementing [`StyleDom`]: a document root whose children are
 /// `n_elems` `div`s, each holding one text node.
 ///
-/// The text nodes are not incidental — they are visited by the inheritance
-/// walk and were present in the workload that produced the reference
-/// numbers.
+/// Each element has one text child so the inheritance path is exercised.
 struct BenchDoc {
     nodes: Vec<BenchNode>,
 }
@@ -1080,13 +804,7 @@ fn mixed_combinator_workload(n_articles: usize) -> (BenchDoc, RuleTree, u64) {
 fn bench_cascade(c: &mut Criterion) {
     let mut group = c.benchmark_group("cascade");
 
-    // `rule_heavy` stresses the rules-per-element factor, `element_heavy` the
-    // node count. Healthy absolute cost is ≈20 and ≈33 ns/declaration
-    // respectively at the `832500e` baseline (they are not comparable — see
-    // the throughput note below).
-    // The ≈4 ns/declaration in the module doc is the regression *delta*, not
-    // the healthy cost.
-    //
+    // Exercise both rule-heavy and element-heavy workloads.
     // cov:ignore: bench harness — never instrumented under `cargo llvm-cov
     // --workspace` (bench targets are not built by `cargo test`/`cargo
     // llvm-cov --workspace`), so nothing in this loop has coverage
@@ -1097,16 +815,7 @@ fn bench_cascade(c: &mut Criterion) {
     ] {
         let (doc, tree, declarations) = workload(n_rules, n_elems);
 
-        // Denominate in declarations rather than calls: the guarded class
-        // moves a per-declaration constant, so a delta expressed this way is
-        // the quantity under study and is comparable across configs.
-        //
-        // Two caveats. criterion prints this as a *rate* (`Melem/s`), so a
-        // per-declaration time has to be inverted out of it. And the absolute
-        // figure is **not** comparable between the two configs — element_heavy
-        // carries 4× the nodes over 0.4× the declarations, which is why it
-        // reads ≈33 ns against rule_heavy's ≈20 ns on identical code (both
-        // at the `832500e` baseline). Only the *delta* is comparable.
+        // Report throughput in declarations so the workloads share a unit.
         group.throughput(Throughput::Elements(declarations));
         group.bench_function(name, |b| {
             b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));

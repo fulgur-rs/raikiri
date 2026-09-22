@@ -156,8 +156,6 @@ pub struct CascadeResult {
 /// # Example
 ///
 /// ```ignore
-/// // ignore: raikiri-dom crate は raikiri-style の doc-test から使えないため
-/// // (crate cycle 回避)、実 code は integration test で確認。ここは shape のみ。
 /// use raikiri_style::{build_rule_tree, cascade, ComputedValues};
 ///
 /// # fn demo<D: raikiri_style::StyleDom>(dom: &D) {

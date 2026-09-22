@@ -55,45 +55,17 @@
 //!
 //! - `speak-as` (see above).
 //!
-//! # RuleTree integration (origin-aware)
+//! # RuleTree integration
 //!
-//! [`crate::ruletree::RuleTree`] now owns a `counter_styles`
-//! [`CounterStyleRegistry`], populated by every call to
-//! [`crate::ruletree::RuleTree::add_stylesheet`] regardless of `origin` —
-//! which covers both [`crate::ruletree::build_rule_tree`] (DOM `<style>`
-//! element walk, always Author) and `raikiri`'s umbrella `build_cascaded`
-//! (the actual production entry point, which calls `add_stylesheet` directly
-//! with a mix of origins rather than going through `build_rule_tree`).
-//! `add_stylesheet` runs [`parse_counter_style_rules`] as its own independent
-//! second pass over the same `source` string rather than folding
-//! `@counter-style` recognition into the existing `style_rules`/`page_rules`
-//! parser — the single-pass-per-concern split this module started with (see
-//! the "What's implemented" section above) is preserved; only the *insertion*
-//! changed, not the parse strategy. Read the populated registry back via
-//! [`crate::ruletree::RuleTree::counter_styles`].
+//! [`crate::ruletree::RuleTree`] populates its [`CounterStyleRegistry`] while
+//! parsing stylesheets, for every stylesheet origin. Same-name rules follow
+//! CSS Counter Styles Level 3 §3 cascade ordering, with author rules taking
+//! precedence over user-agent rules. The cascade result exposes the registry
+//! to marker and generated-content counter resolution through
+//! [`resolve_custom_counter`].
 //!
-//! Each parsed rule is fed to [`CounterStyleRegistry::insert_with_origin`]
-//! (`pub(crate)`, not [`CounterStyleRegistry::insert`] — see that method's
-//! doc for why the plain `insert` stays origin-blind) together with
-//! `add_stylesheet`'s own `origin` argument. The registry itself now tracks,
-//! per name, which origin its current entry came from (type doc below), so
-//! same-name resolution follows CSS Counter Styles L3 §3's "only one wins,
-//! according to standard cascade rules" verbatim (origin-first, so Author
-//! always beats UserAgent regardless of call order) without requiring the
-//! caller to pre-filter by origin: a standalone `Origin::UserAgent`
-//! `@counter-style` with no same-name `Origin::Author` rule is now available
-//! (previously dropped unconditionally by an Author-only gate at the
-//! `add_stylesheet` call site), while a same-name
-//! `Origin::Author` rule still wins over any `Origin::UserAgent` rule
-//! irrespective of which was inserted first.
-//!
-//! This closes the "no production consumer" gap this module previously had
-//! for [`parse_counter_style_rules`] / [`CounterStyleRegistry`]. The cascade
-//! result clones the populated registry, and `raikiri-paint` routes marker and
-//! generated-content `counter()`/`counters()` values through
-//! [`resolve_custom_counter`]. `raikiri-traits::TargetRegistry`'s separate
-//! `target-counter()` resolution flow remains out of scope (see the
-//! "Scope" section above).
+//! Target-counter resolution through `raikiri-traits::TargetRegistry` remains
+//! outside this module.
 
 use std::collections::{HashMap, HashSet};
 
@@ -292,12 +264,9 @@ impl Default for PadDescriptor {
     }
 }
 
-/// `<integer [0,∞]> && <symbol>` — shared CSS grammar shape between `pad`
-/// (§3.6) and each tuple of `additive-symbols` (§3.8): `&&` means both
-/// components are required, in **either** order. Factored out of
-/// [`parse_pad`] and [`parse_weight_symbol_pair`] so the two `&&`-ordering
-/// branches exist exactly once (quality finding: those two functions used
-/// to duplicate this shape independently).
+/// Parse the shared `<integer [0,∞]> && <symbol>` grammar used by `pad`
+/// (§3.6) and `additive-symbols` (§3.8). Both components are required and may
+/// appear in either order.
 fn parse_nonneg_int_and_symbol(input: &mut Parser<'_, '_>) -> Option<(i32, CounterSymbol)> {
     if let Ok(n) = input.try_parse(|i| i.expect_integer()) {
         if n < 0 {
@@ -342,15 +311,9 @@ fn parse_pad(input: &mut Parser<'_, '_>) -> Option<PadDescriptor> {
 /// doesn't use a negative sign (the sentence's own gating condition), so
 /// this function doesn't need to re-derive that condition itself.
 ///
-/// **Scope-cut**: both `repr`'s length and `negative_reserved` count
-/// `.chars()` (Unicode scalar values), not grapheme clusters (CSS Text 3
-/// <https://www.w3.org/TR/css-text-3/#grapheme-cluster>). A combining
-/// character sequence or ZWJ emoji sequence in a symbol would count as more
-/// than one "cluster" here, over-padding slightly. `unicode-segmentation`
-/// (true grapheme clustering) is not a workspace dependency; the ASCII/BMP
-/// case this crate's tests exercise is unaffected, and true clustering is
-/// deferred per "start with subset, widen from there"
-/// rather than adding a dependency for it now.
+/// **Scope-cut**: lengths here use Unicode scalar values from `.chars()`, not
+/// grapheme clusters. Combining sequences and ZWJ emoji therefore count as
+/// multiple units and may be padded more than a grapheme-based implementation.
 ///
 /// `pad.min_length` is parsed straight off an author-supplied CSS
 /// `<integer [0,∞]>` with no upper bound (`parse_pad`), so `diff` — and
@@ -547,23 +510,9 @@ fn parse_range(input: &mut Parser<'_, '_>) -> Option<CounterRange> {
 /// verbatim: "For cyclic, numeric, and fixed systems, the range is negative
 /// infinity to positive infinity."
 ///
-/// **`fixed` is grouped with the unbounded systems here, not given a finite
-/// window** — an earlier version of this function computed a finite
-/// `first_symbol_value .. first_symbol_value + symbols.len() - 1` window for
-/// `fixed` instead, which (a) misattributed §3.1.2's symbol-exhaustion
-/// behavior to this §3.5 range check when the spec's own §3.5 text quoted
-/// above puts `fixed` in the *unbounded* group, and (b) could overflow: near
-/// `i32::MAX`, `first_symbol_value.saturating_add(symbols.len()).saturating_sub(1)`
-/// could invert into `lower > upper`, making [`RangeEntry::contains`] return
-/// `false` for every value — silently reporting "always out of range" for a
-/// rule `fixed_repr` could otherwise represent. `fixed`'s actual
-/// window-exhaustion behavior — "further values cannot be represented by
-/// this counter style, and must instead be represented by the fallback
-/// counter style" — is already, independently enforced by [`fixed_repr`]'s
-/// own bounds check (quoted in full there); it just hands off to the same
-/// `fallback` at step 3 of [`generate_counter`] instead of at this
-/// function's step 2, with an identical end result for every value this
-/// crate has tests for.
+/// `fixed` is grouped with the unbounded systems here, as required by §3.5.
+/// Its symbol-exhaustion behavior is handled separately by [`fixed_repr`],
+/// which falls back when the requested value cannot be represented.
 ///
 /// - cyclic / numeric / fixed: `Infinite..Infinite`, per the quoted sentence
 ///   above.
@@ -657,14 +606,10 @@ fn parse_additive_symbols(input: &mut Parser<'_, '_>) -> Option<Vec<(i32, Counte
 // CounterStyleRule + the per-declaration parser that builds one
 // ---------------------------------------------------------------------------
 
-/// A parsed `@counter-style` rule — one entry per descriptor CSS Counter
-/// Styles L3 §3 defines, minus `speak-as` (see module doc). Fields are
-/// `pub` for direct read/construction (this is a fresh, self-contained
-/// module with no accumulated write-path history to guard against, unlike
-/// e.g. [`crate::rule::StyleRule`]); the one invariant this type cares about
-/// — "only a spec-valid rule enters a registry" — is enforced at the
-/// [`CounterStyleRegistry::insert`] boundary via [`CounterStyleRule::is_valid`],
-/// not by field privacy.
+/// A parsed `@counter-style` rule — one entry per descriptor defined by CSS
+/// Counter Styles Level 3 §3, excluding `speak-as` (see the module doc).
+/// Registry insertion enforces the invariant that only spec-valid rules are
+/// retained.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CounterStyleRule {
@@ -731,10 +676,8 @@ impl CounterStyleRule {
     /// with a `symbols` or `additive-symbols` descriptor", §3.1.7
     /// <https://www.w3.org/TR/css-counter-styles-3/#extends-system>).
     ///
-    /// [`CounterStyleRegistry::insert`] is the only call site — a rule that
-    /// fails this check is silently dropped there, per this crate's general
-    /// "spec-invalid → silently dropped" convention (`@page`'s invalid
-    /// selector handling is the sibling precedent).
+    /// Invalid rules are rejected by the registry and do not define a
+    /// counter style.
     pub fn is_valid(&self) -> bool {
         match &self.system {
             CounterStyleSystem::Cyclic
@@ -994,97 +937,10 @@ pub fn parse_counter_style_rules(source: &str) -> Vec<CounterStyleRule> {
 
 /// Name → [`CounterStyleRule`] registry.
 ///
-/// CSS Counter Styles L3 §3 (anchor above) verbatim on same-name rules: "If
-/// multiple `@counter-style` rules are defined with the same name, only one
-/// wins, according to standard cascade rules. … `@counter-style` rules
-/// cascade 'atomically': if one replaces another of the same name, it
-/// replaces it *entirely*, rather than just replacing the specific
-/// descriptors it specifies."
-///
-/// Both halves of that quote are implemented here. "Atomically" is a plain
-/// overwrite — whole `CounterStyleRule` values are stored, never merged
-/// field-by-field. "Standard cascade rules" (origin first, then source
-/// order within an origin) is implemented by recording, per name, which
-/// [`Origin`] the currently-stored rule came from
-/// (this field was origin-blind before — see
-/// [`Self::insert`]'s doc for the one remaining origin-blind entry point)
-/// and consulting that origin on every subsequent insert of the same name:
-///
-/// - [`Self::insert_with_origin`] (`pub(crate)`, used by
-///   [`crate::ruletree::RuleTree::add_stylesheet`]) applies the actual
-///   precedence via [`crate::cascade::cascade_rank`]: a new rule overwrites
-///   unless it is itself outranked by the currently-stored one. Concretely,
-///   for the origins every current in-repo call site of
-///   [`crate::ruletree::RuleTree::add_stylesheet`] actually passes it
-///   (`Origin::UserAgent` / `Origin::Author` / `Origin::User` —
-///   `@counter-style` never comes from the
-///   crate-private HTML presentational-hint path
-///   (`push_img_dimension_hints`, `crates/raikiri-style/src/cascade.rs`),
-///   so [`Origin::AuthorPresentationalHint`] does not reach here via any
-///   caller in this crate today, even though [`Origin`] itself has 4
-///   variants). [`Origin::User`] (added
-///   alongside [`Origin::AuthorPresentationalHint`]) was likewise
-///   unreachable here at the time it was added —
-///   no caller anywhere routed to `Origin::User` yet. That later changed:
-///   consumer-provided `extra_stylesheets`
-///   is now tagged `Origin::User` end-to-end (via raikiri-html's retag +
-///   umbrella's `stylesheet_kind_to_origin`), and
-///   [`crate::ruletree::RuleTree::add_stylesheet`] runs
-///   [`parse_counter_style_rules`] +
-///   [`Self::insert_with_origin`] against the *same* `source`/`origin` it
-///   was given for style rules — so an `@counter-style` rule inside a
-///   consumer's `extra_stylesheets` string now reaches here tagged
-///   `Origin::User` too, in production. Note that `add_stylesheet` is
-///   `pub fn` with an unconstrained `origin: Origin` parameter, so this is
-///   a fact about current callers, not a structural guarantee — an
-///   external caller passing `Origin::AuthorPresentationalHint` directly
-///   would reach `insert_with_origin` and be resolved correctly by the
-///   rank-based logic below regardless — a new `Origin::Author` rule always overwrites,
-///   regardless of what's currently stored (same rank as an existing
-///   Author entry, or outranks an existing UserAgent one); a new
-///   `Origin::UserAgent` rule overwrites only when nothing is stored yet or
-///   the stored entry is itself `Origin::UserAgent` (so the last
-///   `Origin::UserAgent` insert of a name wins among same-origin entries,
-///   matching the source-order tie-break), and is dropped when the stored
-///   entry is `Origin::Author` (Author always beats UserAgent, independent
-///   of call order — CSS Cascading L4 §"cascade-origin"
-///   (<https://www.w3.org/TR/css-cascade-4/#cascade-origin>)). Reuses
-///   [`crate::cascade::cascade_rank`] rather than a local rank fn — same
-///   sibling-arm convention [`crate::page::cascade_page`] already follows
-///   for `@page` (that function's doc, "Sibling arm convention"):
-///   `@counter-style` and style-rule origin ordering are
-///   the same CSS Cascading L4 mechanism, so a second copy of the
-///   `Origin -> u8` mapping would just be drift risk. The call always fixes
-///   `important` to `false`: CSS Counter Styles L3 §3's "standard cascade
-///   rules" has no `!important`-equivalent concept for `@counter-style` at
-///   all, so there's nothing to pass through — but `false` isn't an
-///   arbitrary placeholder either, it's specifically the *non-important*
-///   half of [`crate::cascade::cascade_rank`]'s ranking (UA < User <
-///   AuthorPresentationalHint < Author,
-///   `cascade_rank` doc has the exact values), which is the half that
-///   actually matches §3's origin order;
-///   the other half ([`crate::cascade::cascade_rank`] with
-///   `important: true`) inverts precedence and would be wrong here.
-///   Resolution is by rank, not a hardcoded `Author`/`UserAgent` pair,
-///   specifically so adding a variant to [`Origin`] (`#[non_exhaustive]`)
-///   is a compile error at [`crate::cascade::cascade_rank`]'s own `match`
-///   — not a silently-wrong precedence here. This has now happened twice:
-///   once when [`Origin::AuthorPresentationalHint`] was added, and once
-///   when [`Origin::User`] was added (which later gained a production
-///   producer, [`Origin::User`]'s
-///   doc has the status) — both times `cascade_rank`'s `match` had to be
-///   updated to stay exhaustive, but this function's logic needed no
-///   change (rank-based, not per-variant — see above).
-/// - [`Self::insert`] (the `pub` entry point, unchanged since before
-///   origin-awareness was added) stays origin-blind: it always overwrites,
-///   exactly as it did when this type had no origin concept at all — safe
-///   regardless of what an external crate does with it, since `insert` is
-///   the only origin-tagging entry point external code can reach (
-///   [`Self::insert_with_origin`] is `pub(crate)`) and every entry it
-///   creates is tagged the same fixed `Origin::Author`, so the two-origin
-///   precedence rule above never actually branches for external callers.
-///   In-crate, the only callers are [`Self::from_source`] and this module's
-///   own unit tests, none of which mix origins either.
+/// CSS Counter Styles Level 3 §3 requires same-name rules to be selected by
+/// the standard cascade and replaced atomically. This registry stores one
+/// complete rule per name and records its origin so insertion can apply that
+/// precedence while preserving source order within an origin.
 #[non_exhaustive]
 #[derive(Clone, Debug, Default)]
 pub struct CounterStyleRegistry {
@@ -1159,84 +1015,15 @@ impl CounterStyleRegistry {
 // generate a counter (§2) — the per-system algorithms + resolve_custom_counter
 // ---------------------------------------------------------------------------
 
-/// Allocation-size (byte) budget for [`symbolic_repr`], [`additive_repr`],
-/// and [`apply_pad`] — CSS Counter Styles L3 §2 "Counter Styles"
-/// <https://www.w3.org/TR/css-counter-styles-3/#counter-styles> verbatim:
-/// "Some values of system (symbolic, additive) and some descriptors (pad)
-/// can generate representations with size linear to an author-supplied
-/// number. This can potentially be abused to generate excessively large
-/// representations and consume undue amounts of the user's memory or even
-/// hang their browser. User agents must support representations at least 60
-/// Unicode codepoints long, but they may choose to instead use the fallback
-/// style for representations that would be longer than 60 codepoints."
+/// Byte budget for generated counter representations.
 ///
-/// This crate takes the latter option: all three functions return `None`
-/// once the representation they would build exceeds this many bytes, and
-/// [`generate_counter`] already treats a `None` result — whether the
-/// initial representation ([`symbolic_repr`]/[`additive_repr`]) or the
-/// padded one ([`apply_pad`]) — as "use the fallback counter style" (see
-/// its own doc); no separate fallback integration logic is needed.
-///
-/// # Why bytes, not repetition count
-///
-/// An earlier version of this cap bounded symbol *repetition count* only.
-/// That bounds allocation size only when a `<symbol>`'s own length is
-/// itself bounded — but `<symbol>`'s `<string>` alternative (`parse_symbol`)
-/// has no length limit anywhere in this parser: a single long-`<string>`
-/// symbol, repeated a repetition count comfortably under any reps-only cap,
-/// still allocates `reps * symbol.len()` bytes — the same linear-blowup
-/// shape the cap exists to close, just carried by symbol length instead of
-/// the counter value. `apply_pad`'s `pad.min_length` (an unbounded
-/// `<integer [0,∞]>`, parsed straight off the author's CSS with no upper
-/// bound — see [`parse_pad`]) produces the identical shape a third way:
-/// `pad.symbol` repeated `diff` times, where `diff` is derived from
-/// `min_length`. Bounding *bytes* — repetitions times symbol length, or pad
-/// difference times pad-symbol length — bounds the actual worst-case
-/// allocation regardless of which factor is inflated.
-///
-/// # Relation to the 60-codepoint floor
-///
-/// §2's own floor is a *codepoint* count in the rendered representation, not
-/// a byte count — but it still gives a hard, not merely practical, bound on
-/// this budget: UTF-8 encodes any single codepoint in at most 4 bytes, so a
-/// representation of exactly 60 codepoints is at most `60 * 4 = 240` bytes,
-/// regardless of how those bytes are split between repetition count and
-/// symbol length. `MAX_REPR_BYTES` (64 KiB = 65536 bytes) exceeds that
-/// worst case by roughly 270×, so this cap can never reject a
-/// representation §2 requires user agents to support — full stop, not just
-/// "in practice" for realistically-authored `symbols`/`additive-symbols`/
-/// `pad` declarations (whose symbols are typically far shorter than 4
-/// bytes/codepoint and whose byte cost is correspondingly far below 240
-/// bytes at the 60-codepoint mark). The headroom above 240 bytes is what
-/// makes the cap "generous", not what makes it *safe* — safety comes from
-/// the 240-byte bound alone.
-///
-/// A symbol whose own string is empty (`""`) never trips *this budget
-/// check* at any repetition count or pad difference: the byte product
-/// `reps * 0` is always `0`, so an empty symbol's true (0-codepoint)
-/// representation is exactly what a budget-only check would return. This
-/// falls directly out of measuring bytes rather than repetitions — no
-/// separate empty-symbol special case is needed for the *budget*. It does
-/// **not**, by itself, bound how long a caller might still spend
-/// constructing that representation — see the empty-symbol guard inline in
-/// [`additive_repr`]'s own repetition loop (a body comment there, not this
-/// doc) for the one place an empty symbol still needs special-casing, for
-/// time rather than bytes.
+/// CSS Counter Styles Level 3 §2 warns that `symbolic`, `additive`, and
+/// `pad` can otherwise allocate from author-supplied sizes. Values that would
+/// exceed this budget return `None` and use the fallback counter style.
 const MAX_REPR_BYTES: u64 = 64 * 1024;
 
-/// Checked `reps * symbol_len` byte count, or `None` on `u64` overflow —
-/// shared by [`symbolic_repr`], [`additive_repr`], and [`apply_pad`] (see
-/// [`MAX_REPR_BYTES`]'s doc for why all three need this same check). `reps`
-/// is always non-negative at every call site (a repetition count or a pad
-/// `difference`, each already checked `> 0` / derived from a non-negative
-/// quantity before this is called) — the multiplication itself is
-/// `checked_mul` rather than plain `*` because `reps` and `symbol_len` are
-/// each independently large enough (an `i32`-counter-value-derived
-/// repetition count or a `u32`-derived pad difference; a `<string>` token
-/// with no parser-enforced length limit) that their product can exceed
-/// `u64::MAX`. `None` is treated as "exceeds the budget" by every caller,
-/// same as an in-range-but-too-large product — an overflowing byte count is
-/// never smaller than the budget it overflowed past.
+/// Return the byte count for `reps * symbol_len`, or `None` on overflow.
+/// Callers treat overflow as exceeding [`MAX_REPR_BYTES`].
 fn checked_repr_bytes(reps: i64, symbol_len: usize) -> Option<u64> {
     (reps as u64).checked_mul(symbol_len as u64)
 }
@@ -1498,12 +1285,10 @@ fn additive_repr(tuples: &[(i32, CounterSymbol)], value: i64) -> Option<String> 
 /// already does `use raikiri_style::property::{..., CounterStyle}`) — and
 /// the predefined-style formatting logic (`decimal-leading-zero` /
 /// `*-roman` / `*-alpha` / `*-latin` / `disc` / `circle` / `square`) already
-/// lives there, in `format_counter` / `format_named_counter`. Reimplementing
-/// it here would create exactly the kind
-/// of duplicated-source-of-truth drift this project has hit before (see
-/// e.g. [`crate::page::PageCascadeResult::declarations`]'s doc for a
-/// repeated instance of the same drift). The paint consumer treats `None`
-/// from this function as the CSS decimal fallback, while a successful result
+/// lives there, in `format_counter` / `format_named_counter`.
+/// Reimplementing it here would duplicate that source of truth. The paint
+/// consumer treats `None` from this function as the CSS decimal fallback,
+/// while a successful result
 /// is rendered as the custom style's representation. Prefix/suffix application
 /// for a default `::marker` stays at that consumer boundary because these
 /// descriptors do not apply to `counter()` / `counters()` themselves.

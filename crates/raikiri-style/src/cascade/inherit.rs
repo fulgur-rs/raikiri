@@ -306,56 +306,11 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 /// [`Option::take`] が slot を `None` に戻すので、この走査自体が次 node 用の
 /// reset を兼ねる。
 ///
-/// 以前は `HashMap` iteration 順 (per-process random seed) だった。既存
-/// property は key と [`SpecifiedValues`] の field が 1:1 disjoint なので、
-/// 決定的になったこと自体に観測可能な差は無い。
-///
-/// ## shorthand key はここに届かない (なぜ順序に賭けてはいけないか)
-///
-/// shorthand key (`PropertyKey::{Padding, Margin, Border}`) は宣言順では対応する
-/// longhand より**後**に来るので、**もし**届いたら必ず後勝ちする。それが spec と
-/// 食い違うかどうかは declaration の並び順に依存する:
-///
-/// ```text
-/// margin: 0px; margin-top: 10px  → spec top=10 / 順序任せなら top=0   ← 食い違う
-/// margin-top: 10px; margin: 0px  → spec top=0  / 順序任せなら top=0   ← 一致
-/// ```
-///
-/// spec は「longhand が勝つ」とは言っていない。CSS Cascading L4 §3
-/// <https://www.w3.org/TR/css-cascade-4/#shorthand> が shorthand を
-/// "exactly as if expanded in place" と定義し、勝者は §6.1
-/// <https://www.w3.org/TR/css-cascade-4/#cascade-sort> の "the last declaration
-/// in document order wins" で決まるだけである。
-///
-/// **したがって `PropertyKey` の variant 順を入れ替える fix は誤り** — 上の
-/// 2 例は鏡像なので、shorthand を longhand の前に動かすと今度は 2 番目の case
-/// が spec 違反になる。正しい fix は「shorthand を cascade 段に**到達させない**」
-/// 方向にしかなく、実装はそちらを採っている:
-///
-/// - **inline style** — [`super::collect::collect_cascaded`] が
-///   [`crate::rule::parse_declaration_block`] を通すので parse 出口で展開済み。
-/// - **stylesheet rule** — [`super::collect::collect_cascaded`] が candidate に積む直前に
-///   [`crate::rule::expand_shorthand_into`] を通す。
-///   parse 出口の展開だけでは post-parse mutation 経路を守れないため
-///   (この経路は crate 内限定 — 根拠は
-///   [`crate::rule::expand_shorthand_into`] doc が canonical)。**shorthand が
-///   到達したら既に bug** なので削除可能な dead defensive code ではない。
-///
-/// 展開後は同一 key の longhand が複数 candidate になるが、[`super::collect::beats`] の `>=`
-/// が「同 rank/spec/order なら後方勝ち」を与えるので §6.1 の order of appearance
-/// がそのまま成立する。
-///
-/// 「展開 arm の書き忘れ」形の壊れ方は **compile-time に強制されている**
-/// — [`crate::rule::expand_shorthand_into`] の match は
-/// exhaustive で、`PropertyValue` に variant を足すと同関数に arm を書くまで
-/// compile error になる。arm list は 1 関数に集約されているので上の 2 経路が
-/// 同時に保証を得る。**強制されるのは arm を書くことだけ**で、残る範囲は同関数
-/// doc の「この guard が守らない範囲」節。defense-in-depth の runtime
-/// guard は [`crate::rule`] の `declaration_block_never_emits_shorthand_keys`
-/// (parse 出口) と、本 module の `post_parse_*` test 群
-/// (6 本、`RuleTree` post-parse mutation 経路 — うち展開の有無を実際に区別する
-/// のは 4 本。残り 2 本は over-correction 用の弱い guard で、各 test の comment
-/// にその旨を開示してある)。
+/// Shorthand keys must not reach this phase. CSS Cascading Level 4 §3
+/// requires shorthand declarations to behave as if expanded in place, and
+/// §6.1 determines the winner by order of appearance. Parsed entry points
+/// expand shorthands before collecting candidates; the exhaustive expansion
+/// match requires an explicit decision for new property variants.
 ///
 /// # `candidates[winner.idx]` の unchecked index について
 ///
@@ -363,13 +318,10 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
 /// 作ったものなので in-bounds。fill と drain が本関数 body 内で隣接しており、
 /// 間に `candidates` を差し替える経路が無いことが根拠。
 ///
-/// **この bare index は防御機構ではない。** slot が前 node から漏れた場合、
-/// 漏れた `idx` は次 node の candidate list に対しても通常 in-bounds なので
-/// (candidate list はたいてい漏れた index より長い)、panic せず**別 node の
-/// declaration を静かに適用**してしまう。実際
-/// `winner_does_not_leak_into_next_sibling` が捕まえるのも panic ではなく
-/// in-bounds の二重適用である。leak に対する実効的な net は [`pick_winners`]
-/// 冒頭の debug_assert (**release build では消える**) と同 test の 2 つ。
+/// The index is valid only because [`pick_winners`] produced it from the
+/// same candidate slice immediately before this drain. A stale slot could
+/// otherwise select another declaration, so the winner buffer is reset for
+/// every node.
 ///
 /// # `candidates` の出所 (flat arena 化後)
 ///
@@ -504,15 +456,8 @@ pub(crate) fn apply_winners(
 /// `Lighter` の catch-all は `_ => 700.0` なので `NaN` / `+Inf` は**700.0 に
 /// 丸められる** (`-Inf` は同じく最初の guard に一致しそのまま伝播する)。
 ///
-/// **本関数自体には runtime guard を追加しない** (「非有限 / 範囲外 f32 の
-/// guard は sink 境界に置く、resolve 層には置かない」という既存方針を
-/// 踏襲)。上記の非対称処理は
-/// `resolve_relative_weight_non_finite_inherited_is_asymmetric` test で
-/// 現状の挙動として check 済み。値が実際に `parley::FontWeight::new` へ渡る
-/// sink 側の guard は `crates/raikiri-dom/src/layout.rs` の
-/// `sanitize_font_weight` (`preshape_text` 内、site 6) にある —
-/// `resolve_relative_weight` が何を返しても最終的に `[1, 1000]` の有限値に
-/// 収める。
+/// The resolver leaves non-finite and out-of-range values to the sink
+/// boundary, where the value is normalized before it reaches layout.
 pub(crate) fn resolve_relative_weight(specified: FontWeightValue, inherited: f32) -> f32 {
     match specified {
         FontWeightValue::Absolute(w) => w,
@@ -599,48 +544,10 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// pass-through 側は全 variant を明示列挙し `_ => value` を使わない。これは意図的な
 /// compile-time guard である: **継承元に依存する解決を持つ property を新しく足した
 /// とき、`_` があると本関数を素通りして未解決値が public な結果に漏れる**。
-/// 実際に過去に起きた regression (`@page { font-weight: bolder }` が
-/// `FontWeightValue::Bolder` のまま park していた) がまさにこの形
-/// だった。exhaustive match なら variant 追加が本関数と [`apply_value`] の
-/// **両方**で compile error になり、2 経路を数え上げることが強制される。
-///
-/// # この guard が守らない範囲 (明示)
-///
-/// 本 match が compile error で捕まえるのは **`PropertyValue` の variant 追加**
-/// だけである。以下 2 つは捕まらない:
-///
-/// 1. 既存 variant の **payload** に継承元依存が入る場合 — pass-through arm は
-///    payload を `_` で捨てるので、`TextAlign` に `MatchParent` (CSS Text 3) が
-///    増えても `PropertyValue::TextAlign(_)` を素通りする。これは `bolder` /
-///    `lighter` と**同型**の解決を要するので、実装時は本関数の arm で payload を
-///    destructure して guard を payload 層に降ろすこと (`FontSize` /
-///    `TextAlign` は既にそれを済ませてある — 前者は payload を destructure
-///    して `resolve_font_size` に、
-///    後者は [`crate::property::resolve_text_align_match_parent`] に渡している)。
-///    **page 経路の、かつ payload 型が
-///    `Length` / `LengthOrAuto` / `LineHeight` / `FontWeightValue` /
-///    `TextAlign` の 5 つに限れば**、この形の漏れは `page::tests` の
-///    `specified_layer_residue` が網羅 match しているので test compile 段で
-///    捕まる。それ以外 (`BorderStyle` / `BorderColor`
-///    / `DisplayValue` / `PositionValue` / `BoxSizing` / `ContentComponent`
-///    / `OverflowValue` / `TextDecorationLine` / `TextDecorationStyle` /
-///    `TextDecorationColor` / `VerticalAlign` / `FontStyle` / `Visibility` /
-///    `ZIndexValue` / `WordBreak` / `OverflowWrap` / `BreakBetween` /
-///    `BreakInside` / `WhiteSpace` / `Hyphens` / `FontVariantCaps`)
-///    は同検出器も `_` で捨てており、`Border` struct の field 追加も
-///    field access で読んでいるため捕まらない。compile error になるのも
-///    test target であって本関数ではない。
-/// 2. **本関数を呼ばない新しい entry point** — 過去の regression はこの形
-///    だった (`cascade_page` が `apply_value` を通らなかった)。CSS Paged Media 3
-///    §6 の margin-box cascade は page context を継承元とする第 3 の経路になる。
-///    exhaustive match は「経路の数え上げ」を強制しない。
-///
-///    この穴を **型で狭めた** (完全には塞いでいない)
-///    — 本関数の戻り値は生の [`PropertyValue`] ではなく
-///    [`ResolvedAgainstInherited`]。その型の doc「narrowed, not closed」節が
-///    canonical な記述 (何を防ぎ、何を防がないか、残余は別途 margin-box
-///    cascade 側の課題として残ること) を持つので、ここでは
-///    繰り返さない。
+/// The pass-through side is exhaustive rather than using a wildcard. Adding a
+/// property variant therefore requires an explicit decision about whether it
+/// depends on inherited values. This compile-time guard does not detect new
+/// entry points or new payload semantics inside an existing variant.
 ///
 /// # 本関数の pass-through は「解決済」ではない (phase 3 が要る)
 ///
@@ -692,13 +599,8 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// page context 自身が root element になるわけではないため。element 経路で
 /// この特別扱いを担うのは [`SpecifiedValues::finalize_as_root`]。
 ///
-/// 公開契約は
-/// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
-/// が canonical。以前あった「public な結果に残る例外はこれ 1 つ」は
-/// 解消され、`page::tests` の
-/// `page_declarations_carry_no_specified_layer_residue` (旧
-/// `page_declarations_carry_exactly_one_specified_layer_residue`) が
-/// check する。
+/// The public contract is [`PageCascadeResult::declarations`].
+///
 /// なお `Percent` は「未解決」ではない — box property の computed value は
 /// percentage のままである (CSS Paged Media 3 §6 の "Percentage values on the
 /// margin and padding properties are relative to the dimensions of the
@@ -1268,17 +1170,9 @@ pub(crate) fn resolve_against_inherited(
 /// acceptance criteria として切り出してある。[`resolve_against_inherited`]
 /// の doc「この guard が守らない範囲」§2 も参照。
 ///
-/// # test 用の裏口 (`Self::for_test`)
-///
-/// `page::tests` には phase 3 を意図的に phase 2 抜きで直接駆動する既存 test
-/// 群がある (`phase_3_variant_classification_matches_the_documented_counts` /
-/// `absolutize_in_page_context_shorthand_fall_throughs` /
-/// `absolutize_in_page_context_font_size_relative_safety_net` —
-/// いずれも「structurally unreachable だが `pub(crate)` 関数は直接駆動できる」
-/// という既存の defense-in-depth 方針の precedent)。これらが本型導入後も raw payload を直接検査できるよう、
-/// `#[cfg(test)]` 限定の直接 constructor を用意する。production build には
-/// 存在しないので、上記の「他 module は本関数を呼ぶ以外に値を作れない」
-/// production guarantee は弱めない。
+/// This wrapper marks values that have passed phase 2 before phase 3.
+/// The direct constructor exists only in test builds; production code uses
+/// [`resolve_against_inherited`].
 #[derive(Debug)]
 pub(crate) struct ResolvedAgainstInherited(PropertyValue);
 
@@ -1295,11 +1189,7 @@ impl ResolvedAgainstInherited {
         &self.0
     }
 
-    /// **test 専用の直接 constructor。** 上記型 doc「test 用の裏口」参照 —
-    /// production では存在しない (`#[cfg(test)]`)。**この `#[cfg(test)]` を
-    /// 外したくなったら、それは「この型が防ぐはずの bypass」を作ろうとして
-    /// いる signal である** — 代わりに [`resolve_against_inherited`] を経由
-    /// すること。
+    /// Test-only constructor for phase-3 inputs.
     #[cfg(test)]
     pub(crate) fn for_test(value: PropertyValue) -> Self {
         Self(value)
@@ -1609,26 +1499,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::MarginRight(v) => target.margin.right = v,
         PropertyValue::MarginBottom(v) => target.margin.bottom = v,
         PropertyValue::MarginLeft(v) => target.margin.left = v,
-        // ⚠️ **これは "safety" net ではない**。
-        // element cascade 経由では到達不能 — `collect_cascaded` が candidate を
-        // 積む前に、stylesheet rule は `expand_shorthand_into` で、inline style は
-        // `parse_declaration_block` (内部で同関数を呼ぶ) で展開されるため。
-        // 残る到達手段は crate 内から `apply_value` を直接呼ぶことだけである。
-        // 仮に到達すると、`PropertyKey` 宣言順では `Margin` が `MarginTop` 等より
-        // **後**に適用される。したがってこの atomic 上書きは **longhand winner を
-        // 必ず破壊する** — `margin: 0; margin-top: 10px` が top=0 になり
-        // CSS Cascading L4 §3 <https://www.w3.org/TR/css-cascade-4/#shorthand> と
-        // 食い違う。net は degraded ではなく **deterministic に spec 違反**。
-        // 到達した時点で既に bug であり、本 arm はそれを穏当に見せない。
-        //
-        // それでも `unreachable!` を採らないのは panic surface を作らない
-        // 方針による。cascade 経路で unreachable なのは
-        // `crate::rule::expand_shorthand_into` の call site 1 / 2 (parse 出口と
-        // element cascade 入口) が担保しており、その担保のうち「展開 arm の
-        // 書き忘れ」は同関数の exhaustive match で compile-time に排除されている
-        // (残る範囲は同関数 doc の
-        // 「この guard が守らない範囲」節)。振る舞い自体は
-        // `apply_value_direct_margin_shorthand_fall_through` test が直接叩いて pin。
+        // Parsed shorthands normally arrive as longhands. If a shorthand is
+        // supplied directly, retain its value without panicking; normal
+        // cascade entry points expand it before this stage.
         PropertyValue::Margin(sides) => target.margin = sides,
         // `margin-inline`/`margin-block` shorthand fall-through — sibling
         // `PropertyValue::Margin` arm と同じく **safety net ではない**。
@@ -5794,12 +5667,7 @@ mod tests {
 
     #[test]
     fn background_image_explicit_none_overrides_an_earlier_url() {
-        // Same-block later-declaration-wins (CSS Cascading L4 §"Cascade
-        // Sort Order", same mechanism `cascade_doc("p { color: red; color:
-        // blue }")` pins for `color`) — this is the only test that reaches
-        // `parse_background_image`'s `none` keyword branch *and* observes
-        // it survive the cascade, rather than merely matching the initial
-        // value that a missing declaration would also produce.
+        // CSS Cascading Level 4 §6.1: the later `none` declaration wins.
         use crate::property::BackgroundImage;
         let cv = cascade_doc(
             "",
@@ -8226,15 +8094,7 @@ mod tests {
 
     #[test]
     fn background_shorthand_expands_to_8_longhands_through_real_cascade() {
-        // Unlike `var_in_background_shorthand_projects_each_deferred_longhand`
-        // above (which goes through the *deferred* `var()` substitution +
-        // `project_deferred_value` path), a literal, non-`var()` `background:`
-        // declaration is a real `PropertyValue::Background` straight out of
-        // `parse_value`, expanded by `crate::rule::expand_background` (via
-        // `expand_shorthand_into`) before it ever reaches `apply_value` —
-        // this is the only test that drives that expansion function through
-        // the real parse → cascade pipeline rather than calling `apply_value`
-        // directly.
+        // A literal shorthand is expanded before values reach `apply_value`.
         use crate::property::{BackgroundAttachment, BackgroundImage, VisualBox};
         let cv = cascade_doc(
             "",
@@ -8724,21 +8584,8 @@ mod tests {
 
     #[test]
     fn post_parse_shorthand_injection_propagates_important() {
-        // 展開時の `!important` copy (spec §3 "Declaring a shorthand property
-        // to be !important is equivalent to declaring all of its sub-properties
-        // to be !important.") が element cascade 入口の展開でも保たれること。
-        //
-        // 注入した shorthand は `!important` を継承する (`[0]` は `!important`
-        // 付きで parse される) ので、後方の normal longhand には**負けない**。
-        //
-        // ⚠️ **本 test は展開の有無を区別しない** (§8.2 spec lens が hunk revert
-        // で実測)。展開しない実装でも `PropertyKey` 宣言順 (`Margin` が
-        // `MarginTop..MarginLeft` より後) のせいで `Margin` slot が最後に
-        // atomic 適用され、偶然同じ 1/2/3/4 になるため。`!important` 方向で
-        // 展開の有無を実際に区別するのは
-        // `post_parse_important_longhand_survives_later_normal_shorthand` で
-        // あり、本 test は「展開が important flag を落としていない」だけを見る
-        // 弱い guard である (`..._after_longhand_lets_shorthand_win` と同種)。
+        // CSS Cascading Level 4 §3 makes a shorthand's `!important`
+        // flag apply to all expanded longhands.
         let cv = cascade_with_post_parse_injection(
             "div { margin-left: 99px !important; margin-top: 10px }",
             0,

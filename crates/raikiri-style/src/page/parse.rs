@@ -377,18 +377,8 @@ pub(crate) fn parse_important_and_exhaust<'i>(
 /// declarations, one of nested margin-box at-rules) a parsed `@page` block
 /// body produces, field-named the same as [`PageRule`]'s matching fields.
 ///
-/// A named struct rather than a positional tuple deliberately: this same
-/// shape used to travel from this function, through
-/// `ruletree`'s `StyleRuleParser::parse_block`, through `ParsedRule::Page`,
-/// to `RuleTree::add_stylesheet`'s match arm, as a bare 5-tuple (plus
-/// `clippy::type_complexity` forcing a `type` alias for the *return type*
-/// alone, which didn't cover the other two positional sites) — three call
-/// sites where a field got silently transposed by reordering the
-/// destructuring pattern would type-check (every field is a `Vec` of a
-/// distinct type today, but `Vec<PageSizeDeclaration>` and
-/// `Vec<PageMarksDeclaration>`, say, look identical at a glance in a
-/// destructuring pattern) and only fail downstream, if at all. Named
-/// fields make that class of error a compile error instead.
+/// A named struct keeps the five independently typed lists distinct while the
+/// parsed block moves through the stylesheet parser.
 pub(crate) struct PageBlockBody {
     pub(crate) declarations: Vec<Declaration>,
     pub(crate) size_declarations: Vec<PageSizeDeclaration>,
@@ -422,19 +412,10 @@ pub(crate) struct PageBlockBody {
 /// at-rule's body has no descriptors of its own — it is exactly the
 /// ordinary-declaration-list grammar that function already implements.
 ///
-/// # Shorthand expansion — this function's own arm is call site 4 of `expand_shorthand_into`
+/// # Shorthand expansion
 ///
-/// The ordinary-property arm applies [`expand_shorthand_into`] before
-/// pushing into the returned `Vec<Declaration>`, exactly like
-/// [`crate::rule::parse_declaration_block`] does — this function *is* the
-/// parse-exit boundary for `@page` blocks (not a second copy of one), so it
-/// carries the same "no shorthand `PropertyValue` leaves this function"
-/// obligation that boundary has. See
-/// [`crate::rule::expand_shorthand_into`]'s doc for the full 4-call-site
-/// account and why each one is load-bearing. The margin-box arm does *not*
-/// add a 5th call site: it delegates to
-/// [`crate::rule::parse_declaration_block`] (call site 1's function), which
-/// already carries that obligation internally — see the previous section.
+/// Ordinary declarations are expanded before they are stored in the page
+/// declaration list. Margin-box bodies use the ordinary declaration parser.
 pub(crate) fn parse_page_declaration_block(input: &mut Parser<'_, '_>) -> PageBlockBody {
     let mut parser = PageDeclParser;
     let mut declarations = Vec::new();

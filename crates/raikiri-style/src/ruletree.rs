@@ -595,35 +595,12 @@ pub struct RuleTree {
     /// cascade は [`crate::page::cascade_page`] が適用する; per-page `PageBox`
     /// derivation と margin-box slot layout は未実装。
     ///
-    /// `style_rules` と違い `pub` のまま — 意図的な選択。canonical な記述
-    /// (docs.rs から到達可能) は [`crate::page::PageRule::declarations`] の
-    /// doc の「Why this field ... is still `pub`」節にある。
-    /// 旧 pointer 先だった [`crate::rule::expand_shorthand_into`] は
-    /// `pub(crate)` で docs.rs に出ないため dead end だった。
+    /// `style_rules` と異なり、page declarations are exposed for page-context
+    /// consumers.
     pub page_rules: Vec<PageRule>,
     /// `@counter-style` at-rule の name → rule registry。
-    ///
-    /// [`RuleTree::add_stylesheet`] が呼ばれるたび (origin を問わず)、同じ
-    /// 文字列に対して [`crate::counter_style::parse_counter_style_rules`] を
-    /// 独立にもう一度走らせ、得られた各 [`crate::counter_style::CounterStyleRule`]
-    /// を呼び出し時の `origin` と一緒に
-    /// [`CounterStyleRegistry::insert_with_origin`] へ渡す。同名 rule 間の
-    /// 勝敗は `CounterStyleRegistry` 自体が origin ごとに追跡して解決する
-    /// ([`CounterStyleRegistry`] 型 doc の解決表参照) — CSS Counter Styles L3
-    /// §3 の "standard cascade rules" (origin が第一基準、同一 origin 内は
-    /// source order) を [`crate::cascade::cascade_rank`] ベースの rank
-    /// 比較でそのまま実装しており ([`Origin`] の variant 数に依存しない —
-    /// `add_stylesheet` に実際に渡る origin は現状 `UserAgent`/`Author` の
-    /// 2 つだけだが、それは呼び出し側の実態であって本 field の実装が
-    /// 2-origin 前提にハードコードされているわけではない、詳細は
-    /// [`CounterStyleRegistry::insert_with_origin`] doc 参照)、呼び出し側
-    /// (`add_stylesheet`) は origin でフィルタする必要がない。詳細は
-    /// [`RuleTree::add_stylesheet`] doc 参照。
-    ///
-    /// `style_rules` 用の parser とは意図的に別 pass ([`crate::counter_style`] module doc
-    /// の "What's implemented" 節が元々の設計意図として明記) — このフィールドは
-    /// 「同じ source 文字列を追加でもう一度 `counter_style` 側の entry point に
-    /// 渡す」配線のみを担い、2 つの parser を 1 pass に融合する話ではない。
+    /// Same-name rules follow CSS Counter Styles Level 3's standard cascade
+    /// order and are stored as complete rule values.
     pub(crate) counter_styles: CounterStyleRegistry,
     /// `@font-face` at-rule の family-name → rule registry。
     ///
@@ -1024,13 +1001,9 @@ fn walk_and_collect<D: StyleDom, F: FnMut(&str)>(dom: &D, id: StyleNodeId, on_st
             // される。cascade.rs の同型 2 箇所 (collect_cascaded /
             // resolve_inheritance) は訪問順に依存しない挙動保持のみが目的
             // だったのと対照的。
-            // `walk_style_elements_pub_visits_all_style_texts_in_document_order`
-            // test が兄弟 `<style>` 2 個 (同一 depth) の text を visit 順で固定
-            // している。ただし同一 depth の兄弟だけでは DFS/BFS を判別できない
-            // (同深度なら両戦略の visit 順が一致してしまう) — mixed depth の
-            // regression net は
-            // `walk_and_collect_preserves_document_order_across_mixed_sibling_descendant_depths`
-            // test が別途固定している。
+            // Flat sibling order alone does not distinguish depth-first from
+            // breadth-first traversal; mixed depths make the document-order
+            // requirement observable.
             let start = stack.len();
             stack.extend(dom.child_ids(id));
             stack[start..].reverse();
@@ -2458,45 +2431,9 @@ mod tests {
         assert_eq!(collected[1], "div { color: blue }");
     }
 
-    /// regression net for document-order preservation
-    /// across MIXED sibling/descendant depths — the existing sibling-only
-    /// test above (2 flat `<style>` at the same depth) cannot distinguish a
-    /// depth-first walk from a naive breadth-first one, because same-depth
-    /// visit order happens to coincide for both strategies. This test uses
-    /// a shape where the doc-order-earlier `<style>` sits *deeper* than the
-    /// doc-order-later one:
-    ///
-    /// ```text
-    /// root
-    /// ├── section          (depth 1)
-    /// │     └── mid        (depth 2)
-    /// │           └── style A   (depth 3, text "p { color: red }")
-    /// └── aside             (depth 1, later sibling of `section`)
-    ///       └── style B    (depth 2, text "div { background-color: blue }")
-    /// ```
-    ///
-    /// (A and B intentionally use different properties — `color` vs.
-    /// `background-color` — so the `build_rule_tree` half below can check
-    /// *which* rule landed at which `source_order`, not just that 2 rules
-    /// exist.)
-    ///
-    /// Correct document order is A then B (pre-order: all of `section`'s
-    /// subtree, including the depth-3 A, precedes `aside`'s subtree)
-    /// regardless of A being deeper than B. A level-order (BFS) walk would
-    /// instead visit the shallower B (depth 2) before the deeper A
-    /// (depth 3), flipping the order — this is exactly the class of bug
-    /// `walk_and_collect`'s doc comment warns is a correctness requirement,
-    /// not just a behavior-compat nicety, because `source_order` feeds the
-    /// cascade order-of-appearance tie-break (CSS Cascading L4
-    /// <https://www.w3.org/TR/css-cascade-4/#cascade-sort>).
-    ///
-    /// Empirically confirmed: this test is
-    /// the only one of the 57 tests in this module that goes red when
-    /// `walk_and_collect` is mutated from `Vec`/LIFO-pop DFS to
-    /// `VecDeque`/`pop_front` BFS — the pre-existing
-    /// `walk_style_elements_pub_visits_all_style_texts_in_document_order`
-    /// test (2 flat siblings, same depth) stays green under that mutation
-    /// because same-depth visit order happens to coincide for DFS and BFS.
+    /// Style elements must be visited in document order even when an earlier
+    /// element is deeper than a later sibling. This order feeds the CSS
+    /// order-of-appearance cascade tie-break.
     #[test]
     fn walk_and_collect_preserves_document_order_across_mixed_sibling_descendant_depths() {
         use crate::property::PropertyValue;
@@ -3239,13 +3176,8 @@ mod tests {
 
     #[test]
     fn page_declaration_block_never_emits_shorthand_keys() {
-        // Call site 4 of `expand_shorthand_into` (see that function's doc in
-        // `crate::rule`) — `parse_page_declaration_block` must expand
-        // `margin`/`padding`/`border`/`outline` shorthand the same way the
-        // qualified-rule parse exit does, so a consumer reading
-        // `PageRule::declarations` directly never observes a raw shorthand
-        // `PropertyValue` straight out of parsing (before `cascade_page`'s
-        // own defense-in-depth re-expansion even runs).
+        // Page declaration parsing expands the supported shorthands so that
+        // consumers do not observe raw shorthand values.
         use crate::property::PropertyValue;
 
         let rules = page_rules("@page { margin: 1cm 2cm 3cm 4cm; outline: auto 2px red }");

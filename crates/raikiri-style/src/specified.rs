@@ -17,8 +17,7 @@
 //! phase に分けることは必須の制約**である。
 //!
 //! なお cascade 段の winner 適用順そのものは **決定的**である —
-//! `PropertyKey` discriminant を index にした slot 配列を昇順に走査するため
-//! (以前は `HashMap` iteration 順で非決定的だった)。
+//! `PropertyKey` discriminant を index にした slot 配列を昇順に走査するため。
 //! 上の拘束は適用順の決定性とは独立に成り立つ: どの順に適用しようと
 //! 「全 winner 適用後」でなければ基準 `font-size` は確定しない。
 
@@ -81,15 +80,6 @@ use crate::resolve::{
 /// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `list_style_type` / `list_style_position` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* / `object_fit` / `table_layout` / `border_collapse` / `caption_side` / `empty_cells` |
 /// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
 ///
-/// **手動同期 — drift に注意**: 上の表の property 名列挙は手動で維持される
-/// リストであり、[`crate::computed::ComputedValues::inherit_from`] の doc の
-/// inherited / non-inherited prose 列挙
-/// (`crates/raikiri-style/src/computed.rs`) と同期して更新する必要がある。
-/// 片方だけを更新すると drift して silent な継承 bug になる。新しい inherited
-/// property を追加する際は両方の doc を同時に更新すること。将来的には単一の
-/// const 配列 / 生成マクロから両方の doc と実装を駆動できれば drift を機械的に
-/// 防げるが、現状は手動同期である。
-///
 /// \* `background_image` は `None`/`Url(String)` の 2 variant では文字通り
 /// この行の分類通りだが、`Gradient(..)` variant (CSS Images 4 §3) は
 /// `<length-percentage>`/`<angle>` を含む — それでも表の分類上は「既に
@@ -120,25 +110,13 @@ use crate::resolve::{
 ///
 /// [`Self::inherit_from`] は inherited property を親の [`ComputedValues`] から
 /// seed する。これは単なる効率の話ではなく **正しさの要求**である:
-/// [`crate::cascade::apply_value`] の `PropertyValue::FontWeight` arm は
-/// `apply_value` 中の read-modify-write で、書き込み前の
-/// `self.font_weight` が**親の computed font-weight である**ことに依拠して
-/// `bolder` / `lighter` を解決する。[`Self::initial`] から seed すると
-/// `bolder` が常に 400 起点になり、**compile error にも既存 test の失敗にも
-/// ならずに**壊れる。
-/// check: `bolder_resolves_against_parent_computed_weight_through_staging`。
+/// [`crate::cascade::apply_value`] の `PropertyValue::FontWeight` arm は、
+/// `bolder` / `lighter` を親の computed font-weight を基準に解決する。
+/// [`Self::initial`] から seed すると、この基準を失う。
 ///
-/// `font_size` も同じ invariant に依拠する (`FontSizeRelative` arm が
-/// 加わった) — [`Self::inherit_from`] は
-/// `font_size` を [`crate::resolve::lift_font_size`] 経由で seed し、この
-/// 関数は常に `Length::Px` を返す (`Px` は絶対化の不動点、同関数 doc 参照)。
-/// [`Self::initial`] も `font_size: Length::Px(INITIAL_FONT_SIZE_PX)` で
-/// 同じく `Px`。したがって `apply_value` の `FontSizeRelative` arm が
-/// 書き込み前に読む `self.font_size` は**必ず「親 (または root では initial)
-/// の computed font-size」の `Length::Px` 表現である** — `font_weight`
-/// (`u16`、単位を持たない) とは表現型が違うが保証の形は同じ。
-/// [`Self::initial`] から seed する実装に変えると `larger` が常に
-/// `INITIAL_FONT_SIZE_PX` (16px) 起点になり、`bolder` と同じ壊れ方をする。
+/// `font_size` follows the same rule: [`Self::inherit_from`] seeds it from
+/// the parent's computed value through [`crate::resolve::lift_font_size`],
+/// while the root uses the initial value.
 ///
 /// # `text_align: match-parent` は D5 と**同型ではない**
 ///
@@ -1181,60 +1159,13 @@ impl SpecifiedValues {
     /// [`Self::finalize_as_root`] を使うこと (`rem` の基準が違う上、
     /// `match-parent` も "computes to start" の別ルールになる)。
     ///
-    /// # 引数を `&ComputedValues` に広げた理由
+    /// The parent provides the computed values needed for inherited
+    /// properties such as `text-align: match-parent`. Lengths are resolved in
+    /// the documented cascade phases: relative font-size values use the
+    /// parent basis, while later relative values use this node's computed
+    /// font size. The root uses [`Self::finalize_as_root`] because `rem` and
+    /// `match-parent` have distinct root rules (CSS Text 3 §6.1).
     ///
-    /// 当初 `parent_font_size: ComputedLength` だけを受け取っていたが、
-    /// `text-align: match-parent` の解決 (CSS Text 3 §6.1) が親の
-    /// `text_align` + `direction` も要求するようになった。3 つの scalar
-    /// 引数に分割する案 (`parent_font_size, parent_text_align,
-    /// parent_direction`) も検討したが、将来また別の inherited property が
-    /// 「親の computed 値」を要求するたびに引数が増える形になるため、
-    /// [`crate::cascade::resolve_against_inherited`] が既に取っている
-    /// `inherited: &ComputedValues` の shape に揃えた —呼び手 (`cascade.rs` の
-    /// `resolve_inheritance`) は `parent_computed` をそのまま渡すだけになる。
-    ///
-    /// この形は同一 node の winner 適用順序に関する懸念を持ち込まない —
-    /// `parent` は呼び手が**この node の staging (`self`) とは別に**保持して
-    /// いる、既に確定済みの親の [`ComputedValues`] であり、`self` (自 node の
-    /// staging、`direction` winner が上書き済みかもしれない) とは無関係な
-    /// 参照である。[`crate::property::resolve_text_align_match_parent`] の
-    /// doc が説明する「なぜ `apply_value` ではなく `finalize` か」の根拠は
-    /// まさにこの分離にある。
-    ///
-    /// # phase 順序の担保
-    ///
-    /// phase 2 と phase 3 は基準が違う (親の font-size vs. 自 node の font-size)
-    /// にもかかわらず両方 [`ComputedLength`] なので、型検査だけでは取り違えを
-    /// 防げない。本実装が実際に担保するのは次の 3 点であり、それ以上ではない:
-    ///
-    /// 1. **phase 3 の本体は `parent` を名前として持たない** — 後半は
-    ///    private な `Self::absolutize_with` に閉じており、その signature に
-    ///    `parent` が無いので、**その body の中では**取り違えが書けない。
-    ///
-    ///    **本関数の body については同じことが言えない** — `parent.font_size` と
-    ///    `font_size` はどちらも [`ComputedLength`] として同一 scope に居るので
-    ///    `self.absolutize_with(parent.font_size, ..., ctx)` のような取り違えは
-    ///    compile する。「取り違えは書けない」という capability claim は本関数には
-    ///    成り立たない。`text_align` 解決も同型の risk を持つ —
-    ///    `resolve_text_align_match_parent(self.text_align, parent.text_align,
-    ///    parent.direction)` の 2 番目と 3 番目の引数は異なる型
-    ///    (`TextAlign` / `Direction`) なので取り違えれば compile error になるが、
-    ///    `self.text_align` と `parent.text_align` はどちらも `TextAlign` なので
-    ///    その 2 つの取り違えは compile する。
-    /// 2. **cascade pipeline から見た絶対化の入口は本関数と
-    ///    [`Self::finalize_as_root`] の 2 つだけ** なので、phase 2 → phase 3 の
-    ///    順序と基準の受け渡しは各 2 行に局所化されている。
-    ///    **call site を実際に守っているのはこの局所性であって claim 1 ではない。**
-    /// 3. **root / 非 root の `rem` 基準の違いが entry point の名前になっている**
-    ///    ので、呼び出し側は `ResolveContext` を組み立てる判断をしない。同様に
-    ///    `match-parent` の「親あり」/「親なし (root)」分岐も entry point の
-    ///    選択そのもの (`finalize` vs `finalize_as_root`) に埋め込まれている。
-    ///
-    /// 逆に担保**していない**こと: [`crate::resolve`] の絶対化関数群は個別に
-    /// public なので、本関数を経由せず誤った基準で呼ぶ code は依然として書ける。
-    /// `OwnFontSize` / `ParentFontSize` newtype による型 level の enforcement は
-    /// 採らなかった — 守る距離が各関数の 2 行しかない一方、public 関数 8 本と
-    /// その doctest の signature churn を伴うため。
     pub fn finalize(self, parent: &ComputedValues, ctx: &ResolveContext) -> ComputedValues {
         // `parent` の line-height 基準 (CSS Values 4 §6.1.1 の自己参照条項、
         // font-size (phase 2) の `lh` にも要るように
@@ -2019,15 +1950,7 @@ mod tests {
         }
     }
 
-    // -----------------------------------------------------------------
-    // initial の 2 表現が一致する (drift 検出)
-    // -----------------------------------------------------------------
-
-    /// specified 層の initial を絶対化すると computed 層の initial に一致する。
-    ///
-    /// 両辺は独立に literal を持つ 2 本の struct literal なので自己参照ではない
-    /// — 片方だけを書き換える drift を捕らえる。以前 `resolve.rs` に
-    /// 置かれていた drift test (完全 tautology 化したため削除) の後継。
+    /// The specified initial values finalize to the computed initial values.
     #[test]
     fn initial_specified_finalizes_to_initial_computed() {
         assert_eq!(
@@ -2858,21 +2781,8 @@ mod tests {
         assert_eq!(cv.text_align, TextAlign::Right);
     }
 
-    /// **The test that pins the whole design of this module's `match-parent`
-    /// handling**: a node that declares *both* `direction: rtl` and
-    /// `text-align: match-parent` must still resolve against the *parent's*
-    /// direction, not its own. If `finalize` (or a future refactor) ever
-    /// starts reading `self.direction` instead of `parent.direction` for this
-    /// resolution, this is the test that catches it — every other test in
-    /// this module has `self.direction == parent.direction` and would stay
-    /// green.
-    ///
-    /// Spec citation: CSS Text 3 §6.1 `#valdef-text-align-match-parent`
-    /// says "interpreted against **the parent's** direction value" — not the
-    /// element's own. See `crate::property::resolve_text_align_match_parent` // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
-    /// doc for why this can't be resolved in `cascade::apply_value` (the
-    /// same-node winner-order hazard between the `direction` and `text-align`
-    /// `PropertyKey` slots).
+    /// CSS Text 3 §6.1 says that `match-parent` is interpreted against the
+    /// parent's direction, not the element's own direction.
     #[test]
     fn finalize_match_parent_uses_parent_direction_not_own_direction_winner() {
         let mut sv = SpecifiedValues::initial();
@@ -2956,9 +2866,6 @@ mod tests {
     /// keywords do **not** pass through `finalize`/`finalize_as_root`
     /// unchanged — `resolve_writing_mode` collapses every one of them to
     /// `WritingMode::HorizontalTb` (`WritingMode` doc's Non-goal section).
-    /// This is the element-path pin; the page-path equivalent is
-    /// `crate::page::tests::absolutize_in_page_context_collapses_writing_mode_to_horizontal_tb`.
-    ///
     /// Future work: vertical writing-mode 実装時に本 collapse を
     /// 削除し、本 test を revert/rewrite すること。
     #[test]
@@ -2986,10 +2893,6 @@ mod tests {
     /// unconditionally in `absolutize_with`, whether the value reaching it
     /// came from a fresh winner or from `SpecifiedValues::inherit_from`'s
     /// plain copy of the parent's (already-collapsed, in any real cascade)
-    /// computed value. See `computed::tests::non_initial_parent`'s doc
-    /// comment for why this same invariant is exercised there with a
-    /// synthetic (real-cascade-unreachable) `ComputedValues` literal.
-    ///
     /// Future work: vertical writing-mode 実装時に本 collapse を
     /// 削除し、本 test を revert/rewrite すること。
     #[test]

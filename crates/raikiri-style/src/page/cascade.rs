@@ -92,9 +92,7 @@ pub struct PageContextQuery {
     /// Compared case-sensitively per CSS Values L4
     /// [`#custom-idents`](https://www.w3.org/TR/css-values-4/#custom-idents)
     /// `<custom-ident>` — "fully case-sensitive … even in the ASCII range"
-    /// (mirrors the parse-time invariant pinned by
-    /// `page_named_ident_is_case_sensitive` in ruletree tests, and the
-    /// sibling citation on [`PageSelectorEntry::ident`]).
+    /// (mirrors the parse-time invariant on [`PageSelectorEntry::ident`]).
     pub page_name: Option<Atom>,
     /// Whether this is the first page (`:first` matches).
     pub is_first: bool,
@@ -175,54 +173,9 @@ impl PageCascadeResult {
     /// Winning `(key, value)` per property, after the two resolution passes
     /// described below.
     ///
-    /// **This doc is the canonical statement of that contract.** Other sites
-    /// that touch it point here instead of restating it — enumerate them with
-    /// `git grep "PageCascadeResult::declarations"` rather than trusting a
-    /// list, because a list of pointer sites drifts exactly the way the
-    /// duplicated rule statements did (this has already happened twice).
-    /// **A new site that mentions this contract
-    /// must spell `PageCascadeResult::declarations` verbatim** (in an
-    /// intra-doc link, or in plain text where links do not resolve, as the
-    /// umbrella crate's `pub use` commentary does) — that is what keeps the
-    /// grep recipe complete. The layer-vs-type rule the whole contract rests
-    /// on ("the type does not name a layer") is canonical on [`Length`].
-    ///
-    /// # What is pinned mechanically, and what is not
-    ///
-    /// The **"no specified-layer residue"** claim below is pinned by
-    /// `page::tests`' `page_declarations_carry_no_specified_layer_residue`
-    /// (before a later change, `text-align: match-parent` was the
-    /// one documented exception and the same test was named
-    /// `page_declarations_carry_exactly_one_specified_layer_residue`),
-    /// `cascade_page_output_carries_no_specified_layer_residue`, and
-    /// `phase_3_variant_classification_matches_the_documented_counts`.
-    /// The **individual phase-table rows** below (the
-    /// `border-*-width` style gate, the `<percentage>` pass-through, `auto`,
-    /// `line-height: <number>`) are *not* covered by those three — they each
-    /// have their own acceptance test in `page::tests` instead, and their
-    /// payloads are deliberately absent from `page_corpus` (one payload per
-    /// variant is all it can carry).
-    ///
-    /// Three further limits, stated here so a consumer need not read the test
-    /// module to learn them:
-    ///
-    /// - Both residue pins terminate at [`cascade_page`]. They assert that
-    ///   *this* entry point's output is a computed-value bag; they cannot
-    ///   assert it for an entry point that does not exist yet. CSS Paged
-    ///   Media 3 §6's page-margin-box cascade ("page-margin boxes inherit from
-    ///   the page context") would be a third path.
-    ///   [`absolutize_in_page_context`]'s parameter type forces any caller that
-    ///   reuses phase 3 to have gone through phase 2 first; see
-    ///   [`crate::cascade::ResolvedAgainstInherited`] for exactly what that
-    ///   does and does not close (the remainder is tracked separately, as
-    ///   future work outside this source tree).
-    /// - The residue detector classifies five payload types exhaustively
-    ///   (`Length` / `LengthOrAuto` / `LineHeight` / `FontWeightValue` /
-    ///   `TextAlign`); a new payload case in any *other* type is not caught.
-    /// - The detector's variant-addition tripwire is **one-way**: adding a
-    ///   `PropertyValue` variant is a compile error in the test module, but
-    ///   nothing then forces the author to extend `page_corpus`, so a new
-    ///   variant can sit outside the corpus with every test green.
+    /// This accessor returns the computed declaration bag produced by the page
+    /// cascade. CSS Paged Media Level 3 §6 requires a computed value for every
+    /// property in the page context.
     ///
     /// **These are computed values, with no documented exception** (see
     /// the phase 2 bullet below for the property
@@ -383,10 +336,7 @@ impl PageCascadeResult {
     /// section documents does not depend on how that resolves: two already
     /// finite operands can still overflow to infinity on the `*` in phase 2
     /// alone (e.g. a `1e30px` root font-size times a `1e20em` page
-    /// declaration), with no contested cast anywhere in the chain. See
-    /// `page::tests::cascade_page_font_size_can_carry_infinity_from_finite_operand_multiply`
-    /// for that arithmetic-only reproducer, which stays valid regardless of
-    /// how that open question is resolved.
+    /// declaration), with no contested cast anywhere in the chain.
     ///
     /// **This map does not filter that out**, and neither does
     /// [`ComputedValues`] — the element path's equivalent computed-value bag —
@@ -400,33 +350,15 @@ impl PageCascadeResult {
     /// not at the parse/resolve layer that produces it**). This map is the
     /// same kind of computed-value bag, so the same precedent applies to it.
     ///
-    /// No sink for `declarations` exists yet — the consumer that would read
-    /// this map (page-margin-box layout, mirroring `apply_computed_to_style`
-    /// for the element path) is future scope, and `raikiri-style` currently has
-    /// zero consumers of this field outside this crate: grepping the type
-    /// name `PageCascadeResult` (not `.declarations`, which `PageRule` and
-    /// `StyleRule` also expose as an unrelated field/accessor name) finds
-    /// only doc-comment *mentions* elsewhere (`raikiri-dom`, and an umbrella
-    /// comment noting that `cascade_page` itself is not re-exported), never
-    /// an actual field read, as of this writing. The hazard is therefore
-    /// real but currently unreachable; **when that sink is built, its
-    /// bridge must add the equivalent guard**, following the same precedent
-    /// rather than adding one here.
+    /// Any downstream consumer that converts these values to geometry must
+    /// apply the appropriate finite-value and layout-safety checks at that
+    /// sink; this layer preserves the computed result without filtering it.
     ///
     /// # Why this is a method, not a field
     ///
-    /// Before this accessor existed, `declarations` was a `pub` field. The
-    /// `#[non_exhaustive]` on this type already blocked external struct-literal
-    /// construction, but a `pub` field leaves one hole open regardless:
-    /// `let mut r = PageCascadeResult::default(); r.declarations.insert(key,
-    /// raw_specified_value)` — parking an unresolved specified-layer value in
-    /// the map without going through [`cascade_page`] at all. That is the same
-    /// *class* of defect as the regression this whole doc
-    /// pins against, just reached by direct field-write instead of a cascade
-    /// bug, so the field is now private and this accessor is the only read
-    /// path — the "resolved against the inheritance parent" contract is
-    /// enforced by construction (only `cascade_page`, in this module, can
-    /// populate the field) rather than by convention.
+    /// Keeping the map private prevents callers from inserting unresolved
+    /// specified-layer values without going through [`cascade_page`]. The
+    /// accessor exposes the resolved declarations read-only.
     ///
     /// ## Compile-fail check
     ///
@@ -448,27 +380,10 @@ impl PageCascadeResult {
     /// r.declarations.insert(PropertyKey::Color, PropertyValue::Color(CssColor::BLACK));
     /// ```
     ///
-    /// Verified non-vacuous the same way as this crate's other compile-fail
-    /// pins: temporarily
-    /// restoring `pub` on the field makes the fence above compile (and thus
-    /// makes `cargo test --doc` fail on it), confirming the fence fails
-    /// *because* the field is private and not for some unrelated reason.
+    /// ### Accessor control
     ///
-    /// ### Non-vacuous control
-    ///
-    /// (Same vocabulary as `raikiri-paint`'s
-    /// `draw_glyphs_at_natural_font_size_is_a_non_vacuous_control` and this
-    /// crate's `page::tests::specified_layer_residue_detector_is_not_vacuous`.)
-    ///
-    /// The fence above depends on ingredients that have nothing to do with
-    /// `declarations`'s visibility — `PropertyValue::Color`'s payload shape
-    /// and `CssColor::BLACK` staying valid names — plus the legitimate read
-    /// path, `declarations()`, actually returning what [`cascade_page`]
-    /// produced. If any of those drift (rename, shape change), the fence
-    /// above would keep compile-failing for the wrong reason and the check
-    /// would go silently vacuous. This ordinary (must-compile-and-pass)
-    /// doctest exercises the same ingredients through the accessor, so a
-    /// drift breaks it first, not the fence:
+    /// The following doctest exercises the public accessor independently of
+    /// the compile-fail privacy check.
     ///
     /// ```
     /// use raikiri_style::{
@@ -529,15 +444,8 @@ impl PageCascadeResult {
 /// apply with the following exceptions: page-margin boxes inherit from the page
 /// context. The page context inherits from the root element."
 ///
-/// Before this type was introduced, this argument was `Option<&ComputedValues>`,
-/// and `None` was accepted with no compile error, warning, or lint marking
-/// the choice — a call-site audit
-/// found 27 of the 29 call sites existing at that time reached the L3 legacy
-/// exception this way, by omission rather than by a deliberate choice, which
-/// silently resolves inherited properties against the initial values instead
-/// of the root element. Replacing the `Option` with this named 2-variant enum
-/// makes that choice a call-site-visible decision instead of something
-/// reachable by omission.
+/// The named variants make the choice between the root element and the L3
+/// legacy initial-values exception explicit at each invocation.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug)]
 pub enum PageInheritance<'a> {
@@ -625,16 +533,10 @@ pub enum PageInheritance<'a> {
 /// See [`PageInheritance`] for the two named choices, their spec basis, and
 /// which one to prefer — that is what step 3 above resolves winners against.
 ///
-/// # Compile-fail check
+/// # Typed inheritance choice
 ///
-/// Before this type was introduced the third parameter was
-/// `Option<&ComputedValues>` and a bare `None` literal compiled silently —
-/// see [`PageInheritance`]'s doc for the history. The parameter's type is now
-/// [`PageInheritance`] itself (not `impl Into<PageInheritance>`, which would
-/// let `None` convert implicitly if a `From<Option<_>>` impl existed) and
-/// [`PageInheritance`] has no `Default` impl, so there is no value `None`
-/// could coerce or default into — this is a type error, not a silent
-/// default:
+/// The [`PageInheritance`] parameter is explicit and has no default, so a
+/// caller must choose the inheritance source.
 ///
 /// ```compile_fail
 /// use raikiri_style::{Origin, PageContextQuery, RuleTree, cascade_page};
@@ -644,11 +546,8 @@ pub enum PageInheritance<'a> {
 /// let _ = cascade_page(&tree, &PageContextQuery::default(), None);
 /// ```
 ///
-/// Non-vacuous control: swapping `None` above for
-/// [`PageInheritance::LegacyInitialValues`] is exactly
-/// [`PageCascadeResult::declarations`]'s own doctest, which compiles and
-/// passes — confirming the failure above is caused by the removed implicit
-/// `None` path and not by an unrelated mistake in the fence.
+/// A valid [`PageInheritance`] value is accepted by the ordinary example
+/// below.
 ///
 /// # Ties on equal `(rank, specificity, source_order)`
 ///
@@ -1064,8 +963,7 @@ fn page_context_line_height_basis(
 /// The consequence is load-bearing and matches the element path: `@page {
 /// border-top-width: 5px }` **on its own** computes to `0px`, exactly as
 /// `ComputedValues::initial().border.top.width()` is `0px` for an element that
-/// declares no `border-style` (check:
-/// `specified::tests::initial_border_width_is_gated_to_zero_at_computed_layer`).
+/// declares no `border-style`.
 fn page_context_border_styles(
     declarations: &HashMap<PropertyKey, ResolvedAgainstInherited>,
 ) -> Sides<BorderStyle> {
@@ -3388,15 +3286,8 @@ mod tests {
     // this was wired up, `FontWeightValue::Bolder` parked unresolved in the public
     // `declarations` map).
 
-    /// Direct, single-site check that `PageInheritance::FromRoot` and
-    /// `PageInheritance::LegacyInitialValues` are a real discrimination, not
-    /// two names for the same behaviour. The per-property tests elsewhere in
-    /// this module each show one side of this split across two *separate*
-    /// tests (e.g. `cascade_page_font_weight_bolder_resolves_against_root_computed_weight`
-    /// vs. `cascade_page_font_weight_relative_with_legacy_initial_values_uses_initial_400`);
-    /// this asserts both sides against the same rule tree in one place,
-    /// following the "non-vacuous control" convention used elsewhere in this
-    /// crate (see `specified_layer_residue_detector_is_not_vacuous`).
+    /// The two inheritance variants produce distinct results for relative
+    /// font weights under the same page rule.
     #[test]
     fn cascade_page_from_root_and_legacy_initial_values_diverge_for_relative_font_weight() {
         let mut tree = RuleTree::empty();
@@ -4261,10 +4152,8 @@ mod tests {
         );
     }
 
-    /// The gate is per side, and all four sides are exercised — this is the
-    /// only test that reaches the `BorderRightWidth` / `BorderBottomWidth` arms
-    /// of `absolutize_in_page_context` and the `right` / `bottom` writes in
-    /// `page_context_border_styles`.
+    /// The style gate applies independently to each border side; all four
+    /// sides are checked with distinct values.
     ///
     /// **What it does and does not catch**: the gate is binary, so of the 6
     /// possible side pairings this catches the 4 that straddle it
@@ -4614,27 +4503,9 @@ mod tests {
         );
     }
 
-    /// Direct exercise of the three **shorthand fall-through arms** of
-    /// `absolutize_in_page_context`. They are unreachable through `cascade_page`:
-    /// `crate::rule::expand_shorthand_into` runs both at the parse exit // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
-    /// (`parse_declaration_block`) and at the `@page` cascade entry (the
-    /// candidate loop in `cascade_page`), so the
-    /// post-parse mutation path through the `pub` field
-    /// `PageRule::declarations` is covered too — that is what the
-    /// `post_parse_page_*` tests in this module check.
-    ///
-    /// They are therefore driven directly here, for the same reason
-    /// `cascade::tests::apply_value_direct_margin_shorthand_fall_through` exists
-    /// (behaviour pinned instead of `unreachable!` — the crate keeps the
-    /// cascade panic-free, and the exhaustive expansion `match` does not
-    /// enforce everything; see its doc).
-    ///
-    /// `absolutize_in_page_context` takes a
-    /// `ResolvedAgainstInherited`, whose constructor is private outside
-    /// `crate::cascade` — `ResolvedAgainstInherited::for_test` is the // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
-    /// `#[cfg(test)]`-only escape hatch that lets this test keep driving the
-    /// function directly with a hand-picked payload (see that type's doc,
-    /// "test 用の裏口").
+    /// Exercise shorthand fall-through values directly. Normal cascade entry
+    /// points expand these values before phase 3; the direct test also keeps
+    /// the phase-3 function panic-free for defensive inputs.
     #[test]
     fn absolutize_in_page_context_shorthand_fall_throughs() {
         let fs = ComputedLength(20.0);
@@ -4921,18 +4792,8 @@ mod tests {
         }
     }
 
-    /// Sibling of `absolutize_in_page_context_shorthand_fall_throughs` for
-    /// the 4 CSS Logical Properties and Values 1 §4.2/§4.4 2-value
-    /// shorthands (`margin-inline`/`margin-block`/`padding-inline`/
-    /// `padding-block`) — same "not a safety net, pinned directly because
-    /// unreachable via real cascade" rationale (`crate::property::PropertyValue::PaddingInline` doc, // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (#[test]-item doc) — rustdoc-blind, confirmed via わざと壊して確かめる
-    /// which is the canonical record, and the `absolutize_in_page_context`
-    /// arm comments right above each one).
-    ///
-    /// `start`/`end` deliberately use **distinct** values (rather than
-    /// `StartEnd::both`) so a hypothetical `start`/`end` field swap in
-    /// [`StartEnd::map`]'s call sites would fail this test instead of
-    /// passing unnoticed.
+    /// Check absolute conversion for the two-value logical box shorthands
+    /// defined by CSS Logical Properties and Values Level 1 §4.2/§4.4.
     #[test]
     fn absolutize_in_page_context_logical_shorthand_fall_throughs() {
         let fs = ComputedLength(20.0);
@@ -5250,16 +5111,8 @@ mod tests {
         }
     }
 
-    /// Direct exercise of the `WritingMode` arm of
-    /// `absolutize_in_page_context` — the page-path check for
-    /// `resolve_writing_mode`'s unconditional collapse (element-path check:
-    /// `specified::tests::finalize_collapses_all_non_horizontal_writing_modes`).
-    /// All 5 spec keywords collapse to `HorizontalTb`, including
-    /// `HorizontalTb` itself (identity, not a no-op passthrough that a
-    /// future refactor could silently break).
-    ///
-    /// Future work: vertical writing-mode 実装時に本 collapse を
-    /// 削除し、本 test を revert/rewrite すること。
+    /// CSS Writing Modes resolution currently maps all supported writing
+    /// modes to the horizontal-tb computed value.
     #[test]
     fn absolutize_in_page_context_collapses_writing_mode_to_horizontal_tb() {
         let fs = ComputedLength(20.0);
@@ -5350,14 +5203,7 @@ mod tests {
         );
     }
 
-    /// Direct exercise of the `Opacity` arm of `absolutize_in_page_context`
-    /// — CSS Color 4 §3.3's computed-value clamp to `[0, 1]`, the
-    /// page-context sibling of `SpecifiedValues::absolutize_with`'s same
-    /// clamp (`specified::tests::opacity_out_of_range_specified_clamps_at_finalize`
-    /// pins the element-path half). The `font_size`/`own_line_height`/`ctx`
-    /// inputs are irrelevant here — unlike `TextShadow` above, this arm's
-    /// transform doesn't absolutize a length — so this test doesn't vary
-    /// them, only the `Opacity` payload.
+    /// CSS Color 4 §3.3 clamps computed opacity to `[0, 1]`.
     #[test]
     fn absolutize_in_page_context_covers_opacity_arm_clamp() {
         let fs = ComputedLength(20.0);
@@ -5488,18 +5334,8 @@ mod tests {
         );
     }
 
-    /// Direct exercise of the `FontSizeRelative` "safety net" arm of
-    /// `absolutize_in_page_context` — structurally unreachable through
-    /// `cascade_page` (step 3/phase 2 always converges `FontSizeRelative` to
-    /// `FontSize(Length::Px(_))` first, see the arm's own doc), but the
-    /// `pub(crate)` function can still be driven directly with an unresolved
-    /// value, same as `absolutize_in_page_context_shorthand_fall_throughs`
-    /// above — via `ResolvedAgainstInherited::for_test`, the `#[cfg(test)]`
-    /// escape hatch added once the function's parameter
-    /// stopped being a raw `PropertyValue` (see that type's doc, "test 用の
-    /// 裏口"). Pins: no panic, and the result shape matches what phase 2
-    /// (`resolve_against_inherited`'s `FontSizeRelative` arm) would have
-    /// produced — `FontSize(Length::Px(_))`.
+    /// Direct phase-3 inputs may still contain a relative font size; normalize
+    /// them without panicking and preserve the computed value shape.
     #[test]
     fn absolutize_in_page_context_font_size_relative_safety_net() {
         use crate::property::RelativeFontSize;
@@ -5538,340 +5374,26 @@ mod tests {
         );
     }
 
-    // ── 「`declarations` は computed 値」契約の機械的 check ────────────────────
-    //
-    // 契約の canonical な記述は
-    // `PageCascadeResult::declarations` の doc にあり、本節はそれを**散文では
-    // なく実行可能な形で**押さえる。散文だけで保っていた間に drift が 2 回
-    // 起きている: (1) ある変更で対応表が実装と乖離し
-    // 別の変更が in-band caveat で patch した、(2) 上で触れた phase 3 追加の
-    // diff 内で pass-through arm の数え上げが「21」と書かれた (実測 22)。
-    //
-    // 本節が壊れる条件:
-    //
-    // - `PropertyValue` に variant を足す → `specified_layer_residue` の網羅
-    //   match が **compile error**。`page_corpus` を `sample_for` 駆動に
-    //   変える前は、分類を書いた
-    //   後に `page_corpus` / `PROPERTY_VALUE_VARIANTS` (手で持つ数)
-    //   の更新を強制するものが無かった — 両者が 40 で整合したまま新 variant
-    //   が corpus 外に残る case は**全 test green になる** (最初の debt 監査で
-    //   `PropertyValue::Orphan` を足して
-    //   実測、その後の rework で当時の crate 状態 (58343de) に対し
-    //   再実証: 6 箇所の網羅 match [`property::PropertyValue::key`,
-    //   `rule::expand_shorthand_into`, `absolutize_in_page_context`,
-    //   `specified_layer_residue`, `cascade::resolve_against_inherited`,
-    //   `cascade::apply_value`] を素直に分類しただけで 674 passed / 0
-    //   failed、新 variant は corpus 側 3 本の check のどれにも通らなかった —
-    //   最初の debt 監査時点の記録は 5 site だったが、`rule::expand_shorthand_into` が
-    //   その後の landing で網羅 match になっており今は 6 site)。
-    //   その後の rework で `PROPERTY_VALUE_VARIANTS` を廃止し、
-    //   `page_corpus` を `sample_for` (`PropertyKey` に対する網羅 match、
-    //   `property_key_samples!` マクロ生成) 駆動に変えた — 新しい
-    //   `PropertyKey` variant を伴う通常の property 追加は、上と同じ手順
-    //   (新 variant + 6 site の素直な分類) を fix 後の code に対して
-    //   再実行して確認済み: `sample_for` の compile error が発生し、
-    //   `property_key_samples!` 自体を書き換えない限り、それを直す方法は
-    //   呼び出しへの 1 行追加 (`ALL_PROPERTY_KEYS` と `sample_for` を同時に
-    //   拡張する) だけなので、「compile error は直したが corpus は更新し
-    //   忘れた」という中間状態が自然には起きない — この経路では
-    //   674 passed / 0 failed が **2 failed**
-    //   (`phase_3_variant_classification_matches_the_documented_counts`
-    //   / `specified_layer_residue_detector_is_not_vacuous` — どちらも
-    //   `PHASE_3_PASS_THROUGH_VARIANTS` 系の別定数側が動かないことで発火する、
-    //   詳細は該当 test の doc) に変わることを確認した。
-    //
-    //   **guard は当初 one-way だった** (その rework 自身がこのギャップに
-    //   気づき、follow-up として追跡を開始した) — 新 variant が既存の
-    //   `PropertyKey` を再利用する場合 (`FontSizeRelative` と同型) は
-    //   `PropertyKey` の variant 集合が増えないため `sample_for` も compile
-    //   error にならず、`key_sharing_extras` への追加は手作業のままだった。
-    //   その follow-up 起票時点の記録は「真の automatic closure には
-    //   `PropertyValue`/`PropertyKey` 自体への macro/derive が要り、それは
-    //   umbrella re-export boundary の再判定を要する out-of-scope な
-    //   変更」だった — この結論は「型の variant を安全に列挙する手段が
-    //   stable Rust に無い (`mem::variant_count` は unstable、外部 derive
-    //   crate は 独立実装方針外)」という前提に基づいていたが、
-    //   **reflection による列挙**と**網羅 match による forcing**を区別して
-    //   いなかった。その follow-up の実装は後者を選んだ:
-    //   `property_value_variant_registry!` (`key_sharing_extras` の直後) が
-    //   `PropertyKey` ではなく `PropertyValue` **自身**に対して網羅的な
-    //   match を生成する — `property_key_samples!` が `PropertyKey` に
-    //   対してやっていることをそのまま一般化しただけで、`PropertyValue`/
-    //   `PropertyKey` の定義自体には触れない (`#[non_exhaustive]` は
-    //   downstream crate にのみ効くため、定義と同じ crate 内のここでの
-    //   網羅性には影響しない — wall/umbrella crossing ではない)。
-    //
-    //   ⚠️ **これで閉じるのは「compile error になるかどうか」までであり
-    //   「corpus への反映を忘れないこと」自体を compile error にはしない**
-    //   — 網羅 match は「型に variant が増えたこと」しか検出できず、増えた
-    //   variant を `sample_for` / `key_sharing_extras` 側へ反映し忘れる
-    //   ことまでは compile-time には防げない。その反映漏れは
-    //   `page_corpus_covers_every_registered_property_value_variant` (test、
-    //   `property_value_variant_registry!` の直後) が runtime で検出する —
-    //   `PROPERTY_VALUE_VARIANT_COUNT` (登録側、網羅 match 経由で正しく
-    //   増える) と `page_corpus().len()` (corpus 側、反映漏れがあれば
-    //   増えない) の不一致が test failure として現れる。
-    //
-    //   ⚠️ 本節がこの一連の経緯・機構・残存ギャップの canonical な記述
-    //   — `property_key_samples!` /
-    //   `sample_for` / `property_value_variant_registry!` /
-    //   `specified_layer_residue` / 下の corpus 整合性 test の doc は
-    //   ここへの pointer のみを持ち、繰り返さない。
-    // - `absolutize_in_page_context` の arm 分類を動かす →
-    //   `phase_3_variant_classification_matches_the_documented_counts` が落ちる。
-    // - phase 2 / phase 3 を素通りする値が `declarations` に届くようになる →
-    //   `page_declarations_carry_no_specified_layer_residue` /
-    //   `cascade_page_output_carries_no_specified_layer_residue` が落ちる。
-    //
-    // 実際に踏んだ改修の例: `text-align: match-parent` が
-    // 解決可能になったことで上記 2 test の期待値は「例外 1 つ」から「例外 0」
-    // (空 vec) に変わった (旧 test 名
-    // `page_declarations_carry_exactly_one_specified_layer_residue` は
-    // `page_declarations_carry_no_specified_layer_residue` に改名)。
-    // `specified_layer_residue` の `TextAlign::MatchParent` arm 自体は
-    // **削除しなかった** — `resolve_against_inherited` を経由し損ねる将来の
-    // regression (gap (b) 相当) に対する tripwire として
-    // 残してある。同じ「今後別の inherited-value-dependent keyword を足す」
-    // ケースへの一般化: 新しい `PropertyValue` variant / payload が **phase 2
-    // で解決される**ようになったら、本節に残る手で持つ数
-    // (`PHASE_3_PASS_THROUGH_VARIANTS` / `raw_corpus_residue_variants` の
-    // `+ 3` 項の内訳コメント — この 2 つは `sample_for` 駆動の corpus の対象外、
-    // 別途判断が要ることが確定している) と `page_corpus` の worst-case
-    // payload、および `page_declarations_carry_no_specified_layer_residue` /
-    // `cascade_page_output_carries_no_specified_layer_residue` の期待値を
-    // 同時に見直すこと。
+    // The corpus below exercises the computed-value contract and uses an
+    // exhaustive match so newly added property variants require an explicit
+    // classification.
 
-    /// phase 3 (`absolutize_in_page_context`) が**素通しする** variant 数。
-    ///
-    /// 22 → 23 (`Direction` は phase 3 で変換する length を
-    /// 持たないため pass-through 側に加わる — `TextAlign` 自身は元々こちら側)。
-    /// 23 → 24 (`TextDecoration` も同じ理由で
-    /// pass-through 側 — length を運ばないため phase 3 に変換対象が無い)。
-    /// 24 → 27 (`text-decoration` の longhand 分解で `TextDecorationLine` /
-    /// `TextDecorationStyle` / `TextDecorationColor` が新 variant として
-    /// 加わり、3 つとも同じ理由 — length を運ばないため — で pass-through 側に
-    /// 加わる。旧 `TextDecoration` はそのまま pass-through に残る、
-    /// `absolutize_in_page_context` のバケット comment 参照)。
-    /// 27 → 28 (`VerticalAlign` — minimal scope の `baseline`/`sub`/`super` —
-    /// も同じ理由で pass-through 側)。
-    /// 28 → 29 (`FontStyle` も同じ理由 — この crate の scope
-    /// (`normal`/`italic` のみ) では length を運ばないため phase 3 に変換対象が
-    /// 無い)。
-    /// 29 → 30 (`TextTransform` も同じ理由 — この crate の scope
-    /// (`none`/`capitalize`/`uppercase`/`lowercase` のみ) では length を
-    /// 運ばないため phase 3 に変換対象が無い)。
-    /// 30 → 31 (`Visibility` も同じ理由 — length を運ばないため phase 3 に
-    /// 変換対象が無い)。
-    /// 31 → 32 (`ZIndex` も同じ理由 — `ZIndexValue` は `<integer>` を運ぶが
-    /// length ではないため phase 3 に変換対象が無い)。
-    /// 32 → 34 (`WordBreak` / `OverflowWrap` も同じ理由 — どちらも length を
-    /// 運ばない keyword-only property のため phase 3 に変換対象が無い)。
-    /// 34 → 37 (`BreakBefore` / `BreakAfter` / `BreakInside` も同じ理由 —
-    /// CSS Fragmentation Module Level 3 の keyword-only property のため
-    /// length を運ばず phase 3 に変換対象が無い。legacy shorthand
-    /// `page-break-*` はこれらと同じ variant/key に落ちるので別枠にならない)。
-    /// 37 → 39 (`Float` / `Clear` も同じ理由 — どちらも length を運ばない
-    /// keyword-only property のため phase 3 に変換対象が無い。この path は
-    /// §9.7 の `display` 強制変換も行わない —
-    /// `absolutize_in_page_context` の `Float`/`Clear` arm doc 参照)。
-    /// 39 → 40 (`WhiteSpace` も同じ理由 — length を運ばない keyword-only
-    /// property のため phase 3 に変換対象が無い)。
-    /// 40 → 49 (`FlexDirection` / `FlexWrap` / `FlexGrow` / `FlexShrink` /
-    /// `JustifyContent` / `AlignContent` / `AlignItems` / `AlignSelf` /
-    /// `PlaceContent` — 9 variant とも同じ理由: keyword-only か `<number>`
-    /// のみで length を運ばないため phase 3 に変換対象が無い。`FlexBasis` /
-    /// `RowGap` / `ColumnGap` / `Flex` / `Gap` は `<length-percentage>` を
-    /// 運ぶため pass-through 側には**加わらない** —
-    /// `absolutize_in_page_context` のバケット comment 参照)。
-    /// 49 → 48 (`VerticalAlign` が `<length>` variant を獲得し、`FlexBasis`
-    /// 等と同じ理由でこちら側から**抜ける** — phase 3 で実際に絶対化する
-    /// 専用 arm を `absolutize_in_page_context` に持つようになったため。
-    /// pass-through 側から抜けたのはこの改修で唯一のケース — 上記の履歴は
-    /// 全て「加わる」方向だったことに注意)。
-    /// 48 → 50 (`Hyphens` / `FontVariantCaps` も同じ理由 — どちらも length を
-    /// 運ばない keyword-only property のため phase 3 に変換対象が無い)。
-    /// 50 → 51 (`Quotes` も同じ理由 — CSS Content 3 §2.4.1 は length を
-    /// 運ばない `[ <string> <string> ]+ | none` grammar のため phase 3 に
-    /// 変換対象が無い)。
-    /// 51 → 63 (CSS Grid Layout Module Level 1 の `GridTemplateAreas` /
-    /// `GridAutoFlow` / `GridRowStart` / `GridRowEnd` / `GridColumnStart` /
-    /// `GridColumnEnd` / `GridRow` / `GridColumn` (§7.3/§7.7/§8.3/§8.4) と
-    /// CSS Box Alignment Module Level 3 の `JustifyItems` / `JustifySelf` /
-    /// `PlaceItems` / `PlaceSelf` (§7.1/§6.1/§7.3/§6.3) — 12 variant とも
-    /// 同じ理由: keyword-only (または shorthand-with-no-length-components)
-    /// のため length を運ばず phase 3 に変換対象が無い。`GridTemplateColumns`
-    /// / `GridTemplateRows` / `GridAutoColumns` / `GridAutoRows` は track
-    /// list 中に `<length-percentage>` を運ぶため pass-through 側には
-    /// **加わらない** — `absolutize_in_page_context` のバケット comment
-    /// 参照)。
-    /// 63 → 65 (`Orphans` / `Widows`, CSS Fragmentation Module Level 3 §3.3 —
-    /// both carry a bare positive `<integer>`, not a length, so there is
-    /// nothing for phase 3 to absolutize).
-    /// 65 → 67 (`CustomProperty` / `Deferred` are retained before computed
-    /// value resolution and are not page-context length values).
-    /// 67 → 69 (`OutlineStyle` / `OutlineColor` are keyword/color values and
-    /// therefore need no page-context length conversion; `OutlineWidth` and
-    /// the `Outline` shorthand remain on the transform side because they carry
-    /// a width).
-    /// 69 → 73 (`BackgroundRepeat` / `BackgroundAttachment` /
-    /// `BackgroundClip` / `BackgroundOrigin`, CSS Backgrounds and Borders 3
-    /// §2.4/§2.5/§2.7/§2.8 — all 4 are keyword-only and therefore need no
-    /// page-context length conversion. `BackgroundSize` / `BackgroundPosition`
-    /// remain on the transform side because they carry
-    /// `<length-percentage>` — `absolutize_in_page_context`'s dedicated
-    /// `BackgroundSize`/`BackgroundPosition` arms, mirroring `Width`/
-    /// `Height` above).
-    /// 73 → 74 (`BackgroundImage`, CSS Backgrounds and Borders 3 §2.3 —
-    /// `none | <url>` carries no length payload either, same reasoning as
-    /// its 4 keyword-only siblings above).
-    /// 74 → 75 (`ObjectFit`, CSS Images Module Level 3 §5.1 — keyword-only,
-    /// carries no length payload, same reasoning as its background-*
-    /// keyword-only siblings above. `ObjectPosition` remains on the
-    /// transform side because it carries `<length-percentage>` — reuses
-    /// `CssPosition`/the `css_position` helper, same shape as
-    /// `BackgroundPosition`).
-    /// 75 → 77 (`Isolation` / `MixBlendMode`, CSS Compositing and Blending
-    /// Level 1 §3.4.2/§3.4.1 — both keyword-only, carry no length payload,
-    /// same reasoning as `ObjectFit` above. Unlike `Opacity`, which sits
-    /// beside these two in the enum but gets its own dedicated transform
-    /// arm below (a real `[0,1]` clamp), neither `isolation` nor
-    /// `mix-blend-mode` has any phase-3 work at all).
-    /// 77 → 79 (`MaskImage` / `ClipPath`, CSS Masking Level 1 §7.1/§5.1 —
-    /// both carry `<url>`/keyword-shaped payloads this crate never
-    /// absolutizes (`MaskImage`/`ClipPath` doc's scope notes), same
-    /// identity-pass-through reasoning as `BackgroundImage` above).
-    /// 79 → 81 (`Transform` / `Filter`, CSS Transforms Level 1 §4 / CSS
-    /// Filter Effects Level 1 §5 — both currently pass through unchanged,
-    /// but not for the same reason: `filter`'s own Computed value is "as
-    /// specified" so this is simply correct, while `transform`'s is "as
-    /// specified, but with lengths made absolute" so this is a real,
-    /// currently-unimplemented gap — see the identity-pass-through arm's
-    /// own doc comment above and `TransformFunction`/`FilterFunction`
-    /// doc's scope notes for the full distinction).
-    /// 95 → 99 (`TextDecorationSkipInk` / `TextDecorationSkipSpaces` /
-    /// `TextEmphasisPosition` / `TextUnderlinePosition`, CSS Text
-    /// Decoration 4 ED — all keyword-only, carry no length payload, same
-    /// identity-pass-through reasoning as the 3 `text-decoration`
-    /// longhands above).
-    /// 99 → 98 (`TextDecoration` shorthand leaves the identity bucket for
-    /// the transform side: its `-thickness` component carries
-    /// `<length-percentage>` — dedicated fall-through arm, same shape as
-    /// `Background` above).
-    /// 98 → 99 (`Page`, CSS Paged Media 3 §8.1 — keyword-only, carries no
-    /// length payload, same identity-pass-through reasoning as
-    /// `TextCombineUpright` above).
-    ///
-    /// `sample_for` 駆動の corpus の対象外 — 本定数と下の `raw_corpus_residue_variants`
-    /// の `+ 3` 項は「phase 3 の分類自体」という別種の hand-maintained な事実
-    /// であり、明示的に別途判断している。`border-spacing` は phase 3 で
-    /// absolutize するため transform bucket に含めず、`caption-side` と
-    /// `empty-cells` は keyword-only の pass-through bucket に含める。
-    /// この値は `page_corpus` の現在の identity/pass-through arms と同期する。
-    // Includes the five page-only inherit markers, which phase 3 leaves
-    // untouched as a defensive no-op after phase 2 has normally resolved them.
+    /// Number of corpus variants that require no page-context length
+    /// conversion. The exhaustive match in `absolutize_in_page_context`
+    /// determines the classification.
+    // Includes page-only inherit markers, which are resolved before this
+    // phase and therefore remain unchanged here.
     const PHASE_3_PASS_THROUGH_VARIANTS: usize = 120;
-
-    /// phase 3 が**変換する** variant 数。内訳は line-height 1 / padding
-    /// (longhand 4 + shorthand 1) / margin (longhand 4 + shorthand 1) /
-    /// border-width (longhand 4 + `border` shorthand 1 + `border-width`
-    /// shorthand 1) / width + height 2 /
-    /// font-size: larger/smaller 1 (`FontSizeRelative` —
-    /// `absolutize_in_page_context` の structurally-unreachable な safety-net
-    /// arm。到達しないが「素通し」ではなく実際に変換する形の arm なので
-    /// `PHASE_3_PASS_THROUGH_VARIANTS` 側には数えない) / text-shadow 1
-    /// (各 item の length 3 本を絶対化する実 transform arm、`text_shadow_item`
-    /// helper 参照) / transform 1 (`translate` 系の `<length-percentage>`
-    /// を `lp` と同じ split で絶対化する `transform_function` helper
-    /// 参照) / border-spacing 1 (2 軸の `<length>` を絶対化する実 transform
-    /// arm、`TabSize` と同じ round-trip 形) / text-decoration-thickness 1 /
-    /// text-decoration-inset 1 / `text-decoration` shorthand 1 (3 者とも
-    /// `<length-percentage>` 成分のみを absolutize する実 transform arm)。
-    /// (keyword-only の skip-ink / skip-spaces / emphasis-position /
-    /// underline-position 4 者は素通し側に数える。)
-    ///
-    /// 以前は `PROPERTY_VALUE_VARIANTS -
-    /// PHASE_3_PASS_THROUGH_VARIANTS` という `const` 式だった。
-    /// `PROPERTY_VALUE_VARIANTS` を廃止した (`page_corpus` の doc 参照) ので
-    /// `page_corpus().len()` (`Vec` を allocate するため const 文脈で呼べない)
-    /// を使う `fn` に変えてある。**この値の基準は `page_corpus().len()` —
-    /// corpus が `PropertyValue` の全 variant を実際に覆っている間だけ
-    /// 「変換する variant 数」を表す。** corpus の完全性自体は
-    /// この変更の当時は独立には検査されていなかった (旧 `const`
-    /// 式と数値的に同じ結果を返すことと「意味が同じ」ことは別の主張
-    /// だった) — その後の follow-up (`page_corpus` 手前の section
-    /// comment 参照) がこのギャップを埋め、`property_value_variant_registry!`
-    /// (`PropertyValue` 自身の variant 集合に対する網羅 match、`page_corpus`
-    /// 直後) と `page_corpus_covers_every_registered_property_value_variant`
-    /// (test、同じ並び) 経由で corpus 完全性の独立検査を復活させた。「基準
-    /// として妥当」は再び test で担保されている。
+    /// Number of corpus variants transformed by page-context resolution.
+    /// This is derived from the corpus size and the pass-through count.
     fn phase_3_transformed_variants() -> usize {
         page_corpus().len() - PHASE_3_PASS_THROUGH_VARIANTS
     }
 
-    /// phase 2 / phase 3 を**通す前**の corpus が持つ specified 層残滓の数 =
-    /// `phase_3_transformed_variants()` + phase 2 が解決する `font-size` /
-    /// `font-weight` / `text-align: match-parent` の 3。
-    ///
-    /// 数自体 (3) はこの改修の前後で**変わらない** — 変わったのは
-    /// 3 番目の意味: 以前は「phase 2 でも phase 3 でも解決しない孤立した残滓」
-    /// (`text-align: match-parent`) だったが、今は他 2 つ (`font-size` /
-    /// `font-weight`) と同じ「phase 2 が解決する」側に合流した。この値は
-    /// **raw corpus** (どちらの phase も通していない) に対する残滓数を数えて
-    /// いるので、resolve 先が phase 2 か「resolve 不能」かに関わらず raw 値
-    /// そのものが `specified_layer_residue` に引っかかる限り数は同じになる。
-    ///
-    /// `FontSizeRelative` (`larger`/`smaller`) もこの「phase 2 が解決する」
-    /// 3 種と同じ扱いに**見える**が、`+3` には数えない — phase 3
-    /// (`absolutize_in_page_context`) 側で `FontSize` / `FontWeight` /
-    /// `TextAlign::MatchParent` は「pass-through」bucket
-    /// (`PHASE_3_PASS_THROUGH_VARIANTS`) に居るのに対し、`FontSizeRelative` は
-    /// 独自の (structurally unreachable な) transform arm を持ち
-    /// `phase_3_transformed_variants()` 側に既に数えられているため
-    /// (二重計上を避ける、上記関数の doc 参照)。
-    ///
-    /// # keyword-only phase-3 transforms は逆方向の例外
-    ///
-    /// その rework までは「phase 3 が変換する variant」と「raw
-    /// corpus サンプルが specified 層残滓を持つ variant」が偶然 1:1 対応して
-    /// いた — `phase_3_transformed_variants()` の内訳 (`padding` / `margin` /
-    /// `border-*-width` / `width` / `height` / `line-height` /
-    /// `font-size: larger/smaller`) は全て raw サンプルに `Length::Em`/`Rem`/
-    /// `Pt` を使う worst-case payload だったため、変換対象 = 残滓持ち、が
-    /// 常に成立していた。
-    ///
-    /// `overflow-x`/`overflow-y`/`overflow` は CSS Overflow 3 §3.1 の
-    /// cross-axis coupling (`resolve_overflow`) により phase 3 で実際に
-    /// 変換される (`absolutize_in_page_context` の `OverflowX`/`OverflowY`/
-    /// `Overflow` arm、`phase_3_transformed_variants()` に正しく含まれる) が、
-    /// payload は length を運ばない keyword (`OverflowValue`) のみなので raw
-    /// corpus サンプルは `specified_layer_residue` に一切引っかからない
-    /// (同関数の `OverflowX`/`OverflowY`/`Overflow` arm が `None` を返す)。
-    /// この 1:1 対応が初めて崩れた 3 variant。
-    ///
-    /// `writing-mode` は同じ形の 4 番目の variant — `resolve_writing_mode`
-    /// (CSS Writing Modes 4 §3.2) により phase 3 で実際に変換される
-    /// (`absolutize_in_page_context` の `WritingMode` arm) が、payload は
-    /// length を運ばない keyword (`WritingMode`) のみなので raw corpus
-    /// サンプル (`VerticalRl`) も `specified_layer_residue` に引っかからない
-    /// (同関数の `WritingMode` arm が `None` を返す、`WritingMode` doc の
-    /// Non-goal 節参照)。
-    /// Future work: vertical writing-mode 実装時に本 collapse を
-    /// 削除し、`KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE` を 4 へ戻すこと。
-    ///
-    /// `opacity` (CSS Color 4 §3.3) は同じ形の 5 番目の variant だが、他の 4
-    /// つと異なり **keyword ではなく number** — `absolutize_in_page_context`
-    /// の `Opacity` arm は `[0, 1]` への range clamp という実 phase-3
-    /// transform を行う (`phase_3_transformed_variants()` に正しく含まれる)
-    /// が、payload (`f32`) は `Length` を運ばないので
-    /// `specified_layer_residue` はそもそも検査対象にしていない
-    /// (同関数の `Opacity` arm が `None` を返す) — length 残滓とは無関係な
-    /// 理由で同じバケットに落ちる。
-    ///
-    /// 定数名を `OVERFLOW_...` のままにしないのはこのため — 対応する variant が
-    /// overflow の 3 つだけではなくなった。`phase_3_transformed_variants()`
-    /// 側の +3 を打ち消す。
-    /// Future work: 5 のうち 1 は `writing-mode` 由来。vertical
-    /// writing 実装で collapse を削除したら 4 へ戻すこと。
+    /// Number of raw corpus variants that retain specified-layer values after
+    /// accounting for phase-2 resolution and keyword-only phase-3 transforms.
+    /// The count is used to check that page declarations expose computed
+    /// values rather than unresolved specified values.
     const KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE: usize = 5;
 
     fn raw_corpus_residue_variants() -> usize {
@@ -8126,12 +7648,7 @@ mod tests {
         }
     }
 
-    /// `FontSize` / `FontSizeRelative` が意図的に同じ `PropertyKey` を共有する
-    /// こと自体の direct check (`page_corpus_has_no_duplicate_or_mismatched_samples`
-    /// の doc が説明する単射性崩れの根拠)。property.rs 側の
-    /// `font_size_relative_shares_property_key_with_font_size` と同じ主張を
-    /// page 経路の corpus に対して確認する — corpus の 2 entry が同じ key を
-    /// 持つことは bug ではなく仕様であると明示する。
+    /// `font-size` and its relative form intentionally share one property key.
     #[test]
     fn page_corpus_font_size_and_font_size_relative_share_one_key() {
         let corpus = page_corpus();
@@ -8147,33 +7664,9 @@ mod tests {
         );
     }
 
-    /// phase 3 の「素通し」分類が doc の数え上げと一致すること。
-    ///
-    /// phase 3 追加時の diff が doc に書いた「21」が実測 22 だった drift の
-    /// 再発 pin。分類 (どの arm にどの variant を置くか) を動かすと落ちる。
-    ///
-    /// ⚠️ **射程**: 判定は `out == value` なので、check しているのは arm の所属
-    /// ではなく「`page_corpus` の payload に対する挙動」である。corpus が
-    /// payload を variant あたり 1 つしか持たない以上、`border_styles` を
-    /// `Sides::all(Solid)` に固定した本 test は **style gate 自体を check しない**
-    /// (gate は `cascade_page_border_width_*` の 4 本が持つ)。同様に `%` /
-    /// `auto` / `line-height: <number>` の挙動も本 test の射程外で、それぞれ
-    /// 専用の acceptance test がある。
-    ///
-    /// `page_corpus()` は phase 2 を通していない raw payload を含む
-    /// (`FontWeight::Bolder` / `TextAlign::MatchParent` 等) — 本 test はそれを
-    /// **意図的に** phase 3 へ直接投入して分類する。後の変更で
-    /// `absolutize_in_page_context` の引数が `ResolvedAgainstInherited` に
-    /// なったため、`ResolvedAgainstInherited::for_test` (`#[cfg(test)]` 限定)
-    /// を経由してこの raw payload を包む。
-    ///
-    /// 「変換」側の数 (`phase_3_transformed_variants()`) は独立には assert
-    /// しない — `unchanged + 変換された数 ==
-    /// page_corpus().len()` の恒等式と `phase_3_transformed_variants() ==
-    /// page_corpus().len() - PHASE_3_PASS_THROUGH_VARIANTS` の定義から、下の
-    /// `unchanged` の assert が通った時点で自動的に真になる算術的同語反復
-    /// になるため。`phase_3_transformed_variants()` 自体は
-    /// `raw_corpus_residue_variants()` から引き続き参照される。
+    /// Confirm that every corpus value is classified consistently by page
+    /// context resolution. Raw values are wrapped in the test-only inherited
+    /// context used by this phase.
     #[test]
     fn phase_3_variant_classification_matches_the_documented_counts() {
         let font_size = ComputedLength(20.0);
@@ -8553,67 +8046,12 @@ mod tests {
         assert_send::<PageCascadeResult>();
     }
 
-    // ── post-parse shorthand injection into `@page` ─────────────────────────
-    //
-    // `add_stylesheet` の**後**に declaration を shorthand variant へ書き戻す
-    // post-parse mutation 経路。`crate::rule::parse_declaration_block` の
-    // parse-time 展開はこの経路を守らない。element 経路の同形 gap を塞いだのが
-    // element-path 側の fix (`crate::cascade` の `collect_cascaded`)、`@page`
-    // 経路 = `cascade_page` を塞いだのが `@page`-path 側の fix (本節)。
-    //
-    // `RuleTree.page_rules` / `PageRule.declarations` は先述の可視性引き締め
-    // の後も `pub` field である (element 経路と違い可視性では閉じない)。何が
-    // 閉じていて何が開いているかは `crate::rule::expand_shorthand_into` doc の
-    // 「2 と 3 で閉じている範囲が違う」節が canonical — ここには再掲しない
-    // (再掲は既に 2 度 drift した)。
-    //
-    // 守るべき spec は 2 条:
-    //
-    // - CSS Cascading L4 §3 <https://www.w3.org/TR/css-cascade-4/#shorthand>
-    //   "A shorthand property sets all of its longhand sub-properties, exactly
-    //   as if expanded in place."
-    // - CSS Cascading L4 §6.1 <https://www.w3.org/TR/css-cascade-4/#cascade-sort>
-    //   "Order of Appearance: … the last declaration in document order wins."
-    //
-    // ⚠️ **失敗の形は element 経路と異なる** (silent drop になる理由は
-    // `crate::rule::expand_shorthand_into` doc の「2 と 3 で破れ方が違う」節)。
-    // 展開しないと shorthand winner が `PropertyKey::Margin` 等の独立 key に
-    // park するため、各 family test は「shorthand key が結果に存在しないこと」を
-    // 直接 assert する — element 経路には書けなかった強い guard である。
-    //
-    // 各 test の comment にある「展開の有無を区別する / しない」の判定は、
-    // `cascade_page` の展開 hunk を revert した状態での実測に基づく
-    // (`crate::cascade` の `post_parse_*` 群が
-    // 採ったのと同じ hunk-revert 法)。
+    // Post-parse shorthand injection into `@page` exercises the same CSS
+    // shorthand expansion and cascade ordering rules as parsed declarations.
+    // CSS Cascading Level 4 §3 and §6.1 require expansion into longhands and
+    // ordering by origin, importance, specificity, and appearance.
 
-    /// element-path 側の fix にあった helper (`cascade::tests::
-    /// cascade_with_post_parse_injection`) の `@page` 版。
-    ///
-    /// `css` を `RuleTree::add_stylesheet` で parse したあと、
-    /// `page_rules[0].declarations[idx].value` を `injected` に差し替え、
-    /// `cascade_page` を通した結果を返す。
-    ///
-    /// この手つきは **`@page`-path 側の fix が報告した当時の Consumer 経路**
-    /// そのもの。先述の可視性引き締めで
-    /// `Declaration::value` が `pub(crate)` になったので、もう crate 外からは
-    /// 書けない。
-    ///
-    /// `PageRule` を直接 literal 構築しないのが要点 — `#[non_exhaustive]` は
-    /// crate 内構築を妨げないので、literal だと **報告された経路とは別の経路**を
-    /// test してしまう。
-    ///
-    /// ⚠️ 差し替えるのは `.value` **だけ**なので、`css` の `idx` 番目の
-    /// declaration は 2 役を持つ:
-    ///
-    /// 1. **値は捨てられる** — 単に「その位置に declaration を 1 個作る」ための
-    ///    placeholder (以降の assert に一切現れない `99px` を置いている)。
-    /// 2. **`important` flag は生き残り、injected shorthand に載る** — 展開時に
-    ///    各 longhand へ copy される。これを利用して「注入 shorthand は normal」
-    ///    を作っているのが
-    ///    `post_parse_page_important_longhand_survives_later_normal_shorthand`。
-    ///
-    /// `PageInheritance::LegacyInitialValues` = L3 legacy exception (initial values に解決)。
-    /// 本節の fixture は全て `px` なので phase 2 / phase 3 は恒等写像になる。
+    /// Build a page cascade after replacing one parsed declaration value.
     fn page_with_post_parse_injection(
         css: &str,
         idx: usize,
@@ -8629,10 +8067,7 @@ mod tests {
         )
     }
 
-    /// 4 side が全て互いに異なり、かつ initial (0) とも異なる margin fixture。
-    /// `Sides::all` だと「1 side しか展開していない」実装と「4 side 展開した」
-    /// 実装が区別できず、0 を使うと initial と区別できない
-    /// (`cascade::tests::distinct_margin_sides` と同じ意図)。
+    /// Return distinct values for the four margin sides.
     fn distinct_page_margin_sides() -> Sides<LengthOrAuto> {
         Sides {
             top: LengthOrAuto::Length(Length::Px(1.0)),
@@ -8642,14 +8077,7 @@ mod tests {
         }
     }
 
-    /// `key` 位置に入っている margin longhand の px 値。4 variant を or-pattern で
-    /// 畳んでいるのは、explicit な `PropertyValue` assert だと 4 side × 4 test で
-    /// 16 site に膨らむため。key ↔ variant が食い違う形の bug は本 helper では
-    /// 検出できないが、`cascade_page` の key は `PropertyValue::key()` 由来であり
-    /// (winner selection の `let key = value.key();`)、その対応は
-    /// `crate::property` の `margin_longhand_keys_map_correctly` が check 済み。 // doc-pointer-lint:ignore: opt-out-3, #[cfg(test)] mod tests (non-#[test] mod-level helper doc) — rustdoc-blind, confirmed via わざと壊して確かめる (demoted from an already-linked span)
-    /// border 側に同型 helper を置かず explicit assert にしてあるのは、3
-    /// sub-property family ぶんの helper が要るのに対し assert が 12 個で済むため。
+    /// Return the pixel value for a margin longhand.
     fn margin_px(result: &PageCascadeResult, key: PropertyKey) -> Option<f32> {
         match result.declarations().get(&key) {
             Some(
@@ -8662,7 +8090,7 @@ mod tests {
         }
     }
 
-    /// `margin_px` の padding 版 (or-pattern の是非は同 doc を参照)。
+    /// Return the pixel value for a padding longhand.
     fn padding_px(result: &PageCascadeResult, key: PropertyKey) -> Option<f32> {
         match result.declarations().get(&key) {
             Some(
@@ -8677,14 +8105,6 @@ mod tests {
 
     #[test]
     fn post_parse_page_margin_shorthand_before_longhand_lets_longhand_win() {
-        // 注入後の declaration 列 (= `margin: 1px 2px 3px 4px; margin-top: 10px`):
-        //   `[0]` Margin(1,2,3,4)   ← 注入
-        //   `[1]` MarginTop(10px)
-        // spec §3 + §6.1 → top=10 (後方 longhand)、right/bottom/left=2/3/4。
-        //
-        // **展開の有無を区別する**: 展開しない実装では `PropertyKey::Margin` が
-        // 独立 winner として park し、`MarginRight` 等は結果に現れない
-        // (top だけが 10px で残る silent drop)。
         let result = page_with_post_parse_injection(
             "@page { margin-left: 99px; margin-top: 10px }",
             0,
@@ -8695,8 +8115,6 @@ mod tests {
             Some(10.0),
             "後方 longhand が order of appearance で勝つこと (§6.1)"
         );
-        // 残り 3 side は shorthand 由来の per-side 値。全て assert するのは
-        // 「shorthand を単に落とす」実装と「top arm だけ展開する」実装を弾くため。
         assert_eq!(margin_px(&result, PropertyKey::MarginRight), Some(2.0));
         assert_eq!(margin_px(&result, PropertyKey::MarginBottom), Some(3.0));
         assert_eq!(margin_px(&result, PropertyKey::MarginLeft), Some(4.0));
@@ -8708,16 +8126,6 @@ mod tests {
 
     #[test]
     fn post_parse_page_margin_shorthand_after_longhand_lets_shorthand_win() {
-        // 鏡像方向 (`margin-top: 10px; margin: 1px 2px 3px 4px`):
-        //   `[0]` MarginTop(10px)
-        //   `[1]` Margin(1,2,3,4)   ← 注入
-        // spec §6.1 → 全 side が shorthand 由来 = 1/2/3/4。
-        //
-        // **展開の有無を区別する** — element 経路の同名 test
-        // (`post_parse_margin_shorthand_after_longhand_lets_shorthand_win`) は
-        // `PropertyKey` 宣言順のせいで偶然 pass する弱い guard だったが、
-        // `@page` では shorthand が独立 key に park するので top は 10px のまま
-        // 残り (spec は 1px)、区別できる。
         let result = page_with_post_parse_injection(
             "@page { margin-top: 10px; margin-left: 99px }",
             1,
@@ -8732,9 +8140,6 @@ mod tests {
 
     #[test]
     fn post_parse_page_padding_shorthand_before_longhand_lets_longhand_win() {
-        // margin と同じ形を padding family でも check (展開 arm が family ごとに
-        // 独立に書かれているため)。1/2/3/4px の意図は
-        // `distinct_page_margin_sides` doc と同じ。**展開の有無を区別する**。
         let result = page_with_post_parse_injection(
             "@page { padding-left: 99px; padding-top: 10px }",
             0,
@@ -8754,14 +8159,6 @@ mod tests {
 
     #[test]
     fn post_parse_page_border_shorthand_before_longhand_lets_longhand_win() {
-        // border は 4 side × 3 sub-property = 12 longhand に展開される。
-        // width / style を per-side で全て違う値にして、12 arm が sink 経由でも
-        // 落ちていないことを check する。
-        //
-        // **展開の有無を区別する**、しかも二重に: 展開しないと (a) 12 longhand
-        // が結果に現れず、(b) `page_context_border_styles` が style longhand を
-        // 1 つも見つけられないので initial `none` と判定し、残った
-        // `border-top-width: 10px` すら §3.3 の style gate で 0px に潰れる。
         let result = page_with_post_parse_injection(
             "@page { border-left-width: 99px; border-top-width: 10px }",
             0,
@@ -8845,14 +8242,6 @@ mod tests {
 
     #[test]
     fn post_parse_page_shorthand_injection_propagates_important() {
-        // 展開時の `!important` copy (spec §3 verbatim: "Declaring a shorthand
-        // property to be !important is equivalent to declaring all of its
-        // sub-properties to be !important.") が `@page` 入口の展開でも保たれる
-        // こと。注入した shorthand は placeholder の `!important` を継承するので
-        // 後方の normal longhand には**負けない**。
-        //
-        // **展開の有無を区別する** (element 経路の同名 test は区別しなかった) —
-        // 展開しないと `MarginTop` は 10px のまま残り、1/2/3/4 のどれも現れない。
         let result = page_with_post_parse_injection(
             "@page { margin-left: 99px !important; margin-top: 10px }",
             0,
@@ -8871,21 +8260,6 @@ mod tests {
 
     #[test]
     fn post_parse_page_important_longhand_survives_later_normal_shorthand() {
-        // 注入後の declaration 列
-        // (= `margin-top: 10px !important; margin: 1px 2px 3px 4px`):
-        //   `[0]` MarginTop(10px) !important
-        //   `[1]` Margin(1,2,3,4)  normal   ← 注入 (`important` は false のまま)
-        //
-        // CSS Cascading L4 §6.1 <https://www.w3.org/TR/css-cascade-4/#cascade-sort>
-        // の cascade sort は Origin and Importance を Order of Appearance
-        // **より上位**に置く。したがって後方の normal shorthand は前方の
-        // important longhand に勝てない → top=10。残り 3 side は shorthand 由来
-        // = 2/3/4。
-        //
-        // **展開の有無を区別する** — ただし区別しているのは下の 3 side assert と
-        // `contains_key` assert であり、headline の `MarginTop == 10.0` (§6.1) は
-        // 展開しない実装でも pass する (`MarginTop(10px) !important` がそのまま
-        // 独立 winner として残るため)。3 side assert を「冗長」として削らないこと。
         let result = page_with_post_parse_injection(
             "@page { margin-top: 10px !important; margin-left: 99px }",
             1,
@@ -8905,7 +8279,6 @@ mod tests {
 
     #[test]
     fn cascade_page_deterministic_across_10_runs() {
-        // Sibling of `cascade::tests::cascade_with_ua_deterministic_across_10_runs`.
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(
             "@page { color: red } \

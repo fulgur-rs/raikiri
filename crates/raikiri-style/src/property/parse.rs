@@ -3293,8 +3293,6 @@ fn linear_srgb_to_oklab(rgb: [f32; 3]) -> [f32; 3] {
 /// 落ちる — 本 helper が Ident 段で先取りする必要がある。resolution 委譲の
 /// rationale は [`BorderColor`] enum doc 参照 (paint scope 責務)。
 ///
-/// 5 call site (4 longhand + [`parse_border_shorthand`] color slot) が本
-/// helper を経由する (sibling-arm convention consistency)。
 fn parse_border_color(input: &mut Parser<'_, '_>) -> Option<BorderColor> {
     // `expect_ident_matching` は ASCII case-insensitive (cssparser 慣行、
     // sibling `parse_margin_side` line 1892 と同 shape の keyword intercept)。
@@ -3635,14 +3633,8 @@ fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
 /// - `false` → `<length>` mode: `%` を受理しない。
 /// - `true` → `<length-percentage>` mode: `%` も受理する。
 ///
-/// **受理 / 未対応 unit の一覧は本節では列挙しない** — 下の
-/// `Token::Dimension` match arm (module doc 冒頭の「該 arm を single source
-/// of truth として扱う」と同じ convention、`_` arm 直前 comment が未対応側の
-/// 代表例を持つ) と `parse_length_value_rejects_unsupported_unit` test が
-/// canonical。**ここに一覧を書き足す運用は受理 unit が増えるたびに drift
-/// した** (実際に `cm` を筆頭に、`ch` / `ex` / `ic` /
-/// `mm` / `in` / `pc` / `Q` / `lh` / `rlh` の一括拡張のたびに本節の一覧全体が
-/// stale 化していた)。
+/// The `Token::Dimension` match below is the source of truth for supported
+/// units; unsupported units are rejected.
 ///
 /// # Unitless zero
 ///
@@ -3798,17 +3790,8 @@ pub(crate) fn parse_length_value(
 /// (`parse_length_value` 自体は sign check しない仕様 — 同関数の "Sign / range"
 /// doc 参照)。
 ///
-/// 本 helper 導入前は 6 call site それぞれが `Length::Px(v) | Length::Em(v) |
-/// … => v` の OR-pattern を個別に持っていた。
-/// [`Length`] が 5 → 16 variant に増える際、6 site 全てを手で拡張すると
-/// 1 か所でも変数を書き漏らした variant が非負チェックを素通りする
-/// (実際 2 site — `parse_border_width_side` / `parse_line_height` — は
-/// `_ => None` catch-all を持っていたため、拡張漏れは compile error にならず
-/// 黙って新 unit を reject し続ける fail-quiet になっていた)。本 helper は
-/// **exhaustive match を 1 か所に集約**することで、新 variant 追加時に
-/// compile error で全 call site の見直しを強制する —
-/// 「拡張のたびに N site 分の負債が乗る」パターンをこの関数の
-/// 内側だけに閉じ込める。
+/// The exhaustive match keeps the non-negative range check consistent across
+/// all supported length units.
 fn length_payload(length: Length) -> f32 {
     match length {
         Length::Px(v)
@@ -3940,9 +3923,8 @@ fn parse_text_indent(input: &mut Parser<'_, '_>) -> Option<TextIndentValue> {
 /// checkpoint 経由の rewind を確保する (sibling: [`parse_content_list_items`] の
 /// bare `<string>` literal 分岐と同 pattern)。
 ///
-/// `expect_ident_matching` は ASCII case-insensitive (cssparser 慣行、既存
-/// `counter_reset_is_case_insensitive_on_none` test が挙動を pin) なので
-/// `AUTO` / `Auto` も透過的に受理される。
+/// `expect_ident_matching` is ASCII case-insensitive, so `AUTO` and `Auto`
+/// are accepted as well.
 pub(crate) fn parse_margin_side(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
@@ -4145,15 +4127,8 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 /// は内部で `input.next()` を unconditional に消費するため、ident 分岐は
 /// checkpoint 経由の rewind (`try_parse`) で先に試す必要がある。
 ///
-/// # `em` / `rem` / `%` / `pt` を受理するようになった経緯
-///
-/// 以前は `px` 以外を post-filter で drop していた。理由は「font-size
-/// context resolve 未実装」であり、その resolve が後に実装された —
-/// cascade が phase 2 で
-/// [`crate::resolve::resolve_font_size`] を呼び、`em` は**親の** computed
-/// font-size、`rem` は root element の computed font-size、`%` は同 §2.5
-/// "Percentages: refer to parent element's font size" に従って絶対化する。
-/// したがって drop の理由が消えたので受理する。
+/// Relative and percentage lengths are resolved by the cascade using the
+/// parent and root font-size bases required by CSS Values 4.
 ///
 /// # Non-negative constraint
 ///
@@ -4355,8 +4330,7 @@ fn parse_padding_side_res<'i>(input: &mut Parser<'i, '_>) -> Result<Length, Pars
 /// 違反した token は unconsumed のまま残る → caller
 /// (`rule.rs::DeclParser`) の `expect_exhausted` がその leftover を検知して
 /// declaration ごと drop する ([`parse_padding_shorthand`] の "Robustness"
-/// 節と同型 — `padding_shorthand_rejects_any_negative_value` test の doc が
-/// 同じ shape を check する)。
+/// 節と同型。
 fn parse_padding_logical_shorthand(input: &mut Parser<'_, '_>) -> Option<StartEnd<Length>> {
     let start = parse_padding_side(input)?;
     let end = input.try_parse(parse_padding_side_res).ok();
@@ -4376,30 +4350,9 @@ fn parse_padding_logical_shorthand(input: &mut Parser<'_, '_>) -> Option<StartEn
 /// [`crate::computed::INITIAL_FONT_SIZE_PX`] 参照) とは異なり、こちらは
 /// **spec が規範的に定める厳密値**であり、raikiri の選択ではない。
 ///
-/// **非 test code で `3.0` (border-width `medium`) を書く単一 source**
-/// ([`INITIAL_FONT_SIZE_PX`](crate::computed::INITIAL_FONT_SIZE_PX)
-/// と同じ pattern) — [`parse_border_width_side`] の `medium` keyword 分岐と、
-/// [`parse_border_shorthand`] の width 省略成分デフォルトが参照する。
-/// [`crate::specified::INITIAL_BORDER`] の `width` field も本 const を参照する
-/// (property → specified の既存依存方向 — `specified` は既に
-/// `use crate::property::{..}` で本 module の型を import している。逆方向の
-/// edge を作らないこと)。
-///
-/// 一方「initial の border-width が **3px そのものである**」ことの check は
-/// test 側が literal で持つ。**これらを「一貫性のため」本 const への参照に
-/// 書き換えてはならない** — 全体が自己参照になり、const の誤編集を何も
-/// 検出できなくなる ([`INITIAL_FONT_SIZE_PX`](crate::computed::INITIAL_FONT_SIZE_PX)
-/// doc と同じ理由)。該当 test は本 const を `5.0` 等に摂動すれば列挙できる
-/// (lib test が fail-fast して doctest section まで到達しないので、
-/// `cargo test -p raikiri-style` と `--doc` を別々に走らせること)。
-///
-/// **`thin` (1px) / `thick` (5px) は const 化しない** — 同じ規範文の 3 keyword
-/// の残り 2 つだが、[`parse_border_width_side`] の keyword match 内 1 箇所ずつ
-/// にしか現れず (border shorthand の省略成分デフォルトは spec 上も `medium`
-/// のみが initial value)、複数 site 間の drift 余地がない。const 化するのは
-/// 独立 literal が 2 箇所以上に分散している `medium` のみで十分
-/// (`medium` の重複を解消する scope、thin/thick への一般化は
-/// non-goal)。
+/// The implementation uses one shared constant for the `medium` keyword and
+/// the omitted shorthand width. The initial border value reuses the same
+/// constant.
 pub(crate) const BORDER_WIDTH_MEDIUM_PX: f32 = 3.0;
 
 /// `border-{top,right,bottom,left}-width` の single-side value を parse する。
@@ -4764,9 +4717,7 @@ pub(crate) fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides
 /// - **(b) 非対応 — CSS-wide keyword**: 未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
 ///   が canonical。同 ident 経路で他 keyword と同じく
-///   落ちる。旧稿は `all` を CSS-wide keyword の一つとして誤って列挙していた
-///   — `all` は shorthand property 名であって値ではなく、この訂正も
-///   consolidation の一部)。
+///   落ちる。
 /// - **calc() / var()**: 未実装、本 task scope 外
 ///   (`Token::Function` は `parse_length_value` が Dimension / Percentage 以外を
 ///   silent drop)。
@@ -4780,9 +4731,8 @@ pub(crate) fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides
 /// 確保する ([`parse_margin_side`] と同 pattern — margin の grammar `<length-
 /// percentage> | auto` と同 shape を LengthOrAuto payload で共有)。
 ///
-/// `expect_ident_matching` は ASCII case-insensitive (cssparser 慣行、既存
-/// `counter_reset_is_case_insensitive_on_none` test が挙動を pin) なので
-/// `AUTO` / `Auto` も透過的に受理される。
+/// `expect_ident_matching` is ASCII case-insensitive, so `AUTO` and `Auto`
+/// are accepted as well.
 ///
 /// # Non-negative filter (sibling: [`parse_padding_side`])
 ///
@@ -6357,26 +6307,9 @@ pub(crate) fn parse_place_self_shorthand(input: &mut Parser<'_, '_>) -> Option<P
 /// "values" は author が書いた `<number>` を指すため、`0.6` や `1000.4` は
 /// 丸めれば範囲内になるが invalid)。
 ///
-/// # Fractional weight は丸めずそのまま保持する
+/// Fractional values are preserved as `f32`; relative-weight resolution uses
+/// the unrounded computed value.
 ///
-/// **spec は fraction を落としてよいとは述べていない。** §2.2 の property table
-/// は `Computed value: a number, see below` と規定し、§2.2.2 "Missing weights"
-/// <https://www.w3.org/TR/css-fonts-4/#missing-weights> は "Fractional weights
-/// are valid" と明言する。WPT `css/css-fonts/parsing/font-weight-computed.html`
-/// の `test_computed_value('font-weight', '150.25')` (2-arg 形 = computed ==
-/// specified) がこれを直接 check している。
-///
-/// payload ([`FontWeightValue::Absolute`]) と
-/// [`crate::computed::ComputedValues::font_weight`] は共に `f32` (以前は
-/// `u16` だったが格上げ) なので、parse 時に整数化する必要が
-/// ない — `<number>` の `value` をそのまま保持する。旧実装は computed side が
-/// `u16` だったため round-half-away-from-zero で整数化しており、その丸めが
-/// §2.2.1 "Relative Weights" relative-weight table の*行選択*を変える 2 次被害
-/// があった (親 `font-weight: 349.5` + 子 `bolder` が旧実装では 350 への丸め後
-/// `350 <= w < 550` 行 → 700 に化け、spec の `100 <= w < 350` 行 → 400
-/// と食い違う。`549.5` + `bolder`、`749.5` + `lighter` も同型 — check:
-/// `crate::cascade::tests::bolder_lighter_resolve_against_unrounded_fractional_parent_weight`)。
-/// `f32` 格上げにより丸めそのものが不要になったため、この 2 次被害も解消される。
 pub(crate) fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeightValue> {
     match &next_numeric_stable(input).ok()? {
         // `<number [1,1000]>`。`value` field (f32) を見るので `1e3` のような
@@ -9752,9 +9685,8 @@ pub(crate) fn parse_transform_length_percentage(input: &mut Parser<'_, '_>) -> O
 /// huge-*exponent* literal like `rotate(0e999deg)` before `parse_angle`
 /// ever computes degrees from it, so — same as the guards above — this is
 /// defense-in-depth rather than the primary mechanism in ordinary use.
-/// Guarded here at the call site rather than inside `parse_angle` itself,
-/// to avoid changing that shared helper's behavior for its other
-/// (gradient) callers.
+/// The guard is local so the shared gradient parser keeps its existing
+/// behavior.
 pub(crate) fn parse_angle_reject_nan(input: &mut Parser<'_, '_>) -> Option<Angle> {
     let angle = input.try_parse(parse_angle).ok()?;
     (!angle.0.is_nan()).then_some(angle)
@@ -10050,7 +9982,7 @@ fn parse_sepia_args<'i>(input: &mut Parser<'i, '_>) -> Result<FilterFunction, Pa
 /// ([`FilterFunction::DropShadow`] doc参照). [`parse_text_shadow_lengths`]'s
 /// offset-x/offset-y already go through [`parse_shadow_length_reject_nan`]'s
 /// `!is_nan()` guard (see that function's doc), so this reuse inherits the
-/// guard automatically — no separate guard needed at this call site.
+/// guard automatically.
 pub(crate) fn parse_drop_shadow_args<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<FilterFunction, ParseError<'i, ()>> {

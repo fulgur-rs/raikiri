@@ -183,12 +183,8 @@ pub enum FontFaceDisplay {
 // Rule.
 // ---------------------------------------------------------------------------
 
-/// A parsed `@font-face` rule — one field per implemented descriptor
-/// (module doc "What's implemented"). Fields are `pub` for direct
-/// read/construction, mirroring [`crate::counter_style::CounterStyleRule`]'s
-/// rationale; the one invariant this type cares about — "only a spec-valid
-/// rule enters a registry" — is enforced at the [`FontFaceRegistry::insert`]
-/// boundary via [`FontFaceRule::is_valid`], not by field privacy.
+/// A parsed `@font-face` rule — one field per implemented descriptor.
+/// Registry insertion enforces that only spec-valid rules are retained.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub struct FontFaceRule {
@@ -720,20 +716,9 @@ pub fn parse_font_face_rules(source: &str) -> Vec<FontFaceRule> {
 
 /// Family-name → [`FontFaceRule`] registry.
 ///
-/// Same-name resolution is the standard cascade (origin first, then source
-/// order within an origin): a new rule overwrites unless it is outranked by
-/// the currently-stored one, reusing [`crate::cascade::cascade_rank`] rather
-/// than a local rank fn — the same sibling-arm convention
-/// [`crate::counter_style::CounterStyleRegistry`] follows (that type's doc
-/// has the full rationale, including why the call fixes `important` to
-/// `false` and why resolution is by rank rather than a hardcoded
-/// `Author`/`UserAgent` pair).
-///
-/// What this registry does **not** do: fetch `src: url(...)` targets,
-/// register bytes into a font collection, or pick a face for an element —
-/// all deferred (module doc "Scope"). The one production consumer so far is
-/// [`crate::ruletree::RuleTree::add_stylesheet`]'s second pass, which only
-/// populates; matching/fetching arrive with a later task.
+/// Same-name rules follow the standard cascade (origin first, then source
+/// order within an origin) using [`crate::cascade::cascade_rank`]. The
+/// registry stores complete rules and does not fetch sources or select faces.
 #[non_exhaustive]
 #[derive(Clone, Debug, Default)]
 pub struct FontFaceRegistry {
@@ -772,14 +757,8 @@ impl FontFaceRegistry {
         }
     }
 
-    /// Insert `rule` as having come from `origin`, applying the standard
-    /// cascade same-name precedence against whatever is currently stored for
-    /// `rule.family` (type doc for the exact resolution table). `pub(crate)`
-    /// — the one production caller is
-    /// [`crate::ruletree::RuleTree::add_stylesheet`]; external crates only
-    /// ever reach [`Self::insert`] (origin-blind) or [`Self::from_source`].
-    /// A rule that fails [`FontFaceRule::is_valid`] is silently dropped,
-    /// same enforcement point as [`Self::insert`].
+    /// Insert `rule` with an origin-aware same-name precedence. Invalid rules
+    /// are silently dropped, as in [`Self::insert`].
     pub(crate) fn insert_with_origin(&mut self, rule: FontFaceRule, origin: Origin) {
         if !rule.is_valid() {
             return;

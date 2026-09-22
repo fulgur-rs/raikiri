@@ -45,17 +45,6 @@ use crate::resolve::{
 /// と規定し、`medium` の実 px は UA 依存。本実装は browser default の 16px を
 /// 採る。
 ///
-/// **非 test code で 16px を書く単一 source** —
-/// [`ComputedValues::initial`] の `font_size` と
-/// [`crate::resolve::ResolveContext::initial`] の `root_font_size` が参照する。
-/// 両者は同一値でなければならず、独立に literal を持つと乖離を型検査で拾えない。
-///
-/// 一方「initial value が **16px そのものである**」ことの check は test 側が
-/// literal で持つ。**これらを「一貫性のため」本 const への参照に書き換えては
-/// ならない** — 全体が自己参照になり、const の誤編集を何も検出できなくなる。
-/// 該当 test は本 const を `20.0` 等に摂動すれば列挙できる (lib test が
-/// fail-fast して doctest section まで到達しないので、
-/// `cargo test -p raikiri-style` と `--doc` を別々に走らせること)。
 pub(crate) const INITIAL_FONT_SIZE_PX: f32 = 16.0;
 
 /// Persistent custom-property environment used by computed values.
@@ -293,17 +282,6 @@ pub struct ComputedValues {
     /// 規定しない ([`crate::property::initial_font_family`] doc 参照)。
     /// 本実装は `[Atom::from("serif")]` を採る。
     ///
-    /// [`Arc<Vec<..>>`] wrap: inheritance walk clone
-    /// (`SpecifiedValues::inherit_from` の `parent.font_family.clone()`、
-    /// `resolve_inheritance` の stack push + `out[idx] = computed.clone()`) が
-    /// **shallow (Arc reference-count increment)** になる。`font-family` は inherited property なので、
-    /// [`Self::counter_reset`] 等 (non-inherited) とはコストの形が異なる —
-    /// 「毎 node で initial にリセットする」コストではなく「inheritance walk が
-    /// 毎 node で値を運ぶ」コストで、N-node document あたり O(N) の 1-element
-    /// `Vec` malloc になっていた (out-of-diff pre-existing の perf 特性として発見)。
-    /// `Arc<Vec<T>>: Deref<Target = Vec<T>>` により downstream の `.iter()` /
-    /// `.len()` / `.is_empty()` は既存 pattern そのままで通る (dom/paint consumer
-    /// 波及 0)。
     pub font_family: Arc<Vec<Atom>>,
     /// `font-size`。**inherited**、initial: 16px (spec は `medium`、実 px は
     /// UA 依存)。CSS Fonts 4 §2.5 "Font size: the font-size property"
@@ -1921,59 +1899,10 @@ impl ComputedValues {
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout)。
     ///
-    /// **手動同期リスト — drift に注意**: 上の prose 列挙は手動で維持される
-    /// リストであり、[`crate::specified::SpecifiedValues`] の対応表
-    /// (`crates/raikiri-style/src/specified.rs` の `SpecifiedValues` doc の
-    /// property → 層の対応表) と同期して更新する必要がある。片方だけを更新すると
-    /// silent な継承 bug になる。新しい inherited property を追加する際は両方の
-    /// doc を同時に更新すること。将来的には単一の const 配列 / 生成マクロから
-    /// 両方の doc と実装を駆動できれば drift を機械的に防げるが、現状は手動同期
-    /// である。
+    /// The inherited/non-inherited classification is defined by each field's
+    /// documentation. Inherited fields are copied from the parent's computed
+    /// values; non-inherited fields retain their initial values.
     ///
-    /// # 実装 (delegation)
-    ///
-    /// cascade pipeline は本 method を使わない — winner の適用が staging 層
-    /// ([`SpecifiedValues`]) に移ったため、`resolve_inheritance` は
-    /// [`SpecifiedValues::inherit_from`] → [`SpecifiedValues::finalize`] を通る。
-    /// 本 method はそこへ delegate する thin wrapper であり、**分類の実装は
-    /// [`SpecifiedValues::inherit_from`] の 1 箇所だけに存在する** (新 property
-    /// 追加時に 2 箇所を更新する必要はない)。
-    ///
-    /// delegation が恒等である根拠 — [`SpecifiedValues::inherit_from`] の出力に
-    /// **font-relative な値は 1 つも含まれない**:
-    ///
-    /// - inherited な length 系 (`font_size` / `line_height`) は
-    ///   [`lift_font_size`](crate::resolve::lift_font_size) /
-    ///   [`lift_line_height`](crate::resolve::lift_line_height) が `Px` /
-    ///   keyword / number にしか写さず、いずれも絶対化の**不動点**である。
-    /// - non-inherited は全て initial value (`Px(0)` / `Auto` / `medium`+`none`)。
-    ///
-    /// 帰結として `finalize` は `em` / `rem` / `%` の arm を一度も踏まないので、
-    /// **`ResolveContext` の中身は結果に影響しない** (`rem` の参照値が現れない)。
-    /// 下で `parent.font_size` を渡しているのは形式上の要請にすぎず、
-    /// `ResolveContext::initial()` でも同じ値になる。check:
-    /// `inherit_from_is_independent_of_resolve_context`。
-    ///
-    /// `border` だけは「specified の initial (`medium` = 3px) が computed 層で
-    /// style gating により 0px に潰れる」変換を経るが、これは
-    /// [`Self::initial`] の `border` と同じ値であり non-inherited の要求どおり。
-    ///
-    /// `finalize` は `parent` (`&Self` 全体) から
-    /// `text_align` / `direction` も読んで `text-align: match-parent` を解決
-    /// するが、こちらも恒等である —
-    /// [`SpecifiedValues::inherit_from`] が `text_align` を親からそのまま
-    /// コピーする
-    /// ([`SpecifiedValues::text_align`](crate::specified::SpecifiedValues::text_align)
-    /// の doc 参照) ので、渡される
-    /// `self.text_align` は常に `parent.text_align` と等しく、`MatchParent`
-    /// では**あり得ない** (computed 値が `MatchParent` を取らない invariant、
-    /// [`crate::property::resolve_text_align_match_parent`] の debug_assert が
-    /// check する)。よって解決関数は常に "as specified" の pass-through 分岐を
-    /// 通り、`child.text_align == parent.text_align` になる。
-    ///
-    /// [`SpecifiedValues`]: crate::specified::SpecifiedValues
-    /// [`SpecifiedValues::inherit_from`]: crate::specified::SpecifiedValues::inherit_from
-    /// [`SpecifiedValues::finalize`]: crate::specified::SpecifiedValues::finalize
     pub fn inherit_from(parent: &Self) -> Self {
         let mut child = crate::specified::SpecifiedValues::inherit_from(parent).finalize(
             parent,
@@ -2516,12 +2445,8 @@ mod tests {
         }
     }
 
-    /// `inherit_from` は inherited を親からコピーし、non-inherited を initial に
-    /// 戻す。**`SpecifiedValues` への delegation が壊れたらここで落ちる。**
-    ///
-    /// field 単位で全 94 field を検査する — delegation は `finalize` を通るので、
-    /// 絶対化側の regression (例: `lift_font_size` が不動点でなくなる、
-    /// `resolve_border` の gating が消える) もここに現れる。
+    /// Inherited fields come from the parent; non-inherited fields use their
+    /// initial values.
     #[test]
     fn inherit_from_copies_inherited_and_resets_non_inherited() {
         let parent = non_initial_parent();

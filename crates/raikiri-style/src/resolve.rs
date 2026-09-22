@@ -15,13 +15,7 @@
 //! canonical な説明は [`Length`] の doc の「本型は『specified 層』を意味しない
 //! — 層は出所で決まる」節、page 経路が保証する内容は
 //! [`crate::page::PageCascadeResult::declarations`] の doc が canonical。
-//! **本節は要約に留め、規則の中身をここに書き足さないこと** — 以前ここには
-//! 「書き換えるときは必ずあちらと揃えること」と書いてあったが、その手運用は
-//! 実際に 2 度 drift した。現在は `page::tests` の
-//! `page_declarations_carry_no_specified_layer_residue` (以前は
-//! `page_declarations_carry_exactly_one_specified_layer_residue` という名前で、
-//! `text-align: match-parent` が唯一の specified 層残滓だった) が保証内容を
-//! 機械的に check している。
+//! 本節は層の関係だけを要約し、各 API の契約はそれぞれの doc comment に記す。
 //!
 //! # なぜ絶対化が独立 phase なのか
 //!
@@ -3073,9 +3067,7 @@ mod tests {
     };
     use crate::specified::SpecifiedValues;
 
-    /// `root_font_size` = 16px の共通 context (`rem` の参照値)。
-    /// `Rem` を含む test の期待値はこの 16px に依存する — 変更すると落ちる。
-    /// 自 node / 親の font-size は各 test が引数で個別に渡す。
+    /// Shared context for `rem`, with a 16px root font size.
     const CTX: ResolveContext = ResolveContext {
         root_font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
         root_line_height: None,
@@ -4004,12 +3996,8 @@ mod tests {
         assert_eq!(computed.width, ComputedLength(10.0));
     }
 
-    /// 追加した absolute unit (`pc`) も
-    /// `border-*-width` の style gating (この module doc / `resolve_border`
-    /// doc の "spec tension" 節) と組み合わさって正しく解決する — `1pc = 16px`
-    /// (CSS Values 4 §6.2)。`style: none` では新 unit も他 unit と同じく 0px に
-    /// gate される (regression check: この gate は絶対化の**後**に効くため、
-    /// unit を増やしても gate 自体の網羅性は変わらない)。
+    /// CSS Values 4 §6.2 defines `1pc = 16px`. Border width remains zero
+    /// when the border style is `none`, as required by CSS Backgrounds and Borders.
     #[test]
     fn border_pc_width_is_absolutized_and_still_gated_by_style() {
         let mut specified = SpecifiedValues::initial().border.top;

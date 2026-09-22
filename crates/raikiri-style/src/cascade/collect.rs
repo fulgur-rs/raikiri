@@ -24,10 +24,8 @@ pub(crate) type Specificity = u32;
 /// style attribute) are considered to have a specificity higher than any
 /// selector." (`(1, 0, 0, 0)` は CSS 2.1 §6.4.3 の旧表現であり L4 の規定ではない)。
 /// selectors crate は 32-bit packed で `id << 20 | class << 10 | element` を使う。
-/// `1 << 30` はその packed 空間のどの selector 由来 specificity よりも大きいので、
-/// 上記 "higher than any selector" を満たす。**この margin はちょうど 1** であり
-/// upstream が packing 幅を広げると反転しうる不変条件 — check は
-/// `tests::inline_specificity_exceeds_max_reachable_packed_specificity` を参照。
+/// `1 << 30` is above the selector-specificity range used by this adapter,
+/// satisfying the CSS ordering rule.
 pub(crate) const INLINE_SPECIFICITY: Specificity = 1 << 30;
 /// inline style の source_order — 全 stylesheet rule より後 (最終出現扱い)。
 pub(crate) const INLINE_SOURCE_ORDER: u32 = u32::MAX;
@@ -65,13 +63,8 @@ pub(crate) const PRESENTATIONAL_HINT_SOURCE_ORDER: u32 = 0;
 /// figure, listing, p, plaintext, pre, xmp { margin-top: 1em;
 /// margin-bottom: 1em; }` rule.
 ///
-/// Reuses [`INLINE_SPECIFICITY`]'s value rather than re-deriving an
-/// equivalent bound: that constant's own pinning test
-/// (`inline_specificity_exceeds_max_reachable_packed_specificity`) already
-/// proves it exceeds every specificity value reachable through the
-/// `selectors` crate's packed representation — the exact same bound any
-/// selector-based `Origin::UserAgent` rule (present or future) is subject
-/// to as well.
+/// Reuses [`INLINE_SPECIFICITY`]'s bound rather than defining a second
+/// selector-specificity threshold.
 pub(crate) const MARGIN_COLLAPSING_QUIRK_SPECIFICITY: Specificity = INLINE_SPECIFICITY;
 /// [`MARGIN_COLLAPSING_QUIRK_SPECIFICITY`]'s companion source_order. `0` —
 /// same reasoning as [`PRESENTATIONAL_HINT_SOURCE_ORDER`]: the
@@ -97,24 +90,9 @@ pub(crate) type CustomCascadedDecl = (CustomProperty, bool, Origin, Specificity,
 /// [`collect_cascaded`] の出力 — 全 node 分の candidate を単一 flat `Vec` に
 /// 積み、node ごとの部分区間を [`Range`] で引く。
 ///
-/// # 何を置換したか
-///
-/// 旧実装は `HashMap<StyleNodeId, Vec<CascadedDecl>>` — per-node に `Vec` を
-/// 1 本ずつ確保していた。n=1000 node の cascade で **collect_cascaded 単体
-/// 4,030 allocs / 2,439,940 bytes** (実測値)。ただしこの 4,030 のうち
-/// **1,020 allocs / 64,744 bytes は本 struct が触れていない
-/// `dom.child_ids(id).collect()` 行**に由来していた (同じ doc でその行だけを
-/// 単独実行して確認、当時は本 struct の対象外)。この残差は、
-/// [`collect_cascaded`] / [`super::inherit::resolve_inheritance`] 双方の呼び出し箇所を「捨て
-/// `Vec` へ `collect` して `rev()`」から「`stack` へ直接 `extend` してから
-/// 追加分だけ in-place `reverse()`」に書き換えることで解消済み — 中間
-/// allocation はもう存在しない (同じ形の第 3 の call site だった
-/// `crates/raikiri-style/src/ruletree.rs` の `walk_style_elements` も同じ
-/// 技法で解消済み、本 module の対象外)。per-node `Vec` の growth chain 自体が
-/// 担っていたのは残り **3,010 allocs / 2,375,196 bytes** — push のたび
-/// geometric に再確保するその growth chain が丸ごと allocation cost だった。
-/// 単一 arena にすると growth chain は文書全体で 1 本になり (n=1000 で 23
-/// allocs まで低下、-99.2%)、chain 長は `O(log 総 candidate 数)` に潰れる。
+/// The flat arena keeps candidate storage contiguous and records one range per
+/// node. This avoids per-node candidate containers while preserving document
+/// order.
 ///
 /// # なぜ struct で wrap するか (bare `(Vec<_>, HashMap<_, Range<usize>>)` にしないか)
 ///
@@ -126,11 +104,9 @@ pub(crate) type CustomCascadedDecl = (CustomProperty, bool, Origin, Specificity,
 /// 別 node の候補を静かに拾う。通常の呼び出し側 (実装コード) には
 /// [`candidates`](Self::candidates) だけを使わせることで、
 /// 「この node 自身の区間ちょうど」以外のスライスを組み立てさせない。
-/// `decls`/`ranges` フィールド自体は `pub(crate)` — no-overlap 不変条件
-/// (どの 2 node の区間も重ならない) を直接検証するテストのための例外的な
-/// 白箱アクセス経路であり、実装コードはこの 2 フィールドを直接読まない
-/// (常に `candidates`/`custom_candidates`/`pseudo_candidates`/
-/// `pseudo_custom_candidates` 経由)。
+/// The `decls`/`ranges` fields are `pub(crate)` so the owning cascade
+/// module can maintain the non-overlapping range invariant; implementation
+/// code reads candidates through the typed accessors.
 ///
 /// `pub(crate)` は [`super::inherit::resolve_inheritance`] 自身が `pub(crate)` (他 module の
 /// doc からの intra-doc link のため) であることに追随するだけで、他 module
@@ -973,23 +949,12 @@ mod tests {
 
     #[test]
     fn inline_specificity_exceeds_max_reachable_packed_specificity() {
-        // 現行 10-bit 飽和点 (1023) を十分に超える数。id field は 4096 個、
-        // element field は type-chain 1201 個 (下記) で現行 field を確実に
-        // 飽和させる。この余裕はあくまで「現行 10-bit field を確実に飽和
-        // させる」ためのものであり、upstream が将来 field 幅を広げた場合に
-        // **その新しい幅でも飽和し続ける**ことまでは保証しない (例えば
-        // 12-bit = 4095 まで広がれば、この個数では飽和しきらない)。
-        // それでも `measured_specificity` は selectors crate の公開 API から
-        // 都度実測する値なので、幅が変わって挙動が変化したこと自体は
-        // 検知できる — 「理論上の最大値と一致し続ける」のではなく
-        // 「upstream の実装変化を都度観測する」ことが本 test の check 機構。
+        // Build a selector whose specificity exceeds the inline-style
+        // constant. Repeated IDs, classes, and type selectors exercise all
+        // specificity components through the parser's public API.
         const FIELD_REPEAT: usize = 4096;
-        // element_selectors field は 1 compound selector につき type
-        // selector を 1 つしか持てないが、descendant combinator で compound
-        // を連結すれば compound ごとに LocalName 分が積み上がる。
-        // `"div "` (末尾 space = descendant combinator) を 1200 回連結した
-        // 直後に最終 compound `div#a#a...#a.b.b...:hover:active` を置き、
-        // id / class / element の 3 field を同時に飽和させる。
+        // A descendant chain accumulates type-selector specificity across
+        // compounds, while the final compound accumulates IDs and classes.
         const TYPE_CHAIN_REPEAT: usize = 1200;
         let type_chain: String = "div ".repeat(TYPE_CHAIN_REPEAT);
         let ids: String = "#a".repeat(FIELD_REPEAT);
@@ -1005,12 +970,7 @@ mod tests {
 
         assert!(
             INLINE_SPECIFICITY > measured_specificity,
-            "INLINE_SPECIFICITY ({INLINE_SPECIFICITY:#x}) は selectors crate の \
-             公開 API (Selector::specificity) で実測した到達可能最大値 \
-             ({measured_specificity:#x}) を上回らなければならない — CSS Cascading L4 \
-             §6.1 の 'higher than any selector' 要件。selectors crate の \
-             packed-specificity field 幅が変わった signal (cascade.rs \
-             INLINE_SPECIFICITY doc 参照)。"
+            "inline specificity must exceed the strongest supported selector"
         );
     }
 
@@ -1194,17 +1154,9 @@ mod tests {
 
     #[test]
     fn cascade_rank_orders_ua_user_hint_author_normal_then_reverses_for_important() {
-        // Direct unit exercise of `cascade_rank`'s full 8-arm match
-        // (`cascade_rank`'s doc has the full re-derivation and rank table).
-        // Pinned via a chain of relative-order assertions rather than exact
-        // `assert_eq!` values: the chain below establishes a complete total
-        // order over all 8 values (each value related to its neighbor, no
-        // gaps) — it does *not* prove the exact literal values 0-7 (e.g.
-        // ranks 10,11,12,14,15,16,17,18 would satisfy the same chain), but
-        // that's the right level of strength here, since none of
-        // `cascade_rank`'s 3 call sites — `counter_style.rs`'s
-        // `insert_with_origin`, `page.rs`'s `cascade_page`, this file's
-        // `beats` — switch on the literal `u8`, only compare/order it.
+        // Check the complete ordering without depending on the internal rank
+        // numbers; consumers compare ranks rather than interpreting their
+        // numeric representation.
         //
         // The Normal-tier ordering (UA < User < hint < Author) combines two
         // spec-verbatim facts: CSS Cascading L4 §6.1's origin list gives

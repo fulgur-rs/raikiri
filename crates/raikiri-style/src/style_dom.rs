@@ -308,16 +308,6 @@ pub trait StyleElement {
     /// having no backing storage, not an endorsement of collapsing empty
     /// values to absent.
     ///
-    /// This crate's own mock (`test_dom.rs`) intentionally keeps the older,
-    /// stricter "empty value collapses to `None`" behavior as a
-    /// simplification local to that mock (see its own doc comment) — it no
-    /// longer represents the real DOM's behavior.
-    /// `cascade::tests::attribute_exists_selector_does_not_match_empty_value_attr`
-    /// and
-    /// `cascade::tests::attribute_exact_match_selector_does_not_match_empty_value_attr`
-    /// check that mock-only behavior; they describe matching against
-    /// `TestDoc`, not against a real `Document`.
-    ///
     /// `id`'s own empty-is-absent normalization ([`Self::id`]) is a
     /// narrower, separate contract layered on top of this method — it does
     /// not apply to `attr()` itself.

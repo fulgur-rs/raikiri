@@ -13,111 +13,17 @@ use super::collect::{
 ///
 /// # Spec mapping (verbatim, live HTML Standard)
 ///
-/// HTML Living Standard §15.4.3 "Attributes for embedded content and
-/// images" (<https://html.spec.whatwg.org/multipage/rendering.html#dimRendering>):
+/// Map HTML `img` `width` and `height` attributes to presentational hints,
+/// following HTML Living Standard §15.4.3:
+/// <https://html.spec.whatwg.org/multipage/rendering.html#dimRendering>.
+/// Values use the HTML dimension-value parser; invalid attributes produce no
+/// hint, while zero is a valid value.
 ///
-/// > The `width` and `height` attributes on an `img` element's dimension
-/// > attribute source map to the dimension properties 'width' and 'height'
-/// > on the `img` element respectively.
-///
-/// "maps to the dimension property" (**not** "…(ignoring zero)" — cf. e.g.
-/// `<table width>`) は
-/// <https://html.spec.whatwg.org/multipage/rendering.html#maps-to-the-dimension-property>
-/// が定義: 属性値を [`parse_html_dimension_value`] (HTML LS "rules for
-/// parsing dimension values") で parse し、失敗しなければその結果を
-/// presentational hint の値として使う。`0` は "ignoring zero" ではないため
-/// 有効な hint 値になる。parse 失敗時は hint 自体を作らない (cascade 的には
-/// 属性が存在しないのと同じ — 他の source があればそれが勝ち、無ければ
-/// property の initial value `auto` のまま)。
-///
-/// # Non-goals (spec が定義するがこの関数が扱わないこと)
-///
-/// - **`aspect-ratio` mapping**: 同じ spec 段落が続けて "They similarly map
-///   to the aspect-ratio property (using dimension rules) of the `img`
-///   element" と述べるが、raikiri-style は `aspect-ratio` property を
-///   まだ実装していない ([`crate::property::PropertyValue`] に該当 variant
-///   なし) — mapping 先が存在しないので実装しようがない、spec 逸脱ではなく
-///   「まだ生えていない property への言及」。
-/// - **`dimension attribute source` 間接**:
-///   <https://html.spec.whatwg.org/multipage/embedded-content.html#concept-img-dimension-attribute-source>
-///   は "initially set to the element itself" で、`<picture>`/`srcset`
-///   選択があった場合のみ選ばれた `<source>` 側に切り替わる。raikiri は
-///   `<picture>` source 選択を未実装なので、この関数は常に `img` 要素自身の
-///   属性を読む — 上記 default と一致する straightforward な subset。
-/// - **`embed` / `iframe` / `object` / `video` / `input[type=image]`**: 同じ
-///   spec 段落の後続文が他要素にも同じ mapping を適用するが、本関数の
-///   scope narrowing は `img` のみに限定している (最小実装、将来の拡張の
-///   土台という位置づけ)。
-///
-/// # Cascade origin (`Origin::AuthorPresentationalHint` へ retag 済み、
-/// spec text 再確認済み)
-///
-/// CSS Cascading L5 §6.5 "Precedence of Non-CSS Presentational Hints"
-/// (<https://drafts.csswg.org/css-cascade-5/#preshint>, verbatim) はこの種の
-/// hint を "a special-purpose author presentational hint origin between the
-/// regular user origin and the author origin" — user origin と author
-/// origin の間に位置する独立 origin — に置くことを定め、"Presentational
-/// hints entering the cascade as author presentational hint origin rules
-/// can be overridden by author-origin styles, but not by non-important
-/// user-origin styles" と続ける。本関数は専用 variant
-/// [`Origin::AuthorPresentationalHint`] を採る — [`super::collect::cascade_rank`] はこれを
-/// `(User, false) => 1` より上、`(Author, false) => 3` より下に置く
-/// ([`Origin::User`] 挿入後の値 — [`super::collect::cascade_rank`] doc
-/// 参照)。この rank 差は `beats` の tuple compare `(rank, specificity, source_order)` の
-/// **第一要素**なので、真の UA-origin rule には specificity/source_order を
-/// 問わず常に勝ち、real author-origin 宣言 (stylesheet rule でも inline
-/// style でも) には specificity/source_order を問わず常に負ける — かつて
-/// (retag 前、旧版は hint も real 宣言も同じ `Origin::Author`
-/// に tag していた) は後者の保証を「hint の specificity を 0 に固定し、
-/// real 宣言が zero-specificity かつ stylesheet 先頭 rule の場合に限り
-/// 発生する exact tie を push 順序 (hint を先に push) で決着させる」という
-/// 同一 origin 内 tie-break に依存していた — 3rd tier 導入によりその依存は
-/// 解消され、origin rank だけで無条件に決着する。[`Origin::User`] の挿入は
-/// この結論を変えない — hint の rank は挿入後も
-/// 依然として real `Author` rank と等しくなることが無い (`AuthorPresentationalHint`
-/// と `Author` は常に隣接する別 rank 値のまま、[`super::collect::cascade_rank`] doc の rank
-/// 表参照) ため、[`super::collect::collect_cascaded`] が今も stylesheet rule matching /
-/// inline style より先にこの関数を push する呼び出し順は残っているが、
-/// 上記の通りもう correctness の必要条件ではない (無害な残置、re-verify 済み)。
-///
-/// テスト
-/// `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
-/// はこの「specificity を問わず real author 宣言が勝つ」性質を、かつては
-/// exact-tie 経由で、今は origin rank 差で直接 exercise する ([`Origin::User`]
-/// 挿入後も rank 差の大小関係は変わらないため、この test は無変更で check
-/// し続ける)。
-///
-/// `Origin::User` no-producer 残差の解消: raikiri-style 内の
-/// [`Origin::User`] variant 自体を追加した時点 ([`super::collect::cascade_rank`] の 4-tier
-/// 化) では、consumer が渡す `extra_stylesheets` を実際に [`Origin::User`]
-/// へ route する producer がまだ無く、今も `StylesheetKind::Author` 経由で
-/// [`Origin::Author`] として届いていた。spec の完全な順序では hint は
-/// 「user origin より強い」はずだが、当時の実装は user stylesheet 宣言を
-/// hint より強い [`Origin::Author`] rank に一律 fold していた — user
-/// stylesheet が img の width/height を上書きできるという結果自体は spec と
-/// 一致していたが (`Author` rank は hint より常に上)、独立した User origin
-/// へ実際に route されていない分、モデルの精度としては不完全だった。
-///
-/// raikiri-traits 側の `StylesheetKind` に独立
-/// `User` variant を追加し raikiri-html で retag、umbrella 側の
-/// `stylesheet_kind_to_origin` を拡張する genuine multi-crate diff
-/// (raikiri-style 単体では完結しない) が着地し、この残差は解消された —
-/// `extra_stylesheets` は今は実際に [`Origin::User`] へ route される。**normal
-/// 宣言同士なら** user stylesheet の宣言はもう [`Origin::Author`] rank に
-/// fold されず、spec 通り hint ([`Origin::AuthorPresentationalHint`]、normal
-/// rank 2) より弱い ([`Origin::User`] normal rank 1) — つまり `<img width>`
-/// hint は今や normal な `extra_stylesheets` 由来の宣言に specificity を
-/// 問わず勝つ (real author-origin 宣言、たとえば in-document `<style>`、には
-/// normal 同士なら今も負ける — umbrella crate の `build_cascaded` doc の
-/// "DOM `<style>` vs `extra_stylesheets`" 節参照)。ただし
-/// `extra_stylesheets` 側が `!important` を持つ場合はこの勝敗も反転する:
-/// [`Origin::User`] の important rank (6) は hint の (常に normal で push
-/// される、[`super::collect::cascade_rank`] doc 参照) rank (2) より高いため、`!important`
-/// 付きの `extra_stylesheets` 宣言は hint に specificity を問わず勝つ。この
-/// normal-tier の振る舞いの umbrella 越し end-to-end check は
-/// `crates/raikiri/tests/build_cascaded.rs`'s
-/// `img_width_presentational_hint_beats_extra_stylesheets_user_origin_via_umbrella`
-/// 参照。
+/// The hints use CSS Cascading Level 5's author-presentational-hint origin:
+/// <https://drafts.csswg.org/css-cascade-5/#preshint>. They lose to normal
+/// author declarations and beat normal user-origin declarations. This helper
+/// handles `img` dimensions only; `aspect-ratio` and other element mappings
+/// are outside its scope.
 pub(crate) fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<CascadedDecl>) {
     // HTML-namespace gate:
     // this mapping is HTML LS's own presentational hint, scoped to the HTML
@@ -307,11 +213,7 @@ fn substantial_sibling_bounds<D: StyleDom>(
 
 /// Margin-collapsing quirks (HTML LS §15.3.9 "Margin collapsing quirks",
 /// <https://html.spec.whatwg.org/multipage/rendering.html#margin-collapsing-quirks>
-/// — fetched as raw spec HTML directly rather than through a summarizing
-/// fetch, the same precaution [`super::selector_match::matches_empty`]'s doc explains: this
-/// section sits deep inside one very long single-page spec, where
-/// summarized fetches have been observed to truncate before reaching the
-/// relevant section).
+///
 ///
 /// Four verbatim rules, all gated on [`StyleQuirksMode::Quirks`] (the DOM
 /// Standard's full "quirks mode", distinct from "limited-quirks mode" —
