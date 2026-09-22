@@ -8,11 +8,12 @@
 //!
 //! - [`dom`]      — DOM abstraction trait + identifier newtypes (Symbol, NodeId)
 //! - [`page`]     — Page-related opaque model types (PageFragment, PageBox, ...)
+//! - [`paint`]    — Owned renderer-neutral page paint payload prototype
 //! - [`policy`]   — ResourcePolicy trait + violation types
 //! - [`net`]      — NetworkProvider trait + Request / FetchedResource types
 //! - [`resolver`] — ReplacedResolver trait + intrinsic size types
 //! - [`error`]    — RenderError taxonomy + status / summary types
-//! - [`sink`]     — RenderSink trait
+//! - [`sink`]     — RenderSink and PagePaintSink traits
 //! - [`strategy`] — Strategy traits (LookaheadPolicy, TargetResolver, EmissionPolicy, ReflowPolicy)
 //! - [`config`]   — Entry point configs (RenderLimits, LookaheadConfig, ...)
 //! - [`plan`]     — `plan()` output types (DocumentPlan, PageSummary)
@@ -30,6 +31,7 @@ pub mod image;
 pub mod io;
 pub mod net;
 pub mod page;
+pub mod paint;
 pub mod plan;
 pub mod policy;
 pub mod resolver;
@@ -62,13 +64,19 @@ pub use page::{
     PageFragmentPageGeometry, PageFragmentRect, PendingResolution, ResolveOutcome, RunningTemplate,
     RunningTemplateId, TargetInfo, TargetRegistry, resolve_content_component,
 };
+pub use paint::{
+    PagePaintKind, PagePaintOperation, PagePaintPayload, PaintBorder, PaintBorderStyle, PaintClip,
+    PaintColor, PaintFill, PaintGlyph, PaintGlyphRun, PaintImage, PaintInsets, PaintRect,
+    PaintResource, PaintResourceBundle, PaintResourceId, PaintResourceKind, PaintShadow,
+    PaintTransform,
+};
 pub use plan::{BreakReason, DocumentPlan, PageSummary, TargetDefinition};
 pub use policy::{PolicyViolation, ResourceKind, ResourcePolicy, ViolationType};
 pub use resolver::{
     IntrinsicBox, ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError,
     ResolverRequest,
 };
-pub use sink::{PageEventObserver, RenderSink};
+pub use sink::{PageEventObserver, PagePaintSink, RenderSink};
 pub use strategy::{
     ContainerOverflowFallback, DirtyDeadline, EmissionPolicy, LookaheadPolicy, ProbeContext,
     ReflowAction, ReflowPolicy, ResolvedTarget, TargetRequest, TargetResolver,
@@ -113,6 +121,7 @@ mod tests {
         fn _assert<T: ?Sized>() {}
         _assert::<dyn RenderSink>();
         _assert::<dyn PageEventObserver>();
+        _assert::<dyn PagePaintSink>();
         _assert::<dyn ReplacedResolver>();
         _assert::<dyn ImagePixelSource>();
         _assert::<dyn NetworkProvider>();

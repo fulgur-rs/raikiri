@@ -2,6 +2,7 @@
 
 use crate::error::RenderSummary;
 use crate::page::{PageFragment, PageFragmentEvent}; // cov:ignore: type-only import
+use crate::paint::PagePaintPayload; // cov:ignore: type-only import
 
 /// Optional receiver for neutral page-local link events.
 ///
@@ -12,6 +13,25 @@ use crate::page::{PageFragment, PageFragmentEvent}; // cov:ignore: type-only imp
 pub trait PageEventObserver: Send {
     /// Receive one deterministic page-local event.
     fn observe_event(&mut self, event: PageFragmentEvent) -> std::io::Result<()>; // cov:ignore: trait signature has no executable body
+}
+
+/// Optional receiver for the additive neutral paint payload prototype.
+///
+/// This trait is intentionally separate from [`RenderSink`]: existing geometry
+/// consumers do not need to accept paint, and a producer may add paint without
+/// changing the geometry/event contracts. `accept_paint` takes ownership of an
+/// entire page payload, including its shared resource bundle, so the consumer
+/// may retain or serialize it after the callback returns. A future producer
+/// calls [`Self::finish_paint`] exactly once after all successful payload
+/// callbacks; it skips completion after an acceptance error or abort. The
+/// current `render_streaming` API does not call this trait.
+// cov:ignore: paint sink trait declaration has no executable body
+pub trait PagePaintSink: Send {
+    /// Receive one owned, page-local paint payload.
+    fn accept_paint(&mut self, payload: PagePaintPayload) -> std::io::Result<()>; // cov:ignore: trait signature has no executable body
+
+    /// Complete a successful paint stream.
+    fn finish_paint(&mut self) -> std::io::Result<()>; // cov:ignore: trait signature has no executable body
 }
 
 /// Consumer 側 render output receiver (Finding #4 completion protocol)。
