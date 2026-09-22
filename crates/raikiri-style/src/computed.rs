@@ -98,6 +98,13 @@ impl CustomPropertyEnvironment {
         None
     }
 
+    /// Look up a value declared on this node, without walking inherited
+    /// environments.  This is used by the consumer-property boundary, whose
+    /// registrations are local by default.
+    pub(crate) fn get_local(&self, name: &str) -> Option<SmolStr> {
+        self.local.get(name).cloned().flatten()
+    }
+
     /// Number of entries owned by this environment, for bounded regression
     /// tests and diagnostics.
     #[cfg(test)]
@@ -1593,9 +1600,29 @@ pub struct ComputedValues {
     /// CSS Variables' inherited custom-property semantics without adding a
     /// public API or a second root-style argument.
     pub(crate) custom_properties: Arc<CustomPropertyEnvironment>,
+    /// Resolved custom properties declared on this node only. This is kept
+    /// separately because nodes without declarations share their inherited
+    /// environment for performance.
+    pub(crate) local_custom_properties: Arc<CustomPropertyEnvironment>,
 }
 
 impl ComputedValues {
+    /// Return an effective resolved CSS custom-property value as an owned
+    /// string.  This accessor deliberately exposes only primitive text, not
+    /// the style engine's internal property environment.
+    pub fn resolved_custom_property(&self, name: &str) -> Option<String> {
+        self.custom_properties
+            .get(name)
+            .map(|value| value.to_string())
+    }
+
+    /// Return a custom-property value declared locally on this node.
+    pub fn local_resolved_custom_property(&self, name: &str) -> Option<String> {
+        self.local_custom_properties
+            .get_local(name)
+            .map(|value| value.to_string())
+    }
+
     /// CSS spec に沿った initial value。cascade で何も matching しなかった root
     /// node と、inheritance chain の terminate に使う。
     pub fn initial() -> Self {
@@ -1909,6 +1936,7 @@ impl ComputedValues {
             column_count: ColumnCountValue::Auto,
             column_width: ComputedColumnWidth::Auto,
             custom_properties: empty_custom_properties(),
+            local_custom_properties: empty_custom_properties(),
         }
     }
 
@@ -1937,6 +1965,7 @@ impl ComputedValues {
         // starts with the ordinary computed initial state, so carry this
         // crate-private bridge explicitly through the public helper too.
         child.custom_properties = parent.custom_properties.clone();
+        child.local_custom_properties = empty_custom_properties();
         child.quotes_auto = parent.quotes_auto;
         child
     }
@@ -2471,6 +2500,10 @@ mod tests {
             column_count: ColumnCountValue::Count(3),
             column_width: ComputedColumnWidth::Px(24.0),
             custom_properties: CustomPropertyEnvironment::from_map(HashMap::from([(
+                SmolStr::new("--fixture"),
+                SmolStr::new("1px"),
+            )])),
+            local_custom_properties: CustomPropertyEnvironment::from_map(HashMap::from([(
                 SmolStr::new("--fixture"),
                 SmolStr::new("1px"),
             )])),

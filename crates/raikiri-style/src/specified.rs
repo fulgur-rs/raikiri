@@ -46,7 +46,7 @@ use crate::property::{
     empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
     empty_string_set_entries, empty_text_shadow_list, empty_transform_list, initial_font_family,
     initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
-    resolve_text_align_match_parent, resolve_writing_mode,
+    resolve_text_align_internal_center, resolve_text_align_match_parent, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ResolveContext,
@@ -1228,8 +1228,10 @@ impl SpecifiedValues {
         );
         // text-align: match-parent の解決 (CSS Text 3 §6.1)。親を持つ node の
         // 分岐 — root element の "computes to start" は `finalize_as_root` 側。
-        let text_align =
-            resolve_text_align_match_parent(self.text_align, parent.text_align, parent.direction);
+        let text_align = resolve_text_align_internal_center(
+            resolve_text_align_match_parent(self.text_align, parent.text_align, parent.direction),
+            parent.text_align,
+        );
         // phase 2.5: line-height を絶対化する。
         // `lh` (自己参照、親基準) / `rlh` (tree-global、`ctx.root_line_height`
         // 基準) の判断根拠は `resolve_line_height` doc が canonical。
@@ -1353,7 +1355,8 @@ impl SpecifiedValues {
         // element." — 親の text_align / direction を一切参照しない、この
         // 関数に閉じた特別扱い (上記 doc 節参照)。
         let text_align = match self.text_align {
-            TextAlign::MatchParent => TextAlign::Start,
+            TextAlign::MatchParent | TextAlign::Inherit => TextAlign::Start,
+            TextAlign::InternalCenter => TextAlign::Center,
             other => other,
         };
         // phase 2.5: root element には親が無いので
@@ -1939,6 +1942,7 @@ impl SpecifiedValues {
             column_count: self.column_count,
             column_width: resolve_column_width(self.column_width, font_size, own_line_height, ctx),
             custom_properties: crate::computed::empty_custom_properties(),
+            local_custom_properties: crate::computed::empty_custom_properties(),
         }
     }
 }
@@ -2427,6 +2431,7 @@ mod tests {
             column_count: ColumnCountValue::Count(3),
             column_width: crate::resolve::ComputedColumnWidth::Px(24.0),
             custom_properties: crate::computed::empty_custom_properties(),
+            local_custom_properties: crate::computed::empty_custom_properties(),
         }
     }
 

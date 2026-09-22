@@ -30,6 +30,9 @@
 pub mod error;
 pub use error::CascadeError;
 
+pub mod consumer;
+pub use consumer::{ConsumerPropertyGrammar, ConsumerPropertyRegistration};
+
 pub mod style_dom;
 pub use style_dom::{
     StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind, StyleQuirksMode,

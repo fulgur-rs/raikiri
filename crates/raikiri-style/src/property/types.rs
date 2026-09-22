@@ -1095,9 +1095,10 @@ pub enum RelativeFontSize {
 /// - **Non-goal**: `left` / `right` — additional slant-direction keywords
 ///   in the same propdef grammar quoted above. Not implemented here;
 ///   silent drop like any other unhandled ident (below).
-/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
-///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical)。
+/// - **部分対応**: 継承 property に必要な CSS-wide `inherit` は受理し、computed
+///   層で親の値へ解決する。他の CSS-wide keyword (`initial` / `unset` /
+///   `revert` / `revert-layer`) は未実装で silent drop (一覧・理由は
+///   [`PropertyValue`] doc の「CSS-wide keyword」節が canonical)。
 /// - **(a) spec-invalid**: 上記 5 keyword (`left` / `right` は上記 Non-goal
 ///   節参照) 以外の ident は silent drop = `None`。
 ///
@@ -2968,6 +2969,13 @@ pub enum TextAlign {
     /// 親の direction で `left`/`right` に解決した後、その解決値を継承)。
     /// root element では `start` に fallback (§6.1 spec verbatim)。
     MatchParent,
+    /// CSS-wide `inherit` for the inherited `text-align` property. It resolves
+    /// directly to the parent computed value before layout.
+    Inherit,
+    /// HTML UA stylesheet の `-internal-center`。親の computed alignment が
+    /// initial `start` のときだけ `center` に解決し、それ以外では親の値を
+    /// 継承する。これは author-facing CSS Text grammar の値ではない。
+    InternalCenter,
     /// `justify-all` — text-align-all と text-align-last の両方を justify に set、
     /// 末行にも justify を強制する (§6.1 spec verbatim)。
     JustifyAll,
@@ -3401,6 +3409,29 @@ pub(crate) fn resolve_text_align_match_parent(
             }
         }
         // match-parent 以外は spec 上 "as specified" — 解決不要。
+        other => other,
+    }
+}
+
+/// HTML UA stylesheet の `text-align: -internal-center` と CSS-wide `inherit` を
+/// 親の computed 値に対して解決する。Blink/WebKit の table-header default と同じく、
+/// internal center は親が initial `start` の場合だけ中央寄せを選び、author が
+/// table 側で別の alignment を指定した場合はその値を継承する。`inherit` は常に
+/// 親の値を継承する。通常の CSS parser から author-facing grammar としては
+/// internal 値を公開しないが、UA stylesheet は同じ declaration pipeline を通る。
+pub(crate) fn resolve_text_align_internal_center(
+    specified: TextAlign,
+    parent_text_align: TextAlign,
+) -> TextAlign {
+    match specified {
+        TextAlign::InternalCenter => {
+            if parent_text_align == TextAlign::Start {
+                TextAlign::Center
+            } else {
+                parent_text_align
+            }
+        }
+        TextAlign::Inherit => parent_text_align,
         other => other,
     }
 }

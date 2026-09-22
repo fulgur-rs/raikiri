@@ -26,7 +26,10 @@ mod parse;
 pub use parse::{parse_html, parse_html_with_limits};
 
 mod stubs;
-pub use stubs::{plan, render_streaming, render_streaming_with_observer};
+pub use stubs::{
+    plan, render_streaming, render_streaming_with_consumer_properties,
+    render_streaming_with_observer,
+};
 
 mod html_to_png;
 pub use html_to_png::{html_to_png, html_to_png_with_fonts, html_to_png_with_resolver};
@@ -68,8 +71,8 @@ pub use raikiri_dom::{FontError, PageMargins, PageSlice, build_wpt_font_ctx, fir
 #[rustfmt::skip]
 pub use raikiri_traits::{
     // ── 既存 ──
-    AbortController, AbortSignal, Body, CascadeError, Dom, Element,
-    FetchedResource, HeaderMap, Method, NetworkError, NetworkProvider,
+    AbortController, AbortSignal, Body, CascadeError, ConsumerPropertyEvent,
+    ConsumerPropertyObserver, ConsumerPropertyValue, Dom, Element, FetchedResource, HeaderMap, Method, NetworkError, NetworkProvider,
     Node, NodeId, NodeKind, ParseError, QuirksMode, RenderError, RenderWarning,
     Request, ResourceKind, StylesheetKind,
 
@@ -253,6 +256,7 @@ pub use raikiri_style::{
 // 参照)。`BorderColor` / `BorderStyle` は追加された
 // (`Border` の残り 2 field の型を Consumer に型付きで公開する)。
 pub use raikiri_style::property::{Border, BorderColor, BorderStyle, LineHeight};
+pub use raikiri_style::{ConsumerPropertyGrammar, ConsumerPropertyRegistration};
 
 // ── url: `ParseOptions.base_url: Option<Url>` の実体型 ─────────────────
 pub use url::Url;
@@ -316,8 +320,20 @@ pub fn build_cascaded(doc: &UncascadedDocument) -> CascadeResult {
     build_cascaded_with_media_context(doc, &MediaContext::default())
 }
 
-/// Build the cascade for one page-context query using the default media
-/// context.
+/// Build a cascade that retains the supplied consumer-owned properties.
+pub fn build_cascaded_with_consumer_properties(
+    doc: &UncascadedDocument,
+    consumer_properties: &[ConsumerPropertyRegistration],
+) -> CascadeResult {
+    build_cascaded_with_media_context_for_page_and_consumer_properties(
+        doc,
+        &MediaContext::default(),
+        &PageContextQuery::default(),
+        consumer_properties,
+    )
+}
+
+/// Build the cascade for one page-context query using the default media context.
 pub fn build_cascaded_for_page(
     doc: &UncascadedDocument,
     page_query: &PageContextQuery,
@@ -346,7 +362,26 @@ pub fn build_cascaded_with_media_context_for_page(
     media_context: &MediaContext,
     page_query: &PageContextQuery,
 ) -> CascadeResult {
-    let tree = build_rule_tree(doc);
+    build_cascaded_with_media_context_for_page_and_consumer_properties(
+        doc,
+        media_context,
+        page_query,
+        &[],
+    )
+}
+
+/// Build a page-aware cascade while retaining registered consumer properties.
+///
+/// Registration is optional and has no effect on the compatibility cascade.
+/// Registered properties are parsed into the existing inherited custom-property
+/// environment, then exposed through the neutral observer at render time.
+pub fn build_cascaded_with_media_context_for_page_and_consumer_properties(
+    doc: &UncascadedDocument,
+    media_context: &MediaContext,
+    page_query: &PageContextQuery,
+    consumer_properties: &[ConsumerPropertyRegistration],
+) -> CascadeResult {
+    let tree = build_rule_tree_with_consumer_properties(doc, consumer_properties);
     cascade_with_media_context_for_page(&doc.dom, &tree, media_context, page_query)
         .expect("cascade は常に Ok のはず")
 }
@@ -356,7 +391,15 @@ pub fn build_cascaded_with_media_context_for_page(
 /// Keeping this operation separate lets a paged renderer retain the parsed
 /// `@page` rules while it performs a per-page cascade in a later page loop.
 pub fn build_rule_tree(doc: &UncascadedDocument) -> RuleTree {
-    let mut tree = RuleTree::empty();
+    build_rule_tree_with_consumer_properties(doc, &[])
+}
+
+/// Build a rule tree configured for the supplied consumer-owned properties.
+pub fn build_rule_tree_with_consumer_properties(
+    doc: &UncascadedDocument,
+    consumer_properties: &[ConsumerPropertyRegistration],
+) -> RuleTree {
+    let mut tree = RuleTree::empty_with_consumer_properties(consumer_properties);
 
     // Document に associate されている全 stylesheet を kind に応じて Origin
     // に map。呼び出し順 (=注入順) が cascade の source_order を決める。
@@ -441,6 +484,20 @@ mod html_document_tests {
             uncascaded,
             cascade,
         }
+    }
+
+    #[test]
+    fn consumer_property_cascade_wrapper_accepts_registration() {
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let uncascaded = raikiri_html::parse(&b"<p style=\"bookmark-level: 4\">Hi</p>"[..], &opts)
+            .expect("parse");
+        let registrations = [ConsumerPropertyRegistration::integer("bookmark-level")];
+        let cascade = build_cascaded_with_consumer_properties(&uncascaded, &registrations);
+        assert!(!cascade.computed.is_empty());
     }
 
     #[test]
