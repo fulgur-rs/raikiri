@@ -102,6 +102,11 @@ css/css-lists/marker-counter-ref.html
 # CSS Color offscreen opacity group-compositing reftest pair.
 css/css-color/t32-opacity-offscreen-b.xht
 css/css-color/t32-opacity-offscreen-b-ref.html
+# CSS Color 4 rgb() syntax and alpha parsing reftest pair.
+css/css-color/background-color-rgb-001.html
+css/css-color/background-color-rgb-001-ref.html
+css/css-color/background-color-hsl-001.html
+css/css-color/background-color-hsl-001-ref.html
 # CSS Images object-fit PNG matrix and shared RGB fixture.
 css/css-images/object-fit-fill-png-001i.html
 css/css-images/object-fit-fill-png-001-ref.html
