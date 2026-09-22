@@ -175,3 +175,4 @@ css/css-images/image-orientation/support/exif-orientation-9-u-pre-rotated.jpg
 css/css-images/object-fit-containcontainintrinsicsize-png-001i.tentative.html
 css/css-images/object-fit-containsize-png-001-ref.tentative.html
 css/css-images/support/colors-16x8.png
+css/css-break/tall-line-in-short-fragmentainer-002.html

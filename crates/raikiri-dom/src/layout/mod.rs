@@ -7073,6 +7073,60 @@ fn prepare_multicol_layout(doc: &mut Document, cascade: &CascadeResult, fallback
             })
             .count();
         let has_direct_text = !direct_text.is_empty();
+        // A fixed-height auto-fill multicol can place an oversized direct
+        // child in one column and let it overflow through the next column.
+        // Project that narrow case as a row-wrapping flex flow: each child
+        // owns one column's inline slot while its block overflow remains
+        // visible, matching the class-B break at the fragmentainer edge.
+        let fixed_fragmentainer_height = match cascade.computed[idx].height {
+            ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() && value > 0.0 => {
+                Some(value)
+            }
+            _ => None,
+        };
+        let has_oversized_direct_child = fixed_fragmentainer_height.is_some_and(|height| {
+            doc.nodes[idx].children.iter().any(|&child| {
+                doc.nodes[child].kind() == NodeKind::Element
+                    && doc.nodes[child].is_in_document()
+                    && doc.nodes[child].style.display != Display::None
+                    && style_dimension_length(doc.nodes[child].style.size.height)
+                        .is_some_and(|child_height| child_height > height + 0.001)
+            })
+        });
+        if !has_direct_text && has_oversized_direct_child {
+            let style = &mut doc.nodes[idx].style;
+            style.display = Display::Flex;
+            style.flex_direction = TaffyFlexDirection::Row;
+            style.flex_wrap = TaffyFlexWrap::Wrap;
+            style.align_items = Some(TaffyAlignItems::FLEX_START);
+            style.align_content = Some(TaffyAlignContent::FLEX_START);
+            style.justify_content = None;
+            style.gap.width = LengthPercentage::length(metrics.column_gap);
+            style.gap.height = LengthPercentage::length(0.0);
+            for &child in &doc.nodes[idx].children.clone() {
+                if doc.nodes[child].kind() != NodeKind::Element
+                    || !doc.nodes[child].is_in_document()
+                {
+                    continue;
+                }
+                let has_direct_br = doc.nodes[child]
+                    .children
+                    .iter()
+                    .any(|&grandchild| doc.nodes[grandchild].tag_name() == Some("br"));
+                let child_has_explicit_height =
+                    style_dimension_length(doc.nodes[child].style.size.height).is_some();
+                let child_line_height = line_height_px(&cascade.computed[child]);
+                let child_style = &mut doc.nodes[child].style;
+                child_style.flex_grow = 0.0;
+                child_style.flex_shrink = 0.0;
+                child_style.size.width = Dimension::length(metrics.column_width);
+                if !child_has_explicit_height && has_direct_br {
+                    child_style.size.height = Dimension::length(child_line_height);
+                }
+                child_style.min_size.width = LengthPercentageAuto::length(0.0);
+                child_style.flex_basis = Dimension::length(metrics.column_width);
+            }
+        }
         // A direct text run is the only case in this focused slice that needs
         // explicit line fragments. The line count is balanced top-to-bottom.
         let mut column_height: f32 = 0.0;
