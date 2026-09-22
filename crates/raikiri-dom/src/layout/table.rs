@@ -2677,4 +2677,46 @@ mod tests {
         assert!((left_layout.size.width - 55.0).abs() < 1.0);
         assert!((right_layout.size.width - 55.0).abs() < 1.0);
     }
+
+    #[test]
+    fn absolute_auto_table_uses_definite_containing_block_width() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("width: 100px; height: 100px; position: relative"),
+        );
+        let table = doc.append_element(
+            Some(container),
+            "table",
+            Style::default(),
+            Some("display: table; position: absolute; left: -100px; height: 100px"),
+        );
+        let row = doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display: table-row"),
+        );
+        let cell = doc.append_element(
+            Some(row),
+            "td",
+            Style::default(),
+            Some("display: table-cell"),
+        );
+        doc.append_text(cell, "x");
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).unwrap();
+        crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+        let table_layout = doc.nodes[table].unrounded_layout;
+        assert!(
+            (table_layout.size.width - 100.0).abs() < 1.0,
+            "table width was {}",
+            table_layout.size.width
+        );
+    }
 }
