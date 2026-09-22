@@ -59,16 +59,17 @@ Use this workflow only for visual WPT reftests with `rel=match` or
    python3 scripts/wpt/survey_reftests.py \
        --wpt-root target/wpt \
        --baseline expectations/raikiri-baseline.txt \
-       --category css/css-text --list-tests
+       --category css/css-text --theme hyphens --list-tests
    ```
 
 4. Pick one unbaselined theme with local references, a supported file extension,
    and no survey blockers. Inspect its actual tests and references before
    deciding it is one semantic theme. Directory and filename-prefix grouping
    are only hints; review `theme_source` and manually group root-level files.
-   If a category is absent, check the sparse patterns and `subset.txt` before
-   concluding it has no reftests. If a
-   test uses an extension the current runner does not discover (for example
+   If a category is absent, check the sparse patterns and fixed roots in
+   `subset.txt` before concluding it has no reftests. Do not edit the shared
+   sparse set for one theme. If a test uses an extension the current runner
+   does not discover (for example
    `.xht`), do not claim it is runnable until the runner supports it.
 5. Check `bd ready` and `bd search` for an existing issue. Reuse a suitable
    issue; otherwise create one under the WPT coverage umbrella and claim it.
@@ -78,9 +79,12 @@ Use this workflow only for visual WPT reftests with `rel=match` or
 ## 2. Work one theme
 
 1. Create the dedicated worktree under `.worktrees/`. Confirm its status is
-   clean before editing. Keep the theme's test files, reference files, and
-   required support assets in `scripts/wpt/subset.txt`; run `fetch.sh` again
-   after changing that subset.
+   clean before editing. Do not change `scripts/wpt/subset.txt` for a theme:
+   `css/`, `fonts/`, and `images/` are stable shared roots. `fetch.sh` reapplies
+   sparse patterns to the shared WPT checkout, so a narrow per-task edit can
+   hide tests from another branch. If a selected test needs files outside those
+   roots, stop and request a shared checkout-scope change; do not mutate the
+   sparse set for this PR.
 2. Establish the pre-change result for the selected tests. The survey itself is
    not an execution command. Use or add `raikiri-wpt` integration tests that
    run the selected WPT pairs at 800x600 with the bundled WPT font context.

@@ -10,6 +10,7 @@ expectations file.
 from __future__ import annotations
 
 import argparse
+import codecs
 import html.parser
 import json
 import os
@@ -26,6 +27,36 @@ HTML_EXTENSIONS = {".html", ".htm", ".xhtml", ".xht", ".xml", ".svg"}
 RUNNER_EXTENSIONS = {".html", ".htm", ".xhtml"}
 DEFAULT_ROOT = Path("target/wpt")
 DEFAULT_BASELINE = Path("expectations/raikiri-baseline.txt")
+XML_ENCODING_RE = re.compile(rb"<\?xml\b[^>]*\bencoding\s*=\s*(['\"])([^'\"]+)\1", re.IGNORECASE)
+META_CHARSET_RE = re.compile(rb"<meta\b[^>]*\bcharset\s*=\s*['\"]?\s*([^\s/;'\"]+)", re.IGNORECASE)
+META_CONTENT_ENCODING_RE = re.compile(
+    rb"<meta\b[^>]*\bcontent\s*=\s*['\"][^'\"]*?charset\s*=\s*([^\s;/'\"]+)",
+    re.IGNORECASE,
+)
+
+
+def decode_markup(data: bytes) -> str:
+    """Decode WPT markup using its BOM or declared XML/HTML charset."""
+    if data.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+        return data.decode("utf-32", errors="replace")
+    if data.startswith(codecs.BOM_UTF8):
+        return data.decode("utf-8-sig", errors="replace")
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return data.decode("utf-16", errors="replace")
+
+    prefix = data[:4096]
+    for pattern in (XML_ENCODING_RE, META_CHARSET_RE, META_CONTENT_ENCODING_RE):
+        match = pattern.search(prefix)
+        if match:
+            try:
+                encoding_group = 2 if pattern is XML_ENCODING_RE else 1
+                encoding = match.group(encoding_group).decode("ascii")
+                return data.decode(encoding, errors="replace")
+            except (LookupError, UnicodeDecodeError):
+                pass
+    # Reftest syntax uses ASCII markup, so replacement preserves tags and hrefs
+    # even when an unusual fixture omits a useful encoding declaration.
+    return data.decode("utf-8", errors="replace")
 
 
 class ReftestLinkParser(html.parser.HTMLParser):
@@ -60,9 +91,11 @@ def read_baseline(path: Path) -> set[str]:
 
 
 def checkout_revision(root: Path) -> str:
+    """Return a revision only when root is itself the WPT Git worktree."""
+    root = root.resolve()
     try:
         result = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel", "HEAD"],
             check=True,
             capture_output=True,
             text=True,
@@ -70,7 +103,23 @@ def checkout_revision(root: Path) -> str:
         )
     except (OSError, subprocess.SubprocessError):
         return "unknown"
-    return result.stdout.strip()
+
+    lines = result.stdout.strip().splitlines()
+    if len(lines) != 2 or Path(lines[0]).resolve() != root:
+        # `git -C <directory>` walks up to a parent repository. Do not label a
+        # copied WPT subtree with the Raikiri checkout's unrelated commit.
+        return "unknown"
+    return lines[1].strip()
+
+
+def output_overwrites_baseline(output_path: Path, baseline_path: Path) -> bool:
+    """Detect direct, symlink, and hard-link aliases before writing a report."""
+    if output_path.resolve() == baseline_path.resolve():
+        return True
+    try:
+        return output_path.exists() and baseline_path.exists() and os.path.samefile(output_path, baseline_path)
+    except OSError:
+        return False
 
 
 def resolve_reference(root: Path, test_path: Path, href: str) -> dict[str, str]:
@@ -182,8 +231,8 @@ def scan_reftests(
         if theme_filter and theme != theme_filter:
             continue
         try:
-            source = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as error:
+            source = decode_markup(path.read_bytes())
+        except OSError as error:
             errors.append(f"could not read {test_id}: {error}")
             continue
 
@@ -332,7 +381,7 @@ def render_text(report: dict, list_tests: bool) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Survey WPT reftests by category and directory-derived theme")
+    parser = argparse.ArgumentParser(description="Survey WPT reftests by category and theme")
     parser.add_argument("--wpt-root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     parser.add_argument("--category", help="only include test IDs under this WPT path prefix")
@@ -341,6 +390,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, help="write the report here instead of stdout")
     parser.add_argument("--list-tests", action="store_true", help="include each test ID in text output")
     args = parser.parse_args(argv)
+
+    if args.output and output_overwrites_baseline(args.output, args.baseline):
+        print("error: survey output must not overwrite the baseline", file=sys.stderr)
+        return 2
 
     try:
         baseline = read_baseline(args.baseline)
