@@ -2864,26 +2864,40 @@ fn paint_document_impl(
 
     let named_page_matches = |node_id: usize| match active_page_name {
         None => true,
-        Some(active) => match cascade.page_values.get(node_id) {
-            Some(raikiri_style::property::PageValue::Named(name)) => {
-                // Floats retain the preceding page in the page-name-float
-                // cases; do not hide the floated box merely because its
-                // inherited page value names the following page.
-                if matches!(
-                    cascade.computed[node_id].float,
-                    FloatValue::Left
-                        | FloatValue::Right
-                        | FloatValue::InlineStart
-                        | FloatValue::InlineEnd
-                        | FloatValue::Footnote
-                ) {
-                    true
-                } else {
-                    active.is_some_and(|page| name.0.as_str() == page)
+        Some(active) => {
+            // An inline canvas is a boundary marker for pagination, but its
+            // `page` value does not assign the replaced inline box to the
+            // named page. Keep painting it on the page selected by layout.
+            let is_inline_canvas = document.get_node(node_id).is_some_and(|node| {
+                node.tag_name()
+                    .is_some_and(|tag| tag.eq_ignore_ascii_case("canvas"))
+                    && matches!(cascade.computed[node_id].display, DisplayValue::Inline)
+            });
+            if is_inline_canvas {
+                true
+            } else {
+                match cascade.page_values.get(node_id) {
+                    Some(raikiri_style::property::PageValue::Named(name)) => {
+                        // Floats retain the preceding page in the page-name-float
+                        // cases; do not hide the floated box merely because its
+                        // inherited page value names the following page.
+                        if matches!(
+                            cascade.computed[node_id].float,
+                            FloatValue::Left
+                                | FloatValue::Right
+                                | FloatValue::InlineStart
+                                | FloatValue::InlineEnd
+                                | FloatValue::Footnote
+                        ) {
+                            true
+                        } else {
+                            active.is_some_and(|page| name.0.as_str() == page)
+                        }
+                    }
+                    _ => true,
                 }
             }
-            _ => true,
-        },
+        }
     };
 
     // body 自身の親 (`<html>`) の font-size は stack と独立した traversal
