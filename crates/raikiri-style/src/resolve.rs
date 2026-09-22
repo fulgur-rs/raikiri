@@ -265,6 +265,18 @@ pub enum ComputedTextDecorationInset {
     },
 }
 
+/// Computed `text-underline-offset`: `auto` or a fixed CSS-pixel offset.
+///
+/// The property is inherited. A length therefore becomes an absolute value at
+/// the declaring element and is lifted back to `px` when a child inherits it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ComputedTextUnderlineOffset {
+    /// Let the user agent choose the underline offset.
+    Auto,
+    /// Fixed offset from the underline's zero position in CSS pixels.
+    Length(ComputedLength),
+}
+
 /// Computed absolute length plus authored `ch` provenance.
 ///
 /// The computed value remains an absolute fallback for consumers that do not
@@ -2020,6 +2032,26 @@ pub fn resolve_text_decoration_inset(
             start: resolve_length(start, font_size, own_line_height, ctx),
             end: resolve_length(end, font_size, own_line_height, ctx),
         },
+    }
+}
+
+/// Resolve an inherited `text-underline-offset` length against the declaring
+/// element's font metrics. Percentages and deferred mixed calc values remain
+/// outside this focused horizontal foundation slice and use `auto`.
+pub fn resolve_text_underline_offset(
+    specified: LengthOrAuto,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedTextUnderlineOffset {
+    match specified {
+        LengthOrAuto::Auto | LengthOrAuto::Calc(_) => ComputedTextUnderlineOffset::Auto,
+        LengthOrAuto::Length(length) => ComputedTextUnderlineOffset::Length(resolve_length(
+            length,
+            font_size,
+            own_line_height,
+            ctx,
+        )),
     }
 }
 

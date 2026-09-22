@@ -59,8 +59,8 @@ use crate::resolve::{
     resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_length_percentage_with_ch, resolve_line_height,
     resolve_margin_length_or_auto, resolve_outline, resolve_tab_size,
-    resolve_text_decoration_inset, resolve_text_shadow_item, resolve_transform_function,
-    resolve_vertical_align, used_line_height_length,
+    resolve_text_decoration_inset, resolve_text_shadow_item, resolve_text_underline_offset,
+    resolve_transform_function, resolve_vertical_align, used_line_height_length,
 };
 
 /// Cascade winner を適用し終えたが、まだ絶対化していない per-node の値。
@@ -286,6 +286,9 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::text_decoration_inset`] の staging。`em`/`rem` 等の
     /// length は phase 3 で自 node の font-size / line-height 基準へ絶対化する。
     pub text_decoration_inset: TextDecorationInset,
+    /// [`ComputedValues::text_underline_offset`] の staging。inherited の
+    /// fixed length は phase 3 で declaring node の font-size 基準へ解決する。
+    pub text_underline_offset: LengthOrAuto,
     /// [`ComputedValues::vertical_align`] の staging。**型は
     /// [`ComputedValues::vertical_align`] と同じ** [`VerticalAlign`] だが、
     /// 層は field 一律ではない — `baseline`/`sub`/`super`/`middle`/
@@ -675,6 +678,7 @@ impl SpecifiedValues {
                 start: Length::Px(0.0),
                 end: Length::Px(0.0),
             },
+            text_underline_offset: LengthOrAuto::Auto,
             // CSS 2.1 §10.8.1: vertical-align initial は `baseline`。
             vertical_align: VerticalAlign::Baseline,
             // CSS Fonts 4 §2.4: font-style initial は `normal`。
@@ -1014,6 +1018,13 @@ impl SpecifiedValues {
                         .map(|c| lift_text_shadow_item(*c))
                         .collect(),
                 )
+            },
+            // CSS Text Decoration 4 §2.8: text-underline-offset is inherited.
+            text_underline_offset: match parent.text_underline_offset {
+                crate::resolve::ComputedTextUnderlineOffset::Auto => LengthOrAuto::Auto,
+                crate::resolve::ComputedTextUnderlineOffset::Length(value) => {
+                    LengthOrAuto::Length(Length::Px(value.px()))
+                }
             },
             // ── non-inherited: initial 値 ───────────────────────────────
             background_color: CssColor::TRANSPARENT,
@@ -1621,6 +1632,12 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
+            text_underline_offset: resolve_text_underline_offset(
+                self.text_underline_offset,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
             // 6 keyword (`baseline`/`sub`/`super`/`middle`/`text-top`/
             // `text-bottom`) は computed value = specified keyword、
             // `VerticalAlign::Length` (`<length>` / `<percentage>`) だけ own
@@ -1962,6 +1979,7 @@ mod tests {
         ComputedGridTrackListComponent, ComputedGridTrackSize, ComputedLengthPercentage,
         ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
         ComputedOutline, ComputedTabSize, ComputedTextDecorationInset, ComputedTextShadow,
+        ComputedTextUnderlineOffset,
     };
 
     /// `root_font_size` = 16px の共通 context。
@@ -2240,6 +2258,7 @@ mod tests {
                 start: ComputedLength(3.0),
                 end: ComputedLength(4.0),
             },
+            text_underline_offset: ComputedTextUnderlineOffset::Length(ComputedLength(5.0)),
             vertical_align: VerticalAlign::Sub,
             font_style: FontStyle::Italic,
             font_variant_caps: FontVariantCaps::SmallCaps,
@@ -2436,6 +2455,12 @@ mod tests {
         // CSS Text 3 §8.1: text-indent は inherited — computed → specified
         // の lift (`lift_length_percentage`)。
         assert_eq!(child.text_indent, Length::Px(9.0));
+        // CSS Text Decoration 4 §2.8: the fixed computed offset lifts back
+        // to a specified `px` length without being re-based on the child.
+        assert_eq!(
+            child.text_underline_offset,
+            LengthOrAuto::Length(Length::Px(5.0))
+        );
         // CSS Text 3 §8.1: hanging/each-line flags inherit like the length.
         assert!(child.text_indent_hanging);
         assert!(!child.text_indent_each_line);

@@ -428,6 +428,12 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "text-underline-position" => {
             parse_text_underline_position(input).map(PropertyValue::TextUnderlinePosition)
         }
+        // CSS Text Decoration 4 §2.8 text-underline-offset. The focused
+        // implementation accepts `auto` and fixed lengths; percentages are
+        // intentionally deferred because their used basis is font-size.
+        "text-underline-offset" => {
+            parse_text_underline_offset(input).map(PropertyValue::TextUnderlineOffset)
+        }
         // CSS Paged Media 3 §8.1 page. grammar: `auto | <custom-ident>`
         // (`PageValue` doc 参照)。
         "page" => parse_page_value(input).map(PropertyValue::Page),
@@ -7336,6 +7342,17 @@ fn parse_text_decoration_thickness(input: &mut Parser<'_, '_>) -> Option<TextDec
         return Some(TextDecorationThickness::FromFont);
     }
     parse_length_value(input, true).map(TextDecorationThickness::Length)
+}
+
+/// `text-underline-offset: auto | <length>` を parse する。
+///
+/// CSS Text Decoration 4 allows `<length-percentage>`, but this focused
+/// slice keeps percentage resolution out of the style/paint bridge.
+fn parse_text_underline_offset(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
+    if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
+        return Some(LengthOrAuto::Auto);
+    }
+    parse_length_value(input, false).map(LengthOrAuto::Length)
 }
 
 /// `text-decoration-inset: <length>{1,2} | auto` を parse する

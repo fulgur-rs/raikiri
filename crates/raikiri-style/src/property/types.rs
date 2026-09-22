@@ -7946,6 +7946,10 @@ pub enum PropertyValue {
     /// selected by the specified `writing-mode` before layout bridging.
     /// Appended to preserve existing variant discriminants.
     MinBlockSize(LengthOrAuto),
+    /// `text-underline-offset` — inherited, initial: `auto` (CSS Text
+    /// Decoration 4 §2.8). This focused implementation accepts `auto` and
+    /// fixed lengths; percentages and deferred mixed math remain unsupported.
+    TextUnderlineOffset(LengthOrAuto),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -8434,6 +8438,8 @@ pub enum PropertyKey {
     Columns,
     // Logical minimum block size; appended to preserve existing key slots.
     MinBlockSize,
+    // CSS Text Decoration 4 §2.8; appended to preserve existing key slots.
+    TextUnderlineOffset,
 }
 
 impl PropertyValue {
@@ -8520,6 +8526,7 @@ impl PropertyValue {
             PropertyValue::MinWidth(_) => PropertyKey::MinWidth,
             PropertyValue::MinHeight(_) => PropertyKey::MinHeight,
             PropertyValue::MinBlockSize(_) => PropertyKey::MinBlockSize,
+            PropertyValue::TextUnderlineOffset(_) => PropertyKey::TextUnderlineOffset,
             PropertyValue::BoxSizing(_) => PropertyKey::BoxSizing,
             PropertyValue::Direction(_) => PropertyKey::Direction,
             PropertyValue::OverflowX(_) => PropertyKey::OverflowX,
@@ -9680,6 +9687,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "min-width" => PropertyKey::MinWidth,
         "min-height" => PropertyKey::MinHeight,
         "min-block-size" => PropertyKey::MinBlockSize,
+        "text-underline-offset" => PropertyKey::TextUnderlineOffset,
         "box-sizing" => PropertyKey::BoxSizing,
         "direction" => PropertyKey::Direction,
         "overflow-x" => PropertyKey::OverflowX,

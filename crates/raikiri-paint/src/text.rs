@@ -26,7 +26,9 @@ use raikiri_style::property::{
     CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextAlign, TextAlignLast,
     TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextShadowColor,
 };
-use raikiri_style::{CascadeResult, ComputedTextDecorationInset, ComputedValues};
+use raikiri_style::{
+    CascadeResult, ComputedTextDecorationInset, ComputedTextUnderlineOffset, ComputedValues,
+};
 
 /// A decoration line carried from the element that originated it.
 ///
@@ -51,6 +53,8 @@ pub(crate) struct DecorationSpec {
     /// Inline-start/end endpoint offsets from `text-decoration-inset`.
     inset_start: f64,
     inset_end: f64,
+    /// Fixed offset for underlines originating at this element.
+    underline_offset: f64,
     origin_rtl: bool,
 }
 
@@ -146,6 +150,16 @@ fn element_decoration(cv: &ComputedValues, origin_shift_y: f32) -> Option<Decora
         ComputedTextDecorationInset::Auto => (0.0, 0.0),
         ComputedTextDecorationInset::Lengths { start, end } => (start.px() as f64, end.px() as f64),
     };
+    let underline_offset = match cv.text_underline_offset {
+        ComputedTextUnderlineOffset::Auto => 0.0,
+        ComputedTextUnderlineOffset::Length(value) => value.px() as f64,
+    };
+    let underline_offset = if underline_offset.is_finite() {
+        underline_offset
+    } else {
+        // cov:ignore: computed style values are sanitized before paint.
+        0.0
+    };
     let raw_font_size = cv.font_size.px() as f64;
     let origin_font_size = if raw_font_size.is_finite() {
         raw_font_size.max(1.0)
@@ -166,6 +180,7 @@ fn element_decoration(cv: &ComputedValues, origin_shift_y: f32) -> Option<Decora
         origin_shift_y,
         inset_start,
         inset_end,
+        underline_offset,
         origin_rtl: matches!(cv.direction, Direction::Rtl),
     })
 }
@@ -770,7 +785,9 @@ fn paint_decoration_line(
             abs_y + line_top as f64 + decoration.origin_ascent + decoration.origin_shift_y as f64;
         let thickness = decoration.origin_thickness;
         let center = match kind {
-            DecorationLineKind::Underline => baseline + decoration.origin_descent * 0.5,
+            DecorationLineKind::Underline => {
+                baseline + decoration.origin_descent * 0.5 + decoration.underline_offset
+            }
             DecorationLineKind::Overline => baseline - decoration.origin_ascent + thickness * 0.5,
             DecorationLineKind::LineThrough => baseline - decoration.origin_ascent * 0.35,
         };
@@ -1004,6 +1021,7 @@ mod tests {
             origin_shift_y: 0.0,
             inset_start: 10.0,
             inset_end: -10.0,
+            underline_offset: 0.0,
             origin_rtl: false,
         };
         assert_eq!(decoration_span(100.0, 200.0, &spec), Some((110.0, 210.0)));
@@ -1024,6 +1042,7 @@ mod tests {
             origin_shift_y: 0.0,
             inset_start: 60.0,
             inset_end: 50.0,
+            underline_offset: 0.0,
             origin_rtl: false,
         };
         assert_eq!(decoration_span(100.0, 200.0, &spec), None);

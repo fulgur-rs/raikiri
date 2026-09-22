@@ -1298,8 +1298,9 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Transforms exact 2D transform-origin/skew slice (+5).
         // + CSS Borders exact current-color and sub-unit slice (+2).
         // + CSS Text Decoration inset endpoint smoke (+1).
+        // + CSS Text Decoration fixed underline-offset horizontal smoke (+1).
         // + CSS Inline block-in-inline margin-collapse smoke (+1).
-        assert_eq!(set.baseline.entries.len(), 1256);
+        assert_eq!(set.baseline.entries.len(), 1257);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }

@@ -3217,8 +3217,14 @@ fn paint_document_impl(
                 let own_shift =
                     vertical_align_shift_px(cv.vertical_align, cv.display, parent_font_size);
                 let child_shift_y = shift_y + own_shift;
-                // Compute position:relative offset (CSS Positioned Layout 3 §3).
-                let (pos_dx, pos_dy) = position_offset_px(cv);
+                // Taffy applies `inset` to inline nodes' layout locations,
+                // while the table-caption path still needs the paint-side
+                // relative offset. Avoid shifting inline descendants twice.
+                let (pos_dx, pos_dy) = if matches!(cv.display, DisplayValue::Inline) {
+                    (0.0, 0.0)
+                } else {
+                    position_offset_px(cv)
+                };
                 let (own_transform_x, own_transform_y) =
                     transform_translation(cv, layout.size.width, layout.size.height);
                 let child_transform_x = transform_x + own_transform_x;
@@ -3859,8 +3865,8 @@ fn paint_document_impl(
                 };
 
                 // Reverse push makes the lowest stack level paint first.
-                // For position:relative, children are laid out at normal flow
-                // position but paint at offset position.
+                // Inline relative insets are already present in `layout.location`;
+                // other supported relative boxes retain the paint-side offset.
                 let child_parent_x = abs_x + pos_dx + fixed_dx;
                 let child_parent_y = abs_y + pos_dy + fixed_dy;
                 let own_multicol_clip_height = match cv.column_count {

@@ -89,6 +89,8 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
             }
         }),
 
+        PropertyValue::TextUnderlineOffset(value) => Some(serialize_length_or_auto(value)),
+
         _ => None,
     }
 }

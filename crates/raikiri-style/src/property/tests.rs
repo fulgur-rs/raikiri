@@ -6372,6 +6372,31 @@ fn text_underline_position_parses_auto_and_combinations() {
 }
 
 #[test]
+fn text_underline_offset_parses_fixed_lengths_and_auto() {
+    assert_eq!(
+        parse("auto", "text-underline-offset"),
+        Some(PropertyValue::TextUnderlineOffset(LengthOrAuto::Auto))
+    );
+    assert_eq!(
+        parse("11px", "text-underline-offset"),
+        Some(PropertyValue::TextUnderlineOffset(LengthOrAuto::Length(
+            Length::Px(11.0),
+        )))
+    );
+    assert_eq!(parse_entire("10%", "text-underline-offset"), None);
+    assert_eq!(
+        serialize_value(&parse_entire("11px", "text-underline-offset").unwrap()),
+        Some("11px".to_owned())
+    );
+}
+
+#[test]
+fn text_underline_offset_key_maps_to_property_key() {
+    let v = PropertyValue::TextUnderlineOffset(LengthOrAuto::Auto);
+    assert_eq!(v.key(), PropertyKey::TextUnderlineOffset);
+}
+
+#[test]
 fn text_underline_position_key_maps_to_property_key() {
     let v = PropertyValue::TextUnderlinePosition(TextUnderlinePosition::AUTO);
     assert_eq!(v.key(), PropertyKey::TextUnderlinePosition);

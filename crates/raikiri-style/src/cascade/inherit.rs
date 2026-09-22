@@ -870,6 +870,7 @@ pub(crate) fn resolve_against_inherited(
         // above since expansion removes it before this function runs.)
         | PropertyValue::TextDecorationThickness(_)
         | PropertyValue::TextDecorationInset(_)
+        | PropertyValue::TextUnderlineOffset(_)
         // `vertical-align`'s 6 keywords (`baseline`/`sub`/`super`/`middle`/
         // `text-top`/`text-bottom`) describe a shift *relative to the
         // parent's font metrics*, but that relation is a used-value/layout
@@ -1620,6 +1621,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // CSS Text Decoration 4 §2.9.1: non-inherited, but font-relative
         // lengths remain in staging until `SpecifiedValues::finalize`.
         PropertyValue::TextDecorationInset(v) => target.text_decoration_inset = v,
+        // CSS Text Decoration 4 §2.8: inherited; fixed lengths remain in
+        // staging until `SpecifiedValues::finalize` resolves them.
+        PropertyValue::TextUnderlineOffset(v) => target.text_underline_offset = v,
         // `text-decoration` shorthand fall-through。sibling `PropertyValue::Margin`
         // arm と同じく **safety net ではない** — 到達すれば 3 longhand winner を
         // 一括で破壊し spec と食い違う。cascade 経路では unreachable
