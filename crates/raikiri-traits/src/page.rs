@@ -190,6 +190,9 @@ pub struct PageFragmentItem {
     pub fragment_count: u32,
     /// True when this placement repeats the complete source content.
     pub is_repeat: bool,
+    /// Optional line range for a text placement (`start..end`, end exclusive).
+    /// Non-text placements leave this as `None`.
+    pub line_range: Option<PageFragmentLineRange>,
 }
 
 impl PageFragmentItem {
@@ -209,12 +212,41 @@ impl PageFragmentItem {
             fragment_index,
             fragment_count,
             is_repeat,
+            line_range: None,
         }
+    }
+
+    /// Attach a line range to a text placement.
+    pub fn with_line_range(mut self, line_range: PageFragmentLineRange) -> Self {
+        self.line_range = Some(line_range);
+        self
     }
 
     /// Whether this node is split across multiple non-repeated placements.
     pub fn is_split(&self) -> bool {
         !self.is_repeat && self.fragment_count > 1
+    }
+}
+
+/// Inclusive/exclusive line range carried by a text page placement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PageFragmentLineRange {
+    /// First line index, inclusive.
+    pub start: u32,
+    /// Last line index, exclusive.
+    pub end: u32,
+}
+
+impl PageFragmentLineRange {
+    /// Construct a line range.
+    pub fn new(start: u32, end: u32) -> Self {
+        Self { start, end }
+    }
+
+    /// Whether the range contains no lines.
+    pub fn is_empty(self) -> bool {
+        self.start >= self.end
     }
 }
 

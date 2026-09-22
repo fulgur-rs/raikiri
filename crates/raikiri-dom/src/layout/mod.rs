@@ -10,7 +10,7 @@
 
 use raikiri_traits::{
     NodeId, NodeKind, PageFragment, PageFragmentInsets, PageFragmentItem, PageFragmentKind,
-    PageFragmentOrientation, PageFragmentRect,
+    PageFragmentLineRange, PageFragmentOrientation, PageFragmentRect,
 };
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -8523,11 +8523,11 @@ pub struct PageSlice {
 /// unchanged; this convenience wrapper runs it and projects its post-layout
 /// DOM coordinates into page-local [`PageFragmentItem`] records.
 ///
-/// The first geometry pass clips a box at page boundaries.  It does not yet
-/// split a text shaping object at individual line boundaries; callers that need
-/// that stronger continuation contract must use the subsequent line
-/// fragmentation pass.  The clipping is nevertheless deterministic and keeps
-/// source-node identity stable, so it is safe as the neutral API seam.
+/// The geometry pass clips a box at page boundaries. Shaped text placements
+/// additionally carry a neutral line range based on each line's CSS-px center;
+/// the pass does not expose the shaping engine or re-shape the text. The
+/// projection is deterministic and keeps source-node identity stable, so a
+/// consumer can select continuation lines without re-running pagination.
 #[allow(clippy::result_large_err)]
 pub fn layout_page_fragments(
     document: &mut Document,
@@ -8605,6 +8605,17 @@ pub fn page_fragments_from_slices(
     // stable NodeId projection used by `raikiri_traits::Dom`; sorting by it
     // reproduces fulgur's deterministic BTreeMap iteration order regardless of
     // traversal implementation details.
+    struct PageFragmentSource {
+        node_id: NodeId,
+        node_kind: NodeKind,
+        tag_name: Option<String>,
+        abs_x: f32,
+        abs_y: f32,
+        width: f32,
+        height: f32,
+        line_metrics: Option<Vec<(f32, f32)>>,
+    }
+
     let mut nodes = Vec::new();
     let mut stack = vec![(body_id, 0.0_f32, 0.0_f32)];
     while let Some((node_id, parent_abs_x, parent_abs_y)) = stack.pop() {
@@ -8627,15 +8638,27 @@ pub fn page_fragments_from_slices(
             _ => false,
         };
         if include && abs_x.is_finite() && abs_y.is_finite() {
-            nodes.push((
-                NodeId::new(node_id as u64),
-                node.kind(),
-                node.tag_name().map(str::to_owned),
+            let line_metrics = (node.kind() == NodeKind::Text).then(|| {
+                node.text_layout()
+                    .into_iter()
+                    .flat_map(|layout| {
+                        layout.lines().map(|line| {
+                            let metrics = line.metrics();
+                            (metrics.block_min_coord, metrics.block_max_coord)
+                        })
+                    })
+                    .collect()
+            });
+            nodes.push(PageFragmentSource {
+                node_id: NodeId::new(node_id as u64),
+                node_kind: node.kind(),
+                tag_name: node.tag_name().map(str::to_owned),
                 abs_x,
                 abs_y,
                 width,
                 height,
-            ));
+                line_metrics,
+            });
         }
 
         if node.kind() == NodeKind::Element {
@@ -8644,12 +8667,14 @@ pub fn page_fragments_from_slices(
             }
         }
     }
-    nodes.sort_by_key(|(node_id, ..)| *node_id);
+    nodes.sort_by_key(|node| node.node_id);
 
-    for (node_id, node_kind, tag_name, abs_x, abs_y, width, height) in nodes {
-        let kind = match node_kind {
+    for source in nodes {
+        let kind = match source.node_kind {
             NodeKind::Text => PageFragmentKind::Text,
-            NodeKind::Element if tag_name.as_deref() == Some("img") => PageFragmentKind::Replaced,
+            NodeKind::Element if source.tag_name.as_deref() == Some("img") => {
+                PageFragmentKind::Replaced
+            }
             _ => PageFragmentKind::Box,
         };
         let mut placements = Vec::new();
@@ -8663,10 +8688,10 @@ pub fn page_fragments_from_slices(
             if !page_start.is_finite() || !page_end.is_finite() || page_end <= page_start {
                 continue;
             }
-            let (intersects, fragment_y, fragment_height) = if height > 0.0 {
-                let bottom = abs_y + height;
-                let intersects = abs_y < page_end && bottom > page_start;
-                let top = abs_y.max(page_start);
+            let (intersects, fragment_y, fragment_height) = if source.height > 0.0 {
+                let bottom = source.abs_y + source.height;
+                let intersects = source.abs_y < page_end && bottom > page_start;
+                let top = source.abs_y.max(page_start);
                 let bottom = bottom.min(page_end);
                 (
                     intersects,
@@ -8675,33 +8700,63 @@ pub fn page_fragments_from_slices(
                 )
             } else {
                 (
-                    abs_y >= page_start && abs_y <= page_end,
-                    (abs_y - page_start).max(0.0),
+                    source.abs_y >= page_start && source.abs_y <= page_end,
+                    (source.abs_y - page_start).max(0.0),
                     0.0,
                 )
             };
             if intersects {
-                placements.push((page_slot, fragment_y, fragment_height));
+                let line_range = source.line_metrics.as_deref().and_then(|metrics| {
+                    line_range_for_page(metrics, source.abs_y, page_start, page_end)
+                });
+                placements.push((page_slot, fragment_y, fragment_height, line_range));
             }
         }
         let fragment_count = placements.len() as u32;
-        for (fragment_index, (page_slot, y, fragment_height)) in placements.into_iter().enumerate()
+        for (fragment_index, (page_slot, y, fragment_height, line_range)) in
+            placements.into_iter().enumerate()
         {
             let Some(page) = pages.get_mut(page_slot) else {
                 continue;
             };
-            page.items.push(PageFragmentItem::new(
-                node_id,
-                PageFragmentRect::new(abs_x, y, width, fragment_height),
+            let item = PageFragmentItem::new(
+                source.node_id,
+                PageFragmentRect::new(source.abs_x, y, source.width, fragment_height),
                 kind,
                 fragment_index as u32,
                 fragment_count,
                 false,
-            ));
+            );
+            page.items.push(match line_range {
+                Some(range) => item.with_line_range(range),
+                None => item,
+            });
         }
     }
 
     pages
+}
+
+fn line_range_for_page(
+    line_metrics: &[(f32, f32)],
+    text_abs_y: f32,
+    page_start: f32,
+    page_end: f32,
+) -> Option<PageFragmentLineRange> {
+    let mut first = None;
+    let mut end = 0_u32;
+    for (index, (line_top, line_bottom)) in line_metrics.iter().copied().enumerate() {
+        let top = text_abs_y + line_top;
+        let bottom = text_abs_y + line_bottom;
+        let center = (top + bottom) * 0.5;
+        if !center.is_finite() || center < page_start - 0.001 || center >= page_end - 0.001 {
+            continue;
+        }
+        let index = index as u32;
+        first.get_or_insert(index);
+        end = index.saturating_add(1);
+    }
+    first.map(|start| PageFragmentLineRange::new(start, end))
 }
 
 fn finite_nonnegative(value: f32) -> f32 {
@@ -18101,6 +18156,58 @@ mod tests {
             (total_height - 120.0).abs() < 0.01,
             "fragments={fragments:?}"
         );
+    }
+
+    #[test]
+    fn layout_page_fragments_exposes_text_line_ranges_for_continuations() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let paragraph = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("width:20px;font-size:10px;line-height:10px"),
+        );
+        let text = doc.append_text(paragraph, "a ".repeat(200));
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 50.0;
+
+        let pages = layout_page_fragments(&mut doc, &cascade, page, FontContext::new())
+            .expect("page fragment layout should succeed");
+        let mut text_items: Vec<_> = pages
+            .iter()
+            .flat_map(|page| page.items.iter())
+            .filter(|item| item.node_id.0 == text as u64)
+            .collect();
+        text_items.sort_by_key(|item| item.fragment_index);
+        assert!(
+            text_items.len() >= 2,
+            "long text must continue across pages"
+        );
+        assert!(text_items.iter().all(|item| item.line_range.is_some()));
+        assert_eq!(
+            text_items
+                .first()
+                .and_then(|item| item.line_range)
+                .map(|range| range.start),
+            Some(0)
+        );
+        assert_eq!(
+            text_items
+                .last()
+                .and_then(|item| item.line_range)
+                .map(|range| range.end),
+            Some(doc.nodes[text].text_layout().expect("text shaped").len() as u32)
+        );
+        assert!(text_items.windows(2).all(|items| {
+            items[0].line_range.expect("range").end <= items[1].line_range.expect("range").start
+        }));
     }
 
     #[test]

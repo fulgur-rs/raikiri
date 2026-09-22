@@ -69,8 +69,8 @@ pub use layout::{
 };
 pub use node::{ElementData, Node, NodeData, NodeFlags, TextData};
 pub use raikiri_traits::{
-    PageFragment, PageFragmentInsets, PageFragmentItem, PageFragmentKind, PageFragmentOrientation,
-    PageFragmentRect,
+    PageFragment, PageFragmentInsets, PageFragmentItem, PageFragmentKind, PageFragmentLineRange,
+    PageFragmentOrientation, PageFragmentRect,
 };
 pub use target::{CounterSnapshot, counter_snapshots};
 
