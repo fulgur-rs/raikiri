@@ -30,24 +30,191 @@ use raikiri_style::{Length, PageOrientation, PageSize, PageSizeKeyword};
 use smol_str::SmolStr;
 use url::Url;
 
-/// PageFragment — 1 ページの painted output (glyph run / decoration / target slot 含む)。
-/// 未実装 — paint / pagestream 対応が入り次第 populate される予定。
-#[allow(missing_docs)]
-#[derive(Debug, Default, Clone)]
+/// One committed page of neutral layout geometry.
+///
+/// The producer is `raikiri-dom`'s pagination layer. The type deliberately
+/// carries only CSS-px geometry and neutral identifiers; it does not expose
+/// Taffy, Parley, `raikiri_style`, or a renderer-specific drawable payload.
+/// `PageFragment` is the page-level container passed to a future streaming
+/// sink. Its [`items`](Self::items) are ordered deterministically by the
+/// pagination producer.
+#[derive(Debug, Default, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct PageFragment {
-    // 将来 populate 予定のフィールド:
-    //   pub page_index: u32,
-    //   pub page_box: PageBox,
-    //   pub items: Vec<PaintedBoxItem>,
-    //   pub target_slots: Vec<TargetSlot>,
-    //   ...
+    /// Zero-based page index.
+    pub page_index: u32,
+    /// Resolved physical page box in CSS pixels.
+    pub page_box: PageBox,
+    /// Resolved page margins in CSS pixels.
+    pub margins: PageFragmentInsets,
+    /// Resolved border/padding inset inside the page margin area.
+    pub content_insets: PageFragmentInsets,
+    /// Effective page content rectangle in page-local CSS pixels.
+    pub content_box: PageFragmentRect,
+    /// The page's origin in the shared document body-content coordinate space.
+    pub content_origin_y: f32,
+    /// Resolved page name, if the page context selected one.
+    pub page_name: Option<String>,
+    /// Physical orientation derived from the resolved page box.
+    pub orientation: PageFragmentOrientation,
+    /// Per-node placements intersecting this page, in deterministic order.
+    pub items: Vec<PageFragmentItem>,
 }
 
 impl PageFragment {
-    /// Construct an empty PageFragment (placeholder, not yet populated).
+    /// Construct an empty page fragment snapshot.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Construct a page snapshot with resolved metadata and no items.
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_metadata(
+        page_index: u32,
+        page_box: PageBox,
+        margins: PageFragmentInsets,
+        content_insets: PageFragmentInsets,
+        content_box: PageFragmentRect,
+        content_origin_y: f32,
+        page_name: Option<String>,
+        orientation: PageFragmentOrientation,
+    ) -> Self {
+        Self {
+            page_index,
+            page_box,
+            margins,
+            content_insets,
+            content_box,
+            content_origin_y,
+            page_name,
+            orientation,
+            items: Vec::new(),
+        }
+    }
+
+    /// Whether this page contains no visible node placements.
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+}
+
+/// A CSS-px rectangle used by page-fragment metadata and placements.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct PageFragmentRect {
+    /// Left edge or x coordinate in CSS pixels.
+    pub x: f32,
+    /// Top edge or y coordinate in CSS pixels.
+    pub y: f32,
+    /// Width in CSS pixels.
+    pub width: f32,
+    /// Height in CSS pixels.
+    pub height: f32,
+}
+
+impl PageFragmentRect {
+    /// Construct a CSS-px rectangle.
+    pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+}
+
+/// Effective page margin or border/padding inset in CSS pixels.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct PageFragmentInsets {
+    /// Top inset.
+    pub top: f32,
+    /// Right inset.
+    pub right: f32,
+    /// Bottom inset.
+    pub bottom: f32,
+    /// Left inset.
+    pub left: f32,
+}
+
+impl PageFragmentInsets {
+    /// Construct four CSS-px insets.
+    pub fn new(top: f32, right: f32, bottom: f32, left: f32) -> Self {
+        Self {
+            top,
+            right,
+            bottom,
+            left,
+        }
+    }
+}
+
+/// Physical orientation of a resolved page fragment.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PageFragmentOrientation {
+    /// Page width is less than or equal to page height.
+    #[default]
+    Portrait,
+    /// Page width is greater than page height.
+    Landscape,
+}
+
+/// Neutral kind classification for one page placement.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PageFragmentKind {
+    /// Element or container border-box placement.
+    #[default]
+    Box,
+    /// Text-node placement.
+    Text,
+    /// Replaced-element placement such as an image.
+    Replaced,
+}
+
+/// One source-node placement on a page.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct PageFragmentItem {
+    /// Stable source DOM node identifier.
+    pub node_id: NodeId,
+    /// Fragment-local border-box rectangle in CSS pixels.
+    pub rect: PageFragmentRect,
+    /// Neutral placement classification.
+    pub kind: PageFragmentKind,
+    /// Zero-based fragment ordinal for this source node.
+    pub fragment_index: u32,
+    /// Total number of placements for this source node in the snapshot.
+    pub fragment_count: u32,
+    /// True when this placement repeats the complete source content.
+    pub is_repeat: bool,
+}
+
+impl PageFragmentItem {
+    /// Construct one page placement.
+    pub fn new(
+        node_id: NodeId,
+        rect: PageFragmentRect,
+        kind: PageFragmentKind,
+        fragment_index: u32,
+        fragment_count: u32,
+        is_repeat: bool,
+    ) -> Self {
+        Self {
+            node_id,
+            rect,
+            kind,
+            fragment_index,
+            fragment_count,
+            is_repeat,
+        }
+    }
+
+    /// Whether this node is split across multiple non-repeated placements.
+    pub fn is_split(&self) -> bool {
+        !self.is_repeat && self.fragment_count > 1
     }
 }
 
@@ -1666,5 +1833,33 @@ mod running_template_id_tests {
         let id1 = RunningTemplateId::new(NodeId::new(1));
         let id2 = RunningTemplateId::new(NodeId::new(2));
         assert!(id1 < id2);
+    }
+}
+
+#[cfg(test)]
+mod page_fragment_tests {
+    use super::*;
+
+    #[test]
+    fn fragment_item_split_and_repeat_semantics_are_distinct() {
+        let split = PageFragmentItem::new(
+            NodeId::new(7),
+            PageFragmentRect::new(0.0, 0.0, 10.0, 5.0),
+            PageFragmentKind::Box,
+            0,
+            2,
+            false,
+        );
+        assert!(split.is_split());
+
+        let repeat = PageFragmentItem::new(
+            NodeId::new(7),
+            PageFragmentRect::new(0.0, 0.0, 10.0, 5.0),
+            PageFragmentKind::Box,
+            0,
+            2,
+            true,
+        );
+        assert!(!repeat.is_split());
     }
 }

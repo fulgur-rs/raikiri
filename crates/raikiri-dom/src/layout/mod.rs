@@ -5,9 +5,13 @@
 //! 最小統合で pre-shape する。現在の scope は単一 A4 ページ、ASCII Latin、
 //! parley system font default (byte-identical cross-machine は将来 font pinning で対応予定)。
 //!
-//! 全 helper は crate-private、pub 型は [`layout_single_page`] のみ。
+//! Single-page, paged-layout, and neutral page-fragment entry points are public;
+//! implementation helpers remain crate-private.
 
-use raikiri_traits::NodeKind;
+use raikiri_traits::{
+    NodeId, NodeKind, PageFragment, PageFragmentInsets, PageFragmentItem, PageFragmentKind,
+    PageFragmentOrientation, PageFragmentRect,
+};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
@@ -8510,6 +8514,202 @@ pub struct PageSlice {
     pub content_origin_y: f32,
     /// Named page selected by the first class-A box on this page.
     pub page_name: Option<String>,
+}
+
+/// Layout a document and return neutral per-page fragment snapshots.
+///
+/// This is the `raikiri-dom` producer-facing geometry API corresponding to
+/// fulgur's `PaginationGeometryTable`.  The existing [`layout_pages`] API is
+/// unchanged; this convenience wrapper runs it and projects its post-layout
+/// DOM coordinates into page-local [`PageFragmentItem`] records.
+///
+/// The first geometry pass clips a box at page boundaries.  It does not yet
+/// split a text shaping object at individual line boundaries; callers that need
+/// that stronger continuation contract must use the subsequent line
+/// fragmentation pass.  The clipping is nevertheless deterministic and keeps
+/// source-node identity stable, so it is safe as the neutral API seam.
+#[allow(clippy::result_large_err)]
+pub fn layout_page_fragments(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    font_ctx: FontContext,
+) -> Result<Vec<PageFragment>, LayoutError> {
+    let slices = layout_pages(document, cascade, page_box, font_ctx)?;
+    Ok(page_fragments_from_slices(
+        document, cascade, page_box, &slices,
+    ))
+}
+
+/// Project an already-paginated document into neutral page fragment snapshots.
+///
+/// `slices` must come from one of the `layout_pages*` functions and therefore
+/// describe the same post-layout `document`.  This separate projection helper
+/// lets resolver-aware and scheduled-page callers retain their existing layout
+/// entry point while consuming the same public fragment model.
+pub fn page_fragments_from_slices(
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    slices: &[PageSlice],
+) -> Vec<PageFragment> {
+    let margins = page_margins(cascade, page_box);
+    let content_insets = page_content_insets(cascade, page_box);
+    let content_width = margins.content_width(page_box).max(0.0);
+    let content_height =
+        (margins.content_height(page_box) - content_insets.top - content_insets.bottom).max(0.0);
+    let content_box = PageFragmentRect::new(
+        margins.left + content_insets.left,
+        margins.top + content_insets.top,
+        content_width,
+        content_height,
+    );
+    let margins = PageFragmentInsets::new(margins.top, margins.right, margins.bottom, margins.left);
+    let content_insets = PageFragmentInsets::new(
+        content_insets.top,
+        content_insets.right,
+        content_insets.bottom,
+        content_insets.left,
+    );
+    let orientation = if page_box.width > page_box.height {
+        PageFragmentOrientation::Landscape
+    } else {
+        PageFragmentOrientation::Portrait
+    };
+
+    let mut pages: Vec<PageFragment> = slices
+        .iter()
+        .map(|slice| {
+            PageFragment::with_metadata(
+                slice.page_index,
+                page_box,
+                margins,
+                content_insets,
+                content_box,
+                slice.content_origin_y,
+                slice.page_name.clone(),
+                orientation,
+            )
+        })
+        .collect();
+
+    if pages.is_empty() {
+        return pages;
+    }
+
+    let Some(body_id) = find_body(document) else {
+        return pages;
+    };
+
+    // Collect absolute post-pagination coordinates.  The arena index is the
+    // stable NodeId projection used by `raikiri_traits::Dom`; sorting by it
+    // reproduces fulgur's deterministic BTreeMap iteration order regardless of
+    // traversal implementation details.
+    let mut nodes = Vec::new();
+    let mut stack = vec![(body_id, 0.0_f32, 0.0_f32)];
+    while let Some((node_id, parent_abs_x, parent_abs_y)) = stack.pop() {
+        let Some(node) = document.get_node(node_id) else {
+            continue;
+        };
+        if !node.is_in_document() || node.is_non_rendered_html_element() || node.is_display_none() {
+            continue;
+        }
+        let layout = node.unrounded_layout;
+        let abs_x = parent_abs_x + layout.location.x;
+        let abs_y = parent_abs_y + layout.location.y;
+        let width = finite_nonnegative(layout.size.width);
+        let height = finite_nonnegative(layout.size.height);
+        let include = match node.kind() {
+            NodeKind::Text => node
+                .text_content()
+                .is_some_and(|text| !text.trim().is_empty()),
+            NodeKind::Element => true,
+            _ => false,
+        };
+        if include && abs_x.is_finite() && abs_y.is_finite() {
+            nodes.push((
+                NodeId::new(node_id as u64),
+                node.kind(),
+                node.tag_name().map(str::to_owned),
+                abs_x,
+                abs_y,
+                width,
+                height,
+            ));
+        }
+
+        if node.kind() == NodeKind::Element {
+            for &child_id in node.children.iter().rev() {
+                stack.push((child_id, abs_x, abs_y));
+            }
+        }
+    }
+    nodes.sort_by_key(|(node_id, ..)| *node_id);
+
+    for (node_id, node_kind, tag_name, abs_x, abs_y, width, height) in nodes {
+        let kind = match node_kind {
+            NodeKind::Text => PageFragmentKind::Text,
+            NodeKind::Element if tag_name.as_deref() == Some("img") => PageFragmentKind::Replaced,
+            _ => PageFragmentKind::Box,
+        };
+        let mut placements = Vec::new();
+        for (page_slot, slice) in slices.iter().enumerate() {
+            let page_start = slice.content_origin_y;
+            let page_end = slices
+                .get(page_slot + 1)
+                .map(|next| next.content_origin_y)
+                .filter(|next| next.is_finite() && *next > page_start)
+                .unwrap_or(page_start + content_height);
+            if !page_start.is_finite() || !page_end.is_finite() || page_end <= page_start {
+                continue;
+            }
+            let (intersects, fragment_y, fragment_height) = if height > 0.0 {
+                let bottom = abs_y + height;
+                let intersects = abs_y < page_end && bottom > page_start;
+                let top = abs_y.max(page_start);
+                let bottom = bottom.min(page_end);
+                (
+                    intersects,
+                    (top - page_start).max(0.0),
+                    (bottom - top).max(0.0),
+                )
+            } else {
+                (
+                    abs_y >= page_start && abs_y <= page_end,
+                    (abs_y - page_start).max(0.0),
+                    0.0,
+                )
+            };
+            if intersects {
+                placements.push((page_slot, fragment_y, fragment_height));
+            }
+        }
+        let fragment_count = placements.len() as u32;
+        for (fragment_index, (page_slot, y, fragment_height)) in placements.into_iter().enumerate()
+        {
+            let Some(page) = pages.get_mut(page_slot) else {
+                continue;
+            };
+            page.items.push(PageFragmentItem::new(
+                node_id,
+                PageFragmentRect::new(abs_x, y, width, fragment_height),
+                kind,
+                fragment_index as u32,
+                fragment_count,
+                false,
+            ));
+        }
+    }
+
+    pages
+}
+
+fn finite_nonnegative(value: f32) -> f32 {
+    if value.is_finite() {
+        value.max(0.0)
+    } else {
+        0.0
+    }
 }
 
 fn page_break_is_forced(value: BreakBetween) -> bool {
@@ -17800,6 +18000,107 @@ mod tests {
         .expect("layout Ok");
 
         assert_eq!(doc.nodes[img].image_intrinsic_size(), None);
+    }
+
+    #[test]
+    fn layout_page_fragments_emits_one_page_with_deterministic_items() {
+        let (mut doc, cascade) = hello_world_doc();
+        let pages = layout_page_fragments(&mut doc, &cascade, PageBox::A4, FontContext::new())
+            .expect("page fragment layout should succeed");
+
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0].page_index, 0);
+        assert_eq!(pages[0].page_box, PageBox::A4);
+        assert!(!pages[0].is_empty());
+        assert!(
+            pages[0]
+                .items
+                .windows(2)
+                .all(|items| items[0].node_id <= items[1].node_id)
+        );
+        assert!(
+            pages[0]
+                .items
+                .iter()
+                .any(|item| item.kind == PageFragmentKind::Text)
+        );
+    }
+
+    #[test]
+    fn layout_page_fragments_preserves_forced_page_break() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let first = doc.append_element(Some(body), "div", Style::default(), Some("height:10px"));
+        doc.append_text(first, "first");
+        let second = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("break-before:page;height:10px"),
+        );
+        doc.append_text(second, "second");
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 60.0;
+
+        let pages = layout_page_fragments(&mut doc, &cascade, page, FontContext::new())
+            .expect("page fragment layout should succeed");
+        assert!(pages.len() >= 2, "forced page break must create page 1+");
+        assert!(
+            pages[1]
+                .items
+                .iter()
+                .any(|item| item.node_id.0 == second as u64)
+        );
+    }
+
+    #[test]
+    fn layout_page_fragments_clips_long_block_into_split_fragments() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let tall = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("width:20px;height:120px"),
+        );
+        doc.append_text(tall, "tall");
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 50.0;
+
+        let pages = layout_page_fragments(&mut doc, &cascade, page, FontContext::new())
+            .expect("page fragment layout should succeed");
+        let fragments: Vec<_> = pages
+            .iter()
+            .flat_map(|page| page.items.iter())
+            .filter(|item| item.node_id.0 == tall as u64)
+            .collect();
+        assert!(
+            fragments.len() >= 2,
+            "tall block must cross a page boundary"
+        );
+        assert!(fragments.iter().all(|item| item.is_split()));
+        assert!(
+            fragments
+                .windows(2)
+                .all(|items| items[0].fragment_index < items[1].fragment_index)
+        );
+        let total_height: f32 = fragments.iter().map(|item| item.rect.height).sum();
+        assert!(
+            (total_height - 120.0).abs() < 0.01,
+            "fragments={fragments:?}"
+        );
     }
 
     #[test]
