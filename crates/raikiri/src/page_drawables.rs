@@ -3,8 +3,9 @@
 //! [`PageDrawables`] は [`PageScene`](crate::PageScene) が保持する
 //! per-attribute node map の集合。1 page 内の全 drawable state を
 //! attribute 単位 (block / paragraph / image / svg / …) に分離して並べる
-//! ことで、consumer の forward iterate と raikiri 内部の batch operation
-//! の両方を cache-friendly / SIMD-friendly に保つ。
+//! ことで、`raikiri` crate 内の dogfooding / validation path における
+//! forward iterate と batch operation を cache-friendly / SIMD-friendly に保つ。
+//! Fulgur-facing output contract は `raikiri-dom` を中心に別途定義する。
 //!
 //! # TrackedMap の役割
 //!
@@ -20,7 +21,8 @@
 //! Insertion log tail 読み出し API (`mark` / `since`) は現時点では
 //! **pub にしない**。raikiri PageScene = per-page immutable snapshot
 //! semantics では初期 unused、将来 raikiri 内部の convert /
-//! reflow pass が必要とした時点で pub 化を再判断する。
+//! reflow pass が必要とした時点で pub 化を再判断する。これは dogfooding
+//! surface の設計であり、fulgur-facing API の約束ではない。
 //!
 //! # 参考 shape
 //!
@@ -45,7 +47,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// `BTreeMap<NodeId, V>` + append-only insertion log の thin wrapper。
 ///
-/// # Consumer contract
+/// # Internal dogfooding contract
 ///
 /// - [`Deref`](std::ops::Deref) 経由で `&BTreeMap<NodeId, V>` として読み出せる
 ///   (deterministic iteration order = key ascending)
@@ -106,8 +108,9 @@ impl<V> TrackedMap<V> {
 }
 
 /// 1 page 分の per-attribute drawable map。[`PageScene`](crate::PageScene)
-/// の drawables field として保持され、consumer が attribute 単位で
-/// forward iterate して paint する。
+/// の drawables field として保持され、`raikiri` crate 内の dogfooding / validation
+/// path が attribute 単位で forward iterate して paint する。Fulgur-facing page
+/// output は `raikiri-dom` を中心に定義される。
 ///
 /// # Field 選定基準
 ///
