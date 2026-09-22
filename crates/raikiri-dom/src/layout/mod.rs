@@ -2869,6 +2869,40 @@ fn realign_text_after_layout(
             child = parent;
         }
     }
+
+    // Taffy does not include floated descendants in an auto-height
+    // containing block's used height. Propagate the bottom edge of supported
+    // left/right floats through auto-height ancestors, including the
+    // containing-block border. This keeps following flow from moving upward
+    // after a fragmented flex item with a float descendant.
+    for idx in 0..doc.nodes.len() {
+        if doc.nodes[idx].kind() != NodeKind::Element
+            || !doc.nodes[idx].is_in_document()
+            || !matches!(
+                cascade.computed[idx].float,
+                FloatValue::Left | FloatValue::Right
+            )
+        {
+            continue;
+        }
+        let mut child = idx;
+        while let Some(parent) = parent_of[child] {
+            if matches!(
+                cascade.computed[parent].height,
+                ComputedLengthPercentageOrAuto::Auto
+            ) {
+                let child_bottom = doc.nodes[child].unrounded_layout.location.y
+                    + doc.nodes[child].unrounded_layout.size.height
+                    + cascade.computed[parent].border.bottom.width().px();
+                doc.nodes[parent].unrounded_layout.size.height = doc.nodes[parent]
+                    .unrounded_layout
+                    .size
+                    .height
+                    .max(child_bottom);
+            }
+            child = parent;
+        }
+    }
 }
 fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
     for idx in 0..doc.nodes.len() {
