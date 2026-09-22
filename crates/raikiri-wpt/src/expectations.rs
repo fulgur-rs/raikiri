@@ -1310,7 +1310,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // - Remove stale CSS Grid percentage-size-subitems-001 PASS pin (-1).
         // + CSS Page hidden-child named-page boundary exact slice (+1).
         // + CSS Page inline canvas named-page boundary exact slice (+2).
-        assert_eq!(set.baseline.entries.len(), 1271);
+        // + CSS Page nested named-page propagation exact slice (+2).
+        assert_eq!(set.baseline.entries.len(), 1273);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }

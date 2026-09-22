@@ -6,6 +6,7 @@ use raikiri_dom::{
     layout_page_fragments, page_fragment_events_from_pages, page_fragment_geometry_table,
     page_fragments_from_slices_with_page_geometry,
 };
+use raikiri_html::{ParseOptions, parse};
 use raikiri_style::{Origin, build_rule_tree, cascade};
 use raikiri_traits::{
     NodeId, PageBox, PageFragmentInsets, PageFragmentOrientation, PageFragmentPageGeometry,
@@ -491,4 +492,31 @@ fn page_fragment_projection_keeps_distinct_resolved_geometry_per_page() {
     assert_eq!(pages[1].content_box, second.content_box);
     assert_eq!(pages[1].orientation, PageFragmentOrientation::Landscape);
     assert_eq!(pages[1].page_name.as_deref(), Some("wide"));
+}
+#[test]
+fn named_page_propagation_skips_out_of_flow_children() {
+    let html = br#"<!doctype html>
+        <html><body>
+          <div style="page: named">
+            <div style="position:absolute;top:0">out of flow</div>
+            <div>in flow</div>
+          </div>
+        </body></html>"#;
+    let options = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let mut parsed = parse(&html[..], &options).expect("parse named-page fixture");
+    let rules = build_rule_tree(&parsed.dom);
+    let cascade = cascade(&parsed.dom, &rules).expect("cascade named-page fixture");
+
+    let pages = raikiri_dom::layout_page_fragments(
+        &mut parsed.dom,
+        &cascade,
+        PageBox::A4,
+        FontContext::new(),
+    )
+    .expect("layout named-page fixture");
+    assert!(!pages.is_empty());
 }
