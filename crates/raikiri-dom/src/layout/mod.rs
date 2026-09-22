@@ -2643,6 +2643,32 @@ fn realign_inline_replaced_children(doc: &mut Document, cascade: &CascadeResult)
     }
 }
 
+/// Find the nearest synthetic inline formatting root for a text node.
+fn inline_root_for_text(
+    doc: &Document,
+    parent_of: &[Option<usize>],
+    text_id: usize,
+) -> Option<usize> {
+    let mut ancestor = parent_of[text_id];
+    while let Some(id) = ancestor {
+        if doc.nodes[id].flags.contains(NodeFlags::IS_INLINE_ROOT) {
+            return Some(id);
+        }
+        ancestor = parent_of[id];
+    }
+    None
+}
+
+/// Return a node's horizontal position in the document coordinate space.
+fn absolute_layout_x(doc: &Document, parent_of: &[Option<usize>], mut id: usize) -> f32 {
+    let mut x = 0.0;
+    while let Some(parent) = parent_of[id] {
+        x += doc.nodes[id].unrounded_layout.location.x;
+        id = parent;
+    }
+    x
+}
+
 fn realign_text_after_layout(
     doc: &mut Document,
     cascade: &CascadeResult,
@@ -2789,6 +2815,24 @@ fn realign_text_after_layout(
         let preserve_wide_body_run = !inside_multicol
             && is_leading_body_text(doc, Some(parent_idx), idx)
             && matches!(cv.text_align, TextAlign::Start | TextAlign::Left);
+        let inline_continuation = inline_root_for_text(doc, &parent_of, idx).and_then(|root| {
+            let root_cv = &cascade.computed[root];
+            if root == parent_idx
+                || cv.direction != Direction::Ltr
+                || root_cv.direction != Direction::Ltr
+                || root_cv.writing_mode != WritingMode::HorizontalTb
+            {
+                return None;
+            }
+            let root_x = absolute_layout_x(doc, &parent_of, root);
+            let node_x = absolute_layout_x(doc, &parent_of, idx);
+            let prefix = node_x - root_x;
+            let width = doc.nodes[root].unrounded_layout.size.width;
+            if !prefix.is_finite() || !width.is_finite() || prefix <= 0.0 || width <= prefix {
+                return None;
+            }
+            Some((width - prefix, root_x - node_x))
+        });
         let Some(layout) = doc.nodes[idx]
             .data
             .as_text_mut()
@@ -2796,6 +2840,24 @@ fn realign_text_after_layout(
         else {
             continue;
         };
+        if let Some((available, continuation_offset)) = inline_continuation {
+            let should_rebreak = available.is_finite()
+                && available > 0.0
+                && available + f32::EPSILON < layout.width();
+            if should_rebreak {
+                layout.break_all_lines(Some(available));
+                layout.align(Alignment::Start, AlignmentOptions::default());
+                let line_count = layout.len();
+                if let NodeData::Text(text) = &mut doc.nodes[idx].data {
+                    text.text_line_offsets = Some(
+                        (0..line_count)
+                            .map(|line| if line == 0 { 0.0 } else { continuation_offset })
+                            .collect(),
+                    );
+                }
+                continue;
+            }
+        }
         // A direct body text run may intentionally overflow the page content
         // width when the paged containing block carries a margin.  Preserve
         // the page-width shaping used by the paged bridge instead of
@@ -8253,6 +8315,7 @@ pub fn relayout_text_for_width(
     for node in document.nodes.iter_mut() {
         if let Some(text) = node.data.as_text_mut() {
             text.text_layout = None;
+            text.text_line_offsets = None;
             text.text_indent_px = None;
             text.text_indent_hanging = false;
             text.text_indent_each_line = false;
@@ -8419,6 +8482,7 @@ pub fn layout_single_page(
     for node in document.nodes.iter_mut() {
         if let Some(t) = node.data.as_text_mut() {
             t.text_layout = None;
+            t.text_line_offsets = None;
             t.multicol_fragments = None; // cov:ignore: reset is exercised by repeated ignored WPT layouts.
             t.text_indent_px = None;
             t.text_indent_hanging = false;
