@@ -59,6 +59,14 @@ pub enum RenderError {
         /// 実行された iteration 数。
         iterations: u32,
     },
+    /// Page geometry kept changing after the bounded scheduled layout passes.
+    /// No pages are emitted when this terminal status is returned, because the
+    /// page-local rectangles and resolved page metadata would otherwise come
+    /// from different pagination schedules.
+    PageGeometryDidNotConverge {
+        /// Number of scheduled layout passes attempted.
+        iterations: u32,
+    },
     /// その他 `std::io::Error` 系。
     Io(std::io::Error),
 
@@ -98,6 +106,12 @@ impl std::fmt::Display for RenderError {
             Self::TargetDidNotConverge { iterations } => {
                 write!(f, "target-* did not converge in {iterations} iterations")
             }
+            Self::PageGeometryDidNotConverge { iterations } => {
+                write!(
+                    f,
+                    "page geometry did not converge in {iterations} iterations"
+                )
+            }
             Self::Io(_) => write!(f, "I/O error"),
             Self::Unimplemented {
                 feature,
@@ -125,6 +139,7 @@ impl std::error::Error for RenderError {
             Self::LimitExceeded { .. }
             | Self::Configuration(_)
             | Self::TargetDidNotConverge { .. }
+            | Self::PageGeometryDidNotConverge { .. }
             | Self::Unimplemented { .. } => None,
         }
     }
@@ -489,6 +504,18 @@ mod unimplemented_variant_tests {
             migration_hint: "hint",
         };
         assert!(err.source().is_none(), "Unimplemented has no inner cause");
+    }
+
+    #[test]
+    fn page_geometry_nonconvergence_is_structured_and_terminal() {
+        use std::error::Error;
+
+        let err = RenderError::PageGeometryDidNotConverge { iterations: 3 };
+        assert_eq!(
+            err.to_string(),
+            "page geometry did not converge in 3 iterations"
+        );
+        assert!(err.source().is_none());
     }
 
     #[test]

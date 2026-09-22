@@ -325,3 +325,56 @@ fn render_streaming_resolves_named_first_page_before_layout() {
     assert_eq!(first.page_box.height, 140.0);
     assert_eq!(first.margins.left, 11.0);
 }
+
+#[test]
+fn render_streaming_relayouts_until_page_geometry_converges() {
+    let stylesheet = r#"
+        @page { size: 100px 100px; margin: 0; }
+        @page :left { size: 100px 240px; margin: 0; }
+        @page wide { size: 100px 180px; margin: 0; }
+    "#;
+    let options = raikiri::ParseOptions {
+        extra_stylesheets: &[stylesheet],
+        network: None,
+        base_url: None,
+    };
+    let doc = parse_html(
+        &br#"<html><body><div style="height:200px">first</div><div style="page:wide;break-before:page;height:10px">wide</div><div style="height:300px">tail</div></body></html>"#[..],
+        &options,
+    )
+    .expect("parse");
+    let mut sink = RecordingSink::default();
+    let status = render_streaming(
+        &doc,
+        defaults(100.0, 100.0),
+        &NoopResolver,
+        StreamingConfig::default(),
+        &mut sink,
+    )
+    .expect("render");
+
+    let summary = match status {
+        RenderStatus::Completed(summary) => summary,
+        _ => panic!("geometry convergence case should complete"),
+    };
+    assert_eq!(summary.total_pages, 4);
+    assert_eq!(sink.pages.len(), 4);
+    assert_eq!(sink.pages[0].content_origin_y, 0.0);
+    assert_eq!(sink.pages[1].content_origin_y, 100.0);
+    assert_eq!(sink.pages[2].content_origin_y, 280.0);
+    assert_eq!(sink.pages[3].content_origin_y, 380.0);
+    assert_eq!(sink.pages[0].page_box.height, 100.0);
+    assert_eq!(sink.pages[1].page_box.height, 180.0);
+    assert_eq!(sink.pages[2].page_box.height, 100.0);
+    assert_eq!(sink.pages[3].page_box.height, 240.0);
+    assert_eq!(sink.pages[1].page_name.as_deref(), Some("wide"));
+
+    // Every emitted item must fit the resolved page-local geometry. Before the
+    // schedule refresh, page 1 used the 240px item projection with a 180px
+    // `wide` page metadata record.
+    for page in &sink.pages {
+        assert!(page.items.iter().all(|item| {
+            item.rect.y >= -0.001 && item.rect.y + item.rect.height <= page.page_box.height + 0.001
+        }));
+    }
+}
