@@ -457,6 +457,9 @@ css/css-break/block-min-height-001b.html
 css/css-break/border-image-000.html
 css/css-break/overflowed-abs-pos-with-percentage-height-print.html
 css/css-break/widows-block-in-inline-001.html
+# --- css-break min-block-size Fulgur v0.40.0 PASS slice (exact, 800x600, 2026-09-22) ---
+css/css-break/break-inside-avoid-min-block-size-1.html
+css/css-break/break-inside-avoid-min-block-size-2.html
 # --- css-break flexbox print Fulgur v0.40.0 PASS slice (exact, 800x600, 2026-09-22) ---
 css/css-break/flexbox/multi-line-row-flex-fragmentation-080-print.html
 css/css-break/flexbox/single-line-column-flex-fragmentation-065-print.html

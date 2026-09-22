@@ -1289,6 +1289,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Break forced page-break reftest (+1).
         // + CSS Break Flexbox print Fulgur v0.40.0 PASS slice (+7).
         // + CSS Break Flexbox additional Fulgur v0.40.0 PASS slice (+7).
+        // + CSS Break logical min-block-size Fulgur v0.40.0 PASS slice (+2).
         // + CSS Multi-column nested block-flow exact slice (+4).
         // + CSS Text white-space/line-breaking resource exact slice (+5).
         // + CSS Values exact calc nesting/rounding slice (+5).
@@ -1296,7 +1297,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Pseudo exact active-selection/first-letter slice (+2).
         // + CSS Transforms exact 2D transform-origin/skew slice (+5).
         // + CSS Borders exact current-color and sub-unit slice (+2).
-        assert_eq!(set.baseline.entries.len(), 1252);
+        assert_eq!(set.baseline.entries.len(), 1254);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
