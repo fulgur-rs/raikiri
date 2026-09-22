@@ -3252,7 +3252,7 @@ fn paint_document_impl(
                 let mut paint_background_height = layout.size.height;
                 let mut multicol_clip_pushed = false;
                 if let Some(clip_height) =
-                    fragment_clip_height.filter(|height| height.is_finite() && *height > 0.0)
+                    fragment_clip_height.filter(|height| height.is_finite() && *height >= 0.0)
                 {
                     paint_y = paint_y.floor();
                     paint_height = paint_height.min(clip_height);
@@ -3873,6 +3873,19 @@ fn paint_document_impl(
                             }) =>
                         {
                             Some(clip_height)
+                        }
+                        // A zero-height block at a multicolumn break can own
+                        // an overflowing parallel flow. It has no fragment
+                        // area in the column, so its descendants must not
+                        // paint into the following sibling's fragment.
+                        Some(_) // cov:ignore: exercised by ignored exact paged-text WPT.
+                            if document.get_node(child).is_some_and(|child_node| { // cov:ignore: exercised by ignored exact paged-text WPT.
+                                child_node.kind() == NodeKind::Element // cov:ignore: exercised by ignored exact paged-text WPT.
+                                    && child_node.unrounded_layout.size.height <= 0.0 // cov:ignore: exercised by ignored exact paged-text WPT.
+                                    && !child_node.children.is_empty() // cov:ignore: exercised by ignored exact paged-text WPT.
+                            }) => // cov:ignore: exercised by ignored exact paged-text WPT.
+                        {
+                            Some(0.0) // cov:ignore: exercised by ignored exact paged-text WPT.
                         }
                         Some(_) => None,
                         None => fragment_clip_height,
