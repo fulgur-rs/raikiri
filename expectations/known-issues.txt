@@ -205,7 +205,25 @@ css/css-values/urls/url-request-modifiers-serialize.sub.html | url request modif
 css/css-values/viewport-units-parsing.html | viewport units vw/vh etc not implemented (style layer has no viewport, follow-up)
 
 # ── css-text reftest Level4 quarantine (2026-09-14, goal C, not in MVP) ──
-css/css-text/hanging-punctuation/ | hanging-punctuation Level4 not in MVP
+# The first + leading U+3000 slice is covered by the focused exact reftest;
+# these remaining cases require deferred punctuation classes, bidi, inline
+# boundaries, variable metrics, or `allow-end`/`last` layout behavior.
+css/css-text/hanging-punctuation/hanging-punctuation-allow-end-001.xht | hanging-punctuation allow-end behavior is outside the implemented first + U+3000 slice
+css/css-text/hanging-punctuation/hanging-punctuation-allow-end-basic.html | hanging-punctuation allow-end behavior is outside the implemented first + U+3000 slice
+css/css-text/hanging-punctuation/hanging-punctuation-allow-end-inlines.html | hanging-punctuation allow-end behavior is outside the implemented first + U+3000 slice
+css/css-text/hanging-punctuation/hanging-punctuation-allow-end.html | hanging-punctuation allow-end behavior is outside the implemented first + U+3000 slice
+css/css-text/hanging-punctuation/hanging-punctuation-block-bound-001.html | hanging-punctuation block-boundary behavior is outside the implemented first + U+3000 slice
+css/css-text/hanging-punctuation/hanging-punctuation-first-and-last-together.html | combined first/last hanging behavior is outside the implemented slice
+css/css-text/hanging-punctuation/hanging-punctuation-first-001.xht | general first punctuation behavior is outside the implemented first + U+3000 slice
+css/css-text/hanging-punctuation/hanging-punctuation-first-rtl.html | hanging-punctuation bidi behavior is deferred
+css/css-text/hanging-punctuation/hanging-punctuation-first-whitespace.html | hanging-punctuation whitespace behavior is outside the implemented first + U+3000 slice
+css/css-text/hanging-punctuation/hanging-punctuation-first.html | general first punctuation behavior is outside the implemented first + U+3000 slice
+css/css-text/hanging-punctuation/hanging-punctuation-force-end-001.xht | hanging-punctuation force-end behavior is outside the implemented slice
+css/css-text/hanging-punctuation/hanging-punctuation-inline-bound-001.html | hanging-punctuation inline-boundary behavior is deferred
+css/css-text/hanging-punctuation/hanging-punctuation-last-001.xht | hanging-punctuation last behavior is outside the implemented slice
+css/css-text/hanging-punctuation/hanging-punctuation-last-rtl.html | hanging-punctuation bidi behavior is deferred
+css/css-text/hanging-punctuation/hanging-punctuation-variable-font-size.html | hanging-punctuation variable-font-size behavior is deferred
+css/css-text/hanging-punctuation/hanging-scrollable-001.html | hanging-punctuation scrollable behavior is deferred
 css/css-text/hyphens/hyphenate-character | hyphenate-character Level4 not in MVP
 css/css-text/hyphens/hyphenate-limit-chars | hyphenate-limit-chars Level4 not in MVP
 css/css-text/text-autospace/ | text-autospace Level4 not in MVP

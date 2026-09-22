@@ -1340,6 +1340,8 @@ css/css-multicol/multicol-nested-033.html
 css/css-text/writing-system/writing-system-font-001.html
 # --- CSS Text multi-category exact 800x600 PASS-only pins 2026-09-21 ---
 # text-group-align, text-spacing-trim, and hanging-punctuation.
+# `hanging-punctuation: first` leading U+3000 exact 800x600 PASS-only pin.
+css/css-text/hanging-punctuation/hanging-punctuation-first-002.html
 css/css-text/text-group-align/text-group-align-center-vlr.html
 css/css-text/text-group-align/text-group-align-center.html
 css/css-text/text-group-align/text-group-align-end-vlr.html

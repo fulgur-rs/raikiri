@@ -5154,6 +5154,57 @@ fn text_align_key_maps_to_text_align_property_key() {
     assert_eq!(v.key(), PropertyKey::TextAlign);
 }
 
+// ── hanging-punctuation (CSS Text 3 §8.2.1) ──
+
+#[test]
+fn hanging_punctuation_parse_implemented_subset() {
+    assert_eq!(
+        parse_entire("none", "hanging-punctuation"),
+        Some(PropertyValue::HangingPunctuation(HangingPunctuation::None))
+    );
+    assert_eq!(
+        parse_entire("first", "hanging-punctuation"),
+        Some(PropertyValue::HangingPunctuation(HangingPunctuation::First))
+    );
+}
+
+#[test]
+fn hanging_punctuation_is_case_insensitive_and_rejects_deferred_values() {
+    assert_eq!(
+        parse_entire("FIRST", "hanging-punctuation"),
+        Some(PropertyValue::HangingPunctuation(HangingPunctuation::First))
+    );
+    assert_eq!(parse_entire("last", "hanging-punctuation"), None);
+    assert_eq!(parse_entire("allow-end", "hanging-punctuation"), None);
+    assert_eq!(parse_entire("none first", "hanging-punctuation"), None);
+}
+
+#[test]
+fn hanging_punctuation_key_maps_to_property_key() {
+    assert_eq!(
+        PropertyValue::HangingPunctuation(HangingPunctuation::None).key(),
+        PropertyKey::HangingPunctuation
+    );
+    assert_eq!(
+        PropertyValue::HangingPunctuation(HangingPunctuation::First).key(),
+        PropertyKey::HangingPunctuation
+    );
+}
+
+#[test]
+fn hanging_punctuation_serializes_keywords() {
+    assert_eq!(
+        serialize_value(&PropertyValue::HangingPunctuation(HangingPunctuation::None)),
+        Some("none".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::HangingPunctuation(
+            HangingPunctuation::First
+        )),
+        Some("first".to_owned())
+    );
+}
+
 // ── text-indent (CSS Text 3 §8.1) ──
 //
 // Full value grammar: `<length-percentage> && hanging? && each-line?` —

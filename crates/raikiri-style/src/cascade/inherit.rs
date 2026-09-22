@@ -777,6 +777,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Content(_)
         | PropertyValue::StringSet(_)
         | PropertyValue::Position(_)
+        | PropertyValue::HangingPunctuation(_)
         | PropertyValue::Direction(_)
         | PropertyValue::TextIndent(_)
         | PropertyValue::PaddingTop(_)
@@ -1414,6 +1415,8 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // invariant への違反になる。詳細は
         // `crate::property::resolve_text_align_match_parent` の doc。
         PropertyValue::TextAlign(t) => target.text_align = t,
+        // CSS Text 3 §8.2.1: inherited keyword, simple by-value assignment.
+        PropertyValue::HangingPunctuation(v) => target.hanging_punctuation = v,
         // CSS Text 3 §6.2 text-justify — **inherited** keyword、単純代入。
         PropertyValue::TextJustify(v) => target.text_justify = v,
         // CSS Text 3 §6.1 text-align-last — **inherited** keyword、単純代入。
