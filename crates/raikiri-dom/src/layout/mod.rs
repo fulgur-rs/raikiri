@@ -9679,7 +9679,10 @@ pub fn layout_pages_with_page_geometry(
     let mut flow_shift = 0.0_f32;
     let mut current_page = 0_u32;
     let mut max_page = 0_u32;
-    let mut pending_break = false;
+    // Keep a break-after attached to its source box until its descendants
+    // have been visited.  Applying it to the first flex child would turn a
+    // break-after on the flex container into an extra blank page.
+    let mut pending_break_source: Option<usize> = None;
     // When a forced-break box underflows into the preceding page, descendants
     // follow the box while later siblings still begin after the break boundary.
     let mut pending_underflow: Option<(usize, f32)> = None;
@@ -9838,7 +9841,10 @@ pub fn layout_pages_with_page_geometry(
                 && height > 0.0
                 && !candidate.is_float_descendant
                 && candidate_page_name != current_page_name;
-            let consumes_pending_break = pending_break && candidate.is_direct_body_text;
+            let pending_break_applies = pending_break_source.is_some_and(|source| {
+                !is_descendant_or_self(document, node_id, source, &parent_of)
+            });
+            let consumes_pending_break = pending_break_applies && candidate.is_direct_body_text;
             if saw_child {
                 if consumes_pending_break || named_page_change {
                     let natural_page = if effective_y.is_finite() && effective_y >= 0.0 {
@@ -9891,7 +9897,14 @@ pub fn layout_pages_with_page_geometry(
                 }
             }
             if consumes_pending_break {
-                pending_break = false;
+                pending_break_source = None;
+            }
+            let candidate_break_after = page_break_is_forced(cascade.computed[node_id].break_after)
+                || candidate.deferred_named_break_after;
+            let pending_source_is_ancestor = pending_break_source
+                .is_some_and(|source| is_descendant_or_self(document, node_id, source, &parent_of));
+            if candidate_break_after && !pending_source_is_ancestor {
+                pending_break_source = Some(node_id);
             }
             continue;
         }
@@ -10020,8 +10033,10 @@ pub fn layout_pages_with_page_geometry(
             && effective_y < page_origin(current_page) + page_step_at(current_page)
             && effective_y + height > page_origin(current_page) + page_step_at(current_page);
 
+        let pending_break_applies = pending_break_source
+            .is_some_and(|source| !is_descendant_or_self(document, node_id, source, &parent_of));
         let page_transition = saw_child
-            && (pending_break
+            && (pending_break_applies
                 || (forced_before && !forced_break_at_page_start)
                 || named_page_change
                 || page_overflow
@@ -10100,6 +10115,9 @@ pub fn layout_pages_with_page_geometry(
                     effective_y += node_delta;
                 }
                 current_page = target_page;
+                if pending_break_applies {
+                    pending_break_source = None;
+                }
             } else if effective_y.is_finite() && effective_y >= 0.0 {
                 current_page = current_page.max(page_index_for_y(effective_y));
             }
@@ -10163,8 +10181,13 @@ pub fn layout_pages_with_page_geometry(
                 }
             }
         }
-        pending_break =
+        let candidate_break_after =
             page_break_is_forced(computed.break_after) || candidate.deferred_named_break_after;
+        let pending_source_is_ancestor = pending_break_source
+            .is_some_and(|source| is_descendant_or_self(document, node_id, source, &parent_of));
+        if candidate_break_after && !pending_source_is_ancestor {
+            pending_break_source = Some(node_id);
+        }
     }
 
     if !page_widths.is_empty() {

@@ -1465,6 +1465,8 @@ css/css-page/page-name-000-print.html
 css/css-page/page-name-001-print.html
 css/css-page/page-name-002-print.html
 css/css-page/page-left-right-001-print.html
+css/css-page/page-name-flex-003-print.html
+css/css-page/page-name-flex-004-print.html
 css/css-page/page-margin-001-print.html
 css/css-page/page-margin-002-print.html
 css/css-page/page-margin-003-print.html
