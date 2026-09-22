@@ -9553,6 +9553,9 @@ pub fn layout_pages_with_page_geometry(
         /// A named descendant nested inside a flex item defers one boundary
         /// until the containing flex box has finished.
         deferred_named_break_after: bool,
+        /// An inline canvas with a named page is a boundary marker, but its
+        /// inline-level box does not itself establish the named page type.
+        inline_named_page: bool,
     }
 
     fn has_nested_named_page_descendant(
@@ -9640,6 +9643,7 @@ pub fn layout_pages_with_page_geometry(
                         is_float_descendant: inside_float,
                         page_name: inherited_page_name,
                         deferred_named_break_after: false,
+                        inline_named_page: false,
                     });
                 }
             }
@@ -9661,14 +9665,27 @@ pub fn layout_pages_with_page_geometry(
                         PositionValue::Absolute | PositionValue::Fixed
                     );
                 let explicit_page_name = selected_page_name(cascade, node_id);
+                // Inline canvas boxes do not establish the named page type,
+                // but their `page` value still marks the boundary between the
+                // surrounding class-A boxes. This mirrors the inline canvas
+                // CSS Page cases without treating a replaced inline box as a
+                // block-level named-page candidate.
+                let inline_named_page = direct_body_child
+                    && explicit_page_name.is_some()
+                    && matches!(computed.display, DisplayValue::Inline)
+                    && node
+                        .tag_name()
+                        .is_some_and(|tag| tag.eq_ignore_ascii_case("canvas"));
                 // The `page` property on an out-of-flow box does not open a
                 // normal-flow page boundary. Keep its inherited page context,
                 // but do not use its explicit name to split pagination.
-                let own_page_name = if !float_subtree && !inside_flex && !out_of_flow_subtree {
-                    explicit_page_name.clone()
-                } else {
-                    None
-                };
+                let own_page_name =
+                    if !inline_named_page && !float_subtree && !inside_flex && !out_of_flow_subtree
+                    {
+                        explicit_page_name.clone()
+                    } else {
+                        None
+                    };
                 let page_name = own_page_name.clone().or(inherited_page_name);
                 let deferred_named_break_after = matches!(computed.display, DisplayValue::Flex)
                     && has_nested_named_page_descendant(document, cascade, node_id, 0);
@@ -9719,6 +9736,7 @@ pub fn layout_pages_with_page_geometry(
                         || flex_item_candidate
                         || grid_item_candidate
                         || own_page_name.is_some()
+                        || inline_named_page
                         || page_break_is_forced(computed.break_before)
                         || page_break_is_forced(computed.break_after));
                 if is_break_candidate {
@@ -9736,6 +9754,7 @@ pub fn layout_pages_with_page_geometry(
                         is_float_descendant: inside_float,
                         page_name: page_name.clone(),
                         deferred_named_break_after,
+                        inline_named_page,
                     });
                 }
                 let child_is_direct_body = node_id == body_id;
@@ -10074,7 +10093,8 @@ pub fn layout_pages_with_page_geometry(
         let height = candidate.height;
         let mut effective_y = raw_y + flow_shift + descendant_margin;
         materialize_y(document, node_id, effective_y, &parent_of);
-        let forced_before = page_break_is_forced(computed.break_before);
+        let forced_before =
+            page_break_is_forced(computed.break_before) || candidate.inline_named_page;
         let style = &document.nodes[node_id].style;
         let margin_top = used_style_length_percentage_auto(style.margin.top, content_width)
             .or_else(|| used_computed_length_percentage_or_auto(computed.margin.top, content_width))
@@ -10318,8 +10338,9 @@ pub fn layout_pages_with_page_geometry(
                 }
             }
         }
-        let candidate_break_after =
-            page_break_is_forced(computed.break_after) || candidate.deferred_named_break_after;
+        let candidate_break_after = page_break_is_forced(computed.break_after)
+            || candidate.deferred_named_break_after
+            || candidate.inline_named_page;
         let pending_source_is_ancestor = pending_break_source
             .is_some_and(|source| is_descendant_or_self(document, node_id, source, &parent_of));
         if candidate_break_after && !pending_source_is_ancestor {
