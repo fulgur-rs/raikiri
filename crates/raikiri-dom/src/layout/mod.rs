@@ -9551,6 +9551,7 @@ pub fn layout_pages_with_page_geometry(
         grid_single_column_parent: bool,
         inside_flex: bool,
         inside_float: bool,
+        inside_out_of_flow: bool,
         out: &mut Vec<PageCandidate>,
     ) {
         let Some(node) = document.get_node(node_id) else {
@@ -9596,8 +9597,16 @@ pub fn layout_pages_with_page_geometry(
                 // fragmentainer in the page-name-float cases.
                 let is_float = !matches!(computed.float, FloatValue::None);
                 let float_subtree = inside_float || is_float;
+                let out_of_flow_subtree = inside_out_of_flow
+                    || matches!(
+                        computed.position,
+                        PositionValue::Absolute | PositionValue::Fixed
+                    );
                 let explicit_page_name = selected_page_name(cascade, node_id);
-                let own_page_name = if !float_subtree && !inside_flex {
+                // The `page` property on an out-of-flow box does not open a
+                // normal-flow page boundary. Keep its inherited page context,
+                // but do not use its explicit name to split pagination.
+                let own_page_name = if !float_subtree && !inside_flex && !out_of_flow_subtree {
                     explicit_page_name.clone()
                 } else {
                     None
@@ -9714,6 +9723,7 @@ pub fn layout_pages_with_page_geometry(
                         ),
                         inside_flex || matches!(computed.display, DisplayValue::Flex),
                         float_subtree,
+                        out_of_flow_subtree,
                         out,
                     );
                 }
@@ -9733,6 +9743,7 @@ pub fn layout_pages_with_page_geometry(
         0.0,
         page_step,
         None,
+        false,
         false,
         false,
         false,

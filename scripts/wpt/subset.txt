@@ -188,3 +188,9 @@ css/css-break/widows-block-in-inline-001.html
 # CSS Text Decoration underline offset horizontal foundation.
 css/css-text-decor/text-underline-offset-002.html
 css/css-text-decor/reference/text-underline-offset-002-ref.html
+
+# CSS Borders baseline pairs used by the ignored 800x600 reftest target.
+css/css-borders/border-radius-currentcolor.html
+css/css-borders/border-radius-currentcolor-ref.html
+css/css-borders/borders-on-sub-unit-sized-elements.html
+css/css-borders/reference/borders-on-sub-unit-sized-elements-ref.html
