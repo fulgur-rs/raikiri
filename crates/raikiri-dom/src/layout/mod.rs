@@ -7403,7 +7403,26 @@ fn prepare_multicol_layout(doc: &mut Document, cascade: &CascadeResult, fallback
             }
         }
 
-        if direct_breaks > 0 && !has_direct_text {
+        if direct_breaks > 0
+            && has_direct_text
+            && matches!(
+                cascade.computed[idx].height,
+                ComputedLengthPercentageOrAuto::Auto
+            )
+        {
+            let line_height = line_height_px(&cascade.computed[idx]);
+            // An auto-height `column-fill: auto` flow cannot honor soft
+            // breaks: all direct `<br>` lines establish the used height in
+            // source order instead of being divided among columns. This is
+            // the narrow direct-break shape covered by widows-orphans-017.
+            let direct_line_count = direct_text
+                .iter()
+                .filter_map(|&text_id| doc.nodes[text_id].text_layout())
+                .map(|layout| layout.len())
+                .sum::<usize>();
+            let line_count = direct_line_count.max(direct_breaks.saturating_add(1));
+            column_height = (line_count as f32 * line_height).max(0.0);
+        } else if direct_breaks > 0 && !has_direct_text {
             let line_height = line_height_px(&cascade.computed[idx]);
             column_height =
                 (direct_breaks.div_ceil(metrics.column_count) as f32 * line_height).max(0.0);
