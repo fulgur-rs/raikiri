@@ -59,8 +59,8 @@ pub use page::{
     PageDefaultsBuilder, PageFragment, PageFragmentEvent, PageFragmentGeometry,
     PageFragmentGeometryTable, PageFragmentInsets, PageFragmentItem, PageFragmentKind,
     PageFragmentLineRange, PageFragmentLink, PageFragmentLinkEvent, PageFragmentOrientation,
-    PageFragmentRect, PendingResolution, ResolveOutcome, RunningTemplate, RunningTemplateId,
-    TargetInfo, TargetRegistry, resolve_content_component,
+    PageFragmentPageGeometry, PageFragmentRect, PendingResolution, ResolveOutcome, RunningTemplate,
+    RunningTemplateId, TargetInfo, TargetRegistry, resolve_content_component,
 };
 pub use plan::{BreakReason, DocumentPlan, PageSummary, TargetDefinition};
 pub use policy::{PolicyViolation, ResourceKind, ResourcePolicy, ViolationType};

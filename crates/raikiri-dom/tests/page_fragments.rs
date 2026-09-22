@@ -2,11 +2,14 @@
 
 use parley::FontContext;
 use raikiri_dom::{
-    Document, PageFragmentEvent, PageFragmentItem, PageFragmentKind, PageFragmentRect,
+    Document, PageFragmentEvent, PageFragmentItem, PageFragmentKind, PageFragmentRect, PageSlice,
     layout_page_fragments, page_fragment_events_from_pages, page_fragment_geometry_table,
+    page_fragments_from_slices_with_page_geometry,
 };
-use raikiri_style::{build_rule_tree, cascade};
-use raikiri_traits::{NodeId, PageBox};
+use raikiri_style::{Origin, build_rule_tree, cascade};
+use raikiri_traits::{
+    NodeId, PageBox, PageFragmentInsets, PageFragmentOrientation, PageFragmentPageGeometry,
+};
 use smol_str::SmolStr;
 use taffy::Style;
 
@@ -371,4 +374,121 @@ fn page_fragment_link_events_prefer_leaf_placements_and_keep_box_fallbacks() {
     assert!(!placements.contains(&NodeId::new(anchor as u64)));
     assert!(placements.contains(&NodeId::new(span as u64)));
     assert!(placements.contains(&NodeId::new(direct_text as u64)));
+}
+
+#[test]
+fn page_fragment_margin_padding_coordinates_are_applied_once() {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let box_id = document.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("width:10px;height:10px"),
+    );
+    document.append_text(box_id, "box");
+
+    let mut rules = build_rule_tree(&document);
+    rules.add_stylesheet("@page { margin:20px; padding:5px; }", Origin::Author);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let mut page_box = PageBox::new();
+    page_box.width = 100.0;
+    page_box.height = 100.0;
+    let pages = layout_page_fragments(&mut document, &cascade, page_box, FontContext::new())
+        .expect("page fragment layout should succeed");
+
+    assert_eq!(pages.len(), 1);
+    let page = &pages[0];
+    assert_eq!(page.page_box, page_box);
+    assert_eq!(
+        page.margins,
+        PageFragmentInsets::new(20.0, 20.0, 20.0, 20.0)
+    );
+    assert_eq!(
+        page.content_insets,
+        PageFragmentInsets::new(5.0, 5.0, 5.0, 5.0)
+    );
+    assert_eq!(
+        page.content_box,
+        PageFragmentRect::new(25.0, 25.0, 60.0, 50.0)
+    );
+
+    let item = page
+        .items
+        .iter()
+        .find(|item| item.node_id == NodeId::new(box_id as u64))
+        .expect("box placement");
+    assert_eq!(item.rect.x, 0.0);
+    assert_eq!(item.rect.y, 0.0);
+    assert_eq!(
+        (
+            page.content_box.x + item.rect.x,
+            page.content_box.y + item.rect.y
+        ),
+        (25.0, 25.0),
+        "consumer adds the content-box origin exactly once"
+    );
+}
+
+#[test]
+fn page_fragment_projection_keeps_distinct_resolved_geometry_per_page() {
+    let document = Document::new();
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let mut fallback_page = PageBox::new();
+    fallback_page.width = 100.0;
+    fallback_page.height = 100.0;
+    let slices = [
+        PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: Some("first".to_string()),
+        },
+        PageSlice {
+            page_index: 1,
+            content_origin_y: 80.0,
+            page_name: Some("wide".to_string()),
+        },
+    ];
+    let first = PageFragmentPageGeometry::new(
+        0,
+        fallback_page,
+        PageFragmentInsets::new(10.0, 10.0, 10.0, 10.0),
+        PageFragmentInsets::new(2.0, 2.0, 2.0, 2.0),
+        PageFragmentRect::new(12.0, 12.0, 76.0, 76.0),
+        PageFragmentOrientation::Portrait,
+    );
+    let second = PageFragmentPageGeometry::new(
+        1,
+        {
+            let mut page = PageBox::new();
+            page.width = 200.0;
+            page.height = 100.0;
+            page
+        },
+        PageFragmentInsets::new(20.0, 15.0, 20.0, 15.0),
+        PageFragmentInsets::new(4.0, 3.0, 4.0, 3.0),
+        PageFragmentRect::new(18.0, 24.0, 164.0, 52.0),
+        PageFragmentOrientation::Landscape,
+    );
+
+    let pages = page_fragments_from_slices_with_page_geometry(
+        &document,
+        &cascade,
+        fallback_page,
+        &slices,
+        &[first, second],
+    );
+
+    assert_eq!(pages.len(), 2);
+    assert_eq!(pages[0].page_box, fallback_page);
+    assert_eq!(pages[0].content_box, first.content_box);
+    assert_eq!(pages[0].page_name.as_deref(), Some("first"));
+    assert_eq!(pages[1].page_box.width, 200.0);
+    assert_eq!(pages[1].margins, second.margins);
+    assert_eq!(pages[1].content_insets, second.content_insets);
+    assert_eq!(pages[1].content_box, second.content_box);
+    assert_eq!(pages[1].orientation, PageFragmentOrientation::Landscape);
+    assert_eq!(pages[1].page_name.as_deref(), Some("wide"));
 }

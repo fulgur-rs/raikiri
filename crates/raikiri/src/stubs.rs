@@ -7,16 +7,77 @@
 
 use parley::FontContext;
 use raikiri_dom::{
-    layout_pages_with_resolver, page_fragment_events_from_pages, page_fragments_from_slices,
+    PageSlice, first_page_name, layout_pages_with_page_geometry_and_resolver,
+    layout_pages_with_resolver, page_fragment_events_from_pages,
+    page_fragments_from_slices_with_page_geometry, resolve_page_fragment_geometry,
 };
 use raikiri_traits::{
-    DocumentPlan, PageBox, PageDefaults, PageEventObserver, PlanConfig, RenderError, RenderSink,
-    RenderStatus, RenderStatus::Aborted, RenderStatus::Completed, RenderSummary, ReplacedResolver,
-    StreamingConfig,
+    DocumentPlan, PageBox, PageDefaults, PageEventObserver, PageFragmentPageGeometry, PlanConfig,
+    RenderError, RenderSink, RenderStatus, RenderStatus::Aborted, RenderStatus::Completed,
+    RenderSummary, ReplacedResolver, StreamingConfig,
 };
 use std::collections::BTreeMap;
 
-use crate::HtmlDocument;
+use crate::{
+    Atom, HtmlDocument, MediaContext, PageContextQuery, build_cascaded_with_media_context_for_page,
+};
+
+/// Build the page-context query used by the neutral page stream.
+///
+/// The first page is treated as recto (`:right`) by default. Blank-page state
+/// is not inferred here because the current `PageSlice` contract does not
+/// expose blank-page insertion; that remains an explicit pagination follow-up.
+fn page_query_for_slice(slice: &PageSlice) -> PageContextQuery {
+    let mut query = PageContextQuery::default();
+    query.page_name = slice.page_name.as_deref().map(Atom::from);
+    query.is_first = slice.page_index == 0;
+    query.is_left = slice.page_index % 2 == 1;
+    query.is_right = !query.is_left;
+    query
+}
+
+fn page_box_for_cascade(
+    cascade: &raikiri_style::CascadeResult,
+    defaults: &PageDefaults,
+) -> PageBox {
+    cascade
+        .page
+        .size()
+        .map(|size| PageBox::from_page_size(Some(size)))
+        .unwrap_or(defaults.page_box)
+}
+
+fn resolve_page_geometries(
+    doc: &HtmlDocument,
+    defaults: &PageDefaults,
+    slices: &[PageSlice],
+) -> Vec<PageFragmentPageGeometry> {
+    slices
+        .iter()
+        .map(|slice| {
+            let query = page_query_for_slice(slice);
+            let cascade = build_cascaded_with_media_context_for_page(
+                &doc.uncascaded,
+                &MediaContext::default(),
+                &query,
+            );
+            let page_box = page_box_for_cascade(&cascade, defaults);
+            resolve_page_fragment_geometry(&cascade, page_box, slice.page_index)
+        })
+        .collect()
+}
+
+fn content_width_for_geometry(geometry: PageFragmentPageGeometry) -> f32 {
+    (geometry.page_box.width - geometry.margins.left - geometry.margins.right).max(0.0)
+}
+
+fn geometry_differs(left: PageFragmentPageGeometry, right: PageFragmentPageGeometry) -> bool {
+    left.page_box != right.page_box
+        || left.margins != right.margins
+        || left.content_insets != right.content_insets
+        || left.content_box != right.content_box
+        || left.orientation != right.orientation
+}
 
 /// Plan mode (dry-run: parse+cascade+layout planning のみ、PaintedBox 構築なし)。
 ///
@@ -97,22 +158,91 @@ fn render_streaming_inner(
         return Ok(Aborted { partial_pages: 0 });
     }
 
-    let page_box = doc
-        .cascade
-        .page
-        .size()
-        .map(|size| PageBox::from_page_size(Some(size)))
-        .unwrap_or(defaults.page_box);
+    // Resolve the first page context before layout so `:first` and the first
+    // resolved `@page size` participate in the initial fragmentainer.
+    let mut first_query = PageContextQuery::default();
+    first_query.is_first = true;
+    first_query.is_right = true;
+    let mut first_cascade = build_cascaded_with_media_context_for_page(
+        &doc.uncascaded,
+        &MediaContext::default(),
+        &first_query,
+    );
+    // The first class-A box can select a named page. Resolve that name before
+    // the initial layout so a named `:first` page is not flattened to the
+    // anonymous page geometry.
+    if let Some(name) = first_page_name(&doc.uncascaded.dom, &first_cascade) {
+        first_query.page_name = Some(Atom::from(name.as_str()));
+        first_cascade = build_cascaded_with_media_context_for_page(
+            &doc.uncascaded,
+            &MediaContext::default(),
+            &first_query,
+        );
+    }
+    let page_box = page_box_for_cascade(&first_cascade, &defaults);
     let mut document = doc.uncascaded.dom.clone();
-    let slices = layout_pages_with_resolver(
+    let mut slices = layout_pages_with_resolver(
         &mut document,
-        &doc.cascade,
+        &first_cascade,
         page_box,
         FontContext::new(),
         resolver,
     )
     .map_err(RenderError::from)?;
-    let pages = page_fragments_from_slices(&document, &doc.cascade, page_box, &slices);
+    let mut page_geometries = resolve_page_geometries(doc, &defaults, &slices);
+    let mut previous_schedule: Option<Vec<(f32, f32)>> = None;
+    for _ in 0..3 {
+        let Some(first_geometry) = page_geometries.first().copied() else {
+            break; // cov:ignore: a successful document with a body always emits a page slice.
+        };
+        let geometry_varies = page_geometries
+            .iter()
+            .any(|geometry| geometry_differs(*geometry, first_geometry));
+        if !geometry_varies {
+            break;
+        }
+        let schedule: Vec<(f32, f32)> = page_geometries
+            .iter()
+            .map(|geometry| {
+                (
+                    geometry.content_box.height,
+                    content_width_for_geometry(*geometry),
+                )
+            })
+            .collect();
+        if previous_schedule.as_ref() == Some(&schedule) {
+            break;
+        }
+        let page_steps: Vec<f32> = schedule.iter().map(|(height, _)| *height).collect();
+        let page_widths: Vec<f32> = schedule.iter().map(|(_, width)| *width).collect();
+        previous_schedule = Some(schedule);
+        // The first pagination pass establishes page count, names, and source
+        // coordinates. If page selectors resolve different used geometry, rerun
+        // the existing scheduled paginator with producer-owned page steps/widths.
+        // This remains a bounded batch layout pass; it does not claim incremental
+        // layout. A changed page count may trigger another schedule pass.
+        slices = layout_pages_with_page_geometry_and_resolver(
+            &mut document,
+            &first_cascade,
+            page_box,
+            FontContext::new(),
+            &page_steps,
+            &page_widths,
+            resolver,
+        )
+        .map_err(RenderError::from)?;
+    }
+    // Resolve once more after the final bounded schedule pass so metadata and
+    // page names always describe the slices that will actually be emitted.
+    page_geometries = resolve_page_geometries(doc, &defaults, &slices);
+
+    let pages = page_fragments_from_slices_with_page_geometry(
+        &document,
+        &first_cascade,
+        page_box,
+        &slices,
+        &page_geometries,
+    );
 
     let total_pages = u32::try_from(pages.len()).unwrap_or(u32::MAX);
     if config
