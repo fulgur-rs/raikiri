@@ -412,6 +412,7 @@ pub fn compute_table_layout(
     // max-height/max-width keep leaving sub-intrinsic tables at natural
     // size. min still wins over max on direct conflict.
     let st = &doc.nodes[table_idx].style;
+    let specified_height = resolve_dimension(st.size.height, inputs.parent_size.height);
     let min_w = resolve_dimension(st.min_size.width.into(), inputs.parent_size.width);
     let max_w = resolve_dimension(st.max_size.width.into(), inputs.parent_size.width);
     let min_h = resolve_dimension(st.min_size.height.into(), inputs.parent_size.height);
@@ -533,13 +534,16 @@ pub fn compute_table_layout(
             effective_known
                 .height
                 .map(|h| {
-                    // cov:ignore: exercised by ignored exact table-fragmentation WPT.
-                    clamp_min_max(
-                        (h - padding_border_size.height).max(0.0), // cov:ignore: exercised by ignored exact table-fragmentation WPT.
-                        min_h_outer, // cov:ignore: exercised by ignored exact table-fragmentation WPT.
-                        max_h_outer, // cov:ignore: exercised by ignored exact table-fragmentation WPT.
-                    ) // cov:ignore: exercised by ignored exact table-fragmentation WPT.
-                }) // cov:ignore: exercised by ignored exact table-fragmentation WPT.
+                    // Taffy reports authored definite table heights in the
+                    // outer box-sizing domain. Auto tables retain the legacy
+                    // known-height normalization used by fragmentation.
+                    let outer_height = if specified_height.is_some() {
+                        h
+                    } else {
+                        (h - padding_border_size.height).max(0.0) // cov:ignore: exercised by ignored exact table-fragmentation WPT.
+                    };
+                    clamp_min_max(outer_height, min_h_outer, max_h_outer)
+                })
                 .unwrap_or_else(|| {
                     clamp_min_max(
                         content_height + padding_border_size.height,
@@ -2510,6 +2514,47 @@ mod tests {
             overlap.abs() < 1.0,
             "separate cells should abut exactly, got overlap {overlap}"
         );
+    }
+
+    #[test]
+    fn explicit_table_height_respects_box_sizing() {
+        for (box_sizing, expected_outer) in [("border-box", 100.0), ("content-box", 140.0)] {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let table_style = format!(
+                "display: table; box-sizing: {box_sizing}; border: 20px solid black; border-collapse: collapse; height: 100px"
+            );
+            let table = doc.append_element(
+                Some(body),
+                "table",
+                Style::default(),
+                Some(table_style.as_str()),
+            );
+            let row = doc.append_element(
+                Some(table),
+                "tr",
+                Style::default(),
+                Some("display: table-row"),
+            );
+            doc.append_element(
+                Some(row),
+                "td",
+                Style::default(),
+                Some("display: table-cell"),
+            );
+            doc.mark_in_document_flags();
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).unwrap();
+            crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new())
+                .unwrap();
+            let table_layout = doc.nodes[table].unrounded_layout;
+            assert!(
+                (table_layout.size.height - expected_outer).abs() < 1.0,
+                "{box_sizing}: table outer height should be {expected_outer}, got {}", // cov:ignore: assertion diagnostic is evaluated only on failure.
+                table_layout.size.height
+            );
+        }
     }
 
     #[test]

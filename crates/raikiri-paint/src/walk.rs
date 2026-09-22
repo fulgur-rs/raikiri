@@ -36,7 +36,7 @@ use raikiri_style::property::{
     CounterStyle, CssColor, DisplayValue, FloatValue, Gradient, GradientStopColor, Length,
     LengthOrAuto, LineBreak, ListStyleType, ObjectFit, OutlineColor, OutlineStyle, OverflowValue,
     PositionValue, PropertyKey, PropertyValue, QuoteKeyword, Sides, TextAlign, TextShadowColor,
-    VerticalAlign, WritingMode, ZIndexValue,
+    VerticalAlign, Visibility, WritingMode, ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderRadius, ComputedCssPosition,
@@ -3285,16 +3285,22 @@ fn paint_document_impl(
                 ) {
                     paint_background_width = width; // cov:ignore: vertical background geometry is exercised by the ignored exact WPT reftest.
                 }
-                let mut paints_on_page = node_id == body_id
-                    || ((fixed_in_viewport || named_page_matches(node_id))
-                        && (fixed_in_viewport
-                            || inside_fixed
-                            || box_intersects_page(
-                                abs_y,
-                                layout.size.height,
-                                page_top,
-                                page_bottom,
-                            )));
+                // A hidden table must not paint its own collapsed border. Keep
+                // row/cell visibility handling unchanged; `visibility: collapse`
+                // is table-layout-specific and existing row painting relies on it.
+                let visibility_hidden_table = cv.visibility == Visibility::Hidden
+                    && matches!(cv.display, DisplayValue::Table | DisplayValue::InlineTable);
+                let mut paints_on_page = !visibility_hidden_table
+                    && (node_id == body_id
+                        || ((fixed_in_viewport || named_page_matches(node_id))
+                            && (fixed_in_viewport
+                                || inside_fixed
+                                || box_intersects_page(
+                                    abs_y,
+                                    layout.size.height,
+                                    page_top,
+                                    page_bottom,
+                                ))));
                 // An absolutely positioned containing block can own a child
                 // fragment on a later page even when its first layout box ends
                 // before that page.  Preserve the parent's border/background
@@ -5990,6 +5996,52 @@ mod tests {
             ),
             0.0
         );
+    }
+
+    #[test]
+    fn paint_document_skips_hidden_table_decoration() {
+        let mut document = Document::new();
+        let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let table = document.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some(
+                "display: table; width: 100px; height: 100px; box-sizing: border-box; border: 20px solid red; border-collapse: collapse; visibility: hidden",
+            ),
+        );
+        let row = document.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display: table-row"),
+        );
+        document.append_element(
+            Some(row),
+            "td",
+            Style::default(),
+            Some("display: table-cell"),
+        );
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+        raikiri_dom::layout_single_page(
+            &mut document,
+            &cascade,
+            PageBox::A4,
+            parley::FontContext::new(),
+        )
+        .expect("layout Ok");
+
+        let mut scene = Scene::new();
+        crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
+        let draws = scene
+            .commands
+            .iter()
+            .filter(|command| matches!(command, RenderCommand::Fill(_) | RenderCommand::Stroke(_)))
+            .count();
+        // The only draw is the page canvas; the hidden table's border is absent.
+        assert_eq!(draws, 1);
     }
 
     #[test]
