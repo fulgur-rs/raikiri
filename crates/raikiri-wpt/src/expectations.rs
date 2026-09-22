@@ -1290,7 +1290,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Break Flexbox print fragmentation slice (+9).
         // + CSS Break Table reftest slice (+6).
         // + CSS Break Grid reftest slice (+11).
-        // + CSS Break Flexbox additional exact slice (+37).
+        // + CSS Break Flexbox additional Fulgur v0.40.0 PASS slice (+7).
         // + CSS Break Grid multicolumn fragmentainer paint slice (+30).
         // + CSS Break Grid exact follow-up sweep (+2).
         // + CSS Break Flexbox row-line break propagation slice (+2).
@@ -1303,7 +1303,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Pseudo exact active-selection/first-letter slice (+2).
         // + CSS Transforms exact 2D transform-origin/skew slice (+5).
         // + CSS Borders exact current-color and sub-unit slice (+2).
-        assert_eq!(set.baseline.entries.len(), 1336);
+        assert_eq!(set.baseline.entries.len(), 1306);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
