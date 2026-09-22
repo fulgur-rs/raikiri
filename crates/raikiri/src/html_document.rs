@@ -30,9 +30,10 @@ impl HtmlDocument {
         &self.cascade
     }
 
-    /// Parse 時に head 配下から集約された `<style>` element の source list
+    /// Parse 時に head/body から集約された inline `<style>` element と
+    /// fetched head stylesheet source の list
     /// ([`UncascadedDocument::stylesheet_sources`] に一致)。
-    /// `<body>` 内 `<style>` は現状未対応 (将来拡張予定)。
+    /// HTML/XHTML と SVG の `<style>` は対象で、MathML の同名 element は除外される。
     pub fn stylesheet_sources(&self) -> &[String] {
         &self.uncascaded.stylesheet_sources
     }

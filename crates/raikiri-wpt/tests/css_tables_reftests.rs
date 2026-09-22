@@ -197,3 +197,57 @@ fn css_tables_border_collapse_and_paint_pairs_are_pixel_exact_at_800x600() {
         );
     }
 }
+
+/// Verify that a body stylesheet participates in the subpixel table-padding pair.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn css_tables_body_style_subpixel_padding_is_pixel_exact_at_800x600() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let relative =
+        "css/css-tables/height-distribution/td-different-subpixel-padding-in-same-row.html";
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    let test = root.join(relative);
+    let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
+        .unwrap_or_else(|error| panic!("discover {relative}: {error}"));
+    assert_eq!(pairs.len(), 1, "expected one pair for {relative}");
+    let result =
+        run_pair(&pairs[0], config).unwrap_or_else(|error| panic!("run {relative}: {error}"));
+    assert!(
+        matches!(result.outcome, TestOutcome::Pass),
+        "{relative}: {:?} ({} mismatched pixels)",
+        result.outcome,
+        result.mismatched_pixels
+    );
+}
+
+#[test]
+#[ignore]
+fn temporary_th_text_align_render_probe() {
+    use raikiri_wpt::reftest::render_raikiri;
+    use std::fs;
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    for (name, html) in [
+        (
+            "test",
+            fs::read_to_string(root.join("css/css-tables/th-text-align.html")).unwrap(),
+        ),
+        (
+            "ref",
+            fs::read_to_string(root.join("css/css-tables/th-text-align-ref.html")).unwrap(),
+        ),
+    ] {
+        let image = render_raikiri(&html, 800, 600).unwrap();
+        let file = fs::File::create(format!("/home/mitz/.cache/th-text-align-{name}.png")).unwrap();
+        let mut enc = png::Encoder::new(file, image.width, image.height);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header()
+            .unwrap()
+            .write_image_data(&image.rgba)
+            .unwrap();
+    }
+}

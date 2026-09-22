@@ -7,11 +7,12 @@ use url::Url;
 /// Parse phase の出力。cascade 前の DOM + inline/external stylesheet source
 /// 集約結果 + parse warnings。
 ///
-/// `stylesheet_sources` には `<head>` 内 `<style>` element の text content
-/// と、`<head>` 内 `<link rel="stylesheet">` を `ParseOptions::network`
-/// 経由で fetch した CSS text が Author stylesheet として集約される
-/// (`TreeSink::finish()` 後に parse 層が fetch するため Sink は I/O を持たない)。
-/// Inline と external source は head の document order で並ぶ。Inline、extra、
+/// `stylesheet_sources` には `<head>` 内および `<head>` 外の `<style>` element
+/// の text content と、`<head>` 内 `<link rel="stylesheet">` を
+/// `ParseOptions::network` 経由で fetch した CSS text が Author stylesheet として
+/// 集約される (`TreeSink::finish()` 後に parse 層が fetch するため Sink は I/O を持たない)。
+/// Head の source を先に保ち、head 外の inline style は document order で後続する。
+/// Inline と external source はこの projection 順で並ぶ。Inline、extra、
 /// 外部 stylesheet の leading `@import` は、利用可能な provider で出現位置に
 /// 展開される。解決不能、循環、深度制限、または resource limit に該当する
 /// import は元の at-rule のまま残り、parse 全体は継続する。
@@ -23,10 +24,11 @@ use url::Url;
 pub struct UncascadedDocument {
     /// DOM tree (raikiri-dom arena)。
     pub dom: Document,
-    /// `<head>` 内 `<style>` element の text content と、同じく `<head>` 内で
-    /// fetch に成功した `<link rel="stylesheet">` の CSS text。両者は head の
-    /// document order で並び、Author origin として cascade に統合される想定
-    /// (raikiri umbrella crate の `build_cascaded` が消費)。
+    /// `<head>` 内外の `<style>` element の text content と、`<head>` 内で
+    /// fetch に成功した `<link rel="stylesheet">` の CSS text。head の source
+    /// を先に保ち、head 外の inline style は document order で後続する。
+    /// Author origin として cascade に統合される想定 (raikiri umbrella crate の
+    /// `build_cascaded` が消費)。
     pub stylesheet_sources: Vec<String>,
     /// html5ever が報告した非致命 parse error を warning として保持。
     /// 上位の orchestrator (raikiri umbrella crate) が `Document` を経由し

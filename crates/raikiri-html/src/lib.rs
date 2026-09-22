@@ -670,6 +670,39 @@ mod tests {
         }
 
         #[test]
+        fn parse_preserves_source_order_across_head_and_body_styles() {
+            // Head `<style>` / `<link>` / `<style>` entries are interleaved at
+            // their original positions, then body styles continue in document
+            // order. This is the source order consumed by the umbrella cascade.
+            let provider = EchoUrlProvider;
+            let opts = ParseOptions {
+                extra_stylesheets: &[],
+                network: Some(&provider as &dyn NetworkProvider),
+                base_url: None,
+            };
+            let html = br#"<html><head>
+                           <style>p{color:red}</style>
+                           <link rel="stylesheet" href="https://example.test/head.css">
+                           <style>p{color:blue}</style>
+                           </head><body>
+                           <style>p{color:green}</style>
+                           <section><style>p{color:purple}</style></section>
+                           <p>x</p>
+                           </body></html>"#;
+            let uncascaded = parse(&html[..], &opts).expect("parse ok");
+            assert_eq!(
+                uncascaded.stylesheet_sources,
+                vec![
+                    String::from("p{color:red}"),
+                    String::from("/* https://example.test/head.css */"),
+                    String::from("p{color:blue}"),
+                    String::from("p{color:green}"),
+                    String::from("p{color:purple}"),
+                ]
+            );
+        }
+
+        #[test]
         fn parse_skips_link_stylesheet_inside_template_element() {
             // <template> contents are inert per spec (mirrors
             // `parse_skips_style_inside_template_element` for <style>) —
@@ -3084,17 +3117,50 @@ mod tests {
     }
 
     #[test]
-    fn parse_ignores_body_style_in_m1_scope() {
-        // 設計仕様書 §6 initial implementation: <head> 内 <style> のみ登録。<body> 内 <style> は
-        // position-aware semantics を要するため defer。
+    fn parse_extracts_body_style_after_head_style() {
         let html = b"<html><head><style>p{color:red}</style></head>\
                      <body><style>p{color:blue}</style><p>x</p></body></html>";
         let opts = empty_options();
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
-        // Only <head> style should be extracted.
         assert_eq!(
             uncascaded.stylesheet_sources,
-            vec![String::from("p{color:red}")]
+            vec![String::from("p{color:red}"), String::from("p{color:blue}")]
+        );
+    }
+
+    #[test]
+    fn parse_extracts_body_style_without_explicit_head() {
+        let html = b"<html><body><style>p{color:green}</style><p>x</p></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        assert_eq!(
+            uncascaded.stylesheet_sources,
+            vec![String::from("p{color:green}")]
+        );
+    }
+
+    #[test]
+    fn parse_skips_body_style_inside_template_element() {
+        let html = b"<html><body><template><style>p{color:red}</style></template>                     <style>p{color:blue}</style><p>x</p></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        assert_eq!(
+            uncascaded.stylesheet_sources,
+            vec![String::from("p{color:blue}")]
+        );
+    }
+
+    #[test]
+    fn parse_extracts_svg_style_but_skips_mathml_style() {
+        let html = b"<html><body><svg><style>circle{fill:red}</style></svg>                     <math><style>p{color:orange}</style></math>                     <style>p{color:green}</style><p>x</p></body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        assert_eq!(
+            uncascaded.stylesheet_sources,
+            vec![
+                String::from("circle{fill:red}"),
+                String::from("p{color:green}")
+            ]
         );
     }
 
