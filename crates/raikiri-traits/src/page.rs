@@ -249,10 +249,11 @@ impl PageFragmentItem {
 ///
 /// This is the neutral counterpart to fulgur's `PaginationGeometry`: the
 /// `fragments` vector is ordered by page and fragment index, while
-/// `is_repeat` distinguishes complete per-page copies from split content. The current
-/// `raikiri-dom` producer emits split/ordinary placements (`is_repeat == false`);
-/// repeat-producing fixed/header layout remains an explicit future producer.
-/// The model already preserves the flag for such producers and consumers.
+/// `is_repeat` distinguishes complete per-page copies from split content. The
+/// `raikiri-dom` producer emits repeat placements for fixed-position subtrees
+/// when its existing layout produces the subtree geometry. Table header/footer
+/// repetition is not synthesized until pagination owns a corresponding
+/// repeated placement; that unsupported semantic remains explicit.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct PageFragmentGeometry {
