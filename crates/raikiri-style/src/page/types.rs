@@ -7,6 +7,7 @@ use crate::ruletree::Origin;
 // `cascade_page` in the doc comments below resolve to their new homes in
 // sibling modules via this glob (they are all `pub`/`pub(crate)` in
 // `page::parse` / `page::cascade`, re-exported at `page::*`).
+#[allow(unused_imports)]
 use super::*;
 
 /// Parsed `@page` selector list — a comma-separated list of compound
