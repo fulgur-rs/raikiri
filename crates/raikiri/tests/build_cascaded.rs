@@ -699,14 +699,12 @@ fn imported_media_condition_is_evaluated_by_the_selected_cascade_context() {
 }
 
 #[test]
-fn body_style_element_is_not_applied_per_m1_head_only_contract() {
-    // raikiri-html は現状 head 配下の <style> のみ stylesheet_sources
-    // に集約する (<body> 内 <style> の position-aware semantics は将来対応)。
-    // umbrella build_cascaded は stylesheet_sources を Author として消費するため、
-    // <body> 内 <style> は cascade に流れず、<p> は UA CSS の display: block を得る。
-    // (raikiri-html/src/sink.rs::extract_inline_stylesheets の invariant と一致)
+fn body_style_element_reaches_umbrella_cascade() {
+    // Body styles are collected as Author stylesheets just like head styles.
+    // Place the rule after the target element to prove that the final cascade
+    // still applies it across the document.
     let html = "<html><head></head>\
-                <body><style>p { display: inline }</style><p>Hi</p></body></html>";
+                <body><p>Hi</p><style>p { display: inline }</style></body></html>";
     let doc = parse_html(html);
     let result = build_cascaded(&doc);
 
@@ -714,11 +712,10 @@ fn body_style_element_is_not_applied_per_m1_head_only_contract() {
     let display = result.computed[p_id.0 as usize].display;
     assert_eq!(
         display,
-        DisplayValue::Block,
-        "<body> 内の <style> は現状未対応、<p> は UA CSS 経由で display: block を得る",
+        DisplayValue::Inline,
+        "body <style> must reach the umbrella Author cascade",
     );
 }
-
 #[test]
 fn img_width_height_html_attributes_reach_computed_style_through_real_parse_path() {
     // raikiri-style crate 内 (`crate::cascade::

@@ -51,11 +51,11 @@ pub fn parse<R: Read>(
 ///
 /// parse 完了時に既定 UA CSS + `options.extra_stylesheets` を
 /// [`raikiri_dom::Document::add_stylesheet`] 経由で Document 状態に注入する
-/// (UA=UserAgent/extra=User kind)。Extra と head stylesheet の leading `@import`
+/// (UA=UserAgent/extra=User kind)。Extra と inline stylesheet の leading `@import`
 /// は `options.network` がある場合に source order に従って展開される。続けて
 /// `<head>` 内の external stylesheet を `options.network` / `options.base_url` 経由で
 /// fetch し、成功分を `UncascadedDocument.stylesheet_sources` に Author として
-/// head order で統合する (`fetch_external_stylesheets` doc 参照)。外部 stylesheet
+/// head source の後へ統合する (`fetch_external_stylesheets` doc 参照)。外部 stylesheet
 /// の import は response の `final_url` を nested import の base として使う。
 /// 失敗した import は元の at-rule を保持し、fetch failure は
 /// `NetworkFallback` / `PolicyWarning` を記録する。
@@ -124,8 +124,8 @@ where
 
 /// `<head>` 内の stylesheet-bearing elements を document order で処理し、成功した
 /// external CSS を `doc.stylesheet_sources` に Author origin として追加する。
-/// Inline `<style>` と `<link>` は同じ `stylesheet_sources` bucket 内で元の
-/// head order に並ぶ。`raikiri` umbrella の `build_cascaded` はこの Vec を
+/// Head 内の inline `<style>` と `<link>` は head order に並び、head 外の inline
+/// `<style>` はその後ろに保持される。`raikiri` umbrella の `build_cascaded` はこの Vec を
 /// 丸ごと Author として消費するため、umbrella 側の API 変更は不要である。
 ///
 /// href の検出は `sink::collect_head_stylesheet_sources` (`finish()` 後の
