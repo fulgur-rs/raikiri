@@ -7964,16 +7964,9 @@ fn preshape_text(
         let mcv = nearest_block_container(doc, cascade, &parent_of, idx)
             .map(|b| &cascade.computed[b])
             .unwrap_or(cv);
-        // A page margin can leave a very narrow content strip while the
-        // document still paints overflowing inline text into that strip's
-        // neighboring page area.  Preserve the historical full-page shaping
-        // in that extreme case; otherwise the narrowed fragmentainer width
-        // creates an extra line that a page-level clip will remove only after
-        // it has changed the document's height.
-        let page_margin_overflow = page_width.is_finite()
-            && max_advance.is_finite()
-            && max_advance > 0.0
-            && page_width >= max_advance * 2.0;
+        // Page side margins define the inline containing block.  Keep the
+        // shaped run on that same width so line breaks agree with the page
+        // content box even when the remaining strip is very narrow.
         // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
         let multicol_advance =
             multicol_column_width_for_text(cascade, &parent_of, idx, max_advance);
@@ -7987,9 +7980,7 @@ fn preshape_text(
         let shape_advance = if let Some(column_width) = multicol_advance {
             column_width
         } else if page_width > max_advance
-            && (is_leading_body_text(doc, body_id, idx)
-                || has_out_of_flow_ancestor(parent_of[idx])
-                || page_margin_overflow)
+            && (is_leading_body_text(doc, body_id, idx) || has_out_of_flow_ancestor(parent_of[idx]))
         {
             page_width
         } else if let Some(width) = authored_advance {
