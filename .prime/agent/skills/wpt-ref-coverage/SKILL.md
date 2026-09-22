@@ -40,8 +40,9 @@ Use this workflow only for visual WPT reftests with `rel=match` or
 1. Read `AGENTS.md`, run `bd prime`, inspect `git status`, and inspect the exact
    contents of this skill from the repository working tree. Do not overwrite
    uncommitted files.
-2. Fetch the pinned WPT checkout (from the task worktree so its `target/wpt`
-   link is installed):
+2. Fetch the pinned WPT checkout (the physical shared cache is
+   `$HOME/.cache/raikiri/wpt`; running from the task worktree installs its
+   replaceable `target/wpt` link, including after `target/` cleanup):
 
    ```sh
    scripts/wpt/fetch.sh

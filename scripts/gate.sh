@@ -44,6 +44,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # one level down too.
 # shellcheck source=lib/repo_root.sh
 source "$SCRIPT_DIR/lib/repo_root.sh"
+# shellcheck source=wpt/lib/cache_path.sh
+source "$SCRIPT_DIR/wpt/lib/cache_path.sh"
 
 cd "$REPO_ROOT"
 
@@ -208,22 +210,18 @@ if [[ "$CENSUS_COUNT" -eq 0 ]]; then
   IGNORED_N=0
 else
   # gate.md §8.1(a): "-- --ignored" needs target/wpt (VRT font fixtures)
-  # fetched. In a linked worktree, target/ is per-worktree and doesn't
-  # inherit main's fetch (the related change). Auto-repair the symlink
-  # rather than fail the whole gate on a one-line environment gap — this is
-  # exactly the "record verified by re-running it" spirit described in the
-  # temporary-directory change's note; a gate that requires a silent manual
-  # `ln -s` before it works is the same failure class as the tmpfs bug.
+  # fetched. target/ is per-worktree build output and may have been removed by
+  # cargo clean; recreate the compatibility link directly from the persistent
+  # home cache instead of depending on the main worktree's target/ directory.
   if [[ ! -e "$REPO_ROOT/target/wpt" ]]; then
-    MAIN_WORKTREE="$(git worktree list --porcelain | awk '/^worktree /{print $2; exit}')"
-    if [[ -n "$MAIN_WORKTREE" && "$MAIN_WORKTREE" != "$REPO_ROOT" && -e "$MAIN_WORKTREE/target/wpt" ]]; then
-      mkdir -p "$REPO_ROOT/target"
-      ln -s "$MAIN_WORKTREE/target/wpt" "$REPO_ROOT/target/wpt"
-      echo "(re-linked target/wpt -> $MAIN_WORKTREE/target/wpt)"
+    WPT_CACHE_DIR="$(wpt_cache_dir)"
+    if [[ -e "$WPT_CACHE_DIR/.git" ]]; then
+      ensure_wpt_cache_link "$REPO_ROOT" "$WPT_CACHE_DIR"
+      echo "(re-linked target/wpt -> $WPT_CACHE_DIR)"
     else
-      echo "warning: target/wpt missing and no main worktree fetch found to"
-      echo "         link against. Run scripts/wpt/fetch.sh first if the"
-      echo "         --ignored run below fails on VRT font fixtures."
+      echo "warning: WPT cache missing at $WPT_CACHE_DIR. Run"
+      echo "         scripts/wpt/fetch.sh before the --ignored run if it fails"
+      echo "         on VRT font fixtures."
     fi
   fi
 

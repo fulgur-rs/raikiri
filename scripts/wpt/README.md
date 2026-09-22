@@ -1,18 +1,35 @@
 # scripts/wpt/
 
-`fetch.sh` executes a sparse, shallow clone of the W3C web-platform-tests
-repository into `target/wpt/`, pinned to the SHA in `pinned_sha.txt`.
+`fetch.sh` keeps the sparse, shallow W3C web-platform-tests checkout at
+`$HOME/.cache/raikiri/wpt`, pinned to the SHA in `pinned_sha.txt`. Every
+worktree gets a replaceable `target/wpt` symlink to that checkout for existing
+commands and Rust tests. Removing `target/` (for example with `cargo clean`)
+removes only the link; `fetch.sh` and the gate recreate it from the home cache.
 
 `subset.txt` defines the shared sparse roots: all of `css/`, `fonts/`, and
-`images/`. `fetch.sh` validates this exact set, symlinks one checkout into task
-worktrees, and atomically replaces its local sparse-pattern file with a
-read-only inode. An already-open stale writer is detached; later runs of an old
-`fetch.sh` fail instead of narrowing the shared checkout and hiding tests from
-sibling worktrees. Do not narrow or add per-task paths; use
-the survey's category/theme filters. To change shared roots, use a reviewed
-project-level change that updates both `subset.txt` and the guard in `fetch.sh`.
-Only then should a maintainer unlock `target/wpt/.git/info/sparse-checkout`
-with `chmod u+w` before rerunning the fetch.
+`images/`. `fetch.sh` validates this exact set and atomically replaces the
+cache's sparse-pattern file with a read-only inode. An already-open stale
+writer is detached; later runs of an old `fetch.sh` fail instead of narrowing
+the shared checkout and hiding tests from sibling worktrees. Do not narrow or
+add per-task paths; use the survey's category/theme filters. To change shared
+roots, use a reviewed project-level change that updates both `subset.txt` and
+the guard in `fetch.sh`. Only then should a maintainer unlock
+`$HOME/.cache/raikiri/wpt/.git/info/sparse-checkout` with `chmod u+w` before
+rerunning the fetch.
+
+## One-time migration from `target/wpt`
+
+If an older checkout still has a physical `target/wpt` directory, run this once
+from the main worktree when the home-cache destination does not already exist:
+
+```sh
+mkdir -p "$HOME/.cache/raikiri"
+mv target/wpt "$HOME/.cache/raikiri/wpt"
+ln -s "$HOME/.cache/raikiri/wpt" target/wpt
+```
+
+This preserves the pinned Git checkout and any local files. `fetch.sh` refuses
+to create a duplicate cache while the old physical checkout is still present.
 
 ## Usage
 
