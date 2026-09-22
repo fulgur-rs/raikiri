@@ -1939,6 +1939,7 @@ impl SpecifiedValues {
             column_count: self.column_count,
             column_width: resolve_column_width(self.column_width, font_size, own_line_height, ctx),
             custom_properties: crate::computed::empty_custom_properties(),
+            local_custom_properties: crate::computed::empty_custom_properties(),
         }
     }
 }
@@ -2427,6 +2428,7 @@ mod tests {
             column_count: ColumnCountValue::Count(3),
             column_width: crate::resolve::ComputedColumnWidth::Px(24.0),
             custom_properties: crate::computed::empty_custom_properties(),
+            local_custom_properties: crate::computed::empty_custom_properties(),
         }
     }
 

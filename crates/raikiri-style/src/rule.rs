@@ -9,11 +9,13 @@ use cssparser::{
 use selectors::parser::SelectorList;
 
 use crate::RaikiriSelectorImpl;
+use crate::consumer::{ConsumerPropertyGrammar, ConsumerPropertyRegistration};
 use crate::property::{
-    BackgroundShorthand, Border, BorderColor, BorderStyle, DeferredValue, FlexFlow, FlexShorthand,
-    FontShorthand, FontShorthandSize, GapShorthand, GridLineShorthand, Length, LengthOrAuto,
-    Outline, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand,
-    PropertyKey, PropertyValue, Sides, StartEnd, TextDecorationShorthand, parse_value,
+    BackgroundShorthand, Border, BorderColor, BorderStyle, CustomProperty, DeferredValue, FlexFlow,
+    FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand, GridLineShorthand, Length,
+    LengthOrAuto, Outline, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand,
+    PlaceSelfShorthand, PropertyKey, PropertyValue, Sides, StartEnd, TextDecorationShorthand,
+    consume_deferred_value, parse_consumer_text_value, parse_value,
 };
 
 /// 1 property declaration = value + `!important` flag。
@@ -165,7 +167,19 @@ impl StyleRule {
 /// per-side winner selection が自然に成立することを担保するための spec-correct
 /// な expansion — 詳細は [`expand_shorthand_into`] doc 参照。
 pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
-    let mut parser = DeclParser;
+    parse_declaration_block_with_consumer_properties(input, &[])
+}
+
+/// Parse a declaration block with an optional set of consumer-owned property
+/// registrations.  The default wrapper above intentionally keeps all existing
+/// callers on the zero-overhead path.
+pub(crate) fn parse_declaration_block_with_consumer_properties(
+    input: &mut Parser<'_, '_>,
+    consumer_properties: &[ConsumerPropertyRegistration],
+) -> Vec<Declaration> {
+    let mut parser = DeclParser {
+        consumer_properties,
+    };
     let mut out = Vec::new();
     for decl in RuleBodyParser::new(input, &mut parser).flatten() {
         expand_shorthand_into(&decl, |d| out.push(d));
@@ -1158,10 +1172,69 @@ fn expand_background(
     });
 }
 
-/// Per-declaration parser for cssparser::RuleBodyParser。
-struct DeclParser;
+fn parse_registered_consumer_value(
+    name: &str,
+    input: &mut Parser<'_, '_>,
+    registrations: &[ConsumerPropertyRegistration],
+) -> Option<PropertyValue> {
+    let registration = registrations
+        .iter()
+        .find(|registration| registration.matches_css_name(name))?;
+    let start = input.state();
+    let raw = consume_deferred_value(input)?;
+    let has_deferred_substitution = raw.to_ascii_lowercase().contains("var(");
+    if !has_deferred_substitution {
+        let valid = match registration.grammar() {
+            ConsumerPropertyGrammar::Integer => {
+                let mut parser_input = cssparser::ParserInput::new(raw.as_str());
+                let mut parser = Parser::new(&mut parser_input);
+                parser
+                    .parse_entirely(|parser| {
+                        let value = parser
+                            .expect_integer()
+                            .map_err(|_| parser.new_custom_error(()))?;
+                        Ok::<_, cssparser::ParseError<'_, ()>>(value)
+                    })
+                    .is_ok()
+            }
+            ConsumerPropertyGrammar::IntegerOrNone => {
+                let mut parser_input = cssparser::ParserInput::new(raw.as_str());
+                let mut parser = Parser::new(&mut parser_input);
+                parser
+                    .parse_entirely(|parser| -> Result<(), cssparser::ParseError<'_, ()>> {
+                        if parser
+                            .try_parse(|parser| parser.expect_ident_matching("none"))
+                            .is_ok()
+                        {
+                            Ok(())
+                        } else {
+                            parser
+                                .expect_integer()
+                                .map(|_| ())
+                                .map_err(|_| parser.new_custom_error(()))
+                        }
+                    })
+                    .is_ok()
+            }
+            ConsumerPropertyGrammar::Text => parse_consumer_text_value(raw.as_str()).is_some(),
+        };
+        if !valid {
+            input.reset(&start);
+            return None;
+        }
+    }
+    Some(PropertyValue::CustomProperty(CustomProperty {
+        name: registration.storage_name(),
+        value: raw,
+    }))
+}
 
-impl<'i> DeclarationParser<'i> for DeclParser {
+/// Per-declaration parser for cssparser::RuleBodyParser。
+struct DeclParser<'a> {
+    consumer_properties: &'a [ConsumerPropertyRegistration],
+}
+
+impl<'i, 'a> DeclarationParser<'i> for DeclParser<'a> {
     type Declaration = Declaration;
     type Error = ();
 
@@ -1171,7 +1244,9 @@ impl<'i> DeclarationParser<'i> for DeclParser {
         input: &mut Parser<'i, 't>,
         _declaration_start: &ParserState,
     ) -> Result<Declaration, ParseError<'i, Self::Error>> {
-        let value = parse_value(name.as_ref(), input).ok_or_else(|| input.new_custom_error(()))?;
+        let value = parse_registered_consumer_value(name.as_ref(), input, self.consumer_properties)
+            .or_else(|| parse_value(name.as_ref(), input))
+            .ok_or_else(|| input.new_custom_error(()))?;
         let important = input.try_parse(cssparser::parse_important).is_ok();
         // Exhaustive consumption: trailing garbage after the value (and optional
         // `!important`) must reject the whole declaration rather than silently
@@ -1184,20 +1259,20 @@ impl<'i> DeclarationParser<'i> for DeclParser {
 }
 
 // At-rule parser は no-op (block 内で @rule が現れた場合は drop)。
-impl<'i> AtRuleParser<'i> for DeclParser {
+impl<'i, 'a> AtRuleParser<'i> for DeclParser<'a> {
     type Prelude = ();
     type AtRule = Declaration;
     type Error = ();
 }
 
 // Qualified-rule parser (nested rule) も no-op — block 内 nested rule は drop。
-impl<'i> QualifiedRuleParser<'i> for DeclParser {
+impl<'i, 'a> QualifiedRuleParser<'i> for DeclParser<'a> {
     type Prelude = ();
     type QualifiedRule = Declaration;
     type Error = ();
 }
 
-impl<'i> RuleBodyItemParser<'i, Declaration, ()> for DeclParser {
+impl<'i, 'a> RuleBodyItemParser<'i, Declaration, ()> for DeclParser<'a> {
     fn parse_qualified(&self) -> bool {
         false
     }

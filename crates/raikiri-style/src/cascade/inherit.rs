@@ -105,10 +105,14 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         };
         let is_element = node.kind() == StyleNodeKind::Element;
 
-        let custom_properties = cascaded
+        let local_custom_properties = cascaded
             .custom_candidates(id)
-            .map(|candidates| resolve_custom_properties(&parent_custom_properties, candidates))
+            .map(|candidates| resolve_custom_properties(&parent_custom_properties, candidates));
+        let custom_properties = local_custom_properties
+            .clone()
             .unwrap_or_else(|| parent_custom_properties.clone());
+        let local_custom_properties =
+            local_custom_properties.unwrap_or_else(empty_custom_properties);
 
         // phase 1: 親からの inheritance walk 開始値 (inherited のみ親の computed
         // からコピー、非継承は initial) に自 node の cascaded winner を適用する。
@@ -164,6 +168,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
             }
         };
         computed.custom_properties = custom_properties.clone();
+        computed.local_custom_properties = local_custom_properties;
 
         // 子へ渡す rem/rlh context。root element の phase 2 + 2.5 が終わった
         // 時点で `root_font_size` / `root_line_height` が確定するので、ここで
@@ -218,9 +223,13 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
                 if candidates.is_none() && custom_candidates.is_none() {
                     continue;
                 }
-                let pseudo_custom_properties = custom_candidates
-                    .map(|candidates| resolve_custom_properties(&custom_properties, candidates))
+                let pseudo_local_custom_properties = custom_candidates
+                    .map(|candidates| resolve_custom_properties(&custom_properties, candidates));
+                let pseudo_custom_properties = pseudo_local_custom_properties
+                    .clone()
                     .unwrap_or_else(|| custom_properties.clone());
+                let pseudo_local_custom_properties =
+                    pseudo_local_custom_properties.unwrap_or_else(empty_custom_properties);
 
                 let mut pseudo_specified = SpecifiedValues::inherit_from(&computed);
                 if let Some(candidates) = candidates {
@@ -247,6 +256,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
                 );
                 let mut pseudo_computed = pseudo_specified.finalize(&computed, &ctx);
                 pseudo_computed.custom_properties = pseudo_custom_properties;
+                pseudo_computed.local_custom_properties = pseudo_local_custom_properties;
                 pseudo_out.insert((id, pseudo), pseudo_computed);
             }
         }

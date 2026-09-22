@@ -8,7 +8,7 @@ use crate::PseudoElem;
 use crate::RaikiriSelectorImpl;
 use crate::media::MediaContext;
 use crate::property::{CustomProperty, PropertyValue};
-use crate::rule::{expand_shorthand_into, parse_declaration_block};
+use crate::rule::{expand_shorthand_into, parse_declaration_block_with_consumer_properties};
 use crate::ruletree::{Origin, RuleTree};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 
@@ -630,7 +630,10 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                 if let Some(source) = elem.inline_style_source() {
                     let mut input = ParserInput::new(source);
                     let mut parser = Parser::new(&mut input);
-                    for decl in parse_declaration_block(&mut parser) {
+                    for decl in parse_declaration_block_with_consumer_properties(
+                        &mut parser,
+                        rule_tree.consumer_property_registrations(),
+                    ) {
                         push_cascaded_decl(
                             &mut out.decls,
                             &mut out.custom_decls,

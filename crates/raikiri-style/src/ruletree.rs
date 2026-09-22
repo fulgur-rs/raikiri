@@ -12,6 +12,7 @@ use cssparser::{Parser, ParserInput, SourceLocation, StyleSheetParser, Token};
 use selectors::parser::{ParseRelative, Parser as SelectorParser, Selector, SelectorList};
 use std::collections::HashMap;
 
+use crate::consumer::ConsumerPropertyRegistration;
 use crate::counter_style::{CounterStyleRegistry, parse_counter_style_rules};
 use crate::font_face::{FontFaceRegistry, parse_font_face_rules};
 use crate::media::{MediaCondition, MediaRule, parse_media_condition};
@@ -19,7 +20,7 @@ use crate::page::{
     PageBlockBody, PageRule, PageSelector, parse_page_declaration_block, parse_page_prelude,
 };
 use crate::property::parse_value;
-use crate::rule::{Declaration, StyleRule, parse_declaration_block};
+use crate::rule::{Declaration, StyleRule, parse_declaration_block_with_consumer_properties};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 use crate::{Atom, PseudoClass, PseudoElem, RaikiriSelectorImpl, RaikiriSelectorParser};
 
@@ -637,6 +638,9 @@ pub struct RuleTree {
     pub(crate) rules: Vec<CssRule>,
     /// Remaining budget for overlapping bodies retained by nested opaque rules.
     opaque_body_budget: usize,
+    /// Consumer-owned CSS property registrations used while parsing declarations.
+    /// Empty in the compatibility/default path.
+    consumer_properties: Vec<ConsumerPropertyRegistration>,
 }
 
 impl RuleTree {
@@ -757,7 +761,23 @@ impl RuleTree {
             next_style_order: 0,
             rules: Vec::new(),
             opaque_body_budget: MAX_CUMULATIVE_NESTED_OPAQUE_BODY_BYTES,
+            consumer_properties: Vec::new(),
         }
+    }
+
+    /// Empty rule tree configured to retain the supplied consumer-owned
+    /// property names while parsing qualified rules and inline declarations.
+    pub fn empty_with_consumer_properties(
+        consumer_properties: &[ConsumerPropertyRegistration],
+    ) -> Self {
+        let mut tree = Self::empty();
+        tree.consumer_properties = consumer_properties.to_vec();
+        tree
+    }
+
+    /// Registrations used by this tree's declaration parser.
+    pub fn consumer_property_registrations(&self) -> &[ConsumerPropertyRegistration] {
+        &self.consumer_properties
     }
 
     /// Stylesheet 文字列を parse して rule を append する。
@@ -805,6 +825,7 @@ impl RuleTree {
             source,
             opaque_body_budget: &mut self.opaque_body_budget,
             namespaces: &mut namespaces,
+            consumer_properties: &self.consumer_properties,
         };
         let mut style_order = self.next_style_order;
         let mut page_order = self.page_rules.len() as u32;
@@ -889,6 +910,7 @@ impl RuleTree {
                             None,
                             &mut self.media_rules,
                             &mut style_order,
+                            &self.consumer_properties,
                         );
                     }
                     let index = self.opaque_at_rules.len();
@@ -1433,7 +1455,10 @@ fn set_at_rule_origin(record: &mut AtRuleRecord, origin: Origin) {
     }
 }
 
-fn parse_media_style_rule(record: &QualifiedRuleRecord) -> Option<StyleRule> {
+fn parse_media_style_rule(
+    record: &QualifiedRuleRecord,
+    consumer_properties: &[ConsumerPropertyRegistration],
+) -> Option<StyleRule> {
     let mut input = ParserInput::new(&record.prelude);
     let mut parser = Parser::new(&mut input);
     let selectors = parser
@@ -1449,7 +1474,10 @@ fn parse_media_style_rule(record: &QualifiedRuleRecord) -> Option<StyleRule> {
     let mut parser = Parser::new(&mut input);
     Some(StyleRule {
         selectors,
-        declarations: parse_declaration_block(&mut parser),
+        declarations: parse_declaration_block_with_consumer_properties(
+            &mut parser,
+            consumer_properties,
+        ),
         source_order: 0,
         origin: record.origin,
     })
@@ -1460,6 +1488,7 @@ fn collect_media_style_rules(
     parent_condition: Option<MediaCondition>,
     out: &mut Vec<MediaRule>,
     style_order: &mut u32,
+    consumer_properties: &[ConsumerPropertyRegistration],
 ) {
     let Some(local_condition) = parse_media_condition(&record.prelude) else {
         return;
@@ -1473,7 +1502,7 @@ fn collect_media_style_rules(
     for child in &record.children {
         match child {
             RuleNode::Qualified(qualified) => {
-                let Some(mut rule) = parse_media_style_rule(qualified) else {
+                let Some(mut rule) = parse_media_style_rule(qualified, consumer_properties) else {
                     continue;
                 };
                 rule.source_order = *style_order;
@@ -1481,7 +1510,13 @@ fn collect_media_style_rules(
                 out.push(MediaRule { rule, condition });
             }
             RuleNode::AtRule(nested) if nested.name.eq_ignore_ascii_case("media") => {
-                collect_media_style_rules(nested, Some(condition), out, style_order);
+                collect_media_style_rules(
+                    nested,
+                    Some(condition),
+                    out,
+                    style_order,
+                    consumer_properties,
+                );
             }
             // An unknown wrapper may have a completely different grammar. Do
             // not accidentally execute its descendants as ordinary CSS rules.
@@ -1581,6 +1616,7 @@ struct StyleRuleParser<'s, 'b> {
     source: &'s str,
     opaque_body_budget: &'b mut usize,
     namespaces: &'b mut NamespaceMap,
+    consumer_properties: &'b [ConsumerPropertyRegistration],
 }
 
 impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
@@ -1744,7 +1780,8 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, Self::Error>> {
-        let declarations = parse_declaration_block(input);
+        let declarations =
+            parse_declaration_block_with_consumer_properties(input, self.consumer_properties);
         if !nested_block_has_closing_brace(self.source, input) {
             return Err(input.new_custom_error(()));
         }

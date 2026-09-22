@@ -25,6 +25,7 @@
 //! spec drift protocol の design 由来)。
 
 pub mod config;
+pub mod consumer;
 pub mod dom;
 pub mod error;
 pub mod image;
@@ -43,6 +44,7 @@ pub use config::{
     BatchConfig, BatchConfigBuilder, LookaheadConfig, LookaheadConfigBuilder, PlanConfig,
     PlanConfigBuilder, RenderLimits, RenderLimitsBuilder, StreamingConfig, StreamingConfigBuilder,
 };
+pub use consumer::{ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue};
 pub use dom::{Dom, Element, Node, NodeId, NodeKind, QuirksMode, StylesheetKind, Symbol};
 pub use error::{
     CascadeError, EmittedSlotInfo, ExhaustionPolicy, LayoutError, LimitKind, ParseError,
