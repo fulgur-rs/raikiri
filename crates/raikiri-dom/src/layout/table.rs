@@ -213,6 +213,7 @@ pub fn compute_table_layout(
     };
 
     let table_idx = usize::from(table_id);
+    let abspos_table = doc.nodes[table_idx].style.position == taffy::Position::Absolute;
     let mut grid = build_table_grid(doc, table_idx);
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
@@ -485,7 +486,15 @@ pub fn compute_table_layout(
     // Auto tables without a specified width size to content
     // (shrink-wrap); specified widths (and fixed layout) keep the previous
     // fill basis.
-    let table_width_basis = if border_spacing.0 > 0.0 || border_spacing.1 > 0.0 {
+    let table_width_basis = if abspos_table && specified_width.is_none() {
+        // An auto-width absolutely positioned table uses the containing block's
+        // available width for this table-layout path.  Taffy's shrink-to-fit
+        // probe may report the intrinsic cell width as `known_dimensions.width`,
+        // but CSS Tables 3 caps the available size at (and in this case fills)
+        // the containing block; retaining the probe would leave a narrow strip
+        // missing from the table background.
+        inputs.parent_size.width.or(effective_known.width)
+    } else if border_spacing.0 > 0.0 || border_spacing.1 > 0.0 {
         specified_width.or(effective_known.width)
     } else {
         match table_layout {
@@ -2667,5 +2676,47 @@ mod tests {
         assert!((wide_layout.size.width - 110.0).abs() < 1.0);
         assert!((left_layout.size.width - 55.0).abs() < 1.0);
         assert!((right_layout.size.width - 55.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn absolute_auto_table_uses_definite_containing_block_width() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("width: 100px; height: 100px; position: relative"),
+        );
+        let table = doc.append_element(
+            Some(container),
+            "table",
+            Style::default(),
+            Some("display: table; position: absolute; left: -100px; height: 100px"),
+        );
+        let row = doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display: table-row"),
+        );
+        let cell = doc.append_element(
+            Some(row),
+            "td",
+            Style::default(),
+            Some("display: table-cell"),
+        );
+        doc.append_text(cell, "x");
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).unwrap();
+        crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+        let table_layout = doc.nodes[table].unrounded_layout;
+        assert!(
+            (table_layout.size.width - 100.0).abs() < 1.0,
+            "table width was {}",
+            table_layout.size.width
+        );
     }
 }

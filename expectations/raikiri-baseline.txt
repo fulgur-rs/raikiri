@@ -1143,6 +1143,8 @@ css/css-tables/table-as-item-cell-percentage-001.html
 # transform:rotate on the reference — full vertical-table support. Re-pin
 # when that lands. Net of this swap: +1-1 = 0 (count assert unchanged).
 # --- css-tables reftest pin 2026-09-16 (whitespace segment-break collapse, CSS Text 3 §4.1) ---
+css/css-tables/absolute-tables-008.tentative.html
+css/css-tables/absolute-tables-011.tentative.html
 css/css-tables/absolute-tables-012.html
 css/css-tables/caption-relative-positioning.html
 css/css-tables/height-distribution/percentage-sizing-of-table-cell-children-002.html
