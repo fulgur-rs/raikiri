@@ -1,5 +1,10 @@
 use crate::Atom;
 use crate::property::Length;
+// `PropertyValue` is referenced only from doc comments below (contrasting
+// this module's value types with the general property-value enum), not from
+// any code path, hence the allow.
+#[allow(unused_imports)]
+use crate::property::PropertyValue;
 use crate::rule::Declaration;
 use crate::ruletree::Origin;
 
