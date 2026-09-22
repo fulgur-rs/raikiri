@@ -30,6 +30,25 @@ fn named_page_and_margin_pairs_are_pixel_exact_at_800x600() {
     }
 }
 
+/// A named page box containing only a `display:none` child still opens its
+/// explicit empty page boundary.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn page_name_display_none_child_is_pixel_exact_at_800x600() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    run_exact_pair(
+        &root,
+        "css/css-page",
+        "page-name-display-none-child-print.html",
+        config,
+    );
+}
+
 /// Page counters in margin boxes match their references exactly.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]

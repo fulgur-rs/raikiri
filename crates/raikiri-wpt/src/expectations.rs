@@ -1308,7 +1308,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Tables body stylesheet/subpixel padding exact slice (+1).
         // + CSS Page out-of-flow named-page exact slice (+2).
         // - Remove stale CSS Grid percentage-size-subitems-001 PASS pin (-1).
-        assert_eq!(set.baseline.entries.len(), 1268);
+        // + CSS Page hidden-child named-page boundary exact slice (+1).
+        assert_eq!(set.baseline.entries.len(), 1269);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
