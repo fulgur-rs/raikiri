@@ -679,6 +679,8 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         doc.nodes[idx].table_layout = cv.table_layout;
         doc.nodes[idx].border_collapse = cv.border_collapse;
         doc.nodes[idx].border_spacing = cv.border_spacing;
+        doc.nodes[idx].break_before = cv.break_before;
+        doc.nodes[idx].break_after = cv.break_after;
         doc.nodes[idx].authored_writing_mode = cascade
             .authored_writing_modes
             .get(idx)
@@ -6437,7 +6439,9 @@ pub(crate) fn compute_multicol_layout(
     // multicol boxes and for deferred out-of-flow cases. The custom path is
     // entered only at a real nested block-flow boundary.
     let custom_scope = (tree.fragmentation_stack.is_empty()
-        && multicol_has_nested_descendant(tree, index)
+        && (multicol_has_nested_descendant(tree, index)
+            || (multicol_has_direct_block_child(tree, index)
+                && tree.nodes[index].style.size.height == Dimension::auto()))
         || !tree.fragmentation_stack.is_empty())
         && style.horizontal
         && !multicol_has_out_of_flow_descendant(tree, index);
@@ -6544,6 +6548,15 @@ fn multicol_has_out_of_flow_descendant(tree: &Document, node_id: usize) -> bool 
     false
 }
 
+// cov:ignore: direct block fragmentation is exercised by the ignored multicol WPT reftests.
+fn multicol_has_direct_block_child(tree: &Document, node_id: usize) -> bool {
+    tree.nodes[node_id].children.iter().any(|&child| {
+        tree.nodes[child].is_in_document()
+            && tree.nodes[child].kind() == NodeKind::Element
+            && tree.nodes[child].style.display != Display::None
+    })
+}
+
 // cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
 fn relayout_nested_multicol_children(
     tree: &mut Document,
@@ -6578,52 +6591,124 @@ fn relayout_nested_multicol_children(
     let mut column = 0usize;
     let mut cursor = 0.0f32;
     let mut maximum = 0.0f32;
-
-    for (order, child) in children.into_iter().enumerate() {
-        let child_height = match fragment_height {
-            Some(height) => AvailableSpace::Definite((height - cursor).max(0.0)),
-            None => AvailableSpace::MaxContent,
-        };
-        let child_inputs = LayoutInput {
-            run_mode: RunMode::PerformLayout,
-            sizing_mode: SizingMode::InherentSize,
-            axis: RequestedAxis::Both,
-            known_dimensions: Size {
-                width: Some(context.column_width),
-                height: None,
-            },
-            known_dimensions_are_definite: Size {
-                width: true,
-                height: false,
-            },
-            parent_size: Size {
-                width: Some(context.column_width),
-                height: context.available_height,
-            },
-            available_space: Size {
-                width: AvailableSpace::Definite(context.column_width),
-                height: child_height,
-            },
-            vertical_margins_are_collapsible: TaffyLine::FALSE,
-        };
-
-        // prepare_multicol_layout gives direct text a temporary used height
-        // for its page-level projection. A nested width probe must measure the
-        // shaped layout again instead of reusing that stale height.
-        if matches!(tree.nodes[child].data, NodeData::Text(_)) {
-            tree.nodes[child].style.size.height = Dimension::auto();
-            tree.nodes[child].cache.clear();
+    // With an auto-height multicol, measure block children once before
+    // placing them. This gives the simple balancing pass a target height;
+    // measuring against the current column would otherwise keep every child
+    // in the first column and leave the container taller than necessary.
+    let auto_measurements = if tree.fragmentation_stack.len() == 1
+        && fragment_height.is_none()
+        && !multicol_has_nested_descendant(tree, index)
+    {
+        let mut measurements = Vec::with_capacity(children.len());
+        for &child in &children {
+            let child_inputs = LayoutInput {
+                run_mode: RunMode::PerformLayout,
+                sizing_mode: SizingMode::InherentSize,
+                axis: RequestedAxis::Both,
+                known_dimensions: Size {
+                    width: Some(context.column_width),
+                    height: None,
+                },
+                known_dimensions_are_definite: Size {
+                    width: true,
+                    height: false,
+                },
+                parent_size: Size {
+                    width: Some(context.column_width),
+                    height: context.available_height,
+                },
+                available_space: Size {
+                    width: AvailableSpace::Definite(context.column_width),
+                    height: AvailableSpace::MaxContent,
+                },
+                vertical_margins_are_collapsible: TaffyLine::FALSE,
+            };
+            if matches!(tree.nodes[child].data, NodeData::Text(_)) {
+                tree.nodes[child].style.size.height = Dimension::auto();
+                tree.nodes[child].cache.clear();
+            }
+            let output = tree.compute_child_layout(TaffyNodeId::from(child), child_inputs);
+            refresh_nested_text_fragments(tree, child, context);
+            let layout = tree.nodes[child].unrounded_layout;
+            let margin_top = layout.margin.top;
+            let margin_bottom = layout.margin.bottom;
+            measurements.push((
+                child,
+                output,
+                layout,
+                margin_top,
+                margin_bottom,
+                margin_top + output.size.height + margin_bottom,
+            ));
         }
-        let child_output = tree.compute_child_layout(TaffyNodeId::from(child), child_inputs);
-        refresh_nested_text_fragments(tree, child, context);
-        let mut child_layout = tree.nodes[child].unrounded_layout;
-        let margin_top = child_layout.margin.top;
-        let margin_bottom = child_layout.margin.bottom;
-        let needed = margin_top + child_output.size.height + margin_bottom;
-        if let Some(height) = fragment_height
+        let total = measurements.iter().map(|entry| entry.5).sum::<f32>();
+        let largest = measurements.iter().map(|entry| entry.5).fold(0.0, f32::max);
+        let target = (total / context.column_count as f32).max(largest);
+        Some((measurements, target))
+    } else {
+        None
+    };
+
+    let mut avoid_column_break_after_previous = false;
+    for (order, child) in children.into_iter().enumerate() {
+        let measured = auto_measurements
+            .as_ref()
+            .and_then(|(entries, _)| entries.iter().find(|entry| entry.0 == child));
+        let (child_output, mut child_layout, margin_top, margin_bottom, needed) =
+            if let Some((_, output, layout, margin_top, margin_bottom, needed)) = measured {
+                (*output, *layout, *margin_top, *margin_bottom, *needed)
+            } else {
+                let child_height = match fragment_height {
+                    Some(height) => AvailableSpace::Definite((height - cursor).max(0.0)),
+                    None => AvailableSpace::MaxContent,
+                };
+                let child_inputs = LayoutInput {
+                    run_mode: RunMode::PerformLayout,
+                    sizing_mode: SizingMode::InherentSize,
+                    axis: RequestedAxis::Both,
+                    known_dimensions: Size {
+                        width: Some(context.column_width),
+                        height: None,
+                    },
+                    known_dimensions_are_definite: Size {
+                        width: true,
+                        height: false,
+                    },
+                    parent_size: Size {
+                        width: Some(context.column_width),
+                        height: context.available_height,
+                    },
+                    available_space: Size {
+                        width: AvailableSpace::Definite(context.column_width),
+                        height: child_height,
+                    },
+                    vertical_margins_are_collapsible: TaffyLine::FALSE,
+                };
+
+                // prepare_multicol_layout gives direct text a temporary used height
+                // for its page-level projection. A nested width probe must measure the
+                // shaped layout again instead of reusing that stale height.
+                if matches!(tree.nodes[child].data, NodeData::Text(_)) {
+                    tree.nodes[child].style.size.height = Dimension::auto();
+                    tree.nodes[child].cache.clear();
+                }
+                let output = tree.compute_child_layout(TaffyNodeId::from(child), child_inputs);
+                refresh_nested_text_fragments(tree, child, context);
+                let layout = tree.nodes[child].unrounded_layout;
+                let margin_top = layout.margin.top;
+                let margin_bottom = layout.margin.bottom;
+                let needed = margin_top + output.size.height + margin_bottom;
+                (output, layout, margin_top, margin_bottom, needed)
+            };
+        let break_height =
+            fragment_height.or_else(|| auto_measurements.as_ref().map(|(_, height)| *height));
+        let avoid_column_break = avoid_column_break_after_previous
+            || matches!(tree.nodes[child].break_before, BreakBetween::Avoid);
+        if let Some(height) = break_height
             && column + 1 < context.column_count
             && cursor > 0.0
             && cursor + needed > height
+            && !avoid_column_break
         {
             maximum = maximum.max(cursor);
             tree.fragment_tree
@@ -6681,10 +6766,20 @@ fn relayout_nested_multicol_children(
             }
         }
         cursor = y + child_output.size.height + margin_bottom;
+        if tree.nodes[child].kind() == NodeKind::Element {
+            avoid_column_break_after_previous =
+                matches!(tree.nodes[child].break_after, BreakBetween::Avoid);
+        }
     }
-    maximum
-        .max(cursor)
-        .max(fallback_height.min(fragment_height.unwrap_or(fallback_height)))
+    let minimum_height =
+        if auto_measurements.is_some() && !multicol_has_nested_descendant(tree, index) {
+            0.0
+        } else {
+            fragment_height
+                .map(|height| fallback_height.min(height))
+                .unwrap_or(fallback_height)
+        };
+    maximum.max(cursor).max(minimum_height)
 }
 
 // cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.

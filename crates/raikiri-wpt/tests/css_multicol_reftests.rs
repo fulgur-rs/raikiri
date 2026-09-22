@@ -25,6 +25,7 @@ fn css_multicol_pass_pairs_are_pixel_exact_at_800x600() {
         // Balancing and break avoidance.
         "css/css-multicol/balance-break-avoidance-000.html",
         "css/css-multicol/balance-break-avoidance-001.html",
+        "css/css-multicol/balance-break-avoidance-002.html",
         // Spanning, vertical writing, and fragmentainer sizing.
         "css/css-multicol/multicol-span-all-004.html",
         "css/css-multicol/multicol-under-vertical-rl-scroll.html",
