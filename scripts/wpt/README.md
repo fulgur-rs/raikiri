@@ -42,6 +42,41 @@ its equivalent reftest is covered by the `raikiri-wpt` unit suite. When the
 runner starts consuming the full WPT tree, extend `subset.txt` and update this
 README.
 
+## Surveying WPT reftests
+
+`survey_reftests.py` builds an inventory of actual `<link rel="match|mismatch">`
+reftest files in the fetched WPT tree. It groups files by WPT category and the
+first directory below that category. Root-level files are grouped by a
+numbered filename prefix, but are marked for manual theme review. The report
+includes reference-pair counts, baseline membership, missing/external
+references, and file extensions that the current `raikiri-wpt` tree discovery
+does not scan. It records the checked-out WPT revision, sparse-checkout
+patterns, and the standard 800x600 CSS-pixel viewport.
+
+The survey only sees files materialized in the current checkout. A category
+missing from a sparse checkout is absent, not empty; add the category and its
+needed references/assets to `subset.txt` before using the inventory to plan
+work. The checkout's current physical location is managed by `fetch.sh`; use
+`target/wpt` as the stable working-tree path.
+
+```sh
+scripts/wpt/fetch.sh
+python3 scripts/wpt/survey_reftests.py --format text --list-tests
+python3 scripts/wpt/survey_reftests.py \
+    --category css/css-text \
+    --format json \
+    --output target/css-text-reftest-survey.json
+```
+
+This is an inventory, not a test run: a baseline entry is not proof of a fresh
+PASS, and structurally resolved links do not prove the test is renderable. A
+file with multiple reference links must pass every pair before it is promoted.
+Root-level test files are listed separately for manual theme review; directory
+names are only an initial grouping hint. The script is read-only and never
+updates `expectations/raikiri-baseline.txt`. Use the `wpt-ref-coverage` project
+skill to select one reviewed category/theme and run its implementation loop.
+The separate meta-assert review flow below is not part of this survey.
+
 ## Updating the CSS dashboard
 
 `docs/wpt-dashboard.html` is generated from the pinned WPT tree and
