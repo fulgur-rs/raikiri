@@ -9,7 +9,7 @@
 
 use raikiri_traits::{
     Body, Method, NetworkError, NetworkProvider, PolicyViolation, RenderWarning, Request,
-    ResourceKind, WarningKind,
+    ResourceKind, ViolationType, WarningKind,
 };
 use url::Url;
 
@@ -158,12 +158,26 @@ impl ImportExpander<'_> {
         let safe_url = redacted_url(&url);
         let summary = network_error_summary(&error);
         let (kind, details) = match error {
-            NetworkError::PolicyViolation(violation) => (
-                WarningKind::PolicyWarning {
-                    violation: sanitize_policy_violation(violation),
-                },
-                format!("stylesheet @import fetch violated network policy for {safe_url}"),
-            ),
+            NetworkError::PolicyViolation(violation) => {
+                let (kind, reason) = match &violation.violation_type {
+                    ViolationType::FetchTooLarge { limit, actual }
+                    | ViolationType::DecodedTooLarge { limit, actual } => (
+                        WarningKind::ResourceLimitExceeded {
+                            kind: violation.kind,
+                            limit: *limit,
+                            actual: *actual,
+                        },
+                        "resource response exceeded a byte limit",
+                    ),
+                    _ => (
+                        WarningKind::PolicyWarning {
+                            violation: sanitize_policy_violation(violation.clone()),
+                        },
+                        "fetch violated network policy",
+                    ),
+                };
+                (kind, format!("stylesheet @import {reason} for {safe_url}"))
+            }
             _ => (
                 WarningKind::NetworkFallback {
                     url: safe_url.clone(),

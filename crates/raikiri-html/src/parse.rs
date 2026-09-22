@@ -8,7 +8,7 @@ use html5ever::tendril::TendrilSink;
 use html5ever::tree_builder::TreeSink;
 use raikiri_traits::{
     Body, Method, NetworkError, ParseError, RenderWarning, Request, ResourceKind, StylesheetKind,
-    WarningKind,
+    ViolationType, WarningKind,
 };
 use url::Url;
 
@@ -236,16 +236,26 @@ fn fetch_external_stylesheets(
                         }
                     }
                     Err(NetworkError::PolicyViolation(violation)) => {
-                        // ResourcePolicy が拒否した (SandboxedNetProvider 等、既存
-                        // sandboxing 契約側の判定) — 専用 warning variant が既にある
-                        // のでそれを使う。URL と provider-controlled details は
-                        // warning に漏らさない。
-                        doc.warnings.push(RenderWarning {
-                            kind: WarningKind::PolicyWarning {
-                                violation: sanitize_policy_violation(violation),
+                        // ResourcePolicy / RenderResources may deny a response
+                        // because it exceeds a byte cap. Preserve that diagnostic
+                        // separately from ordinary policy denials.
+                        let kind = match &violation.violation_type {
+                            ViolationType::FetchTooLarge { limit, actual }
+                            | ViolationType::DecodedTooLarge { limit, actual } => {
+                                WarningKind::ResourceLimitExceeded {
+                                    kind: violation.kind,
+                                    limit: *limit,
+                                    actual: *actual,
+                                }
+                            }
+                            _ => WarningKind::PolicyWarning {
+                                violation: sanitize_policy_violation(violation.clone()),
                             },
+                        };
+                        doc.warnings.push(RenderWarning {
+                            kind,
                             node_id: Some(node_id),
-                            details: "<link rel=stylesheet>: fetch denied by resource policy"
+                            details: "<link rel=stylesheet>: fetch denied by resource policy or resource limit"
                                 .to_owned(),
                         });
                     }
@@ -284,12 +294,15 @@ fn fetch_external_stylesheets(
     doc.stylesheet_sources = ordered_sources;
 }
 
-/// Resolve the document's effective base URL for stylesheet and link fetches.
+/// Resolve the document's effective base URL for stylesheet, font, and replaced-resource fetches.
 ///
 /// A valid `<base>` in the document is resolved against the caller-provided
 /// fallback. Invalid, `data:`, and `javascript:` base URLs fall back to the
 /// caller-provided URL, matching the existing link-fetch behavior.
-fn effective_document_base_url(doc: &UncascadedDocument, fallback: Option<&Url>) -> Option<Url> {
+pub fn effective_document_base_url(
+    doc: &UncascadedDocument,
+    fallback: Option<&Url>,
+) -> Option<Url> {
     match crate::sink::find_document_base_href(&doc.dom) {
         Some(base_href) => resolve_url(&base_href, fallback)
             .filter(|url| !matches!(url.scheme(), "data" | "javascript"))

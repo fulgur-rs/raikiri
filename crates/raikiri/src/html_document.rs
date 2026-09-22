@@ -9,7 +9,8 @@
 //! 一致、shape / code / UA CSS の持ち込みなし (independent implementation)。
 
 use raikiri_html::UncascadedDocument;
-use raikiri_style::CascadeResult;
+use raikiri_style::{CascadeResult, FontFaceRegistry};
+use url::Url;
 
 /// Cascade まで完了した document unit。
 #[derive(Debug)]
@@ -17,6 +18,8 @@ use raikiri_style::CascadeResult;
 pub struct HtmlDocument {
     pub(crate) uncascaded: UncascadedDocument,
     pub(crate) cascade: CascadeResult,
+    pub(crate) font_faces: FontFaceRegistry,
+    pub(crate) effective_base_url: Option<Url>,
 }
 
 impl HtmlDocument {
@@ -36,5 +39,11 @@ impl HtmlDocument {
     /// HTML/XHTML と SVG の `<style>` は対象で、MathML の同名 element は除外される。
     pub fn stylesheet_sources(&self) -> &[String] {
         &self.uncascaded.stylesheet_sources
+    }
+
+    /// Effective document base URL used for linked stylesheets, imports, fonts,
+    /// and relative replaced-element URLs.
+    pub fn effective_base_url(&self) -> Option<&Url> {
+        self.effective_base_url.as_ref()
     }
 }

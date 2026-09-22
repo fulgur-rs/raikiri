@@ -60,6 +60,17 @@ pub(crate) fn resolve_images(
     document: &mut Document,
     resolver: &dyn ReplacedResolver,
 ) -> Result<(), ResolverError> {
+    resolve_images_with_base(document, resolver, None)
+}
+
+/// Resolve replaced-element URLs against the document base when they are not
+/// already absolute.
+#[allow(clippy::result_large_err)]
+pub(crate) fn resolve_images_with_base(
+    document: &mut Document,
+    resolver: &dyn ReplacedResolver,
+    base_url: Option<&Url>,
+) -> Result<(), ResolverError> {
     for node in document.nodes.iter_mut() {
         if !node.is_in_document() {
             continue;
@@ -82,7 +93,10 @@ pub(crate) fn resolve_images(
         else {
             continue;
         };
-        let Ok(url) = Url::parse(src) else {
+        let url = Url::parse(src)
+            .ok()
+            .or_else(|| base_url.and_then(|base| base.join(src).ok()));
+        let Some(url) = url else {
             continue;
         };
         let resolved = resolver.resolve(ResolverRequest::new(&url))?;
@@ -210,7 +224,7 @@ mod tests {
     }
 
     #[test]
-    fn skips_img_with_relative_src() {
+    fn skips_img_with_relative_src_without_a_base() {
         let mut doc = Document::new();
         let root = doc.root_index();
         let img = doc.append_element(Some(root), "img", Style::default(), None::<&str>);
@@ -219,6 +233,38 @@ mod tests {
         resolve_images(&mut doc, &FixedSizeResolver(10.0, 20.0)).expect("resolve Ok");
 
         assert_eq!(doc.nodes[img].image_intrinsic_size(), None);
+    }
+
+    #[test]
+    fn resolves_relative_img_src_against_document_base() {
+        struct Capture(std::cell::RefCell<Option<Url>>);
+        impl ReplacedResolver for Capture {
+            fn resolve(
+                &self,
+                req: ResolverRequest<'_>,
+            ) -> Result<ResolvedIntrinsic, ResolverError> {
+                *self.0.borrow_mut() = Some(req.url().clone());
+                Ok(ResolvedIntrinsic {
+                    intrinsic: IntrinsicBox::new(10.0, 20.0),
+                    disposition: ResolveDisposition::Ok,
+                })
+            }
+        }
+
+        let mut doc = Document::new();
+        let root = doc.root_index();
+        let img = doc.append_element(Some(root), "img", Style::default(), None::<&str>);
+        doc.set_element_attributes(img, vec![("src".into(), "../image.png".into())]);
+        let resolver = Capture(std::cell::RefCell::new(None));
+        let base = Url::parse("https://example.test/book/chapter.html").unwrap();
+
+        resolve_images_with_base(&mut doc, &resolver, Some(&base)).expect("resolve Ok");
+
+        assert_eq!(
+            resolver.0.borrow().as_ref(),
+            Some(&Url::parse("https://example.test/image.png").unwrap()),
+        );
+        assert_eq!(doc.nodes[img].image_intrinsic_size(), Some((10.0, 20.0)));
     }
 
     /// A resolver `Err` is terminal by `ReplacedResolver`'s contract, so this

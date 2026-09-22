@@ -2,8 +2,8 @@
 //! orchestrator。
 //!
 //! spec §L1060 の pub API 相当。内部 pipeline は
-//! `raikiri_html::parse` → [`build_cascaded_for_page`] (first-page query) →
-//! assemble。現状 cascade は
+//! [`raikiri_html::parse`] → rule-tree build and first-page cascade → assemble。
+//! 現状 cascade は
 //! 常に `Ok` を返すため、`RenderError::Parse` のみが bubble する。
 //!
 //! # Input byte cap
@@ -30,10 +30,10 @@
 
 use std::io::Read;
 
-use raikiri_html::{ParseOptions, RaikiriTreeSink, parse_with_sink};
+use raikiri_html::{ParseOptions, RaikiriTreeSink, effective_document_base_url, parse_with_sink};
 use raikiri_traits::{LimitKind, ParseError, RenderError, RenderLimits};
 
-use crate::{HtmlDocument, PageContextQuery, build_cascaded_for_page};
+use crate::{HtmlDocument, PageContextQuery, build_rule_tree};
 
 /// HTML byte stream を parse し、cascade まで完了した [`HtmlDocument`] を返す。
 ///
@@ -150,12 +150,23 @@ pub fn parse_html_with_limits<R: Read>(
     // memcpy で済む (bytes 二重 alloc は避けられないが、cap 分の memory が上限)。
     let sink = RaikiriTreeSink::new(limits.max_parse_warnings);
     let uncascaded = parse_with_sink(buf.as_slice(), sink, options).map_err(RenderError::Parse)?;
+    let effective_base_url = effective_document_base_url(&uncascaded, options.base_url.as_ref());
     let mut first_page = PageContextQuery::default();
     first_page.is_first = true;
     first_page.is_right = true;
-    let cascade = build_cascaded_for_page(&uncascaded, &first_page);
+    let rule_tree = build_rule_tree(&uncascaded);
+    let font_faces = rule_tree.font_faces().clone();
+    let cascade = raikiri_style::cascade_with_media_context_for_page(
+        &uncascaded.dom,
+        &rule_tree,
+        &raikiri_style::MediaContext::default(),
+        &first_page,
+    )
+    .expect("cascade は常に Ok のはず");
     Ok(HtmlDocument {
         uncascaded,
         cascade,
+        font_faces,
+        effective_base_url,
     })
 }

@@ -9245,8 +9245,28 @@ pub fn layout_pages_with_resolver(
     font_ctx: FontContext,
     resolver: &dyn ReplacedResolver,
 ) -> Result<Vec<PageSlice>, LayoutError> {
+    layout_pages_with_resolver_and_base_url(document, cascade, page_box, font_ctx, resolver, None)
+}
+
+/// [`layout_pages_with_resolver`] with relative image URLs resolved against a
+/// document base URL.
+#[allow(clippy::result_large_err)]
+pub fn layout_pages_with_resolver_and_base_url(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    font_ctx: FontContext,
+    resolver: &dyn ReplacedResolver,
+    base_url: Option<&url::Url>,
+) -> Result<Vec<PageSlice>, LayoutError> {
     document.mark_in_document_flags();
-    crate::image_resolve::resolve_images(document, resolver).map_err(LayoutError::Resolver)?;
+    match base_url {
+        Some(base_url) => {
+            crate::image_resolve::resolve_images_with_base(document, resolver, Some(base_url))
+        }
+        None => crate::image_resolve::resolve_images(document, resolver),
+    }
+    .map_err(LayoutError::Resolver)?;
     layout_pages(document, cascade, page_box, font_ctx)
 }
 
@@ -9262,8 +9282,38 @@ pub fn layout_pages_with_page_geometry_and_resolver(
     page_widths: &[f32],
     resolver: &dyn ReplacedResolver,
 ) -> Result<Vec<PageSlice>, LayoutError> {
+    layout_pages_with_page_geometry_and_resolver_and_base_url(
+        document,
+        cascade,
+        page_box,
+        font_ctx,
+        page_steps,
+        page_widths,
+        resolver,
+        None,
+    )
+}
+
+/// [`layout_pages_with_page_geometry_and_resolver`] with document-relative image URLs.
+#[allow(clippy::result_large_err, clippy::too_many_arguments)]
+pub fn layout_pages_with_page_geometry_and_resolver_and_base_url(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    font_ctx: FontContext,
+    page_steps: &[f32],
+    page_widths: &[f32],
+    resolver: &dyn ReplacedResolver,
+    base_url: Option<&url::Url>,
+) -> Result<Vec<PageSlice>, LayoutError> {
     document.mark_in_document_flags();
-    crate::image_resolve::resolve_images(document, resolver).map_err(LayoutError::Resolver)?;
+    match base_url {
+        Some(base_url) => {
+            crate::image_resolve::resolve_images_with_base(document, resolver, Some(base_url))
+        }
+        None => crate::image_resolve::resolve_images(document, resolver),
+    }
+    .map_err(LayoutError::Resolver)?;
     layout_pages_with_page_geometry(
         document,
         cascade,
@@ -10420,10 +10470,31 @@ pub fn layout_single_page_with_resolver(
     font_ctx: FontContext,
     resolver: &dyn ReplacedResolver,
 ) -> Result<(), LayoutError> {
+    layout_single_page_with_resolver_and_base_url(
+        document, cascade, page_box, font_ctx, resolver, None,
+    )
+}
+
+/// [`layout_single_page_with_resolver`] with document-relative image URLs.
+#[allow(clippy::result_large_err)]
+pub fn layout_single_page_with_resolver_and_base_url(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    font_ctx: FontContext,
+    resolver: &dyn ReplacedResolver,
+    base_url: Option<&url::Url>,
+) -> Result<(), LayoutError> {
     // See "# 実行順" above — this must precede `resolve_images`, whose
     // membership gate reads the flags this refreshes.
     document.mark_in_document_flags();
-    crate::image_resolve::resolve_images(document, resolver).map_err(LayoutError::Resolver)?;
+    match base_url {
+        Some(base_url) => {
+            crate::image_resolve::resolve_images_with_base(document, resolver, Some(base_url))
+        }
+        None => crate::image_resolve::resolve_images(document, resolver),
+    }
+    .map_err(LayoutError::Resolver)?;
     layout_single_page(document, cascade, page_box, font_ctx)
 }
 

@@ -25,10 +25,22 @@ pub use html_document::HtmlDocument;
 mod parse;
 pub use parse::{parse_html, parse_html_with_limits};
 
+mod font_context;
+pub use font_context::{
+    BundledFont, FontContextBuildError, FontContextBuilder, MAX_BUNDLED_FONT_BYTES,
+};
+
+mod resources;
+pub use resources::{
+    DEFAULT_MAX_AGGREGATE_RESOURCE_BYTES, DEFAULT_MAX_RESOURCE_BYTES, RenderResources,
+    ResourceLimits, parse_html_with_resources,
+};
+
 mod stubs;
 pub use stubs::{
-    plan, render_streaming, render_streaming_with_consumer_properties,
-    render_streaming_with_observer,
+    plan, render_html_pages_with_resources, render_html_streaming_with_resources, render_streaming,
+    render_streaming_with_consumer_properties, render_streaming_with_observer,
+    render_streaming_with_resources,
 };
 
 mod html_to_png;
@@ -72,9 +84,10 @@ pub use raikiri_dom::{FontError, PageMargins, PageSlice, build_wpt_font_ctx, fir
 pub use raikiri_traits::{
     // ── 既存 ──
     AbortController, AbortSignal, Body, CascadeError, ConsumerPropertyEvent,
-    ConsumerPropertyObserver, ConsumerPropertyValue, Dom, Element, FetchedResource, HeaderMap, Method, NetworkError, NetworkProvider,
+    ConsumerPropertyObserver, ConsumerPropertyValue, DecodedImage, Dom, Element, FetchedResource,
+    HeaderMap, ImagePixelSource, Method, NetworkError, NetworkProvider,
     Node, NodeId, NodeKind, ParseError, QuirksMode, RenderError, RenderWarning,
-    Request, ResourceKind, StylesheetKind,
+    Request, ResourceKind, StylesheetKind, WarningKind,
 
     // ── error / status 系 ──
     RenderStatus, RenderSummary, LimitKind, UnresolvedTarget, UnresolvedReason,
@@ -483,6 +496,8 @@ mod html_document_tests {
         HtmlDocument {
             uncascaded,
             cascade,
+            font_faces: raikiri_style::FontFaceRegistry::new(),
+            effective_base_url: None,
         }
     }
 
