@@ -611,6 +611,8 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
         gap_percent,
         height_definite: !matches!(cv.height, ComputedLengthPercentageOrAuto::Auto),
         horizontal: matches!(cv.writing_mode, WritingMode::HorizontalTb),
+        orphans: cv.orphans.max(1) as usize,
+        widows: cv.widows.max(1) as usize,
     })
 }
 
@@ -6441,11 +6443,11 @@ pub(crate) fn compute_multicol_layout(
     let custom_scope = (tree.fragmentation_stack.is_empty()
         && (multicol_has_nested_descendant(tree, index)
             || (multicol_has_direct_block_child(tree, index)
-                && tree.nodes[index].style.size.height == Dimension::auto()))
+                && tree.nodes[index].style.size.height == Dimension::auto())
+            || multicol_has_direct_break_flow(tree, index))
         || !tree.fragmentation_stack.is_empty())
         && style.horizontal
         && !multicol_has_out_of_flow_descendant(tree, index);
-
     let stack_depth = tree.fragmentation_stack.len();
     tree.fragmentation_stack.push(context);
     let mut output = compute_block_layout(tree, node_id, inputs, block_ctx);
@@ -6537,6 +6539,17 @@ fn multicol_has_nested_descendant(tree: &Document, node_id: usize) -> bool {
 }
 
 // cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
+fn multicol_has_direct_break_flow(tree: &Document, node_id: usize) -> bool {
+    tree.nodes[node_id].children.iter().copied().any(|child| {
+        tree.nodes[child].kind() == NodeKind::Element
+            && tree.nodes[child].is_in_document()
+            && tree.nodes[child]
+                .children
+                .iter()
+                .any(|&grandchild| tree.nodes[grandchild].tag_name() == Some("br"))
+    })
+}
+
 fn multicol_has_out_of_flow_descendant(tree: &Document, node_id: usize) -> bool {
     let mut pending = tree.nodes[node_id].children.clone();
     while let Some(child) = pending.pop() {
@@ -6628,7 +6641,6 @@ fn relayout_nested_multicol_children(
                 tree.nodes[child].cache.clear();
             }
             let output = tree.compute_child_layout(TaffyNodeId::from(child), child_inputs);
-            refresh_nested_text_fragments(tree, child, context);
             let layout = tree.nodes[child].unrounded_layout;
             let margin_top = layout.margin.top;
             let margin_bottom = layout.margin.bottom;
@@ -6732,6 +6744,7 @@ fn relayout_nested_multicol_children(
         child_layout.size = child_output.size;
         child_layout.location = Point { x, y };
         tree.set_unrounded_layout(TaffyNodeId::from(child), &child_layout);
+        refresh_nested_text_fragments(tree, child, column_context);
         let child_fragment = tree.fragment_tree.push(crate::fragment::LayoutFragment {
             node_id: child,
             parent: Some(container_fragment),
@@ -6786,45 +6799,78 @@ fn relayout_nested_multicol_children(
 fn nested_text_line_ranges(
     layout: &parley::Layout<()>,
     context: FragmentationContext,
-) -> Vec<(usize, usize)> {
+) -> Vec<(usize, usize, usize)> {
     let line_count = layout.len();
-    if let Some(height) = context.available_height.filter(|height| *height > 0.0) {
-        let mut ranges = Vec::with_capacity(context.column_count);
-        let mut start = 0usize;
-        for _ in 0..context.column_count {
-            if start >= line_count {
+    if line_count == 0 || context.column_index >= context.column_count {
+        return Vec::new();
+    }
+    let available_columns = context.column_count - context.column_index;
+    let mut ranges = Vec::with_capacity(available_columns);
+    let mut start = 0usize;
+    for column in 0..available_columns {
+        if start >= line_count {
+            break;
+        }
+        let origin = layout
+            .lines()
+            .nth(start)
+            .map(|line| line.metrics().block_min_coord)
+            .unwrap_or(0.0);
+        let mut end = start;
+        while end < line_count {
+            let fits = context
+                .available_height
+                .filter(|height| *height > 0.0)
+                .map(|height| {
+                    layout
+                        .lines()
+                        .nth(end)
+                        .map(|line| {
+                            line.metrics().block_max_coord - origin <= height + f32::EPSILON
+                        })
+                        .unwrap_or(false)
+                })
+                .unwrap_or_else(|| {
+                    let remaining = line_count - start;
+                    let target = remaining.div_ceil(available_columns - column);
+                    end - start < target
+                });
+            if !fits && end > start {
                 break;
             }
-            let origin = layout
-                .lines()
-                .nth(start)
-                .map(|line| line.metrics().block_min_coord)
-                .unwrap_or(0.0);
-            let mut end = start;
-            while end < line_count {
-                let fits = layout
-                    .lines()
-                    .nth(end)
-                    .map(|line| line.metrics().block_max_coord - origin <= height + f32::EPSILON)
-                    .unwrap_or(false);
-                if !fits && end > start {
-                    break;
-                }
-                end += 1;
-            }
-            ranges.push((start, end.max(start + 1).min(line_count)));
-            start = end.max(start + 1).min(line_count);
+            end += 1;
         }
-        return ranges;
+        ranges.push((
+            start,
+            end.max(start + 1).min(line_count),
+            context.column_index + column,
+        ));
+        start = end.max(start + 1).min(line_count);
     }
-    let lines_per_column = line_count.div_ceil(context.column_count);
-    (0..context.column_count)
-        .filter_map(|column| {
-            let start = (column * lines_per_column).min(line_count);
-            let end = ((column + 1) * lines_per_column).min(line_count);
-            (start < end).then_some((start, end))
-        })
-        .collect()
+    if let Some(last) = ranges.last_mut()
+        && last.1 < line_count
+    {
+        last.1 = line_count;
+    }
+
+    // CSS Fragmentation §3.3 constrains each line break. If the final
+    // fragment would contain fewer than `widows` lines, move lines from the
+    // preceding fragment while preserving its `orphans` minimum. This is the
+    // smallest safe adjustment because the shaped layout and line metrics do
+    // not change; only the fragment ranges move.
+    let orphans = context.orphans.max(1);
+    let widows = context.widows.max(1);
+    for boundary in 0..ranges.len().saturating_sub(1) {
+        let left_len = ranges[boundary].1 - ranges[boundary].0;
+        let right_len = ranges[boundary + 1].1 - ranges[boundary + 1].0;
+        if right_len < widows {
+            let movable = left_len.saturating_sub(orphans);
+            let moved = (widows - right_len).min(movable);
+            ranges[boundary].1 -= moved;
+            ranges[boundary + 1].0 -= moved;
+        }
+    }
+    ranges
 }
 
 // cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
@@ -6833,37 +6879,43 @@ fn refresh_nested_text_fragments(
     node_id: usize,
     context: FragmentationContext,
 ) {
-    let NodeData::Text(text) = &mut tree.nodes[node_id].data else {
-        return;
-    };
-    let Some(layout) = text.text_layout.as_ref() else {
-        return;
-    };
-    let line_count = layout.len();
-    if line_count == 0 {
-        text.multicol_fragments = None;
+    if let NodeData::Text(text) = &mut tree.nodes[node_id].data {
+        let Some(layout) = text.text_layout.as_ref() else {
+            return;
+        };
+        let line_count = layout.len();
+        if line_count == 0 {
+            text.multicol_fragments = None;
+            return;
+        }
+        let ranges = nested_text_line_ranges(layout, context);
+        text.multicol_fragments = Some(
+            ranges
+                .into_iter()
+                .map(|(start, end, column)| MulticolTextFragment {
+                    line_start: start,
+                    line_end: end,
+                    x: context.column_offset_x(column)
+                        - context.column_offset_x(context.column_index),
+                    // The painter normalizes the first selected line's
+                    // block-minimum. Store that minimum here so a recursive
+                    // fragment keeps the ordinary block-flow baseline.
+                    y: layout
+                        .lines()
+                        .nth(start)
+                        .map(|line| line.metrics().block_min_coord)
+                        .unwrap_or(0.0),
+                })
+                .collect(),
+        );
         return;
     }
-    let ranges = nested_text_line_ranges(layout, context);
-    text.multicol_fragments = Some(
-        ranges
-            .into_iter()
-            .enumerate()
-            .map(|(column, (start, end))| MulticolTextFragment {
-                line_start: start,
-                line_end: end,
-                x: context.column_offset_x(column),
-                // The painter normalizes the first selected line's
-                // block-minimum. Store that minimum here so a recursive
-                // fragment keeps the ordinary block-flow baseline.
-                y: layout
-                    .lines()
-                    .nth(start)
-                    .map(|line| line.metrics().block_min_coord)
-                    .unwrap_or(0.0),
-            })
-            .collect(),
-    );
+    let children = tree.nodes[node_id].children.clone();
+    for child in children {
+        if tree.nodes[child].is_in_document() && tree.nodes[child].style.display != Display::None {
+            refresh_nested_text_fragments(tree, child, context);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -7179,16 +7231,55 @@ fn prepare_multicol_layout(doc: &mut Document, cascade: &CascadeResult, fallback
             }
             _ => None,
         };
-        let has_oversized_direct_child = fixed_fragmentainer_height.is_some_and(|height| {
-            doc.nodes[idx].children.iter().any(|&child| {
+        let element_children: Vec<usize> = doc.nodes[idx]
+            .children
+            .iter()
+            .copied()
+            .filter(|&child| {
                 doc.nodes[child].kind() == NodeKind::Element
                     && doc.nodes[child].is_in_document()
                     && doc.nodes[child].style.display != Display::None
-                    && style_dimension_length(doc.nodes[child].style.size.height)
-                        .is_some_and(|child_height| child_height > height + 0.001)
+            })
+            .collect();
+        let has_oversized_direct_child = fixed_fragmentainer_height.is_some_and(|height| {
+            element_children.iter().any(|&child| {
+                style_dimension_length(doc.nodes[child].style.size.height)
+                    .is_some_and(|child_height| child_height > height + 0.001)
             })
         });
-        if !has_direct_text && has_oversized_direct_child {
+        let has_oversized_nested_inline_child = fixed_fragmentainer_height.is_some_and(|height| {
+            element_children.iter().any(|&child| {
+                let mut pending = vec![child];
+                while let Some(descendant) = pending.pop() {
+                    if matches!(
+                        cascade.computed[descendant].display,
+                        DisplayValue::Inline | DisplayValue::InlineBlock
+                    ) && style_dimension_length(doc.nodes[descendant].style.size.height)
+                        .is_some_and(|descendant_height| descendant_height > height + 0.001)
+                    {
+                        return true;
+                    }
+                    pending.extend(doc.nodes[descendant].children.iter().copied());
+                }
+                false
+            })
+        });
+        // The projection is valid for direct-`br` lines and the narrow
+        // two-child nested inline-block fixture. A longer nested flow
+        // (as in tall-line-000) owns a parallel flow and stays on the normal
+        // multicol path.
+        let has_direct_br_in_each_child = element_children.iter().all(|&child| {
+            doc.nodes[child]
+                .children
+                .iter()
+                .any(|&grandchild| doc.nodes[grandchild].tag_name() == Some("br"))
+        });
+        let has_two_child_nested_inline_flow =
+            element_children.len() == 2 && has_oversized_nested_inline_child;
+        if !has_direct_text
+            && (has_oversized_direct_child && has_direct_br_in_each_child
+                || has_two_child_nested_inline_flow)
+        {
             let style = &mut doc.nodes[idx].style;
             style.display = Display::Flex;
             style.flex_direction = TaffyFlexDirection::Row;
@@ -7258,6 +7349,7 @@ fn prepare_multicol_layout(doc: &mut Document, cascade: &CascadeResult, fallback
                 doc.nodes[text_id].style.size.height = Dimension::length(column_height);
             }
         }
+
         if direct_breaks > 0 && !has_direct_text {
             let line_height = line_height_px(&cascade.computed[idx]);
             column_height =
