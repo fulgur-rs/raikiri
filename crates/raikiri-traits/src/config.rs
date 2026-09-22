@@ -365,6 +365,10 @@ pub struct StreamingConfig {
     pub limits: RenderLimits,
     /// `plan` の結果を hint として渡す (round 4 review #2)。
     pub initial_registry: Option<TargetRegistry>,
+    /// Optional cooperative cancellation signal checked before layout and
+    /// before each page emission. An aborted render never calls
+    /// `RenderSink::finish_render`.
+    pub signal: Option<crate::AbortSignal>,
 }
 
 impl StreamingConfig {
@@ -385,6 +389,7 @@ pub struct StreamingConfigBuilder {
     lookahead: Option<LookaheadConfig>,
     limits: Option<RenderLimits>,
     initial_registry: Option<Option<TargetRegistry>>,
+    signal: Option<Option<crate::AbortSignal>>,
 }
 
 impl StreamingConfigBuilder {
@@ -406,6 +411,12 @@ impl StreamingConfigBuilder {
         self
     }
 
+    /// Set a cooperative cancellation signal.
+    pub fn signal(mut self, v: Option<crate::AbortSignal>) -> Self {
+        self.signal = Some(v);
+        self
+    }
+
     /// Build。未設定 field は Default 値。
     pub fn build(self) -> StreamingConfig {
         let d = StreamingConfig::default();
@@ -413,6 +424,7 @@ impl StreamingConfigBuilder {
             lookahead: self.lookahead.unwrap_or(d.lookahead),
             limits: self.limits.unwrap_or(d.limits),
             initial_registry: self.initial_registry.unwrap_or(d.initial_registry),
+            signal: self.signal.unwrap_or(d.signal),
         }
     }
 }

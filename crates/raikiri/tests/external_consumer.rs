@@ -1,5 +1,5 @@
 //! External consumer が `use raikiri::*;` のみで parse_html → plan (Err) →
-//! render_streaming (Err) の chain を書けることを compile + run で pin。
+//! render_streaming (Completed) の chain を書けることを compile + run で pin.
 
 use raikiri::*;
 
@@ -34,7 +34,7 @@ fn external_consumer_can_reference_all_reexported_types() {
 }
 
 /// External consumer が `use raikiri::*;` のみで parse_html → plan (Err) →
-/// render_streaming (Err) の chain を書けることを compile + run で pin。
+/// render_streaming (Completed) の chain を書けることを compile + run で pin.
 /// (design test #9)
 #[test]
 fn external_consumer_can_call_parse_plan_render_streaming() {
@@ -54,10 +54,10 @@ fn external_consumer_can_call_parse_plan_render_streaming() {
     struct NoopSink;
     impl RenderSink for NoopSink {
         fn accept_page(&mut self, _f: PageFragment) -> Result<(), std::io::Error> {
-            unreachable!()
+            Ok(())
         }
         fn finish_render(&mut self, _s: RenderSummary) -> Result<(), std::io::Error> {
-            unreachable!()
+            Ok(())
         }
     }
 
@@ -77,21 +77,15 @@ fn external_consumer_can_call_parse_plan_render_streaming() {
     ));
 
     let mut sink = NoopSink;
-    let stream_err = render_streaming(
+    let stream_status = render_streaming(
         &doc,
         PageDefaults::default(),
         &NoopResolver,
         StreamingConfig::default(),
         &mut sink,
     )
-    .expect_err("unimplemented render_streaming API must Err");
-    assert!(matches!(
-        stream_err,
-        RenderError::Unimplemented {
-            feature: "render_streaming",
-            ..
-        }
-    ));
+    .expect("render_streaming should complete");
+    assert!(matches!(stream_status, RenderStatus::Completed(_)));
 }
 
 /// 全 `#[non_exhaustive]` struct が external crate から X::default() / builder
@@ -401,12 +395,14 @@ fn external_consumer_can_chain_builder_fluent_setters() {
         .limits(limits.clone())
         .initial_registry(Some(TargetRegistry::new()))
         .build();
-    // StreamingConfigBuilder は 3 setter (lookahead / limits / initial_registry)
-    // 全てを chain 対象に含める。
+    // StreamingConfigBuilder は 4 setter (lookahead / limits /
+    // initial_registry / signal) 全てを chain 対象に含める。
+    let abort_controller = AbortController::new();
     let _stream = StreamingConfig::builder()
         .lookahead(lookahead.clone())
         .limits(limits.clone())
         .initial_registry(Some(TargetRegistry::new()))
+        .signal(Some(abort_controller.signal.clone()))
         .build();
     // BatchConfig は lookahead を持たないため limits + initial_registry chain のみ。
     let _batch = BatchConfig::builder()

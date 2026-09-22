@@ -192,7 +192,7 @@ pub enum RenderStatus {
 }
 
 /// Render 完了 summary (Finding #4 completion protocol)。
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RenderSummary {
     /// 総ページ数。
     pub total_pages: u32,
