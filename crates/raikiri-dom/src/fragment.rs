@@ -21,6 +21,10 @@ pub(crate) struct MulticolStyle {
     pub(crate) height_definite: bool,
     /// Whether this tranche is in the supported horizontal writing mode.
     pub(crate) horizontal: bool,
+    /// Minimum line boxes retained before a line break.
+    pub(crate) orphans: usize,
+    /// Minimum line boxes retained after a line break.
+    pub(crate) widows: usize,
 }
 
 /// A local fragmentainer context passed down the nested layout stack.
@@ -42,6 +46,10 @@ pub(crate) struct FragmentationContext {
     pub(crate) origin_x: f32,
     /// Physical origin supplied by the parent fragment.
     pub(crate) origin_y: f32,
+    /// Minimum line boxes retained before a line break.
+    pub(crate) orphans: usize,
+    /// Minimum line boxes retained after a line break.
+    pub(crate) widows: usize,
 }
 
 impl FragmentationContext {
@@ -77,6 +85,8 @@ impl FragmentationContext {
             column_index: 0,
             origin_x: 0.0,
             origin_y: 0.0,
+            orphans: style.orphans.max(1),
+            widows: style.widows.max(1),
         })
     }
 
@@ -181,6 +191,8 @@ mod tests {
                 gap_percent: Some(10.0),
                 height_definite: true,
                 horizontal: true,
+                orphans: 2,
+                widows: 2,
             },
         )
         .expect("positive used width should resolve");
@@ -201,6 +213,8 @@ mod tests {
                     gap_percent: None,
                     height_definite: false,
                     horizontal: true,
+                    orphans: 2,
+                    widows: 2,
                 },
             )
             .is_none()
@@ -215,6 +229,8 @@ mod tests {
                 gap_percent: None,
                 height_definite: false,
                 horizontal: true,
+                orphans: 2,
+                widows: 2,
             },
         )
         .expect("auto count should derive from width");
@@ -229,6 +245,8 @@ mod tests {
                 gap_percent: None,
                 height_definite: false,
                 horizontal: true,
+                orphans: 2,
+                widows: 2,
             },
         )
         .expect("non-finite gap should fail closed to zero");

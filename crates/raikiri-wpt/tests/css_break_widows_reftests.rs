@@ -1,4 +1,4 @@
-//! Focused CSS Break oversized-line fragmentation checks.
+//! Focused CSS Break orphans/widows fragmentation checks.
 //!
 //! These pairs were measured at the project-wide exact 800x600 viewport.
 //! The test is ignored by default because the sparse WPT checkout is fetched
@@ -9,15 +9,14 @@ use std::path::PathBuf;
 use raikiri_wpt::reftest::{ReftestConfig, discover_pairs_for_file_with_wpt_root, run_pair};
 use raikiri_wpt::runner::{TestOutcome, Tolerance};
 
-/// Keep the verified oversized-line multicolumn case covered at exact pixels.
+/// Keep verified line-range distributions covered at exact pixels.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn css_break_tall_line_cases_are_pixel_exact_at_800x600() {
+fn css_break_widows_cases_are_pixel_exact_at_800x600() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let cases = [
-        "css/css-break/tall-line-in-short-fragmentainer-000.html",
-        "css/css-break/tall-line-in-short-fragmentainer-001.html",
-        "css/css-break/tall-line-in-short-fragmentainer-002.html",
+        "css/css-break/widows-001.html",
+        "css/css-break/widows-block-in-inline-001.html",
     ];
     let mut config = ReftestConfig::default();
     config.width = 800;
