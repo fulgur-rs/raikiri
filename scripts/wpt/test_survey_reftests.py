@@ -1,13 +1,15 @@
 """Tests for the WPT reftest survey script."""
 from __future__ import annotations
 
+import io
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from survey_reftests import make_report, read_baseline, scan_reftests  # noqa: E402
+from survey_reftests import checkout_revision, main, make_report, read_baseline, scan_reftests  # noqa: E402
 
 
 class SurveyReftestsTests(unittest.TestCase):
@@ -125,6 +127,47 @@ class SurveyReftestsTests(unittest.TestCase):
         report = self.survey("css/css-text")
         self.assertEqual(report["checkout_scope"], "materialized sparse checkout")
         self.assertEqual(report["sparse_checkout_patterns"], ["css/css-text"])
+
+    def test_cli_refuses_baseline_as_output_path_or_symlink(self) -> None:
+        original = self.baseline_path.read_bytes()
+        symlink = self.baseline_path.parent / "baseline-output.json"
+        symlink.symlink_to(self.baseline_path)
+        for output in (self.baseline_path, symlink):
+            errors = io.StringIO()
+            with redirect_stderr(errors):
+                status = main([
+                    "--wpt-root", str(self.root),
+                    "--baseline", str(self.baseline_path),
+                    "--format", "json",
+                    "--output", str(output),
+                ])
+            self.assertEqual(status, 2)
+            self.assertIn("must not overwrite the baseline", errors.getvalue())
+            self.assertEqual(self.baseline_path.read_bytes(), original)
+
+    def test_revision_is_unknown_for_non_git_wpt_root_inside_parent_repo(self) -> None:
+        repository_root = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory(dir=repository_root) as temporary:
+            nested_wpt = Path(temporary) / "copied-wpt"
+            nested_wpt.mkdir()
+            self.assertEqual(checkout_revision(nested_wpt), "unknown")
+
+    def test_xml_declared_legacy_and_utf16_markup_are_read(self) -> None:
+        (self.root / "legacy.xht").write_bytes(
+            b"<?xml version=\"1.0\" encoding='iso-8859-1'?>"
+            b"<html><body>\xe9<link rel=match href=\"reference.html\"/></body></html>"
+        )
+        (self.root / "utf16.html").write_bytes(
+            "<html><link rel=match href=\"reference.html\"/></html>".encode("utf-16")
+        )
+        self.write("reference.html", "<p>reference</p>")
+
+        entries, errors = scan_reftests(self.root, set())
+        by_id = {entry["test_id"]: entry for entry in entries}
+        self.assertFalse(errors)
+        self.assertEqual(by_id["legacy.xht"]["pair_count"], 1)
+        self.assertEqual(by_id["utf16.html"]["pair_count"], 1)
+        self.assertFalse(by_id["legacy.xht"]["runner_supported_extension"])
 
     def test_missing_baseline_is_an_error(self) -> None:
         with self.assertRaisesRegex(ValueError, "baseline file not found"):

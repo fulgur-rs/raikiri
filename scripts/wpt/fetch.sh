@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Shallow-clone WPT upstream and sparse-checkout only the paths needed
-# by raikiri-wpt / raikiri VRT tests. Idempotent: re-running updates to
-# the pinned SHA.
+# Shallow-clone WPT upstream and sparse-checkout the stable shared roots
+# (css/, fonts/, images/). Idempotent: re-running updates to the pinned SHA.
+# Keep subset.txt broad and branch-independent: this checkout is shared across
+# worktrees, and narrowing sparse paths in one branch hides files from others.
 #
 # Worktree-aware (the earlier change): target/ is per-worktree working
 # state (gitignored; cargo/git don't share it across `git worktree`
@@ -28,6 +29,8 @@ source "$SCRIPT_DIR/../lib/repo_root.sh"
 
 SHA_FILE="$SCRIPT_DIR/pinned_sha.txt"
 SUBSET_FILE="$SCRIPT_DIR/subset.txt"
+# Do not add a per-task path here. SUBSET_FILE feeds the shared WPT checkout;
+# `sparse-checkout reapply` removes paths omitted by whichever branch runs us.
 REMOTE_URL="${WPT_REMOTE_URL:-https://github.com/web-platform-tests/wpt.git}"
 
 # git-common-dir is the main worktree's real .git directory even when this

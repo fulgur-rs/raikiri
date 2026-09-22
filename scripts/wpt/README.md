@@ -4,9 +4,13 @@
 repository into `target/wpt/`, pinned to the SHA in `pinned_sha.txt`.
 
 The set of fetched paths is controlled by `subset.txt` (one pattern per line,
-Git sparse-checkout syntax). The current subset includes `fonts` (Ahem, Lato,
-CSSTest 等) for VRT cross-machine determinism and the focused
-`css/css-page/page-box-001-print.html` canvas-background pin.
+Git sparse-checkout syntax). The shared checkout materializes all of `css/`,
+`fonts/`, and `images/`. `fetch.sh` symlinks this one checkout into task
+worktrees, so **do not narrow or add per-task paths to `subset.txt`**: another
+branch would reapply its patterns to the shared Git checkout and make tests
+invisible in sibling worktrees. Use the survey's category/theme filters to
+focus work instead. The broad CSS tree is intentional so category surveys do
+not need branch-specific fetch rules.
 
 ## Usage
 
@@ -53,15 +57,18 @@ references, and file extensions that the current `raikiri-wpt` tree discovery
 does not scan. It records the checked-out WPT revision, sparse-checkout
 patterns, and the standard 800x600 CSS-pixel viewport.
 
-The survey only sees files materialized in the current checkout. A category
-missing from a sparse checkout is absent, not empty; add the category and its
-needed references/assets to `subset.txt` before using the inventory to plan
-work. The checkout's current physical location is managed by `fetch.sh`; use
-`target/wpt` as the stable working-tree path.
+The survey only sees files materialized in the current checkout. It records
+the WPT revision and sparse patterns, so an absent category in a sparse
+checkout is absent, not empty. CSS categories are covered by the stable `css/`
+root; categories outside the fixed roots need an explicit shared checkout-scope
+change, not a task-specific edit to `subset.txt`. Use `target/wpt` as the stable
+working-tree path.
 
 ```sh
 scripts/wpt/fetch.sh
-python3 scripts/wpt/survey_reftests.py --format text --list-tests
+python3 scripts/wpt/survey_reftests.py --format text
+python3 scripts/wpt/survey_reftests.py \
+    --category css/css-text --theme hyphens --list-tests
 python3 scripts/wpt/survey_reftests.py \
     --category css/css-text \
     --format json \
@@ -71,8 +78,9 @@ python3 scripts/wpt/survey_reftests.py \
 This is an inventory, not a test run: a baseline entry is not proof of a fresh
 PASS, and structurally resolved links do not prove the test is renderable. A
 file with multiple reference links must pass every pair before it is promoted.
-Root-level test files are listed separately for manual theme review; directory
-names are only an initial grouping hint. The script is read-only and never
+Root-level test files are grouped by a numbered filename prefix and marked
+for manual theme review; directory names are also only an initial grouping
+hint. The script is read-only and never
 updates `expectations/raikiri-baseline.txt`. Use the `wpt-ref-coverage` project
 skill to select one reviewed category/theme and run its implementation loop.
 The separate meta-assert review flow below is not part of this survey.
