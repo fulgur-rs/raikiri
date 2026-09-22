@@ -281,6 +281,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::TextDecorationSkipInk(_)
         | PropertyValue::TextDecorationSkipSpaces(_)
         | PropertyValue::TextDecorationInset(_)
+        | PropertyValue::TextUnderlineOffset(_)
         | PropertyValue::TextEmphasisPosition(_)
         | PropertyValue::TextUnderlinePosition(_)
         | PropertyValue::VerticalAlign(_)

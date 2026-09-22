@@ -34,8 +34,8 @@ use crate::resolve::{
     ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackSize, ComputedLength,
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
     ComputedLineHeight, ComputedOutline, ComputedTabSize, ComputedTextDecorationInset,
-    ComputedTextShadow, ComputedTransformFunction, empty_computed_box_shadow_list,
-    empty_computed_text_shadow_list, empty_computed_transform_list,
+    ComputedTextShadow, ComputedTextUnderlineOffset, ComputedTransformFunction,
+    empty_computed_box_shadow_list, empty_computed_text_shadow_list, empty_computed_transform_list,
     initial_computed_grid_auto_track_list,
 };
 
@@ -829,6 +829,10 @@ pub struct ComputedValues {
     /// paint can trim or extend each decoration segment without re-resolving
     /// against the originating font.
     pub text_decoration_inset: ComputedTextDecorationInset,
+    /// `text-underline-offset`. **inherited**, initial: `auto` (CSS Text
+    /// Decoration 4 §2.8). Length values are fixed computed offsets and are
+    /// carried with the decoration origin.
+    pub text_underline_offset: ComputedTextUnderlineOffset,
     /// `vertical-align`. **non-inherited**, initial:
     /// [`VerticalAlign::Baseline`] (CSS 2.1 §10.8.1 "Vertical alignment: the
     /// 'vertical-align' property"
@@ -1717,6 +1721,7 @@ impl ComputedValues {
                 start: ComputedLength::ZERO,
                 end: ComputedLength::ZERO,
             },
+            text_underline_offset: ComputedTextUnderlineOffset::Auto,
             // CSS 2.1 §10.8.1: vertical-align initial は `baseline`。
             vertical_align: VerticalAlign::Baseline,
             // CSS Fonts 4 §2.4: font-style initial は `normal`。
@@ -1910,7 +1915,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout)。
     ///
@@ -2246,6 +2251,7 @@ mod tests {
                 start: ComputedLength(3.0),
                 end: ComputedLength(4.0),
             },
+            text_underline_offset: ComputedTextUnderlineOffset::Length(ComputedLength(5.0)),
             // `Sub` — initial (`Baseline`) と異なる値 (non_initial_parent の
             // 趣旨どおり全 field を非 initial に)。
             vertical_align: VerticalAlign::Sub,

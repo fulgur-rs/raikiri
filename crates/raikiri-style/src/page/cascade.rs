@@ -2190,6 +2190,18 @@ fn absolutize_in_page_context(
                 }
             })
         }
+        // CSS Text Decoration 4 §2.8: fixed underline offsets resolve
+        // against the declaring page context's font-size. Deferred mixed
+        // math is outside this focused slice and falls back to `auto`.
+        PropertyValue::TextUnderlineOffset(value) => {
+            PropertyValue::TextUnderlineOffset(match value {
+                LengthOrAuto::Auto => LengthOrAuto::Auto,
+                LengthOrAuto::Length(length) => LengthOrAuto::Length(Length::Px(
+                    resolve_length(length, font_size, own_line_height, ctx).px(),
+                )),
+                LengthOrAuto::Calc(_) => LengthOrAuto::Auto,
+            })
+        }
         // `text-decoration` shorthand fall-through (see `Padding` above for
         // the unreachability rationale) — unreachable in practice
         // (`expand_shorthand_into` expands it before this function ever sees
@@ -5543,6 +5555,9 @@ mod tests {
         MinWidth => PropertyValue::MinWidth(LengthOrAuto::Length(Length::Em(7.0))),
         MinHeight => PropertyValue::MinHeight(LengthOrAuto::Length(Length::Em(8.0))),
         MinBlockSize => PropertyValue::MinBlockSize(LengthOrAuto::Length(Length::Em(9.0))),
+        TextUnderlineOffset => {
+            PropertyValue::TextUnderlineOffset(LengthOrAuto::Length(Length::Em(9.0)))
+        },
         BoxSizing => PropertyValue::BoxSizing(BoxSizing::BorderBox),
         // No specified/computed distinction for `direction` (computed
         // value = specified value) — any value is "worst case".
@@ -6282,6 +6297,7 @@ mod tests {
         MinWidth,
         MinHeight,
         MinBlockSize,
+        TextUnderlineOffset,
         BoxSizing,
         Direction,
         OverflowX,
@@ -6778,7 +6794,8 @@ mod tests {
             | PropertyValue::MaxHeight(l)
             | PropertyValue::MinWidth(l)
             | PropertyValue::MinHeight(l)
-            | PropertyValue::MinBlockSize(l) => length_or_auto(*l),
+            | PropertyValue::MinBlockSize(l)
+            | PropertyValue::TextUnderlineOffset(l) => length_or_auto(*l),
             PropertyValue::Padding(s) => sides(*s, length),
             PropertyValue::Margin(s) => sides(*s, length_or_auto),
             PropertyValue::PaddingInline(p) | PropertyValue::PaddingBlock(p) => {

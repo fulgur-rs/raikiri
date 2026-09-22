@@ -184,3 +184,7 @@ css/css-break/tall-line-in-short-fragmentainer-001.html
 css/css-break/tall-line-in-short-fragmentainer-002.html
 css/css-break/widows-001.html
 css/css-break/widows-block-in-inline-001.html
+
+# CSS Text Decoration underline offset horizontal foundation.
+css/css-text-decor/text-underline-offset-002.html
+css/css-text-decor/reference/text-underline-offset-002-ref.html
