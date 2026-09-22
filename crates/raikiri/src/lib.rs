@@ -94,8 +94,14 @@ pub use raikiri_traits::{
     LayoutBuffer, TargetRegistry, RunningTemplate, FormData,
     GcpmDirective, ContentValueItem,
 
+    // ── neutral paint payload ──
+    PagePaintKind, PagePaintOperation, PagePaintPayload, PaintBorder, PaintBorderStyle, PaintClip,
+    PaintColor, PaintFill, PaintGlyph, PaintGlyphRun, PaintImage, PaintInsets, PaintRect,
+    PaintResource, PaintResourceBundle, PaintResourceId, PaintResourceKind, PaintShadow,
+    PaintTransform,
+
     // ── traits (Consumer が implement) ──
-    PageEventObserver, RenderSink, ReplacedResolver, ResourcePolicy,
+    PageEventObserver, PagePaintSink, RenderSink, ReplacedResolver, ResourcePolicy,
 
     // ── strategy traits ──
     LookaheadPolicy, TargetResolver, EmissionPolicy, ReflowPolicy,
