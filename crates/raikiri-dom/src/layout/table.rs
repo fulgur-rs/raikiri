@@ -213,6 +213,7 @@ pub fn compute_table_layout(
     };
 
     let table_idx = usize::from(table_id);
+    let abspos_table = doc.nodes[table_idx].style.position == taffy::Position::Absolute;
     let mut grid = build_table_grid(doc, table_idx);
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
@@ -485,7 +486,15 @@ pub fn compute_table_layout(
     // Auto tables without a specified width size to content
     // (shrink-wrap); specified widths (and fixed layout) keep the previous
     // fill basis.
-    let table_width_basis = if border_spacing.0 > 0.0 || border_spacing.1 > 0.0 {
+    let table_width_basis = if abspos_table && specified_width.is_none() {
+        // An auto-width absolutely positioned table uses the containing block's
+        // available width for this table-layout path.  Taffy's shrink-to-fit
+        // probe may report the intrinsic cell width as `known_dimensions.width`,
+        // but CSS Tables 3 caps the available size at (and in this case fills)
+        // the containing block; retaining the probe would leave a narrow strip
+        // missing from the table background.
+        inputs.parent_size.width.or(effective_known.width)
+    } else if border_spacing.0 > 0.0 || border_spacing.1 > 0.0 {
         specified_width.or(effective_known.width)
     } else {
         match table_layout {
