@@ -26,6 +26,7 @@ fn public_page_fragment_snapshot_is_node_ordered() {
 
     assert_eq!(pages.len(), 1);
     assert_eq!(pages[0].page_index, 0);
+    assert!(pages[0].items.iter().all(|item| item.page_index == 0));
     assert!(
         pages[0]
             .items

@@ -180,6 +180,8 @@ pub enum PageFragmentKind {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct PageFragmentItem {
+    /// Zero-based page index containing this placement.
+    pub page_index: u32,
     /// Stable source DOM node identifier.
     pub node_id: NodeId,
     /// Fragment-local border-box rectangle in CSS pixels.
@@ -208,6 +210,7 @@ impl PageFragmentItem {
         is_repeat: bool,
     ) -> Self {
         Self {
+            page_index: 0,
             node_id,
             rect,
             kind,
@@ -216,6 +219,12 @@ impl PageFragmentItem {
             is_repeat,
             line_range: None,
         }
+    }
+
+    /// Set the zero-based page containing this placement.
+    pub fn with_page_index(mut self, page_index: u32) -> Self {
+        self.page_index = page_index;
+        self
     }
 
     /// Attach a line range to a text placement.

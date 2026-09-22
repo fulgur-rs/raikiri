@@ -8727,7 +8727,8 @@ pub fn page_fragments_from_slices(
                 fragment_index as u32,
                 fragment_count,
                 false,
-            );
+            )
+            .with_page_index(page.page_index);
             page.items.push(match line_range {
                 Some(range) => item.with_line_range(range),
                 None => item,
@@ -8747,11 +8748,16 @@ pub fn page_fragment_geometry_table(pages: &[PageFragment]) -> PageFragmentGeome
     let mut table = PageFragmentGeometryTable::new();
     for page in pages {
         for item in &page.items {
+            // The page snapshot is authoritative for this placement. Normalize
+            // manually assembled snapshots as well as producer output so the
+            // node-centric table always retains the page index required by a
+            // fulgur-compatible consumer.
+            let item = item.clone().with_page_index(page.page_index);
             let geometry = table
                 .entry(item.node_id)
                 .or_insert_with(|| PageFragmentGeometry::new(item.node_id, item.is_repeat));
             debug_assert_eq!(geometry.is_repeat, item.is_repeat); // cov:ignore: one producer cannot mix split and repeat records.
-            geometry.fragments.push(item.clone());
+            geometry.fragments.push(item);
         }
     }
     table
@@ -18168,6 +18174,11 @@ mod tests {
                 .windows(2)
                 .all(|items| items[0].fragment_index < items[1].fragment_index)
         );
+        assert!(
+            fragments
+                .iter()
+                .all(|item| item.page_index < pages.len() as u32)
+        );
         let total_height: f32 = fragments.iter().map(|item| item.rect.height).sum();
         assert!((total_height - 120.0).abs() < 0.01);
     }
@@ -18360,6 +18371,8 @@ mod tests {
         assert_eq!(geometry.node_id, NodeId::new(9));
         assert!(geometry.is_split());
         assert_eq!(geometry.fragments.len(), 2);
+        assert_eq!(geometry.fragments[0].page_index, 0);
+        assert_eq!(geometry.fragments[1].page_index, 1);
         assert_eq!(geometry.fragments[1].fragment_index, 1);
     }
 
