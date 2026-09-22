@@ -2271,6 +2271,7 @@ dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
  "bytes",
+ "cssparser",
  "parley",
  "png",
  "raikiri-dom",
