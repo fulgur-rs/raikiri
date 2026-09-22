@@ -18268,17 +18268,6 @@ mod tests {
                 .all(|item| item.node_id.0 != comment as u64)
         );
 
-        document.nodes[body].unrounded_layout.location.x = f32::NAN;
-        document.nodes[body].unrounded_layout.size.width = f32::NAN;
-        document.nodes[body].unrounded_layout.size.height = f32::NAN;
-        let pages = page_fragments_from_slices(
-            &document,
-            &cascade,
-            PageBox::A4,
-            std::slice::from_ref(&slice),
-        );
-        assert!(pages[0].is_empty());
-
         let invalid_slice = PageSlice {
             page_index: 0,
             content_origin_y: f32::NAN,
@@ -18291,6 +18280,17 @@ mod tests {
             std::slice::from_ref(&invalid_slice),
         );
         assert_eq!(pages.len(), 1);
+        assert!(pages[0].is_empty());
+
+        document.nodes[body].unrounded_layout.location.x = f32::NAN;
+        document.nodes[body].unrounded_layout.size.width = f32::NAN;
+        document.nodes[body].unrounded_layout.size.height = f32::NAN;
+        let pages = page_fragments_from_slices(
+            &document,
+            &cascade,
+            PageBox::A4,
+            std::slice::from_ref(&slice),
+        );
         assert!(pages[0].is_empty());
     }
 
