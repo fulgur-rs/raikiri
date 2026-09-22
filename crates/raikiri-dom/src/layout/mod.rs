@@ -8526,9 +8526,12 @@ pub struct PageSlice {
 ///
 /// The geometry pass clips a box at page boundaries. Shaped text placements
 /// additionally carry a neutral line range based on each line's CSS-px center;
-/// the pass does not expose the shaping engine or re-shape the text. The
-/// projection is deterministic and keeps source-node identity stable, so a
-/// consumer can select continuation lines without re-running pagination.
+/// the pass does not expose the shaping engine or re-shape the text. Fixed-
+/// positioned subtrees use their existing post-layout geometry as complete
+/// per-page repeat records; table header/footer repetition is not synthesized
+/// without corresponding pagination support. The projection is deterministic
+/// and keeps source-node identity stable, so a consumer can select
+/// continuation lines without re-running pagination.
 #[allow(clippy::result_large_err)]
 pub fn layout_page_fragments(
     document: &mut Document,
@@ -8621,11 +8624,12 @@ pub fn page_fragments_from_slices(
         width: f32,
         height: f32,
         line_metrics: Option<Vec<(f32, f32)>>,
+        is_repeat: bool,
     }
 
     let mut nodes = Vec::new();
-    let mut stack = vec![(body_id, 0.0_f32, 0.0_f32)];
-    while let Some((node_id, parent_abs_x, parent_abs_y)) = stack.pop() {
+    let mut stack = vec![(body_id, 0.0_f32, 0.0_f32, false)];
+    while let Some((node_id, parent_abs_x, parent_abs_y, inherited_repeat)) = stack.pop() {
         let Some(node) = document.get_node(node_id) else {
             continue; // cov:ignore: document-owned child links are valid by construction.
         };
@@ -8637,6 +8641,18 @@ pub fn page_fragments_from_slices(
         let abs_y = parent_abs_y + layout.location.y;
         let width = finite_nonnegative(layout.size.width);
         let height = finite_nonnegative(layout.size.height);
+        // A fixed-position subtree is painted in every committed page. The
+        // existing layout pass already computes one viewport-relative box;
+        // preserve that geometry and mark the records as complete repeats
+        // instead of clipping them as in-flow content.
+        let is_repeat = inherited_repeat
+            || matches!(
+                cascade
+                    .computed
+                    .get(node_id)
+                    .map(|computed| &computed.position),
+                Some(PositionValue::Fixed)
+            );
         let include = match node.kind() {
             NodeKind::Text => node
                 .text_content()
@@ -8665,12 +8681,13 @@ pub fn page_fragments_from_slices(
                 width,
                 height,
                 line_metrics,
+                is_repeat,
             });
         } // cov:ignore: layout sanitization normally keeps source coordinates finite.
 
         if node.kind() == NodeKind::Element {
             for &child_id in node.children.iter().rev() {
-                stack.push((child_id, abs_x, abs_y));
+                stack.push((child_id, abs_x, abs_y, is_repeat));
             }
         }
     }
@@ -8685,6 +8702,11 @@ pub fn page_fragments_from_slices(
             _ => PageFragmentKind::Box,
         };
         let mut placements = Vec::new();
+        let repeat_line_range = source.line_metrics.as_deref().and_then(|metrics| {
+            (!metrics.is_empty()).then(|| {
+                PageFragmentLineRange::new(0, u32::try_from(metrics.len()).unwrap_or(u32::MAX))
+            })
+        });
         for (page_slot, slice) in ordered_slices.iter().enumerate() {
             let page_start = slice.content_origin_y;
             let page_end = ordered_slices
@@ -8693,6 +8715,15 @@ pub fn page_fragments_from_slices(
                 .filter(|next| next.is_finite() && *next > page_start)
                 .unwrap_or(page_start + content_height);
             if !page_start.is_finite() || !page_end.is_finite() || page_end <= page_start {
+                continue;
+            }
+            if source.is_repeat {
+                placements.push((
+                    page_slot,
+                    source.abs_y.max(0.0),
+                    source.height,
+                    repeat_line_range,
+                ));
                 continue;
             }
             let (intersects, fragment_y, fragment_height) = if source.height > 0.0 {
@@ -8732,7 +8763,7 @@ pub fn page_fragments_from_slices(
                 kind,
                 fragment_index as u32,
                 fragment_count,
-                false,
+                source.is_repeat,
             )
             .with_page_index(page.page_index);
             page.items.push(match line_range {
