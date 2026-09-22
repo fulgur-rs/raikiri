@@ -119,3 +119,21 @@ fn run_exact_pair(root: &std::path::Path, dir: &str, name: &str, config: Reftest
         result.mismatched_pixels
     );
 }
+
+/// Named-page declarations on out-of-flow boxes do not create page transitions.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn out_of_flow_named_page_boxes_match_at_800x600() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    for name in [
+        "page-name-abspos-001-print.html",
+        "page-name-abspos-002-print.html",
+    ] {
+        run_exact_pair(&root, "css/css-page", name, config);
+    }
+}
