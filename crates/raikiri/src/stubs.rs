@@ -6,12 +6,15 @@
 //! sink contract.
 
 use parley::FontContext;
-use raikiri_dom::{layout_pages_with_resolver, page_fragments_from_slices};
+use raikiri_dom::{
+    layout_pages_with_resolver, page_fragment_events_from_pages, page_fragments_from_slices,
+};
 use raikiri_traits::{
-    DocumentPlan, PageBox, PageDefaults, PlanConfig, RenderError, RenderSink, RenderStatus,
-    RenderStatus::Aborted, RenderStatus::Completed, RenderSummary, ReplacedResolver,
+    DocumentPlan, PageBox, PageDefaults, PageEventObserver, PlanConfig, RenderError, RenderSink,
+    RenderStatus, RenderStatus::Aborted, RenderStatus::Completed, RenderSummary, ReplacedResolver,
     StreamingConfig,
 };
+use std::collections::BTreeMap;
 
 use crate::HtmlDocument;
 
@@ -54,6 +57,40 @@ pub fn render_streaming(
     config: StreamingConfig,
     sink: &mut dyn RenderSink,
 ) -> Result<RenderStatus, RenderError> {
+    render_streaming_inner(doc, defaults, resolver, config, sink, None)
+}
+
+/// Stream neutral page snapshots and page-local link/annotation events.
+///
+/// This is the opt-in observer variant of [`render_streaming`]. The page
+/// stream remains renderer-neutral, and the observer receives only opaque
+/// [`NodeId`](raikiri_traits::NodeId), page indices, CSS-pixel rectangles, and
+/// link values. Events are delivered after the corresponding
+/// [`RenderSink::accept_page`] call. Observer I/O failures are returned as
+/// [`RenderError::Sink`]; the page may already have been accepted and
+/// `finish_render` is skipped. Successful renders still call
+/// [`RenderSink::finish_render`] exactly once.
+#[allow(clippy::result_large_err)]
+pub fn render_streaming_with_observer(
+    doc: &HtmlDocument,
+    defaults: PageDefaults,
+    resolver: &dyn ReplacedResolver,
+    config: StreamingConfig,
+    sink: &mut dyn RenderSink,
+    observer: &mut dyn PageEventObserver,
+) -> Result<RenderStatus, RenderError> {
+    render_streaming_inner(doc, defaults, resolver, config, sink, Some(observer))
+}
+
+#[allow(clippy::result_large_err)]
+fn render_streaming_inner(
+    doc: &HtmlDocument,
+    defaults: PageDefaults,
+    resolver: &dyn ReplacedResolver,
+    config: StreamingConfig,
+    sink: &mut dyn RenderSink,
+    mut observer: Option<&mut dyn PageEventObserver>,
+) -> Result<RenderStatus, RenderError> {
     let signal = config.signal.clone();
     let is_aborted = || signal.as_ref().is_some_and(|signal| signal.is_aborted());
     if is_aborted() {
@@ -90,6 +127,20 @@ pub fn render_streaming(
         });
     }
 
+    let mut events_by_page = BTreeMap::new();
+    if observer.is_some() {
+        for event in page_fragment_events_from_pages(&document, &pages) {
+            let page_index = match &event {
+                raikiri_traits::PageFragmentEvent::Link(event) => event.page_index,
+                _ => continue, // cov:ignore: future non-exhaustive event variant cannot be constructed here
+            };
+            events_by_page
+                .entry(page_index)
+                .or_insert_with(Vec::new)
+                .push(event);
+        }
+    }
+
     let mut emitted_pages = 0_u32;
     for page in pages {
         if is_aborted() {
@@ -97,7 +148,15 @@ pub fn render_streaming(
                 partial_pages: emitted_pages,
             });
         }
+        let page_index = page.page_index;
         sink.accept_page(page).map_err(RenderError::Sink)?;
+        if let (Some(observer), Some(events)) =
+            (observer.as_deref_mut(), events_by_page.remove(&page_index))
+        {
+            for event in events {
+                observer.observe_event(event).map_err(RenderError::Sink)?;
+            }
+        }
         emitted_pages = emitted_pages.saturating_add(1);
     }
     if is_aborted() {

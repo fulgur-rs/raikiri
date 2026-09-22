@@ -1,7 +1,18 @@
 //! RenderSink trait — Consumer 側の page emission receiver。
 
 use crate::error::RenderSummary;
-use crate::page::PageFragment;
+use crate::page::{PageFragment, PageFragmentEvent}; // cov:ignore: type-only import
+
+/// Optional receiver for neutral page-local link events.
+///
+/// The event path is separate from [`RenderSink`]'s page emission path so
+/// existing sinks remain source-compatible. A caller that does not provide an
+/// observer receives the same page-only behavior as before.
+// cov:ignore: observer trait declaration has no executable body
+pub trait PageEventObserver: Send {
+    /// Receive one deterministic page-local event.
+    fn observe_event(&mut self, event: PageFragmentEvent) -> std::io::Result<()>; // cov:ignore: trait signature has no executable body
+}
 
 /// Consumer 側 render output receiver (Finding #4 completion protocol)。
 ///

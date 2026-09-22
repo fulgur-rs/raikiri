@@ -56,10 +56,11 @@ pub use net::{
 pub use page::{
     ContentSource, ContentValueConvertError, ContentValueItem, CounterStack, FormData,
     GcpmDirective, LayoutBuffer, NamedStringState, PageBox, PageContext, PageDefaults,
-    PageDefaultsBuilder, PageFragment, PageFragmentGeometry, PageFragmentGeometryTable,
-    PageFragmentInsets, PageFragmentItem, PageFragmentKind, PageFragmentLineRange,
-    PageFragmentOrientation, PageFragmentRect, PendingResolution, ResolveOutcome, RunningTemplate,
-    RunningTemplateId, TargetInfo, TargetRegistry, resolve_content_component,
+    PageDefaultsBuilder, PageFragment, PageFragmentEvent, PageFragmentGeometry,
+    PageFragmentGeometryTable, PageFragmentInsets, PageFragmentItem, PageFragmentKind,
+    PageFragmentLineRange, PageFragmentLink, PageFragmentLinkEvent, PageFragmentOrientation,
+    PageFragmentRect, PendingResolution, ResolveOutcome, RunningTemplate, RunningTemplateId,
+    TargetInfo, TargetRegistry, resolve_content_component,
 };
 pub use plan::{BreakReason, DocumentPlan, PageSummary, TargetDefinition};
 pub use policy::{PolicyViolation, ResourceKind, ResourcePolicy, ViolationType};
@@ -67,7 +68,7 @@ pub use resolver::{
     IntrinsicBox, ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError,
     ResolverRequest,
 };
-pub use sink::RenderSink;
+pub use sink::{PageEventObserver, RenderSink};
 pub use strategy::{
     ContainerOverflowFallback, DirtyDeadline, EmissionPolicy, LookaheadPolicy, ProbeContext,
     ReflowAction, ReflowPolicy, ResolvedTarget, TargetRequest, TargetResolver,
@@ -111,6 +112,7 @@ mod tests {
     fn dyn_traits_are_object_safe() {
         fn _assert<T: ?Sized>() {}
         _assert::<dyn RenderSink>();
+        _assert::<dyn PageEventObserver>();
         _assert::<dyn ReplacedResolver>();
         _assert::<dyn ImagePixelSource>();
         _assert::<dyn NetworkProvider>();
