@@ -132,7 +132,7 @@ fn render_streaming_inner(
         for event in page_fragment_events_from_pages(&document, &pages) {
             let page_index = match &event {
                 raikiri_traits::PageFragmentEvent::Link(event) => event.page_index,
-                _ => continue,
+                _ => continue, // cov:ignore: future non-exhaustive event variant cannot be constructed here
             };
             events_by_page
                 .entry(page_index)

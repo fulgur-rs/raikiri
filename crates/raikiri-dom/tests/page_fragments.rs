@@ -309,3 +309,66 @@ fn page_fragment_link_event_order_is_page_and_node_deterministic() {
         .collect();
     assert!(anchors.windows(2).all(|ids| ids[0] <= ids[1]));
 }
+
+#[test]
+fn page_fragment_link_events_skip_documents_without_a_body() {
+    let document = Document::new();
+    let pages = [raikiri_traits::PageFragment::default()];
+    assert!(page_fragment_events_from_pages(&document, &pages).is_empty());
+}
+
+#[test]
+fn page_fragment_link_events_prefer_leaf_placements_and_keep_box_fallbacks() {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let anchor = document.append_element(Some(body), "a", Style::default(), None::<&str>);
+    document.set_element_attributes(
+        anchor,
+        vec![(SmolStr::new("href"), SmolStr::new("#target"))],
+    );
+    let span = document.append_element(Some(anchor), "span", Style::default(), None::<&str>);
+    let direct_text = document.append_text(anchor, "direct");
+    document.append_text(span, "nested");
+
+    let rect = PageFragmentRect::new(0.0, 0.0, 10.0, 5.0);
+    let mut page = raikiri_traits::PageFragment::default();
+    page.items = vec![
+        PageFragmentItem::new(
+            NodeId::new(anchor as u64),
+            rect,
+            PageFragmentKind::Box,
+            0,
+            1,
+            false,
+        ),
+        PageFragmentItem::new(
+            NodeId::new(span as u64),
+            rect,
+            PageFragmentKind::Box,
+            0,
+            1,
+            false,
+        ),
+        PageFragmentItem::new(
+            NodeId::new(direct_text as u64),
+            rect,
+            PageFragmentKind::Text,
+            0,
+            1,
+            false,
+        ),
+    ];
+
+    let events = page_fragment_events_from_pages(&document, &[page]);
+    let placements: Vec<_> = events
+        .iter()
+        .map(|event| match event {
+            PageFragmentEvent::Link(event) => event.placement_node_id,
+            _ => unreachable!("only link events are currently emitted"),
+        })
+        .collect();
+    assert!(!placements.contains(&NodeId::new(anchor as u64)));
+    assert!(placements.contains(&NodeId::new(span as u64)));
+    assert!(placements.contains(&NodeId::new(direct_text as u64)));
+}

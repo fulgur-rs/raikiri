@@ -8845,20 +8845,21 @@ pub fn page_fragment_events_from_pages(
             })
             .collect();
         for item in linked_items.iter().copied() {
-            let Some(placement_node_id) = usize::try_from(item.node_id.0).ok() else {
-                continue;
-            };
-            let Some(anchor_id) = owners.get(&placement_node_id).copied() else {
-                continue;
-            };
-            let Some(href) = hrefs.get(&anchor_id) else {
-                continue;
-            };
+            // `linked_items` has already validated all three lookups above.
+            // Keeping the invariant explicit here avoids a second set of
+            // impossible branches in the hot event projection loop.
+            let placement_node_id = usize::try_from(item.node_id.0)
+                .expect("linked item NodeId must fit the local arena index");
+            let anchor_id = *owners
+                .get(&placement_node_id)
+                .expect("linked item must have an anchor owner");
+            let href = hrefs
+                .get(&anchor_id)
+                .expect("anchor owner must retain its href");
             if item.kind == PageFragmentKind::Box
                 && linked_items.iter().any(|other| {
-                    let Some(other_node_id) = usize::try_from(other.node_id.0).ok() else {
-                        return false;
-                    };
+                    let other_node_id = usize::try_from(other.node_id.0)
+                        .expect("linked item NodeId must fit the local arena index");
                     other.node_id != item.node_id
                         && owners.get(&other_node_id) == Some(&anchor_id)
                         && is_descendant_of(other_node_id, placement_node_id, &parent_by_node)
@@ -8888,7 +8889,7 @@ pub fn page_fragment_events_from_pages(
             .then_with(|| left.rect.y.total_cmp(&right.rect.y))
             .then_with(|| left.rect.x.total_cmp(&right.rect.x))
             .then_with(|| left.fragment_index.cmp(&right.fragment_index)),
-        _ => std::cmp::Ordering::Equal,
+        _ => std::cmp::Ordering::Equal, // cov:ignore: future non-exhaustive event variant cannot be constructed here
     });
     events
 }
