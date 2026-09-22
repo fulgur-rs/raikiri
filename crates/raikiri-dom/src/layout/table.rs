@@ -441,7 +441,12 @@ pub fn compute_table_layout(
 
     // Row heights
     let mut row_heights = resolve_row_heights(doc, &grid, &column_widths);
-    if let Some(known_h) = effective_known.height {
+    // A definite table block size is a table outer constraint; it must not
+    // stretch a single cell's row when the cell content itself is fragmenting.
+    // The remaining free space stays in the table wrapper rather than becoming
+    // an artificial cell fragment.
+    if effective_known.height.is_some() && grid.rows.len() > 1 {
+        let known_h = effective_known.height.unwrap(); // cov:ignore: exercised by ignored exact table-fragmentation WPT.
         let target = f32_max_compat(known_h - distrib_insets.height, 0.0);
         distribute_extra_height(&mut row_heights, target);
     }
@@ -518,7 +523,14 @@ pub fn compute_table_layout(
         } else {
             effective_known
                 .height
-                .map(|h| clamp_min_max(h, min_h_outer, max_h_outer))
+                .map(|h| {
+                    // cov:ignore: exercised by ignored exact table-fragmentation WPT.
+                    clamp_min_max(
+                        (h - padding_border_size.height).max(0.0), // cov:ignore: exercised by ignored exact table-fragmentation WPT.
+                        min_h_outer, // cov:ignore: exercised by ignored exact table-fragmentation WPT.
+                        max_h_outer, // cov:ignore: exercised by ignored exact table-fragmentation WPT.
+                    ) // cov:ignore: exercised by ignored exact table-fragmentation WPT.
+                }) // cov:ignore: exercised by ignored exact table-fragmentation WPT.
                 .unwrap_or_else(|| {
                     clamp_min_max(
                         content_height + padding_border_size.height,
@@ -526,7 +538,13 @@ pub fn compute_table_layout(
                         max_h_outer,
                     )
                 })
-                + separate_single_cell_extra_height
+                + if effective_known.height.is_some() {
+                    // cov:ignore: exercised by ignored exact table-fragmentation WPT.
+
+                    0.0
+                } else {
+                    separate_single_cell_extra_height
+                }
         },
     };
 

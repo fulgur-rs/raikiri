@@ -19,6 +19,13 @@ fn css_break_table_pairs_are_pixel_exact_at_800x600() {
         "css/css-break/table/caption-margin-005.html",
         "css/css-break/table/monolithic-overflow-001.tentative.html",
         "css/css-break/table/table-fragmentation-001a-print.html",
+        "css/css-break/table/table-fragmentation-001b-print.html",
+        "css/css-break/table/table-fragmentation-001c-print.html",
+        "css/css-break/table/table-fragmentation-001d-print.html",
+        "css/css-break/table/table-fragmentation-002a-print.html",
+        "css/css-break/table/table-fragmentation-002b-print.html",
+        "css/css-break/table/table-fragmentation-002c-print.html",
+        "css/css-break/table/table-fragmentation-002d-print.html",
         "css/css-break/table/table-cell-border-001.html",
         "css/css-break/table/table-cell-border-002.html",
     ];
