@@ -9576,6 +9576,21 @@ pub fn layout_pages_with_page_geometry(
         false
     }
 
+    /// A named box containing a hidden subtree still establishes an explicit
+    /// page boundary. Keep that boundary distinct from the zero-height named
+    /// runs that are otherwise coalesced at one source coordinate.
+    fn has_display_none_descendant(document: &Document, node_id: usize) -> bool {
+        let Some(node) = document.get_node(node_id) else {
+            return false;
+        };
+        node.children.iter().any(|&child_id| {
+            let Some(child) = document.get_node(child_id) else {
+                return false;
+            };
+            child.is_display_none() || has_display_none_descendant(document, child_id)
+        })
+    }
+
     // Candidate collection carries the recursive layout state explicitly so page
     // membership is decided from source coordinates before local page offsets.
     #[allow(clippy::too_many_arguments)]
@@ -9811,6 +9826,7 @@ pub fn layout_pages_with_page_geometry(
     // This coalesces zero-height named runs such as a/b/c/d/e without creating
     // one blank page per zero-height box.
     let mut last_named_raw_y: Option<f32> = None;
+    let mut last_named_had_display_none_descendant = false;
     let mut saw_child = false;
     // Direct fixed-height blocks are the only class-A boxes for which this
     // minimal paginator can safely move a leading line as a unit. Track the
@@ -10092,6 +10108,7 @@ pub fn layout_pages_with_page_geometry(
         // this matters for chains of empty named boxes with overflowing text.
         let same_named_coordinate = candidate.is_named
             && candidate.is_direct_body_element
+            && !last_named_had_display_none_descendant
             && last_named_raw_y.is_some_and(|previous| (raw_y - previous).abs() <= 0.001);
         let named_page_change =
             saw_child && candidate_page_name != current_page_name && !same_named_coordinate;
@@ -10263,6 +10280,8 @@ pub fn layout_pages_with_page_geometry(
             current_page_name = candidate_page_name;
             if candidate.is_direct_body_element {
                 last_named_raw_y = candidate.is_named.then_some(raw_y);
+                last_named_had_display_none_descendant =
+                    candidate.is_named && has_display_none_descendant(document, node_id);
             }
         }
         if page_names.len() <= current_page as usize {
