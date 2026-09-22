@@ -183,8 +183,8 @@ use crate::property::{
     FlexBasisValue, Gradient, GradientColorStop, GridInflexibleBreadth, GridRepeatCount,
     GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
     GridTrackSize, Length, LengthOrAuto, LengthOrNormal, LineHeight, LinearGradient, Outline,
-    OutlineColor, OutlineStyle, RadialGradient, RadialSize, TabSize, TextShadowColor,
-    TextShadowItem, TransformFunction, VerticalAlign,
+    OutlineColor, OutlineStyle, RadialGradient, RadialSize, TabSize, TextDecorationInset,
+    TextShadowColor, TextShadowItem, TransformFunction, VerticalAlign,
 };
 
 // ---------------------------------------------------------------------------
@@ -245,6 +245,24 @@ impl ComputedLength {
     pub fn px(self) -> f32 {
         self.0
     }
+}
+
+/// Computed `text-decoration-inset`: `auto` or two absolute endpoint lengths.
+///
+/// The specified property accepts font-relative lengths, so the computed layer
+/// must not retain [`crate::property::Length`] values that still need a font
+/// basis. Paint consumes this type as an inline-axis trim/extension.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ComputedTextDecorationInset {
+    /// Let the decoration implementation use its automatic endpoint behavior.
+    Auto,
+    /// Start/end endpoint offsets in CSS pixels.
+    Lengths {
+        /// Inline-start trim (negative values extend the line).
+        start: ComputedLength,
+        /// Inline-end trim (negative values extend the line).
+        end: ComputedLength,
+    },
 }
 
 /// Computed absolute length plus authored `ch` provenance.
@@ -1985,6 +2003,23 @@ pub fn resolve_vertical_align(
         VerticalAlign::Length(l) => VerticalAlign::Length(Length::Px(
             resolve_length(l, font_size, own_line_height, ctx).px(),
         )),
+    }
+}
+
+/// Resolve `text-decoration-inset` lengths against the declaring element's
+/// computed font and line-height.
+pub fn resolve_text_decoration_inset(
+    specified: TextDecorationInset,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedTextDecorationInset {
+    match specified {
+        TextDecorationInset::Auto => ComputedTextDecorationInset::Auto,
+        TextDecorationInset::Lengths { start, end } => ComputedTextDecorationInset::Lengths {
+            start: resolve_length(start, font_size, own_line_height, ctx),
+            end: resolve_length(end, font_size, own_line_height, ctx),
+        },
     }
 }
 

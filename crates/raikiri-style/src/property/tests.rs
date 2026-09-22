@@ -6255,6 +6255,18 @@ fn text_decoration_inset_parses_auto_and_one_or_two_lengths() {
     assert_eq!(parse_entire("10%", "text-decoration-inset"), None);
     assert_eq!(parse_entire("none", "text-decoration-inset"), None);
     assert_eq!(parse_entire("auto auto", "text-decoration-inset"), None);
+    assert_eq!(
+        serialize_value(&parse_entire("0", "text-decoration-inset").unwrap()),
+        Some("0px".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&parse_entire("0px 0px", "text-decoration-inset").unwrap()),
+        Some("0px".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&parse_entire("-1ch -1ch", "text-decoration-inset").unwrap()),
+        Some("-1ch".to_owned())
+    );
 }
 
 #[test]

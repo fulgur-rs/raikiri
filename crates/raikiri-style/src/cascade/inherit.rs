@@ -1617,6 +1617,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::TextDecorationLine(v) => target.text_decoration_line = v,
         PropertyValue::TextDecorationStyle(v) => target.text_decoration_style = v,
         PropertyValue::TextDecorationColor(v) => target.text_decoration_color = v,
+        // CSS Text Decoration 4 §2.9.1: non-inherited, but font-relative
+        // lengths remain in staging until `SpecifiedValues::finalize`.
+        PropertyValue::TextDecorationInset(v) => target.text_decoration_inset = v,
         // `text-decoration` shorthand fall-through。sibling `PropertyValue::Margin`
         // arm と同じく **safety net ではない** — 到達すれば 3 longhand winner を
         // 一括で破壊し spec と食い違う。cascade 経路では unreachable
@@ -2028,13 +2031,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // ここは winner の単純代入 (`Visibility` arm と同じ shape)。
         PropertyValue::EmptyCells(v) => target.empty_cells = v,
         // New Text 3 / Writing Modes 3 / Text Decoration 4 properties with no
-        // staging field yet (parsing only). The keyword-only ones
+        // element staging field yet (parsing only). The keyword-only ones
         // (`LineBreak`...`UnicodeBidi`, `TextDecorationSkipInk`...
-        // `TextUnderlinePosition`) carry no length; `TextDecorationThickness`
-        // / `TextDecorationInset` carry `<length-percentage>` but are still
-        // staging-less — their absolutization lives only on the `@page`
-        // path (`crate::page::absolutize_in_page_context`'s arms), same
-        // split as the phase-2/phase-3 division above.
+        // `TextUnderlinePosition`) carry no length. `TextDecorationThickness`
+        // remains parsing-only; `TextDecorationInset` is handled by the
+        // ordinary specified/computed element path above.
         PropertyValue::TextAlignAll(_)
         | PropertyValue::TextCombineUpright(_)
         | PropertyValue::TextOrientation(_)
@@ -2042,7 +2043,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         | PropertyValue::TextDecorationSkipInk(_)
         | PropertyValue::TextDecorationSkipSpaces(_)
         | PropertyValue::TextDecorationThickness(_)
-        | PropertyValue::TextDecorationInset(_)
         | PropertyValue::TextEmphasisPosition(_)
         | PropertyValue::TextUnderlinePosition(_) => {}
         // CSS Paged Media 3 §8.1: retain the non-inherited named-page value
@@ -2096,7 +2096,7 @@ mod tests {
     use crate::resolve::{
         ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedLength,
         ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLineHeight,
-        ComputedTabSize, ComputedTextShadow,
+        ComputedTabSize, ComputedTextDecorationInset, ComputedTextShadow,
     };
     use crate::ruletree::{RuleTree, build_rule_tree};
     use crate::test_dom::TestDoc;
@@ -8299,6 +8299,48 @@ mod tests {
         assert_eq!(cv.text_decoration_line, TextDecorationLine::UNDERLINE);
         assert_eq!(cv.text_decoration_style, TextDecorationStyle::Wavy);
         assert_eq!(cv.text_decoration_color, TextDecorationColor::Resolved(RED));
+    }
+
+    #[test]
+    fn text_decoration_inset_resolves_and_keeps_auto_distinct() {
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some("font-size: 20px; text-decoration-inset: 1em 2px"),
+        );
+        assert_eq!(
+            cv.text_decoration_inset,
+            ComputedTextDecorationInset::Lengths {
+                start: ComputedLength(20.0),
+                end: ComputedLength(2.0),
+            }
+        );
+
+        let auto = cascade_doc("", "div", Some("text-decoration-inset: auto"));
+        assert_eq!(
+            auto.text_decoration_inset,
+            ComputedTextDecorationInset::Auto
+        );
+    }
+
+    #[test]
+    fn text_decoration_inset_is_non_inherited() {
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(0, "div", Some("text-decoration-inset: 3px 4px"));
+        let child = doc.push_element(parent, "span", None);
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        assert_eq!(
+            result.computed[parent].text_decoration_inset,
+            ComputedTextDecorationInset::Lengths {
+                start: ComputedLength(3.0),
+                end: ComputedLength(4.0),
+            }
+        );
+        assert_eq!(
+            result.computed[child].text_decoration_inset,
+            ComputedValues::initial().text_decoration_inset
+        );
     }
 
     #[test]

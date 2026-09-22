@@ -39,10 +39,10 @@ use crate::property::{
     Length, LengthOrAuto, LengthOrNormal, LineBreak, LineHeight, ListStylePosition, ListStyleType,
     MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle, OverflowValue,
     OverflowWrap, OverflowXY, PageValue, PositionValue, RubyPosition, SelfAlignmentValue, Sides,
-    TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor, TextDecorationLine,
-    TextDecorationStyle, TextJustify, TextShadowItem, TextTransform, TextWrapMode,
-    TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode,
-    ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
+    TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextDecorationColor, TextDecorationInset,
+    TextDecorationLine, TextDecorationStyle, TextJustify, TextShadowItem, TextTransform,
+    TextWrapMode, TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak,
+    WritingMode, ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
     empty_filter_list, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
     empty_transform_list, initial_font_family, initial_grid_auto_track_list,
     resolve_display_for_float, resolve_overflow, resolve_text_align_match_parent,
@@ -58,8 +58,9 @@ use crate::resolve::{
     resolve_grid_template_tracks, resolve_length, resolve_length_or_normal_with_ch,
     resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_length_percentage_with_ch, resolve_line_height,
-    resolve_margin_length_or_auto, resolve_outline, resolve_tab_size, resolve_text_shadow_item,
-    resolve_transform_function, resolve_vertical_align, used_line_height_length,
+    resolve_margin_length_or_auto, resolve_outline, resolve_tab_size,
+    resolve_text_decoration_inset, resolve_text_shadow_item, resolve_transform_function,
+    resolve_vertical_align, used_line_height_length,
 };
 
 /// Cascade winner を適用し終えたが、まだ絶対化していない per-node の値。
@@ -76,7 +77,7 @@ use crate::resolve::{
 ///
 /// | 層 | field |
 /// |---|---|
-/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `border_radius` / `box_shadow` / `outline` / `width` / `height` / `text_indent` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` / `background_size` / `background_position` / `object_position` / `border_spacing` |
+/// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `border_radius` / `box_shadow` / `outline` / `width` / `height` / `text_indent` / `text_decoration_inset` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` / `background_size` / `background_position` / `object_position` / `border_spacing` |
 /// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `list_style_type` / `list_style_position` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `font_style` / `font_variant_caps` / `text_transform` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `hyphens` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* / `object_fit` / `table_layout` / `border_collapse` / `caption_side` / `empty_cells` |
 /// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
 ///
@@ -282,6 +283,9 @@ pub struct SpecifiedValues {
     /// computed-equivalent (`TextDecorationColor` は length を運ばない、
     /// currentcolor の used-value resolution は paint scope 責務)。
     pub text_decoration_color: TextDecorationColor,
+    /// [`ComputedValues::text_decoration_inset`] の staging。`em`/`rem` 等の
+    /// length は phase 3 で自 node の font-size / line-height 基準へ絶対化する。
+    pub text_decoration_inset: TextDecorationInset,
     /// [`ComputedValues::vertical_align`] の staging。**型は
     /// [`ComputedValues::vertical_align`] と同じ** [`VerticalAlign`] だが、
     /// 層は field 一律ではない — `baseline`/`sub`/`super`/`middle`/
@@ -666,6 +670,11 @@ impl SpecifiedValues {
             text_decoration_line: TextDecorationLine::NONE,
             text_decoration_style: TextDecorationStyle::Solid,
             text_decoration_color: TextDecorationColor::CurrentColor,
+            // CSS Text Decoration 4 §2.9.1: initial is `0` and non-inherited.
+            text_decoration_inset: TextDecorationInset::Lengths {
+                start: Length::Px(0.0),
+                end: Length::Px(0.0),
+            },
             // CSS 2.1 §10.8.1: vertical-align initial は `baseline`。
             vertical_align: VerticalAlign::Baseline,
             // CSS Fonts 4 §2.4: font-style initial は `normal`。
@@ -1052,6 +1061,11 @@ impl SpecifiedValues {
             text_decoration_line: TextDecorationLine::NONE,
             text_decoration_style: TextDecorationStyle::Solid,
             text_decoration_color: TextDecorationColor::CurrentColor,
+            // non-inherited (CSS Text Decoration 4 §2.9.1 "Inherited: no")。
+            text_decoration_inset: TextDecorationInset::Lengths {
+                start: Length::Px(0.0),
+                end: Length::Px(0.0),
+            },
             // non-inherited (CSS 2.1 §10.8.1 "Inherited: no")。
             vertical_align: VerticalAlign::Baseline,
             // non-inherited (CSS2 §9.9.1 "Inherited: no")。
@@ -1601,6 +1615,12 @@ impl SpecifiedValues {
             text_decoration_line: self.text_decoration_line,
             text_decoration_style: self.text_decoration_style,
             text_decoration_color: self.text_decoration_color,
+            text_decoration_inset: resolve_text_decoration_inset(
+                self.text_decoration_inset,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
             // 6 keyword (`baseline`/`sub`/`super`/`middle`/`text-top`/
             // `text-bottom`) は computed value = specified keyword、
             // `VerticalAlign::Length` (`<length>` / `<percentage>`) だけ own
@@ -1941,7 +1961,7 @@ mod tests {
         ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
         ComputedGridTrackListComponent, ComputedGridTrackSize, ComputedLengthPercentage,
         ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
-        ComputedOutline, ComputedTabSize, ComputedTextShadow,
+        ComputedOutline, ComputedTabSize, ComputedTextDecorationInset, ComputedTextShadow,
     };
 
     /// `root_font_size` = 16px の共通 context。
@@ -2216,6 +2236,10 @@ mod tests {
             text_decoration_line: TextDecorationLine::UNDERLINE,
             text_decoration_style: TextDecorationStyle::Wavy,
             text_decoration_color: TextDecorationColor::Resolved(CssColor::BLACK),
+            text_decoration_inset: ComputedTextDecorationInset::Lengths {
+                start: ComputedLength(3.0),
+                end: ComputedLength(4.0),
+            },
             vertical_align: VerticalAlign::Sub,
             font_style: FontStyle::Italic,
             font_variant_caps: FontVariantCaps::SmallCaps,
@@ -2506,6 +2530,7 @@ mod tests {
         assert_eq!(child.text_decoration_line, initial.text_decoration_line);
         assert_eq!(child.text_decoration_style, initial.text_decoration_style);
         assert_eq!(child.text_decoration_color, initial.text_decoration_color);
+        assert_eq!(child.text_decoration_inset, initial.text_decoration_inset);
         // CSS 2.1 §10.8.1: vertical-align は non-inherited。
         assert_eq!(child.vertical_align, initial.vertical_align);
         // CSS2 §9.9.1: z-index は non-inherited。
