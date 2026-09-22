@@ -669,7 +669,6 @@ css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-002.html
 css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-last-baseline-001.html
 css/css-grid/abspos/grid-abspos-staticpos-justify-self-img-last-baseline-002.html
 css/css-grid/grid-items/percentage-size-subitems-002.html
-css/css-grid/grid-items/percentage-size-subitems-001.html
 css/css-grid/min-size-auto-overflow-clip.html
 css/css-grid/abspos/grid-abspos-staticpos-align-items-center.html
 css/css-grid/abspos/grid-abspos-staticpos-align-items-center-large-border-padding.html

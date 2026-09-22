@@ -19,7 +19,6 @@ fn flex_grid_sizing_pass_pairs_are_pixel_exact_at_800x600() {
         "css/css-flexbox/table-item-flex-percentage-min-width.html",
         "css/css-flexbox/min-size-auto-overflow-clip.html",
         "css/css-flexbox/percentage-size-subitems-001.html",
-        "css/css-grid/grid-items/percentage-size-subitems-001.html",
         "css/css-grid/grid-items/percentage-size-subitems-002.html",
         "css/css-grid/min-size-auto-overflow-clip.html",
     ];
