@@ -71,6 +71,30 @@ fn content_width_for_geometry(geometry: PageFragmentPageGeometry) -> f32 {
     (geometry.page_box.width - geometry.margins.left - geometry.margins.right).max(0.0)
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct PageGeometrySchedule {
+    page_steps: Vec<f32>,
+    page_widths: Vec<f32>,
+    page_names: Vec<Option<String>>,
+}
+
+fn page_geometry_schedule(
+    page_geometries: &[PageFragmentPageGeometry],
+    slices: &[PageSlice],
+) -> PageGeometrySchedule {
+    PageGeometrySchedule {
+        page_steps: page_geometries
+            .iter()
+            .map(|geometry| geometry.content_box.height)
+            .collect(),
+        page_widths: page_geometries
+            .iter()
+            .map(|geometry| content_width_for_geometry(*geometry))
+            .collect(),
+        page_names: slices.iter().map(|slice| slice.page_name.clone()).collect(),
+    }
+}
+
 fn geometry_differs(left: PageFragmentPageGeometry, right: PageFragmentPageGeometry) -> bool {
     left.page_box != right.page_box
         || left.margins != right.margins
@@ -109,7 +133,9 @@ pub fn plan(
 ///
 /// A configured [`AbortSignal`](raikiri_traits::AbortSignal) is checked before
 /// layout, before every page, and before completion. Aborted renders return
-/// without calling `RenderSink::finish_render`.
+/// without calling `RenderSink::finish_render`. If the bounded page-geometry
+/// schedule does not converge, [`RenderError::PageGeometryDidNotConverge`]
+/// is returned before any page is emitted.
 #[allow(clippy::result_large_err)]
 pub fn render_streaming(
     doc: &HtmlDocument,
@@ -189,9 +215,10 @@ fn render_streaming_inner(
         resolver,
     )
     .map_err(RenderError::from)?;
+    const MAX_PAGE_GEOMETRY_PASSES: u32 = 3;
     let mut page_geometries = resolve_page_geometries(doc, &defaults, &slices);
-    let mut previous_schedule: Option<Vec<(f32, f32)>> = None;
-    for _ in 0..3 {
+    let mut geometry_converged = true;
+    for pass in 0..MAX_PAGE_GEOMETRY_PASSES {
         let Some(first_geometry) = page_geometries.first().copied() else {
             break; // cov:ignore: a successful document with a body always emits a page slice.
         };
@@ -201,37 +228,46 @@ fn render_streaming_inner(
         if !geometry_varies {
             break;
         }
-        let schedule: Vec<(f32, f32)> = page_geometries
-            .iter()
-            .map(|geometry| {
-                (
-                    geometry.content_box.height,
-                    content_width_for_geometry(*geometry),
-                )
-            })
-            .collect();
-        if previous_schedule.as_ref() == Some(&schedule) {
-            break;
-        }
-        let page_steps: Vec<f32> = schedule.iter().map(|(height, _)| *height).collect();
-        let page_widths: Vec<f32> = schedule.iter().map(|(_, width)| *width).collect();
-        previous_schedule = Some(schedule);
+
+        let schedule = page_geometry_schedule(&page_geometries, &slices);
         // The first pagination pass establishes page count, names, and source
         // coordinates. If page selectors resolve different used geometry, rerun
         // the existing scheduled paginator with producer-owned page steps/widths.
-        // This remains a bounded batch layout pass; it does not claim incremental
-        // layout. A changed page count may trigger another schedule pass.
+        // This remains a bounded batch layout pass; a changed page count or page
+        // name can trigger another schedule pass.
         slices = layout_pages_with_page_geometry_and_resolver(
             &mut document,
             &first_cascade,
             page_box,
             FontContext::new(),
-            &page_steps,
-            &page_widths,
+            &schedule.page_steps,
+            &schedule.page_widths,
             resolver,
         )
         .map_err(RenderError::from)?;
+        // A scheduled pass can change both page count and page selectors. Re-
+        // resolve before the next iteration so the following schedule is
+        // derived from the slices it will actually replace.
+        page_geometries = resolve_page_geometries(doc, &defaults, &slices);
+        let refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
+        if refreshed_schedule == schedule {
+            break;
+        }
+        // cov:ignore: no current public fixture can keep a static page-rule schedule
+        // changing through all three bounded passes; the terminal status has a
+        // direct contract test in raikiri-traits.
+        if pass + 1 == MAX_PAGE_GEOMETRY_PASSES {
+            geometry_converged = false;
+        }
     }
+    // cov:ignore: see the bounded non-convergence branch above; no inconsistent
+    // pages are emitted, and the structured error variant is contract-tested.
+    if !geometry_converged {
+        return Err(RenderError::PageGeometryDidNotConverge {
+            iterations: MAX_PAGE_GEOMETRY_PASSES,
+        });
+    }
+
     // Resolve once more after the final bounded schedule pass so metadata and
     // page names always describe the slices that will actually be emitted.
     page_geometries = resolve_page_geometries(doc, &defaults, &slices);
