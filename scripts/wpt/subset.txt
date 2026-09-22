@@ -194,3 +194,9 @@ css/css-borders/border-radius-currentcolor.html
 css/css-borders/border-radius-currentcolor-ref.html
 css/css-borders/borders-on-sub-unit-sized-elements.html
 css/css-borders/reference/borders-on-sub-unit-sized-elements-ref.html
+
+# CSS Color rgb()/hsl() baseline reftest pairs used by the ignored 800x600 target.
+css/css-color/background-color-rgb-001.html
+css/css-color/background-color-rgb-001-ref.html
+css/css-color/background-color-hsl-001.html
+css/css-color/background-color-hsl-001-ref.html
