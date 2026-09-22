@@ -8,7 +8,8 @@ use crate::computed::{
 use crate::property::{
     BorderRadius, FontWeightValue, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
     Length, LengthOrAuto, LengthOrNormal, PositionValue, PropertyValue, RelativeFontSize, Sides,
-    WritingMode, initial_grid_auto_track_list, resolve_text_align_match_parent,
+    WritingMode, initial_grid_auto_track_list, resolve_text_align_internal_center,
+    resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ResolveContext,
@@ -751,11 +752,12 @@ pub(crate) fn resolve_against_inherited(
         // 解決する (上記 doc の trap 注記: page context 自身が root element の
         // "computes to start" 特別扱いを受けることは無い)。他 keyword は
         // no-op (関数 doc参照)。
-        PropertyValue::TextAlign(t) => PropertyValue::TextAlign(resolve_text_align_match_parent(
-            t,
-            inherited.text_align,
-            inherited.direction,
-        )),
+        PropertyValue::TextAlign(t) => PropertyValue::TextAlign(
+            resolve_text_align_internal_center(
+                resolve_text_align_match_parent(t, inherited.text_align, inherited.direction),
+                inherited.text_align,
+            ),
+        ),
         // CSS Fonts 4 §2.5 `<relative-size>` (`larger` / `smaller`):
         // `bolder` / `lighter` と同型、継承元の computed
         // font-size に対して解決する。`FontSize` variant に収束させる —

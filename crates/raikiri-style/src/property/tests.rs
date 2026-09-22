@@ -5084,6 +5084,10 @@ fn text_align_parse_all_eight_keywords() {
         Some(PropertyValue::TextAlign(TextAlign::MatchParent))
     );
     assert_eq!(
+        parse("-internal-center", "text-align"),
+        Some(PropertyValue::TextAlign(TextAlign::InternalCenter))
+    );
+    assert_eq!(
         parse("justify-all", "text-align"),
         Some(PropertyValue::TextAlign(TextAlign::JustifyAll))
     );
@@ -5119,7 +5123,10 @@ fn text_align_rejects_unknown_keyword() {
 fn text_align_rejects_css_wide_keyword() {
     // (b) 非対応 — CSS-wide keyword は未実装 (将来対応)、silent drop。5 keyword
     // の一覧・理由は `PropertyValue` doc の「CSS-wide keyword」節が canonical。
-    assert_eq!(parse("inherit", "text-align"), None);
+    assert_eq!(
+        parse("inherit", "text-align"),
+        Some(PropertyValue::TextAlign(TextAlign::Inherit))
+    );
     assert_eq!(parse("initial", "text-align"), None);
     assert_eq!(parse("unset", "text-align"), None);
     assert_eq!(parse("revert", "text-align"), None);
@@ -8553,10 +8560,60 @@ fn non_match_parent_specified_values_pass_through_unchanged() {
         TextAlign::Right,
         TextAlign::Center,
         TextAlign::Justify,
+        TextAlign::Inherit,
+        TextAlign::InternalCenter,
         TextAlign::JustifyAll,
     ] {
         assert_eq!(
             resolve_text_align_match_parent(specified, TextAlign::Center, Direction::Rtl),
+            specified
+        );
+    }
+}
+
+#[test]
+fn internal_center_centers_only_initial_start_parent() {
+    assert_eq!(
+        resolve_text_align_internal_center(TextAlign::InternalCenter, TextAlign::Start),
+        TextAlign::Center
+    );
+    assert_eq!(
+        resolve_text_align_internal_center(TextAlign::Inherit, TextAlign::Start),
+        TextAlign::Start
+    );
+    for parent in [
+        TextAlign::End,
+        TextAlign::Left,
+        TextAlign::Right,
+        TextAlign::Center,
+        TextAlign::Justify,
+        TextAlign::JustifyAll,
+    ] {
+        assert_eq!(
+            resolve_text_align_internal_center(TextAlign::InternalCenter, parent),
+            parent
+        );
+    }
+}
+
+#[test]
+fn internal_center_resolver_does_not_change_author_values() {
+    assert_eq!(
+        resolve_text_align_internal_center(TextAlign::Inherit, TextAlign::End),
+        TextAlign::End
+    );
+    for specified in [
+        TextAlign::Start,
+        TextAlign::End,
+        TextAlign::Left,
+        TextAlign::Right,
+        TextAlign::Center,
+        TextAlign::Justify,
+        TextAlign::MatchParent,
+        TextAlign::JustifyAll,
+    ] {
+        assert_eq!(
+            resolve_text_align_internal_center(specified, TextAlign::End),
             specified
         );
     }
