@@ -527,6 +527,8 @@ css/css-break/flexbox/single-line-row-flex-fragmentation-021.html
 css/css-break/flexbox/single-line-row-flex-fragmentation-038.html
 css/css-break/flexbox/single-line-row-flex-fragmentation-049.html
 css/css-break/flexbox/single-line-row-flex-fragmentation-050.html
+# --- css-break multicol block projection (exact, 800x600, 2026-09-22) ---
+css/css-break/borders-000.html
 # --- css-page image-resource remeasurement (exact, 800x600, 2026-09-21) ---
 css/css-break/zero-height-page-break-001-print.html
 css/css-page/background-image-only-for-print.html
