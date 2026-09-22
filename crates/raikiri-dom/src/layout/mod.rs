@@ -9336,7 +9336,26 @@ pub fn layout_pages_with_page_geometry(
             && effective_y >= page_origin(current_page)
             && effective_y < page_origin(current_page) + page_step_at(current_page)
             && effective_y + height > page_origin(current_page) + page_step_at(current_page);
+        // A trailing flex item may extend into the containing flex box's
+        // continuation at the page edge. Earlier items still move intact when
+        // they would cross a fragmentainer, preserving the existing column
+        // flex pagination behavior.
+        let flex_item_is_last = candidate.is_flex_item
+            && parent_of[node_id].is_some_and(|parent_id| {
+                document.nodes[parent_id]
+                    .children
+                    .iter()
+                    .rev()
+                    .find(|&&child_id| {
+                        document.nodes[child_id].is_in_document()
+                            && document.nodes[child_id].kind() == NodeKind::Element
+                            && !document.nodes[child_id].is_display_none()
+                    })
+                    .copied()
+                    == Some(node_id)
+            });
         let flex_item_overflow = candidate.is_flex_item
+            && !flex_item_is_last
             && effective_y.is_finite()
             && effective_y >= page_origin(current_page)
             && effective_y < page_origin(current_page) + page_step_at(current_page)
