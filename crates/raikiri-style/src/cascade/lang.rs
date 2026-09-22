@@ -3,8 +3,7 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId};
 /// `PseudoClass::Lang` arm of [`super::selector_match::compound_matches`] — CSS Selectors L4 §7.2
 /// <https://www.w3.org/TR/selectors-4/#the-lang-pseudo>: "represents an
 /// element whose content language is one of the languages listed in its
-/// argument" (bikeshed source verbatim, see [`language_range_matches`] doc
-/// for the fetch note). `ranges` is empty-or-more per [`crate::PseudoClass::Lang`]
+/// argument". `ranges` is empty-or-more per [`crate::PseudoClass::Lang`]
 /// grammar (`parse_comma_separated` never actually returns an empty `Vec`
 /// for a non-empty `:lang(...)` argument list, but this function does not
 /// special-case emptiness — `ranges.iter().any(..)` is vacuously `false` on
@@ -21,10 +20,7 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId};
 /// The empty string is a narrower case than a non-empty content language:
 /// it does not match a bare wildcard range, but it does match other ranges, notably the
 /// literal empty-string range `:lang("")`. CSS Selectors L4 §7.2, bikeshed
-/// source `selectors-4/Overview.bs` `#the-lang-pseudo` (direct raw fetch of
-/// `raw.githubusercontent.com/w3c/csswg-drafts/main/selectors-4/Overview.bs`,
-/// bypassing WebFetch's truncation on this TR page the same way
-/// [`super::selector_match::matches_empty`]'s `:empty` doc note does), verbatim: "For this
+/// source `selectors-4/Overview.bs` `#the-lang-pseudo` (verbatim): "For this
 /// purpose, a wildcard language range (\"*\") does not match elements
 /// whose language is not tagged (e.g. `lang=\"\"`), but does match elements
 /// whose language is tagged as undetermined (`lang=und`). A language range
@@ -76,9 +72,8 @@ pub(crate) fn lang_pseudo_matches<D: StyleDom, E: StyleElement>(
 /// step gates on `elem.namespace_uri()` — but a 2-element allowlist (HTML
 /// *or* SVG) rather than `dir`'s HTML-only 1-element one, per the quoted
 /// step's explicit "an HTML element or an element in the SVG namespace"
-/// wording (an earlier version of this
-/// function read `lang` unconditionally, which is wrong for any other
-/// foreign-namespace element — MathML concretely: `<math lang="ja">` nested
+/// wording. For a foreign-namespace element — MathML concretely: `<math
+/// lang="ja">` nested
 /// under `<html lang="en">` must resolve to `"en"`, not `"ja"`, since MathML
 /// is neither HTML nor SVG. [`own_html_or_svg_lang_attribute`] is the gate;
 /// see its doc for the allowlist). This only restricts *whose own*
@@ -169,18 +164,14 @@ pub(crate) fn own_html_or_svg_lang_attribute<E: StyleElement>(elem: &E) -> Optio
 /// Does `range` (one comma-separated argument of `:lang(...)`) match
 /// `content_language` (the resolved [`effective_language`])? Implements RFC
 /// 4647 §3.3.2 "Extended Filtering"
-/// (<https://www.rfc-editor.org/rfc/rfc4647.html#section-3.3.2>), which CSS Selectors L4 §7.2 cites verbatim (bikeshed
-/// source `selectors-4/Overview.bs`, same fetch as [`crate::Direction`]'s doc —
-/// the published TR page truncated before §7.2 for this crate's WebFetch
-/// tool):
+/// (<https://www.rfc-editor.org/rfc/rfc4647.html#section-3.3.2>), which CSS Selectors L4 §7.2 cites:
 ///
 /// > The element's content language matches a language range if its content
 /// > language, as represented in BCP 47 syntax, matches the given language
 /// > range in an extended filtering operation per \[RFC4647\] (section
 /// > 3.3.2).
 ///
-/// RFC 4647 §3.3.2 verbatim (direct fetch of `rfc-editor.org`'s plain-text
-/// rendering):
+/// RFC 4647 §3.3.2 verbatim :
 ///
 /// > 1. Split both the extended language range and the language tag being
 /// >    compared into a list of subtags by dividing on the hyphen (%x2D)
@@ -215,8 +206,7 @@ pub(crate) fn own_html_or_svg_lang_attribute<E: StyleElement>(elem: &E) -> Optio
 ///
 /// # BCP47 well-formedness and canonicalization
 ///
-/// CSS Selectors L4 §7.2 additionally requires (bikeshed source, same fetch
-/// as above):
+/// CSS Selectors Level 4 §7.2 additionally requires:
 ///
 /// > The \[content language\] and the \[language range\] must be
 /// > canonicalized and converted to extlang form as per section 4.5 of

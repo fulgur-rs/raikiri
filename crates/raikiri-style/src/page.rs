@@ -76,8 +76,7 @@
 //!
 //! Whitespace *within* a compound (e.g. `@page : left`, `@page named :first`,
 //! `@page :first :left`) is rejected per the compound rule — the whole
-//! `@page` rule is dropped. This tightening was added after review surfaced
-//! a gap in the initial parser scaffolding.
+//! `@page` rule is dropped.
 //!
 //! # Margin-box at-rules
 //!
@@ -94,18 +93,6 @@
 //! skipped, declarations before and after it in the `@page` block still
 //! parse) — see [`PageMarginBoxRule`] for the stored shape.
 //!
-//! # Note on `:nth-page`
-//!
-//! Earlier scaffolding drafts included an `NthPage` pseudo variant for
-//! `:nth-page(An+B)`. That variant was removed after reviewer verification
-//! that `:nth-page` is not part of CSS Paged Media Level 3 nor the Level 4
-//! Editor's Draft. Accepting it under autonomous authority would emit a
-//! [`PagePseudo`] variant no primary source defines, forcing invented
-//! cascade semantics ahead of the rest of the cascade design. The decision on
-//! whether raikiri should ship a spec-outside `:nth-page` extension (e.g. for
-//! GCPM prototyping) is deferred to a human decision, tracked outside this
-//! source tree.
-
 mod types;
 pub use types::*;
 

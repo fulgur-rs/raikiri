@@ -279,34 +279,14 @@ fn expand_hex_nibble(n: u8) -> u8 {
 /// は `PropertyValue` の bag なので computed 値も本型で運ばれる。したがって
 /// 「`Length` が見えたから未解決」と判断してはならない。
 ///
-/// **本節が「型は層を表明しない」規則の canonical な記述である。**
-/// 一方、page 経路が具体的に何を保証するか (どの値が computed 層に居るのか、
-/// 例外は何か) は
+/// The type does not identify the cascade layer. In the page path,
 /// [`PageCascadeResult::declarations`](crate::page::PageCascadeResult::declarations)
-/// の doc が canonical であり、その内容は `page::tests` の
-/// `page_declarations_carry_no_specified_layer_residue` (以前の名前は
-/// `page_declarations_carry_exactly_one_specified_layer_residue`)
-/// が機械的に check している。**ここに保証の中身を書き足して重複させないこと**
-/// — 手で 2 site を揃える運用は既に 2 度 drift した。
+/// can contain computed values represented by these same variants. Consumers
+/// must use the cascade contract rather than infer resolution from the variant
+/// name.
 ///
-/// Downstream match は必ず wildcard arm を持つこと (`#[non_exhaustive]` 属性、
-/// 変数追加が既存 pattern-match を break しない forward-compat 契約)。
-///
-/// **訂正**: 本節は以前 `crates/raikiri-dom/src/
-/// layout.rs:143` の `preshape_text` を「wildcard arm を持つ既存 sibling」と
-/// して挙げていたが、これは Option A 層分離
-/// ([`crate::resolve`] 参照) で崩れた — `preshape_text` が消費する
-/// `cv.font_size` は現在 [`crate::resolve::ComputedLength`] (px scalar) で
-/// あり、`Length` を直接 match しないため wildcard arm ごと削除済
-/// (`layout.rs` の `preshape_text` doc "失敗しない" 節に経緯あり)。
-/// 実際 `crates/raikiri-dom` / `raikiri-paint` / `raikiri-html` /
-/// `raikiri-traits` は現状どこも `Length` を直接 match しない — 層分離後は
-/// すべて [`crate::resolve`] の `Computed*` 型 (`ComputedLength` /
-/// `ComputedLengthPercentage` / `ComputedLengthPercentageOrAuto` /
-/// `ComputedBorder`) を経由するため。上記の wildcard-arm 契約は
-/// **`Length` を直接 match する将来の downstream code に対して有効**であり、
-/// 現時点でこの契約を exercise している既存 site は無い (`crates/` 全体を
-/// 再 grep して確認済み)。
+/// Downstream matches should include a wildcard arm because this type is
+/// `#[non_exhaustive]`.
 ///
 /// # Primary sources (§ title + anchor)
 ///
@@ -978,62 +958,23 @@ pub struct Border {
     pub color: BorderColor,
 }
 
-/// `#[non_exhaustive]` は crate 外からの struct-literal 構築を `E0639` で塞ぐ
-/// (umbrella (`raikiri` crate) へ [`Border`]
-/// 自体を re-export した際に踏んだ制約 — その時点では埋め合わせの
-/// constructor が無く、型は名指しできても値を得る public な経路が無かった)。
-///
-/// `raikiri-traits::page::PageBox` / `PageDefaults` 等、本 workspace で
-/// `#[non_exhaustive]` かつ umbrella re-export 対象の struct が共通して使う
-/// 「zero-arg `new()` (= `Default::default()`) + 全 field `pub` による
-/// mutation」の 2-pattern 構築契約 (`crates/raikiri/tests/external_consumer.rs`
-/// の "3 pattern" acceptance criteria の pattern 1 + pattern 2) を
-/// [`Border`] にも適用する。3 field のみの単純な値なので builder
-/// (pattern 3) は他の類似 struct (`PageBox` / `PageContext` 等) と同様に
-/// 見送り — 複数 setter を持つ多 field config struct 向けの pattern であり、
-/// このためだけの builder は無駄な surface になる。
+/// `Border` is non-exhaustive but provides a default constructor and public
+/// fields so downstream callers can construct and then customize a value.
 impl Border {
     /// CSS Backgrounds 3 の初期値
     /// (`width` = medium = 3px §3.3 / `style` = `none` §3.2 / `color` = `currentcolor` §3.1)
     /// を持つ `Border` を返す zero-arg constructor。`Self::default()` の thin
     /// wrapper — `raikiri_traits::page::PageBox::new` と同じ shape。
     ///
-    /// 全 field が `pub` なので、initial 以外の値が要る呼び手は
-    /// `let mut b = Border::new(); b.width = Length::Px(5.0);` の mutation
-    /// pattern で組み立てる (`external_consumer_can_mutate_pub_fields_via_default_shorthand`
-    /// が umbrella 経由でこの経路を check する)。
+    /// Callers can customize the public fields after construction.
     pub fn new() -> Self {
         Self::default()
     }
 }
 
 impl Default for Border {
-    /// CSS Backgrounds 3 initial value。[`crate::specified::INITIAL_BORDER`]
-    /// (cascade の internal fast-path 用 `pub(crate) const`) と同じ値を保つ —
-    /// 単体テスト `border_default_matches_initial_border`
-    /// ([`crate::specified::INITIAL_BORDER`] と `assert_eq!` で突き合わせ) が
-    /// drift を検知する。2 つを 1 本化しない理由: `INITIAL_BORDER` は `const`
-    /// (cascade hot path で使う compile-time 値) だが、trait method
-    /// (`Default::default`) は stable Rust では `const fn` にできないため。
-    ///
-    /// # sibling [`BorderStyle`] / [`BorderColor`] の "Default は derive しない"
-    /// 注記との関係
-    ///
-    /// [`BorderStyle`] の doc は「`Default` は derive しない — 本 crate の
-    /// convention は "derive `Default` iff `.default()` が call される"」と
-    /// 述べている。これは **`#[derive(Default)]`** (呼ばれない Default を
-    /// タダだから足す) の話であり、本 impl はそれとは逆で「呼ばれるから
-    /// 手書きで足す」— 内部からは [`Border::new`]、外部からは umbrella
-    /// (`raikiri` crate) の pattern-1/pattern-2 construction check
-    /// (`external_consumer_can_construct_all_non_exhaustive_types` /
-    /// `external_consumer_can_mutate_pub_fields_via_default_shorthand`) が
-    /// 実際に呼ぶ。手書き `impl Default` を `#[non_exhaustive]` struct に
-    /// 足す in-crate precedent は `counter_style.rs` の
-    /// [`NegativeDescriptor`](crate::counter_style::NegativeDescriptor) /
-    /// [`PadDescriptor`](crate::counter_style::PadDescriptor) (どちらも
-    /// hand-written `impl Default`、derive ではない) — 同じ判断基準
-    /// (「呼ばれるかどうか」) の適用であり、本 impl はその convention への
-    /// 違反ではなくむしろ一致。
+    /// CSS Backgrounds 3 initial value: medium width, no border style, and
+    /// currentcolor.
     fn default() -> Self {
         Self {
             width: Length::Px(BORDER_WIDTH_MEDIUM_PX),

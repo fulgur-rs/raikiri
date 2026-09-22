@@ -74,22 +74,15 @@ use super::resolve_directionality;
 ///   引き続き `false` (dynamic pseudo-class の対応は本実装の scope 外のまま)。
 /// - `Component::Root` (`:root`, CSS Selectors L4
 ///   §13.1 <https://www.w3.org/TR/selectors-4/#the-root-pseudo>) — matches
-///   iff `ancestors.is_empty()`. Both call sites
-///   ([`match_complex_selector_list`] for the rightmost compound,
-///   [`match_from_element`] for compounds reached by crossing a combinator)
-///   pass `ancestors` root-first/immediate-parent-last — [`super::collect::collect_cascaded`]'s
+///   iff `ancestors.is_empty()`. The matcher passes `ancestors`
+///   root-first/immediate-parent-last — [`super::collect::collect_cascaded`]'s
 ///   doc establishes that only `StyleNodeKind::Element` nodes are ever
 ///   pushed onto `ancestor_path`, so an empty `ancestors` slice means "no
 ///   element ancestor", i.e. this element is the root element of the
-///   document tree — exactly the spec's "root of the document" (TR
-///   anchor's own prose repeatedly truncated on WebFetch before reaching
-///   normative text, same failure mode as [`match_combinator_chain`]'s
-///   "Spec provenance note"; what loaded is the summary-table one-liner,
-///   "an E element, root of the document").
+///   document tree — exactly the spec's "root of the document" .
 /// - `Component::Empty` (`:empty`, CSS Selectors
 ///   L4 §13.2 <https://www.w3.org/TR/selectors-4/#the-empty-pseudo>) — see
-///   [`matches_empty`] doc for the verbatim spec text and its L4-vs-L3
-///   whitespace-handling correction history.
+///   [`matches_empty`] doc for the whitespace handling.
 /// - `Component::Is` / `Component::Where` (`:is()` / `:where()`) — recursively
 ///   match their selector lists against the same element. Invalid branches
 ///   produced by forgiving parsing fail closed in the ordinary matcher, while
@@ -351,68 +344,15 @@ fn is_document_white_space(c: char) -> bool {
 /// <https://www.w3.org/TR/selectors-4/#the-empty-pseudo>) — whether
 /// `elem_id` has no children that count toward emptiness.
 ///
-/// # Spec provenance and correction
+/// CSS Selectors Level 4 allows document whitespace characters in an empty
+/// element. The implementation treats space, tab, line feed, and carriage
+/// return as document whitespace, while non-empty text and element children
+/// make the element non-empty. Comments and processing instructions do not.
 ///
-/// L4's own TR anchor repeatedly truncated on WebFetch before reaching
-/// normative prose — same failure mode [`match_combinator_chain`]'s "Spec
-/// provenance note" documents for combinators. The first pass of this
-/// function fell back to Selectors **Level 3** prose ("only... content
-/// nodes... whose data has a non-zero length must be considered as
-/// affecting emptiness") without realizing L4 had *deliberately changed*
-/// this from L3, not merely restated it. Corrected after a direct raw
-/// fetch of `raw.githubusercontent.com/w3c/csswg-drafts/main/selectors-4/
-/// Overview.bs` (bypassing WebFetch's truncation entirely — `curl` the
-/// bikeshed source and grep it directly), `#the-empty-pseudo` section,
-/// verbatim: "The :empty pseudo-class represents an element that has no
-/// children except, optionally, [=document white space characters=]. ...
-/// only element nodes and content nodes (such as \[\[DOM\]\] text nodes, and
-/// entity references) whose data has a non-zero length must be considered
-/// as affecting emptiness; comments, processing instructions, and other
-/// nodes must not affect whether an element is considered empty or not."
-/// — followed by an explicit changelog note: "In Level 2 and Level 3 of
-/// Selectors, :empty did not match elements that contained only white
-/// space. This was changed so that... elements which authors perceive of
-/// as empty can be selected by this selector, as they expect." The
-/// section's own worked examples list `<p> </p>` (whitespace-only) among
-/// what `p:empty` matches, and `<div>&nbsp;</div>` among what it does
-/// *not* match — pinning both directions.
-///
-/// "Document white space characters" is itself a CSS Text Module Level 4
-/// term (`#the-empty-pseudo`'s own autolink target), verbatim (direct raw
-/// fetch of `.../css-text-4/Overview.bs`, `#white-space-rules`): "the
-/// [document white space characters]: spaces (U+0020), tabs (U+0009), and
-/// segment breaks" — stated a second time nearby, identically: "both
-/// include spaces (U+0020), tabs (U+0009), and line feeds (U+000A)". For
-/// HTML specifically (same source, `#white-space-rules` preamble), a
-/// segment break is exactly line feed (U+000A): "In the case of HTML,
-/// newlines are normalized to line feed characters (U+000A)... so... each
-/// line feed (U+000A) is treated as a segment break" — and carriage
-/// return (U+000D) is separately stated to be "treated identically to
-/// spaces (U+0020) in all respects" (same source). CR-inclusion is not
-/// dead weight against a non-HTML-normalized [`StyleDom`]: an HTML parser
-/// folds a *literal* CR/CRLF byte in the source to LF during input-stream
-/// preprocessing, but a numeric character reference such as `&#x0D;` is
-/// decoded to U+000D during tokenization, *after* that normalization step,
-/// so a real DOM text node produced by a conformant parser can and does
-/// contain a literal U+000D. §4's own closing sentence on this point:
-/// "the character is preserved — and the above rule observable — when
-/// encoded using an escape sequence (`&#x0d;`)." [`is_document_white_space`]
-/// is generic over any [`StyleDom`] impl, not just `raikiri-html`'s, but
-/// the CR handling is load-bearing for ordinary conformant HTML content
-/// (e.g. `<h1>A&#x0d;&#x0d;B</h1>`), not defensive dead code.
-///
-/// **Deliberately excludes form feed (U+000C)** — unlike Rust's
-/// `char::is_ascii_whitespace()` / this crate's own HTML "ASCII
-/// whitespace" 5-character set used elsewhere ([`crate::style_dom`]'s
-/// `class_token_matches`). Direct search of the css-text-4 raw source
-/// (not a WebFetch summary) for "U+000C"/"form feed" returns zero hits
-/// anywhere near the "document white space characters" dfn, which is
-/// stated explicitly — twice — as exactly {space, tab, segment break/line
-/// feed}, no fourth category. This is narrower than an earlier relayed
-/// characterization of the set as "U+000A/U+000D/U+000C family" — flagged
-/// here as a discrepancy to confirm or correct with a citation, since this
-/// function currently follows the directly-verified primary source over
-/// the relayed one where they disagree.
+/// CSS Text Level 4 defines document whitespace as spaces, tabs, and segment
+/// breaks; HTML normalizes segment breaks to line feeds and treats carriage
+/// return as a space.
+/// <https://drafts.csswg.org/css-text-4/#white-space-rules>
 ///
 /// # Node-kind coverage
 ///
@@ -548,8 +488,10 @@ pub(crate) fn sibling_position<D: StyleDom>(
 /// (`selectors` 0.39.0 `parser.rs`'s `NthSelectorData::only`/`first`/`last`
 /// constructors and `parse_nth_pseudo_class`, the dependency's own public parse dispatch — not a Stylo reference).
 ///
-/// L4's own per-selector TR anchors truncated the same way documented on
-/// [`matches_empty`]; fell back to Selectors **Level 3** §6.6
+/// The structural sibling-position rules are defined by Selectors Level 3
+/// §6.6 and retained by Level 4.
+///
+/// Selectors **Level 3** §6.6
 /// <https://www.w3.org/TR/selectors-3/#structural-pseudos> (verbatim,
 /// again the same feature, unchanged by L4
 /// except for the `An+B of S` extension handled by [`matches_nth_of`]):
@@ -991,26 +933,11 @@ fn following_sibling_elements<D: StyleDom>(
 /// `.foo::before` rule directly onto `.foo` the real element, with no
 /// changes needed to that function or `compound_matches`).
 ///
-/// # Why `Component::PseudoElement` can only be this function's own leading
-/// compound
+/// # Why `Component::PseudoElement` is restricted to the leading compound
 ///
-/// `RaikiriSelectorParser` overrides none of `PseudoElement`'s
-/// `is_before_or_after` / `accepts_state_pseudo_classes` /
-/// `parses_as_element_backed` defaults (all stay `false` — see
-/// [`crate::PseudoElem`] doc), so the `selectors` crate's own parser state
-/// machine rejects any pseudo-class or further pseudo-element after a
-/// `::before`/`::after` (`selectors` v0.39.0 `parser.rs`'s
-/// `AFTER_NON_ELEMENT_BACKED_PSEUDO`/`AFTER_BEFORE_OR_AFTER_PSEUDO` state
-/// handling), and a compound/combinator *following* `::before`/`::after`
-/// (e.g. `a::before b`) is rejected even earlier, as a bare syntax error —
-/// empirically confirmed against this crate's actual `parse_selector_list`
-/// (not read from `selectors`' source in isolation): `.foo::before` parses
-/// to the raw match-order sequence `[PseudoElement(Before),
-/// Combinator(PseudoElement), Class("foo")]`; `a::before b`,
-/// `::before::after`, `::before:hover`, and `.foo::before.bar` are all
-/// parse errors. A `Selector` that parsed successfully at all therefore has
-/// **at most one** `Component::PseudoElement`, always as the sole member of
-/// its own rightmost compound.
+/// The parser rejects a pseudo-class, another pseudo-element, or a following
+/// compound after `::before`/`::after`. A successfully parsed selector
+/// therefore contains at most one pseudo-element, in its own leading compound.
 pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
     dom: &D,
     selector: &Selector<RaikiriSelectorImpl>,
@@ -1081,49 +1008,11 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 ///   満たしながら何らかの element に一致すること」という再帰的な定義を
 ///   そのまま素直に実装したもの。
 ///
-///   **この再試行は load-bearing — 省略すると壊れる** (訂正: 以前ここには
-///   「祖先チェーンは分岐の無い単一の直線なので retry は
-///   冗長」という誤った一般化があった。独立したレビューが複数、
-///   同型の反例を構築して指摘 — 以下は
-///   その反例)。誤りだった論法は「直近候補を選んだ場合の残り
-///   `ancestors` は、より遠い候補を選んだ場合の残り `ancestors` を
-///   必ず包含する superset になる」という主張だったが、これは**残りが
-///   すべて [`Combinator::Descendant`] のとき**にしか成立しない —
-///   その場合は次の判定が「残り `ancestors` の**どこかに** compound が
-///   一致するか」という集合に対する自由な存在探索で、探索対象が広い
-///   ほど (superset ほど) 弱くならないため。しかし残りに
-///   [`Combinator::Child`] が 1 つでも混ざると、その段の判定は
-///   `ancestors.split_last()` が指す**特定 1 要素**の compound 一致
-///   可否であり、候補ごとに「集合の一部を切り詰めたもの」ではなく
-///   「そもそも別の要素」を見ることになる — supersetによる包含関係が
-///   意味を持たない。
-///
-///   反例 (`.x > .y .target`、`x`/`y`/`target` は class):
-///   `G(.x) → F(.y) → M(no class) → C(.y) → elem(.target)` という祖先
-///   チェーンで `elem` を判定する。`elem` の直近の `.y` 候補は `C`
-///   だが、`C` の直近の親は `M` で `.x` を持たない — `Child` の判定対象
-///   `M` に固定されるため、`C` 候補はここで確定的に失敗する。ここで
-///   打ち切ると selector 全体が不一致になってしまうが、正しい答えは
-///   一致: より遠い候補 `F` (`.y` を持つ) の直近の親は `G` で `.x` を
-///   持つ。`F` を試すこの再試行が無ければ、この (spec 上正当な)
-///   selector が静かに一致しなくなる — check 用の regression test
-///   `tests::descendant_retry_past_a_failed_child_combinator_candidate_is_required`
-///   (この module 内 `#[cfg(test)] mod tests`) がこの具体形をそのまま
-///   実行する。
-///
-///   sibling combinator (`+`/`~`) のような非祖先チェーン型 combinator が
-///   同じ complex selector 内に混在するとさらに事情が変わりうる — ただし
-///   「事情が変わる」というのは
-///   「不正確になる」ではなく「別の軸で load-bearing になる」だった:
-///   sibling ジャンプは `ancestors` を不変のまま引き継ぐため、そこから
-///   さらに左へ [`Combinator::Descendant`] が続く場合もこの retry は
-///   同じ理由でそのまま load-bearing (下記 [`Combinator::NextSibling`] /
-///   [`Combinator::LaterSibling`] の説明、および `ruletree.rs`
-///   `is_supported_selector_list` doc の "4 combinator 間の混在" note
-///   参照)。探索順序 (直近から遠方へ)
-///   自体は正しさに影響しない — いずれの順で候補を試しても最終的な
-///   一致/不一致の結果 (「一致する候補が存在するか」という真偽値) は
-///   変わらない。
+///   The retry is required when a descendant combinator is followed by a
+///   child combinator: each candidate may have a different immediate parent.
+///   For example, `.x > .y .target` can require trying an outer `.y` after
+///   the nearer `.y` fails the child relation. The result is independent of
+///   candidate order because matching asks whether any candidate succeeds.
 /// - [`Combinator::NextSibling`] (CSS Selectors L4
 ///   <https://www.w3.org/TR/selectors-4/#adjacent-sibling-combinators>
 ///   §14.3, verbatim: "The elements represented by the two compound
@@ -1184,42 +1073,10 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 /// 同じ姿勢で、いずれの combinator も (到達すれば) ここでは match fail 扱い
 /// にする。
 ///
-/// # Spec provenance note
-///
-/// この doc および [`match_complex_selector_list`] / [`super::collect::collect_cascaded`]
-/// が引用する verbatim 文言はすべて、`https://www.w3.org/TR/selectors-4/`
-/// への直接 WebFetch がページ全体の大きさのため section 14 (Combinators) は
-/// おろか `#complex` (§4) にすら到達する前に繰り返し切り詰められたことを
-/// 受け、代わりに同一文書の正典 source である CSSWG bikeshed 原稿
-/// (`raw.githubusercontent.com/w3c/csswg-drafts/main/selectors-4/Overview.bs`)
-/// から確認したもの — TR ページの当該 anchor への
-/// 直接到達はできていない。descendant/child/next-sibling/general-sibling
-/// combinator の文言 (定義文中心の安定した記述、4 つとも同じ `<h3 id=…>`
-/// 形式の見出し直下) はこの ED 原稿の内容が publish 済み TR とも一致して
-/// いると見込んで TR anchor (`#descendant-combinators` /
-/// `#child-combinators` / `#adjacent-sibling-combinators` /
-/// `#general-sibling-combinators`) に紐付けたままにしているが、`#complex`
-/// (complex selector 全体の match 条件) は ED 側の周辺記述に
-/// pseudo-compound selector 関連の、TR 発行後に追加された可能性のある文言が
-/// 混在しており、そちらは "TR と一致しているはず" という前提を置かず ED URL
-/// (<https://drafts.csswg.org/selectors-4/#complex>) 自体に紐付けている
-/// ([`match_complex_selector_list`] の引用も同様)。§14.3/§14.4 の節番号は
-/// 同じ ED 原稿内の `<h2 id="combinators">` 配下の `<h3>` 出現順
-/// (descendant, child, adjacent-sibling, general-sibling) から数えたもの。
-///
 /// # Implementation: explicit `Vec` stack, not native recursion
 ///
-/// Prior to this fix, this function and [`match_from_element`]
-/// mutually recursed on the native Rust call stack — one stack frame pair
-/// per combinator actually walked while matching successively along the
-/// ancestor/sibling chain, with no selector-length/complexity cap anywhere
-/// in the parse/build path. That is the same class of problem
-/// `collect_cascaded` had pre-job-199 (tree-depth-correlated native
-/// recursion on untrusted-depth input) — confirmed empirically here too:
-/// regression test `deep_child_combinator_chain_small_stack_no_overflow`
-/// (this module's `tests`) reliably aborted the process with a native stack
-/// overflow (128 KiB stack, 500-deep uniformly-matching `>` chain) against
-/// the prior recursive implementation.
+/// The matcher uses an explicit heap-backed stack so selector depth does not
+/// consume the native call stack.
 ///
 /// The fix below uses an explicit `Vec`-based stack, the same *technique*
 /// `collect_cascaded` uses for its own job-199 fix — but not the same
@@ -1267,15 +1124,10 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 /// `S(k) = 2^(k-1)` for `k >= 1`. A `div`-only complex selector with exactly
 /// as many compounds as the ancestor chain is deep (the "exact fit" case —
 /// every compound has a slot, no unsatisfiable point is ever reached) does
-/// *not* hit this bound: it matches via the same greedy
-/// nearest-candidate-first path this doc's [`Combinator::Descendant`] note
-/// describes, and the retry loop is never actually exercised because the
-/// very first candidate at every level already leads to a full match. The
-/// same selector with **one extra compound** (so the chain is one ancestor
-/// short of what the selector needs, the minimal unsatisfiable case) is the
-/// one that hits `S(k) = 2^(k-1)` — confirmed empirically (this crate's
-/// `TestDoc` mock, `match_complex_selector_list` timed directly) to match
-/// this scaling. This is an untrusted-depth CPU-exhaustion vulnerability,
+/// *not* hit this bound: it matches via the nearest-candidate-first path.
+/// An unsatisfiable selector with one more compound than available ancestors
+/// reaches the `S(k) = 2^(k-1)` bound. This is an untrusted-depth CPU-exhaustion
+/// risk,
 /// not merely a slow path: a sufficiently deep DOM chain
 /// (attacker-controlled markup depth) matched against a same-shape selector
 /// (attacker-controlled stylesheet) makes `S(k)` explode long before any
@@ -1732,27 +1584,13 @@ fn immediate_preceding_sibling<D: StyleDom>(
 /// — 兄弟候補にも使われるようになったため
 /// `match_from_element` に rename。
 ///
-/// 以前は、compound が一致した後さらに左の
-/// combinator へ**自分で再帰**していた ([`match_combinator_chain`] との
-/// 相互再帰、native stack を消費する側)。現在は compound 一致後の `iter`
-/// (次の compound の手前まで進んだ状態) を `Some` で返すだけに変わり、
-/// 「さらに左の combinator へ進むかどうか」の判断とその実行は
-/// [`match_combinator_chain`] の explicit `Vec` stack 駆動ループ側の責務に
-/// 一本化されている (同関数の "Implementation" doc 参照) — 呼び出し側が
-/// 自分の判断で `matched_iter.next_sequence()` を呼び、`stack.push` するか
-/// `return true` するかを選ぶ。
+/// Compound matching returns the advanced iterator to
+/// [`match_combinator_chain`], which drives the remaining selector with an
+/// explicit stack. This keeps the selector walk bounded by the selector and
+/// ancestor-chain lengths rather than the native call stack.
 ///
-/// `elem_id` を [`StyleElement`] の借用値ではなく [`StyleNodeId`] で受け取る
-/// 設計: `StyleElement` は [`StyleDom::NodeRef`]/[`StyleNode::Element`] と
-/// いう GAT 経由の型で、呼び出しをまたいで別の借用ライフタイムの値を
-/// 持ち回るにはシグネチャが煩雑になる — id は `Copy` なのでこの受け渡しには
-/// 明らかに軽量。[`super::collect::collect_cascaded`] 側で既に解決済みの `elem` を再利用
-/// しない分、候補 1 段ごとに `dom.node()`/`as_element()` を 1 回余分に
-/// 呼ぶが、raikiri-style crate-internal な `#[cfg(test)]` 限定 mock
-/// (`TestDoc`) / raikiri-dom の実装いずれも arena index 参照相当の安価な
-/// lookup (`TestDoc` の宿る module は `#[cfg(test)]` gated のため、ここは
-/// あえて intra-doc link 化しない — non-test の `cargo doc` からは解決
-/// できない target になる)。
+/// The element is resolved from its [`StyleNodeId`] for each candidate; the
+/// same helper serves ancestor and sibling combinators.
 ///
 /// Returns: compound が一致すれば、その後の compound を指す `iter` を
 /// `Some` で返す (呼び出し側がさらに左へ進めるかどうかを判断する)。
@@ -2998,29 +2836,8 @@ mod tests {
 
     #[test]
     fn descendant_retry_past_a_failed_child_combinator_candidate_is_required() {
-        // Regression pinned by 3 independently-converging reviewer lenses
-        // (spec/quality/debt) on this branch's first draft, which had a
-        // *false* doc-comment claim on `match_combinator_chain` that the
-        // `Combinator::Descendant` retry loop is provably redundant for an
-        // ancestor-chain-only combinator subset. That's only true when
-        // *every* subsequent combinator is also `Descendant` (a free
-        // existential search over a strictly-growing superset as you pick
-        // a nearer anchor). It breaks the moment a `Combinator::Child` sits
-        // further left: `Child` pins one *specific* element
-        // (`ancestors.split_last()`), not "any element in the remaining
-        // set" — different `Descendant` anchor choices check genuinely
-        // different elements, not nested subsets of the same free search.
-        // See `match_combinator_chain`'s doc for
-        // the full argument this test exists to check.
-        //
-        // Selector `.x > .y .target` against
-        // `G(.x) -> F(.y) -> M(no class) -> C(.y) -> elem(.target)`:
-        // the *nearest* `.y` candidate is `C`, but `Child` forces checking
-        // `C`'s immediate parent `M` specifically, which lacks `.x` — a
-        // confirmed dead end. Only the *farther* `.y` candidate `F` works,
-        // because `Child` then forces checking `F`'s immediate parent `G`,
-        // which does have `.x`. Without the retry (stopping at `C`'s
-        // failure), this selector would silently stop matching.
+        // A descendant retry is required when a later child combinator can
+        // inspect a different immediate parent; see `match_combinator_chain`.
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
         doc.push_text(s, ".x > .y .target { background-color: red }");
@@ -3245,13 +3062,8 @@ mod tests {
 
     #[test]
     fn empty_pseudo_class_matches_element_with_zero_length_text_child() {
-        // Spec text (`matches_empty` doc, verbatim): "...content nodes...
-        // whose data has a non-zero length must be considered as affecting
-        // emptiness" — a zero-length text node (`data.len() == 0`) does
-        // NOT meet "non-zero length" and so must not disqualify `:empty`,
-        // regardless of the L3/L4 whitespace-handling difference (quality
-        // lens finding: this branch of `matches_empty`'s `Text` arm was
-        // previously untested).
+        // Selectors Level 4 ignores zero-length text nodes when determining
+        // whether `:empty` matches.
         let mut doc = TestDoc::new();
         let s = doc.push_element(0, "style", None);
         doc.push_text(s, "p:empty { color: red }");

@@ -27,7 +27,7 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNode
 /// spec's own "always ltr or rtl, never undetermined" shape.
 ///
 /// CSS Selectors L4 §7.1 <https://www.w3.org/TR/selectors-4/#the-dir-pseudo>
-/// (bikeshed source, same fetch as [`Direction`]'s doc) is what motivates
+/// This motivates
 /// consulting ancestors at all rather than just the own attribute (`[dir=C]`
 /// would suffice for that): "the directionality of an element inherits so
 /// that a child without a dir attribute will have the same directionality
@@ -74,15 +74,14 @@ pub(crate) fn resolve_directionality<D: StyleDom, E: StyleElement>(
 }
 
 /// The `dir` attribute's full enumerated state — HTML LS §3.2.6.4's LTR /
-/// RTL / Auto / Undefined states (same fetch as [`resolve_directionality`]'s
-/// doc) — including `Auto`, which [`own_explicit_direction`] (the
+/// RTL / Auto / Undefined states (see [`resolve_directionality`]'s
+/// contract) — including `Auto`, which [`own_explicit_direction`] (the
 /// ancestor-walk helper, which only ever needs an explicit `ltr`/`rtl`
 /// winner) folds into `None` alongside `Undefined`.
 ///
 /// Attribute keyword matching is ASCII case-insensitive, per HTML's general
 /// treatment of enumerated attribute keywords (`the dir attribute is an
-/// enumerated attribute with the following keywords and states`, same
-/// fetch) — same posture as this crate's other HTML-enumerated-value
+/// enumerated attribute with the following keywords and states`) — same posture as this crate's other HTML-enumerated-value
 /// comparisons (e.g. `elem.tag_name()`'s `eq_ignore_ascii_case` in
 /// [`super::selector_match::compound_matches`]). Missing or invalid values (anything other than
 /// `ltr`/`rtl`/`auto`) both resolve to `Undefined` per HTML LS's own
@@ -91,7 +90,7 @@ pub(crate) fn resolve_directionality<D: StyleDom, E: StyleElement>(
 ///
 /// # HTML-namespace-only, unlike [`super::lang::effective_language`]'s `lang` reads
 ///
-/// The same fetch continues, immediately after the quoted algorithm:
+/// HTML further states:
 ///
 /// > Since the `dir` attribute is only defined for HTML elements, it cannot
 /// > be present on elements from other namespaces. Thus, elements from
@@ -157,8 +156,8 @@ pub(crate) fn own_explicit_direction<E: StyleElement>(elem: &E) -> Option<Direct
     }
 }
 
-/// HTML LS §3.2.6.4's "auto directionality" given an element (same fetch as
-/// [`resolve_directionality`]'s doc), simplified to the text-content-scan
+/// HTML LS §3.2.6.4's "auto directionality" given an element (see
+/// [`resolve_directionality`]'s contract), simplified to the text-content-scan
 /// branch only:
 ///
 /// > To compute the auto directionality given an element element: \[...\]
@@ -199,7 +198,7 @@ fn auto_directionality<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> Option<Dir
 /// with `canExcludeRoot` fixed to `false` (the only value
 /// [`auto_directionality`] ever needs — `true` is only used by the
 /// shadow-tree `slot` branch this crate does not implement, see that
-/// function's doc). Same fetch as [`resolve_directionality`]'s doc:
+/// function's doc).:
 ///
 /// > For each node descendant of element's descendants, in tree order: If
 /// > any of \[descendant, any ancestor element of descendant that is a
@@ -307,7 +306,7 @@ pub(crate) enum StrongBidiType {
 }
 
 /// HTML LS §3.2.6.4's "text node directionality" given a `Text` node's data
-/// (same fetch as [`resolve_directionality`]'s doc):
+///:
 ///
 /// > If text's data does not contain a code point whose bidirectional
 /// > character type is L, AL, or R, then return null. Let codePoint be the
@@ -1181,16 +1180,9 @@ pub(crate) const STRONG_L_NON_ALPHABETIC_RANGES: &[(u32, u32)] = &[
 /// not tag `Alphabetic`), or `None` for everything else — which matches
 /// the real `Bidi_Class` table for most of those too (their actual classes
 /// are typically weak/neutral types like EN, AN, CS, ON, WS, NSM). This is
-/// not exhaustive — case 2 of the `is_alphabetic()` fallback section below
-/// documents two further residuals left deliberately unguarded beyond
-/// `STRONG_L_NON_ALPHABETIC_RANGES`'s fixed `Nd`/punctuation/`Mc`
-/// categories: a version-drift-driven one, where a Unicode revision newer
-/// than what the pinned toolchain's `is_alphabetic()` was built against
-/// assigns real `Bidi_Class=L` to code points this function does not yet
-/// special-case (currently on the order of thousands, of which only three
-/// are individually listed), and a smaller, toolchain-independent
-/// structural one (`So`/`No` symbols and numbers) — see case 2 for both
-/// residuals' shape and why each is left unguarded. Three specific code
+/// This fallback is intentionally conservative: explicit ranges cover
+/// non-alphabetic strong-direction code points, while other characters fall
+/// back to the alphabetic classification or remain neutral. Three specific code
 /// points *are* handled explicitly before
 /// reaching any of this, cheaply, without a table: U+200E LEFT-TO-RIGHT
 /// MARK and U+200F RIGHT-TO-LEFT MARK
