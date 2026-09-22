@@ -496,6 +496,8 @@ css/css-page/margin-boxes/background-001-print.html
 css/css-display/display-flow-root-002.html
 # --- css-inline minimal line-box foundation (exact static reftest, 800x600) ---
 css/CSS2/linebox/vertical-align-top-bottom-padding.html
+# --- css-inline block-in-inline margin collapse (exact static reftest, 800x600) ---
+css/CSS2/box-display/block-in-inline-007.xht
 css/css-lists/list-style-position-001.html
 css/css-lists/parsing/counter-increment-invalid.html
 css/css-lists/parsing/counter-reset-invalid.html

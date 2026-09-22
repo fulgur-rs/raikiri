@@ -68,6 +68,9 @@ css/css-ui/reference/outline-offset.html
 # CSS Display foundation: standalone flow-root reftest pair.
 css/css-display/display-flow-root-002.html
 css/css-display/display-flow-root-002-ref.html
+# CSS 2.1 block-in-inline splitting foundation.
+css/CSS2/box-display/block-in-inline-007.xht
+css/CSS2/box-display/block-in-inline-007-ref.xht
 # CSS Inline foundation: direct top/bottom vertical-align in a minimal line box.
 css/CSS2/linebox/vertical-align-top-bottom-padding.html
 css/CSS2/linebox/vertical-align-top-bottom-padding-ref.html

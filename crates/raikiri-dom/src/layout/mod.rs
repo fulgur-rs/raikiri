@@ -2911,6 +2911,80 @@ fn realign_text_after_layout(
         }
     }
 }
+/// Collapse adjacent block margins inside a non-replaced inline box.
+///
+/// CSS 2.1 §9.2.1.1 splits an inline containing block around block-level
+/// children. Whitespace-only text between those children is part of the
+/// anonymous inline fragments, not an intervening block. Taffy's block path
+/// already gives the children the right vertical order, but it does not
+/// perform this block-in-inline margin collapse; keeping both margins would
+/// add one extra line-height-sized gap between two adjacent block children.
+/// Keep this pass narrow: only direct children of a plain `inline` wrapper and
+/// only resolvable absolute margins are rewritten.
+fn collapse_block_in_inline_margins(doc: &mut Document, idx: usize, cascade: &CascadeResult) {
+    if cascade.computed[idx].display != DisplayValue::Inline {
+        return;
+    }
+
+    let mut previous_block = None;
+    for &child in &doc.nodes[idx].children.clone() {
+        if !doc.nodes[child].is_in_document() {
+            continue;
+        }
+        match doc.nodes[child].kind() {
+            NodeKind::Text => {
+                // Whitespace around a block child belongs to the anonymous
+                // inline fragments and must not interrupt sibling margin
+                // collapse. Any visible text does interrupt that sequence.
+                if !text_of(doc, child).is_some_and(|text| text.chars().all(is_css_white_space)) {
+                    previous_block = None;
+                }
+            }
+            NodeKind::Element => {
+                let display = cascade.computed[child].display;
+                if display == DisplayValue::None {
+                    continue;
+                }
+                if is_inline_element_box(cascade, child) {
+                    previous_block = None;
+                    continue;
+                }
+                if let Some(previous) = previous_block {
+                    collapse_adjacent_block_margins(doc, previous, child);
+                }
+                previous_block = Some(child);
+            }
+            _ => previous_block = None,
+        }
+    }
+}
+
+fn collapse_adjacent_block_margins(doc: &mut Document, previous: usize, next: usize) {
+    let previous_margin = doc.nodes[previous].style.margin.bottom.into_raw();
+    let next_margin = doc.nodes[next].style.margin.top.into_raw();
+    if previous_margin.tag() != CompactLength::LENGTH_TAG
+        || next_margin.tag() != CompactLength::LENGTH_TAG
+    {
+        return;
+    }
+    let previous_margin = previous_margin.value();
+    let next_margin = next_margin.value();
+    if !previous_margin.is_finite() || !next_margin.is_finite() {
+        return;
+    }
+    let collapsed = if previous_margin >= 0.0 && next_margin >= 0.0 {
+        previous_margin.max(next_margin)
+    } else if previous_margin <= 0.0 && next_margin <= 0.0 {
+        previous_margin.min(next_margin)
+    } else {
+        previous_margin + next_margin
+    };
+    if collapsed.is_finite() {
+        doc.nodes[previous].style.margin.bottom = LengthPercentageAuto::length(collapsed);
+        doc.nodes[next].style.margin.top = LengthPercentageAuto::length(0.0);
+    }
+}
+
 fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
@@ -2930,6 +3004,7 @@ fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
             doc.nodes[idx].flags.remove(NodeFlags::IS_INLINE_ROOT);
             continue;
         }
+        collapse_block_in_inline_margins(doc, idx, cascade);
         let qualifies = qualifies_for_minimal_line_box(doc, idx, cascade);
         doc.nodes[idx]
             .flags
@@ -10509,6 +10584,45 @@ mod tests {
         apply_computed_to_style(&mut doc, &cr);
 
         assert_eq!(doc.nodes[body].style.direction, taffy::Direction::Rtl);
+    }
+
+    #[test]
+    fn collapse_block_in_inline_margins_ignores_whitespace_between_blocks() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let inline =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:inline"));
+        let before = doc.append_element(
+            Some(inline),
+            "div",
+            Style::default(),
+            Some("display:block; margin:16px 0"),
+        );
+        doc.append_text(inline, "\n   ");
+        let after = doc.append_element(
+            Some(inline),
+            "div",
+            Style::default(),
+            Some("display:block; margin:16px 0"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+
+        collapse_block_in_inline_margins(&mut doc, inline, &cr);
+
+        assert_eq!(
+            doc.nodes[before].style.margin.bottom,
+            LengthPercentageAuto::length(16.0)
+        );
+        assert_eq!(
+            doc.nodes[after].style.margin.top,
+            LengthPercentageAuto::length(0.0)
+        );
     }
 
     #[test]
