@@ -64,13 +64,14 @@ pub use layout::{
     PageContentInsets, PageMargins, PageSlice, first_page_name, layout_page_fragments,
     layout_pages, layout_pages_with_page_geometry, layout_pages_with_page_geometry_and_resolver,
     layout_pages_with_page_steps, layout_pages_with_resolver, layout_single_page,
-    layout_single_page_with_resolver, page_content_insets, page_fragments_from_slices,
-    page_margins, relayout_text_for_width,
+    layout_single_page_with_resolver, page_content_insets, page_fragment_geometry_table,
+    page_fragments_from_slices, page_margins, relayout_text_for_width,
 };
 pub use node::{ElementData, Node, NodeData, NodeFlags, TextData};
 pub use raikiri_traits::{
-    PageFragment, PageFragmentInsets, PageFragmentItem, PageFragmentKind, PageFragmentLineRange,
-    PageFragmentOrientation, PageFragmentRect,
+    PageFragment, PageFragmentGeometry, PageFragmentGeometryTable, PageFragmentInsets,
+    PageFragmentItem, PageFragmentKind, PageFragmentLineRange, PageFragmentOrientation,
+    PageFragmentRect,
 };
 pub use target::{CounterSnapshot, counter_snapshots};
 

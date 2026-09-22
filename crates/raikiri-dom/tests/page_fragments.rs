@@ -3,9 +3,10 @@
 use parley::FontContext;
 use raikiri_dom::{
     Document, PageFragmentItem, PageFragmentKind, PageFragmentRect, layout_page_fragments,
+    page_fragment_geometry_table,
 };
 use raikiri_style::{build_rule_tree, cascade};
-use raikiri_traits::PageBox;
+use raikiri_traits::{NodeId, PageBox};
 use taffy::Style;
 
 #[test]
@@ -36,6 +37,17 @@ fn public_page_fragment_snapshot_is_node_ordered() {
             .items
             .iter()
             .any(|item| item.kind == PageFragmentKind::Text)
+    );
+
+    let table = page_fragment_geometry_table(&pages);
+    let node_ids: Vec<_> = table.keys().copied().collect();
+    assert!(node_ids.windows(2).all(|ids| ids[0] <= ids[1]));
+    assert_eq!(
+        table
+            .get(&NodeId::new(first as u64))
+            .expect("first geometry")
+            .node_id,
+        NodeId::new(first as u64)
     );
 }
 

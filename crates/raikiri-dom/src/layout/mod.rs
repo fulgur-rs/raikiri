@@ -9,8 +9,9 @@
 //! implementation helpers remain crate-private.
 
 use raikiri_traits::{
-    NodeId, NodeKind, PageFragment, PageFragmentInsets, PageFragmentItem, PageFragmentKind,
-    PageFragmentLineRange, PageFragmentOrientation, PageFragmentRect,
+    NodeId, NodeKind, PageFragment, PageFragmentGeometry, PageFragmentGeometryTable,
+    PageFragmentInsets, PageFragmentItem, PageFragmentKind, PageFragmentLineRange,
+    PageFragmentOrientation, PageFragmentRect,
 };
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -8735,6 +8736,28 @@ pub fn page_fragments_from_slices(
     }
 
     pages
+}
+
+/// Group page snapshots into a deterministic NodeId-ordered geometry table.
+///
+/// `pages` must be the ordered snapshot returned by [`layout_page_fragments`]
+/// or [`page_fragments_from_slices`]. Each node's fragments retain page order,
+/// and each geometry record preserves the producer's `is_repeat` flag.
+pub fn page_fragment_geometry_table(pages: &[PageFragment]) -> PageFragmentGeometryTable {
+    let mut table = PageFragmentGeometryTable::new();
+    for page in pages {
+        for item in &page.items {
+            let geometry = table
+                .entry(item.node_id)
+                .or_insert_with(|| PageFragmentGeometry::new(item.node_id, item.is_repeat));
+            debug_assert_eq!(
+                geometry.is_repeat, item.is_repeat,
+                "one node cannot mix split and repeat page placements"
+            );
+            geometry.fragments.push(item.clone());
+        }
+    }
+    table
 }
 
 fn line_range_for_page(
@@ -18208,6 +18231,121 @@ mod tests {
         assert!(text_items.windows(2).all(|items| {
             items[0].line_range.expect("range").end <= items[1].line_range.expect("range").start
         }));
+    }
+
+    #[test]
+    fn page_fragment_projection_handles_empty_missing_body_and_invalid_slice_inputs() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let document = Document::new();
+        let rules = build_rule_tree(&document);
+        let cascade_result = cascade(&document, &rules).expect("cascade Ok");
+        assert!(
+            page_fragments_from_slices(&document, &cascade_result, PageBox::A4, &[]).is_empty()
+        );
+
+        let slice = PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        };
+        let pages = page_fragments_from_slices(
+            &document,
+            &cascade_result,
+            PageBox::A4,
+            std::slice::from_ref(&slice),
+        );
+        assert_eq!(pages.len(), 1);
+        assert!(pages[0].is_empty());
+
+        let mut document = Document::new();
+        let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+        let invalid_slice = PageSlice {
+            page_index: 0,
+            content_origin_y: f32::NAN,
+            page_name: None,
+        };
+        let pages = page_fragments_from_slices(
+            &document,
+            &cascade,
+            PageBox::A4,
+            std::slice::from_ref(&invalid_slice),
+        );
+        assert_eq!(pages.len(), 1);
+        assert!(pages[0].is_empty());
+        assert!(body > html);
+    }
+
+    #[test]
+    fn layout_page_fragments_classifies_replaced_and_skips_non_rendered_nodes() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut document = Document::new();
+        let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let template =
+            document.append_element(Some(body), "template", Style::default(), None::<&str>);
+        document.append_text(template, "not rendered");
+        document.append_comment(Some(body), "comment");
+        document.append_element(Some(body), "div", Style::default(), None::<&str>);
+        let image = document.append_element(
+            Some(body),
+            "img",
+            Style::default(),
+            Some("width:10px;height:10px"),
+        );
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+
+        let pages = layout_page_fragments(&mut document, &cascade, PageBox::A4, FontContext::new())
+            .expect("page fragment layout should succeed");
+        assert!(
+            pages[0]
+                .items
+                .iter()
+                .any(|item| item.node_id.0 == image as u64
+                    && item.kind == PageFragmentKind::Replaced)
+        );
+        assert!(
+            !pages[0]
+                .items
+                .iter()
+                .any(|item| item.node_id.0 == template as u64)
+        );
+    }
+
+    #[test]
+    fn page_fragment_geometry_table_groups_fragments_by_node_id() {
+        let mut first_page = PageFragment::default();
+        first_page.page_index = 0;
+        first_page.items.push(PageFragmentItem::new(
+            NodeId::new(9),
+            PageFragmentRect::new(0.0, 0.0, 10.0, 4.0),
+            PageFragmentKind::Box,
+            0,
+            2,
+            false,
+        ));
+        let mut second_page = PageFragment::default();
+        second_page.page_index = 1;
+        second_page.items.push(PageFragmentItem::new(
+            NodeId::new(9),
+            PageFragmentRect::new(0.0, 0.0, 10.0, 4.0),
+            PageFragmentKind::Box,
+            1,
+            2,
+            false,
+        ));
+        let pages = vec![first_page, second_page];
+        let table = page_fragment_geometry_table(&pages);
+        let geometry = table.get(&NodeId::new(9)).expect("node geometry");
+        assert_eq!(geometry.node_id, NodeId::new(9));
+        assert!(geometry.is_split());
+        assert_eq!(geometry.fragments.len(), 2);
+        assert_eq!(geometry.fragments[1].fragment_index, 1);
     }
 
     #[test]

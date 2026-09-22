@@ -20,6 +20,8 @@ pub use target::{
     PendingResolution, ResolveOutcome, TargetInfo, TargetRegistry, resolve_content_component,
 };
 
+use std::collections::BTreeMap;
+
 use crate::dom::{NodeId, Symbol};
 use raikiri_style::property::{
     ContentComponent, ContentPart, ContentTextKeyword, CounterStyle, LeaderType, QuoteKeyword,
@@ -227,6 +229,44 @@ impl PageFragmentItem {
         !self.is_repeat && self.fragment_count > 1
     }
 }
+
+/// Node-centric geometry collected from page snapshots.
+///
+/// This is the neutral counterpart to fulgur's `PaginationGeometry`: the
+/// `fragments` vector is ordered by page and fragment index, while
+/// `is_repeat` distinguishes complete per-page copies from split content.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct PageFragmentGeometry {
+    /// Stable source DOM node identifier.
+    pub node_id: NodeId,
+    /// Placements for this node in ascending page order.
+    pub fragments: Vec<PageFragmentItem>,
+    /// True when every placement repeats the complete source content.
+    pub is_repeat: bool,
+}
+
+impl PageFragmentGeometry {
+    /// Construct empty node-centric geometry.
+    pub fn new(node_id: NodeId, is_repeat: bool) -> Self {
+        Self {
+            node_id,
+            fragments: Vec::new(),
+            is_repeat,
+        }
+    }
+
+    /// Whether this node's placements represent split content.
+    pub fn is_split(&self) -> bool {
+        !self.is_repeat && self.fragments.len() > 1
+    }
+}
+
+/// Deterministic NodeId-ordered page geometry table.
+///
+/// `BTreeMap` iteration yields the same stable source-node order as the
+/// pagination producer, independent of DOM traversal implementation details.
+pub type PageFragmentGeometryTable = BTreeMap<NodeId, PageFragmentGeometry>;
 
 /// Inclusive/exclusive line range carried by a text page placement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

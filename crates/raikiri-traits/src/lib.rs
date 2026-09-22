@@ -56,10 +56,10 @@ pub use net::{
 pub use page::{
     ContentSource, ContentValueConvertError, ContentValueItem, CounterStack, FormData,
     GcpmDirective, LayoutBuffer, NamedStringState, PageBox, PageContext, PageDefaults,
-    PageDefaultsBuilder, PageFragment, PageFragmentInsets, PageFragmentItem, PageFragmentKind,
-    PageFragmentLineRange, PageFragmentOrientation, PageFragmentRect, PendingResolution,
-    ResolveOutcome, RunningTemplate, RunningTemplateId, TargetInfo, TargetRegistry,
-    resolve_content_component,
+    PageDefaultsBuilder, PageFragment, PageFragmentGeometry, PageFragmentGeometryTable,
+    PageFragmentInsets, PageFragmentItem, PageFragmentKind, PageFragmentLineRange,
+    PageFragmentOrientation, PageFragmentRect, PendingResolution, ResolveOutcome, RunningTemplate,
+    RunningTemplateId, TargetInfo, TargetRegistry, resolve_content_component,
 };
 pub use plan::{BreakReason, DocumentPlan, PageSummary, TargetDefinition};
 pub use policy::{PolicyViolation, ResourceKind, ResourcePolicy, ViolationType};
