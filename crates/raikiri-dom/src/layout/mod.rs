@@ -729,7 +729,7 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
             // pass will replace this estimate with measured marker width.
             style.padding.left = LengthPercentage::length(cv.font_size.px().max(16.0) * 1.5);
         }
-        bridge_min_max_size(style, cv, &mut doc.layout_warnings);
+        bridge_min_max_size(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_border(style, cv, &mut doc.layout_warnings);
         bridge_box_sizing(style, cv);
         bridge_flex(style, cv, &mut doc.layout_warnings);
@@ -1077,37 +1077,49 @@ fn bridge_known_image_intrinsic_size(
 /// min 側 initial `auto` / max 側 initial `none` は共に computed 層で
 /// [`ComputedLengthPercentageOrAuto::Auto`] に正規化済み (specified 層の
 /// `none` → `Auto` placeholder mapping は sibling `parse_max_size` が担う)
-/// ので、4 field とも [`bridge_size`] と全く同じ helper
-/// ([`computed_length_percentage_or_auto_to_taffy_dimension`]) で `Auto` →
-/// `Dimension::auto()` に translate する — max の `none` 用の特別扱いは本
+/// ので、4 field とも同じ
+/// [`computed_length_percentage_or_auto_to_taffy_min_max`] helper で `Auto` →
+/// `LengthPercentageAuto::auto()` に translate する — max の `none` 用の特別扱いは本
 /// bridge に要らない。`none` (no max) と `auto` (no minimum) は共に
-/// "制約なし" として taffy に委譲する。
+/// "制約なし" として taffy に委譲する。calc() payloads are retained in the
+/// document arena by that helper.
 ///
-/// Length policy / Percent policy / 非有限 guard は同 helper の doc 参照。
+/// Length policy / Percent policy / 非有限 guard は helper の doc 参照。
 /// `site` label は 4 caller ごとに `min-width` / `min-height` /
 /// `max-width` / `max-height` を渡す ([`LayoutWarn::NonFiniteClamped`] の診断用)。
-fn bridge_min_max_size(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
+fn bridge_min_max_size(
+    style: &mut taffy::Style,
+    cv: &ComputedValues,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_style::property::CalcLengthPercentage>>,
+    diag: &mut Vec<LayoutWarn>,
+) {
     // min/max 各 2 field を同時に書くので struct literal を 2 発採用
     // (bridge_size と同 shape — default 保持は cv 側の Auto で自然に達成)。
+    // Keep calc() handles alive in the document arena just like width/height;
+    // collapsing a max-width calc() to zero would spuriously clamp a <col>.
     style.min_size = Size {
-        width: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
+        width: computed_length_percentage_or_auto_to_taffy_min_max(
+            calc_values,
             cv.min_width,
             "min-width",
             diag,
         ),
-        height: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
+        height: computed_length_percentage_or_auto_to_taffy_min_max(
+            calc_values,
             cv.min_height,
             "min-height",
             diag,
         ),
     };
     style.max_size = Size {
-        width: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
+        width: computed_length_percentage_or_auto_to_taffy_min_max(
+            calc_values,
             cv.max_width,
             "max-width",
             diag,
         ),
-        height: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
+        height: computed_length_percentage_or_auto_to_taffy_min_max(
+            calc_values,
             cv.max_height,
             "max-height",
             diag,
@@ -4740,6 +4752,37 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
                 .map(|value| (&**value) as *const _ as *const ())
                 .expect("calc value was just pushed");
             Dimension::calc(pointer)
+        }
+    }
+}
+
+/// [`ComputedLengthPercentageOrAuto`] → [`taffy::LengthPercentageAuto`] bridge
+/// for min/max-size properties.
+///
+/// Unlike the margin/inset bridge below, min/max preferred sizes can carry a
+/// calc() payload. Preserve that payload in the document arena so consumers
+/// such as table `<col>` sizing do not observe a false zero constraint.
+fn computed_length_percentage_or_auto_to_taffy_min_max(
+    calc_values: &mut Vec<std::sync::Arc<raikiri_style::property::CalcLengthPercentage>>,
+    loa: ComputedLengthPercentageOrAuto,
+    site: &'static str,
+    diag: &mut Vec<LayoutWarn>,
+) -> LengthPercentageAuto {
+    match loa {
+        ComputedLengthPercentageOrAuto::Px(v) => {
+            LengthPercentageAuto::length(sanitize_taffy(v, site, diag))
+        }
+        ComputedLengthPercentageOrAuto::Percent(p) => {
+            LengthPercentageAuto::percent(sanitize_taffy(p / 100.0, site, diag))
+        }
+        ComputedLengthPercentageOrAuto::Auto => LengthPercentageAuto::auto(),
+        ComputedLengthPercentageOrAuto::Calc(value) => {
+            calc_values.push(std::sync::Arc::new(value));
+            let pointer = calc_values
+                .last()
+                .map(|value| (&**value) as *const _ as *const ())
+                .expect("calc value was just pushed");
+            LengthPercentageAuto::calc(pointer)
         }
     }
 }
@@ -13621,13 +13664,21 @@ mod tests {
             }
         );
 
-        // Case 3: `max-width: none` → LengthPercentageAuto::auto() (no max)。
+        // Case 3: calc() remains a live Taffy handle instead of becoming zero.
+        assert!(
+            max_for(Some("max-width: calc(100px + 1%)"))
+                .width
+                .into_raw()
+                .is_calc()
+        );
+
+        // Case 4: `max-width: none` → LengthPercentageAuto::auto() (no max)。
         assert_eq!(
             max_for(Some("max-width: none")).width,
             LengthPercentageAuto::auto()
         );
 
-        // Case 4: 負値は grammar `[0,∞]` 違反で declaration drop → Auto のまま。
+        // Case 5: 負値は grammar `[0,∞]` 違反で declaration drop → Auto のまま。
         assert_eq!(
             max_for(Some("max-height: -10px")).height,
             LengthPercentageAuto::auto()
