@@ -350,9 +350,10 @@ git worktree add .worktrees/<name> -b <branch>
 ```
 
 `.worktrees/` は `.gitignore` 済み (OpenCode worktrees 枠) で、`git worktree list`
-で一覧できる。`scripts/wpt/fetch.sh` は worktree から呼ばれた場合も
-`target/wpt` を main worktree の共有 checkout へ symlink するので、
-WPT 前提の test も追加手順なしで走る。既存の `$HOME` 直下 worktree
+で一覧できる。`scripts/wpt/fetch.sh` は物理 checkout を
+`$HOME/.cache/raikiri/wpt` に置き、どの worktree から呼ばれても各
+`target/wpt` をそこへの symlink にする。`target/` が cleanup で消えても
+checkout は残り、fetch/gate が必要な symlink を再作成する。既存の `$HOME` 直下 worktree
 (`~/wt-*`) は着手済み task が close するまで grandfathered —
 稼働中の task を中断して移設せず、新規は本節に従う。
 

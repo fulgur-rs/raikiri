@@ -6,17 +6,11 @@
 # The shared sparse-checkout file is made read-only so stale branch scripts
 # fail instead of silently replacing these roots.
 #
-# Worktree-aware (the earlier change): target/ is per-worktree working
-# state (gitignored; cargo/git don't share it across `git worktree`
-# checkouts), so each fresh worktree-<taskid> would otherwise need its own
-# shallow clone of WPT. To avoid that, the actual checkout always lives
-# under the *main* worktree's target/wpt, found via
-# `git rev-parse --git-common-dir` (the shared .git dir, stable regardless
-# of which worktree invokes this script). When run from a linked worktree,
-# this script also symlinks that worktree's own target/wpt to the shared
-# checkout, so env!("CARGO_MANIFEST_DIR")/../../target/wpt
-# (crates/raikiri/tests/hello_world_vrt.rs) resolves to it transparently —
-# no test-side changes needed.
+# target/ is per-worktree build output and can be removed by `cargo clean`.
+# Keep the physical checkout at $HOME/.cache/raikiri/wpt, outside repository
+# cleanup. Each worktree's target/wpt is a replaceable symlink for existing
+# Rust tests and scripts. The home cache is the only checkout with the fixed
+# shared sparse roots.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,13 +24,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../lib/repo_root.sh"
 # shellcheck source=lib/shared_sparse.sh
 source "$SCRIPT_DIR/lib/shared_sparse.sh"
+# shellcheck source=lib/cache_path.sh
+source "$SCRIPT_DIR/lib/cache_path.sh"
 
 SHA_FILE="$SCRIPT_DIR/pinned_sha.txt"
 SUBSET_FILE="$SCRIPT_DIR/subset.txt"
 REMOTE_URL="${WPT_REMOTE_URL:-https://github.com/web-platform-tests/wpt.git}"
 
-# git-common-dir is the main worktree's real .git directory even when this
-# script runs from a linked worktree; its parent is the main worktree root.
+WPT_DIR="$(wpt_cache_dir)"
+LOCAL_WPT_DIR="$REPO_ROOT/target/wpt"
+
+# Detect the old physical checkout under the main worktree. Refuse to create a
+# second 400MB clone until the existing checkout has been moved to the cache.
 GIT_COMMON_DIR="$(cd "$REPO_ROOT" && git rev-parse --git-common-dir)"
 case "$GIT_COMMON_DIR" in
   /*) : ;;
@@ -44,9 +43,20 @@ case "$GIT_COMMON_DIR" in
 esac
 GIT_COMMON_DIR="$(cd "$(dirname "$GIT_COMMON_DIR")" && pwd)/$(basename "$GIT_COMMON_DIR")"
 MAIN_WORKTREE_ROOT="$(dirname "$GIT_COMMON_DIR")"
-
-WPT_DIR="$MAIN_WORKTREE_ROOT/target/wpt"
-LOCAL_WPT_DIR="$REPO_ROOT/target/wpt"
+LEGACY_SHARED_WPT_DIR="$MAIN_WORKTREE_ROOT/target/wpt"
+if [ "$LEGACY_SHARED_WPT_DIR" != "$WPT_DIR" ] &&
+  [ -e "$LEGACY_SHARED_WPT_DIR/.git" ] &&
+  [ ! -L "$LEGACY_SHARED_WPT_DIR" ]; then
+  echo "error: legacy shared WPT checkout still exists at $LEGACY_SHARED_WPT_DIR" >&2
+  echo "       Move it to $WPT_DIR and replace the old path with a symlink; see" >&2
+  echo "       the migration instructions in scripts/wpt/README.md." >&2
+  exit 2
+fi
+if [ -e "$LOCAL_WPT_DIR" ] && [ ! -L "$LOCAL_WPT_DIR" ]; then
+  echo "error: $LOCAL_WPT_DIR exists and is not a symlink; refusing to replace it." >&2
+  echo "       Preserve or migrate any old checkout before fetching WPT." >&2
+  exit 2
+fi
 
 SHA="$(awk '!/^#/ && NF { print; exit }' "$SHA_FILE" | tr -d '[:space:]')"
 if [ -z "$SHA" ]; then
@@ -95,16 +105,7 @@ fi
 # survey_reftests.py, not in the shared checkout config.
 git -C "$WPT_DIR" sparse-checkout reapply
 
-if [ "$REPO_ROOT" != "$MAIN_WORKTREE_ROOT" ]; then
-  mkdir -p "$REPO_ROOT/target"
-  if [ -e "$LOCAL_WPT_DIR" ] && [ ! -L "$LOCAL_WPT_DIR" ]; then
-    echo "error: $LOCAL_WPT_DIR exists and is not a symlink; refusing to" \
-      "overwrite (remove it manually if it's a stale per-worktree clone" \
-      "from before the worktree fix)" >&2
-    exit 1
-  fi
-  ln -sfn "$WPT_DIR" "$LOCAL_WPT_DIR"
-  echo "Linked $LOCAL_WPT_DIR -> $WPT_DIR (shared main-worktree checkout)"
-fi
+ensure_wpt_cache_link "$REPO_ROOT" "$WPT_DIR"
+echo "Linked $LOCAL_WPT_DIR -> $WPT_DIR (shared home cache checkout)"
 
 echo "WPT ready at $WPT_DIR (SHA: $SHA)"
