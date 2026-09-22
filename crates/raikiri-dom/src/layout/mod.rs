@@ -8578,7 +8578,13 @@ pub fn page_fragments_from_slices(
         PageFragmentOrientation::Portrait
     };
 
-    let mut pages: Vec<PageFragment> = slices
+    let mut ordered_slices: Vec<&PageSlice> = slices.iter().collect();
+    ordered_slices.sort_by(|left, right| {
+        left.page_index
+            .cmp(&right.page_index)
+            .then_with(|| left.content_origin_y.total_cmp(&right.content_origin_y))
+    });
+    let mut pages: Vec<PageFragment> = ordered_slices
         .iter()
         .map(|slice| {
             PageFragment::with_metadata(
@@ -8679,9 +8685,9 @@ pub fn page_fragments_from_slices(
             _ => PageFragmentKind::Box,
         };
         let mut placements = Vec::new();
-        for (page_slot, slice) in slices.iter().enumerate() {
+        for (page_slot, slice) in ordered_slices.iter().enumerate() {
             let page_start = slice.content_origin_y;
-            let page_end = slices
+            let page_end = ordered_slices
                 .get(page_slot + 1)
                 .map(|next| next.content_origin_y)
                 .filter(|next| next.is_finite() && *next > page_start)
@@ -18262,6 +18268,21 @@ mod tests {
         );
         assert_eq!(pages.len(), 1);
         assert!(pages[0].is_empty());
+
+        let reversed_slices = [
+            PageSlice {
+                page_index: 1,
+                content_origin_y: 100.0,
+                page_name: None,
+            },
+            slice.clone(),
+        ];
+        let pages =
+            page_fragments_from_slices(&document, &cascade_result, PageBox::A4, &reversed_slices);
+        assert_eq!(
+            pages.iter().map(|page| page.page_index).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
 
         let mut document = Document::new();
         let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
