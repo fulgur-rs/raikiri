@@ -11,7 +11,9 @@ use taffy::{Cache, Layout, Style};
 use crate::fragment::MulticolStyle;
 
 use raikiri_style::ComputedBorderSpacing;
-use raikiri_style::property::{BorderCollapseValue, DisplayValue, TableLayoutValue, WritingMode};
+use raikiri_style::property::{
+    BorderCollapseValue, BreakBetween, DisplayValue, TableLayoutValue, WritingMode,
+};
 use raikiri_traits::NodeKind;
 
 bitflags::bitflags! {
@@ -267,6 +269,10 @@ pub struct Node {
     pub(crate) border_collapse: BorderCollapseValue,
     /// Computed `border-spacing` used by the separate-border table layout.
     pub(crate) border_spacing: ComputedBorderSpacing,
+    /// Computed `break-before` value consumed by column fragmentation.
+    pub(crate) break_before: BreakBetween,
+    /// Computed `break-after` value consumed by column fragmentation.
+    pub(crate) break_after: BreakBetween,
     /// Computed multicolumn settings consumed by the custom Taffy dispatch.
     pub(crate) multicol: Option<MulticolStyle>,
     /// Authored writing mode retained for layout features that need the logical axes.
@@ -335,6 +341,8 @@ impl Node {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
             },
+            break_before: BreakBetween::Auto,
+            break_after: BreakBetween::Auto,
             multicol: None,
             authored_writing_mode: None,
             children: Vec::new(),
@@ -362,6 +370,8 @@ impl Node {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
             },
+            break_before: BreakBetween::Auto,
+            break_after: BreakBetween::Auto,
             multicol: None,
             authored_writing_mode: None,
             children: Vec::new(),
@@ -390,6 +400,8 @@ impl Node {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
             },
+            break_before: BreakBetween::Auto,
+            break_after: BreakBetween::Auto,
             multicol: None,
             authored_writing_mode: None,
             children: Vec::new(),
@@ -423,6 +435,8 @@ impl Node {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
             },
+            break_before: BreakBetween::Auto,
+            break_after: BreakBetween::Auto,
             multicol: None,
             authored_writing_mode: None,
             children: Vec::new(),
@@ -446,6 +460,8 @@ impl Node {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
             },
+            break_before: BreakBetween::Auto,
+            break_after: BreakBetween::Auto,
             multicol: None,
             authored_writing_mode: None,
             children: Vec::new(),
@@ -471,6 +487,8 @@ impl Node {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
             },
+            break_before: BreakBetween::Auto,
+            break_after: BreakBetween::Auto,
             multicol: None,
             authored_writing_mode: None,
             children: Vec::new(),
