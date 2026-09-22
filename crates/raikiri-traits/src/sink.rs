@@ -12,7 +12,7 @@ pub trait PageEventObserver: Send {
     // cov:ignore: trait declaration has no executable body
     /// Receive one deterministic page-local event.
     fn observe_event(&mut self, event: PageFragmentEvent) -> std::io::Result<()>; // cov:ignore: trait signature has no executable body
-} // cov:ignore: trait declaration has no executable body
+}
 
 /// Consumer 側 render output receiver (Finding #4 completion protocol)。
 ///
