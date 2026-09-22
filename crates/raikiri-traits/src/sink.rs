@@ -8,8 +8,8 @@ use crate::page::{PageFragment, PageFragmentEvent}; // cov:ignore: type-only imp
 /// The event path is separate from [`RenderSink`]'s page emission path so
 /// existing sinks remain source-compatible. A caller that does not provide an
 /// observer receives the same page-only behavior as before.
+// cov:ignore: observer trait declaration has no executable body
 pub trait PageEventObserver: Send {
-    // cov:ignore: trait declaration has no executable body
     /// Receive one deterministic page-local event.
     fn observe_event(&mut self, event: PageFragmentEvent) -> std::io::Result<()>; // cov:ignore: trait signature has no executable body
 }
