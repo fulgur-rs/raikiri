@@ -177,6 +177,12 @@ pub enum PageFragmentKind {
 }
 
 /// One source-node placement on a page.
+///
+/// This is the neutral counterpart to fulgur's `Fragment`: `page_index` is
+/// zero-based and `rect` is expressed in CSS pixels in the page content-box
+/// coordinate system. The containing [`PageFragment`] carries the resolved
+/// page metadata; the duplicated index keeps node-centric geometry usable
+/// without retaining the page-vector wrapper.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct PageFragmentItem {
@@ -243,7 +249,10 @@ impl PageFragmentItem {
 ///
 /// This is the neutral counterpart to fulgur's `PaginationGeometry`: the
 /// `fragments` vector is ordered by page and fragment index, while
-/// `is_repeat` distinguishes complete per-page copies from split content.
+/// `is_repeat` distinguishes complete per-page copies from split content. The current
+/// `raikiri-dom` producer emits split/ordinary placements (`is_repeat == false`);
+/// repeat-producing fixed/header layout remains an explicit future producer.
+/// The model already preserves the flag for such producers and consumers.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct PageFragmentGeometry {

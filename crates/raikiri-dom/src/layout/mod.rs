@@ -8741,9 +8741,10 @@ pub fn page_fragments_from_slices(
 
 /// Group page snapshots into a deterministic NodeId-ordered geometry table.
 ///
-/// `pages` must be the ordered snapshot returned by [`layout_page_fragments`]
-/// or [`page_fragments_from_slices`]. Each node's fragments retain page order,
-/// and each geometry record preserves the producer's `is_repeat` flag.
+/// `pages` is normally the ordered snapshot returned by
+/// [`layout_page_fragments`] or [`page_fragments_from_slices`]. The result
+/// normalizes each item to its containing page and sorts node fragments by
+/// page/fragment index, while preserving the producer's `is_repeat` flag.
 pub fn page_fragment_geometry_table(pages: &[PageFragment]) -> PageFragmentGeometryTable {
     let mut table = PageFragmentGeometryTable::new();
     for page in pages {
@@ -8759,6 +8760,11 @@ pub fn page_fragment_geometry_table(pages: &[PageFragment]) -> PageFragmentGeome
             debug_assert_eq!(geometry.is_repeat, item.is_repeat); // cov:ignore: one producer cannot mix split and repeat records.
             geometry.fragments.push(item);
         }
+    }
+    for geometry in table.values_mut() {
+        geometry
+            .fragments
+            .sort_by_key(|item| (item.page_index, item.fragment_index));
     }
     table
 }
@@ -18365,7 +18371,7 @@ mod tests {
             2,
             false,
         ));
-        let pages = vec![first_page, second_page];
+        let pages = vec![second_page, first_page];
         let table = page_fragment_geometry_table(&pages);
         let geometry = table.get(&NodeId::new(9)).expect("node geometry");
         assert_eq!(geometry.node_id, NodeId::new(9));
