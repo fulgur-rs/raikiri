@@ -26,7 +26,7 @@ mod parse;
 pub use parse::{parse_html, parse_html_with_limits};
 
 mod stubs;
-pub use stubs::{plan, render_streaming};
+pub use stubs::{plan, render_streaming, render_streaming_with_observer};
 
 mod html_to_png;
 pub use html_to_png::{html_to_png, html_to_png_with_fonts, html_to_png_with_resolver};
@@ -88,13 +88,14 @@ pub use raikiri_traits::{
     BatchConfig, BatchConfigBuilder,
 
     // ── paged model ──
-    PageBox, PageContext, PageFragment,
+    PageBox, PageContext, PageFragment, PageFragmentEvent,
+    PageFragmentLink, PageFragmentLinkEvent,
     PageDefaults, PageDefaultsBuilder,
     LayoutBuffer, TargetRegistry, RunningTemplate, FormData,
     GcpmDirective, ContentValueItem,
 
     // ── traits (Consumer が implement) ──
-    RenderSink, ReplacedResolver, ResourcePolicy,
+    PageEventObserver, RenderSink, ReplacedResolver, ResourcePolicy,
 
     // ── strategy traits ──
     LookaheadPolicy, TargetResolver, EmissionPolicy, ReflowPolicy,

@@ -205,6 +205,94 @@ pub struct PageFragmentItem {
     pub line_range: Option<PageFragmentLineRange>,
 }
 
+/// Neutral link metadata attached to a page-local event.
+///
+/// The raw, trimmed `href` is preserved exactly as a string. URL resolution,
+/// fragment lookup, and renderer-specific annotation construction remain
+/// consumer responsibilities.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PageFragmentLink {
+    /// Source element's `href` attribute after surrounding whitespace is trimmed.
+    pub href: String,
+}
+
+impl PageFragmentLink {
+    /// Construct link metadata from an `href` value.
+    pub fn new(href: impl Into<String>) -> Self {
+        Self { href: href.into() }
+    }
+}
+
+/// One page-local link event.
+///
+/// `anchor_node_id` identifies the owning `<a>` element while
+/// `placement_node_id` identifies the exact [`PageFragmentItem`] whose
+/// geometry is copied into this event. This distinction preserves link
+/// identity when an anchor wraps text or replaced descendants.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct PageFragmentLinkEvent {
+    /// Stable source DOM node identifier of the owning anchor element.
+    pub anchor_node_id: NodeId,
+    /// Stable source DOM node identifier of the correlated placement.
+    pub placement_node_id: NodeId,
+    /// Zero-based page containing the placement.
+    pub page_index: u32,
+    /// Page-local CSS-pixel geometry copied from the placement.
+    pub rect: PageFragmentRect,
+    /// Fragment ordinal copied from the placement.
+    pub fragment_index: u32,
+    /// Total placements for this source node in the snapshot.
+    pub fragment_count: u32,
+    /// Whether the placement is a complete repeated copy.
+    pub is_repeat: bool,
+    /// Text line range copied from a text placement, if available.
+    pub line_range: Option<PageFragmentLineRange>,
+    /// Neutral link destination.
+    pub link: PageFragmentLink,
+}
+
+impl PageFragmentLinkEvent {
+    /// Construct a link event from a page placement.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        anchor_node_id: NodeId,
+        placement_node_id: NodeId,
+        page_index: u32,
+        rect: PageFragmentRect,
+        fragment_index: u32,
+        fragment_count: u32,
+        is_repeat: bool,
+        line_range: Option<PageFragmentLineRange>,
+        link: PageFragmentLink,
+    ) -> Self {
+        Self {
+            anchor_node_id,
+            placement_node_id,
+            page_index,
+            rect,
+            fragment_index,
+            fragment_count,
+            is_repeat,
+            line_range,
+            link,
+        }
+    }
+}
+
+/// Neutral page-local consumer event vocabulary.
+///
+/// The link variant is deliberately the only initial event. It is sufficient
+/// for a consumer to create its own link annotation while keeping PDF,
+/// accessibility, and renderer-specific annotation values out of this crate.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum PageFragmentEvent {
+    /// A visible source link placement.
+    Link(PageFragmentLinkEvent),
+}
+
 impl PageFragmentItem {
     /// Construct one page placement.
     pub fn new(
