@@ -672,33 +672,38 @@ mod stub_tests {
         parse_html(&b"<p>Hi</p>"[..], &opts).expect("parse")
     }
 
-    /// 現状 replaced element なし → resolve が呼ばれない前提で unreachable。
+    /// Current focused documents do not contain replaced elements, so this
+    /// resolver is expected not to be called.
     struct NoopResolver;
     impl ReplacedResolver for NoopResolver {
         fn resolve(
             &self,
             _req: raikiri_traits::ResolverRequest<'_>,
         ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
-            unreachable!("plan/render_streaming stubs must not call resolver")
+            unreachable!("test document has no replaced element")
         }
     }
 
-    /// unimplemented sink。accept_page / finish_render は No-op。unimplemented API は sink を呼ばない前提。
-    struct NoopSink;
-    impl RenderSink for NoopSink {
+    /// Recording sink used to pin page emission and completion ordering.
+    #[derive(Default)]
+    struct RecordingSink {
+        pages: usize,
+        summary: Option<raikiri_traits::RenderSummary>,
+    }
+    impl RenderSink for RecordingSink {
         fn accept_page(
             &mut self,
             _fragment: raikiri_traits::PageFragment,
         ) -> Result<(), std::io::Error> {
-            // cov:ignore: this branch is unreachable unless the API violates its contract
-            unreachable!("unimplemented render_streaming API must not call sink")
+            self.pages += 1;
+            Ok(())
         }
         fn finish_render(
             &mut self,
-            _summary: raikiri_traits::RenderSummary,
+            summary: raikiri_traits::RenderSummary,
         ) -> Result<(), std::io::Error> {
-            // cov:ignore: this branch is unreachable unless the API violates its contract
-            unreachable!("unimplemented render_streaming API must not call sink")
+            self.summary = Some(summary);
+            Ok(())
         }
     }
 
@@ -721,29 +726,48 @@ mod stub_tests {
     }
 
     #[test]
-    fn render_streaming_returns_unimplemented_with_feature_name() {
+    fn render_streaming_emits_pages_and_finishes_once() {
         let doc = hello_world_doc();
-        let mut sink = NoopSink;
-        let err = render_streaming(
+        let mut sink = RecordingSink::default();
+        let status = render_streaming(
             &doc,
             PageDefaults::default(),
             &NoopResolver,
             StreamingConfig::default(),
             &mut sink,
         )
-        .expect_err("unimplemented render_streaming API must return Err");
-        match err {
-            RenderError::Unimplemented {
-                feature,
-                migration_hint,
-            } => {
-                assert_eq!(feature, "render_streaming", "feature must identify API");
-                assert!(
-                    migration_hint.contains("html_to_png"),
-                    "hint must point Consumer to html_to_png, got {migration_hint:?}"
-                );
+        .expect("render_streaming should complete");
+        let summary = match status {
+            RenderStatus::Completed(summary) => summary,
+            RenderStatus::Aborted { partial_pages } => {
+                panic!("unexpected abort after {partial_pages} pages")
             }
-            other => panic!("expected Unimplemented, got {other:?}"),
-        }
+            _ => panic!("unexpected non-exhaustive render status"),
+        };
+        assert_eq!(sink.pages, 1);
+        assert_eq!(summary.total_pages, 1);
+        assert_eq!(sink.summary.expect("finish_render").total_pages, 1);
+    }
+
+    #[test]
+    fn render_streaming_abort_skips_completion() {
+        let doc = hello_world_doc();
+        let controller = AbortController::new();
+        controller.abort();
+        let config = StreamingConfig::builder()
+            .signal(Some(controller.signal.clone()))
+            .build();
+        let mut sink = RecordingSink::default();
+        let status = render_streaming(
+            &doc,
+            PageDefaults::default(),
+            &NoopResolver,
+            config,
+            &mut sink,
+        )
+        .expect("abort is a status, not an error");
+        assert!(matches!(status, RenderStatus::Aborted { partial_pages: 0 }));
+        assert_eq!(sink.pages, 0);
+        assert!(sink.summary.is_none());
     }
 }

@@ -1,21 +1,16 @@
-//! `plan` / `render_streaming` の 未実装 API。
+//! Entry points that are not yet backed by the full planning state machine.
 //!
-//! この module 内の全 fn は `RenderError::Unimplemented` を返す。
-//! **pagination 実装完了時に、本 module を丸ごと削除して parse.rs / dedicated
-//! plan.rs / render_streaming.rs に本実装を配置し直す** (retire scope isolation)。
-//!
-//! - `plan`: pagination 完了後に populate、PlanConfig の initial_registry と
-//!   併せて DocumentPlan を返す本実装に差し替え
-//! - `render_streaming`: pagestream state machine 実装後に本実装、`RenderSink` に
-//!   PageFragment を stream 出力する
-//!
-//! 現状は両者とも Consumer に migration hint を返す (単一ページ用の
-//! `html_to_png` は実装済み、multi-page streaming は pagestream state
-//! machine の実装完了後)。
+//! `plan` remains an explicit unavailable API. `render_streaming` is the
+//! neutral page-output bridge: it uses the merged `raikiri-dom` pagination
+//! projection and keeps renderer-specific scene and drawable code out of the
+//! sink contract.
 
+use parley::FontContext;
+use raikiri_dom::{layout_pages_with_resolver, page_fragments_from_slices};
 use raikiri_traits::{
-    DocumentPlan, PageDefaults, PlanConfig, RenderError, RenderSink, RenderStatus,
-    ReplacedResolver, StreamingConfig,
+    DocumentPlan, PageBox, PageDefaults, PlanConfig, RenderError, RenderSink, RenderStatus,
+    RenderStatus::Aborted, RenderStatus::Completed, RenderSummary, ReplacedResolver,
+    StreamingConfig,
 };
 
 use crate::HtmlDocument;
@@ -39,23 +34,87 @@ pub fn plan(
     })
 }
 
-/// Streaming rendering (1 pass、BoundedLookahead + PlaceholderTargetResolver +
-/// ImmediateEmission)。
+/// Stream neutral page snapshots to a consumer sink.
 ///
-/// **Unavailable implementation**: 常に `Err(RenderError::Unimplemented { feature: "render_streaming", .. })`
-/// を返す。本実装は pagestream state machine 実装後。
+/// The current driver lays out the document into neutral snapshots before
+/// emitting them. This keeps the public contract renderer-neutral while the
+/// pagination state machine grows: no Taffy, Parley, style, scene, drawable,
+/// or PDF value crosses the sink boundary. The input document is cloned for
+/// the mutating layout pass, so the existing shared `&HtmlDocument` API stays
+/// source-compatible.
 ///
-/// spec §L1084 の signature 準拠。
+/// A configured [`AbortSignal`](raikiri_traits::AbortSignal) is checked before
+/// layout, before every page, and before completion. Aborted renders return
+/// without calling `RenderSink::finish_render`.
 #[allow(clippy::result_large_err)]
 pub fn render_streaming(
-    _doc: &HtmlDocument,
-    _defaults: PageDefaults,
-    _resolver: &dyn ReplacedResolver,
-    _config: StreamingConfig,
-    _sink: &mut dyn RenderSink,
+    doc: &HtmlDocument,
+    defaults: PageDefaults,
+    resolver: &dyn ReplacedResolver,
+    config: StreamingConfig,
+    sink: &mut dyn RenderSink,
 ) -> Result<RenderStatus, RenderError> {
-    Err(RenderError::Unimplemented {
-        feature: "render_streaming",
-        migration_hint: "render_streaming is a non-goal for now. Single-page raster is implemented via `html_to_png`; multi-page streaming lands once the pagestream state machine is implemented",
-    })
+    let signal = config.signal.clone();
+    let is_aborted = || signal.as_ref().is_some_and(|signal| signal.is_aborted());
+    if is_aborted() {
+        return Ok(Aborted { partial_pages: 0 });
+    }
+
+    let page_box = doc
+        .cascade
+        .page
+        .size()
+        .map(|size| PageBox::from_page_size(Some(size)))
+        .unwrap_or(defaults.page_box);
+    let mut document = doc.uncascaded.dom.clone();
+    let slices = layout_pages_with_resolver(
+        &mut document,
+        &doc.cascade,
+        page_box,
+        FontContext::new(),
+        resolver,
+    )
+    .map_err(RenderError::from)?;
+    let pages = page_fragments_from_slices(&document, &doc.cascade, page_box, &slices);
+
+    let total_pages = u32::try_from(pages.len()).unwrap_or(u32::MAX);
+    if config
+        .limits
+        .max_document_pages
+        .is_some_and(|limit| total_pages > limit)
+    {
+        return Err(RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::Pages,
+            limit: config.limits.max_document_pages.unwrap_or(u32::MAX) as u64,
+            actual: total_pages as u64,
+        });
+    }
+
+    let mut emitted_pages = 0_u32;
+    for page in pages {
+        if is_aborted() {
+            return Ok(Aborted {
+                partial_pages: emitted_pages,
+            });
+        }
+        sink.accept_page(page).map_err(RenderError::Sink)?;
+        emitted_pages = emitted_pages.saturating_add(1);
+    }
+    if is_aborted() {
+        return Ok(Aborted {
+            partial_pages: emitted_pages,
+        });
+    }
+
+    let summary = RenderSummary {
+        total_pages: emitted_pages,
+        target_registry: config.initial_registry.unwrap_or_default(),
+        unresolved_targets: Vec::new(),
+        emitted_target_slots: Vec::new(),
+        target_discrepancies: Vec::new(),
+        warnings: doc.uncascaded.warnings.clone(),
+    };
+    sink.finish_render(summary.clone())
+        .map_err(RenderError::Sink)?;
+    Ok(Completed(summary))
 }

@@ -39,7 +39,7 @@ use raikiri_style::property::CalcLengthPercentage;
 /// `nodes` は arena indices を key とする flat storage。index 0 は Document
 /// kind の virtual root。HTML の `<html>` element は raikiri-html の基本
 /// parse 経路が index 1 以降に append する想定 (root = 0 の子として)。
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Document {
     pub(crate) nodes: Vec<Node>,
     /// arena index of the Document root (always 0 の予定、明示的に保持して

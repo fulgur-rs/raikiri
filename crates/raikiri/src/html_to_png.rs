@@ -1,8 +1,8 @@
 //! `html_to_png` — dogfooding helper: HTML → first-page PNG bytes (A4 fallback)。
 //!
 //! spec §L1118 の convenience wrapper。VRT (hello-world) / examples 用途。
-//! Consumer が multi-page / custom PageBox / streaming を要する場合は
-//! `parse_html` + `render_streaming` (将来対応) を chain する。
+//! Consumer が multi-page / custom PageBox / neutral page streaming を要する場合は
+//! `parse_html` + `render_streaming` を chain する。
 //!
 //! # 現状の契約
 //! - PageBox は `@page { size: ... }` の first-page cascadeを優先し、未指定時は

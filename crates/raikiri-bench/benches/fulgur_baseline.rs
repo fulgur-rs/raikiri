@@ -53,10 +53,10 @@
 //! A literal "100 pages × 100 tables" port is not possible against raikiri
 //! today, on two independent axes:
 //!
-//! 1. **No pages.** `raikiri::render_streaming` and `raikiri::plan` are
-//!    stubs — both unconditionally return `RenderError::Unimplemented`
-//!    (`crates/raikiri/src/stubs.rs`). The only rendering entry point that
-//!    actually runs end-to-end is [`raikiri::html_to_png`] /
+//! 1. **No page-stream benchmark yet.** `raikiri::plan` remains an explicit
+//!    stub, and this benchmark does not call the now-implemented neutral
+//!    `raikiri::render_streaming` bridge. The only rendering path measured here
+//!    is [`raikiri::html_to_png`] /
 //!    [`raikiri::html_to_png_with_fonts`]
 //!    (`parse_html` → `layout_single_page` → `build_page_scene` →
 //!    `PageScene::rasterize`), and it is hard-pinned to a single `PageBox::A4`
@@ -76,9 +76,9 @@
 //!    should not be read as, a deliberate stand-in for "N pages". In short:
 //!    fulgur's page axis is **not represented in this file at all**; only
 //!    the table-count axis is measured, at single-page granularity. A future
-//!    file that actually wants a page-count axis would need raikiri to grow
-//!    real pagination first (see the unimplemented entry point above) — there is no way
-//!    to approximate one honestly against the current entry point.
+//!    benchmark that wants a page-count axis should call the neutral
+//!    `render_streaming` bridge directly rather than infer pages from this
+//!    single-page PNG workload.
 //!
 //! 2. **No `<table>` layout.** `crates/raikiri-style/src/property.rs`'s own
 //!    test pins `assert_eq!(parse("table", "display"), None)` — `display:

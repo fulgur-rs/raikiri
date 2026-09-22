@@ -265,8 +265,13 @@ mod tests {
     #[test]
     fn streaming_config_builder_roundtrip() {
         let limits = RenderLimits::builder().max_document_pages(Some(50)).build();
-        let cfg = StreamingConfig::builder().limits(limits).build();
+        let controller = AbortController::new();
+        let cfg = StreamingConfig::builder()
+            .limits(limits)
+            .signal(Some(controller.signal.clone()))
+            .build();
         assert_eq!(cfg.limits.max_document_pages, Some(50));
+        assert!(cfg.signal.is_some());
     }
 
     #[test]

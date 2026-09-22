@@ -83,7 +83,7 @@ pub(crate) struct Attr {
 /// 決まる (`clippy::large_enum_variant` が発火するのはこのため)。それでも
 /// `Text` を Box しないのは意図した trade-off: `text_layout()` は paint hot
 /// path から呼ばれるため、追加の indirection を持ち込みたくない。
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 #[allow(
     clippy::large_enum_variant,
@@ -153,7 +153,7 @@ impl NodeData {
 /// raikiri-html sink が `create_element` の `ElementFlags::template=true` を
 /// 観測した時 [`crate::Document::allocate_template_fragment_root`] 経由で
 /// populate する。詳細は field 側の doc comment を参照。
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ElementData {
     /// HTML / XML tag name (例: `"p"`, `"div"`)。html5ever の QualName.local から
     /// SmolStr に写し取る。
@@ -216,7 +216,7 @@ pub struct MulticolTextFragment {
 }
 
 /// Text-only data。blitz `TextNodeData` (nominally) に対応。
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TextData {
     /// Character data。
     pub(crate) text_content: SmolStr,
@@ -249,7 +249,7 @@ pub struct TextData {
 /// `node.tag_name()` / `node.text_layout()`)、`children` / `unrounded_layout`
 /// は pub field 継続。external contract は Node/Element field access 0 件
 /// なので無影響、raikiri-dom 内部 pub_surface check のみ accessor 経由に再 pin。
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Node {
     /// Taffy layout style。
     pub(crate) style: Style,
