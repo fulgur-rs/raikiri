@@ -253,6 +253,9 @@ pub struct SpecifiedValues {
     pub min_width: LengthOrAuto,
     /// `min-height` の **specified** value。phase 3 で絶対化される。
     pub min_height: LengthOrAuto,
+    /// `min-block-size` の **specified** value。phase 3 で絶対化し、
+    /// `writing-mode` に応じて physical min-width/min-height へ写像する。
+    pub min_block_size: Option<LengthOrAuto>,
     /// `top` の **specified** value。phase 3 で絶対化される。
     pub top: LengthOrAuto,
     /// `right` の **specified** value。phase 3 で絶対化される。
@@ -649,6 +652,7 @@ impl SpecifiedValues {
             max_height: LengthOrAuto::Auto,
             min_width: LengthOrAuto::Auto,
             min_height: LengthOrAuto::Auto,
+            min_block_size: None,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
             bottom: LengthOrAuto::Auto,
@@ -1035,6 +1039,7 @@ impl SpecifiedValues {
             max_height: LengthOrAuto::Auto,
             min_width: LengthOrAuto::Auto,
             min_height: LengthOrAuto::Auto,
+            min_block_size: None,
             top: LengthOrAuto::Auto,
             right: LengthOrAuto::Auto,
             bottom: LengthOrAuto::Auto,
@@ -1413,6 +1418,20 @@ impl SpecifiedValues {
             LengthOrAuto::Length(length) => ch_provenance(length),
             _ => None,
         });
+        let min_width =
+            resolve_length_percentage_or_auto(self.min_width, font_size, own_line_height, ctx);
+        let min_height =
+            resolve_length_percentage_or_auto(self.min_height, font_size, own_line_height, ctx);
+        let physical_min_block = self
+            .min_block_size
+            .map(|value| resolve_length_percentage_or_auto(value, font_size, own_line_height, ctx));
+        let (min_width, min_height) = match self.writing_mode {
+            WritingMode::HorizontalTb => (min_width, physical_min_block.unwrap_or(min_height)),
+            WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr => (physical_min_block.unwrap_or(min_width), min_height),
+        };
         ComputedValues {
             color: self.color,
             background_color: self.background_color,
@@ -1516,18 +1535,9 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
-            min_width: resolve_length_percentage_or_auto(
-                self.min_width,
-                font_size,
-                own_line_height,
-                ctx,
-            ),
-            min_height: resolve_length_percentage_or_auto(
-                self.min_height,
-                font_size,
-                own_line_height,
-                ctx,
-            ),
+            min_width,
+            min_height,
+            min_block_size: physical_min_block,
             top: resolve_length_percentage_or_auto(self.top, font_size, own_line_height, ctx),
             right: resolve_length_percentage_or_auto(self.right, font_size, own_line_height, ctx),
             bottom: resolve_length_percentage_or_auto(self.bottom, font_size, own_line_height, ctx),
@@ -2192,6 +2202,7 @@ mod tests {
             max_height: ComputedLengthPercentageOrAuto::Auto,
             min_width: ComputedLengthPercentageOrAuto::Auto,
             min_height: ComputedLengthPercentageOrAuto::Auto,
+            min_block_size: None,
             top: ComputedLengthPercentageOrAuto::Px(10.0),
             right: ComputedLengthPercentageOrAuto::Px(20.0),
             bottom: ComputedLengthPercentageOrAuto::Px(30.0),

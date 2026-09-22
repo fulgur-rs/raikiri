@@ -349,6 +349,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "max-height" => parse_max_size(input).map(PropertyValue::MaxHeight),
         "min-width" => parse_min_size(input).map(PropertyValue::MinWidth),
         "min-height" => parse_min_size(input).map(PropertyValue::MinHeight),
+        "min-block-size" => parse_min_size(input).map(PropertyValue::MinBlockSize),
         // CSS Sizing 3 §3.3 box-sizing。
         // value grammar `content-box | border-box`、initial `content-box`、
         // not inherited、computed value = specified keyword。
@@ -4789,7 +4790,7 @@ fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
-/// `min-width` / `min-height: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content` を parse する。
+/// `min-width` / `min-height` / `min-block-size: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content` を parse する。
 ///
 /// Grammar reference: CSS Sizing 3 §4 "Minimum Size Properties"
 /// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>。initial value

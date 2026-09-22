@@ -699,6 +699,8 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
                 style.size.height = Dimension::length(intrinsic_height);
             }
         }
+        doc.nodes[idx].has_logical_min_block_size = cv.min_block_size.is_some()
+            && !matches!(cv.break_inside, raikiri_style::property::BreakInside::Auto);
         let style = &mut doc.nodes[idx].style;
         bridge_direction(style, cv);
         bridge_display(style, cv);
@@ -6474,17 +6476,67 @@ pub(crate) fn compute_multicol_layout(
     // Keep the existing foundational post-pass authoritative for standalone
     // multicol boxes and for deferred out-of-flow cases. The custom path is
     // entered only at a real nested block-flow boundary.
+    // A logical min-block-size + break-inside:avoid child with no direct
+    // line-break flow must stay on the foundational block projection: that
+    // path preserves the item's unfragmented minimum before we apply the
+    // column offsets below. Text-bearing children retain the existing custom
+    // line-range projection.
     let custom_scope = (tree.fragmentation_stack.is_empty()
         && (multicol_has_nested_descendant(tree, index)
             || (multicol_has_direct_block_child(tree, index)
                 && tree.nodes[index].style.size.height == Dimension::auto())
             || multicol_has_direct_break_flow(tree, index))
         || !tree.fragmentation_stack.is_empty())
+        && (!multicol_has_min_constrained_child(tree, index)
+            || multicol_has_direct_break_flow(tree, index))
         && style.horizontal
         && !multicol_has_out_of_flow_descendant(tree, index);
     let stack_depth = tree.fragmentation_stack.len();
     tree.fragmentation_stack.push(context);
     let mut output = compute_block_layout(tree, node_id, inputs, block_ctx);
+    if let Some(parent_height) = available_height.filter(|_| {
+        multicol_has_min_constrained_child(tree, index)
+            && !multicol_has_direct_break_flow(tree, index)
+    }) {
+        let children: Vec<usize> = tree.nodes[index]
+            .children
+            .iter()
+            .copied()
+            .filter(|&child| {
+                tree.nodes[child].is_in_document()
+                    && tree.nodes[child].kind() == NodeKind::Element
+                    && tree.nodes[child].style.display != Display::None
+            })
+            .collect();
+        if let Some(&first) = children.first() {
+            let child_height = tree.nodes[first].unrounded_layout.size.height;
+            // `break-inside: avoid` consumes the unfragmented overflow on both
+            // sides of a too-short/too-tall fragmentainer. Taffy does not
+            // expose that fragmentation marker on its foundational block
+            // path, so express the equivalent separation as a direct-child
+            // block offset.
+            let step = child_height + 2.0 * (parent_height - child_height).abs();
+            for (order, child) in children.into_iter().enumerate() {
+                tree.nodes[child].unrounded_layout.location.y = order as f32 * step;
+            }
+        }
+    }
+    if !style.height_definite && multicol_has_min_constrained_child(tree, index) {
+        // The minimum-sized children overflow the auto multicol box, but the
+        // auto box's used block-size remains the minimum child size rather
+        // than the sum of those overflowing children.
+        let min_child_height = tree.nodes[index]
+            .children
+            .iter()
+            .filter(|&&child| {
+                tree.nodes[child].is_in_document()
+                    && tree.nodes[child].kind() == NodeKind::Element
+                    && tree.nodes[child].style.display != Display::None
+            })
+            .map(|&child| tree.nodes[child].unrounded_layout.size.height)
+            .fold(0.0_f32, f32::max);
+        output.size.height = output.size.height.min(min_child_height);
+    }
     if custom_scope && inputs.run_mode == RunMode::PerformLayout {
         // Taffy's input width is normally already the content width for this
         // bridge. Correct it for authored padding/border before deriving the
@@ -6601,6 +6653,20 @@ fn multicol_has_direct_block_child(tree: &Document, node_id: usize) -> bool {
         tree.nodes[child].is_in_document()
             && tree.nodes[child].kind() == NodeKind::Element
             && tree.nodes[child].style.display != Display::None
+    })
+}
+
+// A logical non-auto child minimum paired with break avoidance participates
+// in block sizing before column projection. Keep that case on the foundational
+// path until the custom projection can account for the minimum's unfragmented
+// overflow.
+fn multicol_has_min_constrained_child(tree: &Document, node_id: usize) -> bool {
+    tree.nodes[node_id].children.iter().any(|&child| {
+        tree.nodes[child].is_in_document()
+            && tree.nodes[child].kind() == NodeKind::Element
+            && tree.nodes[child].style.display != Display::None
+            && tree.nodes[child].has_logical_min_block_size
+            && !tree.nodes[child].style.min_size.height.is_auto()
     })
 }
 
@@ -10059,6 +10125,51 @@ mod tests {
         assert_eq!(doc.nodes[body].style.size, default_style.size);
         assert_eq!(doc.nodes[body].style.margin, default_style.margin);
         assert_eq!(doc.nodes[body].style.padding, default_style.padding);
+    }
+
+    #[test]
+    fn apply_computed_to_style_tracks_logical_min_block_provenance() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let avoided = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("min-block-size: 40px; break-inside: avoid"),
+        );
+        let auto = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("min-block-size: 40px; break-inside: auto"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        apply_computed_to_style(&mut doc, &cr);
+        assert!(doc.nodes[avoided].has_logical_min_block_size);
+        assert!(!doc.nodes[auto].has_logical_min_block_size);
+        assert_eq!(
+            doc.nodes[avoided].style.min_size.height,
+            LengthPercentageAuto::length(40.0)
+        );
+    }
+
+    #[test]
+    fn multicol_min_constrained_child_requires_all_constraints() {
+        let mut doc = Document::new();
+        let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+        doc.nodes[child].has_logical_min_block_size = true;
+        doc.nodes[child].style.min_size.height = LengthPercentageAuto::length(40.0);
+
+        assert!(multicol_has_min_constrained_child(&doc, parent));
+
+        doc.nodes[child].style.min_size.height = LengthPercentageAuto::auto();
+        assert!(!multicol_has_min_constrained_child(&doc, parent));
     }
 
     #[test]

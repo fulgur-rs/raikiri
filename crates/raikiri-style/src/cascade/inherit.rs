@@ -599,7 +599,7 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// page context 自身が root element になるわけではないため。element 経路で
 /// この特別扱いを担うのは [`SpecifiedValues::finalize_as_root`]。
 ///
-/// The public contract is [`PageCascadeResult::declarations`].
+/// The public contract is [`crate::PageCascadeResult::declarations`].
 ///
 /// なお `Percent` は「未解決」ではない — box property の computed value は
 /// percentage のままである (CSS Paged Media 3 §6 の "Percentage values on the
@@ -823,6 +823,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::MaxHeight(_)
         | PropertyValue::MinWidth(_)
         | PropertyValue::MinHeight(_)
+        | PropertyValue::MinBlockSize(_)
         | PropertyValue::Top(_)
         | PropertyValue::Right(_)
         | PropertyValue::Bottom(_)
@@ -1563,6 +1564,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             crate::property::PropertyKey::MinHeight => {
                 target.min_height = LengthOrAuto::Calc(value)
             }
+            crate::property::PropertyKey::MinBlockSize => {
+                target.min_block_size = Some(LengthOrAuto::Calc(value))
+            }
             crate::property::PropertyKey::Top => target.top = LengthOrAuto::Calc(value),
             crate::property::PropertyKey::Right => target.right = LengthOrAuto::Calc(value),
             crate::property::PropertyKey::Bottom => target.bottom = LengthOrAuto::Calc(value),
@@ -1579,6 +1583,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::MaxHeight(v) => target.max_height = v,
         PropertyValue::MinWidth(v) => target.min_width = v,
         PropertyValue::MinHeight(v) => target.min_height = v,
+        PropertyValue::MinBlockSize(v) => target.min_block_size = Some(v),
         PropertyValue::Top(v) => target.top = v,
         PropertyValue::Right(v) => target.right = v,
         PropertyValue::Bottom(v) => target.bottom = v,
@@ -2096,6 +2101,44 @@ mod tests {
     use crate::ruletree::{RuleTree, build_rule_tree};
     use crate::test_dom::TestDoc;
     use smol_str::SmolStr;
+
+    #[test]
+    fn min_block_size_maps_to_the_authored_block_axis() {
+        let horizontal = cascade_doc(
+            "",
+            "div",
+            Some("min-block-size: 40px; writing-mode: horizontal-tb"),
+        );
+        assert_eq!(horizontal.min_width, ComputedLengthPercentageOrAuto::Auto);
+        assert_eq!(
+            horizontal.min_height,
+            ComputedLengthPercentageOrAuto::Px(40.0)
+        );
+        assert_eq!(
+            horizontal.min_block_size,
+            Some(ComputedLengthPercentageOrAuto::Px(40.0))
+        );
+
+        let vertical = cascade_doc(
+            "",
+            "div",
+            Some("min-block-size: 40px; writing-mode: vertical-rl"),
+        );
+        assert_eq!(vertical.min_width, ComputedLengthPercentageOrAuto::Px(40.0));
+        assert_eq!(vertical.min_height, ComputedLengthPercentageOrAuto::Auto);
+        assert_eq!(
+            vertical.min_block_size,
+            Some(ComputedLengthPercentageOrAuto::Px(40.0))
+        );
+
+        let physical = cascade_doc("", "div", Some("min-height: 20px"));
+        assert_eq!(physical.min_width, ComputedLengthPercentageOrAuto::Auto);
+        assert_eq!(
+            physical.min_height,
+            ComputedLengthPercentageOrAuto::Px(20.0)
+        );
+        assert_eq!(physical.min_block_size, None);
+    }
 
     #[test]
     fn inheritance_walk_child_from_parent_element() {
@@ -7265,6 +7308,14 @@ mod tests {
             &mut cv,
         );
         assert_eq!(cv.min_height, expect_calc);
+        apply_value(
+            PropertyValue::CalcLengthPercentage {
+                key: PropertyKey::MinBlockSize,
+                value,
+            },
+            &mut cv,
+        );
+        assert_eq!(cv.min_block_size, Some(expect_calc));
         apply_value(
             PropertyValue::CalcLengthPercentage {
                 key: PropertyKey::Top,
