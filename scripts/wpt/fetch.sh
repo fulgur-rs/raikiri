@@ -28,6 +28,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # target/wpt without any indication something was off.
 # shellcheck source=../lib/repo_root.sh
 source "$SCRIPT_DIR/../lib/repo_root.sh"
+# shellcheck source=lib/shared_sparse.sh
+source "$SCRIPT_DIR/lib/shared_sparse.sh"
 
 SHA_FILE="$SCRIPT_DIR/pinned_sha.txt"
 SUBSET_FILE="$SCRIPT_DIR/subset.txt"
@@ -54,15 +56,10 @@ fi
 
 # This checkout is shared across branches. Enforce the stable roots before
 # touching the shared repository; never accept a task-specific sparse subset.
-EXPECTED_SUBSET_PATTERNS=(css fonts images)
-mapfile -t SUBSET_PATTERNS < <(
-  sed -E 's/^[[:space:]]*#.*$//; /^[[:space:]]*$/d' "$SUBSET_FILE"
-)
-if [[ "${SUBSET_PATTERNS[*]}" != "${EXPECTED_SUBSET_PATTERNS[*]}" ]]; then
-  echo "error: $SUBSET_FILE must contain exactly: css, fonts, images" >&2
+if ! SUBSET_CONTENT="$(validate_shared_wpt_subset "$SUBSET_FILE")"; then
   exit 2
 fi
-EXPECTED_SPARSE_CONTENT="$(printf '%s\n' "${EXPECTED_SUBSET_PATTERNS[@]}")"
+mapfile -t EXPECTED_SUBSET_PATTERNS <<< "$SUBSET_CONTENT"
 
 if [ ! -d "$WPT_DIR/.git" ]; then
   mkdir -p "$WPT_DIR"
@@ -76,20 +73,11 @@ fi
 git -C "$WPT_DIR" remote set-url origin "$REMOTE_URL" 2>/dev/null \
   || git -C "$WPT_DIR" remote add origin "$REMOTE_URL"
 
-# Set the shared sparse roots once, then lock the local Git config file. A
-# stale branch's old fetch.sh writes this file with `>`; the read-only mode
-# makes that fail before it can remove tests from sibling worktrees.
-mkdir -p "$WPT_DIR/.git/info"
+# Atomically install the shared roots as a read-only inode. A stale branch's
+# old fetch.sh fails to open the path; an already-open writer is detached by
+# the rename before sparse-checkout reapply reads the canonical file.
 SPARSE_CHECKOUT_FILE="$WPT_DIR/.git/info/sparse-checkout"
-CURRENT_SPARSE_CONTENT="$(cat "$SPARSE_CHECKOUT_FILE" 2>/dev/null || true)"
-if [ "$CURRENT_SPARSE_CONTENT" != "$EXPECTED_SPARSE_CONTENT" ]; then
-  if [ -e "$SPARSE_CHECKOUT_FILE" ] && [ ! -w "$SPARSE_CHECKOUT_FILE" ]; then
-    echo "error: $SPARSE_CHECKOUT_FILE is locked with unexpected roots; inspect it manually" >&2
-    exit 2
-  fi
-  printf '%s\n' "${EXPECTED_SUBSET_PATTERNS[@]}" > "$SPARSE_CHECKOUT_FILE"
-fi
-chmod a-w "$SPARSE_CHECKOUT_FILE"
+install_locked_shared_sparse_file "$SPARSE_CHECKOUT_FILE" "${EXPECTED_SUBSET_PATTERNS[@]}"
 
 # Fetch only the pinned SHA, filter=blob:none to keep it lean. Skip when
 # already at $SHA: with WPT_DIR now shared across every worktree of this

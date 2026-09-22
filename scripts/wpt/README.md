@@ -5,9 +5,10 @@ repository into `target/wpt/`, pinned to the SHA in `pinned_sha.txt`.
 
 `subset.txt` defines the shared sparse roots: all of `css/`, `fonts/`, and
 `images/`. `fetch.sh` validates this exact set, symlinks one checkout into task
-worktrees, and makes its local sparse-pattern file read-only. A stale branch's
-older `fetch.sh` therefore fails instead of narrowing the shared checkout and
-hiding tests from sibling worktrees. Do not narrow or add per-task paths; use
+worktrees, and atomically replaces its local sparse-pattern file with a
+read-only inode. An already-open stale writer is detached; later runs of an old
+`fetch.sh` fail instead of narrowing the shared checkout and hiding tests from
+sibling worktrees. Do not narrow or add per-task paths; use
 the survey's category/theme filters. To change shared roots, use a reviewed
 project-level change that updates both `subset.txt` and the guard in `fetch.sh`.
 Only then should a maintainer unlock `target/wpt/.git/info/sparse-checkout`
