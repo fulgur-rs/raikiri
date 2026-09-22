@@ -967,6 +967,21 @@ mod tests {
     }
 
     #[test]
+    fn paint_single_page_line_break_anywhere_paints_text() {
+        let scene = decorated_text_scene_with_text(
+            "width:16px; line-height:1; font-family:monospace; line-break:anywhere",
+            "aa-a.a)a,a）a",
+        );
+        assert!(
+            scene
+                .commands
+                .iter()
+                .any(|command| matches!(command, RenderCommand::GlyphRun(_))),
+            "line-break:anywhere should still emit a glyph run"
+        );
+    }
+
+    #[test]
     fn paint_single_page_uses_inherited_color_as_brush() {
         // <p style="color:red"> → cascade で red が inherit → text の brush が
         // (255, 0, 0, 255) になることを pin。cascade → shape 系譜の regression 保護。

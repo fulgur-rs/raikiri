@@ -5552,6 +5552,20 @@ mod tests {
     }
 
     #[test]
+    fn flex_static_boxes_use_the_positioned_paint_bucket() {
+        let mut document = Document::new();
+        let flex = document.append_element(
+            Some(document.root_index()),
+            "div",
+            Style::default(),
+            Some("display:flex"),
+        );
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+        assert_eq!(paint_order_key(&cascade, flex), (2, 0));
+    }
+
+    #[test]
     fn list_marker_text_formats_ordinals_and_styles() {
         let (mut document, cascade, first, second) =
             list_fixture("display: list-item", "display: list-item", None);
