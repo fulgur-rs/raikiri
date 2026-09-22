@@ -977,7 +977,7 @@ mod tests {
                 .commands
                 .iter()
                 .any(|command| matches!(command, RenderCommand::GlyphRun(_))),
-            "line-break:anywhere should still emit a glyph run"
+            "line-break:anywhere should still emit a glyph run", // cov:ignore: assertion message runs only on failure
         );
     }
 
