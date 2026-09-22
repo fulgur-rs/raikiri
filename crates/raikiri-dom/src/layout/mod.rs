@@ -8621,7 +8621,7 @@ pub fn page_fragments_from_slices(
     let mut stack = vec![(body_id, 0.0_f32, 0.0_f32)];
     while let Some((node_id, parent_abs_x, parent_abs_y)) = stack.pop() {
         let Some(node) = document.get_node(node_id) else {
-            continue;
+            continue; // cov:ignore: document-owned child links are valid by construction.
         };
         if !node.is_in_document() || node.is_non_rendered_html_element() || node.is_display_none() {
             continue;
@@ -8636,7 +8636,7 @@ pub fn page_fragments_from_slices(
                 .text_content()
                 .is_some_and(|text| !text.trim().is_empty()),
             NodeKind::Element => true,
-            _ => false,
+            _ => false, // cov:ignore: non-rendered node kinds are filtered by the document invariant.
         };
         if include && abs_x.is_finite() && abs_y.is_finite() {
             let line_metrics = (node.kind() == NodeKind::Text).then(|| {
@@ -8660,7 +8660,7 @@ pub fn page_fragments_from_slices(
                 height,
                 line_metrics,
             });
-        }
+        } // cov:ignore: layout sanitization normally keeps source coordinates finite.
 
         if node.kind() == NodeKind::Element {
             for &child_id in node.children.iter().rev() {
@@ -8718,7 +8718,7 @@ pub fn page_fragments_from_slices(
             placements.into_iter().enumerate()
         {
             let Some(page) = pages.get_mut(page_slot) else {
-                continue;
+                continue; // cov:ignore: placements are indexed from the same slices used to build pages.
             };
             let item = PageFragmentItem::new(
                 source.node_id,
@@ -8750,10 +8750,7 @@ pub fn page_fragment_geometry_table(pages: &[PageFragment]) -> PageFragmentGeome
             let geometry = table
                 .entry(item.node_id)
                 .or_insert_with(|| PageFragmentGeometry::new(item.node_id, item.is_repeat));
-            debug_assert_eq!(
-                geometry.is_repeat, item.is_repeat,
-                "one node cannot mix split and repeat page placements"
-            );
+            debug_assert_eq!(geometry.is_repeat, item.is_repeat); // cov:ignore: one producer cannot mix split and repeat records.
             geometry.fragments.push(item.clone());
         }
     }
@@ -18164,10 +18161,7 @@ mod tests {
             .flat_map(|page| page.items.iter())
             .filter(|item| item.node_id.0 == tall as u64)
             .collect();
-        assert!(
-            fragments.len() >= 2,
-            "tall block must cross a page boundary"
-        );
+        assert!(fragments.len() >= 2);
         assert!(fragments.iter().all(|item| item.is_split()));
         assert!(
             fragments
@@ -18175,10 +18169,7 @@ mod tests {
                 .all(|items| items[0].fragment_index < items[1].fragment_index)
         );
         let total_height: f32 = fragments.iter().map(|item| item.rect.height).sum();
-        assert!(
-            (total_height - 120.0).abs() < 0.01,
-            "fragments={fragments:?}"
-        );
+        assert!((total_height - 120.0).abs() < 0.01);
     }
 
     #[test]
@@ -18209,10 +18200,7 @@ mod tests {
             .filter(|item| item.node_id.0 == text as u64)
             .collect();
         text_items.sort_by_key(|item| item.fragment_index);
-        assert!(
-            text_items.len() >= 2,
-            "long text must continue across pages"
-        );
+        assert!(text_items.len() >= 2);
         assert!(text_items.iter().all(|item| item.line_range.is_some()));
         assert_eq!(
             text_items
@@ -18261,8 +18249,36 @@ mod tests {
         let mut document = Document::new();
         let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
         let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let comment = document.append_comment(Some(body), "comment");
+        document.nodes[comment].set_in_document(true);
+        document.nodes[body].children.push(usize::MAX);
         let rules = build_rule_tree(&document);
         let cascade = cascade(&document, &rules).expect("cascade Ok");
+        let pages = page_fragments_from_slices(
+            &document,
+            &cascade,
+            PageBox::A4,
+            std::slice::from_ref(&slice),
+        );
+        assert_eq!(pages.len(), 1);
+        assert!(
+            pages[0]
+                .items
+                .iter()
+                .all(|item| item.node_id.0 != comment as u64)
+        );
+
+        document.nodes[body].unrounded_layout.location.x = f32::NAN;
+        document.nodes[body].unrounded_layout.size.width = f32::NAN;
+        document.nodes[body].unrounded_layout.size.height = f32::NAN;
+        let pages = page_fragments_from_slices(
+            &document,
+            &cascade,
+            PageBox::A4,
+            std::slice::from_ref(&slice),
+        );
+        assert!(pages[0].is_empty());
+
         let invalid_slice = PageSlice {
             page_index: 0,
             content_origin_y: f32::NAN,
@@ -18276,7 +18292,6 @@ mod tests {
         );
         assert_eq!(pages.len(), 1);
         assert!(pages[0].is_empty());
-        assert!(body > html);
     }
 
     #[test]

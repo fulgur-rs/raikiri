@@ -1933,5 +1933,7 @@ mod page_fragment_tests {
             true,
         );
         assert!(!repeat.is_split());
+        assert!(!PageFragmentLineRange::new(0, 1).is_empty());
+        assert!(PageFragmentLineRange::new(1, 1).is_empty());
     }
 }
