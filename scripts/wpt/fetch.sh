@@ -3,6 +3,8 @@
 # (css/, fonts/, images/). Idempotent: re-running updates to the pinned SHA.
 # Keep subset.txt broad and branch-independent: this checkout is shared across
 # worktrees, and narrowing sparse paths in one branch hides files from others.
+# The shared sparse-checkout file is made read-only so stale branch scripts
+# fail instead of silently replacing these roots.
 #
 # Worktree-aware (the earlier change): target/ is per-worktree working
 # state (gitignored; cargo/git don't share it across `git worktree`
@@ -26,11 +28,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # target/wpt without any indication something was off.
 # shellcheck source=../lib/repo_root.sh
 source "$SCRIPT_DIR/../lib/repo_root.sh"
+# shellcheck source=lib/shared_sparse.sh
+source "$SCRIPT_DIR/lib/shared_sparse.sh"
 
 SHA_FILE="$SCRIPT_DIR/pinned_sha.txt"
 SUBSET_FILE="$SCRIPT_DIR/subset.txt"
-# Do not add a per-task path here. SUBSET_FILE feeds the shared WPT checkout;
-# `sparse-checkout reapply` removes paths omitted by whichever branch runs us.
 REMOTE_URL="${WPT_REMOTE_URL:-https://github.com/web-platform-tests/wpt.git}"
 
 # git-common-dir is the main worktree's real .git directory even when this
@@ -52,6 +54,13 @@ if [ -z "$SHA" ]; then
   exit 1
 fi
 
+# This checkout is shared across branches. Enforce the stable roots before
+# touching the shared repository; never accept a task-specific sparse subset.
+if ! SUBSET_CONTENT="$(validate_shared_wpt_subset "$SUBSET_FILE")"; then
+  exit 2
+fi
+mapfile -t EXPECTED_SUBSET_PATTERNS <<< "$SUBSET_CONTENT"
+
 if [ ! -d "$WPT_DIR/.git" ]; then
   mkdir -p "$WPT_DIR"
   git -C "$WPT_DIR" init -q
@@ -64,9 +73,11 @@ fi
 git -C "$WPT_DIR" remote set-url origin "$REMOTE_URL" 2>/dev/null \
   || git -C "$WPT_DIR" remote add origin "$REMOTE_URL"
 
-# Write sparse-checkout patterns (strip comments and blanks)
-mkdir -p "$WPT_DIR/.git/info"
-grep -v '^#' "$SUBSET_FILE" | sed '/^[[:space:]]*$/d' > "$WPT_DIR/.git/info/sparse-checkout"
+# Atomically install the shared roots as a read-only inode. A stale branch's
+# old fetch.sh fails to open the path; an already-open writer is detached by
+# the rename before sparse-checkout reapply reads the canonical file.
+SPARSE_CHECKOUT_FILE="$WPT_DIR/.git/info/sparse-checkout"
+install_locked_shared_sparse_file "$SPARSE_CHECKOUT_FILE" "${EXPECTED_SUBSET_PATTERNS[@]}"
 
 # Fetch only the pinned SHA, filter=blob:none to keep it lean. Skip when
 # already at $SHA: with WPT_DIR now shared across every worktree of this
@@ -79,10 +90,9 @@ if [ "$(git -C "$WPT_DIR" rev-parse HEAD 2>/dev/null || true)" != "$SHA" ]; then
   git -C "$WPT_DIR" checkout -q --detach FETCH_HEAD
 fi
 
-# Re-apply the current sparse patterns even when HEAD already equals the pin.
-# This matters when a worktree adds a focused test path to subset.txt after a
-# previous fetch: changing sparse-checkout patterns alone does not materialize
-# newly selected blobs.
+# Re-apply the fixed shared roots even when HEAD already equals the pin.
+# Per-task path changes are rejected above; category/theme filters belong in
+# survey_reftests.py, not in the shared checkout config.
 git -C "$WPT_DIR" sparse-checkout reapply
 
 if [ "$REPO_ROOT" != "$MAIN_WORKTREE_ROOT" ]; then

@@ -185,6 +185,33 @@ def sparse_checkout_patterns(root: Path) -> list[str] | None:
     ]
 
 
+def tracked_wpt_paths(root: Path) -> set[str] | None:
+    """List indexed paths only when root is the top-level WPT Git checkout."""
+    try:
+        top_level = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if Path(top_level.stdout.strip()).resolve() != root.resolve():
+        return None
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "--cached", "--full-name", "-z"],
+            check=True,
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ValueError(f"could not list tracked WPT paths: {error}") from error
+    return {os.fsdecode(path) for path in result.stdout.split(b"\0") if path}
+
+
 def scan_reftests(
     root: Path,
     baseline: set[str],
@@ -196,33 +223,45 @@ def scan_reftests(
 
     root = root.resolve()
     errors: list[str] = []
-    test_files: list[Path] = []
+    prefix = category_filter.strip("/") if category_filter else None
+    indexed_paths = tracked_wpt_paths(root)
+    if indexed_paths is not None:
+        # Ignore local untracked fixtures so the inventory matches the pinned
+        # WPT checkout rather than leftovers from another task.
+        test_files = [
+            root / relative
+            for relative in sorted(indexed_paths)
+            if (not prefix or relative == prefix or relative.startswith(prefix + "/"))
+            and Path(relative).suffix.casefold() in HTML_EXTENSIONS
+            and (root / relative).is_file()
+        ]
+    else:
+        test_files = []
 
-    def on_walk_error(error: OSError) -> None:
-        errors.append(f"scan error: {error}")
+        def on_walk_error(error: OSError) -> None:
+            errors.append(f"scan error: {error}")
 
-    for directory, names, filenames in os.walk(root, onerror=on_walk_error):
-        relative_directory = Path(directory).relative_to(root).as_posix()
-        names[:] = sorted(name for name in names if name != ".git")
-        if category_filter:
-            normalized = category_filter.strip("/")
-            directory_id = "" if relative_directory == "." else relative_directory
-            relevant = (
-                not directory_id
-                or directory_id == normalized
-                or directory_id.startswith(normalized + "/")
-                or normalized.startswith(directory_id + "/")
-            )
-            if not relevant:
-                names[:] = []
-                continue
-        for filename in sorted(filenames):
-            path = Path(directory) / filename
-            if path.suffix.casefold() in HTML_EXTENSIONS:
-                test_files.append(path)
+        for directory, names, filenames in os.walk(root, onerror=on_walk_error):
+            relative_directory = Path(directory).relative_to(root).as_posix()
+            names[:] = sorted(name for name in names if name != ".git")
+            if category_filter:
+                normalized = category_filter.strip("/")
+                directory_id = "" if relative_directory == "." else relative_directory
+                relevant = (
+                    not directory_id
+                    or directory_id == normalized
+                    or directory_id.startswith(normalized + "/")
+                    or normalized.startswith(directory_id + "/")
+                )
+                if not relevant:
+                    names[:] = []
+                    continue
+            for filename in sorted(filenames):
+                path = Path(directory) / filename
+                if path.suffix.casefold() in HTML_EXTENSIONS:
+                    test_files.append(path)
 
     entries: list[dict] = []
-    prefix = category_filter.strip("/") if category_filter else None
     for path in sorted(test_files):
         test_id = path.relative_to(root).as_posix()
         category, theme, theme_source = category_and_theme(test_id)

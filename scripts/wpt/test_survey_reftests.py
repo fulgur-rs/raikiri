@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import io
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -144,6 +146,88 @@ class SurveyReftestsTests(unittest.TestCase):
             self.assertEqual(status, 2)
             self.assertIn("must not overwrite the baseline", errors.getvalue())
             self.assertEqual(self.baseline_path.read_bytes(), original)
+
+    def test_git_wpt_scan_ignores_untracked_fixtures(self) -> None:
+        self.git(["init", "-q"])
+        self.git(["config", "user.name", "Survey Test"])
+        self.git(["config", "user.email", "survey@example.invalid"])
+        self.git(["add", "-A"])
+        self.git(["commit", "-qm", "fixture WPT tree"])
+        self.write(
+            "css/css-text/untracked-case.html",
+            '<link rel="match" href="reference/ref.html">',
+        )
+
+        entries, errors = scan_reftests(self.root, set())
+        self.assertFalse(errors)
+        self.assertNotIn("css/css-text/untracked-case.html", {entry["test_id"] for entry in entries})
+        self.assertNotEqual(checkout_revision(self.root), "unknown")
+
+    def test_subset_validation_requires_exact_root_lines(self) -> None:
+        subset_file = Path(self.temp.name) / "subset.txt"
+        subset_file.write_text("# stable roots\ncss\nfonts\nimages\n", encoding="utf-8")
+        valid = self.run_shared_sparse(
+            'set -e; source "$1"; validate_shared_wpt_subset "$2"', subset_file
+        )
+        self.assertEqual(valid.returncode, 0, valid.stderr)
+        self.assertEqual(valid.stdout, "css\nfonts\nimages\n")
+
+        subset_file.write_text("css fonts images\n", encoding="utf-8")
+        invalid = self.run_shared_sparse(
+            'source "$1"; validate_shared_wpt_subset "$2"', subset_file
+        )
+        self.assertEqual(invalid.returncode, 2)
+        self.assertIn("must contain exactly", invalid.stderr)
+
+    def test_atomic_sparse_install_detaches_a_stale_open_writer(self) -> None:
+        sparse_file = Path(self.temp.name) / "shared/.git/info/sparse-checkout"
+        sparse_file.parent.mkdir(parents=True)
+        sparse_file.write_text("css\nfonts\nimages\n", encoding="utf-8")
+        old_inode = sparse_file.stat().st_ino
+        script = (
+            'set -e; source "$1"; exec 3>"$2"; '
+            'install_locked_shared_sparse_file "$2" css fonts images; '
+            'printf "css/css-text\n" >&3; exec 3>&-'
+        )
+
+        result = self.run_shared_sparse(script, sparse_file)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sparse_file.read_text(encoding="utf-8"), "css\nfonts\nimages\n")
+        self.assertNotEqual(sparse_file.stat().st_ino, old_inode)
+        self.assertEqual(sparse_file.stat().st_mode & 0o222, 0)
+
+        rerun = self.run_shared_sparse(
+            'set -e; source "$1"; install_locked_shared_sparse_file "$2" css fonts images',
+            sparse_file,
+        )
+        self.assertEqual(rerun.returncode, 0, rerun.stderr)
+        self.assertEqual(sparse_file.read_text(encoding="utf-8"), "css\nfonts\nimages\n")
+        self.assertEqual(sparse_file.stat().st_mode & 0o222, 0)
+
+    def test_locked_unexpected_sparse_roots_are_not_overwritten(self) -> None:
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root can bypass file mode permissions")
+        sparse_file = Path(self.temp.name) / "sparse-checkout"
+        sparse_file.write_text("css/css-text\n", encoding="utf-8")
+        sparse_file.chmod(0o444)
+        result = self.run_shared_sparse(
+            'source "$1"; install_locked_shared_sparse_file "$2" css fonts images',
+            sparse_file,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("locked with unexpected roots", result.stderr)
+        self.assertEqual(sparse_file.read_text(encoding="utf-8"), "css/css-text\n")
+
+    def run_shared_sparse(self, script: str, *args: Path) -> subprocess.CompletedProcess[str]:
+        helper = Path(__file__).parent / "lib" / "shared_sparse.sh"
+        return subprocess.run(
+            ["bash", "-c", script, "bash", str(helper), *(str(arg) for arg in args)],
+            capture_output=True,
+            text=True,
+        )
+
+    def git(self, args: list[str]) -> None:
+        subprocess.run(["git", "-C", str(self.root), *args], check=True, capture_output=True)
 
     def test_revision_is_unknown_for_non_git_wpt_root_inside_parent_repo(self) -> None:
         repository_root = Path(__file__).resolve().parents[2]
