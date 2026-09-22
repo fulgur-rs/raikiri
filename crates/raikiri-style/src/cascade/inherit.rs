@@ -599,7 +599,7 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// page context 自身が root element になるわけではないため。element 経路で
 /// この特別扱いを担うのは [`SpecifiedValues::finalize_as_root`]。
 ///
-/// The public contract is [`PageCascadeResult::declarations`].
+/// The public contract is [`crate::PageCascadeResult::declarations`].
 ///
 /// なお `Percent` は「未解決」ではない — box property の computed value は
 /// percentage のままである (CSS Paged Media 3 §6 の "Percentage values on the
@@ -7308,6 +7308,14 @@ mod tests {
             &mut cv,
         );
         assert_eq!(cv.min_height, expect_calc);
+        apply_value(
+            PropertyValue::CalcLengthPercentage {
+                key: PropertyKey::MinBlockSize,
+                value,
+            },
+            &mut cv,
+        );
+        assert_eq!(cv.min_block_size, Some(expect_calc));
         apply_value(
             PropertyValue::CalcLengthPercentage {
                 key: PropertyKey::Top,

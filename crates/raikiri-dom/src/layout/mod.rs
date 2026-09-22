@@ -10128,6 +10128,51 @@ mod tests {
     }
 
     #[test]
+    fn apply_computed_to_style_tracks_logical_min_block_provenance() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let avoided = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("min-block-size: 40px; break-inside: avoid"),
+        );
+        let auto = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("min-block-size: 40px; break-inside: auto"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        apply_computed_to_style(&mut doc, &cr);
+        assert!(doc.nodes[avoided].has_logical_min_block_size);
+        assert!(!doc.nodes[auto].has_logical_min_block_size);
+        assert_eq!(
+            doc.nodes[avoided].style.min_size.height,
+            LengthPercentageAuto::length(40.0)
+        );
+    }
+
+    #[test]
+    fn multicol_min_constrained_child_requires_all_constraints() {
+        let mut doc = Document::new();
+        let parent = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+        doc.nodes[child].has_logical_min_block_size = true;
+        doc.nodes[child].style.min_size.height = LengthPercentageAuto::length(40.0);
+
+        assert!(multicol_has_min_constrained_child(&doc, parent));
+
+        doc.nodes[child].style.min_size.height = LengthPercentageAuto::auto();
+        assert!(!multicol_has_min_constrained_child(&doc, parent));
+    }
+
+    #[test]
     fn apply_computed_to_style_bridges_direction_to_taffy() {
         use raikiri_style::{build_rule_tree, cascade};
 
