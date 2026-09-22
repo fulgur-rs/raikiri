@@ -234,3 +234,94 @@ fn observer_failure_is_a_structural_sink_error_and_skips_completion() {
     assert_eq!(sink.pages.len(), 1, "page is accepted before its events");
     assert!(sink.summary.is_none());
 }
+
+#[test]
+fn render_streaming_resolves_page_geometry_from_page_contexts() {
+    let stylesheet = r#"
+        @page { size: 100px 100px; margin: 5px; }
+        @page :first { size: 100px 120px; margin: 10px; }
+        @page :right { padding: 3px; }
+        @page :left { size: 120px 100px; margin: 7px; }
+        @page wide { size: 200px 200px; margin: 20px; }
+    "#;
+    let options = raikiri::ParseOptions {
+        extra_stylesheets: &[stylesheet],
+        network: None,
+        base_url: None,
+    };
+    let doc = parse_html(
+        &br#"<html><body><div style="height:90px">first</div><div style="page:wide;break-before:page;height:10px">wide</div><div style="height:180px">tail</div></body></html>"#[..],
+        &options,
+    )
+    .expect("parse");
+    let mut sink = RecordingSink::default();
+    render_streaming(
+        &doc,
+        defaults(100.0, 100.0),
+        &NoopResolver,
+        StreamingConfig::default(),
+        &mut sink,
+    )
+    .expect("render");
+    assert!(sink.pages.len() >= 2);
+    let first = &sink.pages[0];
+    assert_eq!(first.page_box.height, 120.0);
+    assert_eq!(first.margins.top, 10.0);
+    assert_eq!(first.content_insets.left, 3.0);
+
+    let wide = sink
+        .pages
+        .iter()
+        .find(|page| page.page_name.as_deref() == Some("wide"))
+        .expect("named page geometry");
+    assert_eq!(wide.page_box.width, 200.0);
+    assert_eq!(wide.page_box.height, 200.0);
+    assert_eq!(wide.margins.left, 20.0);
+    assert_eq!(wide.content_insets.left, 0.0);
+
+    let left = sink
+        .pages
+        .iter()
+        .find(|page| page.page_box.width == 120.0)
+        .expect("left-page geometry");
+    assert_eq!(left.margins.left, 7.0);
+    assert_eq!(left.content_box.x, 7.0);
+    assert!(
+        sink.pages
+            .windows(2)
+            .any(|pages| pages[0].page_box != pages[1].page_box)
+    );
+}
+
+#[test]
+fn render_streaming_resolves_named_first_page_before_layout() {
+    let stylesheet = r#"
+        @page { size: 100px 100px; margin: 5px; }
+        @page cover { size: 130px 140px; margin: 11px; }
+    "#;
+    let options = raikiri::ParseOptions {
+        extra_stylesheets: &[stylesheet],
+        network: None,
+        base_url: None,
+    };
+    let doc = parse_html(
+        &br#"<html><body><div style="page:cover;height:10px">cover</div><div style="break-before:page;height:10px">next</div></body></html>"#[..],
+        &options,
+    )
+    .expect("parse");
+    let mut sink = RecordingSink::default();
+    render_streaming(
+        &doc,
+        defaults(100.0, 100.0),
+        &NoopResolver,
+        StreamingConfig::default(),
+        &mut sink,
+    )
+    .expect("render");
+
+    let first = sink.pages.first().expect("first page");
+    assert_eq!(first.page_name.as_deref(), Some("cover"));
+    assert_eq!(first.page_box.width, 130.0);
+    assert_eq!(first.page_box.height, 140.0);
+    assert_eq!(first.margins.left, 11.0);
+}

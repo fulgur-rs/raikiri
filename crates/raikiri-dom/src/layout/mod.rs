@@ -12,7 +12,7 @@ use raikiri_traits::{
     NodeId, NodeKind, PageFragment, PageFragmentEvent, PageFragmentGeometry,
     PageFragmentGeometryTable, PageFragmentInsets, PageFragmentItem, PageFragmentKind,
     PageFragmentLineRange, PageFragmentLink, PageFragmentLinkEvent, PageFragmentOrientation,
-    PageFragmentRect,
+    PageFragmentPageGeometry, PageFragmentRect,
 };
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -8621,18 +8621,16 @@ pub fn layout_page_fragments(
     ))
 }
 
-/// Project an already-paginated document into neutral page fragment snapshots.
+/// Resolve one producer-owned page metadata record from a page cascade.
 ///
-/// `slices` must come from one of the `layout_pages*` functions and therefore
-/// describe the same post-layout `document`.  This separate projection helper
-/// lets resolver-aware and scheduled-page callers retain their existing layout
-/// entry point while consuming the same public fragment model.
-pub fn page_fragments_from_slices(
-    document: &Document,
+/// The returned `content_box.x/y` is the physical page-local offset for the
+/// page's content-relative item rectangles. This helper keeps the conversion
+/// in `raikiri-dom` so consumers do not recompute page margins or insets.
+pub fn resolve_page_fragment_geometry(
     cascade: &CascadeResult,
     page_box: PageBox,
-    slices: &[PageSlice],
-) -> Vec<PageFragment> {
+    page_index: u32,
+) -> PageFragmentPageGeometry {
     let margins = page_margins(cascade, page_box);
     let content_insets = page_content_insets(cascade, page_box);
     let content_width = margins.content_width(page_box).max(0.0);
@@ -8656,7 +8654,49 @@ pub fn page_fragments_from_slices(
     } else {
         PageFragmentOrientation::Portrait
     };
+    PageFragmentPageGeometry::new(
+        page_index,
+        page_box,
+        margins,
+        content_insets,
+        content_box,
+        orientation,
+    )
+}
 
+/// Project an already-paginated document using one fixed geometry for all pages.
+///
+/// This compatibility entry point remains valid for fixed-page callers. New
+/// page-aware callers should use [`page_fragments_from_slices_with_page_geometry`]
+/// so each page carries its producer-resolved metadata.
+pub fn page_fragments_from_slices(
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    slices: &[PageSlice],
+) -> Vec<PageFragment> {
+    let geometries: Vec<_> = slices
+        .iter()
+        .map(|slice| resolve_page_fragment_geometry(cascade, page_box, slice.page_index))
+        .collect();
+    page_fragments_from_slices_with_page_geometry(document, cascade, page_box, slices, &geometries)
+}
+
+/// Project slices using one resolved geometry record for each page.
+///
+/// `page_geometries` is producer-owned resolved metadata. A missing page index
+/// falls back to `page_box` and the supplied cascade for compatibility, but a
+/// page-aware caller should provide every emitted page explicitly. Item
+/// rectangles remain relative to each page's `content_box` origin; consumers
+/// add `content_box.x/y` exactly once when placing them on the physical page.
+pub fn page_fragments_from_slices_with_page_geometry(
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    slices: &[PageSlice],
+    page_geometries: &[PageFragmentPageGeometry],
+) -> Vec<PageFragment> {
+    let fallback_geometry = resolve_page_fragment_geometry(cascade, page_box, 0);
     let mut ordered_slices: Vec<&PageSlice> = slices.iter().collect();
     ordered_slices.sort_by(|left, right| {
         left.page_index
@@ -8666,15 +8706,16 @@ pub fn page_fragments_from_slices(
     let mut pages: Vec<PageFragment> = ordered_slices
         .iter()
         .map(|slice| {
-            PageFragment::with_metadata(
+            let geometry = page_geometries
+                .iter()
+                .find(|geometry| geometry.page_index == slice.page_index)
+                .copied()
+                .unwrap_or_else(|| fallback_geometry.with_page_index(slice.page_index));
+            PageFragment::with_page_geometry(
                 slice.page_index,
-                page_box,
-                margins,
-                content_insets,
-                content_box,
+                geometry,
                 slice.content_origin_y,
                 slice.page_name.clone(),
-                orientation,
             )
         })
         .collect();
@@ -8789,7 +8830,13 @@ pub fn page_fragments_from_slices(
                 .get(page_slot + 1)
                 .map(|next| next.content_origin_y)
                 .filter(|next| next.is_finite() && *next > page_start)
-                .unwrap_or(page_start + content_height);
+                .unwrap_or_else(|| {
+                    page_start
+                        + pages
+                            .get(page_slot)
+                            .map(|page| page.content_box.height)
+                            .unwrap_or(0.0)
+                });
             if !page_start.is_finite() || !page_end.is_finite() || page_end <= page_start {
                 continue;
             }

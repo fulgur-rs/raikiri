@@ -32,6 +32,63 @@ use raikiri_style::{Length, PageOrientation, PageSize, PageSizeKeyword};
 use smol_str::SmolStr;
 use url::Url;
 
+/// Resolved geometry metadata for one page in a page-fragment stream.
+///
+/// The values are page-local physical metadata: `content_box.x/y` is the
+/// offset from the physical page origin, while a [`PageFragmentItem`]'s
+/// rectangle is relative to that content-box origin. A producer supplies one
+/// value per page when page size, margins, or insets vary; consumers must not
+/// recompute these values from `page_name`.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct PageFragmentPageGeometry {
+    /// Zero-based page index to which this metadata belongs.
+    pub page_index: u32,
+    /// Resolved physical page box in CSS pixels.
+    pub page_box: PageBox,
+    /// Resolved page margins in CSS pixels.
+    pub margins: PageFragmentInsets,
+    /// Resolved border/padding inset inside the page margin area.
+    pub content_insets: PageFragmentInsets,
+    /// Page-local physical origin and flow dimensions in CSS pixels.
+    ///
+    /// `x/y` is the offset a consumer adds once to an item rectangle. The
+    /// current producer keeps horizontal page insets out of the flow
+    /// containing-block width, so `width` is the scheduled flow width while
+    /// `x/y` still includes the resolved margin and inset.
+    pub content_box: PageFragmentRect,
+    /// Physical orientation derived from `page_box`.
+    pub orientation: PageFragmentOrientation,
+}
+
+impl PageFragmentPageGeometry {
+    /// Construct resolved metadata for one page.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        page_index: u32,
+        page_box: PageBox,
+        margins: PageFragmentInsets,
+        content_insets: PageFragmentInsets,
+        content_box: PageFragmentRect,
+        orientation: PageFragmentOrientation,
+    ) -> Self {
+        Self {
+            page_index,
+            page_box,
+            margins,
+            content_insets,
+            content_box,
+            orientation,
+        }
+    }
+
+    /// Return the same metadata for another page index.
+    pub fn with_page_index(mut self, page_index: u32) -> Self {
+        self.page_index = page_index;
+        self
+    }
+}
+
 /// One committed page of neutral layout geometry.
 ///
 /// The producer is `raikiri-dom`'s pagination layer. The type deliberately
@@ -51,7 +108,12 @@ pub struct PageFragment {
     pub margins: PageFragmentInsets,
     /// Resolved border/padding inset inside the page margin area.
     pub content_insets: PageFragmentInsets,
-    /// Effective page content rectangle in page-local CSS pixels.
+    /// Page-local physical origin and flow dimensions in CSS pixels.
+    ///
+    /// `x/y` is the offset a consumer adds once to an item rectangle. The
+    /// current producer keeps horizontal page insets out of the flow
+    /// containing-block width, so `width` is the scheduled flow width while
+    /// `x/y` still includes the resolved margin and inset.
     pub content_box: PageFragmentRect,
     /// The page's origin in the shared document body-content coordinate space.
     pub content_origin_y: f32,
@@ -69,6 +131,26 @@ impl PageFragment {
         Self::default()
     }
 
+    /// Construct a page snapshot from independently resolved page metadata.
+    pub fn with_page_geometry(
+        page_index: u32,
+        geometry: PageFragmentPageGeometry,
+        content_origin_y: f32,
+        page_name: Option<String>,
+    ) -> Self {
+        Self {
+            page_index,
+            page_box: geometry.page_box,
+            margins: geometry.margins,
+            content_insets: geometry.content_insets,
+            content_box: geometry.content_box,
+            content_origin_y,
+            page_name,
+            orientation: geometry.orientation,
+            items: Vec::new(),
+        }
+    }
+
     /// Construct a page snapshot with resolved metadata and no items.
     #[allow(clippy::too_many_arguments)]
     pub fn with_metadata(
@@ -81,17 +163,19 @@ impl PageFragment {
         page_name: Option<String>,
         orientation: PageFragmentOrientation,
     ) -> Self {
-        Self {
+        Self::with_page_geometry(
             page_index,
-            page_box,
-            margins,
-            content_insets,
-            content_box,
+            PageFragmentPageGeometry::new(
+                page_index,
+                page_box,
+                margins,
+                content_insets,
+                content_box,
+                orientation,
+            ),
             content_origin_y,
             page_name,
-            orientation,
-            items: Vec::new(),
-        }
+        )
     }
 
     /// Whether this page contains no visible node placements.
@@ -179,10 +263,13 @@ pub enum PageFragmentKind {
 /// One source-node placement on a page.
 ///
 /// This is the neutral counterpart to fulgur's `Fragment`: `page_index` is
-/// zero-based and `rect` is expressed in CSS pixels in the page content-box
-/// coordinate system. The containing [`PageFragment`] carries the resolved
-/// page metadata; the duplicated index keeps node-centric geometry usable
-/// without retaining the page-vector wrapper.
+/// zero-based and `rect` is expressed in CSS pixels relative to the containing
+/// page's `content_box` origin. To place it in the physical page coordinate
+/// system, add `PageFragment::content_box.x/y` exactly once; do not add
+/// `content_origin_y`, which is only the shared document-space slice selector.
+/// The containing [`PageFragment`] carries the resolved page metadata; the
+/// duplicated index keeps node-centric geometry usable without retaining the
+/// page-vector wrapper.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct PageFragmentItem {
@@ -2018,6 +2105,46 @@ mod running_template_id_tests {
 #[cfg(test)]
 mod page_fragment_tests {
     use super::*;
+
+    #[test]
+    fn page_geometry_builders_preserve_metadata_and_page_index() {
+        let mut page_box = PageBox::new();
+        page_box.width = 100.0;
+        page_box.height = 120.0;
+        let margins = PageFragmentInsets::new(10.0, 11.0, 12.0, 13.0);
+        let insets = PageFragmentInsets::new(2.0, 3.0, 4.0, 5.0);
+        let content_box = PageFragmentRect::new(18.0, 12.0, 74.0, 94.0);
+        let geometry = PageFragmentPageGeometry::new(
+            0,
+            page_box,
+            margins,
+            insets,
+            content_box,
+            PageFragmentOrientation::Portrait,
+        );
+        let shifted = geometry.with_page_index(3);
+        assert_eq!(shifted.page_index, 3);
+        assert_eq!(shifted.page_box, page_box);
+        assert_eq!(shifted.content_box, content_box);
+
+        let page = PageFragment::with_metadata(
+            3,
+            page_box,
+            margins,
+            insets,
+            content_box,
+            240.0,
+            Some(String::from("named")),
+            PageFragmentOrientation::Portrait,
+        );
+        assert_eq!(page.page_index, 3);
+        assert_eq!(page.page_box, page_box);
+        assert_eq!(page.margins, margins);
+        assert_eq!(page.content_insets, insets);
+        assert_eq!(page.content_box, content_box);
+        assert_eq!(page.content_origin_y, 240.0);
+        assert_eq!(page.page_name.as_deref(), Some("named"));
+    }
 
     #[test]
     fn fragment_item_split_and_repeat_semantics_are_distinct() {
