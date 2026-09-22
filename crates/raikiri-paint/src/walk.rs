@@ -5463,9 +5463,17 @@ fn paint_order_key(cascade: &CascadeResult, node_id: usize) -> (u8, i32) {
     let computed = &cascade.computed[node_id];
     match (&computed.position, computed.z_index) {
         // In-flow boxes paint before positioned descendants with an auto
-        // z-index. Keep static boxes in the normal bucket, but place
-        // absolute/fixed (and relative) auto-z siblings after them so a
-        // positioned cover can correctly occlude later in-flow content.
+        // z-index. Keep ordinary static boxes in the normal bucket, but
+        // place flex containers with positioned descendants alongside
+        // auto-z siblings so their later absolute child paints in tree order.
+        (PositionValue::Static, _)
+            if matches!(
+                computed.display,
+                DisplayValue::Flex | DisplayValue::InlineFlex
+            ) =>
+        {
+            (2, 0)
+        }
         (PositionValue::Static, _) => (1, 0),
         (_, ZIndexValue::Auto) => (2, 0),
         (_, ZIndexValue::Integer(value)) if value < 0 => (0, value),
