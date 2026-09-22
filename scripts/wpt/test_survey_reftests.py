@@ -49,10 +49,10 @@ class SurveyReftestsTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(contents, encoding="utf-8")
 
-    def survey(self, category: str | None = None):
+    def survey(self, category: str | None = None, theme: str | None = None):
         baseline = read_baseline(self.baseline_path)
-        entries, errors = scan_reftests(self.root, baseline, category)
-        return make_report(self.root, self.baseline_path, entries, errors, category)
+        entries, errors = scan_reftests(self.root, baseline, category, theme)
+        return make_report(self.root, self.baseline_path, entries, errors, category, theme)
 
     def test_counts_multiple_match_and_mismatch_pairs_and_baseline_membership(self) -> None:
         report = self.survey("css/css-text")
@@ -111,6 +111,12 @@ class SurveyReftestsTests(unittest.TestCase):
             for test in theme["tests"]
         }
         self.assertEqual(ids, {"css/css-text/white-space/ws-case.html"})
+
+    def test_theme_filter_returns_only_the_selected_root_file_group(self) -> None:
+        report = self.survey("css/css-text", "(root files)/root-case")
+        tests = report["categories"]["css/css-text"]["themes"][0]["tests"]
+        self.assertEqual(len(tests), 2)
+        self.assertTrue(all("root-case" in test["test_id"] for test in tests))
 
     def test_sparse_scope_is_reported(self) -> None:
         sparse_file = self.root / ".git" / "info" / "sparse-checkout"

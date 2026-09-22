@@ -136,7 +136,12 @@ def sparse_checkout_patterns(root: Path) -> list[str] | None:
     ]
 
 
-def scan_reftests(root: Path, baseline: set[str], category_filter: str | None = None) -> tuple[list[dict], list[str]]:
+def scan_reftests(
+    root: Path,
+    baseline: set[str],
+    category_filter: str | None = None,
+    theme_filter: str | None = None,
+) -> tuple[list[dict], list[str]]:
     if not root.is_dir():
         raise ValueError(f"WPT root not found: {root}")
 
@@ -173,6 +178,8 @@ def scan_reftests(root: Path, baseline: set[str], category_filter: str | None = 
         test_id = path.relative_to(root).as_posix()
         category, theme, theme_source = category_and_theme(test_id)
         if prefix and not (test_id == prefix or test_id.startswith(prefix + "/")):
+            continue
+        if theme_filter and theme != theme_filter:
             continue
         try:
             source = path.read_text(encoding="utf-8")
@@ -217,7 +224,14 @@ def scan_reftests(root: Path, baseline: set[str], category_filter: str | None = 
     return entries, errors
 
 
-def make_report(root: Path, baseline_path: Path, entries: list[dict], errors: list[str], category_filter: str | None) -> dict:
+def make_report(
+    root: Path,
+    baseline_path: Path,
+    entries: list[dict],
+    errors: list[str],
+    category_filter: str | None,
+    theme_filter: str | None,
+) -> dict:
     sparse_patterns = sparse_checkout_patterns(root)
     groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for entry in entries:
@@ -253,6 +267,7 @@ def make_report(root: Path, baseline_path: Path, entries: list[dict], errors: li
         "viewport_css_px": [800, 600],
         "baseline_path": str(baseline_path),
         "category_filter": category_filter,
+        "theme_filter": theme_filter,
         "summary": {
             "categories": len(categories),
             "test_files_with_reftest_links": len(entries),
@@ -282,6 +297,7 @@ def render_text(report: dict, list_tests: bool) -> str:
         f"Checkout scope: {report['checkout_scope']}"
         + (f" ({len(report['sparse_checkout_patterns'])} sparse patterns)" if report["sparse_checkout_patterns"] is not None else ""),
         f"Viewport: {report['viewport_css_px'][0]}x{report['viewport_css_px'][1]} CSS px",
+        f"Filter: category={report['category_filter'] or '*'}, theme={report['theme_filter'] or '*'}",
         "Counts: "
         f"{summary['test_files_with_reftest_links']} test files / "
         f"{summary['reference_pairs']} reference pairs; "
@@ -320,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--wpt-root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     parser.add_argument("--category", help="only include test IDs under this WPT path prefix")
+    parser.add_argument("--theme", help="only include the exact survey theme label")
     parser.add_argument("--format", choices=("text", "json"), default="text")
     parser.add_argument("--output", type=Path, help="write the report here instead of stdout")
     parser.add_argument("--list-tests", action="store_true", help="include each test ID in text output")
@@ -327,8 +344,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         baseline = read_baseline(args.baseline)
-        entries, errors = scan_reftests(args.wpt_root, baseline, args.category)
-        report = make_report(args.wpt_root, args.baseline, entries, errors, args.category)
+        entries, errors = scan_reftests(args.wpt_root, baseline, args.category, args.theme)
+        report = make_report(args.wpt_root, args.baseline, entries, errors, args.category, args.theme)
     except (OSError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
