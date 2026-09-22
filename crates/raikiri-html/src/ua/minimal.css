@@ -450,3 +450,7 @@ thead { display: table-header-group; }
 tfoot { display: table-footer-group; }
 tr { display: table-row; }
 td, th { display: table-cell; }
+/* HTML UA behavior: the internal center value centers a header only when
+ * its inherited table alignment is the initial `start` value; otherwise it
+ * follows the inherited alignment. */
+th { text-align: -internal-center; }

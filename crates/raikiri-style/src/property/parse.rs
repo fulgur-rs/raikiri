@@ -6919,7 +6919,9 @@ fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<BoxSizing> {
 /// (CSS Text 3 §6.1 <https://www.w3.org/TR/css-text-3/#text-align-property>)。
 ///
 /// Spec value grammar (§6.1): `start | end | left | right | center | justify |
-/// match-parent | justify-all`。ASCII case-insensitive で ident を比較する
+/// match-parent | justify-all`。加えて inherited property の CSS-wide `inherit`
+/// と HTML UA-only `-internal-center` を内部 cascade 用に受理する。ASCII
+/// case-insensitive で ident を比較する
 /// (CSS spec 慣行、sibling [`parse_string_fetch`] / [`parse_content_part`] /
 /// [`parse_content_text_keyword`] と同 flavor)。
 ///
@@ -6944,6 +6946,8 @@ fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> {
         "center" => Some(TextAlign::Center),
         "justify" => Some(TextAlign::Justify),
         "match-parent" => Some(TextAlign::MatchParent),
+        "inherit" => Some(TextAlign::Inherit),
+        "-internal-center" => Some(TextAlign::InternalCenter),
         "justify-all" => Some(TextAlign::JustifyAll),
         _ => None,
     }
@@ -6967,9 +6971,9 @@ fn parse_hanging_punctuation(input: &mut Parser<'_, '_>) -> Option<HangingPunctu
 ///
 /// # Scope carving ([`Direction`] doc-comment に詳述)
 ///
-/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
-///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical)。
+/// - **部分対応**: CSS-wide `inherit` は computed cascade で親の値へ解決する。
+///   他の CSS-wide keyword (`initial` / `unset` / `revert` / `revert-layer`) は
+///   未実装で silent drop。
 /// - **(a) spec-invalid**: `ltr` / `rtl` 以外の ident は silent drop = `None`。
 fn parse_direction(input: &mut Parser<'_, '_>) -> Option<Direction> {
     let ident = input.expect_ident().ok()?.clone();

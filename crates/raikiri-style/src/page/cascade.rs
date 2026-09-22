@@ -6633,6 +6633,8 @@ mod tests {
                 // この「未解決の raw 値」を検査しているので、`None` に変えると
                 // その negative control が意味を失う。
                 TextAlign::MatchParent => Some("text-align: match-parent"),
+                TextAlign::Inherit => Some("text-align: inherit"),
+                TextAlign::InternalCenter => Some("text-align: -internal-center"),
             }
         }
         fn sides<T: Copy>(
