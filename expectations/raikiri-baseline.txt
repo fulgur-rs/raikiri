@@ -533,6 +533,8 @@ css/css-break/borders-000.html
 css/css-break/overflow-clip-013.html
 # --- css-break flex float height propagation (exact, 800x600, 2026-09-22) ---
 css/css-break/flexbox/flex-fragmented-with-float-descendant-001.html
+# --- css-break flex column trailing item (exact, 800x600, 2026-09-22) ---
+css/css-break/flexbox/single-line-column-flex-fragmentation-060-print.html
 # --- css-page image-resource remeasurement (exact, 800x600, 2026-09-21) ---
 css/css-break/zero-height-page-break-001-print.html
 css/css-page/background-image-only-for-print.html
