@@ -3702,11 +3702,21 @@ fn paint_document_impl(
                 let clips_overflow = !matches!(cv.overflow.x, OverflowValue::Visible)
                     || !matches!(cv.overflow.y, OverflowValue::Visible);
                 if clips_overflow {
+                    let clip_right = paint_x + layout.size.width - layout.padding.right;
+                    let clip_bottom = paint_y + paint_height - layout.padding.bottom;
                     let clip = Rect::new(
                         (paint_x + layout.padding.left) as f64,
                         (paint_y + layout.padding.top) as f64,
-                        (paint_x + layout.size.width - layout.padding.right) as f64,
-                        (paint_y + paint_height - layout.padding.bottom) as f64,
+                        if matches!(cv.overflow.x, OverflowValue::Clip) {
+                            clip_right.floor() as f64
+                        } else {
+                            clip_right as f64
+                        },
+                        if matches!(cv.overflow.y, OverflowValue::Clip) {
+                            clip_bottom.floor() as f64
+                        } else {
+                            clip_bottom as f64
+                        },
                     );
                     scene.push_clip_layer(Affine::IDENTITY, &clip);
                     stack.push(PaintFrame::PopClip);
