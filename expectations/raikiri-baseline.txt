@@ -1201,7 +1201,9 @@ css/css-flexbox/abspos/flex-abspos-staticpos-align-self-safe-003.html
 # white-space/text-wrap, word-break/overflow-wrap, text-indent, and tab-size sweeps
 css/css-text/overflow-wrap/overflow-wrap-anywhere-002.html
 css/css-text/overflow-wrap/overflow-wrap-anywhere-011.html
+css/css-text/overflow-wrap/overflow-wrap-anywhere-span-001.html
 css/css-text/overflow-wrap/overflow-wrap-break-word-002.html
+css/css-text/overflow-wrap/overflow-wrap-break-word-span-001.html
 css/css-text/overflow-wrap/overflow-wrap-min-content-size-001.html
 css/css-text/overflow-wrap/overflow-wrap-min-content-size-004.html
 css/css-text/tab-size/tab-size-integer-001.html

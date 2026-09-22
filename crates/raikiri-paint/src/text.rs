@@ -355,7 +355,7 @@ pub(crate) fn draw_text_node(
             .nth(line_start)
             .map(|line| line.metrics().block_min_coord)
             .unwrap_or(0.0);
-        let line_abs_x = abs_x + fragment_x;
+        let fragment_abs_x = abs_x + fragment_x;
         // The ordinary (non-multicol) path must retain its historical
         // absolute baseline. Only fragmentainer ranges need block-min
         // normalization; otherwise font-dependent metrics can shift a normal
@@ -372,6 +372,12 @@ pub(crate) fn draw_text_node(
                 continue; // cov:ignore: fragment range filtering is covered by the ignored foundation WPT run.
             }
             let metrics = line.metrics();
+            let line_offset = node
+                .text_line_offsets()
+                .and_then(|offsets| offsets.get(line_index))
+                .copied()
+                .unwrap_or(0.0);
+            let line_abs_x = fragment_abs_x + line_offset;
             let last_line_delta = if line_index == last_line_index {
                 text_align_last_delta(metrics, cv.text_align, cv.text_align_last, cv.direction)
             } else {

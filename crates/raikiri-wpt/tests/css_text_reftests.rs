@@ -325,3 +325,15 @@ fn white_space_line_breaking_resource_exact_slice_passes() {
         );
     }
 }
+
+/// Inline `overflow-wrap` continues at the containing line's start.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn overflow_wrap_span_boundaries_are_pixel_exact_at_800x600() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let candidates = [
+        "css/css-text/overflow-wrap/overflow-wrap-anywhere-span-001.html",
+        "css/css-text/overflow-wrap/overflow-wrap-break-word-span-001.html",
+    ];
+    assert_exact_passes(&root, &candidates);
+}

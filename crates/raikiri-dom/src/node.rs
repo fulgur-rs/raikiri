@@ -228,6 +228,13 @@ pub struct TextData {
     /// - Brush type `()` は意図的な choice: color / decoration は持たせない
     /// - Invalidation: `layout_single_page` 呼び出し毎に全 None にクリア + 再走
     pub text_layout: Option<parley::Layout<()>>,
+    /// Optional per-line horizontal offsets for inline continuation lines.
+    ///
+    /// The inline bridge shapes each text node independently, but a wrapped
+    /// descendant continues at its inline root's line start. Layout records
+    /// that small paint-time correction here instead of changing the node's
+    /// box position.
+    pub(crate) text_line_offsets: Option<Vec<f32>>,
     /// Optional line-range fragments generated for a multicolumn container.
     pub(crate) multicol_fragments: Option<Vec<MulticolTextFragment>>,
     /// Font-metric `text-indent: ch` used value prepared before Taffy layout.
@@ -419,6 +426,7 @@ impl Node {
             data: NodeData::Text(TextData {
                 text_content: text,
                 text_layout: None,
+                text_line_offsets: None,
                 multicol_fragments: None,
                 text_indent_px: None,
                 text_indent_hanging: false,
@@ -581,6 +589,15 @@ impl Node {
     pub fn text_layout(&self) -> Option<&parley::Layout<()>> {
         match &self.data {
             NodeData::Text(t) => t.text_layout.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Return per-line horizontal offsets for inline continuation lines.
+    #[inline]
+    pub fn text_line_offsets(&self) -> Option<&[f32]> {
+        match &self.data {
+            NodeData::Text(t) => t.text_line_offsets.as_deref(),
             _ => None,
         }
     }
