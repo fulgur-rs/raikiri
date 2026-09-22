@@ -9,7 +9,7 @@ use url::Url;
 use crate::dom::{NodeId, Symbol};
 use crate::net::NetworkError;
 use crate::page::TargetRegistry;
-use crate::policy::PolicyViolation;
+use crate::policy::{PolicyViolation, ResourceKind};
 use crate::resolver::ResolverError;
 
 // CSS cascade error taxonomy is owned by raikiri-style (Stylo pattern).
@@ -294,6 +294,23 @@ pub enum WarningKind {
     HtmlParseError {
         /// html5ever が返した診断メッセージ (Cow<'static, str> を String 化)。
         message: String,
+    },
+    /// A resource could not be used, but rendering continued with a fallback.
+    ResourceFallback {
+        /// Resource category.
+        kind: ResourceKind,
+        /// Absolute resource URL when one was available.
+        url: Option<Url>,
+    },
+    /// A response or aggregate resource byte limit was reached and the resource
+    /// was skipped. The caller can distinguish this from a provider failure.
+    ResourceLimitExceeded {
+        /// Resource category.
+        kind: ResourceKind,
+        /// Configured byte limit.
+        limit: u64,
+        /// Observed response or aggregate byte count.
+        actual: u64,
     },
 }
 

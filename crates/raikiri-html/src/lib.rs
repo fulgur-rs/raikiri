@@ -8,7 +8,7 @@ mod sink;
 mod types;
 pub mod ua;
 
-pub use parse::{parse, parse_with_sink};
+pub use parse::{effective_document_base_url, parse, parse_with_sink};
 pub use sink::RaikiriTreeSink;
 pub use types::{ParseOptions, UncascadedDocument};
 pub use ua::MINIMAL_UA_CSS;

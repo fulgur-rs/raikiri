@@ -7,22 +7,267 @@
 
 use parley::FontContext;
 use raikiri_dom::{
-    PageSlice, first_page_name, layout_pages_with_page_geometry_and_resolver,
-    layout_pages_with_resolver, page_fragment_events_from_pages,
+    FontFaceLoader, PageSlice, apply_font_faces, first_page_name,
+    layout_pages_with_page_geometry_and_resolver_and_base_url,
+    layout_pages_with_resolver_and_base_url, page_fragment_events_from_pages,
     page_fragments_from_slices_with_page_geometry, resolve_page_fragment_geometry,
 };
+use raikiri_style::FontFaceRegistry;
 use raikiri_traits::{
-    ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue, DocumentPlan, PageBox,
-    PageDefaults, PageEventObserver, PageFragmentPageGeometry, PlanConfig, RenderError, RenderSink,
-    RenderStatus, RenderStatus::Aborted, RenderStatus::Completed, RenderSummary, ReplacedResolver,
-    StreamingConfig,
+    ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue, DocumentPlan,
+    IntrinsicBox, PageBox, PageDefaults, PageEventObserver, PageFragment, PageFragmentPageGeometry,
+    PlanConfig, PolicyViolation, RenderError, RenderSink, RenderStatus, RenderStatus::Aborted,
+    RenderStatus::Completed, RenderSummary, RenderWarning, ReplacedResolver, ResolveDisposition,
+    ResolvedIntrinsic, ResolverError, ResolverRequest, ResourceKind, ResourcePolicy,
+    StreamingConfig, ViolationType, WarningKind,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+use std::sync::{Arc, Mutex};
 
+use crate::resources::{
+    NetworkFontFaceLoader, RenderResources, SharedRenderWarnings, parse_html_with_resources,
+    push_resource_warning, redacted_url, sanitize_policy_violation,
+};
 use crate::{
     Atom, ConsumerPropertyGrammar, ConsumerPropertyRegistration, HtmlDocument, MediaContext,
     PageContextQuery, build_cascaded_with_media_context_for_page_and_consumer_properties,
 };
+
+struct RenderExecutionResources<'a> {
+    font_context: FontContext,
+    font_faces: Option<&'a FontFaceRegistry>,
+    font_face_loader: Option<&'a dyn FontFaceLoader>,
+    effective_base_url: Option<&'a url::Url>,
+    warnings: SharedRenderWarnings,
+}
+
+impl RenderExecutionResources<'_> {
+    fn legacy() -> Self {
+        Self {
+            font_context: FontContext::new(),
+            font_faces: None,
+            font_face_loader: None,
+            effective_base_url: None,
+            warnings: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+struct FallbackRecordingResolver<'a> {
+    inner: &'a dyn ReplacedResolver,
+    policy: Option<&'a dyn ResourcePolicy>,
+    image_pixel_source: Option<&'a dyn crate::ImagePixelSource>,
+    warnings: SharedRenderWarnings,
+    seen: Mutex<HashSet<(url::Url, String)>>,
+}
+
+impl ReplacedResolver for FallbackRecordingResolver<'_> {
+    #[allow(clippy::result_large_err)]
+    fn resolve(&self, request: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
+        let url = request.url().clone();
+        let mut resolved = if let Some(policy) = self.policy {
+            let violation_type = if !policy.is_scheme_allowed(url.scheme(), ResourceKind::Image) {
+                Some(ViolationType::SchemeNotAllowed)
+            } else if !policy.is_host_allowed(url.host_str().unwrap_or(""), ResourceKind::Image) {
+                Some(ViolationType::HostNotAllowed)
+            } else {
+                None
+            };
+            if let Some(violation_type) = violation_type {
+                let violation = PolicyViolation {
+                    kind: ResourceKind::Image,
+                    url: url.clone(),
+                    violation_type,
+                    details: "replaced resource URL denied by policy".to_owned(),
+                };
+                push_resource_warning(
+                    &self.warnings,
+                    RenderWarning {
+                        kind: WarningKind::PolicyWarning {
+                            violation: sanitize_policy_violation(violation),
+                        },
+                        node_id: None,
+                        details: "replaced resource URL denied by policy".to_owned(),
+                    },
+                );
+                Ok(ResolvedIntrinsic {
+                    intrinsic: IntrinsicBox::default(),
+                    disposition: ResolveDisposition::Fallback {
+                        reason: "resource policy denied the replaced resource".to_owned(),
+                    },
+                })
+            } else {
+                self.inner.resolve(request)
+            }
+        } else {
+            self.inner.resolve(request)
+        }?;
+        if matches!(&resolved.disposition, ResolveDisposition::Ok)
+            && let (Some(source), Some(limit)) = (
+                self.image_pixel_source,
+                self.policy
+                    .and_then(|policy| policy.max_decoded_bytes(ResourceKind::Image)),
+            )
+            && let Some(image) = source.get_decoded(&url)
+        {
+            let actual = image.rgba.len() as u64;
+            if actual > limit {
+                push_resource_warning(
+                    &self.warnings,
+                    RenderWarning {
+                        kind: WarningKind::ResourceLimitExceeded {
+                            kind: ResourceKind::Image,
+                            limit,
+                            actual,
+                        },
+                        node_id: None,
+                        details: "decoded image exceeded its configured byte limit".to_owned(),
+                    },
+                );
+                resolved.intrinsic = IntrinsicBox::default();
+                resolved.disposition = ResolveDisposition::Fallback {
+                    reason: "decoded image exceeded its configured byte limit".to_owned(),
+                };
+            }
+        }
+        if let ResolveDisposition::Fallback { reason } = &resolved.disposition {
+            let mut seen = self
+                .seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if seen.insert((url.clone(), reason.clone())) {
+                push_resource_warning(
+                    &self.warnings,
+                    RenderWarning {
+                        kind: WarningKind::ResourceFallback {
+                            kind: ResourceKind::Image,
+                            url: Some(redacted_url(&url)),
+                        },
+                        node_id: None,
+                        details: reason.clone(),
+                    },
+                );
+            }
+        }
+        Ok(resolved)
+    }
+}
+
+struct NoopReplacedResolver;
+
+impl ReplacedResolver for NoopReplacedResolver {
+    fn resolve(&self, _request: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
+        Ok(ResolvedIntrinsic {
+            intrinsic: IntrinsicBox::default(),
+            disposition: ResolveDisposition::Fallback {
+                reason: "no replaced-resource resolver was configured".to_owned(),
+            },
+        })
+    }
+}
+
+/// Stream pages from a parsed document using one shared consumer resource handoff.
+///
+/// Font faces are registered into a clone of the configured font context before
+/// layout. That prepared context is cloned for each bounded page-geometry pass;
+/// paint consumes the shaped runs stored by layout. The same replaced-resource
+/// provider is used by the layout resolver and remains available as the
+/// configured image pixel source for downstream painting.
+#[allow(clippy::result_large_err)]
+pub fn render_streaming_with_resources(
+    doc: &HtmlDocument,
+    defaults: PageDefaults,
+    resources: &RenderResources<'_>,
+    config: StreamingConfig,
+    sink: &mut dyn RenderSink,
+) -> Result<RenderStatus, RenderError> {
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let network = resources.network_adapter();
+    let network_ref = network
+        .as_ref()
+        .map(|provider| provider as &dyn raikiri_traits::NetworkProvider);
+    let effective_base_url =
+        raikiri_html::effective_document_base_url(&doc.uncascaded, resources.fallback_base_url());
+    let font_loader = NetworkFontFaceLoader::new(
+        network_ref,
+        effective_base_url.as_ref(),
+        Arc::clone(&warnings),
+    );
+    let runtime = RenderExecutionResources {
+        font_context: resources.clone_font_context(),
+        font_faces: Some(&doc.font_faces),
+        font_face_loader: Some(&font_loader),
+        effective_base_url: effective_base_url.as_ref(),
+        warnings: Arc::clone(&warnings),
+    };
+    let noop_resolver = NoopReplacedResolver;
+    let inner_resolver = resources.resolver().unwrap_or(&noop_resolver);
+    let resolver = FallbackRecordingResolver {
+        inner: inner_resolver,
+        policy: resources.policy(),
+        image_pixel_source: resources.raw_image_pixel_source(),
+        warnings,
+        seen: Mutex::new(HashSet::new()),
+    };
+    render_streaming_inner(
+        doc,
+        defaults,
+        &resolver,
+        config,
+        sink,
+        None,
+        None,
+        &[],
+        runtime,
+    )
+}
+
+/// Parse and stream HTML with one resource configuration shared by both phases.
+#[allow(clippy::result_large_err)]
+pub fn render_html_streaming_with_resources<R: std::io::Read>(
+    input: R,
+    defaults: PageDefaults,
+    resources: &RenderResources<'_>,
+    config: StreamingConfig,
+    sink: &mut dyn RenderSink,
+) -> Result<RenderStatus, RenderError> {
+    let doc = parse_html_with_resources(input, resources)?;
+    render_streaming_with_resources(&doc, defaults, resources, config, sink)
+}
+
+/// Parse and collect all emitted pages using the shared resource handoff.
+///
+/// This is the batch-collection sibling of [`render_html_streaming_with_resources`].
+/// It uses the same parse, font registration, policy, resolver, and warning
+/// paths, but retains every page in memory before returning.
+#[allow(clippy::result_large_err)]
+pub fn render_html_pages_with_resources<R: std::io::Read>(
+    input: R,
+    defaults: PageDefaults,
+    resources: &RenderResources<'_>,
+    config: StreamingConfig,
+) -> Result<(Vec<PageFragment>, RenderStatus), RenderError> {
+    let mut sink = PageCollector::default();
+    let status =
+        render_html_streaming_with_resources(input, defaults, resources, config, &mut sink)?;
+    Ok((sink.pages, status))
+}
+
+#[derive(Default)]
+struct PageCollector {
+    pages: Vec<PageFragment>,
+}
+
+impl RenderSink for PageCollector {
+    fn accept_page(&mut self, page: PageFragment) -> std::io::Result<()> {
+        self.pages.push(page);
+        Ok(())
+    }
+
+    fn finish_render(&mut self, _summary: RenderSummary) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
 /// Build the page-context query used by the neutral page stream.
 ///
@@ -425,7 +670,17 @@ pub fn render_streaming(
     config: StreamingConfig,
     sink: &mut dyn RenderSink,
 ) -> Result<RenderStatus, RenderError> {
-    render_streaming_inner(doc, defaults, resolver, config, sink, None, None, &[])
+    render_streaming_inner(
+        doc,
+        defaults,
+        resolver,
+        config,
+        sink,
+        None,
+        None,
+        &[],
+        RenderExecutionResources::legacy(),
+    )
 }
 
 /// Stream neutral page snapshots and page-local link/annotation events.
@@ -456,6 +711,7 @@ pub fn render_streaming_with_observer(
         Some(observer),
         None,
         &[],
+        RenderExecutionResources::legacy(),
     )
 }
 
@@ -484,6 +740,7 @@ pub fn render_streaming_with_consumer_properties(
         None,
         Some(observer),
         consumer_properties,
+        RenderExecutionResources::legacy(),
     )
 }
 
@@ -497,6 +754,7 @@ fn render_streaming_inner(
     mut page_observer: Option<&mut dyn PageEventObserver>,
     property_observer: Option<&mut dyn ConsumerPropertyObserver>,
     consumer_properties: &[ConsumerPropertyRegistration],
+    runtime: RenderExecutionResources<'_>,
 ) -> Result<RenderStatus, RenderError> {
     let signal = config.signal.clone();
     let is_aborted = || signal.as_ref().is_some_and(|signal| signal.is_aborted());
@@ -527,14 +785,39 @@ fn render_streaming_inner(
             consumer_properties,
         );
     }
+    let mut font_context = runtime.font_context.clone();
+    if let (Some(font_faces), Some(font_loader)) = (runtime.font_faces, runtime.font_face_loader) {
+        let report = apply_font_faces(
+            &mut font_context,
+            &mut first_cascade.computed,
+            font_faces,
+            font_loader,
+        );
+        for family in report.skipped {
+            push_resource_warning(
+                &runtime.warnings,
+                RenderWarning {
+                    kind: WarningKind::ResourceFallback {
+                        kind: ResourceKind::Font,
+                        url: None,
+                    },
+                    node_id: None,
+                    details: format!(
+                        "@font-face family {family:?} had no usable source; fallback fonts will be used"
+                    ),
+                },
+            );
+        }
+    }
     let page_box = page_box_for_cascade(&first_cascade, &defaults);
     let mut document = doc.uncascaded.dom.clone();
-    let mut slices = layout_pages_with_resolver(
+    let mut slices = layout_pages_with_resolver_and_base_url(
         &mut document,
         &first_cascade,
         page_box,
-        FontContext::new(),
+        font_context.clone(),
         resolver,
+        runtime.effective_base_url,
     )
     .map_err(RenderError::from)?;
     const MAX_PAGE_GEOMETRY_PASSES: u32 = 3;
@@ -557,14 +840,15 @@ fn render_streaming_inner(
         // the existing scheduled paginator with producer-owned page steps/widths.
         // This remains a bounded batch layout pass; a changed page count or page
         // name can trigger another schedule pass.
-        slices = layout_pages_with_page_geometry_and_resolver(
+        slices = layout_pages_with_page_geometry_and_resolver_and_base_url(
             &mut document,
             &first_cascade,
             page_box,
-            FontContext::new(),
+            font_context.clone(),
             &schedule.page_steps,
             &schedule.page_widths,
             resolver,
+            runtime.effective_base_url,
         )
         .map_err(RenderError::from)?;
         // A scheduled pass can change both page count and page selectors. Re-
@@ -667,13 +951,22 @@ fn render_streaming_inner(
         });
     }
 
+    let mut warnings = doc.uncascaded.warnings.clone();
+    warnings.extend(
+        runtime
+            .warnings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .cloned(),
+    );
     let summary = RenderSummary {
         total_pages: emitted_pages,
         target_registry: config.initial_registry.unwrap_or_default(),
         unresolved_targets: Vec::new(),
         emitted_target_slots: Vec::new(),
         target_discrepancies: Vec::new(),
-        warnings: doc.uncascaded.warnings.clone(),
+        warnings,
     };
     sink.finish_render(summary.clone())
         .map_err(RenderError::Sink)?;
