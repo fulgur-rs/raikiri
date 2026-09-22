@@ -3995,12 +3995,11 @@ fn paint_document_impl(
                         );
                         scene.push_clip_layer(Affine::IDENTITY, &clip);
                     }
-                    // The current walker gives each text node its Taffy
-                    // sibling advance, while Parley already positions the
-                    // first glyph of an `anywhere` run at that run's line
-                    // width. Remove that duplicate advance so separate text
-                    // runs (including the runs around an inline span) share
-                    // the same one-character line origin.
+                    // The current walker carries two copies of the
+                    // one-character advance into an `anywhere` text node: the
+                    // Taffy sibling offset and Parley's run line origin.
+                    // Remove both copies so separate text runs (including
+                    // runs around an inline span) share the same line origin.
                     let anywhere_text_width = node
                         .text_layout()
                         .map(|text_layout| text_layout.width())
@@ -4016,7 +4015,7 @@ fn paint_document_impl(
                         text::TextPosition {
                             abs_x: abs_x
                                 - if anywhere_text_run {
-                                    anywhere_text_width.unwrap_or(0.0)
+                                    anywhere_text_width.unwrap_or(0.0) * 2.0
                                 } else {
                                     0.0
                                 }
@@ -5464,9 +5463,17 @@ fn paint_order_key(cascade: &CascadeResult, node_id: usize) -> (u8, i32) {
     let computed = &cascade.computed[node_id];
     match (&computed.position, computed.z_index) {
         // In-flow boxes paint before positioned descendants with an auto
-        // z-index. Keep static boxes in the normal bucket, but place
-        // absolute/fixed (and relative) auto-z siblings after them so a
-        // positioned cover can correctly occlude later in-flow content.
+        // z-index. Keep ordinary static boxes in the normal bucket, but
+        // place flex containers with positioned descendants alongside
+        // auto-z siblings so their later absolute child paints in tree order.
+        (PositionValue::Static, _)
+            if matches!(
+                computed.display,
+                DisplayValue::Flex | DisplayValue::InlineFlex
+            ) =>
+        {
+            (2, 0)
+        }
         (PositionValue::Static, _) => (1, 0),
         (_, ZIndexValue::Auto) => (2, 0),
         (_, ZIndexValue::Integer(value)) if value < 0 => (0, value),
@@ -5542,6 +5549,20 @@ mod tests {
         let rules = build_rule_tree(&document);
         let cascade = cascade(&document, &rules).expect("cascade Ok");
         (document, cascade, first, second)
+    }
+
+    #[test]
+    fn flex_static_boxes_use_the_positioned_paint_bucket() {
+        let mut document = Document::new();
+        let flex = document.append_element(
+            Some(document.root_index()),
+            "div",
+            Style::default(),
+            Some("display:flex"),
+        );
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+        assert_eq!(paint_order_key(&cascade, flex), (2, 0));
     }
 
     #[test]

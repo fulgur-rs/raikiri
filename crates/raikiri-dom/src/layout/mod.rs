@@ -9340,6 +9340,68 @@ pub fn layout_pages_with_page_steps(
     layout_pages_with_page_geometry(document, cascade, page_box, font_ctx, page_steps, &[])
 }
 
+/// Return the start page value propagated from the first in-flow child box.
+///
+/// CSS Page 3 derives a box's start page value from its first child when
+/// that child participates in a class-A break point. Nested named boxes
+/// therefore do not each open a page; the deepest first in-flow box owns
+/// the value compared at the boundary.
+fn propagated_start_page_name(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    inherited_page_name: Option<&str>,
+) -> (bool, Option<String>) {
+    let Some(node) = document.get_node(node_id) else {
+        return (false, None);
+    };
+    if !node.is_in_document() || node.is_display_none() {
+        return (false, None);
+    }
+    if matches!(node.kind(), NodeKind::Text) {
+        let has_text = matches!(
+            &node.data,
+            crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty()
+        );
+        if !has_text {
+            return (false, None);
+        }
+        return (true, inherited_page_name.map(ToOwned::to_owned));
+    }
+    let display = cascade.computed[node_id].display;
+    let page_applies = !matches!(
+        display,
+        DisplayValue::Inline | DisplayValue::InlineFlex | DisplayValue::InlineGrid
+    );
+    let explicit_page_name = if page_applies {
+        selected_page_name(cascade, node_id)
+    } else {
+        None
+    };
+    let used_page_name = explicit_page_name
+        .clone()
+        .or_else(|| inherited_page_name.map(ToOwned::to_owned));
+    for &child_id in &node.children {
+        if child_id >= cascade.computed.len() {
+            continue;
+        }
+        let child_computed = &cascade.computed[child_id];
+        if matches!(
+            child_computed.position,
+            PositionValue::Absolute | PositionValue::Fixed
+        ) || !matches!(child_computed.float, FloatValue::None)
+        {
+            continue;
+        }
+        let (has_box, child_start) =
+            propagated_start_page_name(document, cascade, child_id, used_page_name.as_deref());
+        if has_box {
+            return (true, child_start);
+        }
+    }
+    (true, used_page_name)
+}
+
 /// Layout ordinary block flow with per-page content heights and widths.
 ///
 /// `page_widths` contains content-box widths corresponding to `page_steps`.
@@ -9736,7 +9798,22 @@ pub fn layout_pages_with_page_geometry(
                     } else {
                         None
                     };
-                let page_name = own_page_name.clone().or(inherited_page_name);
+                let (has_propagated_page_name, propagated_page_name) = if own_page_name.is_some() {
+                    propagated_start_page_name(
+                        document,
+                        cascade,
+                        node_id,
+                        inherited_page_name.as_deref(),
+                    )
+                } else {
+                    (false, None)
+                };
+                let page_name = if has_propagated_page_name {
+                    propagated_page_name
+                } else {
+                    own_page_name.clone().or(inherited_page_name.clone())
+                };
+                let child_page_name = own_page_name.clone().or(inherited_page_name);
                 let deferred_named_break_after = matches!(computed.display, DisplayValue::Flex)
                     && has_nested_named_page_descendant(document, cascade, node_id, 0);
                 let is_body = node_id == body_id;
@@ -9818,7 +9895,7 @@ pub fn layout_pages_with_page_geometry(
                         body_id,
                         node.unrounded_layout.size.height.max(0.0),
                         page_step,
-                        page_name.clone(),
+                        child_page_name.clone(),
                         inside_table
                             || matches!(
                                 computed.display,
@@ -10510,6 +10587,94 @@ mod tests {
         let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
         let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
         assert_eq!(find_body(&doc), Some(body));
+    }
+
+    #[test]
+    fn propagated_start_page_name_handles_dom_edge_cases() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let named =
+            doc.append_element(Some(body), "section", Style::default(), Some("page: named"));
+        let inline = doc.append_element(
+            Some(named),
+            "span",
+            Style::default(),
+            Some("display: inline"),
+        );
+        let inline_text = doc.append_text(inline, "inline content");
+        let whitespace = doc.append_text(named, "   ");
+        let hidden =
+            doc.append_element(Some(named), "div", Style::default(), Some("display: none"));
+        let absolute = doc.append_element(
+            Some(named),
+            "div",
+            Style::default(),
+            Some("position: absolute"),
+        );
+        let normal = doc.append_element(Some(named), "div", Style::default(), None::<&str>);
+        let _normal_text = doc.append_text(normal, "normal content");
+        let empty = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+        let detached = doc.append_element(None, "div", Style::default(), None::<&str>);
+
+        doc.mark_in_document_flags();
+        // `is_display_none` reads the bridged Taffy style rather than the
+        // cascade result, so make the defensive predicate explicit here.
+        doc.nodes[hidden].style.display = Display::None;
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        assert_eq!(
+            propagated_start_page_name(&doc, &cr, usize::MAX, None),
+            (false, None)
+        );
+        assert_eq!(propagated_start_page_name(&doc, &cr, 0, None), (true, None));
+        assert_eq!(
+            propagated_start_page_name(&doc, &cr, detached, None),
+            (false, None)
+        );
+        assert_eq!(
+            propagated_start_page_name(&doc, &cr, hidden, None),
+            (false, None)
+        );
+        assert_eq!(
+            propagated_start_page_name(&doc, &cr, whitespace, Some("inherited")),
+            (false, None)
+        );
+        assert_eq!(
+            propagated_start_page_name(&doc, &cr, inline, Some("inherited")),
+            (true, Some("inherited".to_owned()))
+        );
+        assert!(matches!(
+            cr.computed[absolute].position,
+            PositionValue::Absolute
+        ));
+        assert_eq!(
+            propagated_start_page_name(&doc, &cr, absolute, Some("inherited")),
+            (true, Some("inherited".to_owned()))
+        );
+        assert_eq!(
+            propagated_start_page_name(&doc, &cr, inline_text, Some("inherited")),
+            (true, Some("inherited".to_owned()))
+        );
+
+        // An arena child can be stale while a cascade is still in use. The
+        // bounds check keeps this helper defensive, and the leaf fallback
+        // still reports the inherited context.
+        doc.nodes[empty].children.push(cr.computed.len());
+        assert_eq!(
+            propagated_start_page_name(&doc, &cr, empty, Some("inherited")),
+            (true, Some("inherited".to_owned()))
+        );
+
+        // The normal descendant is reached after whitespace, hidden, and
+        // out-of-flow children have been skipped.
+        assert_eq!(
+            propagated_start_page_name(&doc, &cr, named, Some("outer")),
+            (true, Some("outer".to_owned()))
+        );
     }
 
     #[test]
