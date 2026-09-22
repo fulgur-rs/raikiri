@@ -20,6 +20,8 @@ pub use target::{
     PendingResolution, ResolveOutcome, TargetInfo, TargetRegistry, resolve_content_component,
 };
 
+use std::collections::BTreeMap;
+
 use crate::dom::{NodeId, Symbol};
 use raikiri_style::property::{
     ContentComponent, ContentPart, ContentTextKeyword, CounterStyle, LeaderType, QuoteKeyword,
@@ -175,9 +177,17 @@ pub enum PageFragmentKind {
 }
 
 /// One source-node placement on a page.
+///
+/// This is the neutral counterpart to fulgur's `Fragment`: `page_index` is
+/// zero-based and `rect` is expressed in CSS pixels in the page content-box
+/// coordinate system. The containing [`PageFragment`] carries the resolved
+/// page metadata; the duplicated index keeps node-centric geometry usable
+/// without retaining the page-vector wrapper.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct PageFragmentItem {
+    /// Zero-based page index containing this placement.
+    pub page_index: u32,
     /// Stable source DOM node identifier.
     pub node_id: NodeId,
     /// Fragment-local border-box rectangle in CSS pixels.
@@ -190,6 +200,9 @@ pub struct PageFragmentItem {
     pub fragment_count: u32,
     /// True when this placement repeats the complete source content.
     pub is_repeat: bool,
+    /// Optional line range for a text placement (`start..end`, end exclusive).
+    /// Non-text placements leave this as `None`.
+    pub line_range: Option<PageFragmentLineRange>,
 }
 
 impl PageFragmentItem {
@@ -203,18 +216,95 @@ impl PageFragmentItem {
         is_repeat: bool,
     ) -> Self {
         Self {
+            page_index: 0,
             node_id,
             rect,
             kind,
             fragment_index,
             fragment_count,
             is_repeat,
+            line_range: None,
         }
+    }
+
+    /// Set the zero-based page containing this placement.
+    pub fn with_page_index(mut self, page_index: u32) -> Self {
+        self.page_index = page_index;
+        self
+    }
+
+    /// Attach a line range to a text placement.
+    pub fn with_line_range(mut self, line_range: PageFragmentLineRange) -> Self {
+        self.line_range = Some(line_range);
+        self
     }
 
     /// Whether this node is split across multiple non-repeated placements.
     pub fn is_split(&self) -> bool {
         !self.is_repeat && self.fragment_count > 1
+    }
+}
+
+/// Node-centric geometry collected from page snapshots.
+///
+/// This is the neutral counterpart to fulgur's `PaginationGeometry`: the
+/// `fragments` vector is ordered by page and fragment index, while
+/// `is_repeat` distinguishes complete per-page copies from split content. The current
+/// `raikiri-dom` producer emits split/ordinary placements (`is_repeat == false`);
+/// repeat-producing fixed/header layout remains an explicit future producer.
+/// The model already preserves the flag for such producers and consumers.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct PageFragmentGeometry {
+    /// Stable source DOM node identifier.
+    pub node_id: NodeId,
+    /// Placements for this node in ascending page order.
+    pub fragments: Vec<PageFragmentItem>,
+    /// True when every placement repeats the complete source content.
+    pub is_repeat: bool,
+}
+
+impl PageFragmentGeometry {
+    /// Construct empty node-centric geometry.
+    pub fn new(node_id: NodeId, is_repeat: bool) -> Self {
+        Self {
+            node_id,
+            fragments: Vec::new(),
+            is_repeat,
+        }
+    }
+
+    /// Whether this node's placements represent split content.
+    pub fn is_split(&self) -> bool {
+        !self.is_repeat && self.fragments.len() > 1
+    }
+}
+
+/// Deterministic NodeId-ordered page geometry table.
+///
+/// `BTreeMap` iteration yields the same stable source-node order as the
+/// pagination producer, independent of DOM traversal implementation details.
+pub type PageFragmentGeometryTable = BTreeMap<NodeId, PageFragmentGeometry>;
+
+/// Inclusive/exclusive line range carried by a text page placement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PageFragmentLineRange {
+    /// First line index, inclusive.
+    pub start: u32,
+    /// Last line index, exclusive.
+    pub end: u32,
+}
+
+impl PageFragmentLineRange {
+    /// Construct a line range.
+    pub fn new(start: u32, end: u32) -> Self {
+        Self { start, end }
+    }
+
+    /// Whether the range contains no lines.
+    pub fn is_empty(self) -> bool {
+        self.start >= self.end
     }
 }
 
@@ -1861,5 +1951,7 @@ mod page_fragment_tests {
             true,
         );
         assert!(!repeat.is_split());
+        assert!(!PageFragmentLineRange::new(0, 1).is_empty());
+        assert!(PageFragmentLineRange::new(1, 1).is_empty());
     }
 }
