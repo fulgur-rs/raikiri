@@ -7219,7 +7219,11 @@ fn prepare_multicol_layout(doc: &mut Document, cascade: &CascadeResult, fallback
                     && doc.nodes[child].is_in_document()
             })
             .count();
-        let has_direct_text = !direct_text.is_empty();
+        let has_direct_text = direct_text.iter().any(|&id| {
+            doc.nodes[id]
+                .text_content()
+                .is_some_and(|text| !text.trim().is_empty())
+        });
         // A fixed-height auto-fill multicol can place an oversized direct
         // child in one column and let it overflow through the next column.
         // Project that narrow case as a row-wrapping flex flow: each child
@@ -7264,10 +7268,10 @@ fn prepare_multicol_layout(doc: &mut Document, cascade: &CascadeResult, fallback
                 false
             })
         });
-        // The projection is valid for direct-`br` lines and the narrow
-        // two-child nested inline-block fixture. A longer nested flow
-        // (as in tall-line-000) owns a parallel flow and stays on the normal
-        // multicol path.
+        // The projection is valid for direct-`br` lines, the narrow two-child
+        // nested inline-block fixture, and the fixed-height border-break
+        // candidate. A longer nested flow (as in tall-line-000) owns a
+        // parallel flow and stays on the normal multicol path.
         let has_direct_br_in_each_child = element_children.iter().all(|&child| {
             doc.nodes[child]
                 .children
@@ -7276,9 +7280,21 @@ fn prepare_multicol_layout(doc: &mut Document, cascade: &CascadeResult, fallback
         });
         let has_two_child_nested_inline_flow =
             element_children.len() == 2 && has_oversized_nested_inline_child;
+        let has_border_break_candidate = fixed_fragmentainer_height.is_some_and(|height| {
+            element_children.windows(2).any(|pair| {
+                let first = style_dimension_length(doc.nodes[pair[0]].style.size.height);
+                let second = style_dimension_length(doc.nodes[pair[1]].style.size.height);
+                let cv = &cascade.computed[pair[1]];
+                let border = cv.border.top.width().px() + cv.border.bottom.width().px();
+                first.is_some_and(|first| first > 0.0)
+                    && second.is_some_and(|second| second + border >= height - 0.001)
+                    && border > 0.0
+            })
+        });
         if !has_direct_text
             && (has_oversized_direct_child && has_direct_br_in_each_child
-                || has_two_child_nested_inline_flow)
+                || has_two_child_nested_inline_flow
+                || has_border_break_candidate)
         {
             let style = &mut doc.nodes[idx].style;
             style.display = Display::Flex;
@@ -7305,12 +7321,15 @@ fn prepare_multicol_layout(doc: &mut Document, cascade: &CascadeResult, fallback
                 let child_style = &mut doc.nodes[child].style;
                 child_style.flex_grow = 0.0;
                 child_style.flex_shrink = 0.0;
-                child_style.size.width = Dimension::length(metrics.column_width);
+                let horizontal_border = cascade.computed[child].border.left.width().px()
+                    + cascade.computed[child].border.right.width().px();
+                let child_content_width = (metrics.column_width - horizontal_border).max(0.0);
+                child_style.size.width = Dimension::length(child_content_width);
                 if !child_has_explicit_height && has_direct_br {
                     child_style.size.height = Dimension::length(child_line_height);
                 }
                 child_style.min_size.width = LengthPercentageAuto::length(0.0);
-                child_style.flex_basis = Dimension::length(metrics.column_width);
+                child_style.flex_basis = Dimension::length(child_content_width);
             }
         }
         // A direct text run is the only case in this focused slice that needs
