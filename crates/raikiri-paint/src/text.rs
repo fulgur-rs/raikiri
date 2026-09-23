@@ -42,8 +42,7 @@ fn is_autospace_inline_box(item: &PositionedLayoutItem<'_, ()>) -> bool {
 
 /// Return the baseline a run would receive if it were laid out as its own
 /// inline text box. Fulgur's inline child layout uses that baseline rather
-/// than the parent line's maximum-font baseline; autospace boxes model the
-/// same boundary inside one Parley layout.
+/// than the parent line's maximum-font baseline.
 fn standalone_run_baseline(ascent: f32, descent: f32, line_height: f32) -> f32 {
     let ascent = ascent.round();
     let descent = descent.round();
@@ -51,10 +50,7 @@ fn standalone_run_baseline(ascent: f32, descent: f32, line_height: f32) -> f32 {
     ascent + (leading * 0.5).floor()
 }
 
-fn autospace_run_baseline_delta(
-    line_metrics: &parley::LineMetrics,
-    run_metrics: &parley::RunMetrics,
-) -> f32 {
+fn run_baseline_delta(line_metrics: &parley::LineMetrics, run_metrics: &parley::RunMetrics) -> f32 {
     standalone_run_baseline(
         run_metrics.ascent,
         run_metrics.descent,
@@ -468,18 +464,25 @@ pub(crate) fn draw_text_node(
             // in this first line, including the U+3000 glyph itself.
             let mut hanging_offset = 0.0_f32;
             let mut find_hanging_offset = hanging_glyph_count.is_some() && line_index == 0;
-            // A line that carries an autospace boundary gives every glyph run
-            // the baseline it would get as its own inline text box, matching
-            // how the same content renders when split across elements. Runs
-            // in one font therefore stay on one baseline.
+            // Autospace inline boxes already require per-run baselines. A line
+            // with multiple glyph runs needs the same correction for fallback
+            // fonts, even when it has no autospace boundary.
             let line_has_autospace = line.items().any(|item| is_autospace_inline_box(&item));
+            let has_multiple_glyph_runs = line
+                .items()
+                .filter(|item| matches!(item, PositionedLayoutItem::GlyphRun(_)))
+                .nth(1)
+                .is_some();
+            let is_hanging_line = hanging_glyph_count.is_some() && line_index == 0;
+            let adjust_run_baselines =
+                line_has_autospace || (!is_hanging_line && has_multiple_glyph_runs);
             for item in line.items() {
                 let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
                     // Inline boxes are non-painting layout advances.
                     continue;
                 };
-                let autospace_baseline_delta = if line_has_autospace {
-                    autospace_run_baseline_delta(metrics, glyph_run.run().metrics())
+                let baseline_delta = if adjust_run_baselines {
+                    run_baseline_delta(metrics, glyph_run.run().metrics())
                 } else {
                     0.0
                 };
@@ -516,7 +519,7 @@ pub(crate) fn draw_text_node(
                             // positioning at 1/64 CSS-pixel resolution.
                             glyph.x = (glyph.x * 64.0).round() / 64.0;
                         }
-                        glyph.y += autospace_baseline_delta; // cov:ignore: baseline correction is exercised by the ignored resource-backed autospace WPT runs.
+                        glyph.y += baseline_delta; // cov:ignore: baseline correction is exercised by ignored resource-backed WPT runs.
                         to_anyrender_glyph(glyph)
                     })
                     .collect::<Vec<_>>();
@@ -1183,9 +1186,9 @@ fn css_color_to_peniko(c: CssColor) -> Color {
 mod tests {
     use super::{
         AUTOSPACE_INLINE_BOX_ID_MIN, DecorationContext, DecorationSpec, MAX_DECORATION_SEGMENTS,
-        autospace_run_baseline_delta, dashed_lengths, decoration_line_width, decoration_span,
-        decoration_spans, decorations_for_element, is_autospace_inline_box,
-        measure_margin_text_advance, measure_margin_text_height, paint_decoration_style,
+        dashed_lengths, decoration_line_width, decoration_span, decoration_spans,
+        decorations_for_element, is_autospace_inline_box, measure_margin_text_advance,
+        measure_margin_text_height, paint_decoration_style, run_baseline_delta,
         standalone_run_baseline, synthetic_embolden, text_align_last_delta,
     };
     use anyrender::{Scene, recording::RenderCommand};
@@ -1209,7 +1212,7 @@ mod tests {
     }
 
     #[test]
-    fn autospace_helpers_cover_inline_box_detection_and_baselines() {
+    fn baseline_helpers_cover_inline_box_detection_and_baselines() {
         let high_id = PositionedLayoutItem::InlineBox(PositionedInlineBox {
             x: 0.0,
             y: 0.0,
@@ -1242,7 +1245,7 @@ mod tests {
             line_height: 14.0,
             ..RunMetrics::default()
         };
-        assert_eq!(autospace_run_baseline_delta(&line, &run), -1.0);
+        assert_eq!(run_baseline_delta(&line, &run), -1.0);
     }
 
     #[test]

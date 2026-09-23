@@ -263,6 +263,8 @@ fn text_autospace_unpinned_exact_passes() {
     // The Ahem stylesheet is a local WPT resource, and the vs/zh references
     // use nested CSS rules, so run with local resources enabled.
     let candidates = [
+        "css/css-text/text-autospace/text-autospace-ideogram-alpha-001.html",
+        "css/css-text/text-autospace/text-autospace-ligature-001.html",
         "css/css-text/text-autospace/text-autospace-vertical-combine-001.html",
         "css/css-text/text-autospace/text-autospace-vertical-upright-001.html",
         "css/css-text/text-autospace/text-autospace-vs-001.html",
