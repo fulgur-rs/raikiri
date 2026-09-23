@@ -11090,6 +11090,11 @@ mod tests {
             "\u{200d}عA"
         );
         assert_eq!(add_boundary_shaping_joiners(String::new(), true, true), "");
+        // Arabic presentation forms join like their nominal letters.
+        assert_eq!(
+            add_boundary_shaping_joiners("\u{fb50}\u{fe8d}".to_owned(), true, true),
+            "\u{200d}\u{fb50}\u{fe8d}\u{200d}"
+        );
     }
 
     #[test]
@@ -11161,6 +11166,19 @@ mod tests {
         let _br = doc.append_element(Some(br_block), "br", Style::default(), None::<&str>);
         let _br_right = doc.append_text(br_block, "ع");
 
+        // Comments and template contents render nothing inline.
+        let skipped_block = block(&mut doc);
+        let skipped_left = doc.append_text(skipped_block, "ع");
+        let _comment = doc.append_comment(Some(skipped_block), "x");
+        let template = doc.append_element(
+            Some(skipped_block),
+            "template",
+            Style::default(),
+            Some("display:inline"),
+        );
+        let _template_text = doc.append_text(template, "A");
+        let _skipped_right = doc.append_text(skipped_block, "ع");
+
         // An authored ZWJ at the neighbor's edge still continues the context.
         let zwj_block = block(&mut doc);
         let zwj_left = doc.append_text(zwj_block, "ع");
@@ -11195,6 +11213,7 @@ mod tests {
         assert!(adjacent(empty_right, -1));
         assert!(!adjacent(br_left, 1));
         assert!(adjacent(zwj_left, 1));
+        assert!(adjacent(skipped_left, 1));
     }
 
     #[test]
