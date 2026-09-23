@@ -443,11 +443,12 @@ pub fn compute_table_layout(
 
     // Row heights
     let mut row_heights = resolve_row_heights(doc, &grid, &column_widths);
-    // A definite table block size is a table outer constraint; it must not
-    // stretch a single cell's row when the cell content itself is fragmenting.
-    // The remaining free space stays in the table wrapper rather than becoming
-    // an artificial cell fragment.
-    if effective_known.height.is_some() && grid.rows.len() > 1 {
+    // An authored definite table height also establishes the containing block
+    // for percentage-sized children of a single-row cell. Fragmentation can
+    // impose a definite height on a single-row table without doing so; keep
+    // that free space in the wrapper rather than manufacturing a cell
+    // fragment in that case.
+    if effective_known.height.is_some() && (grid.rows.len() > 1 || specified_height.is_some()) {
         let known_h = effective_known.height.unwrap(); // cov:ignore: exercised by ignored exact table-fragmentation WPT.
         let target = f32_max_compat(known_h - distrib_insets.height, 0.0);
         distribute_extra_height(&mut row_heights, target);
@@ -2513,6 +2514,54 @@ mod tests {
         assert!(
             overlap.abs() < 1.0,
             "separate cells should abut exactly, got overlap {overlap}"
+        );
+    }
+
+    #[test]
+    fn explicit_single_row_height_resolves_percentage_child() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display: table; width: 150px; height: 100px; border: 5px solid black"),
+        );
+        let row = doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display: table-row"),
+        );
+        let cell = doc.append_element(
+            Some(row),
+            "td",
+            Style::default(),
+            Some("display: table-cell; padding: 5px; border: 2px solid magenta"),
+        );
+        let child = doc.append_element(
+            Some(cell),
+            "div",
+            Style::default(),
+            Some("width: 100%; height: 100%"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).unwrap();
+        crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+
+        let cell_layout = doc.nodes[cell].unrounded_layout;
+        let child_layout = doc.nodes[child].unrounded_layout;
+        assert!(
+            cell_layout.size.height >= 99.0,
+            "authored table height should stretch the single cell, got {}", // cov:ignore: assertion diagnostic is evaluated only on failure.
+            cell_layout.size.height
+        );
+        assert!(
+            child_layout.size.height >= 80.0,
+            "cell child should receive a non-zero containing block, got {}", // cov:ignore: assertion diagnostic is evaluated only on failure.
+            child_layout.size.height
         );
     }
 
