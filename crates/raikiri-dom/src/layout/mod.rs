@@ -19062,6 +19062,48 @@ mod tests {
     }
 
     #[test]
+    fn preshape_text_applies_negative_word_spacing_in_rayon_path() {
+        use parley::{FontContext, LayoutContext};
+        use raikiri_style::{build_rule_tree, cascade};
+
+        fn first_shaped_width(inline_style: &str) -> f32 {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let p = doc.append_element(Some(body), "p", Style::default(), Some(inline_style));
+            // `preshape_text` switches to Rayon at 32 jobs; 33 eligible text nodes
+            // ensure this assertion exercises the parallel builder path.
+            let mut text_nodes = Vec::new();
+            for _ in 0..33 {
+                text_nodes.push(doc.append_text(p, "A B"));
+            }
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            let mut fonts = FontContext::new();
+            let mut layout_cx = LayoutContext::<()>::new();
+            preshape_text(
+                &mut doc,
+                &cr,
+                &mut fonts,
+                &mut layout_cx,
+                PageBox::A4.width,
+                PageBox::A4.width,
+            );
+            doc.nodes[text_nodes[0]]
+                .text_layout()
+                .expect("text should be shaped")
+                .full_width()
+        }
+
+        let normal = first_shaped_width("word-spacing: 0px");
+        let negative = first_shaped_width("word-spacing: -4px");
+        assert!(
+            negative < normal - 1.0,
+            "negative non-ch word spacing should reduce parallel shaped width: normal={normal}, negative={negative}"
+        );
+    }
+
+    #[test]
     fn text_transform_maps_case_width_kana_and_language_tailoring() {
         assert_eq!(
             apply_text_transform("hello world", TextTransform::Capitalize, ""),
