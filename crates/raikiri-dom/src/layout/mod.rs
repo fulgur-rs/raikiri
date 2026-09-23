@@ -6185,45 +6185,41 @@ fn boundary_shaping_edge(
     if !node.is_in_document() {
         return ShapingEdge::Empty;
     }
-    match node.kind() {
-        NodeKind::Text => {
-            let text = text_of(doc, idx).unwrap_or_default();
-            let edge = if dir < 0 {
-                text.chars().next_back()
-            } else {
-                text.chars().next()
-            };
-            edge.map_or(ShapingEdge::Empty, ShapingEdge::Char)
-        }
-        NodeKind::Element => {
-            let cv = &cascade.computed[idx];
-            if cv.display == DisplayValue::None
-                || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
-            {
-                return ShapingEdge::Empty;
-            }
-            if !is_inline_for_trim(doc, cascade, idx)
-                || is_shaping_isolation_boundary(doc, idx)
-                || boundary_shaping_box_breaks(cascade, idx)
-            {
-                return ShapingEdge::Break;
-            }
-            let children = &node.children;
-            let ordered: Box<dyn Iterator<Item = &usize>> = if dir < 0 {
-                Box::new(children.iter().rev())
-            } else {
-                Box::new(children.iter())
-            };
-            for &child in ordered {
-                match boundary_shaping_edge(doc, cascade, child, dir) {
-                    ShapingEdge::Empty => continue,
-                    edge => return edge,
-                }
-            }
-            ShapingEdge::Empty
-        }
-        _ => ShapingEdge::Empty,
+    if let Some(text) = text_of(doc, idx) {
+        let edge = if dir < 0 {
+            text.chars().next_back()
+        } else {
+            text.chars().next()
+        };
+        return edge.map_or(ShapingEdge::Empty, ShapingEdge::Char);
     }
+    // Comments and processing instructions never carry the in-document flag,
+    // so any remaining node here is an element.
+    let cv = &cascade.computed[idx];
+    if cv.display == DisplayValue::None
+        || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
+    {
+        return ShapingEdge::Empty;
+    }
+    if !is_inline_for_trim(doc, cascade, idx)
+        || is_shaping_isolation_boundary(doc, idx)
+        || boundary_shaping_box_breaks(cascade, idx)
+    {
+        return ShapingEdge::Break;
+    }
+    let children = &node.children;
+    let ordered: Box<dyn Iterator<Item = &usize>> = if dir < 0 {
+        Box::new(children.iter().rev())
+    } else {
+        Box::new(children.iter())
+    };
+    for &child in ordered {
+        match boundary_shaping_edge(doc, cascade, child, dir) {
+            ShapingEdge::Empty => continue,
+            edge => return edge,
+        }
+    }
+    ShapingEdge::Empty
 }
 
 /// Raw text content of a text node.
