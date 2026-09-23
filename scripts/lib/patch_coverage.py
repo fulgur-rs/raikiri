@@ -106,6 +106,12 @@ this workspace's `cargo-llvm-cov 0.8.7` output rather than assumed:
     not be exempted — that would mask a real coverage gap in production
     code. the earlier fix addressed this false-negative risk in
     the prior path-regex-only implementation.
+  - `tests.rs` / `*_tests.rs` / `*-tests.rs` **files** anywhere, e.g. a
+    `#[cfg(test)] mod tests;` module moved out of its parent into
+    `<parent>/tests.rs`: these match the filename half of cargo-llvm-cov's
+    built-in default `--ignore-filename-regex`, so they get no SF: record
+    even though their tests ran. Also classified **unreported**; see
+    `is_structurally_unreported()`.
 """
 
 from __future__ import annotations
@@ -127,6 +133,10 @@ ATTRIBUTE_LINE_RE = re.compile(r"^\s*#!?\[.*\]\s*$")
 # inside a real comment, and (b) accept `// cov:ignore:` with nothing after
 # the colon as a valid exemption. review finding.
 COV_IGNORE_RE = re.compile(r"^//\s*cov:ignore:\s*(\S.*)$")
+# Filename half of cargo-llvm-cov 0.8.7's built-in default
+# `--ignore-filename-regex` (read from the installed binary; opt-out is
+# `--no-default-ignore-filename-regex`). Files matching it get no SF: record.
+LLVM_COV_IGNORED_FILENAME_RE = re.compile(r"(^|/)(tests\.rs|[0-9a-zA-Z_-]+[_-]tests\.rs)$")
 HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
@@ -572,8 +582,16 @@ def is_structurally_unreported(path: str, unreported_paths: set[str]) -> bool:
     """True for paths cargo-llvm-cov's report never lists an SF: record for,
     independent of whether their tests ran — see the module docstring's
     Cargo `test`/`example` target case. NOT true for `bench` targets,
-    where absence instead means "never ran" and should fail."""
-    return path in unreported_paths
+    where absence instead means "never ran" and should fail.
+
+    Also true for a file whose *name* matches the filename half of
+    cargo-llvm-cov's default `--ignore-filename-regex` (`tests.rs`,
+    `*_tests.rs`, `*-tests.rs`) — typically a `#[cfg(test)] mod tests;`
+    module file. The directory half of that default regex (`tests/`,
+    `examples/`, `benches/` components) is deliberately not mirrored here:
+    see `structurally_unreported_paths()` for why a `src/tests/` module
+    must not be exempted by path shape alone."""
+    return path in unreported_paths or bool(LLVM_COV_IGNORED_FILENAME_RE.search(path))
 
 
 @dataclass
@@ -710,10 +728,10 @@ def main() -> int:
         if da_map is None:
             fr.no_lcov_record = True
             if is_structurally_unreported(path, unreported_paths):
-                # A Cargo test/example target's entry file: cargo-llvm-cov
-                # never lists an SF: record for these regardless of
-                # whether they ran — see module docstring. Not a coverage
-                # failure.
+                # A Cargo test/example target's entry file, or a
+                # `tests.rs`-named module file: cargo-llvm-cov never lists
+                # an SF: record for these regardless of whether they ran —
+                # see is_structurally_unreported(). Not a coverage failure.
                 fr.unreported.extend(fr.added_lines)
             else:
                 # benches/*.rs (or any other file cargo-llvm-cov's target
@@ -749,14 +767,15 @@ def main() -> int:
     print(f"changed .rs files with added lines: {len(results)}")
     print(f"total added lines (diff): {total_added}")
     print(f"total cov:ignore-exempted added lines: {total_exempted}")
-    print(f"total unreported added lines (test/example targets, informational): {total_unreported}")
+    print(f"total unreported added lines (test/example targets, tests.rs files; informational): {total_unreported}")
     print(f"total uncovered added lines (FAIL if > 0): {total_uncovered}")
     print()
 
     if total_unreported:
         print("Unreported changed lines (file:line) — cargo-llvm-cov does not")
-        print("list an SF: record for a Cargo test/example target's entry file")
-        print("regardless of whether the test ran; not counted toward PASS/FAIL:")
+        print("list an SF: record for a Cargo test/example target's entry file or a")
+        print("tests.rs-named file regardless of whether the test ran; not counted")
+        print("toward PASS/FAIL:")
         for r in results:
             for ln in r.unreported:
                 print(f"  {r.path}:{ln}")
@@ -767,7 +786,8 @@ def main() -> int:
             print(
                 "PASS: all changed lines are covered or cov:ignore-exempted, "
                 f"except {total_unreported} line(s) in Cargo test/example "
-                "target entry files that cargo-llvm-cov does not report on "
+                "target entry files or tests.rs-named files that "
+                "cargo-llvm-cov does not report on "
                 "(see 'Unreported changed lines' above) — those are not "
                 "verified covered, only not counted as a failure."
             )
