@@ -28,147 +28,329 @@ use crate::resolve::{
     resolve_outline, resolve_tab_size, resolve_vertical_align,
 };
 
-/// `<length-percentage>` → computed, mapped back into the specified-layer
-/// `Length` shape that `PropertyValue` carries (`Px` / `Percent` only —
-/// `Em` / `Rem` / `Pt` are gone after this).
-fn lp(
-    specified: Length,
+/// Basis for resolving lengths in the page context: the page context's own
+/// `font-size`, its own `lh` basis, and the shared [`ResolveContext`].
+#[derive(Clone, Copy)]
+struct PageLengthBasis<'a> {
     font_size: ComputedLength,
     own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> Length {
-    match resolve_length_percentage(specified, font_size, own_line_height, ctx) {
-        ComputedLengthPercentage::Px(v) => Length::Px(v),
-        ComputedLengthPercentage::Percent(p) => Length::Percent(p),
-    }
+    ctx: &'a ResolveContext,
 }
-/// `<length-percentage> | auto` — same mapping, `auto` preserved.
-fn lpa(
-    specified: LengthOrAuto,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> LengthOrAuto {
-    match resolve_length_percentage_or_auto(specified, font_size, own_line_height, ctx) {
-        ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
-        ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
-        ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
-        ComputedLengthPercentageOrAuto::Calc(value) => LengthOrAuto::Calc(value),
+
+impl PageLengthBasis<'_> {
+    /// `<length-percentage>` → computed, mapped back into the specified-layer
+    /// `Length` shape that `PropertyValue` carries (`Px` / `Percent` only —
+    /// `Em` / `Rem` / `Pt` are gone after this).
+    fn lp(self, specified: Length) -> Length {
+        match resolve_length_percentage(specified, self.font_size, self.own_line_height, self.ctx) {
+            ComputedLengthPercentage::Px(v) => Length::Px(v),
+            ComputedLengthPercentage::Percent(p) => Length::Percent(p),
+        }
     }
-}
-/// `<length-percentage> | auto` for `margin-*` specifically —
-/// same mapping as [`lpa`] but
-/// routed through [`resolve_margin_length_or_auto`], whose unresolvable-`lh`/
-/// `rlh` fallback is `Px(0.0)` (margin's true spec initial), not `Auto`
-/// (which is `width`/`height`'s initial, and which would trigger real
-/// auto-margin layout behaviour if used here — see that function's doc).
-fn margin_lpa(
-    specified: LengthOrAuto,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> LengthOrAuto {
-    match resolve_margin_length_or_auto(specified, font_size, own_line_height, ctx) {
-        ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
-        ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
-        ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
-        ComputedLengthPercentageOrAuto::Calc(value) => LengthOrAuto::Calc(value),
-    }
-}
-/// `flex-basis: content | <'width'>` — same mapping as [`lpa`], with
-/// `content` preserved as its own keyword (`ComputedFlexBasis::Content`
-/// has no `LengthOrAuto` equivalent, so it maps back to
-/// `FlexBasisValue::Content` directly rather than routing through the
-/// `Auto`/`Px`/`Percent` cases `lpa` shares).
-fn fb(
-    specified: FlexBasisValue,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> FlexBasisValue {
-    match resolve_flex_basis(specified, font_size, own_line_height, ctx) {
-        ComputedFlexBasis::Auto => FlexBasisValue::Auto,
-        ComputedFlexBasis::Content => FlexBasisValue::Content,
-        ComputedFlexBasis::MinContent => FlexBasisValue::MinContent,
-        ComputedFlexBasis::MaxContent => FlexBasisValue::MaxContent,
-        ComputedFlexBasis::FitContent => FlexBasisValue::FitContent,
-        ComputedFlexBasis::Px(v) => FlexBasisValue::Length(Length::Px(v)),
-        ComputedFlexBasis::Percent(p) => FlexBasisValue::Length(Length::Percent(p)),
-    }
-}
-/// `background-size: <bg-size>` — same round-trip as [`lpa`], applied
-/// per axis via [`resolve_background_size`]; `cover`/`contain` carry no
-/// length and pass straight through.
-fn background_size(
-    specified: BackgroundSize,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> BackgroundSize {
-    fn lift(computed: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
-        match computed {
+    /// `<length-percentage> | auto` — same mapping, `auto` preserved.
+    fn lpa(self, specified: LengthOrAuto) -> LengthOrAuto {
+        match resolve_length_percentage_or_auto(
+            specified,
+            self.font_size,
+            self.own_line_height,
+            self.ctx,
+        ) {
             ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
             ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
             ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
             ComputedLengthPercentageOrAuto::Calc(value) => LengthOrAuto::Calc(value),
         }
     }
-    match resolve_background_size(specified, font_size, own_line_height, ctx) {
-        ComputedBackgroundSize::Cover => BackgroundSize::Cover,
-        ComputedBackgroundSize::Contain => BackgroundSize::Contain,
-        ComputedBackgroundSize::Explicit { width, height } => BackgroundSize::Explicit {
-            width: lift(width),
-            height: lift(height),
-        },
-    }
-}
-/// `background-position: <position>` — same round-trip as [`lp`],
-/// applied to each edge/offset via [`resolve_css_position`].
-fn css_position(
-    specified: CssPosition,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> CssPosition {
-    fn lift(computed: ComputedLengthPercentage) -> Length {
-        match computed {
-            ComputedLengthPercentage::Px(v) => Length::Px(v),
-            ComputedLengthPercentage::Percent(p) => Length::Percent(p),
+    /// `<length-percentage> | auto` for `margin-*` specifically —
+    /// same mapping as [`Self::lpa`] but
+    /// routed through [`resolve_margin_length_or_auto`], whose unresolvable-`lh`/
+    /// `rlh` fallback is `Px(0.0)` (margin's true spec initial), not `Auto`
+    /// (which is `width`/`height`'s initial, and which would trigger real
+    /// auto-margin layout behaviour if used here — see that function's doc).
+    fn margin_lpa(self, specified: LengthOrAuto) -> LengthOrAuto {
+        match resolve_margin_length_or_auto(
+            specified,
+            self.font_size,
+            self.own_line_height,
+            self.ctx,
+        ) {
+            ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
+            ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
+            ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
+            ComputedLengthPercentageOrAuto::Calc(value) => LengthOrAuto::Calc(value),
         }
     }
-    fn lift_offset(computed: ComputedCssPositionOffset) -> CssPositionOffset {
-        match computed {
-            ComputedCssPositionOffset::Start(l) => CssPositionOffset::Start(lift(l)),
-            ComputedCssPositionOffset::End(l) => CssPositionOffset::End(lift(l)),
+    /// `flex-basis: content | <'width'>` — same mapping as [`Self::lpa`], with
+    /// `content` preserved as its own keyword (`ComputedFlexBasis::Content`
+    /// has no `LengthOrAuto` equivalent, so it maps back to
+    /// `FlexBasisValue::Content` directly rather than routing through the
+    /// `Auto`/`Px`/`Percent` cases `lpa` shares).
+    fn fb(self, specified: FlexBasisValue) -> FlexBasisValue {
+        match resolve_flex_basis(specified, self.font_size, self.own_line_height, self.ctx) {
+            ComputedFlexBasis::Auto => FlexBasisValue::Auto,
+            ComputedFlexBasis::Content => FlexBasisValue::Content,
+            ComputedFlexBasis::MinContent => FlexBasisValue::MinContent,
+            ComputedFlexBasis::MaxContent => FlexBasisValue::MaxContent,
+            ComputedFlexBasis::FitContent => FlexBasisValue::FitContent,
+            ComputedFlexBasis::Px(v) => FlexBasisValue::Length(Length::Px(v)),
+            ComputedFlexBasis::Percent(p) => FlexBasisValue::Length(Length::Percent(p)),
         }
     }
-    let computed = resolve_css_position(specified, font_size, own_line_height, ctx);
-    CssPosition {
-        horizontal: lift_offset(computed.horizontal),
-        vertical: lift_offset(computed.vertical),
+    /// `background-size: <bg-size>` — same round-trip as [`Self::lpa`], applied
+    /// per axis via [`resolve_background_size`]; `cover`/`contain` carry no
+    /// length and pass straight through.
+    fn background_size(self, specified: BackgroundSize) -> BackgroundSize {
+        fn lift(computed: ComputedLengthPercentageOrAuto) -> LengthOrAuto {
+            match computed {
+                ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
+                ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
+                ComputedLengthPercentageOrAuto::Percent(p) => {
+                    LengthOrAuto::Length(Length::Percent(p))
+                }
+                ComputedLengthPercentageOrAuto::Calc(value) => LengthOrAuto::Calc(value),
+            }
+        }
+        match resolve_background_size(specified, self.font_size, self.own_line_height, self.ctx) {
+            ComputedBackgroundSize::Cover => BackgroundSize::Cover,
+            ComputedBackgroundSize::Contain => BackgroundSize::Contain,
+            ComputedBackgroundSize::Explicit { width, height } => BackgroundSize::Explicit {
+                width: lift(width),
+                height: lift(height),
+            },
+        }
+    }
+    /// `background-position: <position>` — same round-trip as [`Self::lp`],
+    /// applied to each edge/offset via [`resolve_css_position`].
+    fn css_position(self, specified: CssPosition) -> CssPosition {
+        fn lift(computed: ComputedLengthPercentage) -> Length {
+            match computed {
+                ComputedLengthPercentage::Px(v) => Length::Px(v),
+                ComputedLengthPercentage::Percent(p) => Length::Percent(p),
+            }
+        }
+        fn lift_offset(computed: ComputedCssPositionOffset) -> CssPositionOffset {
+            match computed {
+                ComputedCssPositionOffset::Start(l) => CssPositionOffset::Start(lift(l)),
+                ComputedCssPositionOffset::End(l) => CssPositionOffset::End(lift(l)),
+            }
+        }
+        let computed =
+            resolve_css_position(specified, self.font_size, self.own_line_height, self.ctx);
+        CssPosition {
+            horizontal: lift_offset(computed.horizontal),
+            vertical: lift_offset(computed.vertical),
+        }
+    }
+    /// `row-gap` / `column-gap`: `normal | <length-percentage [0,∞]>` —
+    /// same mapping shape as [`Self::lp`], with `normal` preserved (unlike
+    /// `letter-spacing`/`word-spacing`'s `lift_length_or_normal`, which
+    /// collapses `normal` to a resolved `ComputedLength` — gap's `normal`
+    /// stays a keyword at the computed layer, see
+    /// [`ComputedLengthPercentageOrNormal`] doc).
+    fn lpn(self, specified: LengthOrNormal) -> LengthOrNormal {
+        match resolve_length_percentage_or_normal(
+            specified,
+            self.font_size,
+            self.own_line_height,
+            self.ctx,
+        ) {
+            ComputedLengthPercentageOrNormal::Normal => LengthOrNormal::Normal,
+            ComputedLengthPercentageOrNormal::Px(v) => LengthOrNormal::Length(Length::Px(v)),
+            ComputedLengthPercentageOrNormal::Percent(p) => {
+                LengthOrNormal::Length(Length::Percent(p))
+            }
+        }
+    }
+    /// `grid-template-columns` / `grid-template-rows` — round-trips through
+    /// [`resolve_grid_template_tracks`] and maps the `Computed*` mirror
+    /// types back to the specified-layer shape (`none` preserved as a
+    /// keyword, same as [`Self::fb`]'s `Auto`/`Content` handling).
+    fn gtt(self, specified: GridTemplateTracks) -> GridTemplateTracks {
+        match resolve_grid_template_tracks(
+            specified,
+            self.font_size,
+            self.own_line_height,
+            self.ctx,
+        ) {
+            ComputedGridTemplateTracks::None => GridTemplateTracks::None,
+            ComputedGridTemplateTracks::List(list) => {
+                GridTemplateTracks::List(Arc::new(grid_track_list_from_computed(&list)))
+            }
+        }
+    }
+    /// `grid-auto-columns` / `grid-auto-rows` — same round-trip shape as
+    /// [`Self::gtt`], for the `<track-size>+` (no `none`, no `<line-names>`)
+    /// grammar.
+    fn gatl(self, specified: &[GridTrackSize]) -> Arc<Vec<GridTrackSize>> {
+        let computed =
+            resolve_grid_auto_track_list(specified, self.font_size, self.own_line_height, self.ctx);
+        Arc::new(
+            computed
+                .iter()
+                .cloned()
+                .map(grid_track_size_from_computed)
+                .collect(),
+        )
+    }
+    /// One `border-*` side: absolutize the width and apply the style gate.
+    ///
+    /// Routed through [`resolve_border`] rather than re-testing
+    /// `none` / `hidden` locally — that function's doc calls itself the single
+    /// source of the gate and forbids re-implementing the rule elsewhere.
+    fn border(self, specified: Border) -> Border {
+        let computed = resolve_border(specified, self.font_size, self.own_line_height, self.ctx);
+        Border {
+            width: Length::Px(computed.width.px()),
+            style: computed.style,
+            color: computed.color,
+        }
+    }
+    /// A `border-*-width` longhand, gated by the side's computed style.
+    ///
+    /// `color` is a placeholder — [`resolve_border`] never reads it, and the
+    /// longhand carries no colour. Building the `Border` here (instead of
+    /// branching on `style` locally) is what keeps the gate single-sourced.
+    fn border_width(self, width: Length, style: BorderStyle) -> Length {
+        self.border(Border {
+            width,
+            style,
+            color: BorderColor::CurrentColor,
+        })
+        .width
+    }
+    /// An `outline-width` longhand, gated by the winning `outline-style`.
+    ///
+    /// Routing through [`resolve_outline`] keeps the element and page paths
+    /// on the same CSS UI 3 §4.2 computed-value rule: width is zero when the
+    /// style is `none` (or the retained-but-parser-rejected `hidden` keyword).
+    fn outline_width(self, width: Length, style: OutlineStyle) -> Length {
+        Length::Px(
+            resolve_outline(
+                Outline {
+                    width,
+                    style,
+                    color: OutlineColor::Invert,
+                },
+                self.font_size,
+                self.own_line_height,
+                self.ctx,
+            )
+            .width()
+            .px(),
+        )
+    }
+    /// One `text-shadow` item: absolutize the 3 lengths (`offset-x`/
+    /// `offset-y`/`blur-radius`), round-tripped back into the specified-layer
+    /// `Length::Px` shape (`resolve_length` is the percentage-less resolver —
+    /// text-shadow's lengths don't allow `<percentage>`, `TextShadowItem`
+    /// doc). `color` carries no length (`TextShadowColor` doc) — passed
+    /// through unchanged, same as `Border`'s `color` field above.
+    fn text_shadow_item(self, specified: TextShadowItem) -> TextShadowItem {
+        TextShadowItem {
+            offset_x: Length::Px(
+                resolve_length(
+                    specified.offset_x,
+                    self.font_size,
+                    self.own_line_height,
+                    self.ctx,
+                )
+                .px(),
+            ),
+            offset_y: Length::Px(
+                resolve_length(
+                    specified.offset_y,
+                    self.font_size,
+                    self.own_line_height,
+                    self.ctx,
+                )
+                .px(),
+            ),
+            blur_radius: Length::Px(
+                resolve_length(
+                    specified.blur_radius,
+                    self.font_size,
+                    self.own_line_height,
+                    self.ctx,
+                )
+                .px(),
+            ),
+            color: specified.color,
+        }
+    }
+
+    /// `border-radius` の 4 corner を computed 長から `PropertyValue` が
+    /// 運ぶ `Length::Px` 表現へ戻す。page bag は element path の
+    /// `ComputedValues` と同じ computed-value 契約を持つが、既存の bag の
+    /// API を壊さないため payload 型は specified 側を再利用する。
+    fn border_radius_value(self, specified: BorderRadius) -> BorderRadius {
+        let computed =
+            resolve_border_radius(specified, self.font_size, self.own_line_height, self.ctx);
+        let length = |value: ComputedLengthPercentage| match value {
+            ComputedLengthPercentage::Px(px) => Length::Px(px),
+            ComputedLengthPercentage::Percent(percent) => Length::Percent(percent),
+        };
+        BorderRadius {
+            top_left: length(computed.top_left),
+            top_right: length(computed.top_right),
+            bottom_right: length(computed.bottom_right),
+            bottom_left: length(computed.bottom_left),
+        }
+    }
+
+    /// `box-shadow` の 1 item を computed 長から page bag の
+    /// `BoxShadowItem` へ戻す。`color` は resolve 層で長さを持たないため
+    /// そのまま保持する。
+    fn box_shadow_item(self, specified: BoxShadowItem) -> BoxShadowItem {
+        let computed =
+            resolve_box_shadow_item(specified, self.font_size, self.own_line_height, self.ctx);
+        BoxShadowItem {
+            offset_x: Length::Px(computed.offset_x.px()),
+            offset_y: Length::Px(computed.offset_y.px()),
+            blur_radius: Length::Px(computed.blur_radius.px()),
+            spread_radius: Length::Px(computed.spread_radius.px()),
+            color: computed.color,
+            inset: computed.inset,
+        }
+    }
+
+    /// `outline` の width を絶対化した computed value を
+    /// `PropertyValue` の payload に戻す。outline は box model の寸法へ
+    /// 影響しないため、page phase では値の解決だけを行う。
+    fn outline_value(self, specified: Outline) -> Outline {
+        let computed = resolve_outline(specified, self.font_size, self.own_line_height, self.ctx);
+        Outline {
+            width: Length::Px(computed.width().px()),
+            style: computed.style(),
+            color: computed.color,
+        }
+    }
+
+    /// `transform` の `<length-percentage>` slot を絶対化し page bag の
+    /// `TransformFunction` へ戻す。`lp` と同じ round-trip — length 側は
+    /// `Px` へ、percentage 側は `Percent` のまま残す。`matrix` の 6
+    /// `<number>` slot と `rotate`/`skew` 系の `<angle>` slot はそのまま。
+    fn transform_function(self, specified: TransformFunction) -> TransformFunction {
+        match specified {
+            TransformFunction::Matrix(m) => TransformFunction::Matrix(m),
+            TransformFunction::Translate(tx, ty) => {
+                TransformFunction::Translate(self.lp(tx), self.lp(ty))
+            }
+            TransformFunction::TranslateX(v) => TransformFunction::TranslateX(self.lp(v)),
+            TransformFunction::TranslateY(v) => TransformFunction::TranslateY(self.lp(v)),
+            TransformFunction::Scale(x, y) => TransformFunction::Scale(x, y),
+            TransformFunction::ScaleX(v) => TransformFunction::ScaleX(v),
+            TransformFunction::ScaleY(v) => TransformFunction::ScaleY(v),
+            TransformFunction::Rotate(a) => TransformFunction::Rotate(a),
+            TransformFunction::Skew(ax, ay) => TransformFunction::Skew(ax, ay),
+            TransformFunction::SkewX(a) => TransformFunction::SkewX(a),
+            TransformFunction::SkewY(a) => TransformFunction::SkewY(a),
+        }
     }
 }
-/// `row-gap` / `column-gap`: `normal | <length-percentage [0,∞]>` —
-/// same mapping shape as [`lp`], with `normal` preserved (unlike
-/// `letter-spacing`/`word-spacing`'s `lift_length_or_normal`, which
-/// collapses `normal` to a resolved `ComputedLength` — gap's `normal`
-/// stays a keyword at the computed layer, see
-/// [`ComputedLengthPercentageOrNormal`] doc).
-fn lpn(
-    specified: LengthOrNormal,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> LengthOrNormal {
-    match resolve_length_percentage_or_normal(specified, font_size, own_line_height, ctx) {
-        ComputedLengthPercentageOrNormal::Normal => LengthOrNormal::Normal,
-        ComputedLengthPercentageOrNormal::Px(v) => LengthOrNormal::Length(Length::Px(v)),
-        ComputedLengthPercentageOrNormal::Percent(p) => LengthOrNormal::Length(Length::Percent(p)),
-    }
-}
+
 /// [`ComputedGridTrackBreadth`] → specified [`GridTrackBreadth`] —
-/// round-trip half of [`gtt`]/[`gatl`], same "computed-equivalent
-/// specified representation" convention as [`fb`]/[`lpn`] (`Px`/
+/// round-trip half of [`PageLengthBasis::gtt`]/[`PageLengthBasis::gatl`], same "computed-equivalent
+/// specified representation" convention as [`PageLengthBasis::fb`]/[`PageLengthBasis::lpn`] (`Px`/
 /// `Percent` only, no other unit ever appears post-absolutization).
 fn grid_track_breadth_from_computed(b: ComputedGridTrackBreadth) -> GridTrackBreadth {
     match b {
@@ -201,7 +383,7 @@ fn grid_inflexible_breadth_from_computed(b: ComputedGridTrackBreadth) -> GridInf
     }
 }
 /// [`ComputedGridTrackSize`] → specified [`GridTrackSize`] — round-trip
-/// half of [`gtt`]/[`gatl`].
+/// half of [`PageLengthBasis::gtt`]/[`PageLengthBasis::gatl`].
 fn grid_track_size_from_computed(s: ComputedGridTrackSize) -> GridTrackSize {
     match s {
         ComputedGridTrackSize::Breadth(b) => {
@@ -218,7 +400,7 @@ fn grid_track_size_from_computed(s: ComputedGridTrackSize) -> GridTrackSize {
     }
 }
 /// [`ComputedGridTrackList`] → specified [`GridTrackList`] — round-trip
-/// half of [`gtt`]. `line_names` carry no length so they clone through
+/// half of [`PageLengthBasis::gtt`]. `line_names` carry no length so they clone through
 /// unchanged.
 fn grid_track_list_from_computed(list: &ComputedGridTrackList) -> GridTrackList {
     GridTrackList {
@@ -244,227 +426,6 @@ fn grid_track_list_from_computed(list: &ComputedGridTrackList) -> GridTrackList 
                 }
             })
             .collect(),
-    }
-}
-/// `grid-template-columns` / `grid-template-rows` — round-trips through
-/// [`resolve_grid_template_tracks`] and maps the `Computed*` mirror
-/// types back to the specified-layer shape (`none` preserved as a
-/// keyword, same as [`fb`]'s `Auto`/`Content` handling).
-fn gtt(
-    specified: GridTemplateTracks,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> GridTemplateTracks {
-    match resolve_grid_template_tracks(specified, font_size, own_line_height, ctx) {
-        ComputedGridTemplateTracks::None => GridTemplateTracks::None,
-        ComputedGridTemplateTracks::List(list) => {
-            GridTemplateTracks::List(Arc::new(grid_track_list_from_computed(&list)))
-        }
-    }
-}
-/// `grid-auto-columns` / `grid-auto-rows` — same round-trip shape as
-/// [`gtt`], for the `<track-size>+` (no `none`, no `<line-names>`)
-/// grammar.
-fn gatl(
-    specified: &[GridTrackSize],
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> Arc<Vec<GridTrackSize>> {
-    let computed = resolve_grid_auto_track_list(specified, font_size, own_line_height, ctx);
-    Arc::new(
-        computed
-            .iter()
-            .cloned()
-            .map(grid_track_size_from_computed)
-            .collect(),
-    )
-}
-/// One `border-*` side: absolutize the width and apply the style gate.
-///
-/// Routed through [`resolve_border`] rather than re-testing
-/// `none` / `hidden` locally — that function's doc calls itself the single
-/// source of the gate and forbids re-implementing the rule elsewhere.
-fn border(
-    specified: Border,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> Border {
-    let computed = resolve_border(specified, font_size, own_line_height, ctx);
-    Border {
-        width: Length::Px(computed.width.px()),
-        style: computed.style,
-        color: computed.color,
-    }
-}
-/// A `border-*-width` longhand, gated by the side's computed style.
-///
-/// `color` is a placeholder — [`resolve_border`] never reads it, and the
-/// longhand carries no colour. Building the `Border` here (instead of
-/// branching on `style` locally) is what keeps the gate single-sourced.
-fn border_width(
-    width: Length,
-    style: BorderStyle,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> Length {
-    border(
-        Border {
-            width,
-            style,
-            color: BorderColor::CurrentColor,
-        },
-        font_size,
-        own_line_height,
-        ctx,
-    )
-    .width
-}
-/// An `outline-width` longhand, gated by the winning `outline-style`.
-///
-/// Routing through [`resolve_outline`] keeps the element and page paths
-/// on the same CSS UI 3 §4.2 computed-value rule: width is zero when the
-/// style is `none` (or the retained-but-parser-rejected `hidden` keyword).
-fn outline_width(
-    width: Length,
-    style: OutlineStyle,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> Length {
-    Length::Px(
-        resolve_outline(
-            Outline {
-                width,
-                style,
-                color: OutlineColor::Invert,
-            },
-            font_size,
-            own_line_height,
-            ctx,
-        )
-        .width()
-        .px(),
-    )
-}
-/// One `text-shadow` item: absolutize the 3 lengths (`offset-x`/
-/// `offset-y`/`blur-radius`), round-tripped back into the specified-layer
-/// `Length::Px` shape (`resolve_length` is the percentage-less resolver —
-/// text-shadow's lengths don't allow `<percentage>`, `TextShadowItem`
-/// doc). `color` carries no length (`TextShadowColor` doc) — passed
-/// through unchanged, same as `Border`'s `color` field above.
-fn text_shadow_item(
-    specified: TextShadowItem,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> TextShadowItem {
-    TextShadowItem {
-        offset_x: Length::Px(
-            resolve_length(specified.offset_x, font_size, own_line_height, ctx).px(),
-        ),
-        offset_y: Length::Px(
-            resolve_length(specified.offset_y, font_size, own_line_height, ctx).px(),
-        ),
-        blur_radius: Length::Px(
-            resolve_length(specified.blur_radius, font_size, own_line_height, ctx).px(),
-        ),
-        color: specified.color,
-    }
-}
-
-/// `border-radius` の 4 corner を computed 長から `PropertyValue` が
-/// 運ぶ `Length::Px` 表現へ戻す。page bag は element path の
-/// `ComputedValues` と同じ computed-value 契約を持つが、既存の bag の
-/// API を壊さないため payload 型は specified 側を再利用する。
-fn border_radius_value(
-    specified: BorderRadius,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> BorderRadius {
-    let computed = resolve_border_radius(specified, font_size, own_line_height, ctx);
-    let length = |value: ComputedLengthPercentage| match value {
-        ComputedLengthPercentage::Px(px) => Length::Px(px),
-        ComputedLengthPercentage::Percent(percent) => Length::Percent(percent),
-    };
-    BorderRadius {
-        top_left: length(computed.top_left),
-        top_right: length(computed.top_right),
-        bottom_right: length(computed.bottom_right),
-        bottom_left: length(computed.bottom_left),
-    }
-}
-
-/// `box-shadow` の 1 item を computed 長から page bag の
-/// `BoxShadowItem` へ戻す。`color` は resolve 層で長さを持たないため
-/// そのまま保持する。
-fn box_shadow_item(
-    specified: BoxShadowItem,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> BoxShadowItem {
-    let computed = resolve_box_shadow_item(specified, font_size, own_line_height, ctx);
-    BoxShadowItem {
-        offset_x: Length::Px(computed.offset_x.px()),
-        offset_y: Length::Px(computed.offset_y.px()),
-        blur_radius: Length::Px(computed.blur_radius.px()),
-        spread_radius: Length::Px(computed.spread_radius.px()),
-        color: computed.color,
-        inset: computed.inset,
-    }
-}
-
-/// `outline` の width を絶対化した computed value を
-/// `PropertyValue` の payload に戻す。outline は box model の寸法へ
-/// 影響しないため、page phase では値の解決だけを行う。
-fn outline_value(
-    specified: Outline,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> Outline {
-    let computed = resolve_outline(specified, font_size, own_line_height, ctx);
-    Outline {
-        width: Length::Px(computed.width().px()),
-        style: computed.style(),
-        color: computed.color,
-    }
-}
-
-/// `transform` の `<length-percentage>` slot を絶対化し page bag の
-/// `TransformFunction` へ戻す。`lp` と同じ round-trip — length 側は
-/// `Px` へ、percentage 側は `Percent` のまま残す。`matrix` の 6
-/// `<number>` slot と `rotate`/`skew` 系の `<angle>` slot はそのまま。
-fn transform_function(
-    specified: TransformFunction,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> TransformFunction {
-    match specified {
-        TransformFunction::Matrix(m) => TransformFunction::Matrix(m),
-        TransformFunction::Translate(tx, ty) => TransformFunction::Translate(
-            lp(tx, font_size, own_line_height, ctx),
-            lp(ty, font_size, own_line_height, ctx),
-        ),
-        TransformFunction::TranslateX(v) => {
-            TransformFunction::TranslateX(lp(v, font_size, own_line_height, ctx))
-        }
-        TransformFunction::TranslateY(v) => {
-            TransformFunction::TranslateY(lp(v, font_size, own_line_height, ctx))
-        }
-        TransformFunction::Scale(x, y) => TransformFunction::Scale(x, y),
-        TransformFunction::ScaleX(v) => TransformFunction::ScaleX(v),
-        TransformFunction::ScaleY(v) => TransformFunction::ScaleY(v),
-        TransformFunction::Rotate(a) => TransformFunction::Rotate(a),
-        TransformFunction::Skew(ax, ay) => TransformFunction::Skew(ax, ay),
-        TransformFunction::SkewX(a) => TransformFunction::SkewX(a),
-        TransformFunction::SkewY(a) => TransformFunction::SkewY(a),
     }
 }
 
@@ -539,6 +500,11 @@ pub(super) fn absolutize_in_page_context(
     overflow_pair: OverflowXY,
 ) -> PropertyValue {
     let value = value.into_property_value();
+    let basis = PageLengthBasis {
+        font_size,
+        own_line_height,
+        ctx,
+    };
 
     match value {
         // ── already computed-equivalent after phase 2 ──────────────────────
@@ -891,24 +857,16 @@ pub(super) fn absolutize_in_page_context(
         // property here.
         PropertyValue::TextIndent(v) => {
             PropertyValue::TextIndent(TextIndentValue {
-                length: lp(v.length, font_size, own_line_height, ctx),
+                length: basis.lp(v.length),
                 hanging: v.hanging,
                 each_line: v.each_line,
             })
         }
         // ── padding ───────────────────────────────────────────────────────
-        PropertyValue::PaddingTop(v) => {
-            PropertyValue::PaddingTop(lp(v, font_size, own_line_height, ctx))
-        }
-        PropertyValue::PaddingRight(v) => {
-            PropertyValue::PaddingRight(lp(v, font_size, own_line_height, ctx))
-        }
-        PropertyValue::PaddingBottom(v) => {
-            PropertyValue::PaddingBottom(lp(v, font_size, own_line_height, ctx))
-        }
-        PropertyValue::PaddingLeft(v) => {
-            PropertyValue::PaddingLeft(lp(v, font_size, own_line_height, ctx))
-        }
+        PropertyValue::PaddingTop(v) => PropertyValue::PaddingTop(basis.lp(v)),
+        PropertyValue::PaddingRight(v) => PropertyValue::PaddingRight(basis.lp(v)),
+        PropertyValue::PaddingBottom(v) => PropertyValue::PaddingBottom(basis.lp(v)),
+        PropertyValue::PaddingLeft(v) => PropertyValue::PaddingLeft(basis.lp(v)),
         // Shorthand fall-through — **unreachable through `cascade_page`**.
         // `crate::rule::expand_shorthand_into` runs at both boundaries that feed
         // this function: the parse exit (`parse_page_declaration_block`, this
@@ -935,33 +893,21 @@ pub(super) fn absolutize_in_page_context(
         // keeps the cascade panic-free as a deliberate design policy. Behaviour
         // is pinned directly
         // by `tests::absolutize_in_page_context_shorthand_fall_throughs`.
-        PropertyValue::Padding(sides) => {
-            PropertyValue::Padding(sides.map(|l| lp(l, font_size, own_line_height, ctx)))
-        }
+        PropertyValue::Padding(sides) => PropertyValue::Padding(sides.map(|l| basis.lp(l))),
         // `padding-inline`/`padding-block` shorthand fall-through — same
         // shape and same unreachability rationale as `Padding` above
         // (`crate::property::PropertyValue::PaddingInline` doc covers the
         // physical-mapping choice). Pinned directly by
         // `tests::absolutize_in_page_context_logical_shorthand_fall_throughs`.
         PropertyValue::PaddingInline(pair) => {
-            PropertyValue::PaddingInline(pair.map(|l| lp(l, font_size, own_line_height, ctx)))
+            PropertyValue::PaddingInline(pair.map(|l| basis.lp(l)))
         }
-        PropertyValue::PaddingBlock(pair) => {
-            PropertyValue::PaddingBlock(pair.map(|l| lp(l, font_size, own_line_height, ctx)))
-        }
+        PropertyValue::PaddingBlock(pair) => PropertyValue::PaddingBlock(pair.map(|l| basis.lp(l))),
         // ── margin ────────────────────────────────────────────────────────
-        PropertyValue::MarginTop(v) => {
-            PropertyValue::MarginTop(margin_lpa(v, font_size, own_line_height, ctx))
-        }
-        PropertyValue::MarginRight(v) => {
-            PropertyValue::MarginRight(margin_lpa(v, font_size, own_line_height, ctx))
-        }
-        PropertyValue::MarginBottom(v) => {
-            PropertyValue::MarginBottom(margin_lpa(v, font_size, own_line_height, ctx))
-        }
-        PropertyValue::MarginLeft(v) => {
-            PropertyValue::MarginLeft(margin_lpa(v, font_size, own_line_height, ctx))
-        }
+        PropertyValue::MarginTop(v) => PropertyValue::MarginTop(basis.margin_lpa(v)),
+        PropertyValue::MarginRight(v) => PropertyValue::MarginRight(basis.margin_lpa(v)),
+        PropertyValue::MarginBottom(v) => PropertyValue::MarginBottom(basis.margin_lpa(v)),
+        PropertyValue::MarginLeft(v) => PropertyValue::MarginLeft(basis.margin_lpa(v)),
         // Inherit markers are normally resolved in phase 2. Keep them
         // panic-free if an internal caller bypasses that phase.
         v @ (PropertyValue::MarginTopInherit
@@ -970,52 +916,32 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::MarginLeftInherit
         | PropertyValue::MarginInherit) => v,
         // Shorthand fall-through (see `Padding` above).
-        PropertyValue::Margin(sides) => {
-            PropertyValue::Margin(sides.map(|l| margin_lpa(l, font_size, own_line_height, ctx)))
-        }
+        PropertyValue::Margin(sides) => PropertyValue::Margin(sides.map(|l| basis.margin_lpa(l))),
         // `margin-inline`/`margin-block` shorthand fall-through — same shape
         // as `PaddingInline`/`PaddingBlock` above.
         PropertyValue::MarginInline(pair) => {
-            PropertyValue::MarginInline(pair.map(|l| margin_lpa(l, font_size, own_line_height, ctx)))
+            PropertyValue::MarginInline(pair.map(|l| basis.margin_lpa(l)))
         }
         PropertyValue::MarginBlock(pair) => {
-            PropertyValue::MarginBlock(pair.map(|l| margin_lpa(l, font_size, own_line_height, ctx)))
+            PropertyValue::MarginBlock(pair.map(|l| basis.margin_lpa(l)))
         }
         // ── border-*-width (absolutized **and** style-gated) ──────────────
-        PropertyValue::BorderTopWidth(w) => PropertyValue::BorderTopWidth(border_width(
-            w,
-            border_styles.top,
-            font_size,
-            own_line_height,
-            ctx,
-        )),
-        PropertyValue::BorderRightWidth(w) => PropertyValue::BorderRightWidth(border_width(
-            w,
-            border_styles.right,
-            font_size,
-            own_line_height,
-            ctx,
-        )),
-        PropertyValue::BorderBottomWidth(w) => PropertyValue::BorderBottomWidth(border_width(
-            w,
-            border_styles.bottom,
-            font_size,
-            own_line_height,
-            ctx,
-        )),
-        PropertyValue::BorderLeftWidth(w) => PropertyValue::BorderLeftWidth(border_width(
-            w,
-            border_styles.left,
-            font_size,
-            own_line_height,
-            ctx,
-        )),
+        PropertyValue::BorderTopWidth(w) => {
+            PropertyValue::BorderTopWidth(basis.border_width(w, border_styles.top))
+        }
+        PropertyValue::BorderRightWidth(w) => {
+            PropertyValue::BorderRightWidth(basis.border_width(w, border_styles.right))
+        }
+        PropertyValue::BorderBottomWidth(w) => {
+            PropertyValue::BorderBottomWidth(basis.border_width(w, border_styles.bottom))
+        }
+        PropertyValue::BorderLeftWidth(w) => {
+            PropertyValue::BorderLeftWidth(basis.border_width(w, border_styles.left))
+        }
         // Shorthand fall-through (see `Padding` above). Each side gates on the
         // style it carries itself, which is where a `border` shorthand's style
         // lives.
-        PropertyValue::Border(sides) => {
-            PropertyValue::Border(sides.map(|b| border(b, font_size, own_line_height, ctx)))
-        }
+        PropertyValue::Border(sides) => PropertyValue::Border(sides.map(|b| basis.border(b))),
         // `border-style` / `border-width` / `border-color` shorthand
         // fall-throughs (same unreachability rationale — rule.rs expands
         // them first). Styles and colors carry no lengths (passthrough);
@@ -1024,28 +950,10 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::BorderStyle(sides) => PropertyValue::BorderStyle(sides),
         PropertyValue::BorderWidth(sides) => {
             PropertyValue::BorderWidth(Sides {
-                top: border_width(sides.top, border_styles.top, font_size, own_line_height, ctx),
-                right: border_width(
-                    sides.right,
-                    border_styles.right,
-                    font_size,
-                    own_line_height,
-                    ctx,
-                ),
-                bottom: border_width(
-                    sides.bottom,
-                    border_styles.bottom,
-                    font_size,
-                    own_line_height,
-                    ctx,
-                ),
-                left: border_width(
-                    sides.left,
-                    border_styles.left,
-                    font_size,
-                    own_line_height,
-                    ctx,
-                ),
+                top: basis.border_width(sides.top, border_styles.top),
+                right: basis.border_width(sides.right, border_styles.right),
+                bottom: basis.border_width(sides.bottom, border_styles.bottom),
+                left: basis.border_width(sides.left, border_styles.left),
             })
         }
         PropertyValue::BorderColor(sides) => PropertyValue::BorderColor(sides),
@@ -1055,12 +963,7 @@ pub(super) fn absolutize_in_page_context(
         // font-size/line-height. Percentages are intentionally outside this
         // task's parser contract, so every surviving component round-trips
         // as `Length::Px` after phase 3.
-        PropertyValue::BorderRadius(v) => PropertyValue::BorderRadius(border_radius_value(
-            v,
-            font_size,
-            own_line_height,
-            ctx,
-        )),
+        PropertyValue::BorderRadius(v) => PropertyValue::BorderRadius(basis.border_radius_value(v)),
         PropertyValue::BorderRadiusInherit => PropertyValue::BorderRadiusInherit,
         PropertyValue::BorderRadiusTopLeft(v) => PropertyValue::BorderRadiusTopLeft(Length::Px(
             resolve_length(v, font_size, own_line_height, ctx).px(),
@@ -1082,21 +985,13 @@ pub(super) fn absolutize_in_page_context(
             Arc::new(
                 items
                     .iter()
-                    .map(|item| box_shadow_item(*item, font_size, own_line_height, ctx))
+                    .map(|item| basis.box_shadow_item(*item))
                     .collect(),
             )
         }),
-        PropertyValue::Outline(v) => {
-            PropertyValue::Outline(outline_value(v, font_size, own_line_height, ctx))
-        }
+        PropertyValue::Outline(v) => PropertyValue::Outline(basis.outline_value(v)),
         PropertyValue::OutlineWidth(v) => {
-            PropertyValue::OutlineWidth(outline_width(
-                v,
-                outline_style,
-                font_size,
-                own_line_height,
-                ctx,
-            ))
+            PropertyValue::OutlineWidth(basis.outline_width(v, outline_style))
         }
         PropertyValue::OutlineOffset(v) => {
             PropertyValue::OutlineOffset(Length::Px(
@@ -1104,27 +999,25 @@ pub(super) fn absolutize_in_page_context(
             ))
         }
         // ── width / height / max-* / min-* ──────────────────────────────
-        PropertyValue::Width(v) => PropertyValue::Width(lpa(v, font_size, own_line_height, ctx)),
-        PropertyValue::Height(v) => PropertyValue::Height(lpa(v, font_size, own_line_height, ctx)),
-        PropertyValue::MaxWidth(v) => PropertyValue::MaxWidth(lpa(v, font_size, own_line_height, ctx)),
-        PropertyValue::MaxHeight(v) => PropertyValue::MaxHeight(lpa(v, font_size, own_line_height, ctx)),
-        PropertyValue::MinWidth(v) => PropertyValue::MinWidth(lpa(v, font_size, own_line_height, ctx)),
-        PropertyValue::MinHeight(v) => PropertyValue::MinHeight(lpa(v, font_size, own_line_height, ctx)),
-        PropertyValue::MinBlockSize(v) => PropertyValue::MinBlockSize(lpa(v, font_size, own_line_height, ctx)),
-        PropertyValue::Top(v) => PropertyValue::Top(lpa(v, font_size, own_line_height, ctx)),
-        PropertyValue::Right(v) => PropertyValue::Right(lpa(v, font_size, own_line_height, ctx)),
-        PropertyValue::Bottom(v) => PropertyValue::Bottom(lpa(v, font_size, own_line_height, ctx)),
-        PropertyValue::Left(v) => PropertyValue::Left(lpa(v, font_size, own_line_height, ctx)),
+        PropertyValue::Width(v) => PropertyValue::Width(basis.lpa(v)),
+        PropertyValue::Height(v) => PropertyValue::Height(basis.lpa(v)),
+        PropertyValue::MaxWidth(v) => PropertyValue::MaxWidth(basis.lpa(v)),
+        PropertyValue::MaxHeight(v) => PropertyValue::MaxHeight(basis.lpa(v)),
+        PropertyValue::MinWidth(v) => PropertyValue::MinWidth(basis.lpa(v)),
+        PropertyValue::MinHeight(v) => PropertyValue::MinHeight(basis.lpa(v)),
+        PropertyValue::MinBlockSize(v) => PropertyValue::MinBlockSize(basis.lpa(v)),
+        PropertyValue::Top(v) => PropertyValue::Top(basis.lpa(v)),
+        PropertyValue::Right(v) => PropertyValue::Right(basis.lpa(v)),
+        PropertyValue::Bottom(v) => PropertyValue::Bottom(basis.lpa(v)),
+        PropertyValue::Left(v) => PropertyValue::Left(basis.lpa(v)),
         // ── background-size / background-position ───────────────────────
         // CSS Backgrounds and Borders 3 §2.9/§2.6: both carry
         // `<length-percentage>` components, absolutized against this page
         // context's own font-size/line-height (same basis as `Width`/
         // `Height` above).
-        PropertyValue::BackgroundSize(v) => {
-            PropertyValue::BackgroundSize(background_size(v, font_size, own_line_height, ctx))
-        }
+        PropertyValue::BackgroundSize(v) => PropertyValue::BackgroundSize(basis.background_size(v)),
         PropertyValue::BackgroundPosition(v) => {
-            PropertyValue::BackgroundPosition(css_position(v, font_size, own_line_height, ctx))
+            PropertyValue::BackgroundPosition(basis.css_position(v))
         }
         // `background` shorthand fall-through (see `Padding` above for the
         // unreachability rationale) — unreachable in practice
@@ -1146,8 +1039,8 @@ pub(super) fn absolutize_in_page_context(
                 own_line_height,
                 ctx,
             ),
-            position: css_position(shorthand.position, font_size, own_line_height, ctx),
-            size: background_size(shorthand.size, font_size, own_line_height, ctx),
+            position: basis.css_position(shorthand.position),
+            size: basis.background_size(shorthand.size),
             ..shorthand
         }),
         // ── text-decoration-thickness / text-decoration-inset ────────────
@@ -1248,9 +1141,7 @@ pub(super) fn absolutize_in_page_context(
         // CSS Images Module Level 3 §5.2: carries `<length-percentage>`
         // components via the reused `CssPosition` type (same shape and same
         // `css_position` helper as `BackgroundPosition` above).
-        PropertyValue::ObjectPosition(v) => {
-            PropertyValue::ObjectPosition(css_position(v, font_size, own_line_height, ctx))
-        }
+        PropertyValue::ObjectPosition(v) => PropertyValue::ObjectPosition(basis.css_position(v)),
         // ── opacity ───────────────────────────────────────────────────────
         // CSS Color 4 §3.3: "Opacity values outside the range `[0, 1]` are
         // not invalid, and are preserved in specified values, but are
@@ -1349,7 +1240,7 @@ pub(super) fn absolutize_in_page_context(
             Arc::new(
                 items
                     .iter()
-                    .map(|item| text_shadow_item(*item, font_size, own_line_height, ctx))
+                    .map(|item| basis.text_shadow_item(*item))
                     .collect(),
             )
         }),
@@ -1370,9 +1261,7 @@ pub(super) fn absolutize_in_page_context(
         // CSS Flexible Box Layout Module Level 1 §7.2.3 — `content`/`auto`
         // preserved as keywords, `<length-percentage>` absolutized (`fb`
         // helper above).
-        PropertyValue::FlexBasis(v) => {
-            PropertyValue::FlexBasis(fb(v, font_size, own_line_height, ctx))
-        }
+        PropertyValue::FlexBasis(v) => PropertyValue::FlexBasis(basis.fb(v)),
         // Shorthand fall-through (see `Padding` above) — unreachable in
         // practice (`expand_shorthand_into` expands it before this function
         // ever sees a winner). `grow`/`shrink` carry no length; `basis`
@@ -1380,43 +1269,31 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::Flex(f) => PropertyValue::Flex(FlexShorthand {
             grow: f.grow,
             shrink: f.shrink,
-            basis: fb(f.basis, font_size, own_line_height, ctx),
+            basis: basis.fb(f.basis),
         }),
         // ── row-gap / column-gap ─────────────────────────────────────────
         // CSS Box Alignment Module Level 3 §8.1 — `normal` preserved as a
         // keyword (`lpn` helper above, unlike `letter-spacing`/
         // `word-spacing`'s `normal → 0` collapse).
-        PropertyValue::RowGap(v) => {
-            PropertyValue::RowGap(lpn(v, font_size, own_line_height, ctx))
-        }
-        PropertyValue::ColumnGap(v) => {
-            PropertyValue::ColumnGap(lpn(v, font_size, own_line_height, ctx))
-        }
+        PropertyValue::RowGap(v) => PropertyValue::RowGap(basis.lpn(v)),
+        PropertyValue::ColumnGap(v) => PropertyValue::ColumnGap(basis.lpn(v)),
         // Shorthand fall-through (see `Padding` above) — unreachable in
         // practice, same shape as `Flex` above.
         PropertyValue::Gap(g) => PropertyValue::Gap(GapShorthand {
-            row: lpn(g.row, font_size, own_line_height, ctx),
-            column: lpn(g.column, font_size, own_line_height, ctx),
+            row: basis.lpn(g.row),
+            column: basis.lpn(g.column),
         }),
         // ── grid-template-columns / grid-template-rows ──────────────────────
         // CSS Grid Layout Module Level 1 §7.2 — `none` preserved as a
         // keyword, `<length-percentage>` inside the track list absolutized
         // (`gtt` helper above).
-        PropertyValue::GridTemplateColumns(v) => {
-            PropertyValue::GridTemplateColumns(gtt(v, font_size, own_line_height, ctx))
-        }
-        PropertyValue::GridTemplateRows(v) => {
-            PropertyValue::GridTemplateRows(gtt(v, font_size, own_line_height, ctx))
-        }
+        PropertyValue::GridTemplateColumns(v) => PropertyValue::GridTemplateColumns(basis.gtt(v)),
+        PropertyValue::GridTemplateRows(v) => PropertyValue::GridTemplateRows(basis.gtt(v)),
         // ── grid-auto-columns / grid-auto-rows ───────────────────────────────
         // CSS Grid Layout Module Level 1 §7.6 — same track-size
         // absolutization as `GridTemplateColumns` above (`gatl` helper).
-        PropertyValue::GridAutoColumns(v) => {
-            PropertyValue::GridAutoColumns(gatl(&v, font_size, own_line_height, ctx))
-        }
-        PropertyValue::GridAutoRows(v) => {
-            PropertyValue::GridAutoRows(gatl(&v, font_size, own_line_height, ctx))
-        }
+        PropertyValue::GridAutoColumns(v) => PropertyValue::GridAutoColumns(basis.gatl(&v)),
+        PropertyValue::GridAutoRows(v) => PropertyValue::GridAutoRows(basis.gatl(&v)),
         // ── transform ────────────────────────────────────────────────────
         // CSS Transforms Level 1 §4: Computed value is "as specified, but
         // with lengths made absolute" — `translate()`/`translateX()`/
@@ -1432,7 +1309,7 @@ pub(super) fn absolutize_in_page_context(
                 PropertyValue::Transform(Arc::new(
                     items
                         .iter()
-                        .map(|f| transform_function(*f, font_size, own_line_height, ctx))
+                        .map(|f| basis.transform_function(*f))
                         .collect(),
                 ))
             }
