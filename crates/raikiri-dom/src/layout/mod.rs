@@ -4914,7 +4914,6 @@ fn computed_length_to_taffy_length_percentage(
 /// なって match 自体が消えたため到達不能になった。`pub(crate)` なので戻り値の
 /// narrowing は crate 内で完結する (外部影響 0)。
 ///
-
 /// Preserve the previous per-text-node expansion for inline contexts whose
 /// shared line cursor and wrap positions are not available to pre-shaping.
 fn expand_tabs_locally(text: &str, tab_size: ComputedTabSize, space_advance: f32) -> String {
@@ -5118,33 +5117,42 @@ fn probe_text_advance_inner(
     }
 }
 
-fn probe_text_full_width(
-    fonts: &mut FontContext,
-    layout_cx: &mut LayoutContext<()>,
-    sample: &str,
-    family_str: &str,
+#[derive(Clone, Copy)]
+struct TextProbeStyle<'a> {
+    family_str: &'a str,
     font_size_px: f32,
     font_weight: f32,
     font_style: StyleFontStyle,
     letter_spacing: f32,
     word_spacing: f32,
+}
+
+fn probe_text_full_width(
+    fonts: &mut FontContext,
+    layout_cx: &mut LayoutContext<()>,
+    sample: &str,
+    style: TextProbeStyle<'_>,
 ) -> f32 {
     let mut warnings = Vec::new();
     let size = sanitize_finite(
-        font_size_px,
+        style.font_size_px,
         0.0,
         MAX_FONT_SIZE_PX,
         "font-size",
         &mut warnings,
     );
-    let weight = sanitize_font_weight(font_weight, &mut warnings);
+    let weight = sanitize_font_weight(style.font_weight, &mut warnings);
     let mut builder = layout_cx.ranged_builder(fonts, sample, 1.0, false);
-    builder.push_default(StyleProperty::FontFamily(FontFamily::from(family_str)));
+    builder.push_default(StyleProperty::FontFamily(FontFamily::from(
+        style.family_str,
+    )));
     builder.push_default(StyleProperty::FontSize(size));
     builder.push_default(StyleProperty::FontWeight(FontWeight::new(weight)));
-    builder.push_default(StyleProperty::FontStyle(font_style_to_parley(font_style)));
-    builder.push_default(StyleProperty::LetterSpacing(letter_spacing));
-    builder.push_default(StyleProperty::WordSpacing(word_spacing));
+    builder.push_default(StyleProperty::FontStyle(font_style_to_parley(
+        style.font_style,
+    )));
+    builder.push_default(StyleProperty::LetterSpacing(style.letter_spacing));
+    builder.push_default(StyleProperty::WordSpacing(style.word_spacing));
     let mut layout: Layout<()> = builder.build(sample);
     layout.break_all_lines(None);
     layout.full_width()
@@ -8288,24 +8296,28 @@ fn preshape_text(
             fonts,
             layout_cx,
             " ",
-            &job.metrics_family,
-            job.metrics_size,
-            job.metrics_weight,
-            job.metrics_style,
-            job.metrics_letter_spacing_raw,
-            job.metrics_word_spacing_raw,
+            TextProbeStyle {
+                family_str: &job.metrics_family,
+                font_size_px: job.metrics_size,
+                font_weight: job.metrics_weight,
+                font_style: job.metrics_style,
+                letter_spacing: job.metrics_letter_spacing_raw,
+                word_spacing: job.metrics_word_spacing_raw,
+            },
         );
         let interval = tab_stop_advance(job.tab_size, block_space_advance);
         let space_base_advance = probe_text_full_width(
             fonts,
             layout_cx,
             " ",
-            &job.family_str,
-            job.font_size_raw,
-            job.font_weight_raw,
-            job.font_style,
-            job.letter_spacing_raw,
-            0.0,
+            TextProbeStyle {
+                family_str: &job.family_str,
+                font_size_px: job.font_size_raw,
+                font_weight: job.font_weight_raw,
+                font_style: job.font_style,
+                letter_spacing: job.letter_spacing_raw,
+                word_spacing: 0.0,
+            },
         );
         let text_word_spacing = if job.word_spacing_ch_factor.is_some() {
             job.word_spacing_raw
@@ -8318,12 +8330,14 @@ fn preshape_text(
                     fonts,
                     layout_cx,
                     segment,
-                    &job.family_str,
-                    job.font_size_raw,
-                    job.font_weight_raw,
-                    job.font_style,
-                    job.letter_spacing_raw,
-                    text_word_spacing,
+                    TextProbeStyle {
+                        family_str: &job.family_str,
+                        font_size_px: job.font_size_raw,
+                        font_weight: job.font_weight_raw,
+                        font_style: job.font_style,
+                        letter_spacing: job.letter_spacing_raw,
+                        word_spacing: text_word_spacing,
+                    },
                 )
             });
         job.text = text;
