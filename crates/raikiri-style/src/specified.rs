@@ -290,7 +290,7 @@ pub struct SpecifiedValues {
     /// length は phase 3 で自 node の font-size / line-height 基準へ絶対化する。
     pub text_decoration_inset: TextDecorationInset,
     /// [`ComputedValues::text_underline_offset`] の staging。inherited の
-    /// fixed length は phase 3 で declaring node の font-size 基準へ解決する。
+    /// length-percentage は phase 3 で declaring node の font-size 基準へ解決する。
     pub text_underline_offset: LengthOrAuto,
     /// [`ComputedValues::vertical_align`] の staging。**型は
     /// [`ComputedValues::vertical_align`] と同じ** [`VerticalAlign`] だが、

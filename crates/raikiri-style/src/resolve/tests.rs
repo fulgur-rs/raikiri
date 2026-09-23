@@ -1382,3 +1382,16 @@ fn initial_length_fields_absolutize_to_spec_initials() {
         ComputedLength(INITIAL_FONT_SIZE_PX),
     );
 }
+
+#[test]
+fn text_underline_offset_percentage_uses_computed_font_size() {
+    assert_eq!(
+        resolve_text_underline_offset(
+            LengthOrAuto::Length(Length::Percent(25.0)),
+            ComputedLength(20.0),
+            Some(ComputedLength(40.0)),
+            &CTX,
+        ),
+        ComputedTextUnderlineOffset::Length(ComputedLength(5.0)),
+    );
+}

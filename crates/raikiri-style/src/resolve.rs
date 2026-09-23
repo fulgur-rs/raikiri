@@ -2035,9 +2035,10 @@ pub fn resolve_text_decoration_inset(
     }
 }
 
-/// Resolve an inherited `text-underline-offset` length against the declaring
-/// element's font metrics. Percentages and deferred mixed calc values remain
-/// outside this focused horizontal foundation slice and use `auto`.
+/// Resolve an inherited `text-underline-offset` length-percentage against
+/// the declaring element's font metrics. CSS Text Decoration 4 §2.8 defines
+/// a percentage as a percentage of the computed font size; deferred mixed
+/// `calc()` values still use the conservative `auto` fallback.
 pub fn resolve_text_underline_offset(
     specified: LengthOrAuto,
     font_size: ComputedLength,
@@ -2046,6 +2047,9 @@ pub fn resolve_text_underline_offset(
 ) -> ComputedTextUnderlineOffset {
     match specified {
         LengthOrAuto::Auto | LengthOrAuto::Calc(_) => ComputedTextUnderlineOffset::Auto,
+        LengthOrAuto::Length(Length::Percent(percent)) => {
+            ComputedTextUnderlineOffset::Length(ComputedLength(font_size.0 * percent / 100.0))
+        }
         LengthOrAuto::Length(length) => ComputedTextUnderlineOffset::Length(resolve_length(
             length,
             font_size,
