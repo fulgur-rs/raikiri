@@ -1564,7 +1564,6 @@ fn absolutize_in_page_context(
         | PropertyValue::Deferred(_)
         | PropertyValue::Grid(_)
         | PropertyValue::GridArea(_)
-        | PropertyValue::CalcLengthPercentage { .. }
         | PropertyValue::BackgroundColor(_)
         | PropertyValue::FontFamily(_)
         | PropertyValue::FontSize(_)

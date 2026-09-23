@@ -2822,7 +2822,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 121;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 120;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -2837,8 +2837,8 @@ const KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE: usize = 5;
 
 fn raw_corpus_residue_variants() -> usize {
     // The five raw page-only inherit markers add specified-layer residue
-    // just like the existing four phase-2-only samples.
-    phase_3_transformed_variants() + 9 - KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE
+    // just like the existing three phase-2-only samples.
+    phase_3_transformed_variants() + 8 - KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE
 }
 
 /// `sample_for` / `ALL_PROPERTY_KEYS` を **1 つの token 列**から生成する。
@@ -3540,13 +3540,6 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
             value: "calc(1px + 1px)".into(),
             key: PropertyKey::Width,
         }),
-        PropertyValue::CalcLengthPercentage {
-            key: PropertyKey::Width,
-            value: crate::property::CalcLengthPercentage {
-                percent: 5.0,
-                px: 10.0,
-            },
-        },
     ]
 }
 
@@ -3622,7 +3615,7 @@ macro_rules! property_value_variant_registry {
             const PROPERTY_VALUE_VARIANT_COUNT: usize = [$(stringify!($variant)),+,
                 "CounterResetInherit", "MarginTopInherit", "MarginRightInherit",
                 "MarginBottomInherit", "MarginLeftInherit", "MarginInherit",
-                "BorderRadiusInherit", "CalcLengthPercentage", "GridArea", "Grid"].len();
+                "BorderRadiusInherit", "GridArea", "Grid"].len();
 
             fn property_value_variant_name(value: &PropertyValue) -> &'static str {
                 match value {
@@ -3633,7 +3626,6 @@ macro_rules! property_value_variant_registry {
                     PropertyValue::MarginLeftInherit => "MarginLeftInherit",
                     PropertyValue::MarginInherit => "MarginInherit",
                     PropertyValue::BorderRadiusInherit => "BorderRadiusInherit",
-                    PropertyValue::CalcLengthPercentage { .. } => "CalcLengthPercentage",
                     PropertyValue::GridArea(_) => "GridArea",
                     PropertyValue::Grid(_) => "Grid",
                     $(PropertyValue::$variant(_) => stringify!($variant),)+
@@ -4231,7 +4223,6 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // Shorthand fall-through — either component being residue makes
             // the whole shorthand residue.
             PropertyValue::Gap(g) => length_or_normal(g.row).or_else(|| length_or_normal(g.column)),
-            PropertyValue::CalcLengthPercentage { .. } => Some("calc()"),
             PropertyValue::GridArea(_) | PropertyValue::Grid(_) => None,
             PropertyValue::GridTemplateColumns(v) | PropertyValue::GridTemplateRows(v) => {
                 grid_template_tracks(v)
@@ -5187,11 +5178,29 @@ fn page_declarations_carry_no_specified_layer_residue() {
 
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
-    assert_eq!(
-        residues,
-        vec![(PropertyKey::Width, "calc()")],
-        "only the deferred calc() residue may remain until used-value layout",
+    assert_eq!(residues, vec![]);
+}
+
+/// A mixed-unit `calc()` needs the containing block, so page-context
+/// resolution leaves it for used-value layout.
+#[test]
+fn page_width_calc_stays_a_residue_until_used_value_layout() {
+    let root = root_with_font_size(16.0);
+    let ctx = ResolveContext::new(root.font_size);
+    let value = PropertyValue::Width(LengthOrAuto::Calc(crate::property::CalcLengthPercentage {
+        percent: 5.0,
+        px: 10.0,
+    }));
+    let resolved = absolutize_in_page_context(
+        resolve_against_inherited(value, &root, &ctx),
+        ComputedLength(20.0),
+        None,
+        &ctx,
+        Sides::all(BorderStyle::Solid),
+        OutlineStyle::Solid,
+        OverflowXY::both(OverflowValue::Hidden),
     );
+    assert_eq!(specified_layer_residue(&resolved), Some("calc()"));
 }
 
 /// 同じ規則を **`cascade_page` の出力そのもの** に対して確かめる。
