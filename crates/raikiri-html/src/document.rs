@@ -1,14 +1,12 @@
 //! `HtmlDocument`: assembled document type。
 //!
 //! HTML を parse して cascade まで完了した document unit。Consumer 視点で
-//! 「layout/paint に投入できる状態」を単一 handle で表現する。将来
-//! raikiri-dom に `Document::assemble` が生えた時点で `pub use raikiri_dom::
-//! Document` に透過的に置換される (Consumer surface 不変)。
+//! 「layout/paint に投入できる状態」を単一 handle で表現する。
 //!
 //! blitz `HtmlDocument` の analog (spec §L1134 blitz-compat 対応)。名前のみ
 //! 一致、shape / code / UA CSS の持ち込みなし (independent implementation)。
 
-use raikiri_html::UncascadedDocument;
+use crate::UncascadedDocument;
 use raikiri_style::{CascadeResult, FontFaceRegistry};
 use url::Url;
 
@@ -45,5 +43,14 @@ impl HtmlDocument {
     /// and relative replaced-element URLs.
     pub fn effective_base_url(&self) -> Option<&Url> {
         self.effective_base_url.as_ref()
+    }
+
+    /// Take ownership of the parsed document and its cascade.
+    ///
+    /// Single-page layout drivers mutate the DOM in place (layout results are
+    /// stored on its nodes); they use this to obtain an owned
+    /// [`UncascadedDocument`] together with the matching [`CascadeResult`].
+    pub fn into_parts(self) -> (UncascadedDocument, CascadeResult) {
+        (self.uncascaded, self.cascade)
     }
 }

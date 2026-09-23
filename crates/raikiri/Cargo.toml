@@ -1,7 +1,7 @@
 [package]
 name = "raikiri"
 version = "0.1.0"
-description = "Umbrella crate for raikiri: primary consumer API (parse_html / plan / render_streaming / render_batch / html_to_png) and re-exports of all sub-crates"
+description = "Umbrella crate for raikiri: in-repo dogfooding APIs (html_to_png / PageScene / PageDrawables) and re-exports of all sub-crates"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -13,7 +13,6 @@ raikiri-net    = { workspace = true }
 raikiri-dom    = { workspace = true }
 raikiri-html   = { workspace = true }
 raikiri-paint  = { workspace = true }
-cssparser      = { workspace = true }
 # Re-export `Url` so Consumers can name `raikiri::Url` when constructing
 # `raikiri::ParseOptions { base_url: Some(Url::parse(...)), ... }` without
 # adding `url` as a direct dep.
@@ -32,6 +31,7 @@ tiny-skia           = { workspace = true }
 parley              = { workspace = true }
 
 [dev-dependencies]
+cssparser   = { workspace = true }
 # hello_world_vrt integration test 用。raikiri-vrt は publish=false のため
 # workspace pin (version = "0.1.0", path = ...) を継承せず path-only で指定する
 # (workspace = true にすると version が manifest に残り、cargo publish 時に

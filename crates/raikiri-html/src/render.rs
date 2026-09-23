@@ -1,9 +1,9 @@
-//! Entry points that are not yet backed by the full planning state machine.
+//! Page-output entry points.
 //!
-//! `plan` remains an explicit unavailable API. `render_streaming` is the
-//! neutral page-output bridge: it uses the merged `raikiri-dom` pagination
-//! projection and keeps renderer-specific scene and drawable code out of the
-//! sink contract.
+//! [`render_streaming`] is the single neutral page-output entry point: it uses
+//! the `raikiri-dom` pagination projection and keeps renderer-specific scene
+//! and drawable code out of the sink contract. [`plan`] remains an explicit
+//! unavailable API.
 
 use parley::FontContext;
 use raikiri_dom::{
@@ -15,8 +15,8 @@ use raikiri_dom::{
 use raikiri_style::FontFaceRegistry;
 use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue, DocumentPlan,
-    IntrinsicBox, PageBox, PageDefaults, PageEventObserver, PageFragment, PageFragmentPageGeometry,
-    PlanConfig, PolicyViolation, RenderError, RenderSink, RenderStatus, RenderStatus::Aborted,
+    IntrinsicBox, PageBox, PageDefaults, PageEventObserver, PageFragmentPageGeometry, PlanConfig,
+    PolicyViolation, RenderError, RenderSink, RenderStatus, RenderStatus::Aborted,
     RenderStatus::Completed, RenderSummary, RenderWarning, ReplacedResolver, ResolveDisposition,
     ResolvedIntrinsic, ResolverError, ResolverRequest, ResourceKind, ResourcePolicy,
     StreamingConfig, ViolationType, WarningKind,
@@ -24,39 +24,31 @@ use raikiri_traits::{
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use crate::resources::{
-    NetworkFontFaceLoader, RenderResources, SharedRenderWarnings, parse_html_with_resources,
-    push_resource_warning, redacted_url, sanitize_policy_violation,
+use raikiri_style::{
+    Atom, ConsumerPropertyGrammar, ConsumerPropertyRegistration, MediaContext, PageContextQuery,
 };
-use crate::{
-    Atom, ConsumerPropertyGrammar, ConsumerPropertyRegistration, HtmlDocument, MediaContext,
-    PageContextQuery, build_cascaded_with_media_context_for_page_and_consumer_properties,
+
+use crate::HtmlDocument;
+use crate::cascade::build_cascaded_with_media_context_for_page_and_consumer_properties;
+#[cfg(doc)]
+use crate::parse_html_with_resources;
+use crate::resources::{
+    NetworkFontFaceLoader, RenderResources, SharedRenderWarnings, push_resource_warning,
+    redacted_url, sanitize_policy_violation,
 };
 
 struct RenderExecutionResources<'a> {
     font_context: FontContext,
-    font_faces: Option<&'a FontFaceRegistry>,
-    font_face_loader: Option<&'a dyn FontFaceLoader>,
+    font_faces: &'a FontFaceRegistry,
+    font_face_loader: &'a dyn FontFaceLoader,
     effective_base_url: Option<&'a url::Url>,
     warnings: SharedRenderWarnings,
-}
-
-impl RenderExecutionResources<'_> {
-    fn legacy() -> Self {
-        Self {
-            font_context: FontContext::new(),
-            font_faces: None,
-            font_face_loader: None,
-            effective_base_url: None,
-            warnings: Arc::new(Mutex::new(Vec::new())),
-        }
-    }
 }
 
 struct FallbackRecordingResolver<'a> {
     inner: &'a dyn ReplacedResolver,
     policy: Option<&'a dyn ResourcePolicy>,
-    image_pixel_source: Option<&'a dyn crate::ImagePixelSource>,
+    image_pixel_source: Option<&'a dyn raikiri_traits::ImagePixelSource>,
     warnings: SharedRenderWarnings,
     seen: Mutex<HashSet<(url::Url, String)>>,
 }
@@ -163,109 +155,6 @@ impl ReplacedResolver for NoopReplacedResolver {
                 reason: "no replaced-resource resolver was configured".to_owned(),
             },
         })
-    }
-}
-
-/// Stream pages from a parsed document using one shared consumer resource handoff.
-///
-/// Font faces are registered into a clone of the configured font context before
-/// layout. That prepared context is cloned for each bounded page-geometry pass;
-/// paint consumes the shaped runs stored by layout. The same replaced-resource
-/// provider is used by the layout resolver and remains available as the
-/// configured image pixel source for downstream painting.
-#[allow(clippy::result_large_err)]
-pub fn render_streaming_with_resources(
-    doc: &HtmlDocument,
-    defaults: PageDefaults,
-    resources: &RenderResources<'_>,
-    config: StreamingConfig,
-    sink: &mut dyn RenderSink,
-) -> Result<RenderStatus, RenderError> {
-    let warnings = Arc::new(Mutex::new(Vec::new()));
-    let network = resources.network_adapter();
-    let network_ref = network
-        .as_ref()
-        .map(|provider| provider as &dyn raikiri_traits::NetworkProvider);
-    let effective_base_url =
-        raikiri_html::effective_document_base_url(&doc.uncascaded, resources.fallback_base_url());
-    let font_loader = NetworkFontFaceLoader::new(
-        network_ref,
-        effective_base_url.as_ref(),
-        Arc::clone(&warnings),
-    );
-    let runtime = RenderExecutionResources {
-        font_context: resources.clone_font_context(),
-        font_faces: Some(&doc.font_faces),
-        font_face_loader: Some(&font_loader),
-        effective_base_url: effective_base_url.as_ref(),
-        warnings: Arc::clone(&warnings),
-    };
-    let noop_resolver = NoopReplacedResolver;
-    let inner_resolver = resources.resolver().unwrap_or(&noop_resolver);
-    let resolver = FallbackRecordingResolver {
-        inner: inner_resolver,
-        policy: resources.policy(),
-        image_pixel_source: resources.raw_image_pixel_source(),
-        warnings,
-        seen: Mutex::new(HashSet::new()),
-    };
-    render_streaming_inner(
-        doc,
-        defaults,
-        &resolver,
-        config,
-        sink,
-        None,
-        None,
-        &[],
-        runtime,
-    )
-}
-
-/// Parse and stream HTML with one resource configuration shared by both phases.
-#[allow(clippy::result_large_err)]
-pub fn render_html_streaming_with_resources<R: std::io::Read>(
-    input: R,
-    defaults: PageDefaults,
-    resources: &RenderResources<'_>,
-    config: StreamingConfig,
-    sink: &mut dyn RenderSink,
-) -> Result<RenderStatus, RenderError> {
-    let doc = parse_html_with_resources(input, resources)?;
-    render_streaming_with_resources(&doc, defaults, resources, config, sink)
-}
-
-/// Parse and collect all emitted pages using the shared resource handoff.
-///
-/// This is the batch-collection sibling of [`render_html_streaming_with_resources`].
-/// It uses the same parse, font registration, policy, resolver, and warning
-/// paths, but retains every page in memory before returning.
-#[allow(clippy::result_large_err)]
-pub fn render_html_pages_with_resources<R: std::io::Read>(
-    input: R,
-    defaults: PageDefaults,
-    resources: &RenderResources<'_>,
-    config: StreamingConfig,
-) -> Result<(Vec<PageFragment>, RenderStatus), RenderError> {
-    let mut sink = PageCollector::default();
-    let status =
-        render_html_streaming_with_resources(input, defaults, resources, config, &mut sink)?;
-    Ok((sink.pages, status))
-}
-
-#[derive(Default)]
-struct PageCollector {
-    pages: Vec<PageFragment>,
-}
-
-impl RenderSink for PageCollector {
-    fn accept_page(&mut self, page: PageFragment) -> std::io::Result<()> {
-        self.pages.push(page);
-        Ok(())
-    }
-
-    fn finish_render(&mut self, _summary: RenderSummary) -> std::io::Result<()> {
-        Ok(())
     }
 }
 
@@ -645,102 +534,226 @@ pub fn plan(
     })
 }
 
+/// Resources and observers for one [`render_streaming`] call.
+///
+/// Every part is optional and independent, so link events, registered
+/// consumer properties, and a consumer resource handoff can be combined in a
+/// single render:
+///
+/// ```
+/// use raikiri_html::{
+///     ConsumerPropertyRegistration, RenderOptions, RenderResources, parse_html_with_resources,
+///     render_streaming,
+/// };
+/// use raikiri_traits::{
+///     ConsumerPropertyEvent, ConsumerPropertyObserver, PageEventObserver, PageFragment,
+///     PageFragmentEvent, PageDefaults, RenderSink, RenderSummary, StreamingConfig,
+/// };
+///
+/// #[derive(Default)]
+/// struct Recorder {
+///     pages: usize,
+///     links: usize,
+///     properties: usize,
+/// }
+/// impl RenderSink for Recorder {
+///     fn accept_page(&mut self, _page: PageFragment) -> std::io::Result<()> {
+///         self.pages += 1;
+///         Ok(())
+///     }
+///     fn finish_render(&mut self, _summary: RenderSummary) -> std::io::Result<()> {
+///         Ok(())
+///     }
+/// }
+/// #[derive(Default)]
+/// struct Links(usize);
+/// impl PageEventObserver for Links {
+///     fn observe_event(&mut self, _event: PageFragmentEvent) -> std::io::Result<()> {
+///         self.0 += 1;
+///         Ok(())
+///     }
+/// }
+/// #[derive(Default)]
+/// struct Properties(usize);
+/// impl ConsumerPropertyObserver for Properties {
+///     fn observe_event(&mut self, _event: ConsumerPropertyEvent) -> std::io::Result<()> {
+///         self.0 += 1;
+///         Ok(())
+///     }
+/// }
+///
+/// let resources = RenderResources::new();
+/// let doc = parse_html_with_resources(
+///     &b"<h1 style='bookmark-level: 1'><a href='https://example.com/'>Hi</a></h1>"[..],
+///     &resources,
+/// )
+/// .expect("parse");
+/// let registrations = [ConsumerPropertyRegistration::integer("bookmark-level")];
+/// let (mut links, mut properties, mut sink) =
+///     (Links::default(), Properties::default(), Recorder::default());
+/// let options = RenderOptions::new()
+///     .resources(&resources)
+///     .page_observer(&mut links)
+///     .consumer_properties(&registrations, &mut properties);
+/// render_streaming(
+///     &doc,
+///     PageDefaults::default(),
+///     StreamingConfig::default(),
+///     options,
+///     &mut sink,
+/// )
+/// .expect("render");
+/// assert_eq!(sink.pages, 1);
+/// assert_eq!(links.0, 1);
+/// assert_eq!(properties.0, 1);
+/// ```
+#[derive(Default)]
+pub struct RenderOptions<'r, 'a> {
+    resources: Option<&'r RenderResources<'a>>,
+    page_observer: Option<&'r mut dyn PageEventObserver>,
+    consumer_properties: &'r [ConsumerPropertyRegistration],
+    property_observer: Option<&'r mut dyn ConsumerPropertyObserver>,
+}
+
+impl std::fmt::Debug for RenderOptions<'_, '_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RenderOptions")
+            .field("resources", &self.resources)
+            .field("has_page_observer", &self.page_observer.is_some())
+            .field("consumer_property_count", &self.consumer_properties.len())
+            .field("has_property_observer", &self.property_observer.is_some())
+            .finish()
+    }
+}
+
+impl<'r, 'a> RenderOptions<'r, 'a> {
+    /// Options with default resources and no observers.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Share this resource configuration with the render.
+    ///
+    /// Pass the same value that was given to [`parse_html_with_resources`] so
+    /// both phases share the base URL, network provider, policy, fonts,
+    /// replaced-resource resolver, and limits. Without it the render uses
+    /// [`RenderResources::new`]: the platform font context, no network
+    /// provider, and no replaced-resource resolver (replaced elements fall
+    /// back and are reported as resource warnings).
+    pub fn resources(mut self, resources: &'r RenderResources<'a>) -> Self {
+        self.resources = Some(resources);
+        self
+    }
+
+    /// Receive page-local link events.
+    ///
+    /// Events for a page are delivered after the corresponding
+    /// [`RenderSink::accept_page`] call. They carry only opaque
+    /// [`NodeId`](raikiri_traits::NodeId)s, page indices, CSS-pixel
+    /// rectangles, and link values.
+    pub fn page_observer(mut self, observer: &'r mut dyn PageEventObserver) -> Self {
+        self.page_observer = Some(observer);
+        self
+    }
+
+    /// Register consumer-owned properties and receive their resolved values.
+    ///
+    /// Registered properties take part in the cascade. Their events are
+    /// delivered before the first page is accepted; they carry no page
+    /// geometry and are joined to page fragments by their opaque `NodeId`.
+    pub fn consumer_properties(
+        mut self,
+        registrations: &'r [ConsumerPropertyRegistration],
+        observer: &'r mut dyn ConsumerPropertyObserver,
+    ) -> Self {
+        self.consumer_properties = registrations;
+        self.property_observer = Some(observer);
+        self
+    }
+}
+
 /// Stream neutral page snapshots to a consumer sink.
 ///
-/// The current driver lays out the document into neutral snapshots before
-/// emitting them. This keeps the public contract renderer-neutral while the
-/// pagination state machine grows: no Taffy, Parley, style, scene, drawable,
-/// or PDF value crosses the sink boundary. The input document is cloned for
-/// the mutating layout pass, so the existing shared `&HtmlDocument` API stays
-/// source-compatible.
+/// This is the single render entry point. The document is laid out into
+/// renderer-neutral page fragments before they are emitted: no Taffy, Parley,
+/// style, scene, drawable, or PDF value crosses the sink boundary. The input
+/// document is cloned for the mutating layout pass, so a shared
+/// `&HtmlDocument` is sufficient.
+///
+/// Font faces are registered into a clone of the configured font context
+/// before layout, and that prepared context is cloned for each bounded
+/// page-geometry pass. The configured replaced-resource resolver is wrapped so
+/// policy denials, decoded-size overruns, and fallbacks are reported as
+/// [`RenderWarning`]s in the final summary.
 ///
 /// A configured [`AbortSignal`](raikiri_traits::AbortSignal) is checked before
 /// layout, before every page, and before completion. Aborted renders return
-/// without calling `RenderSink::finish_render`. If the bounded page-geometry
+/// without calling [`RenderSink::finish_render`]. If the bounded page-geometry
 /// schedule does not converge, [`RenderError::PageGeometryDidNotConverge`]
-/// is returned before any page is emitted.
-///
-/// The compatibility path does not register consumer properties and therefore
-/// retains the existing parse, cascade, and traversal behavior.
+/// is returned before any page is emitted. Observer I/O failures are returned
+/// as [`RenderError::Sink`]; a page may already have been accepted and
+/// `finish_render` is skipped. Successful renders call
+/// [`RenderSink::finish_render`] exactly once.
 #[allow(clippy::result_large_err)]
 pub fn render_streaming(
     doc: &HtmlDocument,
     defaults: PageDefaults,
-    resolver: &dyn ReplacedResolver,
     config: StreamingConfig,
+    options: RenderOptions<'_, '_>,
     sink: &mut dyn RenderSink,
 ) -> Result<RenderStatus, RenderError> {
-    render_streaming_inner(
-        doc,
-        defaults,
-        resolver,
-        config,
-        sink,
-        None,
-        None,
-        &[],
-        RenderExecutionResources::legacy(),
-    )
-}
-
-/// Stream neutral page snapshots and page-local link/annotation events.
-///
-/// This is the opt-in observer variant of [`render_streaming`]. The page
-/// stream remains renderer-neutral, and the observer receives only opaque
-/// [`NodeId`](raikiri_traits::NodeId), page indices, CSS-pixel rectangles, and
-/// link values. Events are delivered after the corresponding
-/// [`RenderSink::accept_page`] call. Observer I/O failures are returned as
-/// [`RenderError::Sink`]; the page may already have been accepted and
-/// `finish_render` is skipped. Successful renders still call
-/// [`RenderSink::finish_render`] exactly once.
-#[allow(clippy::result_large_err)]
-pub fn render_streaming_with_observer(
-    doc: &HtmlDocument,
-    defaults: PageDefaults,
-    resolver: &dyn ReplacedResolver,
-    config: StreamingConfig,
-    sink: &mut dyn RenderSink,
-    observer: &mut dyn PageEventObserver,
-) -> Result<RenderStatus, RenderError> {
-    render_streaming_inner(
-        doc,
-        defaults,
-        resolver,
-        config,
-        sink,
-        Some(observer),
-        None,
-        &[],
-        RenderExecutionResources::legacy(),
-    )
-}
-
-/// Stream pages and resolved registered consumer properties.
-///
-/// Consumer-property events are delivered before the first page is accepted.
-/// They contain no page geometry; join them to the later neutral page-fragment
-/// events with their opaque `NodeId`. A property observer error is returned as
-/// [`RenderError::Sink`] and prevents page emission and completion.
-#[allow(clippy::result_large_err)]
-pub fn render_streaming_with_consumer_properties(
-    doc: &HtmlDocument,
-    defaults: PageDefaults,
-    resolver: &dyn ReplacedResolver,
-    config: StreamingConfig,
-    consumer_properties: &[ConsumerPropertyRegistration],
-    sink: &mut dyn RenderSink,
-    observer: &mut dyn ConsumerPropertyObserver,
-) -> Result<RenderStatus, RenderError> {
-    render_streaming_inner(
-        doc,
-        defaults,
-        resolver,
-        config,
-        sink,
-        None,
-        Some(observer),
+    let RenderOptions {
+        resources,
+        page_observer,
         consumer_properties,
-        RenderExecutionResources::legacy(),
+        property_observer,
+    } = options;
+    let default_resources;
+    let resources = match resources {
+        Some(resources) => resources,
+        None => {
+            default_resources = RenderResources::new();
+            &default_resources
+        }
+    };
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let network = resources.network_adapter();
+    let network_ref = network
+        .as_ref()
+        .map(|provider| provider as &dyn raikiri_traits::NetworkProvider);
+    let effective_base_url =
+        crate::effective_document_base_url(&doc.uncascaded, resources.fallback_base_url());
+    let font_loader = NetworkFontFaceLoader::new(
+        network_ref,
+        effective_base_url.as_ref(),
+        Arc::clone(&warnings),
+    );
+    let runtime = RenderExecutionResources {
+        font_context: resources.clone_font_context(),
+        font_faces: &doc.font_faces,
+        font_face_loader: &font_loader,
+        effective_base_url: effective_base_url.as_ref(),
+        warnings: Arc::clone(&warnings),
+    };
+    let noop_resolver = NoopReplacedResolver;
+    let inner_resolver = resources.resolver().unwrap_or(&noop_resolver);
+    let resolver = FallbackRecordingResolver {
+        inner: inner_resolver,
+        policy: resources.policy(),
+        image_pixel_source: resources.raw_image_pixel_source(),
+        warnings,
+        seen: Mutex::new(HashSet::new()),
+    };
+    render_streaming_inner(
+        doc,
+        defaults,
+        &resolver,
+        config,
+        sink,
+        page_observer,
+        property_observer,
+        consumer_properties,
+        runtime,
     )
 }
 
@@ -786,28 +799,26 @@ fn render_streaming_inner(
         );
     }
     let mut font_context = runtime.font_context.clone();
-    if let (Some(font_faces), Some(font_loader)) = (runtime.font_faces, runtime.font_face_loader) {
-        let report = apply_font_faces(
-            &mut font_context,
-            &mut first_cascade.computed,
-            font_faces,
-            font_loader,
-        );
-        for family in report.skipped {
-            push_resource_warning(
-                &runtime.warnings,
-                RenderWarning {
-                    kind: WarningKind::ResourceFallback {
-                        kind: ResourceKind::Font,
-                        url: None,
-                    },
-                    node_id: None,
-                    details: format!(
-                        "@font-face family {family:?} had no usable source; fallback fonts will be used"
-                    ),
+    let report = apply_font_faces(
+        &mut font_context,
+        &mut first_cascade.computed,
+        runtime.font_faces,
+        runtime.font_face_loader,
+    );
+    for family in report.skipped {
+        push_resource_warning(
+            &runtime.warnings,
+            RenderWarning {
+                kind: WarningKind::ResourceFallback {
+                    kind: ResourceKind::Font,
+                    url: None,
                 },
-            );
-        }
+                node_id: None,
+                details: format!(
+                    "@font-face family {family:?} had no usable source; fallback fonts will be used"
+                ),
+            },
+        );
     }
     let page_box = page_box_for_cascade(&first_cascade, &defaults);
     let mut document = doc.uncascaded.dom.clone();

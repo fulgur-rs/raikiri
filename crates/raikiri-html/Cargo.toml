@@ -1,7 +1,7 @@
 [package]
 name = "raikiri-html"
 version = "0.1.0"
-description = "Thin html5ever wrapper (RaikiriTreeSink) that produces UncascadedDocument for raikiri"
+description = "HTML document entry points for raikiri: html5ever parsing, cascade assembly, resource handoff, and the page-streaming render entry point"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -9,6 +9,9 @@ license.workspace = true
 [dependencies]
 raikiri-traits = { workspace = true }
 raikiri-dom    = { workspace = true }
+raikiri-style  = { workspace = true }
+cssparser      = { workspace = true }
+parley         = { workspace = true }
 html5ever      = { workspace = true }
 markup5ever    = { workspace = true }
 rustc-hash     = { workspace = true }
@@ -18,7 +21,6 @@ url            = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
-raikiri-style  = { workspace = true }
 bytes          = { workspace = true }
 
 [lints]

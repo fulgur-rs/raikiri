@@ -2,9 +2,9 @@
 
 use raikiri::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyRegistration,
-    ConsumerPropertyValue, PageBox, PageDefaults, PageFragment, RenderSink, RenderStatus,
-    RenderSummary, ReplacedResolver, ResolverError, ResolverRequest, StreamingConfig, parse_html,
-    render_streaming_with_consumer_properties,
+    ConsumerPropertyValue, PageBox, PageDefaults, PageFragment, RenderOptions, RenderResources,
+    RenderSink, RenderStatus, RenderSummary, ReplacedResolver, ResolverError, ResolverRequest,
+    StreamingConfig, parse_html, render_streaming,
 };
 
 struct NoopResolver;
@@ -90,14 +90,15 @@ fn resolved_consumer_properties_are_neutral_and_document_ordered() {
     ];
     let mut sink = Sink::default();
     let mut observer = Observer::default();
-    let status = render_streaming_with_consumer_properties(
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
+    let status = render_streaming(
         &doc,
         defaults(),
-        &NoopResolver,
         StreamingConfig::default(),
-        &registrations,
+        RenderOptions::new()
+            .resources(&resources)
+            .consumer_properties(&registrations, &mut observer),
         &mut sink,
-        &mut observer,
     )
     .expect("render");
 
@@ -171,14 +172,15 @@ fn explicit_none_is_a_neutral_value_and_observer_errors_are_structured() {
         fail: true,
         ..Observer::default()
     };
-    let error = render_streaming_with_consumer_properties(
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
+    let error = render_streaming(
         &doc,
         defaults(),
-        &NoopResolver,
         StreamingConfig::default(),
-        &registrations,
+        RenderOptions::new()
+            .resources(&resources)
+            .consumer_properties(&registrations, &mut observer),
         &mut sink,
-        &mut observer,
     )
     .expect_err("observer failure must stop the render");
     assert!(matches!(error, raikiri::RenderError::Sink(_)));
@@ -187,14 +189,15 @@ fn explicit_none_is_a_neutral_value_and_observer_errors_are_structured() {
 
     let mut sink = Sink::default();
     let mut observer = Observer::default();
-    render_streaming_with_consumer_properties(
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
+    render_streaming(
         &doc,
         defaults(),
-        &NoopResolver,
         StreamingConfig::default(),
-        &registrations,
+        RenderOptions::new()
+            .resources(&resources)
+            .consumer_properties(&registrations, &mut observer),
         &mut sink,
-        &mut observer,
     )
     .expect("none render");
     assert_eq!(observer.events.len(), 1);
@@ -228,14 +231,15 @@ fn registrations_use_var_resolution_media_and_explicit_inheritance() {
     ];
     let mut sink = Sink::default();
     let mut observer = Observer::default();
-    render_streaming_with_consumer_properties(
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
+    render_streaming(
         &doc,
         defaults(),
-        &NoopResolver,
         StreamingConfig::default(),
-        &registrations,
+        RenderOptions::new()
+            .resources(&resources)
+            .consumer_properties(&registrations, &mut observer),
         &mut sink,
-        &mut observer,
     )
     .expect("render");
 
@@ -283,14 +287,15 @@ fn content_text_ignores_non_rendered_subtrees() {
     let registrations = [ConsumerPropertyRegistration::text("bookmark-label")];
     let mut sink = Sink::default();
     let mut observer = Observer::default();
-    render_streaming_with_consumer_properties(
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
+    render_streaming(
         &doc,
         defaults(),
-        &NoopResolver,
         StreamingConfig::default(),
-        &registrations,
+        RenderOptions::new()
+            .resources(&resources)
+            .consumer_properties(&registrations, &mut observer),
         &mut sink,
-        &mut observer,
     )
     .expect("render");
 
@@ -325,14 +330,15 @@ fn consumer_property_edge_values_and_closure_observer() {
         events.push(event);
         Ok::<_, std::io::Error>(())
     };
-    render_streaming_with_consumer_properties(
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
+    render_streaming(
         &doc,
         defaults(),
-        &NoopResolver,
         StreamingConfig::default(),
-        &registrations,
+        RenderOptions::new()
+            .resources(&resources)
+            .consumer_properties(&registrations, &mut observer),
         &mut sink,
-        &mut observer,
     )
     .expect("render");
 
@@ -364,14 +370,15 @@ fn empty_consumer_registration_keeps_rendering_compatible() {
     let registrations: [ConsumerPropertyRegistration; 0] = [];
     let mut sink = Sink::default();
     let mut observer = Observer::default();
-    let status = render_streaming_with_consumer_properties(
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
+    let status = render_streaming(
         &doc,
         defaults(),
-        &NoopResolver,
         StreamingConfig::default(),
-        &registrations,
+        RenderOptions::new()
+            .resources(&resources)
+            .consumer_properties(&registrations, &mut observer),
         &mut sink,
-        &mut observer,
     )
     .expect("render");
 

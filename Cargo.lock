@@ -2335,8 +2335,10 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "criterion",
+ "cssparser",
  "html5ever 0.40.1",
  "markup5ever 0.40.0",
+ "parley",
  "raikiri-dom",
  "raikiri-style",
  "raikiri-traits",

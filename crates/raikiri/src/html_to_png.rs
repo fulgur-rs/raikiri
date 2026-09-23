@@ -26,7 +26,7 @@ use raikiri_html::ParseOptions;
 use raikiri_traits::{PageBox, RenderError};
 
 use crate::page_scene::build_page_scene;
-use crate::parse::parse_html;
+use crate::parse_html;
 
 /// `html_to_png` / `html_to_png_with_fonts` の共通実装。VRT test 経路 (pinned
 /// `FontContext`) と production 経路 (`FontContext::new()`) の layout logic を
@@ -47,14 +47,13 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
         network: None,
         base_url: None,
     };
-    let mut doc = parse_html(input, &opts)?;
+    let (mut uncascaded, cascade) = parse_html(input, &opts)?.into_parts();
 
-    let page_box = PageBox::from_page_size(doc.cascade.page.size());
-    // pub(crate) field を crate-internal から split-borrow。accessor 経由だと
-    // `&mut self` が要求されて cascade への同時参照が壊れるが、field 直接なら OK。
-    // `?` は raikiri-traits の `From<LayoutError> for RenderError` (error.rs:137-140)
+    let page_box = PageBox::from_page_size(cascade.page.size());
+    // `into_parts` で所有権ごと分解するので、dom の `&mut` と cascade の `&` を
+    // 同時に取れる。`?` は raikiri-traits の `From<LayoutError> for RenderError`
     // で LayoutError → RenderError::Layout に自動変換される。
-    raikiri_dom::layout_single_page(&mut doc.uncascaded.dom, &doc.cascade, page_box, font_ctx)?;
+    raikiri_dom::layout_single_page(&mut uncascaded.dom, &cascade, page_box, font_ctx)?;
 
     // post-layout Document から PageScene snapshot を
     // 抽出し、byte-identical な raster + encode triple は PageScene::rasterize に
@@ -62,10 +61,9 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
     // が verbatim reuse される (PageDrawables 経由 paint 再導出は
     // byte-identical を破るため defer、rasterize が真の snapshot に至る
     // までの過渡形として dom + cascade を param に受ける)。
-    let dom = &doc.uncascaded.dom;
-    let cascade = &doc.cascade;
-    let scene = build_page_scene(dom, cascade, page_box);
-    Ok(scene.rasterize(dom, cascade, page_box))
+    let dom = &uncascaded.dom;
+    let scene = build_page_scene(dom, &cascade, page_box);
+    Ok(scene.rasterize(dom, &cascade, page_box))
 }
 
 /// HTML byte stream を単一の first page (A4 fallback) の PNG に raster する。
@@ -134,19 +132,18 @@ where
         network: None,
         base_url: None,
     };
-    let mut doc = parse_html(input, &opts)?;
-    let page_box = PageBox::from_page_size(doc.cascade.page.size());
+    let (mut uncascaded, cascade) = parse_html(input, &opts)?.into_parts();
+    let page_box = PageBox::from_page_size(cascade.page.size());
     raikiri_dom::layout_single_page_with_resolver(
-        &mut doc.uncascaded.dom,
-        &doc.cascade,
+        &mut uncascaded.dom,
+        &cascade,
         page_box,
         FontContext::new(),
         resolver,
     )?;
-    let dom = &doc.uncascaded.dom;
-    let cascade = &doc.cascade;
-    let scene = build_page_scene(dom, cascade, page_box);
-    Ok(scene.rasterize_with_images(dom, cascade, page_box, pixel_source))
+    let dom = &uncascaded.dom;
+    let scene = build_page_scene(dom, &cascade, page_box);
+    Ok(scene.rasterize_with_images(dom, &cascade, page_box, pixel_source))
 }
 
 #[cfg(test)]

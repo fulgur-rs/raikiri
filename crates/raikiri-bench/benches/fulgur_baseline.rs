@@ -55,7 +55,7 @@
 //!
 //! 1. **No page-stream benchmark yet.** `raikiri::plan` remains an explicit
 //!    stub, and this benchmark does not call the now-implemented neutral
-//!    `raikiri::render_streaming` bridge. The only rendering path measured here
+//!    `raikiri_html::render_streaming` bridge. The only rendering path measured here
 //!    is [`raikiri::html_to_png`] /
 //!    [`raikiri::html_to_png_with_fonts`]
 //!    (`parse_html` → `layout_single_page` → `build_page_scene` →

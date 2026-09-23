@@ -2,8 +2,9 @@
 
 use raikiri::{
     AbortController, PageBox, PageDefaults, PageEventObserver, PageFragment, PageFragmentEvent,
-    RenderSink, RenderStatus, RenderSummary, ReplacedResolver, ResolvedIntrinsic, ResolverError,
-    ResolverRequest, StreamingConfig, parse_html, render_streaming, render_streaming_with_observer,
+    RenderOptions, RenderResources, RenderSink, RenderStatus, RenderSummary, ReplacedResolver,
+    ResolvedIntrinsic, ResolverError, ResolverRequest, StreamingConfig, parse_html,
+    render_streaming,
 };
 
 struct NoopResolver;
@@ -64,11 +65,12 @@ fn forced_break_pages_are_emitted_in_order_and_finished() {
     )
     .expect("parse");
     let mut sink = RecordingSink::default();
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
     let status = render_streaming(
         &doc,
         defaults(100.0, 50.0),
-        &NoopResolver,
         StreamingConfig::default(),
+        RenderOptions::new().resources(&resources),
         &mut sink,
     )
     .expect("render");
@@ -101,11 +103,12 @@ fn sink_failure_stops_before_completion() {
         fail_on_page: Some(0),
         ..RecordingSink::default()
     };
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
     let err = render_streaming(
         &doc,
         defaults(100.0, 50.0),
-        &NoopResolver,
         StreamingConfig::default(),
+        RenderOptions::new().resources(&resources),
         &mut sink,
     )
     .expect_err("sink failure should be terminal");
@@ -133,11 +136,12 @@ fn midstream_abort_reports_partial_pages_without_completion() {
         abort_after_page: Some(controller),
         ..RecordingSink::default()
     };
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
     let status = render_streaming(
         &doc,
         defaults(100.0, 50.0),
-        &NoopResolver,
         config,
+        RenderOptions::new().resources(&resources),
         &mut sink,
     )
     .expect("abort is a status");
@@ -176,13 +180,15 @@ fn observer_receives_page_local_link_events_after_page_emission() {
     .expect("parse");
     let mut sink = RecordingSink::default();
     let mut observer = RecordingObserver::default();
-    let status = render_streaming_with_observer(
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
+    let status = render_streaming(
         &doc,
         defaults(100.0, 50.0),
-        &NoopResolver,
         StreamingConfig::default(),
+        RenderOptions::new()
+            .resources(&resources)
+            .page_observer(&mut observer),
         &mut sink,
-        &mut observer,
     )
     .expect("render");
 
@@ -220,13 +226,15 @@ fn observer_failure_is_a_structural_sink_error_and_skips_completion() {
         fail: true,
         ..RecordingObserver::default()
     };
-    let err = render_streaming_with_observer(
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
+    let err = render_streaming(
         &doc,
         defaults(100.0, 50.0),
-        &NoopResolver,
         StreamingConfig::default(),
+        RenderOptions::new()
+            .resources(&resources)
+            .page_observer(&mut observer),
         &mut sink,
-        &mut observer,
     )
     .expect_err("observer failure should be terminal");
 
@@ -255,11 +263,12 @@ fn render_streaming_resolves_page_geometry_from_page_contexts() {
     )
     .expect("parse");
     let mut sink = RecordingSink::default();
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
     render_streaming(
         &doc,
         defaults(100.0, 100.0),
-        &NoopResolver,
         StreamingConfig::default(),
+        RenderOptions::new().resources(&resources),
         &mut sink,
     )
     .expect("render");
@@ -310,11 +319,12 @@ fn render_streaming_resolves_named_first_page_before_layout() {
     )
     .expect("parse");
     let mut sink = RecordingSink::default();
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
     render_streaming(
         &doc,
         defaults(100.0, 100.0),
-        &NoopResolver,
         StreamingConfig::default(),
+        RenderOptions::new().resources(&resources),
         &mut sink,
     )
     .expect("render");
@@ -344,11 +354,12 @@ fn render_streaming_relayouts_until_page_geometry_converges() {
     )
     .expect("parse");
     let mut sink = RecordingSink::default();
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
     let status = render_streaming(
         &doc,
         defaults(100.0, 100.0),
-        &NoopResolver,
         StreamingConfig::default(),
+        RenderOptions::new().resources(&resources),
         &mut sink,
     )
     .expect("render");
