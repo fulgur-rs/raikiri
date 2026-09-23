@@ -17,6 +17,7 @@ fn overflow_pairs_are_pixel_exact_at_800x600() {
 
     for name in [
         "clip-001.html",
+        "overflow-overlay.html",
         "overflow-canvas.html",
         "overflow-body-propagation-001.html",
         "overflow-body-propagation-002.html",

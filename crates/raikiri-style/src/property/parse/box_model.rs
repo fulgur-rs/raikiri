@@ -955,11 +955,14 @@ pub(super) fn parse_box_sizing(input: &mut Parser<'_, '_>) -> Option<BoxSizing> 
 ///
 /// Spec value grammar (§3.1): `visible | hidden | clip | scroll | auto`。
 /// ASCII case-insensitive で ident を比較する (sibling [`parse_box_sizing`] /
-/// [`parse_direction`] と同 flavor)。
+/// [`parse_direction`] と同 flavor)。 CSS Overflow also defines the legacy
+/// `overlay` spelling as an alias for `auto`; it is normalized to the same
+/// [`OverflowValue::Auto`] variant rather than adding a separate computed value.
 ///
 /// # Scope carving ([`OverflowValue`] doc-comment に詳述)
 ///
-/// - **(a) spec-invalid**: 上記 5 keyword 以外の ident は silent drop = `None`。
+/// - **(a) spec-invalid**: 上記 5 keyword と legacy alias `overlay` 以外の
+///   ident は silent drop = `None`。
 /// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
 ///   が canonical)。
@@ -970,7 +973,7 @@ pub(super) fn parse_overflow_value(input: &mut Parser<'_, '_>) -> Option<Overflo
         "hidden" => Some(OverflowValue::Hidden),
         "clip" => Some(OverflowValue::Clip),
         "scroll" => Some(OverflowValue::Scroll),
-        "auto" => Some(OverflowValue::Auto),
+        "auto" | "overlay" => Some(OverflowValue::Auto),
         _ => None,
     }
 }

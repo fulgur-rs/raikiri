@@ -3202,6 +3202,9 @@ pub enum OverflowValue {
     /// `scroll`。
     Scroll,
     /// `auto`。
+    ///
+    /// The legacy `overlay` spelling is an alias for `auto` and therefore has no
+    /// separate computed-value variant.
     Auto,
 }
 
@@ -7302,8 +7305,8 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照)
     Direction(Direction),
-    /// `overflow-x: visible | hidden | clip | scroll | auto` —
-    /// **non-inherited**、initial: [`OverflowValue::Visible`] (CSS Overflow 3
+    /// `overflow-x: visible | hidden | clip | scroll | auto` (legacy
+    /// `overlay` aliases `auto`) — **non-inherited**、initial: [`OverflowValue::Visible`] (CSS Overflow 3
     /// §3.1 <https://www.w3.org/TR/css-overflow-3/#overflow-properties>)。
     /// computed value は同一 node の `overflow-y` に依存しうる —
     /// [`resolve_overflow`] 参照 (単純代入ではない、[`crate::cascade::apply_value`]
@@ -7312,8 +7315,8 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照)
     OverflowX(OverflowValue),
-    /// `overflow-y: visible | hidden | clip | scroll | auto` —
-    /// [`Self::OverflowX`] と同 grammar / initial / non-inherited、逆 axis。
+    /// `overflow-y: visible | hidden | clip | scroll | auto` (legacy
+    /// `overlay` aliases `auto`) — [`Self::OverflowX`] と同 grammar / initial / non-inherited、逆 axis。
     /// (末尾配置は [`Self::OverflowX`] と同理由)
     OverflowY(OverflowValue),
     /// `overflow: <'overflow-block'>{1,2}` shorthand — CSS Overflow 3 §3.1
