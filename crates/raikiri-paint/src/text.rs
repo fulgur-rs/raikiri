@@ -153,6 +153,11 @@ fn element_decoration(cv: &ComputedValues, origin_shift_y: f32) -> Option<Decora
     let underline_offset = match cv.text_underline_offset {
         ComputedTextUnderlineOffset::Auto => 0.0,
         ComputedTextUnderlineOffset::Length(value) => value.px() as f64,
+        // A percentage is relative to 1em of the decorating element itself,
+        // not of the ancestor that declared it.
+        ComputedTextUnderlineOffset::Percent(percent) => {
+            cv.font_size.px() as f64 * percent as f64 / 100.0
+        }
     };
     let underline_offset = if underline_offset.is_finite() {
         underline_offset
@@ -1366,6 +1371,17 @@ mod tests {
         assert_eq!(decoration.origin_thickness, 2.0);
         assert_eq!(decoration.origin_ascent, 25.6);
         assert_eq!(decoration.origin_descent, 6.4);
+    }
+
+    #[test]
+    fn underline_offset_percentage_resolves_against_decorating_font_size() {
+        let mut cv = ComputedValues::initial();
+        cv.font_size = raikiri_style::resolve::ComputedLength(40.0);
+        cv.text_decoration_line = TextDecorationLine::UNDERLINE;
+        cv.text_underline_offset = raikiri_style::ComputedTextUnderlineOffset::Percent(50.0);
+        let decorations = decorations_for_element(&DecorationContext::default(), &cv, 0.0);
+        let decoration = decorations.iter().next().expect("origin decoration");
+        assert_eq!(decoration.underline_offset, 20.0);
     }
 
     #[test]

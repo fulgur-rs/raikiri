@@ -265,16 +265,23 @@ pub enum ComputedTextDecorationInset {
     },
 }
 
-/// Computed `text-underline-offset`: `auto` or a fixed CSS-pixel offset.
+/// Computed `text-underline-offset`: `auto`, a fixed CSS-pixel offset, or a
+/// percentage of the font size.
 ///
-/// The property is inherited. A length therefore becomes an absolute value at
-/// the declaring element and is lifted back to `px` when a child inherits it.
+/// The property is inherited. A length becomes an absolute value at the
+/// declaring element and is lifted back to `px` when a child inherits it. A
+/// percentage stays relative (CSS Text Decoration 4 §2.8: it "will inherit as
+/// a relative value, and will therefore scale with changes in the font as it
+/// inherits"), so consumers resolve it against the decorating element's own
+/// computed font size.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ComputedTextUnderlineOffset {
     /// Let the user agent choose the underline offset.
     Auto,
     /// Fixed offset from the underline's zero position in CSS pixels.
     Length(ComputedLength),
+    /// Percentage of 1em of the element the value is used on.
+    Percent(f32),
 }
 
 /// Computed absolute length plus authored `ch` provenance.
@@ -2035,9 +2042,11 @@ pub fn resolve_text_decoration_inset(
     }
 }
 
-/// Resolve an inherited `text-underline-offset` length against the declaring
-/// element's font metrics. Percentages and deferred mixed calc values remain
-/// outside this focused horizontal foundation slice and use `auto`.
+/// Resolve an inherited `text-underline-offset` length-percentage against
+/// the declaring element's font metrics. Percentages are kept relative (CSS
+/// Text Decoration 4 §2.8) so they rescale with each inheriting element's font
+/// size; deferred mixed `calc()` values still use the conservative `auto`
+/// fallback.
 pub fn resolve_text_underline_offset(
     specified: LengthOrAuto,
     font_size: ComputedLength,
@@ -2046,6 +2055,9 @@ pub fn resolve_text_underline_offset(
 ) -> ComputedTextUnderlineOffset {
     match specified {
         LengthOrAuto::Auto | LengthOrAuto::Calc(_) => ComputedTextUnderlineOffset::Auto,
+        LengthOrAuto::Length(Length::Percent(percent)) => {
+            ComputedTextUnderlineOffset::Percent(percent)
+        }
         LengthOrAuto::Length(length) => ComputedTextUnderlineOffset::Length(resolve_length(
             length,
             font_size,

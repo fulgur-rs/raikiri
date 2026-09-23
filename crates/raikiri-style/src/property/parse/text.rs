@@ -1178,15 +1178,16 @@ pub(super) fn parse_text_decoration_thickness(
     parse_length_value(input, true).map(TextDecorationThickness::Length)
 }
 
-/// `text-underline-offset: auto | <length>` を parse する。
+/// `text-underline-offset: auto | <length-percentage>` を parse する。
 ///
-/// CSS Text Decoration 4 allows `<length-percentage>`, but this focused
-/// slice keeps percentage resolution out of the style/paint bridge.
+/// CSS Text Decoration 4 §2.8 defines the non-`auto` form as a
+/// `<length-percentage>`. Percentages stay relative in computed style and are
+/// resolved against the decorating element's font size at paint time.
 pub(super) fn parse_text_underline_offset(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
-    parse_length_value(input, false).map(LengthOrAuto::Length)
+    parse_length_value(input, true).map(LengthOrAuto::Length)
 }
 
 /// `text-decoration-inset: <length>{1,2} | auto` を parse する

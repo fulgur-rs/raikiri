@@ -446,9 +446,8 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "text-underline-position" => {
             parse_text_underline_position(input).map(PropertyValue::TextUnderlinePosition)
         }
-        // CSS Text Decoration 4 §2.8 text-underline-offset. The focused
-        // implementation accepts `auto` and fixed lengths; percentages are
-        // intentionally deferred because their used basis is font-size.
+        // CSS Text Decoration 4 §2.8 text-underline-offset:
+        // `auto | <length-percentage>`.
         "text-underline-offset" => {
             parse_text_underline_offset(input).map(PropertyValue::TextUnderlineOffset)
         }

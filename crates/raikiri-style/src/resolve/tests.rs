@@ -1382,3 +1382,18 @@ fn initial_length_fields_absolutize_to_spec_initials() {
         ComputedLength(INITIAL_FONT_SIZE_PX),
     );
 }
+
+#[test]
+fn text_underline_offset_percentage_stays_relative() {
+    // CSS Text Decoration 4 §2.8: percentages inherit as relative values, so
+    // the declaring element's font size must not be baked in.
+    assert_eq!(
+        resolve_text_underline_offset(
+            LengthOrAuto::Length(Length::Percent(25.0)),
+            ComputedLength(20.0),
+            Some(ComputedLength(40.0)),
+            &CTX,
+        ),
+        ComputedTextUnderlineOffset::Percent(25.0),
+    );
+}

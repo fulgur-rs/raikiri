@@ -2170,6 +2170,22 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             end: Length::Px(32.0),
         }),
     );
+    // `text-underline-offset` percentages stay relative so they rescale
+    // with the font size of whichever box inherits them.
+    assert_eq!(
+        absolutize_in_page_context(
+            ResolvedAgainstInherited::for_test(PropertyValue::TextUnderlineOffset(
+                LengthOrAuto::Length(Length::Percent(25.0)),
+            )),
+            fs,
+            None,
+            &ctx,
+            styles,
+            OutlineStyle::None,
+            OverflowXY::both(OverflowValue::Visible),
+        ),
+        PropertyValue::TextUnderlineOffset(LengthOrAuto::Length(Length::Percent(25.0))),
+    );
     // `flex-basis` intrinsic keywords round-trip as keywords through
     // the `fb` helper (same shape as `Content`, which the corpus pins
     // via its own sample).
