@@ -13097,6 +13097,40 @@ mod tests {
     }
 
     #[test]
+    fn preshape_probes_block_ch_metrics_for_a_different_inline_font() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let block = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("display:block; white-space:pre; tab-size:4; font-family:monospace; font-size:16px; word-spacing:0.25ch"),
+        );
+        let inline = doc.append_element(
+            Some(block),
+            "span",
+            Style::default(),
+            Some("font-family:serif; word-spacing:0.25ch"),
+        );
+        let text = doc.append_text(inline, "A\tB");
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        preshape_text(
+            &mut doc,
+            &cascade,
+            &mut fonts,
+            &mut layout_cx,
+            PageBox::A4.width,
+            PageBox::A4.width,
+        );
+        assert!(!doc.nodes[text].snap_glyph_x_to_1_64());
+        assert!(doc.nodes[text].text_layout().is_some());
+    }
+
+    #[test]
     fn preshape_inline_pre_tabs_keep_the_local_fallback() {
         let entries = [(
             "display:inline; white-space:pre; tab-size:4; font-family:monospace; font-size:16px",
