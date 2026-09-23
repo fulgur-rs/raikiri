@@ -72,7 +72,12 @@ def finite_percentage(s: str) -> float:
 def load_slope_ns(estimates_path: Path) -> float:
     with open(estimates_path, encoding="utf-8") as f:
         data = json.load(f)
-    return float(data["slope"]["point_estimate"])
+    # criterion's Auto sampling switches to flat sampling when an iteration is
+    # too slow for the linear scheme under the pinned sample size / time, and
+    # then writes `"slope": null`. `mean` is the same per-iteration time in
+    # that mode.
+    estimate = data.get("slope") or data["mean"]
+    return float(estimate["point_estimate"])
 
 
 def collect_runs(variant_dir: Path, bench_name: str, n: int) -> list[float]:
