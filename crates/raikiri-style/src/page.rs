@@ -99,5 +99,7 @@ pub use types::*;
 mod parse;
 pub(crate) use parse::*;
 
+mod absolutize;
+
 mod cascade;
 pub use cascade::*;
