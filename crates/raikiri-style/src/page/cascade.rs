@@ -2193,11 +2193,15 @@ fn absolutize_in_page_context(
             })
         }
         // CSS Text Decoration 4 §2.8: fixed underline offsets resolve
-        // against the declaring page context's font-size. Deferred mixed
-        // math is outside this focused slice and falls back to `auto`.
+        // against the declaring page context's font-size; percentages stay
+        // relative. Deferred mixed math falls back to `auto`.
         PropertyValue::TextUnderlineOffset(value) => {
             PropertyValue::TextUnderlineOffset(match value {
                 LengthOrAuto::Auto => LengthOrAuto::Auto,
+                // Percentages inherit as relative values.
+                LengthOrAuto::Length(Length::Percent(percent)) => {
+                    LengthOrAuto::Length(Length::Percent(percent))
+                }
                 LengthOrAuto::Length(length) => LengthOrAuto::Length(Length::Px(
                     resolve_length(length, font_size, own_line_height, ctx).px(),
                 )),

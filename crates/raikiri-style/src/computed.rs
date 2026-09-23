@@ -841,7 +841,8 @@ pub struct ComputedValues {
     pub text_decoration_inset: ComputedTextDecorationInset,
     /// `text-underline-offset`. **inherited**, initial: `auto` (CSS Text
     /// Decoration 4 §2.8). Length values are fixed computed offsets and are
-    /// carried with the decoration origin.
+    /// carried with the decoration origin; percentages stay relative to the
+    /// font size of the element the value is used on.
     pub text_underline_offset: ComputedTextUnderlineOffset,
     /// `vertical-align`. **non-inherited**, initial:
     /// [`VerticalAlign::Baseline`] (CSS 2.1 §10.8.1 "Vertical alignment: the

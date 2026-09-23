@@ -8026,8 +8026,8 @@ pub enum PropertyValue {
     /// Appended to preserve existing variant discriminants.
     MinBlockSize(LengthOrAuto),
     /// `text-underline-offset` — inherited, initial: `auto` (CSS Text
-    /// Decoration 4 §2.8). The length-percentage is resolved against the
-    /// declaring element's computed font size.
+    /// Decoration 4 §2.8). Lengths are absolutized at the declaring element;
+    /// percentages stay relative so they scale with the font as they inherit.
     TextUnderlineOffset(LengthOrAuto),
 }
 

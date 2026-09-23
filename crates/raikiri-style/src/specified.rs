@@ -290,7 +290,8 @@ pub struct SpecifiedValues {
     /// length は phase 3 で自 node の font-size / line-height 基準へ絶対化する。
     pub text_decoration_inset: TextDecorationInset,
     /// [`ComputedValues::text_underline_offset`] の staging。inherited の
-    /// length-percentage は phase 3 で declaring node の font-size 基準へ解決する。
+    /// length は phase 3 で declaring node の font-size 基準へ絶対化し、
+    /// percentage は相対値のまま computed へ運ぶ。
     pub text_underline_offset: LengthOrAuto,
     /// [`ComputedValues::vertical_align`] の staging。**型は
     /// [`ComputedValues::vertical_align`] と同じ** [`VerticalAlign`] だが、
@@ -1031,6 +1032,9 @@ impl SpecifiedValues {
                 crate::resolve::ComputedTextUnderlineOffset::Auto => LengthOrAuto::Auto,
                 crate::resolve::ComputedTextUnderlineOffset::Length(value) => {
                     LengthOrAuto::Length(Length::Px(value.px()))
+                }
+                crate::resolve::ComputedTextUnderlineOffset::Percent(percent) => {
+                    LengthOrAuto::Length(Length::Percent(percent))
                 }
             },
             // ── non-inherited: initial 値 ───────────────────────────────
@@ -2433,6 +2437,19 @@ mod tests {
             custom_properties: crate::computed::empty_custom_properties(),
             local_custom_properties: crate::computed::empty_custom_properties(),
         }
+    }
+
+    #[test]
+    fn inherit_from_keeps_text_underline_offset_percentage_relative() {
+        let mut parent = parent_fixture();
+        parent.text_underline_offset = ComputedTextUnderlineOffset::Percent(50.0);
+        let child = SpecifiedValues::inherit_from(&parent);
+        // CSS Text Decoration 4 §2.8: a percentage inherits as a relative
+        // value so it rescales against the child's own font size.
+        assert_eq!(
+            child.text_underline_offset,
+            LengthOrAuto::Length(Length::Percent(50.0))
+        );
     }
 
     #[test]
