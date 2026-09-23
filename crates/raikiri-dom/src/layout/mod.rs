@@ -6790,6 +6790,14 @@ struct CollapsedText {
     migrate_count: u32,
 }
 
+fn has_authored_non_whitespace_text(doc: &Document, idx: usize) -> bool {
+    text_of(doc, idx).is_some_and(|text| text.chars().any(|ch| !is_css_white_space(ch)))
+        || doc.nodes[idx]
+            .children
+            .iter()
+            .any(|&child| has_authored_non_whitespace_text(doc, child))
+}
+
 // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
 fn preserves_inline_whitespace_item(
     doc: &Document,
@@ -6821,6 +6829,7 @@ fn preserves_inline_whitespace_item(
             doc.nodes[child].kind() == NodeKind::Element
                 && is_inline_element_box(cascade, child)
                 && cascade.computed[child].display != DisplayValue::None
+                && has_authored_non_whitespace_text(doc, child)
         })
     };
     has_inline_element(&doc.nodes[parent].children[..pos])
@@ -9019,25 +9028,19 @@ fn preshape_text(
             // cov:ignore: preserved inline whitespace sizing is exercised by the ignored foundation WPT run.
             if inline_space_count > 0 {
                 let family = family_str_of(cv);
-                let glyph = probe_text_advance(
+                let space_advance = probe_text_full_width(
                     fonts,
                     layout_cx,
-                    "x",
-                    &family,
-                    cv.font_size.px(),
-                    cv.font_weight,
-                    cv.font_style,
+                    " ",
+                    TextProbeStyle {
+                        family_str: &family,
+                        font_size_px: cv.font_size.px(),
+                        font_weight: cv.font_weight,
+                        font_style: cv.font_style,
+                        letter_spacing: cv.letter_spacing.px(),
+                        word_spacing: cv.word_spacing.px(),
+                    },
                 );
-                let nbsp = probe_text_advance(
-                    fonts,
-                    layout_cx,
-                    "\u{00a0}x",
-                    &family,
-                    cv.font_size.px(),
-                    cv.font_weight,
-                    cv.font_style,
-                );
-                let space_advance = (nbsp - glyph).max(cv.font_size.px() * 0.5);
                 doc.nodes[idx].style.size.width =
                     Dimension::length(space_advance * inline_space_count as f32);
                 migrate_pending = 0;
@@ -12604,6 +12607,87 @@ mod tests {
             doc.nodes[0].text_layout().is_none(),
             "document root is not text"
         );
+    }
+
+    #[test]
+    fn preshape_text_measures_preserved_inline_whitespace_item() {
+        use parley::{FontContext, LayoutContext};
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let block = doc.append_element(Some(body), "div", Style::default(), Some("display: block"));
+        let left = doc.append_element(
+            Some(block),
+            "span",
+            Style::default(),
+            Some("display: inline"),
+        );
+        doc.append_text(left, "left");
+        let whitespace = doc.append_text(block, "\n  ");
+        let right = doc.append_element(
+            Some(block),
+            "span",
+            Style::default(),
+            Some("display: inline"),
+        );
+        doc.append_text(right, "right");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        preshape_text(
+            &mut doc,
+            &cr,
+            &mut fonts,
+            &mut layout_cx,
+            PageBox::A4.width,
+            PageBox::A4.width,
+        );
+
+        assert!(
+            doc.nodes[whitespace]
+                .style
+                .size
+                .width
+                .into_option()
+                .is_some_and(|width| width > 0.0)
+        );
+    }
+
+    #[test]
+    fn has_authored_non_whitespace_text_walks_nested_inline_content() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let whitespace_only = doc.append_element(
+            Some(body),
+            "span",
+            Style::default(),
+            Some("display: inline"),
+        );
+        let whitespace = doc.append_text(whitespace_only, "\n  ");
+        assert!(!has_authored_non_whitespace_text(&doc, whitespace_only));
+        assert!(!has_authored_non_whitespace_text(&doc, whitespace));
+
+        let wrapper = doc.append_element(
+            Some(body),
+            "span",
+            Style::default(),
+            Some("display: inline"),
+        );
+        let nested = doc.append_element(
+            Some(wrapper),
+            "em",
+            Style::default(),
+            Some("display: inline"),
+        );
+        let text = doc.append_text(nested, "content");
+        assert!(has_authored_non_whitespace_text(&doc, wrapper));
+        assert!(has_authored_non_whitespace_text(&doc, nested));
+        assert!(has_authored_non_whitespace_text(&doc, text));
     }
 
     #[test]
