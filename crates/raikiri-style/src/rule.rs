@@ -1662,6 +1662,43 @@ mod tests {
     }
 
     #[test]
+    fn border_side_family_shorthands_expand_into_four_longhands() {
+        use crate::property::PropertyKey as K;
+        let decls = parse_block(
+            "border-style: solid dashed; border-width: 1px 2px 3px 4px; \
+             border-color: red !important;",
+        );
+        let keys: Vec<_> = decls.iter().map(|d| d.value.key()).collect();
+        assert_eq!(
+            keys,
+            [
+                K::BorderTopStyle,
+                K::BorderRightStyle,
+                K::BorderBottomStyle,
+                K::BorderLeftStyle,
+                K::BorderTopWidth,
+                K::BorderRightWidth,
+                K::BorderBottomWidth,
+                K::BorderLeftWidth,
+                K::BorderTopColor,
+                K::BorderRightColor,
+                K::BorderBottomColor,
+                K::BorderLeftColor,
+            ]
+        );
+        assert_eq!(
+            decls[1].value,
+            PropertyValue::BorderRightStyle(BorderStyle::Dashed)
+        );
+        assert_eq!(
+            decls[7].value,
+            PropertyValue::BorderLeftWidth(Length::Px(4.0))
+        );
+        assert!(decls[..8].iter().all(|d| !d.important));
+        assert!(decls[8..].iter().all(|d| d.important));
+    }
+
+    #[test]
     fn border_shorthand_two_widths_declaration_dropped() {
         // property.rs `border_shorthand_two_widths_leaves_leftover_for_caller_exhausted_check`
         // の end-to-end 側 check: `border: 1px 2px` は shorthand helper が 1px を
