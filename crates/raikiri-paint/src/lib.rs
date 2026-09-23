@@ -967,6 +967,36 @@ mod tests {
     }
 
     #[test]
+    fn paint_single_page_simple_pre_tabs_normalizes_glyph_positions() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let block = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some(
+                "display:block; white-space:pre; tab-size:4; font-family:monospace; font-size:16px",
+            ),
+        );
+        let text = doc.append_text(block, "A\tB");
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+        assert!(doc.get_node(text).unwrap().snap_glyph_x_to_1_64());
+
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+        assert!(
+            scene
+                .commands
+                .iter()
+                .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
+        );
+    }
+
+    #[test]
     fn paint_single_page_line_break_anywhere_paints_text() {
         let scene = decorated_text_scene_with_text(
             "width:16px; line-height:1; font-family:monospace; line-break:anywhere",

@@ -2297,7 +2297,7 @@ fn trail_trim(
 
 /// white-space phase 1 collapsing (CSS Text 3 §4.1)。
 ///
-/// - Pre / PreWrap / BreakSpaces → 無変換 (tab 展開は別途 [`expand_tabs`])。
+/// - Pre / PreWrap / BreakSpaces → 無変換 (tab 展開は [`preshape_text`] で別途行う)。
 /// - Normal / Nowrap: `\t \n \f \r` → space、run collapse、行頭/行末 trim。
 /// - PreLine: `\n` 保持 (forced break)、他は Normal と同じ。
 /// - leading trim は `start != MidLine`、trailing trim は `trim_end`。
@@ -12973,6 +12973,46 @@ mod tests {
         );
     }
 
+    fn preshape_tab_test_entries(entries: &[(&str, &str)]) -> (Document, Vec<usize>) {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let mut text_nodes = Vec::with_capacity(entries.len());
+        for &(style, text) in entries {
+            let block = doc.append_element(Some(body), "p", Style::default(), Some(style));
+            text_nodes.push(doc.append_text(block, text));
+        }
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        preshape_text(
+            &mut doc,
+            &cascade,
+            &mut fonts,
+            &mut layout_cx,
+            PageBox::A4.width,
+            PageBox::A4.width,
+        );
+        (doc, text_nodes)
+    }
+
+    const PRE_TAB_TEST_STYLE: &str = "display:block; white-space:pre; tab-size:4; font-family:monospace; font-size:16px; word-spacing:0.25ch";
+
+    fn assert_tab_layout_reaches_next_stop(doc: &Document, text_nodes: &[usize]) {
+        let full_width = |index: usize| {
+            doc.nodes[text_nodes[index]]
+                .text_layout()
+                .unwrap()
+                .full_width()
+        };
+        let interval = full_width(1) * 4.0;
+        let prefix_width = full_width(2);
+        let suffix_width = full_width(3);
+        let expected = ((prefix_width / interval).floor() + 1.0) * interval + suffix_width;
+        assert!((full_width(0) - expected).abs() < 0.1);
+    }
+
     #[test]
     fn local_tab_fallback_keeps_per_text_run_behavior() {
         assert_eq!(
@@ -12983,6 +13023,88 @@ mod tests {
             expand_tabs_locally("ab\n\tc", ComputedTabSize::Number(4.0), 10.0),
             "ab\n    c"
         );
+    }
+
+    #[test]
+    fn local_tab_fallback_handles_length_stops_and_zero_intervals() {
+        assert_eq!(
+            expand_tabs_locally("a\tb", ComputedTabSize::Length(ComputedLength(20.0)), 10.0,),
+            "a b"
+        );
+        assert_eq!(
+            expand_tabs_locally("a\tb", ComputedTabSize::Length(ComputedLength(20.0)), 0.0,),
+            "ab"
+        );
+        assert_eq!(
+            expand_tabs_locally("a\tb", ComputedTabSize::Number(0.0), 10.0),
+            "ab"
+        );
+    }
+
+    #[test]
+    fn tab_stop_rejects_non_finite_values() {
+        assert_eq!(
+            tab_stop_advance(ComputedTabSize::Number(f32::NAN), 8.0),
+            0.0
+        );
+        assert_eq!(
+            tab_stop_advance(ComputedTabSize::Length(ComputedLength(f32::NAN)), 8.0,),
+            0.0
+        );
+    }
+
+    #[test]
+    fn tab_replacement_without_tabs_preserves_text() {
+        let (text, ranges) = replace_tabs_with_styled_spaces("plain", 20.0, 10.0, |_| 10.0);
+        assert_eq!(text, "plain");
+        assert!(ranges.is_empty());
+    }
+
+    #[test]
+    fn preshape_simple_pre_block_uses_measured_tab_stops() {
+        let entries = [
+            (PRE_TAB_TEST_STYLE, "A\tB"),
+            (PRE_TAB_TEST_STYLE, " "),
+            (PRE_TAB_TEST_STYLE, "A"),
+            (PRE_TAB_TEST_STYLE, "B"),
+        ];
+        let (doc, text_nodes) = preshape_tab_test_entries(&entries);
+        assert_tab_layout_reaches_next_stop(&doc, &text_nodes);
+        assert!(doc.nodes[text_nodes[0]].snap_glyph_x_to_1_64());
+        assert_eq!(
+            doc.nodes[text_nodes[0]]
+                .text_layout()
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn preshape_parallel_simple_pre_tab_runs_apply_spacing_ranges() {
+        let mut entries = vec![
+            (PRE_TAB_TEST_STYLE, "A\tB"),
+            (PRE_TAB_TEST_STYLE, " "),
+            (PRE_TAB_TEST_STYLE, "A"),
+            (PRE_TAB_TEST_STYLE, "B"),
+        ];
+        entries.extend(std::iter::repeat_n((PRE_TAB_TEST_STYLE, "x"), 28));
+        assert_eq!(entries.len(), 32);
+        let (doc, text_nodes) = preshape_tab_test_entries(&entries);
+        assert_tab_layout_reaches_next_stop(&doc, &text_nodes);
+        assert!(doc.nodes[text_nodes[0]].snap_glyph_x_to_1_64());
+    }
+
+    #[test]
+    fn preshape_inline_pre_tabs_keep_the_local_fallback() {
+        let entries = [(
+            "display:inline; white-space:pre; tab-size:4; font-family:monospace; font-size:16px",
+            "A\tB",
+        )];
+        let (doc, text_nodes) = preshape_tab_test_entries(&entries);
+        assert!(!doc.nodes[text_nodes[0]].snap_glyph_x_to_1_64());
+        assert!(doc.nodes[text_nodes[0]].text_layout().unwrap().full_width() > 0.0);
     }
 
     #[test]
