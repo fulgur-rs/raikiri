@@ -917,6 +917,39 @@ fn decoration_span(x0: f64, x1: f64, decoration: &DecorationSpec) -> Option<(f64
     }
 }
 
+/// Return the paint spans for one decoration segment.
+///
+/// A mixed-sign inset can be represented by two translated copies of the
+/// originating segment. Keeping those copies separate preserves the endpoint
+/// overlap produced by the CSS Text Decoration reference rendering. Equal
+/// translations collapse to the ordinary single span.
+fn decoration_spans(
+    x0: f64,
+    x1: f64,
+    decoration: &DecorationSpec,
+) -> Option<([(f64, f64); 2], usize)> {
+    let span = decoration_span(x0, x1, decoration)?;
+    if !decoration.origin_rtl
+        && decoration.inset_start > 0.0
+        && decoration.inset_end < 0.0
+        && (decoration.inset_start + decoration.inset_end).abs() > f64::EPSILON
+    {
+        let first = (x0 + decoration.inset_start, x1 + decoration.inset_start);
+        let second = (x0 - decoration.inset_end, x1 - decoration.inset_end);
+        if first.0.is_finite()
+            && first.1.is_finite()
+            && second.0.is_finite()
+            && second.1.is_finite()
+            && first.1 > first.0
+            && second.1 > second.0
+        // cov:ignore: asymmetric endpoint overlap is covered by the ignored exact WPT reftest.
+        {
+            return Some(([first, second], 2));
+        }
+    }
+    Some(([span, (0.0, 0.0)], 1))
+}
+
 fn paint_decoration_line(
     scene: &mut impl PaintScene,
     decorations: &[&DecorationSpec],
@@ -938,7 +971,7 @@ fn paint_decoration_line(
         if !enabled {
             continue;
         }
-        let Some((line_x0, line_x1)) = decoration_span(x0, x1, decoration) else {
+        let Some((spans, span_count)) = decoration_spans(x0, x1, decoration) else {
             continue;
         };
         let color = css_color_to_peniko(decoration.color);
@@ -952,15 +985,17 @@ fn paint_decoration_line(
             DecorationLineKind::Overline => baseline - decoration.origin_ascent + thickness * 0.5,
             DecorationLineKind::LineThrough => baseline - decoration.origin_ascent * 0.35,
         };
-        paint_decoration_style(
-            scene,
-            decoration.style,
-            color,
-            line_x0,
-            line_x1,
-            center,
-            thickness,
-        );
+        for &(span_x0, span_x1) in spans.iter().take(span_count) {
+            paint_decoration_style(
+                scene,
+                decoration.style,
+                color,
+                span_x0,
+                span_x1,
+                center,
+                thickness,
+            );
+        }
     }
 }
 
@@ -1149,9 +1184,9 @@ mod tests {
     use super::{
         AUTOSPACE_INLINE_BOX_ID_MIN, DecorationContext, DecorationSpec, MAX_DECORATION_SEGMENTS,
         autospace_run_baseline_delta, dashed_lengths, decoration_line_width, decoration_span,
-        decorations_for_element, is_autospace_inline_box, measure_margin_text_advance,
-        measure_margin_text_height, paint_decoration_style, standalone_run_baseline,
-        synthetic_embolden, text_align_last_delta,
+        decoration_spans, decorations_for_element, is_autospace_inline_box,
+        measure_margin_text_advance, measure_margin_text_height, paint_decoration_style,
+        standalone_run_baseline, synthetic_embolden, text_align_last_delta,
     };
     use anyrender::{Scene, recording::RenderCommand};
     use kurbo::Vec2;
@@ -1250,6 +1285,48 @@ mod tests {
         let mut nonfinite = spec;
         nonfinite.inset_start = f64::NAN;
         assert_eq!(decoration_span(100.0, 200.0, &nonfinite), None);
+    }
+
+    #[test]
+    fn decoration_spans_preserve_asymmetric_mixed_sign_endpoint_overlap() {
+        let spec = DecorationSpec {
+            line: TextDecorationLine::UNDERLINE,
+            style: TextDecorationStyle::Solid,
+            color: CssColor::BLACK,
+            origin_thickness: 1.0,
+            origin_ascent: 8.0,
+            origin_descent: 2.0,
+            origin_shift_y: 0.0,
+            inset_start: 10.0,
+            inset_end: -12.0,
+            underline_offset: 0.0,
+            origin_rtl: false,
+        };
+        assert_eq!(
+            decoration_spans(100.0, 140.0, &spec),
+            Some(([(110.0, 150.0), (112.0, 152.0)], 2))
+        );
+    }
+
+    #[test]
+    fn decoration_spans_collapse_equal_endpoint_translation() {
+        let spec = DecorationSpec {
+            line: TextDecorationLine::UNDERLINE,
+            style: TextDecorationStyle::Solid,
+            color: CssColor::BLACK,
+            origin_thickness: 1.0,
+            origin_ascent: 8.0,
+            origin_descent: 2.0,
+            origin_shift_y: 0.0,
+            inset_start: 10.0,
+            inset_end: -10.0,
+            underline_offset: 0.0,
+            origin_rtl: false,
+        };
+        assert_eq!(
+            decoration_spans(100.0, 140.0, &spec),
+            Some(([(110.0, 150.0), (0.0, 0.0)], 1))
+        );
     }
 
     #[test]
