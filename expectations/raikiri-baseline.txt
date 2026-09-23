@@ -956,6 +956,7 @@ css/css-flexbox/flexbox-overflow-vert-003.html
 css/css-flexbox/flexbox-overflow-vert-004.html
 css/css-flexbox/flexbox-overflow-vert-005.html
 css/css-flexbox/flexbox-paint-ordering-003.html
+css/css-flexbox/order-painting.html
 css/css-flexbox/flexbox-with-multi-column-property.html
 css/css-flexbox/flexbox_box-clear.html
 # --- y0zo initial slice 2026-09-16 (FBFC; exact 800x600) ---
