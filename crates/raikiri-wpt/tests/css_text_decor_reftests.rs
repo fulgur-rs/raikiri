@@ -54,6 +54,30 @@ fn text_decoration_inset_px_endpoint_case_is_pixel_exact_at_800x600() {
     );
 }
 
+/// Verify the large positive/negative endpoint inset case at the exact viewport.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_decoration_inset_large_endpoint_case_is_pixel_exact_at_800x600() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test = root.join("css/css-text-decor/text-decoration-inset-016.html");
+    let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
+        .expect("discover CSS Text Decoration inset pair");
+    assert_eq!(pairs.len(), 1, "{}", test.display());
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+    let result =
+        run_pair_with_images(&pairs[0], config).expect("run CSS Text Decoration inset WPT pair");
+    assert!(
+        matches!(result.outcome, TestOutcome::Pass),
+        "{}: {:?} ({} mismatched pixels)",
+        test.display(),
+        result.outcome,
+        result.mismatched_pixels
+    );
+}
+
 /// Verify fixed `text-underline-offset` alignment in the horizontal case.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
