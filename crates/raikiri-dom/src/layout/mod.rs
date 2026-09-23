@@ -12023,6 +12023,72 @@ mod tests {
     }
 
     #[test]
+    fn text_indent_skips_child_cleared_from_document_flags() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let parent = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some("display:block;text-indent:20px"),
+        );
+        let child = doc.append_element(
+            Some(parent),
+            "span",
+            Style::default(),
+            Some("display:inline-block;width:10px;height:10px"),
+        );
+        doc.mark_in_document_flags();
+        assert!(doc.nodes[parent].is_in_document());
+        assert!(doc.nodes[child].is_in_document());
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        assert_eq!(cascade.computed[parent].display, DisplayValue::Block);
+        assert_eq!(cascade.computed[child].display, DisplayValue::InlineBlock);
+        doc.nodes[child].set_in_document(false);
+        assert!(!doc.nodes[child].is_in_document());
+
+        doc.nodes[parent].unrounded_layout.size.width = 100.0;
+        doc.nodes[child].unrounded_layout.location.x = 4.0;
+        realign_single_empty_inline_block_indent(&mut doc, &cascade);
+
+        assert_eq!(doc.nodes[child].unrounded_layout.location.x, 4.0);
+    }
+
+    #[test]
+    fn text_indent_skips_negative_content_width() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;text-indent:20px"),
+        );
+        let child = doc.append_element(
+            Some(parent),
+            "span",
+            Style::default(),
+            Some("display:inline-block;width:10px;height:10px"),
+        );
+        doc.mark_in_document_flags();
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        doc.nodes[parent].unrounded_layout.size.width = -10.0;
+        doc.nodes[child].unrounded_layout.location.x = 4.0;
+        assert!(doc.nodes[parent].unrounded_layout.content_box_width() < 0.0);
+        realign_single_empty_inline_block_indent(&mut doc, &cascade);
+
+        assert_eq!(doc.nodes[child].unrounded_layout.location.x, 4.0);
+    }
+
+    #[test]
     fn text_indent_amount_bounds_nonfinite_values() {
         assert_eq!(
             bounded_text_indent_amount(ComputedLengthPercentage::Px(f32::INFINITY), 100.0, None,),
