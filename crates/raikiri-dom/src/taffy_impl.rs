@@ -17,7 +17,7 @@ use taffy::{
 };
 
 use crate::document::Document;
-use crate::node::NodeData;
+use crate::node::{NodeData, NodeFlags};
 use raikiri_style::property::DisplayValue;
 
 /// Combines an `<img>`'s resolved intrinsic size (if any) with a text
@@ -61,10 +61,13 @@ impl TaffyChildIter<'_> {
         // CSS Flexbox §4: anonymous flex items are not generated for
         // whitespace-only text nodes. The same filtering is needed for Grid,
         // whose item collection also excludes inter-element source whitespace.
-        if !matches!(
-            doc.nodes[usize::from(parent)].style.display,
-            Display::Flex | Display::Grid
-        ) {
+        // A synthetic inline root is the one exception: its whitespace nodes
+        // are explicit zero-content inline items whose collapsed advance was
+        // measured by `preshape_text` and stored in their style.
+        let parent_node = &doc.nodes[usize::from(parent)];
+        if !matches!(parent_node.style.display, Display::Flex | Display::Grid)
+            || parent_node.flags.contains(NodeFlags::IS_INLINE_ROOT)
+        {
             return true;
         }
         !matches!(

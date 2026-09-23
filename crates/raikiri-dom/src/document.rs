@@ -1093,6 +1093,7 @@ mod find_body_flat_tree_tests {
 #[cfg(test)]
 mod taffy_filter_tests {
     use super::*;
+    use crate::node::NodeFlags;
     use taffy::TraversePartialTree;
 
     #[test]
@@ -1133,6 +1134,27 @@ mod taffy_filter_tests {
         let tmpl_children: Vec<taffy::NodeId> =
             <Document as TraversePartialTree>::child_ids(&doc, tmpl_id).collect();
         assert!(tmpl_children.is_empty());
+    }
+
+    #[test]
+    fn synthetic_inline_root_keeps_collapsed_whitespace_child() {
+        let mut doc = Document::new();
+        let root = doc.root_index();
+        let parent = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
+        let whitespace = doc.append_text(parent, "\n  ");
+        doc.nodes[parent].style.display = taffy::Display::Flex;
+        doc.mark_in_document_flags();
+
+        let parent_id = taffy::NodeId::from(parent);
+        assert_eq!(
+            <Document as TraversePartialTree>::child_count(&doc, parent_id),
+            0,
+        );
+
+        doc.nodes[parent].flags.insert(NodeFlags::IS_INLINE_ROOT);
+        let children: Vec<taffy::NodeId> =
+            <Document as TraversePartialTree>::child_ids(&doc, parent_id).collect();
+        assert_eq!(children, vec![taffy::NodeId::from(whitespace)]);
     }
 
     #[test]
