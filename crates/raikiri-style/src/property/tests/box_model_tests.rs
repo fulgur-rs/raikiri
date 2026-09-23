@@ -682,6 +682,26 @@ fn overflow_is_case_insensitive() {
 }
 
 #[test]
+fn overflow_legacy_overlay_alias_maps_to_auto() {
+    // CSS Overflow 3 keeps `overlay` as a legacy alias for `auto`. The alias
+    // must normalize identically for both physical longhands and shorthand.
+    assert_eq!(
+        parse("overlay", "overflow-x"),
+        Some(PropertyValue::OverflowX(OverflowValue::Auto))
+    );
+    assert_eq!(
+        parse("OVERLAY", "overflow-y"),
+        Some(PropertyValue::OverflowY(OverflowValue::Auto))
+    );
+    assert_eq!(
+        parse("overlay", "overflow"),
+        Some(PropertyValue::Overflow(OverflowXY::both(
+            OverflowValue::Auto
+        )))
+    );
+}
+
+#[test]
 fn overflow_rejects_unknown_keyword() {
     assert_eq!(parse("bogus", "overflow-x"), None);
     assert_eq!(parse("collapse", "overflow-y"), None);
