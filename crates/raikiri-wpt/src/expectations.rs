@@ -1317,7 +1317,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Inline anonymous inline/baseline PASS slice (+2).
         // + CSS Text Decoration percentage underline-offset exact slice (+1).
         // - Drop CSS Text shaping/autospace pins that do not pass exactly (-4).
-        assert_eq!(set.baseline.entries.len(), 1278);
+        // + CSS Text text-autospace vs/zh exact resource slice (+2).
+        assert_eq!(set.baseline.entries.len(), 1280);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
