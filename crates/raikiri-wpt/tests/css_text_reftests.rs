@@ -209,12 +209,13 @@ fn assert_exact_passes(root: &std::path::Path, candidates: &[&str]) {
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn shaping_unpinned_exact_passes() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
-    // PASS-only subset; the Fulgur-PASS/Raikiri-FAIL remainder is tracked in
-    // raikiri-spike-0vv.32.8 rather than being allowed to fail this suite.
+    // PASS-only subset; the remaining shaping cases are not exact yet and are
+    // kept out rather than being allowed to fail this suite.
     let candidates = [
         "css/css-text/shaping/shaping-001.html",
         "css/css-text/shaping/shaping-002.html",
         "css/css-text/shaping/shaping-003.html",
+        "css/css-text/shaping/shaping-008.html",
         "css/css-text/shaping/shaping-009.html",
         "css/css-text/shaping/shaping-010.html",
         "css/css-text/shaping/shaping-011.html",
@@ -237,8 +238,8 @@ fn shaping_unpinned_exact_passes() {
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn text_autospace_unpinned_exact_passes() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
-    // PASS-only subset; `vs` and `zh` remain tracked as residual gaps in
-    // raikiri-spike-0vv.32.8 until their spacing behavior is implemented.
+    // PASS-only subset; `vs` and `zh` stay out until their spacing behavior
+    // is implemented.
     let candidates = [
         "css/css-text/text-autospace/text-autospace-vertical-combine-001.html",
         "css/css-text/text-autospace/text-autospace-vertical-upright-001.html",
@@ -420,5 +421,67 @@ fn word_spacing_matrix_at_800x600_with_bundled_fonts() {
                 result.outcome
             );
         }
+    }
+}
+
+/// A space at an inline boundary already ends the Arabic joining context, so
+/// the letters next to it keep their unjoined forms when the words sit in
+/// separate inline boxes.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn boundary_shaping_does_not_join_across_spaces() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let dir = tempfile::tempdir().expect("create reftest dir");
+    std::fs::copy(
+        root.join("fonts/noto/NotoNaskhArabic-regular.woff2"),
+        dir.path().join("naskh.woff2"),
+    )
+    .expect("copy Noto Naskh Arabic");
+    let write = |name: &str, head: &str, body: &str| {
+        let path = dir.path().join(name);
+        std::fs::write(
+            &path,
+            format!(
+                "<!DOCTYPE html><meta charset=utf-8>{head}<style>@font-face{{font-family:t;\
+                 src:url(naskh.woff2)}}body{{margin:0;font:40px t}}</style><p dir=rtl>{body}</p>"
+            ),
+        )
+        .expect("write fixture");
+        path
+    };
+    // The references keep the same inline structure and pin the unjoined
+    // forms with an explicit ZWNJ on the letters next to the space.
+    let cases = [
+        (
+            "word",
+            "هذا <span>مثال</span>",
+            "هذا <span>\u{200c}مثال</span>",
+        ),
+        (
+            "spans",
+            "<span>ع</span> <span>ع</span>",
+            "<span>ع\u{200c}</span> <span>\u{200c}ع</span>",
+        ),
+    ];
+    let mut config = ReftestConfig::default();
+    config.width = 400;
+    config.height = 120;
+    config.tolerance = Tolerance::EXACT;
+    for (name, test_body, ref_body) in cases {
+        write(&format!("{name}-ref.html"), "", ref_body);
+        let test = write(
+            &format!("{name}.html"),
+            &format!(r#"<link rel="match" href="{name}-ref.html">"#),
+            test_body,
+        );
+        let pairs = discover_pairs_for_file_with_wpt_root(&test, None).expect("discover pair");
+        assert_eq!(pairs.len(), 1, "{name}");
+        let result = run_pair(&pairs[0], config).expect("run pair");
+        assert!(
+            matches!(result.outcome, TestOutcome::Pass),
+            "{name}: {:?} ({} mismatched pixels)",
+            result.outcome,
+            result.mismatched_pixels
+        );
     }
 }

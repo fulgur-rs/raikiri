@@ -1316,8 +1316,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Text negative word-spacing exact 800x600 review-approved pair (+1).
         // + CSS Inline anonymous inline/baseline PASS slice (+2).
         // + CSS Text Decoration percentage underline-offset exact slice (+1).
-        // - Drop CSS Text shaping/autospace pins that do not pass exactly (-5).
-        assert_eq!(set.baseline.entries.len(), 1277);
+        // - Drop CSS Text shaping/autospace pins that do not pass exactly (-4).
+        assert_eq!(set.baseline.entries.len(), 1278);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
