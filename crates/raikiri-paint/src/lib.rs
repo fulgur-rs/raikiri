@@ -400,6 +400,32 @@ mod tests {
         (doc, cr)
     }
 
+    #[test]
+    fn paint_single_page_empty_list_item_emits_marker() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let _item = doc.append_element(
+            Some(body),
+            "li",
+            Style::default(),
+            Some("display: list-item; list-style-type: disc"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+        let mut scene = Scene::new();
+        paint_single_page(&mut scene, &doc, &cr, PageBox::A4);
+
+        assert!(
+            scene
+                .commands
+                .iter()
+                .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
+        );
+    }
+
     fn decorated_text_scene(style: &str) -> Scene {
         decorated_text_scene_with_text(style, "Decoration")
     }

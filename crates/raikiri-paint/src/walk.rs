@@ -3676,6 +3676,23 @@ fn paint_document_impl(
                     }
                     // cov:ignore: paint_document layout traversal is covered by reftests; unit tests cover paint_list_marker directly.
                     if !paints_as_absolute_continuation && cv.display == DisplayValue::ListItem {
+                        // An empty list item still owns a generated marker.
+                        // Its principal box has zero width/height, which the
+                        // marker helper intentionally rejects for ordinary
+                        // zero-sized fragments. Give this empty-item marker a
+                        // minimal paint extent without changing that helper's
+                        // defensive behavior for other callers.
+                        let empty_item_marker = node.children.is_empty();
+                        let marker_width = if empty_item_marker {
+                            layout.size.width.max(1.0)
+                        } else {
+                            layout.size.width
+                        };
+                        let marker_height = if empty_item_marker {
+                            layout.size.height.max(cv.font_size.px().max(1.0))
+                        } else {
+                            layout.size.height
+                        };
                         paint_list_marker_with_snapshots(
                             scene,
                             document,
@@ -3683,8 +3700,8 @@ fn paint_document_impl(
                             node_id,
                             paint_x,
                             paint_y,
-                            layout.size.width,
-                            layout.size.height,
+                            marker_width,
+                            marker_height,
                             layout.padding.left,
                             &counter_snapshots,
                             pixel_source,
