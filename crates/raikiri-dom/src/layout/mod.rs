@@ -582,9 +582,12 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
                 {
                     return Some(name.to_string());
                 }
-                // A later named class-A box must not change the initial page
-                // context. Its own transition is handled by the paginator.
-                return None;
+                // A first in-flow descendant can carry the page value through
+                // an anonymous block. Resolve that propagation before falling
+                // back to the anonymous initial page; later siblings must not
+                // change the initial page context.
+                let (_, propagated) = propagated_start_page_name(document, cascade, child_id, None);
+                return propagated;
             }
             _ => {}
         }
@@ -10261,16 +10264,12 @@ pub fn layout_pages_with_page_geometry(
                     } else {
                         None
                     };
-                let (has_propagated_page_name, propagated_page_name) = if own_page_name.is_some() {
-                    propagated_start_page_name(
-                        document,
-                        cascade,
-                        node_id,
-                        inherited_page_name.as_deref(),
-                    )
-                } else {
-                    (false, None)
-                };
+                let (has_propagated_page_name, propagated_page_name) = propagated_start_page_name(
+                    document,
+                    cascade,
+                    node_id,
+                    inherited_page_name.as_deref(),
+                );
                 let page_name = if has_propagated_page_name {
                     propagated_page_name
                 } else {
