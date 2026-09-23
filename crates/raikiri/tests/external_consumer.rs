@@ -77,11 +77,12 @@ fn external_consumer_can_call_parse_plan_render_streaming() {
     ));
 
     let mut sink = NoopSink;
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
     let stream_status = render_streaming(
         &doc,
         PageDefaults::default(),
-        &NoopResolver,
         StreamingConfig::default(),
+        RenderOptions::new().resources(&resources),
         &mut sink,
     )
     .expect("render_streaming should complete");

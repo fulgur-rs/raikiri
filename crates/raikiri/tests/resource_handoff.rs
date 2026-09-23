@@ -6,11 +6,60 @@ use std::time::Duration;
 
 use raikiri::{
     Bytes, DecodedImage, FetchedResource, FontContextBuilder, ImagePixelSource, IntrinsicBox,
-    NetworkError, NetworkProvider, PageDefaults, RenderResources, RenderSink, RenderStatus,
-    RenderSummary, ReplacedResolver, Request, ResolveDisposition, ResolvedIntrinsic, ResolverError,
-    ResolverRequest, ResourceKind, ResourceLimits, ResourcePolicy, StreamingConfig, Url,
-    WarningKind, render_html_pages_with_resources, render_html_streaming_with_resources,
+    NetworkError, NetworkProvider, PageDefaults, PageFragment, RenderError, RenderOptions,
+    RenderResources, RenderSink, RenderStatus, RenderSummary, ReplacedResolver, Request,
+    ResolveDisposition, ResolvedIntrinsic, ResolverError, ResolverRequest, ResourceKind,
+    ResourceLimits, ResourcePolicy, StreamingConfig, Url, WarningKind, parse_html_with_resources,
+    render_streaming,
 };
+
+/// Parse with `resources`, then render with the same resource handoff.
+#[allow(clippy::result_large_err)]
+fn parse_and_render<R: std::io::Read>(
+    input: R,
+    defaults: PageDefaults,
+    resources: &RenderResources<'_>,
+    config: StreamingConfig,
+    sink: &mut dyn RenderSink,
+) -> Result<RenderStatus, RenderError> {
+    let doc = parse_html_with_resources(input, resources)?;
+    render_streaming(
+        &doc,
+        defaults,
+        config,
+        RenderOptions::new().resources(resources),
+        sink,
+    )
+}
+
+#[derive(Default)]
+struct PageCollector {
+    pages: Vec<PageFragment>,
+}
+
+impl RenderSink for PageCollector {
+    fn accept_page(&mut self, page: PageFragment) -> std::io::Result<()> {
+        self.pages.push(page);
+        Ok(())
+    }
+
+    fn finish_render(&mut self, _summary: RenderSummary) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// [`parse_and_render`] into a collector that retains every emitted page.
+#[allow(clippy::result_large_err)]
+fn parse_and_collect_pages<R: std::io::Read>(
+    input: R,
+    defaults: PageDefaults,
+    resources: &RenderResources<'_>,
+    config: StreamingConfig,
+) -> Result<(Vec<PageFragment>, RenderStatus), RenderError> {
+    let mut sink = PageCollector::default();
+    let status = parse_and_render(input, defaults, resources, config, &mut sink)?;
+    Ok((sink.pages, status))
+}
 
 #[derive(Default)]
 struct CountingNetwork {
@@ -92,7 +141,7 @@ fn bundled_no_network_resources_share_base_resolver_and_summary() {
         .replaced_resource_provider(&resolver);
     let mut sink = CapturingSink::default();
 
-    let status = render_html_streaming_with_resources(
+    let status = parse_and_render(
         &b"<html><body style='font-family: \"Bundled Handoff Test\"'>A<img src='../images/cover.png'></body></html>"[..],
         PageDefaults::default(),
         &resources,
@@ -139,7 +188,7 @@ fn bundled_no_network_page_output_is_deterministic_across_runs() {
     let mut outputs = Vec::new();
 
     for _ in 0..3 {
-        let (pages, status) = render_html_pages_with_resources(
+        let (pages, status) = parse_and_collect_pages(
             &b"<html><body style='font-family: \"Bundled Handoff Test\"'>A<img src='../images/cover.png'></body></html>"[..],
             PageDefaults::default(),
             &resources,
@@ -166,7 +215,7 @@ fn html_base_element_overrides_configured_fallback_for_replaced_resources() {
         .replaced_resource_provider(&resolver);
     let mut sink = CapturingSink::default();
 
-    render_html_streaming_with_resources(
+    parse_and_render(
         &b"<html><head><base href='/assets/'></head><body><img src='cover.png'></body></html>"[..],
         PageDefaults::default(),
         &resources,
@@ -184,7 +233,7 @@ fn html_base_element_overrides_configured_fallback_for_replaced_resources() {
 #[test]
 fn batch_collection_uses_the_resource_aware_page_path() {
     let resources = RenderResources::new();
-    let (pages, status) = render_html_pages_with_resources(
+    let (pages, status) = parse_and_collect_pages(
         &b"<html><body><div></div></body></html>"[..],
         PageDefaults::default(),
         &resources,
@@ -230,7 +279,7 @@ fn response_limits_are_reported_in_render_summary() {
         );
     let mut sink = CapturingSink::default();
 
-    let status = render_html_streaming_with_resources(
+    let status = parse_and_render(
         &b"<html><head><link rel='stylesheet' href='main.css'></head><body><p>Hi</p></body></html>"
             [..],
         PageDefaults::default(),
@@ -291,7 +340,7 @@ fn aggregate_response_budget_is_shared_by_parse_and_font_loading() {
         );
     let mut sink = CapturingSink::default();
 
-    let status = render_html_streaming_with_resources(
+    let status = parse_and_render(
         &b"<html><head><link rel='stylesheet' href='main.css'></head><body></body></html>"[..],
         PageDefaults::default(),
         &resources,
@@ -396,7 +445,7 @@ fn decoded_image_limit_is_reported_and_paint_source_refuses_the_image() {
         .replaced_resource_provider(&provider);
     let mut sink = CapturingSink::default();
 
-    let status = render_html_streaming_with_resources(
+    let status = parse_and_render(
         &b"<html><body><img src='image.png'></body></html>"[..],
         PageDefaults::default(),
         &resources,
@@ -442,7 +491,7 @@ fn network_policy_applies_to_stylesheet_font_and_replaced_resource_fetches() {
         .replaced_resource_provider(&resolver);
     let mut sink = CapturingSink::default();
 
-    let status = render_html_streaming_with_resources(
+    let status = parse_and_render(
         &b"<html><head><link rel='stylesheet' href='main.css'></head><body><p>Hi</p><img src='image.png'></body></html>"[..],
         PageDefaults::default(),
         &resources,

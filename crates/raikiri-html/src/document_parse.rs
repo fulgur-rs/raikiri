@@ -2,7 +2,7 @@
 //! orchestrator。
 //!
 //! spec §L1060 の pub API 相当。内部 pipeline は
-//! [`raikiri_html::parse`] → rule-tree build and first-page cascade → assemble。
+//! [`crate::parse`] → rule-tree build and first-page cascade → assemble。
 //! 現状 cascade は
 //! 常に `Ok` を返すため、`RenderError::Parse` のみが bubble する。
 //!
@@ -30,10 +30,13 @@
 
 use std::io::Read;
 
-use raikiri_html::{ParseOptions, RaikiriTreeSink, effective_document_base_url, parse_with_sink};
+use crate::{ParseOptions, RaikiriTreeSink, effective_document_base_url, parse_with_sink};
 use raikiri_traits::{LimitKind, ParseError, RenderError, RenderLimits};
 
-use crate::{HtmlDocument, PageContextQuery, build_rule_tree};
+use raikiri_style::PageContextQuery;
+
+use crate::HtmlDocument;
+use crate::cascade::build_rule_tree;
 
 /// HTML byte stream を parse し、cascade まで完了した [`HtmlDocument`] を返す。
 ///
@@ -56,7 +59,7 @@ use crate::{HtmlDocument, PageContextQuery, build_rule_tree};
 /// # Example
 ///
 /// ```
-/// use raikiri::{parse_html, ParseOptions};
+/// use raikiri_html::{parse_html, ParseOptions};
 ///
 /// let opts = ParseOptions { extra_stylesheets: &[], network: None, base_url: None };
 /// let doc = parse_html(&b"<p>Hi</p>"[..], &opts).expect("parse");
@@ -78,8 +81,7 @@ pub fn parse_html<R: Read>(
 /// * `None` の場合、input を無制限に read する (Consumer が明示的に cap を
 ///   無効化した場合のみ、fail-closed default は 32 MiB)
 ///
-/// [`RenderLimits::max_parse_warnings`] も consult される: `raikiri_html`
-/// の `RaikiriTreeSink` に直接渡され、html5ever が報告する非致命 parse
+/// [`RenderLimits::max_parse_warnings`] も consult される: `RaikiriTreeSink` に直接渡され、html5ever が報告する非致命 parse
 /// error を warning として記録する件数を cap する (詳細は field doc 参照、
 /// input byte cap と異なりこちらは早期 return しない — 超過分は黙って
 /// drop される代わりに synthetic な 1 件の warning が追加される)。
@@ -142,8 +144,8 @@ pub fn parse_html_with_limits<R: Read>(
         }
     }
 
-    // Under cap: materialized slice を raikiri_html::parse_with_sink に渡す
-    // (raikiri_html::parse の thin wrapper 経路だと sink が
+    // Under cap: materialized slice を crate::parse_with_sink に渡す
+    // (crate::parse の thin wrapper 経路だと sink が
     // `RaikiriTreeSink::default()` 固定になり `limits.max_parse_warnings` を
     // consult できないため、ここでは sink を明示的に construct する)。
     // parse_with_sink は内部で `read_to_end` するため、`&[u8]` を渡すと 1 回の

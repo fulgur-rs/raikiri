@@ -4,15 +4,17 @@ use std::fmt;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
 
+use parley::FontContext;
 use raikiri_dom::FontFaceLoader;
-use raikiri_html::ParseOptions;
 use raikiri_traits::{
     Body, DecodedImage, FetchedResource, Method, NetworkError, NetworkProvider, PolicyViolation,
     RenderLimits, RenderWarning, Request, ResourceKind, ResourcePolicy, ViolationType, WarningKind,
 };
 use url::Url;
 
-use crate::{FontContext, HtmlDocument, ImagePixelSource, ReplacedResolver};
+use raikiri_traits::{ImagePixelSource, ReplacedResolver};
+
+use crate::{HtmlDocument, ParseOptions};
 
 /// Default maximum response size accepted through [`RenderResources`].
 pub const DEFAULT_MAX_RESOURCE_BYTES: u64 = 32 * 1024 * 1024;
@@ -63,15 +65,13 @@ impl ResourceLimits {
 
 /// Consumer-supplied inputs and resource policy shared by parse and render.
 ///
-/// This type is in the `raikiri` facade so consumers do not need to depend on
-/// `raikiri-html`, `raikiri-dom`, or `raikiri-traits` implementation crates.
 /// Use the same value with [`crate::parse_html_with_resources`] and
-/// [`crate::render_streaming_with_resources`] so both phases share stylesheet
+/// [`crate::RenderOptions::resources`] so both phases share stylesheet
 /// sources, base URL, network provider, policy, fonts, resolver, and limits.
 ///
 /// `FontContext::new()` is retained as the default for compatibility with the
 /// existing consumer behavior. For deterministic rendering, supply a context
-/// built with [`crate::FontContextBuilder`], which disables system font
+/// built with the `raikiri` crate's `FontContextBuilder`, which disables system font
 /// discovery and applies bundled fonts in a stable fallback order.
 #[derive(Clone)]
 pub struct RenderResources<'a> {
@@ -584,17 +584,17 @@ impl FontFaceLoader for NetworkFontFaceLoader<'_> {
 }
 
 /// Parse HTML using the same renderer-neutral resource configuration later
-/// accepted by the resource-aware render entry points.
+/// accepted by [`crate::RenderOptions::resources`].
 #[allow(clippy::result_large_err)]
 pub fn parse_html_with_resources<R: Read>(
     input: R,
     resources: &RenderResources<'_>,
-) -> Result<HtmlDocument, crate::RenderError> {
+) -> Result<HtmlDocument, raikiri_traits::RenderError> {
     let network = resources.network_adapter();
     let network_ref = network
         .as_ref()
         .map(|provider| provider as &dyn NetworkProvider);
     let extra_stylesheets = resources.extra_stylesheets();
     let options = resources.parse_options(&extra_stylesheets, network_ref);
-    crate::parse::parse_html_with_limits(input, &options, resources.parse_limits())
+    crate::document_parse::parse_html_with_limits(input, &options, resources.parse_limits())
 }
