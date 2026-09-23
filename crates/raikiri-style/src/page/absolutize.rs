@@ -432,64 +432,32 @@ fn grid_track_list_from_computed(list: &ComputedGridTrackList) -> GridTrackList 
 /// **phase 3** for the page context — absolutize one winner against the page
 /// context's own `font-size` and apply the `border-*-width` style gate.
 ///
-/// Sibling of the element path's [`crate::specified::SpecifiedValues::finalize`]
-/// second half (`absolutize_with`). Both funnel into the *same*
-/// [`crate::resolve`] functions, so the spec rules (`em` / `rem` basis,
-/// percentage pass-through, border style gating) have a single implementation
-/// per rule; only the integration logic differs, because the page path carries a
-/// `PropertyValue` bag instead of a typed struct.
+/// Page-path sibling of the element path's
+/// [`crate::specified::SpecifiedValues::finalize`] (`absolutize_with`); both
+/// call the same [`crate::resolve`] functions. Keyword-only and already
+/// computed-equivalent values pass through unchanged; length-bearing values
+/// have relative units resolved to `px`, while `<percentage>` stays symbolic
+/// for the used-value layer (see
+/// [`PageCascadeResult::declarations`](super::PageCascadeResult::declarations)).
 ///
-/// # What this function does not resolve, and why that is fine
+/// The match has no wildcard arm, like
+/// [`crate::cascade::apply_value`] / [`crate::cascade::resolve_against_inherited`]:
+/// a new length-bearing [`PropertyValue`] variant must be classified here
+/// explicitly rather than leak into `declarations` as a specified value.
 ///
-/// `<percentage>` on the box properties stays a percentage — it is a
-/// used-value-layer input (CSS Values 4 §5.5.1), not a phase-3 concern. The
-/// spec citation lives in [`PageCascadeResult::declarations`](super::PageCascadeResult::declarations) (canonical).
+/// # Parameters
 ///
-/// `text-align: match-parent` is **not** handled here either, but for a
-/// different reason than it used to be: it is now fully
-/// resolved by **phase 2**
-/// ([`crate::cascade::resolve_against_inherited`], which runs before this
-/// function) — inherited-value dependence is phase 2's shape, not phase 3's,
-/// so by the time a value reaches this function `TextAlign::MatchParent`
-/// should never appear. It stays in the pass-through arm below (alongside
-/// `Color` / `Display` / …) simply because, once resolved, `text-align`'s
-/// computed value carries no length for phase 3 to touch — same as before,
-/// just for a different underlying reason. `direction` joins the same arm as
-/// a new, ordinary computed-equivalent keyword (CSS Writing Modes 4 §2.1,
-/// computed value = specified value, no phase-2 or phase-3 work at all).
-///
-/// # No wildcard arm
-///
-/// The match is exhaustive without `_`, like its two siblings
-/// ([`crate::cascade::apply_value`] / [`crate::cascade::resolve_against_inherited`]).
-/// A new [`PropertyValue`] variant that carries a length must be classified
-/// here explicitly; a catch-all would let it reach the public `declarations`
-/// map as a specified value — the exact shape of a regression this crate has
-/// already hit once. (What this guard does *not* catch is a new **payload**
-/// case inside an existing variant — gap (a).)
-///
-/// # The `value` parameter is phase-2 output, enforced by its type
-///
-/// `value` is a
-/// [`crate::cascade::ResolvedAgainstInherited`]
-/// rather than a raw [`PropertyValue`] — see that type's doc for what this
-/// does and does not guarantee ("narrowed, not closed").
-///
-/// # `own_line_height`
-///
-/// The page context's own `lh` basis — [`page_context_line_height_basis`](super::cascade::page_context_line_height_basis)'s
-/// output, threaded alongside `font_size` for the same reason: `1lh` in
-/// `padding`/`margin`/`border-*-width` needs this context's *own* resolved
-/// line-height (not the root's — that is `ctx.root_line_height`, used only
-/// for `rlh`).
-///
-/// # `overflow_pair`
-///
-/// [`page_context_overflow_pair`](super::cascade::page_context_overflow_pair)'s output — the page context's raw
-/// `overflow-x`/`overflow-y` winners, threaded in for the same reason
-/// `border_styles` is: CSS Overflow 3 §3.1's cross-axis coupling
-/// ([`resolve_overflow`]) needs *both* axes at once, and this function
-/// otherwise only sees one [`PropertyValue`] winner at a time.
+/// - `value`: phase-2 output ([`crate::cascade::ResolvedAgainstInherited`]).
+/// - `font_size`: this page context's own resolved `font-size` (`em` basis).
+/// - `own_line_height`: this context's own `lh` basis, from
+///   [`page_context_line_height_basis`](super::cascade::page_context_line_height_basis);
+///   `rlh` uses `ctx.root_line_height` instead.
+/// - `border_styles` / `outline_style`: the context's style winners, which gate
+///   `border-*-width` / `outline-width`.
+/// - `overflow_pair`: the raw `overflow-x`/`overflow-y` winners from
+///   [`page_context_overflow_pair`](super::cascade::page_context_overflow_pair),
+///   since [`resolve_overflow`]'s cross-axis coupling needs both axes while
+///   this function sees one winner at a time.
 pub(super) fn absolutize_in_page_context(
     value: ResolvedAgainstInherited,
     font_size: ComputedLength,
@@ -508,9 +476,8 @@ pub(super) fn absolutize_in_page_context(
 
     match value {
         // ── already computed-equivalent after phase 2 ──────────────────────
-        // `font-size` is phase 2's output (`Length::Px`); re-absolutizing it
-        // here would be a second application against the *wrong* basis (its
-        // own value instead of the inheritance parent's).
+        // `font-size` is already phase-2 output (`Length::Px`); re-absolutizing it
+        // here would apply it against its own value instead of the parent's.
         v @ (PropertyValue::Color(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)
@@ -545,85 +512,27 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::OutlineStyle(_)
         | PropertyValue::OutlineColor(_)
         | PropertyValue::BoxSizing(_)
-        // `text-decoration-line`/`-style`/`-color` carry no length and
-        // computed value = specified keyword(s)/color (see
-        // `TextDecorationLine`/`TextDecorationStyle`/`TextDecorationColor`
-        // docs) — nothing for phase 3 to absolutize. The `text-decoration`
-        // shorthand itself does NOT join this bucket: its `-thickness`
-        // component carries `<length-percentage>` (ED §2.4.1), so it gets
-        // its own fall-through transform arm below (same "structurally
-        // unreachable, pinned directly" shape as `Margin`/`Border`/
-        // `Background` above).
         | PropertyValue::TextDecorationLine(_)
         | PropertyValue::TextDecorationStyle(_)
         | PropertyValue::TextDecorationColor(_)
-        // `text-decoration-skip-ink`/`-skip-spaces`/`text-emphasis-position`/
-        // `text-underline-position` carry no length and computed value =
-        // specified keyword(s) (see each type's doc) — nothing for phase 3
-        // to absolutize, same bucket shape as the 3 `text-decoration`
-        // longhands above.
         | PropertyValue::TextDecorationSkipInk(_)
         | PropertyValue::TextDecorationSkipSpaces(_)
         | PropertyValue::TextEmphasisPosition(_)
         | PropertyValue::TextUnderlinePosition(_)
-        // `font-style` carries no length at this crate's scope
-        // (`normal`/`italic`/`oblique` implemented, `oblique`'s `<angle>`
-        // argument is not — see `FontStyle`'s doc) and computed value =
-        // specified keyword — nothing for phase 3 to absolutize.
         | PropertyValue::FontStyle(_)
-        // `font-variant-caps` carries no length either (see
-        // `FontVariantCaps`'s doc) and computed value = specified keyword —
-        // nothing for phase 3 to absolutize.
         | PropertyValue::FontVariantCaps(_)
-        // `text-transform` carries no length (see `TextTransform`'s doc)
-        // and computed value = specified keyword — nothing for phase 3 to
-        // absolutize.
         | PropertyValue::TextTransform(_)
-        // `visibility` carries no length (see `Visibility`'s doc) and
-        // computed value = specified keyword — nothing for phase 3 to
-        // absolutize.
         | PropertyValue::Visibility(_)
-        // `z-index` carries no length (see `ZIndexValue`'s doc) and computed
-        // value = specified value — nothing for phase 3 to absolutize.
         | PropertyValue::ZIndex(_)
-        // `word-break` (CSS Text 3 §5.1) carries no length either and
-        // computed value = specified keyword (see `WordBreak`'s doc) —
-        // nothing for phase 3 to absolutize.
         | PropertyValue::WordBreak(_)
-        // `overflow-wrap` (legacy alias `word-wrap`, CSS Text 3 §5.4)
-        // carries no length either (see `OverflowWrap`'s doc) — same as
-        // `WordBreak` above.
         | PropertyValue::OverflowWrap(_)
-        // `break-before`/`break-after` (CSS Fragmentation Module Level 3
-        // §3.1, legacy shorthand `page-break-before`/`page-break-after`
-        // included) carry no length either (see `BreakBetween`'s doc) —
-        // nothing for phase 3 to absolutize.
         | PropertyValue::BreakBefore(_)
         | PropertyValue::BreakAfter(_)
-        // `break-inside` (CSS Fragmentation Module Level 3 §3.2, legacy
-        // shorthand `page-break-inside` included) carries no length
-        // either (see `BreakInside`'s doc) — same as `BreakBefore`/
-        // `BreakAfter` above.
         | PropertyValue::BreakInside(_)
-        // `float`/`clear` (CSS2 §9.5.1/§9.5.2) carry no length either. The
-        // §9.7 `display` recomputation `float` drives on the element path
-        // (`crate::property::resolve_display_for_float`) is **not**
-        // applied here — a page box is not an element in a visual
-        // formatting context, so §9.7's clause has no subject in this
-        // path; `Float`/`Clear` are opaque pass-through values here, the
-        // same treatment `ZIndex` gets (see that arm's doc).
         | PropertyValue::Float(_)
         | PropertyValue::Clear(_)
-        // `white-space` (CSS Text 3 §3) carries no length either and
-        // computed value = specified keyword (see `WhiteSpace`'s doc) —
-        // nothing for phase 3 to absolutize.
         | PropertyValue::WhiteSpace(_)
-        // `text-wrap` (CSS Text 4 §5 subset) carries no length either —
-        // same as `WhiteSpace` above.
         | PropertyValue::TextWrap(_)
-        // `hyphens` (CSS Text 3 §5.3) carries no length either and computed
-        // value = specified keyword (see `Hyphens`'s doc) — same as
-        // `WhiteSpace` above.
         | PropertyValue::Hyphens(_)
         | PropertyValue::LineBreak(_)
         | PropertyValue::TextJustify(_)
@@ -632,144 +541,51 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::TextCombineUpright(_)
         | PropertyValue::TextOrientation(_)
         | PropertyValue::UnicodeBidi(_)
-        // `page` (CSS Paged Media 3 §8.1) carries no length and computed
-        // value = specified value — nothing for phase 3 to absolutize.
         | PropertyValue::Page(_)
-        // `column-count` carries only a keyword/integer and has no page-side
-        // length to absolutize. `column-width:auto` is likewise already
-        // computed-equivalent; the length-bearing forms have dedicated arms
-        // below so relative units do not leak into the page declaration bag.
         | PropertyValue::ColumnCount(_)
         | PropertyValue::ColumnWidth(ColumnWidthValue::Auto)
-        // `flex-direction`/`flex-wrap` (CSS Flexible Box Layout Module
-        // Level 1 §5.1/§5.2) carry no length and computed value = specified
-        // keyword — nothing for phase 3 to absolutize.
         | PropertyValue::FlexDirection(_)
         | PropertyValue::FlexWrap(_)
-        // `flex-grow`/`flex-shrink` (§7.2.1/§7.2.2) carry a bare
-        // `<number>`, not a length — nothing for phase 3 to absolutize
-        // (unlike `FlexBasis` below, which does carry a
-        // `<length-percentage>` and gets its own transform arm).
         | PropertyValue::FlexGrow(_)
         | PropertyValue::FlexShrink(_)
-        // `flex-flow` shorthand — neither component carries a length (see
-        // `place-content` below for the same shape); structurally
-        // unreachable here regardless (`expand_shorthand_into` expands it
-        // before this function runs).
         | PropertyValue::FlexFlow(_)
-        // `order` (§4.2) carries a bare `<integer>`, not a length —
-        // nothing for phase 3 to absolutize.
         | PropertyValue::Order(_)
-        // `justify-content`/`align-content` (CSS Box Alignment Module Level
-        // 3 §5.1) / `align-items` (§7.2) / `align-self` (§6.2) carry no
-        // length — same shape as `WordBreak` above.
         | PropertyValue::JustifyContent(_)
         | PropertyValue::AlignContent(_)
         | PropertyValue::AlignItems(_)
         | PropertyValue::AlignSelf(_)
-        // `place-content` shorthand joins the same bucket as identity
-        // pass-through — neither of its 2 components carries a length (see
-        // `TextDecoration` above for the same shorthand-with-no-length-
-        // components shape); it is structurally unreachable here regardless
-        // (`expand_shorthand_into` expands it before this function runs).
         | PropertyValue::PlaceContent(_)
-        // `quotes` (CSS Content 3 §2.4.1) carries no length and computed
-        // value = specified value (`ComputedValues::quotes` doc) — nothing
-        // for phase 3 to absolutize.
         | PropertyValue::Quotes(_)
-        // `grid-template-areas` (CSS Grid Layout Module Level 1 §7.3) —
-        // computed value is the keyword `none` or the authored string list
-        // itself (`GridTemplateAreasValue` doc), not a parsed/absolutized
-        // form — nothing for phase 3 to absolutize, same shape as
-        // `GridTemplateAreasValue`'s specified/computed-equivalent layering
-        // (unlike `GridTemplateColumns`/`GridTemplateRows` below, which do
-        // carry `<length-percentage>` in their track sizes and get their
-        // own transform arm).
         | PropertyValue::GridTemplateAreas(_)
-        // `grid-auto-flow` (§7.7) carries no length and computed value =
-        // specified keyword(s) — same shape as `WordBreak` above.
         | PropertyValue::GridAutoFlow(_)
-        // `grid-row-start`/`-end`/`grid-column-start`/`-end` (§8.3) carry no
-        // length (`GridLineValue` doc) — same shape as `WordBreak` above.
         | PropertyValue::GridRowStart(_)
         | PropertyValue::GridRowEnd(_)
         | PropertyValue::GridColumnStart(_)
         | PropertyValue::GridColumnEnd(_)
-        // `grid-row`/`grid-column` shorthands (§8.4) join the same bucket as
-        // identity pass-through — neither longhand they expand to carries a
-        // length either, and they are structurally unreachable here
-        // regardless (same `expand_shorthand_into` reasoning as
-        // `PlaceContent` above).
         | PropertyValue::GridRow(_)
         | PropertyValue::GridColumn(_)
-        // `justify-items` (CSS Box Alignment Module Level 3 §7.1) /
-        // `justify-self` (§6.1) carry no length — same shape as
-        // `AlignItems`/`AlignSelf` above.
         | PropertyValue::JustifyItems(_)
         | PropertyValue::JustifySelf(_)
-        // `place-items`/`place-self` shorthands (§7.3/§6.3) join the same
-        // bucket as identity pass-through, same reasoning as
-        // `PlaceContent`/`GridRow` above.
         | PropertyValue::PlaceItems(_)
         | PropertyValue::PlaceSelf(_)
-        // `orphans`/`widows` (CSS Fragmentation Module Level 3 §3.3) carry a
-        // bare positive `<integer>`, not a length, and computed value =
-        // specified integer — nothing for phase 3 to absolutize, same shape
-        // as `FlexGrow`/`FlexShrink` above.
         | PropertyValue::Orphans(_)
         | PropertyValue::Widows(_)
-        // `background-repeat`/`background-attachment`/`background-clip`/
-        // `background-origin` (CSS Backgrounds and Borders 3 §2.4/§2.5/§2.7/§2.8)
-        // carry no length — computed value = specified keyword(s), same
-        // shape as `WordBreak` above. `background-size`/`background-position`
-        // do carry `<length-percentage>` and get their own transform arms
-        // below (next to `Width`/`Height`).
         | PropertyValue::BackgroundRepeat(_)
         | PropertyValue::BackgroundAttachment(_)
         | PropertyValue::BackgroundClip(_)
         | PropertyValue::BackgroundOrigin(_)
 
-        // `object-fit` (CSS Images Module Level 3 §5.1) carries no length
-        // either — keyword-only payload, same shape as `WordBreak` above.
-        // `object-position` (§5.2) does carry `<length-percentage>` (reuses
-        // `CssPosition`, `background-position`'s type) and gets its own
-        // transform arm below, next to `BackgroundPosition`.
         | PropertyValue::ObjectFit(_)
-        // `isolation` (CSS Compositing and Blending Level 1 §3.4.2) /
-        // `mix-blend-mode` (§3.4.1) — keyword-only payloads, same shape as
-        // `ObjectFit` above.
         | PropertyValue::Isolation(_)
         | PropertyValue::MixBlendMode(_)
 
-        // `clip-path` (§5.1) — `None`/`Url(String)`/`GeometryBox(..)` all
-        // carry no length payload (`ClipPath` doc's scope note — no
-        // `<basic-shape>` support, so no embedded length at all).
         | PropertyValue::ClipPath(_)
-        // `filter` (§5) — Computed value is plain "as specified": no
-        // absolutization is spec-required at all, so passing every
-        // embedded `Length`/`Angle` through untouched (including
-        // `drop-shadow()`'s, reused from `TextShadowItem`) is not a gap,
-        // just this property's actual computed-value definition
-        // (`FilterFunction` doc's "Range restriction is reject, not clamp"
-        // section establishes the same "as specified" fact for a different
-        // purpose).
+        // `filter`'s computed value is as specified: embedded lengths stay untouched.
         | PropertyValue::Filter(_)
-        // `table-layout` (CSS Tables 3 §4) / `border-collapse` (CSS Tables
-        // 3 §6) / `caption-side` (§7) / `empty-cells` (§8) carry no length
-        // and computed value = specified keyword
-        // (`TableLayoutValue`/`BorderCollapseValue` docs) — nothing for
-        // phase 3 to absolutize. A page box is not a table wrapper box, so
-        // none of these properties has layout meaning in this path; all are
-        // opaque pass-through values here, the same treatment `ZIndex` gets
-        // (see that arm's doc). (`border-spacing` §6.1 *does* carry
-        // `<length>` and gets its own transform arm next to `TabSize`.)
         | PropertyValue::TableLayout(_)
         | PropertyValue::BorderCollapse(_)
         | PropertyValue::CaptionSide(_)
         | PropertyValue::EmptyCells(_)) => v,
-        // `column-width` and the width component of `columns` are
-        // length-bearing. Resolve relative units against the page context,
-        // matching the other single-length properties above.
         PropertyValue::ColumnWidth(ColumnWidthValue::Length(length)) => {
             PropertyValue::ColumnWidth(ColumnWidthValue::Length(Length::Px(
                 resolve_length(length, font_size, own_line_height, ctx).px(),
@@ -786,16 +602,6 @@ pub(super) fn absolutize_in_page_context(
             count: shorthand.count,
         }),
         // ── background-image / mask-image ───────────────────────────────
-        // `None`/`Url(String)` are computed-equivalent. `Gradient(..)`'s
-        // `<length-percentage>` payloads (`GradientColorStop::position`,
-        // `RadialSize::Circle`/`Ellipse`, `RadialGradient`/`ConicGradient`'s
-        // `CssPosition`) are partially absolutized: font-relative lengths
-        // (`em`/`rem`/`ex`/`ch`/`ic`/`pt`/`cm`/`mm`/`q`/`in`/`pc`/`lh`/`rlh`)
-        // resolve against this page context's own `font-size`/
-        // `own_line_height` basis, while `<percentage>` stays symbolic for
-        // paint-time box-size resolution — same split as
-        // `background-position`/`object-position` (`resolve_css_position`/
-        // `resolve_length_percentage`), see `resolve_background_image` doc.
         PropertyValue::BackgroundImage(img) => PropertyValue::BackgroundImage(
             crate::resolve::resolve_background_image(img, font_size, own_line_height, ctx),
         ),
@@ -803,58 +609,18 @@ pub(super) fn absolutize_in_page_context(
             crate::resolve::resolve_background_image(img, font_size, own_line_height, ctx),
         ),
         // ── font-size: larger / smaller ──────────────────────────────────
-        // ⚠️ **structurally unreachable through `cascade_page`, not a "safety
-        // net"** — step 3 (phase 2) in `cascade_page` maps *every* winner
-        // through `resolve_against_inherited` before this function ever runs,
-        // and that function's `FontSizeRelative` arm always converges to
-        // `PropertyValue::FontSize(Length::Px(_))`. There is no second entry
-        // point that could skip step 3 (unlike the shorthand fall-throughs
-        // below, which *are* reachable via a direct internal call).
-        //
-        // The arm still exists — not folded into the `Color`/`FontSize`/…
-        // bucket above, and not `unreachable!` — for the same two reasons the
-        // shorthand fall-throughs keep real arms: the crate keeps the cascade
-        // panic-free (a deliberate design policy, see the shorthand
-        // fall-through note in `crate::cascade::apply_value`'s doc), and this
-        // function's `pub(crate)` visibility means test code *can* call it
-        // directly with an
-        // unresolved `FontSizeRelative`, bypassing step 3 (as
-        // `absolutize_in_page_context_font_size_relative_safety_net` does).
-        //
-        // The basis is deliberately `font_size` (this context's own,
-        // phase-2-resolved value) rather than the inheritance parent's — this
-        // function has no parent basis available, and the arm is bug-only
-        // regardless, so spec correctness here is not a design goal. What
-        // matters is: no panic, and convergence to the same `FontSize(Px(_))`
-        // shape the real (phase 2) path produces, so a caller reading
-        // `declarations` never observes an unresolved `FontSizeRelative`.
+        // Unreachable through `cascade_page` (phase 2 resolves it); kept panic-free
+        // for direct callers, converging to the same `FontSize(Px(_))` shape.
         PropertyValue::FontSizeRelative(rel) => {
             PropertyValue::FontSize(Length::Px(resolve_relative_font_size(rel, font_size.px())))
         }
         // ── line-height ───────────────────────────────────────────────────
-        // CSS Inline 3 §5.1 <https://www.w3.org/TR/css-inline-3/#propdef-line-height>:
-        // `<percentage>` is "computed relative to 1em" of the declaring
-        // context. `normal` / `<number>` survive as keywords by spec.
-        //
-        // `lh`/`rlh` used *within* this declaration's own value (self-reference)
-        // use `ctx.root_line_height` — the page context's
-        // CSS Values 4 §6.1.1 self-reference "parent" is the root element
-        // (`page_context_line_height_basis` doc), the same source
-        // `ctx.root_line_height` already carries.
+        // `lh`/`rlh` self-references resolve against the root, hence
+        // `ctx.root_line_height` rather than `own_line_height`.
         PropertyValue::LineHeight(lh) => PropertyValue::LineHeight(lift_line_height(
             resolve_line_height(lh, font_size, ctx.root_line_height, ctx),
         )),
         // ── text-indent ───────────────────────────────────────────────────
-        // CSS Text 3 §8.1 — same `<length-percentage>` absolutization shape
-        // as `padding-top` (`lp` helper above). The fact that this property
-        // is *inherited* at the element cascade layer doesn't change this
-        // function's job: `value` already arrived through
-        // `resolve_against_inherited` (this arm is phase 3, run after phase
-        // 2), so by this point it is this page context's own winner (or a
-        // value already carried through inheritance) — either way, just a
-        // `Length` that needs absolutizing against this context's own
-        // `font_size`/`own_line_height` basis, same as every other box
-        // property here.
         PropertyValue::TextIndent(v) => {
             PropertyValue::TextIndent(TextIndentValue {
                 length: basis.lp(v.length),
@@ -867,38 +633,10 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::PaddingRight(v) => PropertyValue::PaddingRight(basis.lp(v)),
         PropertyValue::PaddingBottom(v) => PropertyValue::PaddingBottom(basis.lp(v)),
         PropertyValue::PaddingLeft(v) => PropertyValue::PaddingLeft(basis.lp(v)),
-        // Shorthand fall-through — **unreachable through `cascade_page`**.
-        // `crate::rule::expand_shorthand_into` runs at both boundaries that feed
-        // this function: the parse exit (`parse_page_declaration_block`, this
-        // module's own `@page`-block parser) and the `@page` cascade entry
-        // (the candidate loop in `cascade_page` itself — the sibling of
-        // `crate::cascade`'s `collect_cascaded`). The
-        // entry-side expansion is what covers the post-parse mutation path
-        // through the `pub` field `PageRule::declarations`.
-        //
-        // ⚠️ **これは "safety" net ではない — 到達したら既に bug である**
-        // (element 側の同種の framing 訂正と同旨)。到達した
-        // winner は `PropertyKey::Margin` 等の独立 key に park したまま
-        // absolutize され、well-formed に見える値のまま `MarginTop` を読む
-        // consumer から黙って消える — まさにこの fall-through が引き起こす
-        // 典型的な failure mode である。degraded ではなく deterministic に
-        // CSS Cascading
-        // L4 §3 <https://www.w3.org/TR/css-cascade-4/#shorthand> 違反であり、
-        // 本 arm はそれを穏当に見せない。
-        //
-        // The arms are kept rather than folded into `unreachable!` for the same
-        // reason `cascade::apply_value` keeps its shorthand arms: the guarantee
-        // above is only partly compile-time enforced — the carve-outs are in the
-        // expansion `match`'s own doc — and the crate
-        // keeps the cascade panic-free as a deliberate design policy. Behaviour
-        // is pinned directly
-        // by `tests::absolutize_in_page_context_shorthand_fall_throughs`.
+        // Shorthand fall-throughs: unreachable through `cascade_page` (shorthands are
+        // expanded first) but kept as real arms, not `unreachable!`, so the cascade
+        // stays panic-free for direct callers.
         PropertyValue::Padding(sides) => PropertyValue::Padding(sides.map(|l| basis.lp(l))),
-        // `padding-inline`/`padding-block` shorthand fall-through — same
-        // shape and same unreachability rationale as `Padding` above
-        // (`crate::property::PropertyValue::PaddingInline` doc covers the
-        // physical-mapping choice). Pinned directly by
-        // `tests::absolutize_in_page_context_logical_shorthand_fall_throughs`.
         PropertyValue::PaddingInline(pair) => {
             PropertyValue::PaddingInline(pair.map(|l| basis.lp(l)))
         }
@@ -915,10 +653,7 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::MarginBottomInherit
         | PropertyValue::MarginLeftInherit
         | PropertyValue::MarginInherit) => v,
-        // Shorthand fall-through (see `Padding` above).
         PropertyValue::Margin(sides) => PropertyValue::Margin(sides.map(|l| basis.margin_lpa(l))),
-        // `margin-inline`/`margin-block` shorthand fall-through — same shape
-        // as `PaddingInline`/`PaddingBlock` above.
         PropertyValue::MarginInline(pair) => {
             PropertyValue::MarginInline(pair.map(|l| basis.margin_lpa(l)))
         }
@@ -926,6 +661,7 @@ pub(super) fn absolutize_in_page_context(
             PropertyValue::MarginBlock(pair.map(|l| basis.margin_lpa(l)))
         }
         // ── border-*-width (absolutized **and** style-gated) ──────────────
+        // A `none`/`hidden` style computes the width to 0, hence `border_styles`.
         PropertyValue::BorderTopWidth(w) => {
             PropertyValue::BorderTopWidth(basis.border_width(w, border_styles.top))
         }
@@ -938,15 +674,8 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::BorderLeftWidth(w) => {
             PropertyValue::BorderLeftWidth(basis.border_width(w, border_styles.left))
         }
-        // Shorthand fall-through (see `Padding` above). Each side gates on the
-        // style it carries itself, which is where a `border` shorthand's style
-        // lives.
+        // Each side gates on the style it carries itself, not on `border_styles`.
         PropertyValue::Border(sides) => PropertyValue::Border(sides.map(|b| basis.border(b))),
-        // `border-style` / `border-width` / `border-color` shorthand
-        // fall-throughs (same unreachability rationale — rule.rs expands
-        // them first). Styles and colors carry no lengths (passthrough);
-        // widths absolutize against the companion side styles, exactly
-        // like the `BorderTopWidth` longhand arms above.
         PropertyValue::BorderStyle(sides) => PropertyValue::BorderStyle(sides),
         PropertyValue::BorderWidth(sides) => {
             PropertyValue::BorderWidth(Sides {
@@ -958,11 +687,6 @@ pub(super) fn absolutize_in_page_context(
         }
         PropertyValue::BorderColor(sides) => PropertyValue::BorderColor(sides),
         // ── border-radius / box-shadow / outline ─────────────────────────
-        // CSS Backgrounds and Borders 3 §5/§6.1 and CSS UI 3 §4: all
-        // length components are computed against this page context's own
-        // font-size/line-height. Percentages are intentionally outside this
-        // task's parser contract, so every surviving component round-trips
-        // as `Length::Px` after phase 3.
         PropertyValue::BorderRadius(v) => PropertyValue::BorderRadius(basis.border_radius_value(v)),
         PropertyValue::BorderRadiusInherit => PropertyValue::BorderRadiusInherit,
         PropertyValue::BorderRadiusTopLeft(v) => PropertyValue::BorderRadiusTopLeft(Length::Px(
@@ -1011,27 +735,10 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::Bottom(v) => PropertyValue::Bottom(basis.lpa(v)),
         PropertyValue::Left(v) => PropertyValue::Left(basis.lpa(v)),
         // ── background-size / background-position ───────────────────────
-        // CSS Backgrounds and Borders 3 §2.9/§2.6: both carry
-        // `<length-percentage>` components, absolutized against this page
-        // context's own font-size/line-height (same basis as `Width`/
-        // `Height` above).
         PropertyValue::BackgroundSize(v) => PropertyValue::BackgroundSize(basis.background_size(v)),
         PropertyValue::BackgroundPosition(v) => {
             PropertyValue::BackgroundPosition(basis.css_position(v))
         }
-        // `background` shorthand fall-through (see `Padding` above for the
-        // unreachability rationale) — unreachable in practice
-        // (`expand_shorthand_into` expands it before this function ever sees
-        // a winner). `position`/`size`/`image` are the length-bearing
-        // components this function absolutizes here — same basis as the
-        // `BackgroundPosition`/`BackgroundSize`/`BackgroundImage` longhand
-        // arms just above (`Flex`/`Gap` below use the same "only the
-        // length-bearing fields get transformed" shape). `image`'s
-        // `Gradient` payload's font-relative `<length-percentage>` values
-        // are absolutized while `<percentage>` stays symbolic (same split as
-        // `BackgroundImage` above). Pinned directly by
-        // `tests::absolutize_in_page_context_shorthand_fall_throughs`'s
-        // `Background` case.
         PropertyValue::Background(shorthand) => PropertyValue::Background(BackgroundShorthand {
             image: crate::resolve::resolve_background_image(
                 shorthand.image,
@@ -1044,11 +751,6 @@ pub(super) fn absolutize_in_page_context(
             ..shorthand
         }),
         // ── text-decoration-thickness / text-decoration-inset ────────────
-        // ED §2.4.1/§2.9.1: both carry `<length-percentage>` components,
-        // absolutized against this page context's own font-size/line-height
-        // (same basis and same `Length::Px(resolve_length(..).px())` shape
-        // as `OutlineOffset` above). `auto`/`from-font` survive as keywords
-        // by spec, same as `LineHeight::Normal`.
         PropertyValue::TextDecorationThickness(t) => {
             PropertyValue::TextDecorationThickness(match t {
                 TextDecorationThickness::Auto | TextDecorationThickness::FromFont => t,
@@ -1070,9 +772,6 @@ pub(super) fn absolutize_in_page_context(
                 }
             })
         }
-        // CSS Text Decoration 4 §2.8: fixed underline offsets resolve
-        // against the declaring page context's font-size; percentages stay
-        // relative. Deferred mixed math falls back to `auto`.
         PropertyValue::TextUnderlineOffset(value) => {
             PropertyValue::TextUnderlineOffset(match value {
                 LengthOrAuto::Auto => LengthOrAuto::Auto,
@@ -1086,15 +785,6 @@ pub(super) fn absolutize_in_page_context(
                 LengthOrAuto::Calc(_) => LengthOrAuto::Auto,
             })
         }
-        // `text-decoration` shorthand fall-through (see `Padding` above for
-        // the unreachability rationale) — unreachable in practice
-        // (`expand_shorthand_into` expands it before this function ever sees
-        // a winner). `thickness` is the only length-bearing component this
-        // function absolutizes here (same basis as the
-        // `TextDecorationThickness` longhand arm just above); the other 3
-        // pass through via the struct-update `..shorthand`. Pinned directly
-        // by `tests::absolutize_in_page_context_shorthand_fall_throughs`'s
-        // `TextDecoration` case.
         PropertyValue::TextDecoration(shorthand) => {
             PropertyValue::TextDecoration(TextDecorationShorthand {
                 thickness: match shorthand.thickness {
@@ -1110,16 +800,6 @@ pub(super) fn absolutize_in_page_context(
                 ..shorthand
             })
         }
-        // `font` shorthand fall-through (see `Padding` above for the
-        // unreachability rationale) — unreachable in practice
-        // (`expand_shorthand_into` expands it before this function ever sees
-        // a winner). `size`/`line-height` are the length-bearing components
-        // this function absolutizes here — same basis as the `FontSize`/
-        // `LineHeight` longhand arms just above (`Flex`/`Gap`/`Background`
-        // above use the same "only the length-bearing fields get
-        // transformed" shape). Pinned directly by
-        // `tests::absolutize_in_page_context_shorthand_fall_throughs`'s
-        // `Font` case.
         PropertyValue::Font(shorthand) => PropertyValue::Font(FontShorthand {
             size: match shorthand.size {
                 FontShorthandSize::Absolute(length) => FontShorthandSize::Absolute(Length::Px(
@@ -1138,25 +818,11 @@ pub(super) fn absolutize_in_page_context(
             ..shorthand
         }),
         // ── object-position ──────────────────────────────────────────────
-        // CSS Images Module Level 3 §5.2: carries `<length-percentage>`
-        // components via the reused `CssPosition` type (same shape and same
-        // `css_position` helper as `BackgroundPosition` above).
         PropertyValue::ObjectPosition(v) => PropertyValue::ObjectPosition(basis.css_position(v)),
         // ── opacity ───────────────────────────────────────────────────────
-        // CSS Color 4 §3.3: "Opacity values outside the range `[0, 1]` are
-        // not invalid, and are preserved in specified values, but are
-        // clamped to the range `[0, 1]` in computed values." This is the
-        // page-context sibling of
-        // `crate::specified::SpecifiedValues::absolutize_with`'s opacity
-        // clamp — a real phase-3 transform, but not a length
-        // absolutization, so it does not need `font_size`/`own_line_height`/
-        // `ctx` the way the arms above do.
         PropertyValue::Opacity(o) => PropertyValue::Opacity(o.clamp(0.0, 1.0)),
         // ── overflow-x / overflow-y ──────────────────────────────────────────
-        // CSS Overflow 3 §3.1 cross-axis coupling — this axis's own winner
-        // (`v`) paired with the *other* axis's winner (`overflow_pair`,
-        // `page_context_overflow_pair`'s output), same shape as
-        // `border_width` pairing `w` with `border_styles.top` above.
+        // Cross-axis coupling: each axis resolves against the other axis's winner.
         PropertyValue::OverflowX(v) => PropertyValue::OverflowX(
             resolve_overflow(OverflowXY {
                 x: v,
@@ -1171,28 +837,11 @@ pub(super) fn absolutize_in_page_context(
             })
             .y,
         ),
-        // `overflow` shorthand fall-through (see `Border` above) — unreachable
-        // in practice (`expand_shorthand_into` expands it before this
-        // function ever sees a winner), not a safety net if it were.
         PropertyValue::Overflow(pair) => PropertyValue::Overflow(resolve_overflow(pair)),
         // ── writing-mode ─────────────────────────────────────────────────
-        // CSS Writing Modes 4 §3.2 — same-node-only normalization (no length,
-        // no cross-property/parent dependency), applied here rather than in
-        // `resolve_against_inherited` for the same reason `overflow-x`/
-        // `overflow-y`'s cross-axis coupling is: it does not depend on the
-        // inheritance parent, only phase 3 runs it. See `WritingMode` doc's
-        // Non-goal section and `resolve_writing_mode` doc for why every
-        // non-`horizontal-tb` keyword collapses here.
         PropertyValue::WritingMode(v) => PropertyValue::WritingMode(resolve_writing_mode(v)),
         PropertyValue::RubyPosition(v) => PropertyValue::RubyPosition(v),
         // ── letter-spacing / word-spacing ───────────────────────────────────
-        // CSS Text 3 §7.2 / §7.1: `normal | <length>`, absolutized the same
-        // way `crate::specified::SpecifiedValues::absolutize_with` does
-        // (`resolve_length_or_normal`), then mapped back into the
-        // specified-layer `LengthOrNormal` shape (`lift_length_or_normal`)
-        // that `PropertyValue` carries — same round-trip as `lp`/`lpa` above,
-        // reusing the shared element-path functions directly since neither
-        // needs page-context-specific integration logic.
         PropertyValue::LetterSpacing(v) => PropertyValue::LetterSpacing(lift_length_or_normal(
             resolve_length_or_normal(v, font_size, own_line_height, ctx),
         )),
@@ -1200,26 +849,10 @@ pub(super) fn absolutize_in_page_context(
             resolve_length_or_normal(v, font_size, own_line_height, ctx),
         )),
         // ── tab-size ─────────────────────────────────────────────────────
-        // CSS Text Module Level 3 §4.2: `<number [0,∞]> | <length [0,∞]>`,
-        // absolutized the same way
-        // `crate::specified::SpecifiedValues::absolutize_with` does
-        // (`resolve_tab_size`), then mapped back into the specified-layer
-        // `TabSize` shape (`lift_tab_size`) that `PropertyValue` carries —
-        // same round-trip as `LetterSpacing`/`WordSpacing` above, reusing
-        // the shared element-path functions directly since neither needs
-        // page-context-specific integration logic.
         PropertyValue::TabSize(v) => {
             PropertyValue::TabSize(lift_tab_size(resolve_tab_size(v, font_size, own_line_height, ctx)))
         }
         // ── border-spacing ─────────────────────────────────────────────────
-        // CSS Tables 3 §6.1: `<length>{1,2}`, absolutized the same way
-        // `crate::specified::SpecifiedValues::absolutize_with` does
-        // (`resolve_border_spacing`), then mapped back into the
-        // specified-layer `BorderSpacingValue` shape (`lift_border_spacing`)
-        // that `PropertyValue` carries — same round-trip as
-        // `LetterSpacing`/`WordSpacing`/`TabSize` above, reusing the shared
-        // element-path functions directly since neither needs
-        // page-context-specific integration logic.
         PropertyValue::BorderSpacing(v) => {
             PropertyValue::BorderSpacing(lift_border_spacing(resolve_border_spacing(
                 v,
@@ -1229,11 +862,6 @@ pub(super) fn absolutize_in_page_context(
             )))
         }
         // ── text-shadow ─────────────────────────────────────────────────────
-        // CSS Text Decoration Module Level 3 §4: each item's 3 lengths
-        // (`offset-x`/`offset-y`/`blur-radius`) are absolutized against this
-        // context's own `font_size`/`own_line_height` basis (`text_shadow_item`
-        // helper above); `<color>` carries no length and passes through.
-        // `none` (empty list) needs no allocation — `items` is reused as-is.
         PropertyValue::TextShadow(items) => PropertyValue::TextShadow(if items.is_empty() {
             items
         } else {
@@ -1245,63 +873,30 @@ pub(super) fn absolutize_in_page_context(
             )
         }),
         // ── vertical-align ───────────────────────────────────────────────
-        // CSS 2.1 §10.8.1 — the bare keywords are preserved as-is,
-        // `<length>` / `<percentage>` absolutized (`<percentage>` is
-        // `used_line_height_length` basis with `0px` fallback when
-        // `line-height: normal` — `resolve_vertical_align` doc).
-        // `resolve_vertical_align` already returns the same
-        // `VerticalAlign` shape `PropertyValue::VerticalAlign` carries (no
-        // separate `Computed*` type exists for this property — see that
-        // function's doc for why — so unlike `lp`/`fb`/`lift_length_or_normal`
-        // above there is no round-trip conversion needed here).
         PropertyValue::VerticalAlign(v) => {
             PropertyValue::VerticalAlign(resolve_vertical_align(v, font_size, own_line_height, ctx))
         }
         // ── flex-basis ────────────────────────────────────────────────────
-        // CSS Flexible Box Layout Module Level 1 §7.2.3 — `content`/`auto`
-        // preserved as keywords, `<length-percentage>` absolutized (`fb`
-        // helper above).
         PropertyValue::FlexBasis(v) => PropertyValue::FlexBasis(basis.fb(v)),
-        // Shorthand fall-through (see `Padding` above) — unreachable in
-        // practice (`expand_shorthand_into` expands it before this function
-        // ever sees a winner). `grow`/`shrink` carry no length; `basis`
-        // gets the same `fb` treatment as the `FlexBasis` longhand above.
         PropertyValue::Flex(f) => PropertyValue::Flex(FlexShorthand {
             grow: f.grow,
             shrink: f.shrink,
             basis: basis.fb(f.basis),
         }),
         // ── row-gap / column-gap ─────────────────────────────────────────
-        // CSS Box Alignment Module Level 3 §8.1 — `normal` preserved as a
-        // keyword (`lpn` helper above, unlike `letter-spacing`/
-        // `word-spacing`'s `normal → 0` collapse).
         PropertyValue::RowGap(v) => PropertyValue::RowGap(basis.lpn(v)),
         PropertyValue::ColumnGap(v) => PropertyValue::ColumnGap(basis.lpn(v)),
-        // Shorthand fall-through (see `Padding` above) — unreachable in
-        // practice, same shape as `Flex` above.
         PropertyValue::Gap(g) => PropertyValue::Gap(GapShorthand {
             row: basis.lpn(g.row),
             column: basis.lpn(g.column),
         }),
         // ── grid-template-columns / grid-template-rows ──────────────────────
-        // CSS Grid Layout Module Level 1 §7.2 — `none` preserved as a
-        // keyword, `<length-percentage>` inside the track list absolutized
-        // (`gtt` helper above).
         PropertyValue::GridTemplateColumns(v) => PropertyValue::GridTemplateColumns(basis.gtt(v)),
         PropertyValue::GridTemplateRows(v) => PropertyValue::GridTemplateRows(basis.gtt(v)),
         // ── grid-auto-columns / grid-auto-rows ───────────────────────────────
-        // CSS Grid Layout Module Level 1 §7.6 — same track-size
-        // absolutization as `GridTemplateColumns` above (`gatl` helper).
         PropertyValue::GridAutoColumns(v) => PropertyValue::GridAutoColumns(basis.gatl(&v)),
         PropertyValue::GridAutoRows(v) => PropertyValue::GridAutoRows(basis.gatl(&v)),
         // ── transform ────────────────────────────────────────────────────
-        // CSS Transforms Level 1 §4: Computed value is "as specified, but
-        // with lengths made absolute" — `translate()`/`translateX()`/
-        // `translateY()`'s `<length-percentage>` slot の length 側だけを
-        // `lp` と同じ split で絶対化し percentage 側は `Percent` のまま残す
-        // (`resolve_length_percentage` と同じ、`background-position` の
-        // `css_position` helper と同型)。`matrix` の 6 `<number>` slot と
-        // `rotate`/`skew` 系の `<angle>` slot はそのまま。
         PropertyValue::Transform(items) => {
             if items.is_empty() {
                 PropertyValue::Transform(items)
