@@ -460,6 +460,13 @@ pub(crate) fn draw_text_node(
                     .map(|mut glyph| {
                         glyph.x -= hanging_offset;
                         glyph.x += last_line_delta;
+                        if node.snap_glyph_x_to_1_64() {
+                            // Reftests with spaces and equivalent tabs can build the
+                            // same CSS position through different f32 sums. Normalize
+                            // that tiny accumulation error while keeping subpixel glyph
+                            // positioning at 1/64 CSS-pixel resolution.
+                            glyph.x = (glyph.x * 64.0).round() / 64.0;
+                        }
                         to_anyrender_glyph(glyph)
                     })
                     .collect::<Vec<_>>();

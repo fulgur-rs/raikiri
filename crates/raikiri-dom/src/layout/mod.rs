@@ -2297,7 +2297,7 @@ fn trail_trim(
 
 /// white-space phase 1 collapsing (CSS Text 3 §4.1)。
 ///
-/// - Pre / PreWrap / BreakSpaces → 無変換 (tab 展開は別途 [`expand_tabs`])。
+/// - Pre / PreWrap / BreakSpaces → 無変換 (tab 展開は [`preshape_text`] で別途行う)。
 /// - Normal / Nowrap: `\t \n \f \r` → space、run collapse、行頭/行末 trim。
 /// - PreLine: `\n` 保持 (forced break)、他は Normal と同じ。
 /// - leading trim は `start != MidLine`、trailing trim は `trim_end`。
@@ -4914,88 +4914,115 @@ fn computed_length_to_taffy_length_percentage(
 /// なって match 自体が消えたため到達不能になった。`pub(crate)` なので戻り値の
 /// narrowing は crate 内で完結する (外部影響 0)。
 ///
-/// U+0009 tab を `tab-size` に従い space に展開する (CSS Text 3 §4.2)。
-///
-/// parley 0.10 に tab-stop API が無いため、shape 前の text 置換で再現する。
-/// tab stop は行頭からの `space_advance` 単位の倍数位置に置く
-/// ("the tab is advanced to the next multiple" — spec §4.2  verbatim ではないが同義)。
-///
-/// # 引数
-///
-/// - `tab_size` — 当該 Text node 自身の computed 値。`tab-size` は inherited のため
-///   block 祖先の指定が自然に届く。inline-001 (`tab-size` が inline box に適用される
-///   ことを assert) に従い、inline 自身の指定もそのまま使う — block container への
-///   付け替えはしない。
-/// - `space_advance` — 当該 font の U+0020 advance (px)。`<length>` tab-size を
-///   space 単位に換算するためだけに使う。
-///
-/// # 近似の明示
-///
-/// column 追跡は `1 char = 1 space advance` とみなす。monospace / Ahem (tab-size
-/// WPT が使う font) では exact。proportional font では近似 — 各 char の実 advance
-/// を測るには shape が要り、本関数は shape 前に走るため原理的に届かない。
-/// `white-space` が tab を preserve しない mode (normal / nowrap / pre-line) では
-/// 呼ばないこと (caller 側で gate)。
-///
-/// # `white-space` との責務分担
-///
-/// 本関数は tab の展開だけを行い、space の collapsing は一切しない。parley 側の
-/// 既存挙動を変えない。
-///
-/// [`ComputedTabSize`]: raikiri_style::ComputedTabSize
-fn expand_tabs(
-    text: &str,
-    tab_size: ComputedTabSize,
-    space_advance: f32,
-) -> std::borrow::Cow<'_, str> {
-    use std::borrow::Cow;
-    if !text.contains('\t') {
-        return Cow::Borrowed(text);
-    }
-    // tab-stop 間隔 (space 単位)。`0` は zero-width tab (tab-size: 0 合法 —
-    // percent-001 は `tab-size: 100%` の invalid 宣言が drop され `0` が残る case)。
-    let stop: f32 = match tab_size {
-        ComputedTabSize::Number(n) if n > 0.0 && n.is_finite() => n,
-        ComputedTabSize::Length(l)
-            if l.px() >= 0.0 && l.px().is_finite() && space_advance > 0.0 =>
+/// Preserve the previous per-text-node expansion for inline contexts whose
+/// shared line cursor and wrap positions are not available to pre-shaping.
+fn expand_tabs_locally(text: &str, tab_size: ComputedTabSize, space_advance: f32) -> String {
+    let stop = match tab_size {
+        ComputedTabSize::Number(number) if number > 0.0 && number.is_finite() => number,
+        ComputedTabSize::Length(length)
+            if length.px().is_finite() && length.px() >= 0.0 && space_advance > 0.0 =>
         {
-            l.px() / space_advance
+            length.px() / space_advance
         }
         _ => 0.0,
     };
+    let mut output = String::with_capacity(text.len());
     if stop <= 0.0 {
-        // zero-width: tab を除去する (allocation は tab 有りの場合のみ)。
-        if !text.contains('\t') {
-            return Cow::Borrowed(text);
-        }
-        return Cow::Owned(text.chars().filter(|&c| c != '\t').collect());
+        output.extend(text.chars().filter(|&character| character != '\t'));
+        return output;
     }
-    let mut out = String::with_capacity(text.len());
-    let mut col: f32 = 0.0;
-    for c in text.chars() {
-        match c {
+    let mut column = 0.0_f32;
+    for character in text.chars() {
+        match character {
             '\n' => {
-                col = 0.0;
-                out.push(c);
+                column = 0.0;
+                output.push(character);
             }
             '\t' => {
-                let next = ((col / stop).floor() + 1.0) * stop;
-                // 累積丸め: `round(next) - round(col)` で tab ごとの誤差を
-                // 吸収し、合計を exact に保つ (fractional tab-size —
-                // block-ancestor test4 の `2.5` × 4 tabs = 10 spaces)。
-                // naive な `(next - col).round()` は 2+3+3+2 → 2+2+2+2 の
-                // ように drift し得る。
-                let k = (next.round() - col.round()).max(0.0) as usize;
-                col = next;
-                out.extend(std::iter::repeat_n(' ', k));
+                let next = ((column / stop).floor() + 1.0) * stop;
+                let count = (next.round() - column.round()).max(0.0) as usize;
+                column = next;
+                output.extend(std::iter::repeat_n(' ', count));
             }
             _ => {
-                col += 1.0;
-                out.push(c);
+                column += 1.0;
+                output.push(character);
             }
         }
     }
-    Cow::Owned(out)
+    output
+}
+
+/// Resolve `tab-size` to an absolute stop interval in CSS pixels.
+fn tab_stop_advance(tab_size: ComputedTabSize, block_space_advance: f32) -> f32 {
+    match tab_size {
+        ComputedTabSize::Number(number)
+            if number.is_finite() && number >= 0.0 && block_space_advance.is_finite() =>
+        {
+            (number * block_space_advance).clamp(0.0, MAX_TAFFY_MAGNITUDE)
+        }
+        ComputedTabSize::Length(length) if length.px().is_finite() && length.px() >= 0.0 => {
+            length.px().min(MAX_TAFFY_MAGNITUDE)
+        }
+        _ => 0.0,
+    }
+}
+
+/// Replace each tab by an invisible U+0020 with ranged WordSpacing so its
+/// advance exactly reaches the next stop. Keeping a normal glyph run preserves
+/// the text's font metrics and line height; the ranged spacing supplies the
+/// block-container-derived physical width when the inline font differs.
+fn replace_tabs_with_styled_spaces(
+    text: &str,
+    interval: f32,
+    space_base_advance: f32,
+    mut measure_segment: impl FnMut(&str) -> f32,
+) -> (String, Vec<(std::ops::Range<usize>, f32)>) {
+    if !text.contains('\t') {
+        return (text.to_owned(), Vec::new());
+    }
+    let mut output = String::with_capacity(text.len());
+    let mut spacing_ranges = Vec::new();
+    let mut segment = String::new();
+    let mut cursor = 0.0_f32;
+    let mut flush_segment = |segment: &mut String, output: &mut String, cursor: &mut f32| {
+        if segment.is_empty() {
+            return;
+        }
+        let measured = measure_segment(segment);
+        if measured.is_finite() && measured > 0.0 {
+            *cursor = (*cursor + measured).min(MAX_TAFFY_MAGNITUDE);
+        }
+        output.push_str(segment);
+        segment.clear();
+    };
+    for character in text.chars() {
+        match character {
+            '\t' => {
+                flush_segment(&mut segment, &mut output, &mut cursor);
+                if interval > 0.0 && interval.is_finite() {
+                    let next = ((cursor / interval).floor() + 1.0) * interval;
+                    let gap = (next - cursor).max(0.0);
+                    if gap > 0.0 {
+                        let start = output.len();
+                        output.push(' ');
+                        let word_spacing = (gap - space_base_advance)
+                            .clamp(-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE);
+                        spacing_ranges.push((start..output.len(), word_spacing));
+                    }
+                    cursor = next.min(MAX_TAFFY_MAGNITUDE);
+                }
+            }
+            '\n' => {
+                flush_segment(&mut segment, &mut output, &mut cursor);
+                output.push(character);
+                cursor = 0.0;
+            }
+            _ => segment.push(character),
+        }
+    }
+    flush_segment(&mut segment, &mut output, &mut cursor);
+    (output, spacing_ranges)
 }
 
 /// Measure one probe glyph/character advance (px) with Parley.
@@ -5088,6 +5115,47 @@ fn probe_text_advance_inner(
     } else {
         size * 0.5
     }
+}
+
+#[derive(Clone, Copy)]
+struct TextProbeStyle<'a> {
+    family_str: &'a str,
+    font_size_px: f32,
+    font_weight: f32,
+    font_style: StyleFontStyle,
+    letter_spacing: f32,
+    word_spacing: f32,
+}
+
+fn probe_text_full_width(
+    fonts: &mut FontContext,
+    layout_cx: &mut LayoutContext<()>,
+    sample: &str,
+    style: TextProbeStyle<'_>,
+) -> f32 {
+    let mut warnings = Vec::new();
+    let size = sanitize_finite(
+        style.font_size_px,
+        0.0,
+        MAX_FONT_SIZE_PX,
+        "font-size",
+        &mut warnings,
+    );
+    let weight = sanitize_font_weight(style.font_weight, &mut warnings);
+    let mut builder = layout_cx.ranged_builder(fonts, sample, 1.0, false);
+    builder.push_default(StyleProperty::FontFamily(FontFamily::from(
+        style.family_str,
+    )));
+    builder.push_default(StyleProperty::FontSize(size));
+    builder.push_default(StyleProperty::FontWeight(FontWeight::new(weight)));
+    builder.push_default(StyleProperty::FontStyle(font_style_to_parley(
+        style.font_style,
+    )));
+    builder.push_default(StyleProperty::LetterSpacing(style.letter_spacing));
+    builder.push_default(StyleProperty::WordSpacing(style.word_spacing));
+    let mut layout: Layout<()> = builder.build(sample);
+    layout.break_all_lines(None);
+    layout.full_width()
 }
 
 /// Return whether the requested face maps both the space and zero glyphs.
@@ -7762,6 +7830,11 @@ fn preshape_text(
     max_advance: f32,
     page_width: f32,
 ) {
+    for node in &mut doc.nodes {
+        if let Some(text) = node.data.as_text_mut() {
+            text.snap_glyph_x_to_1_64 = false;
+        }
+    }
     // Cheap threshold: for tiny DOMs sequential is faster than rayon overhead.
     // Collect eligible Text nodes first to avoid borrowing `doc.nodes` mutably
     // across parallel tasks (which would require Sync on Document). Owned jobs
@@ -7793,11 +7866,17 @@ fn preshape_text(
         // `text-wrap: nowrap`).
         nowrap: bool,
         max_advance: f32,
-        // tab-stop metrics 用 font (block-container 祖先、無ければ自要素)。
+        // tab-stop metrics use the block-container ancestor's font and spacing.
         metrics_family: String,
         metrics_size: f32,
         metrics_weight: f32,
         metrics_style: StyleFontStyle,
+        metrics_letter_spacing_raw: f32,
+        metrics_letter_spacing_ch_factor: Option<f32>,
+        metrics_word_spacing_raw: f32,
+        metrics_word_spacing_ch_factor: Option<f32>,
+        simple_pre_block: bool,
+        tab_spacing_ranges: Vec<(std::ops::Range<usize>, f32)>,
     }
 
     /// probe cache key: (family, size bits, weight bits, style discriminant)。
@@ -7834,8 +7913,8 @@ fn preshape_text(
         )
     }
 
-    // parent map (arena に parent pointer が無いため children から逆引き —
-    // `realign_text_after_layout` と同型)。
+    // Shared parent map for simple pre-block eligibility and whitespace
+    // boundary trimming (the arena has no stored parent pointers).
     let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
     for idx in 0..doc.nodes.len() {
         for &c in doc.nodes[idx].children.clone().iter() {
@@ -7857,16 +7936,6 @@ fn preshape_text(
     // migrating NBSP node adds one).
     let mut migrate_pending: u32 = 0;
     let mut migrate_pending_full_width = false;
-    // Parent map for white-space boundary trimming (arena has no parent
-    // pointers; every text node is visited once here).
-    let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
-    for idx in 0..doc.nodes.len() {
-        for &c in &doc.nodes[idx].children.clone() {
-            if c < parent_of.len() {
-                parent_of[c] = Some(idx);
-            }
-        }
-    }
     let body_id = (0..doc.nodes.len()).find(|&idx| doc.nodes[idx].tag_name() == Some("body"));
     let has_out_of_flow_ancestor = |mut parent: Option<usize>| {
         while let Some(id) = parent {
@@ -8093,6 +8162,19 @@ fn preshape_text(
         } else {
             max_advance
         };
+        let simple_pre_block = matches!(cv.white_space, WhiteSpace::Pre)
+            && parent_of[idx].is_some_and(|parent| {
+                matches!(
+                    cascade.computed[parent].display,
+                    DisplayValue::Block | DisplayValue::InlineBlock | DisplayValue::ListItem
+                ) && nearest_block_container(doc, cascade, &parent_of, idx) == Some(parent)
+                    && doc.nodes[parent]
+                        .children
+                        .iter()
+                        .filter(|&&child| doc.nodes[child].is_in_document())
+                        .count()
+                        == 1
+            });
         jobs.push(Job {
             idx,
             text,
@@ -8111,12 +8193,22 @@ fn preshape_text(
             line_break: cv.line_break,
             overflow_wrap: cv.overflow_wrap,
             text_wrap_mode: cv.text_wrap,
-            nowrap: cv.white_space == WhiteSpace::Nowrap || cv.text_wrap == TextWrapMode::Nowrap,
+            // A simple `white-space: pre` block is non-wrapping; this also
+            // keeps its measured tab cursor independent of later line breaks.
+            nowrap: simple_pre_block
+                || cv.white_space == WhiteSpace::Nowrap
+                || cv.text_wrap == TextWrapMode::Nowrap,
             max_advance: shape_advance,
             metrics_family: family_str_of(mcv),
             metrics_size: mcv.font_size.px(),
             metrics_weight: mcv.font_weight,
             metrics_style: mcv.font_style,
+            metrics_letter_spacing_raw: mcv.letter_spacing.px(),
+            metrics_letter_spacing_ch_factor: mcv.letter_spacing_ch_factor,
+            metrics_word_spacing_raw: mcv.word_spacing.px(),
+            metrics_word_spacing_ch_factor: mcv.word_spacing_ch_factor,
+            simple_pre_block,
+            tab_spacing_ranges: Vec::new(),
         });
     }
 
@@ -8124,15 +8216,71 @@ fn preshape_text(
         return;
     }
 
-    // tab-size: font key ごとに space advance を probe して cache し、
-    // tab を preserve する white-space の job だけ展開する (sequential —
-    // shape 前の 1 回きり。probe 自体は font key 重複排除で償却される)。
-    let mut probes: std::collections::HashMap<(String, u32, u32, u8), f32> =
+    // Resolve `ch` before measuring block-container stops or text prefixes.
+    let mut ch_probes: std::collections::HashMap<(String, u32, u32, u8), f32> =
         std::collections::HashMap::new();
     for job in &jobs {
-        let key = font_key(job);
-        if let std::collections::hash_map::Entry::Vacant(e) = probes.entry(key) {
-            e.insert(probe_text_advance(
+        if job.letter_spacing_ch_factor.is_some() || job.word_spacing_ch_factor.is_some() {
+            let key = shape_font_key(job);
+            if let std::collections::hash_map::Entry::Vacant(entry) = ch_probes.entry(key) {
+                entry.insert(probe_ch_text_advance(
+                    fonts,
+                    layout_cx,
+                    &job.family_str,
+                    job.font_size_raw,
+                    job.font_weight_raw,
+                    job.font_style,
+                ));
+            }
+        }
+        if job.metrics_letter_spacing_ch_factor.is_some()
+            || job.metrics_word_spacing_ch_factor.is_some()
+        {
+            let key = font_key(job);
+            if let std::collections::hash_map::Entry::Vacant(entry) = ch_probes.entry(key) {
+                entry.insert(probe_ch_text_advance(
+                    fonts,
+                    layout_cx,
+                    &job.metrics_family,
+                    job.metrics_size,
+                    job.metrics_weight,
+                    job.metrics_style,
+                ));
+            }
+        }
+    }
+    for job in &mut jobs {
+        if let Some(factor) = job.letter_spacing_ch_factor
+            && let Some(&advance) = ch_probes.get(&shape_font_key(job))
+        {
+            job.letter_spacing_raw = factor * advance;
+        }
+        if let Some(factor) = job.word_spacing_ch_factor
+            && let Some(&advance) = ch_probes.get(&shape_font_key(job))
+        {
+            job.word_spacing_raw = factor * advance;
+        }
+        if let Some(factor) = job.metrics_letter_spacing_ch_factor
+            && let Some(&advance) = ch_probes.get(&font_key(job))
+        {
+            job.metrics_letter_spacing_raw = factor * advance;
+        }
+        if let Some(factor) = job.metrics_word_spacing_ch_factor
+            && let Some(&advance) = ch_probes.get(&font_key(job))
+        {
+            job.metrics_word_spacing_raw = factor * advance;
+        }
+        if !matches!(
+            job.white_space,
+            WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::BreakSpaces
+        ) || !job.text.contains('\t')
+        {
+            continue;
+        }
+        if !job.simple_pre_block {
+            // Inline siblings need one shared post-layout cursor. Keep their
+            // established expansion until the inline bridge exposes that state.
+            let space_advance = probe_text_advance(
                 fonts,
                 layout_cx,
                 " ",
@@ -8140,45 +8288,60 @@ fn preshape_text(
                 job.metrics_size,
                 job.metrics_weight,
                 job.metrics_style,
-            ));
-        }
-    }
-    let mut ch_probes: std::collections::HashMap<(String, u32, u32, u8), f32> =
-        std::collections::HashMap::new();
-    for job in &jobs {
-        if job.letter_spacing_ch_factor.is_none() && job.word_spacing_ch_factor.is_none() {
+            );
+            job.text = expand_tabs_locally(&job.text, job.tab_size, space_advance);
             continue;
         }
-        let key = shape_font_key(job);
-        if let std::collections::hash_map::Entry::Vacant(e) = ch_probes.entry(key) {
-            e.insert(probe_ch_text_advance(
-                fonts,
-                layout_cx,
-                &job.family_str,
-                job.font_size_raw,
-                job.font_weight_raw,
-                job.font_style,
-            ));
-        }
-    }
-    for job in &mut jobs {
-        if matches!(
-            job.white_space,
-            WhiteSpace::Pre | WhiteSpace::PreWrap | WhiteSpace::BreakSpaces
-        ) && let Some(&adv) = probes.get(&font_key(job))
-        {
-            job.text = expand_tabs(&job.text, job.tab_size, adv).into_owned();
-        }
-        if let Some(factor) = job.letter_spacing_ch_factor
-            && let Some(&adv) = ch_probes.get(&shape_font_key(job))
-        {
-            job.letter_spacing_raw = factor * adv;
-        }
-        if let Some(factor) = job.word_spacing_ch_factor
-            && let Some(&adv) = ch_probes.get(&shape_font_key(job))
-        {
-            job.word_spacing_raw = factor * adv;
-        }
+        let block_space_advance = probe_text_full_width(
+            fonts,
+            layout_cx,
+            " ",
+            TextProbeStyle {
+                family_str: &job.metrics_family,
+                font_size_px: job.metrics_size,
+                font_weight: job.metrics_weight,
+                font_style: job.metrics_style,
+                letter_spacing: job.metrics_letter_spacing_raw,
+                word_spacing: job.metrics_word_spacing_raw,
+            },
+        );
+        let interval = tab_stop_advance(job.tab_size, block_space_advance);
+        let space_base_advance = probe_text_full_width(
+            fonts,
+            layout_cx,
+            " ",
+            TextProbeStyle {
+                family_str: &job.family_str,
+                font_size_px: job.font_size_raw,
+                font_weight: job.font_weight_raw,
+                font_style: job.font_style,
+                letter_spacing: job.letter_spacing_raw,
+                word_spacing: 0.0,
+            },
+        );
+        let text_word_spacing = if job.word_spacing_ch_factor.is_some() {
+            job.word_spacing_raw
+        } else {
+            0.0
+        };
+        let (text, spacing_ranges) =
+            replace_tabs_with_styled_spaces(&job.text, interval, space_base_advance, |segment| {
+                probe_text_full_width(
+                    fonts,
+                    layout_cx,
+                    segment,
+                    TextProbeStyle {
+                        family_str: &job.family_str,
+                        font_size_px: job.font_size_raw,
+                        font_weight: job.font_weight_raw,
+                        font_style: job.font_style,
+                        letter_spacing: job.letter_spacing_raw,
+                        word_spacing: text_word_spacing,
+                    },
+                )
+            });
+        job.text = text;
+        job.tab_spacing_ranges = spacing_ranges;
     }
 
     // Copy original FontContext once; each rayon task clones from this base.
@@ -8212,7 +8375,10 @@ fn preshape_text(
                 &mut warnings,
             );
             let font_family = FontFamily::from(job.family_str.as_str());
-            let mut builder = layout_cx.ranged_builder(fonts, &job.text, 1.0, true);
+            // In this simple block run, Taffy's fractional line flow must use
+            // the same metrics as Parley's painted baselines.
+            let quantize_metrics = !job.simple_pre_block;
+            let mut builder = layout_cx.ranged_builder(fonts, &job.text, 1.0, quantize_metrics);
             builder.push_default(StyleProperty::FontFamily(font_family));
             builder.push_default(StyleProperty::FontSize(font_size_px));
             builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
@@ -8225,6 +8391,9 @@ fn preshape_text(
             builder.push_default(StyleProperty::LetterSpacing(letter_spacing));
             if job.word_spacing_ch_factor.is_some() {
                 builder.push_default(StyleProperty::WordSpacing(word_spacing));
+            }
+            for (range, tab_word_spacing) in &job.tab_spacing_ranges {
+                builder.push(StyleProperty::WordSpacing(*tab_word_spacing), range.clone());
             }
             builder.push_default(StyleProperty::WordBreak(parley_word_break(
                 job.word_break,
@@ -8249,6 +8418,7 @@ fn preshape_text(
             doc.layout_warnings.extend(warnings);
             if let Some(t) = doc.nodes[job.idx].data.as_text_mut() {
                 t.text_layout = Some(layout);
+                t.snap_glyph_x_to_1_64 = job.simple_pre_block;
             }
         }
         return;
@@ -8259,7 +8429,7 @@ fn preshape_text(
     // Per-job `LayoutContext::new()` is expensive (ICU AnalysisDataSources etc.)
     // so we reuse one FontContext+LayoutContext per rayon chunk.
     // Chunk size 128 reduces clones to ~4/16 for 500/2000 jobs.
-    let results: Vec<(usize, Layout<()>, Vec<LayoutWarn>)> = jobs
+    let results: Vec<(usize, Layout<()>, Vec<LayoutWarn>, bool)> = jobs
         .par_iter()
         .chunks(256)
         .flat_map(|chunk| {
@@ -8292,7 +8462,9 @@ fn preshape_text(
                     &mut warnings,
                 );
                 let font_family = FontFamily::from(job.family_str.as_str());
-                let mut builder = lcx.ranged_builder(&mut fonts_thread, &job.text, 1.0, true);
+                let quantize_metrics = !job.simple_pre_block;
+                let mut builder =
+                    lcx.ranged_builder(&mut fonts_thread, &job.text, 1.0, quantize_metrics);
                 builder.push_default(StyleProperty::FontFamily(font_family));
                 builder.push_default(StyleProperty::FontSize(font_size_px));
                 builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
@@ -8305,6 +8477,9 @@ fn preshape_text(
                 builder.push_default(StyleProperty::LetterSpacing(letter_spacing));
                 if job.word_spacing_ch_factor.is_some() {
                     builder.push_default(StyleProperty::WordSpacing(word_spacing));
+                }
+                for (range, tab_word_spacing) in &job.tab_spacing_ranges {
+                    builder.push(StyleProperty::WordSpacing(*tab_word_spacing), range.clone());
                 }
                 builder.push_default(StyleProperty::WordBreak(parley_word_break(
                     job.word_break,
@@ -8326,16 +8501,17 @@ fn preshape_text(
                     Some(job.max_advance)
                 });
                 layout.align(Alignment::Start, AlignmentOptions::default());
-                out.push((job.idx, layout, warnings));
+                out.push((job.idx, layout, warnings, job.simple_pre_block));
             }
             out
         })
         .collect();
 
-    for (idx, layout, warnings) in results {
+    for (idx, layout, warnings, snap_glyph_x_to_1_64) in results {
         doc.layout_warnings.extend(warnings);
         if let Some(t) = doc.nodes[idx].data.as_text_mut() {
             t.text_layout = Some(layout);
+            t.snap_glyph_x_to_1_64 = snap_glyph_x_to_1_64;
         }
     }
 }
@@ -12797,64 +12973,210 @@ mod tests {
         );
     }
 
-    #[test]
-    fn expand_tabs_number_at_line_start() {
-        let out = expand_tabs("\t", ComputedTabSize::Number(4.0), 10.0);
-        assert_eq!(out.as_ref(), "    ");
+    fn preshape_tab_test_entries(entries: &[(&str, &str)]) -> (Document, Vec<usize>) {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let mut text_nodes = Vec::with_capacity(entries.len());
+        for &(style, text) in entries {
+            let block = doc.append_element(Some(body), "p", Style::default(), Some(style));
+            text_nodes.push(doc.append_text(block, text));
+        }
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        preshape_text(
+            &mut doc,
+            &cascade,
+            &mut fonts,
+            &mut layout_cx,
+            PageBox::A4.width,
+            PageBox::A4.width,
+        );
+        (doc, text_nodes)
+    }
+
+    const PRE_TAB_TEST_STYLE: &str = "display:block; white-space:pre; tab-size:4; font-family:monospace; font-size:16px; word-spacing:0.25ch";
+
+    fn assert_tab_layout_reaches_next_stop(doc: &Document, text_nodes: &[usize]) {
+        let full_width = |index: usize| {
+            doc.nodes[text_nodes[index]]
+                .text_layout()
+                .unwrap()
+                .full_width()
+        };
+        let interval = full_width(1) * 4.0;
+        let prefix_width = full_width(2);
+        let suffix_width = full_width(3);
+        let expected = ((prefix_width / interval).floor() + 1.0) * interval + suffix_width;
+        assert!((full_width(0) - expected).abs() < 0.1);
     }
 
     #[test]
-    fn expand_tabs_number_mid_line_advances_to_next_stop() {
-        // col 1 + tab-size 2 → 次 stop は col 2 → space 1。
-        let out = expand_tabs("a\tb", ComputedTabSize::Number(2.0), 10.0);
-        assert_eq!(out.as_ref(), "a b");
+    fn local_tab_fallback_keeps_per_text_run_behavior() {
+        assert_eq!(
+            expand_tabs_locally("a\tb", ComputedTabSize::Number(4.0), 10.0),
+            "a   b"
+        );
+        assert_eq!(
+            expand_tabs_locally("ab\n\tc", ComputedTabSize::Number(4.0), 10.0),
+            "ab\n    c"
+        );
     }
 
     #[test]
-    fn expand_tabs_at_exact_stop_advances_full_width() {
-        // col 2 は stop 上 → 次 stop col 4 へ space 2。
-        let out = expand_tabs("ab\tc", ComputedTabSize::Number(2.0), 10.0);
-        assert_eq!(out.as_ref(), "ab  c");
+    fn local_tab_fallback_handles_length_stops_and_zero_intervals() {
+        assert_eq!(
+            expand_tabs_locally("a\tb", ComputedTabSize::Length(ComputedLength(20.0)), 10.0,),
+            "a b"
+        );
+        assert_eq!(
+            expand_tabs_locally("a\tb", ComputedTabSize::Length(ComputedLength(20.0)), 0.0,),
+            "ab"
+        );
+        assert_eq!(
+            expand_tabs_locally("a\tb", ComputedTabSize::Number(0.0), 10.0),
+            "ab"
+        );
     }
 
     #[test]
-    fn expand_tabs_zero_removes_tabs() {
-        // `tab-size: 0` は zero-width (percent-001 の `100%` drop 後の `0`)。
-        let out = expand_tabs("a\tb", ComputedTabSize::Number(0.0), 10.0);
-        assert_eq!(out.as_ref(), "ab");
+    fn tab_stop_rejects_non_finite_values() {
+        assert_eq!(
+            tab_stop_advance(ComputedTabSize::Number(f32::NAN), 8.0),
+            0.0
+        );
+        assert_eq!(
+            tab_stop_advance(ComputedTabSize::Length(ComputedLength(f32::NAN)), 8.0,),
+            0.0
+        );
     }
 
     #[test]
-    fn expand_tabs_negative_number_removes_tabs() {
-        // 負数は parse で除外されるはずだが defensive に除去側へ倒す。
-        let out = expand_tabs("a\tb", ComputedTabSize::Number(-4.0), 10.0);
-        assert_eq!(out.as_ref(), "ab");
+    fn tab_replacement_without_tabs_preserves_text() {
+        let (text, ranges) = replace_tabs_with_styled_spaces("plain", 20.0, 10.0, |_| 10.0);
+        assert_eq!(text, "plain");
+        assert!(ranges.is_empty());
     }
 
     #[test]
-    fn expand_tabs_length_uses_space_advance() {
-        // 1em = 20px, space = 10px → stop 2 → `"\t"` は 2 spaces。
-        let out = expand_tabs("\t", ComputedTabSize::Length(ComputedLength(20.0)), 10.0);
-        assert_eq!(out.as_ref(), "  ");
+    fn preshape_simple_pre_block_uses_measured_tab_stops() {
+        let entries = [
+            (PRE_TAB_TEST_STYLE, "A\tB"),
+            (PRE_TAB_TEST_STYLE, " "),
+            (PRE_TAB_TEST_STYLE, "A"),
+            (PRE_TAB_TEST_STYLE, "B"),
+        ];
+        let (doc, text_nodes) = preshape_tab_test_entries(&entries);
+        assert_tab_layout_reaches_next_stop(&doc, &text_nodes);
+        assert!(doc.nodes[text_nodes[0]].snap_glyph_x_to_1_64());
+        assert_eq!(
+            doc.nodes[text_nodes[0]]
+                .text_layout()
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
     }
 
     #[test]
-    fn expand_tabs_newline_resets_column() {
-        let out = expand_tabs("ab\n\tc", ComputedTabSize::Number(4.0), 10.0);
-        assert_eq!(out.as_ref(), "ab\n    c");
+    fn preshape_parallel_simple_pre_tab_runs_apply_spacing_ranges() {
+        let mut entries = vec![
+            (PRE_TAB_TEST_STYLE, "A\tB"),
+            (PRE_TAB_TEST_STYLE, " "),
+            (PRE_TAB_TEST_STYLE, "A"),
+            (PRE_TAB_TEST_STYLE, "B"),
+        ];
+        entries.extend(std::iter::repeat_n((PRE_TAB_TEST_STYLE, "x"), 28));
+        assert_eq!(entries.len(), 32);
+        let (doc, text_nodes) = preshape_tab_test_entries(&entries);
+        assert_tab_layout_reaches_next_stop(&doc, &text_nodes);
+        assert!(doc.nodes[text_nodes[0]].snap_glyph_x_to_1_64());
     }
 
     #[test]
-    fn expand_tabs_fractional_tab_size_keeps_total_exact() {
-        // block-ancestor test4: `tab-size: 2.5` × 4 tabs = 10 spaces 合計。
-        let out = expand_tabs("\t\t\t\t", ComputedTabSize::Number(2.5), 10.0);
-        assert_eq!(out.as_ref(), "          ");
+    fn preshape_probes_block_ch_metrics_for_a_different_inline_font() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let block = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("display:block; white-space:pre; tab-size:4; font-family:monospace; font-size:16px; word-spacing:0.25ch"),
+        );
+        let inline = doc.append_element(
+            Some(block),
+            "span",
+            Style::default(),
+            Some("font-family:serif; word-spacing:0.25ch"),
+        );
+        let text = doc.append_text(inline, "A\tB");
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        preshape_text(
+            &mut doc,
+            &cascade,
+            &mut fonts,
+            &mut layout_cx,
+            PageBox::A4.width,
+            PageBox::A4.width,
+        );
+        assert!(!doc.nodes[text].snap_glyph_x_to_1_64());
+        assert!(doc.nodes[text].text_layout().is_some());
     }
 
     #[test]
-    fn expand_tabs_without_tabs_returns_borrowed() {
-        let out = expand_tabs("abc", ComputedTabSize::Number(4.0), 10.0);
-        assert_eq!(out.as_ref(), "abc");
+    fn preshape_inline_pre_tabs_keep_the_local_fallback() {
+        let entries = [(
+            "display:inline; white-space:pre; tab-size:4; font-family:monospace; font-size:16px",
+            "A\tB",
+        )];
+        let (doc, text_nodes) = preshape_tab_test_entries(&entries);
+        assert!(!doc.nodes[text_nodes[0]].snap_glyph_x_to_1_64());
+        assert!(doc.nodes[text_nodes[0]].text_layout().unwrap().full_width() > 0.0);
+    }
+
+    #[test]
+    fn tab_stop_number_uses_block_space_advance() {
+        assert_eq!(tab_stop_advance(ComputedTabSize::Number(3.0), 8.0), 24.0);
+    }
+
+    #[test]
+    fn tab_stop_length_is_absolute() {
+        assert_eq!(
+            tab_stop_advance(ComputedTabSize::Length(ComputedLength(18.0)), 8.0),
+            18.0
+        );
+    }
+
+    #[test]
+    fn tab_replacement_measures_prefix_and_ranges_the_gap() {
+        let (text, ranges) = replace_tabs_with_styled_spaces("ab\tc", 20.0, 10.0, |segment| {
+            segment.len() as f32 * 6.0
+        });
+        assert_eq!(text, "ab c");
+        assert_eq!(ranges, vec![(2..3, -2.0)]);
+    }
+
+    #[test]
+    fn tab_replacement_resets_its_cursor_after_newline() {
+        let (text, ranges) = replace_tabs_with_styled_spaces("ab\n\tc", 20.0, 10.0, |segment| {
+            segment.len() as f32 * 6.0
+        });
+        assert_eq!(text, "ab\n c");
+        assert_eq!(ranges, vec![(3..4, 10.0)]);
+    }
+
+    #[test]
+    fn tab_replacement_with_zero_interval_removes_tabs() {
+        let (text, ranges) = replace_tabs_with_styled_spaces("a\tb", 0.0, 10.0, |_| 10.0);
+        assert_eq!(text, "ab");
+        assert!(ranges.is_empty());
     }
 
     #[test]

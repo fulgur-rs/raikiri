@@ -1296,6 +1296,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Break logical min-block-size Fulgur v0.40.0 PASS slice (+2).
         // + CSS Multi-column nested block-flow exact slice (+4).
         // + CSS Text white-space/line-breaking resource exact slice (+5).
+        // + CSS Text tab-size spacing-002/003 exact PASS slice (+2).
         // + CSS Values exact calc nesting/rounding slice (+5).
         // + CSS Selectors exact structural-selector slice (+23).
         // + CSS Pseudo exact active-selection/first-letter slice (+2).
@@ -1311,7 +1312,7 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Page hidden-child named-page boundary exact slice (+1).
         // + CSS Page inline canvas named-page boundary exact slice (+2).
         // + CSS Page nested named-page propagation exact slice (+2).
-        assert_eq!(set.baseline.entries.len(), 1273);
+        assert_eq!(set.baseline.entries.len(), 1275);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
