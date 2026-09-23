@@ -248,6 +248,29 @@ class IsStructurallyUnreportedTests(unittest.TestCase):
             )
         )
 
+    def test_src_tests_rs_module_file_is_unreported(self) -> None:
+        # A `#[cfg(test)] mod tests;` file (e.g. `cascade/inherit/tests.rs`)
+        # matches cargo-llvm-cov's default --ignore-filename-regex, so it
+        # never gets an SF: record even though its tests ran.
+        for path in (
+            "crates/raikiri-style/src/cascade/inherit/tests.rs",
+            "crates/raikiri-style/src/property/tests.rs",
+            "crates/raikiri/src/tests.rs",
+            "crates/raikiri/src/cascade_tests.rs",
+            "crates/raikiri/src/cascade-tests.rs",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(is_structurally_unreported(path, self.unreported_paths))
+
+    def test_tests_rs_lookalike_names_are_not_unreported(self) -> None:
+        for path in (
+            "crates/raikiri/src/contests.rs",
+            "crates/raikiri/src/tests_util.rs",
+            "crates/raikiri/src/tests.rs.bak",
+        ):
+            with self.subTest(path=path):
+                self.assertFalse(is_structurally_unreported(path, self.unreported_paths))
+
 
 class ClassifyNoLcovRecordLinesTests(unittest.TestCase):
     """Regression tests for the whole-file-zero-SF-record false positive: a
