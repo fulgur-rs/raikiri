@@ -224,6 +224,36 @@ fn css_tables_body_style_subpixel_padding_is_pixel_exact_at_800x600() {
     );
 }
 
+/// Verify percentage-sized children in a definite-height table cell.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn css_tables_percentage_cell_children_are_pixel_exact_at_800x600() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let cases = [
+        "css/css-tables/height-distribution/percentage-sizing-of-table-cell-children-002.html",
+        "css/css-tables/height-distribution/percentage-sizing-of-table-cell-replaced-children-001.html",
+    ];
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    for relative in cases {
+        let test = root.join(relative);
+        let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
+            .unwrap_or_else(|error| panic!("discover {relative}: {error}"));
+        assert_eq!(pairs.len(), 1, "expected one pair for {relative}");
+        let result =
+            run_pair(&pairs[0], config).unwrap_or_else(|error| panic!("run {relative}: {error}"));
+        assert!(
+            matches!(result.outcome, TestOutcome::Pass),
+            "{relative}: {:?} ({} mismatched pixels)",
+            result.outcome,
+            result.mismatched_pixels
+        );
+    }
+}
+
 /// Verify the HTML user-agent default that centers `<th>` text.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
