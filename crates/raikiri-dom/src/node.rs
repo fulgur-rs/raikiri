@@ -228,6 +228,9 @@ pub struct TextData {
     /// - Brush type `()` は意図的な choice: color / decoration は持たせない
     /// - Invalidation: `layout_single_page` 呼び出し毎に全 None にクリア + 再走
     pub text_layout: Option<parley::Layout<()>>,
+    /// Whether paint should normalize horizontal glyph positions for a
+    /// single-run `white-space: pre` block.
+    pub(crate) snap_glyph_x_to_1_64: bool,
     /// Optional per-line horizontal offsets for inline continuation lines.
     ///
     /// The inline bridge shapes each text node independently, but a wrapped
@@ -426,6 +429,7 @@ impl Node {
             data: NodeData::Text(TextData {
                 text_content: text,
                 text_layout: None,
+                snap_glyph_x_to_1_64: false,
                 text_line_offsets: None,
                 multicol_fragments: None,
                 text_indent_px: None,
@@ -591,6 +595,12 @@ impl Node {
             NodeData::Text(t) => t.text_layout.as_ref(),
             _ => None,
         }
+    }
+
+    /// Whether paint should normalize this text node's glyph x coordinates.
+    #[inline]
+    pub fn snap_glyph_x_to_1_64(&self) -> bool {
+        matches!(&self.data, NodeData::Text(t) if t.snap_glyph_x_to_1_64)
     }
 
     /// Return per-line horizontal offsets for inline continuation lines.
