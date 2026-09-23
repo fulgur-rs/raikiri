@@ -4960,6 +4960,44 @@ pub enum TextJustify {
     Distribute,
 }
 
+/// `text-autospace` property value (CSS Text Module Level 4).
+///
+/// The keyword forms are kept distinct because `auto` and `normal` are
+/// distinct computed values, even though this layout slice currently uses
+/// `normal` as the only automatic-spacing mode.  The long form stores the
+/// three independent boundary classes and the optional `insert`/`replace`
+/// behavior from the current grammar.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TextAutospace {
+    /// The initial value.  Automatic spacing is enabled for the default
+    /// ideograph/letter and ideograph/number boundaries.
+    Normal,
+    /// The legacy `auto` keyword, preserved as a computed keyword.
+    Auto,
+    /// Disable automatic spacing.
+    NoAutospace,
+    /// An explicit set of boundary classes.
+    Custom {
+        ideograph_alpha: bool,
+        ideograph_numeric: bool,
+        punctuation: bool,
+        mode: TextAutospaceMode,
+    },
+}
+
+/// Optional behavior modifier of an explicit [`TextAutospace`] value.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TextAutospaceMode {
+    /// No explicit modifier was specified.
+    None,
+    /// Insert an inter-character space at matching boundaries.
+    Insert,
+    /// Replace an existing separator at matching boundaries.
+    Replace,
+}
+
 /// `text-align-all` property の value (CSS Text 3 §6.1 longhand).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -8022,6 +8060,8 @@ pub enum PropertyValue {
     /// Decoration 4 §2.8). Lengths are absolutized at the declaring element;
     /// percentages stay relative so they scale with the font as they inherit.
     TextUnderlineOffset(LengthOrAuto),
+    /// `text-autospace` — inherited, initial: `normal` (CSS Text 4).
+    TextAutospace(TextAutospace),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -8514,6 +8554,8 @@ pub enum PropertyKey {
     TextUnderlineOffset,
     // CSS Text 3 §8.2.1; appended to preserve existing key slots.
     HangingPunctuation,
+    // CSS Text 4 text-autospace; appended to preserve existing key slots.
+    TextAutospace,
 }
 
 impl PropertyValue {
@@ -8601,6 +8643,7 @@ impl PropertyValue {
             PropertyValue::MinHeight(_) => PropertyKey::MinHeight,
             PropertyValue::MinBlockSize(_) => PropertyKey::MinBlockSize,
             PropertyValue::TextUnderlineOffset(_) => PropertyKey::TextUnderlineOffset,
+            PropertyValue::TextAutospace(_) => PropertyKey::TextAutospace,
             PropertyValue::BoxSizing(_) => PropertyKey::BoxSizing,
             PropertyValue::Direction(_) => PropertyKey::Direction,
             PropertyValue::OverflowX(_) => PropertyKey::OverflowX,
@@ -9709,6 +9752,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "left" => PropertyKey::Left,
         "text-align" => PropertyKey::TextAlign,
         "hanging-punctuation" => PropertyKey::HangingPunctuation,
+        "text-autospace" => PropertyKey::TextAutospace,
         "text-indent" => PropertyKey::TextIndent,
         "padding-top" => PropertyKey::PaddingTop,
         "padding-right" => PropertyKey::PaddingRight,

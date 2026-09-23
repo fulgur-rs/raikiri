@@ -823,6 +823,104 @@ fn hanging_punctuation_serializes_keywords() {
     );
 }
 
+// ── text-autospace (CSS Text 4) ──
+
+#[test] // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+// cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+fn text_autospace_parses_keyword_forms() {
+    assert_eq!(
+        parse_entire("normal", "text-autospace"),
+        Some(PropertyValue::TextAutospace(TextAutospace::Normal))
+    );
+    assert_eq!(
+        parse_entire("auto", "text-autospace"),
+        Some(PropertyValue::TextAutospace(TextAutospace::Auto))
+    );
+    assert_eq!(
+        parse_entire("no-autospace", "text-autospace"),
+        Some(PropertyValue::TextAutospace(TextAutospace::NoAutospace))
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::TextAutospace(TextAutospace::Normal)),
+        Some("normal".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::TextAutospace(TextAutospace::Auto)),
+        Some("auto".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::TextAutospace(TextAutospace::NoAutospace)),
+        Some("no-autospace".to_owned())
+    );
+}
+
+#[test] // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+// cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+fn text_autospace_parses_and_canonicalizes_explicit_forms() {
+    let value = parse_entire(
+        "punctuation ideograph-alpha ideograph-numeric replace",
+        "text-autospace",
+    );
+    assert_eq!(
+        value,
+        Some(PropertyValue::TextAutospace(TextAutospace::Custom {
+            ideograph_alpha: true,
+            ideograph_numeric: true,
+            punctuation: true,
+            mode: TextAutospaceMode::Replace,
+        }))
+    );
+    assert_eq!(
+        serialize_value(&value.expect("valid text-autospace")),
+        Some("ideograph-alpha ideograph-numeric punctuation replace".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::TextAutospace(TextAutospace::Custom {
+            ideograph_alpha: false,
+            ideograph_numeric: false,
+            punctuation: false,
+            mode: TextAutospaceMode::None,
+        })),
+        Some(String::new())
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::TextAutospace(TextAutospace::Custom {
+            ideograph_alpha: false,
+            ideograph_numeric: false,
+            punctuation: false,
+            mode: TextAutospaceMode::Insert,
+        })),
+        Some("insert".to_owned())
+    );
+}
+
+#[test] // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+// cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+fn text_autospace_rejects_duplicate_or_mixed_keyword_forms() {
+    for source in [
+        "normal ideograph-alpha",
+        "auto insert",
+        "no-autospace punctuation",
+        "ideograph-alpha ideograph-alpha",
+        "insert replace",
+        "punctuation unknown",
+        "ideograph-alpha 1px",
+        // Not part of the current grammar; `no-autospace` replaced it.
+        "none",
+    ] {
+        assert_eq!(parse_entire(source, "text-autospace"), None, "{source}");
+    }
+}
+
+#[test] // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+// cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+fn text_autospace_key_maps_to_property_key() {
+    assert_eq!(
+        PropertyValue::TextAutospace(TextAutospace::Normal).key(),
+        PropertyKey::TextAutospace
+    );
+}
+
 // ── text-indent (CSS Text 3 §8.1) ──
 //
 // Full value grammar: `<length-percentage> && hanging? && each-line?` —

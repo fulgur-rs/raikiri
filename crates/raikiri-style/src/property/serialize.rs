@@ -96,6 +96,35 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
             HangingPunctuation::First => "first".to_owned(),
         }),
 
+        PropertyValue::TextAutospace(value) => Some(match value {
+            TextAutospace::Normal => "normal".to_owned(),
+            TextAutospace::Auto => "auto".to_owned(),
+            TextAutospace::NoAutospace => "no-autospace".to_owned(),
+            TextAutospace::Custom {
+                ideograph_alpha,
+                ideograph_numeric,
+                punctuation,
+                mode,
+            } => {
+                let mut parts = Vec::new();
+                if *ideograph_alpha {
+                    parts.push("ideograph-alpha");
+                }
+                if *ideograph_numeric {
+                    parts.push("ideograph-numeric");
+                }
+                if *punctuation {
+                    parts.push("punctuation");
+                }
+                match mode {
+                    TextAutospaceMode::None => {}
+                    TextAutospaceMode::Insert => parts.push("insert"),
+                    TextAutospaceMode::Replace => parts.push("replace"),
+                }
+                parts.join(" ")
+            }
+        }),
+
         _ => None,
     }
 }

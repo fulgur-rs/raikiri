@@ -500,6 +500,7 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::Position(_)
         | PropertyValue::TextAlign(_)
         | PropertyValue::HangingPunctuation(_)
+        | PropertyValue::TextAutospace(_)
         | PropertyValue::Direction(_)
         | PropertyValue::BorderTopStyle(_)
         | PropertyValue::BorderRightStyle(_)

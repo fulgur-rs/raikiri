@@ -34,12 +34,12 @@ use crate::property::{
     MaskImage, MixBlendMode, ObjectFit, Outline, OutlineStyle, OverflowValue, OverflowWrap,
     OverflowXY, PageValue, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand,
     PositionValue, RelativeFontSize, RubyPosition, SelfAlignmentValue, StartEnd, TabSize,
-    TextAlign, TextAlignAll, TextAlignLast, TextDecorationColor, TextDecorationInset,
-    TextDecorationLine, TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces,
-    TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge, TextEmphasisPosition,
-    TextEmphasisVEdge, TextJustify, TextShadowColor, TextTransform, TextUnderlinePosition,
-    TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode,
-    ZIndexValue,
+    TextAlign, TextAlignAll, TextAlignLast, TextAutospace, TextDecorationColor,
+    TextDecorationInset, TextDecorationLine, TextDecorationShorthand, TextDecorationSkipInk,
+    TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge,
+    TextEmphasisPosition, TextEmphasisVEdge, TextJustify, TextShadowColor, TextTransform,
+    TextUnderlinePosition, TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace,
+    WordBreak, WritingMode, ZIndexValue,
 };
 use crate::resolve::{ComputedLength, ComputedLineHeight};
 use crate::ruletree::build_rule_tree;
@@ -2822,7 +2822,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 120;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 121;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -2907,6 +2907,7 @@ property_key_samples! {
     Position => PropertyValue::Position(PositionValue::Static),
     TextAlign => PropertyValue::TextAlign(TextAlign::MatchParent),
     HangingPunctuation => PropertyValue::HangingPunctuation(HangingPunctuation::First),
+    TextAutospace => PropertyValue::TextAutospace(TextAutospace::Normal),
     TextIndent => PropertyValue::TextIndent(TextIndentValue {
         length: Length::Em(2.0),
         hanging: false,
@@ -3659,6 +3660,7 @@ property_value_variant_registry! {
     Position,
     TextAlign,
     HangingPunctuation,
+    TextAutospace,
     TextIndent,
     PaddingTop,
     PaddingRight,
@@ -4096,6 +4098,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             PropertyValue::FontWeight(fw) => font_weight(*fw),
             PropertyValue::TextAlign(ta) => text_align(*ta),
             PropertyValue::HangingPunctuation(_) => None,
+            PropertyValue::TextAutospace(_) => None,
             PropertyValue::LineBreak(_) => None,
             PropertyValue::TextJustify(_) => None,
             PropertyValue::TextAlignAll(_) => None,

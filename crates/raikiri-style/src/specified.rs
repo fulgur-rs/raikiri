@@ -39,7 +39,7 @@ use crate::property::{
     Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal, LineBreak, LineHeight,
     ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor,
     OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue, PositionValue, RubyPosition,
-    SelfAlignmentValue, Sides, TabSize, TableLayoutValue, TextAlign, TextAlignLast,
+    SelfAlignmentValue, Sides, TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextAutospace,
     TextDecorationColor, TextDecorationInset, TextDecorationLine, TextDecorationStyle, TextJustify,
     TextShadowItem, TextTransform, TextWrapMode, TransformFunction, VerticalAlign, Visibility,
     VisualBox, WhiteSpace, WordBreak, WritingMode, ZIndexValue, empty_box_shadow_list,
@@ -187,6 +187,9 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::hanging_punctuation`] staging. Inherited keyword;
     /// the line-layout consumer applies the implemented `first` subset.
     pub hanging_punctuation: HangingPunctuation,
+    /// [`ComputedValues::text_autospace`](crate::computed::ComputedValues::text_autospace)
+    /// の staging。keyword/flag set は computed-equivalent、inherited。
+    pub text_autospace: TextAutospace,
     /// [`ComputedValues::text_justify`](crate::computed::ComputedValues::text_justify)
     /// の staging。keyword のため computed-equivalent、inherited。
     pub text_justify: TextJustify,
@@ -618,6 +621,8 @@ impl SpecifiedValues {
             text_align: TextAlign::Start,
             // CSS Text 3 §8.2.1: hanging-punctuation initial is `none`.
             hanging_punctuation: HangingPunctuation::None,
+            // CSS Text 4: text-autospace initial is `normal`.
+            text_autospace: TextAutospace::Normal,
             // CSS Text 3 §6.2: text-justify initial is `auto`.
             text_justify: TextJustify::Auto,
             // CSS Text 3 §6.1: text-align-last initial is `auto`.
@@ -931,6 +936,8 @@ impl SpecifiedValues {
             text_align: parent.text_align,
             // CSS Text 3 §8.2.1: hanging-punctuation is inherited.
             hanging_punctuation: parent.hanging_punctuation,
+            // CSS Text 4: text-autospace is inherited.
+            text_autospace: parent.text_autospace,
             // CSS Text 3 §6.2 / §6.1: いずれも inherited、keyword の素朴なコピー。
             text_justify: parent.text_justify,
             text_align_last: parent.text_align_last,
@@ -1497,6 +1504,8 @@ impl SpecifiedValues {
             text_align,
             // CSS Text 3 §8.2.1: inherited keyword, no relative resolution.
             hanging_punctuation: self.hanging_punctuation,
+            // CSS Text 4: inherited keyword/flag set, no relative resolution.
+            text_autospace: self.text_autospace,
             // keyword の素通し (解決不要)。
             text_justify: self.text_justify,
             text_align_last: self.text_align_last,
@@ -2204,6 +2213,7 @@ mod tests {
             }],
             text_align: TextAlign::Center,
             hanging_punctuation: HangingPunctuation::First,
+            text_autospace: TextAutospace::NoAutospace,
             text_justify: TextJustify::InterWord,
             text_align_last: TextAlignLast::Justify,
             direction: Direction::Rtl,
@@ -2470,6 +2480,8 @@ mod tests {
         assert_eq!(child.text_align, TextAlign::Center);
         // CSS Text 3 §8.2.1: hanging-punctuation は inherited。
         assert_eq!(child.hanging_punctuation, HangingPunctuation::First);
+        // CSS Text 4: text-autospace は inherited。
+        assert_eq!(child.text_autospace, TextAutospace::NoAutospace);
         // CSS Writing Modes 4 §2.1: direction は inherited。
         assert_eq!(child.direction, Direction::Rtl);
         // CSS Writing Modes 4 §3.2: writing-mode は inherited。この staging

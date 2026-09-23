@@ -22,8 +22,9 @@ use crate::fragment::{FragmentationContext, MulticolStyle};
 use crate::node::{MulticolTextFragment, NodeData, NodeFlags};
 use parley::{
     Alignment, AlignmentOptions, FontContext, FontFamily, FontStyle, FontWeight, IndentOptions,
-    Layout, LayoutContext, LineHeight, OverflowWrap as ParleyOverflowWrap, PositionedLayoutItem,
-    StyleProperty, TextWrapMode as ParleyTextWrapMode, WordBreak as ParleyWordBreak,
+    InlineBox, InlineBoxKind, Layout, LayoutContext, LineHeight,
+    OverflowWrap as ParleyOverflowWrap, PositionedLayoutItem, StyleProperty,
+    TextWrapMode as ParleyTextWrapMode, WordBreak as ParleyWordBreak,
 };
 use raikiri_style::property::{
     AlignSelfValue, BackgroundImage, BoxSizing as StyleBoxSizing, BreakBetween,
@@ -31,8 +32,8 @@ use raikiri_style::property::{
     DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle as StyleFontStyle,
     GridAutoFlowValue, GridLineValue, GridRepeatCount, GridTemplateAreasValue, Hyphens, Length,
     LengthOrAuto, LineBreak, OverflowValue, OverflowWrap, PositionValue, PropertyKey,
-    PropertyValue, RubyPosition, SelfAlignmentValue, TextAlign, TextJustify, TextTransform,
-    TextWrapMode, VerticalAlign, WhiteSpace, WordBreak, WritingMode,
+    PropertyValue, RubyPosition, SelfAlignmentValue, TextAlign, TextAutospace, TextJustify,
+    TextTransform, TextWrapMode, VerticalAlign, WhiteSpace, WordBreak, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ChLengthProvenance, ComputedColumnWidth, ComputedFlexBasis,
@@ -6026,6 +6027,48 @@ fn has_inline_adjacent(
     }
 }
 
+/// Find the nearest in-flow inline character on one side of a text node.
+///
+/// Text nodes are shaped independently, but autospace applies across ordinary
+/// inline-element boundaries. Whitespace, block-level boxes, atomic inline
+/// boxes, and isolation boundaries stop the search rather than being skipped;
+/// default-ignorable code points such as variation selectors are looked past.
+fn autospace_adjacent_edge_char(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    idx: usize,
+    dir: i8,
+) -> Option<char> {
+    let mut node = idx;
+    loop {
+        let parent = parent_of[node]?;
+        let children = &doc.nodes[parent].children;
+        let position = children.iter().position(|&child| child == node)?;
+        let siblings: Box<dyn Iterator<Item = &usize>> = if dir < 0 {
+            Box::new(children[..position].iter().rev())
+        } else {
+            Box::new(children[position + 1..].iter())
+        };
+        for &sibling in siblings {
+            match boundary_inline_edge(doc, cascade, sibling, dir, is_segment_break_ignorable) {
+                InlineEdge::Empty => continue,
+                InlineEdge::Break => return None,
+                InlineEdge::Char(character) => return Some(character),
+            }
+        }
+        if doc.nodes[parent].kind() == NodeKind::Element
+            && is_inline_element_box(cascade, parent)
+            && !is_shaping_isolation_boundary(doc, parent)
+            && !boundary_shaping_box_breaks(cascade, parent)
+        {
+            node = parent;
+            continue;
+        }
+        return None;
+    }
+}
+
 /// Whether a character belongs to a script whose joining behavior must
 /// continue across inline box boundaries. The CSS Text boundary-shaping cases covered
 /// here exercise Arabic, N'Ko, and Mongolian; a zero-width joiner at an
@@ -6140,10 +6183,10 @@ fn boundary_shaping_adjacent(
             Box::new(kids[pos + 1..].iter())
         };
         for &sib in siblings {
-            match boundary_shaping_edge(doc, cascade, sib, dir) {
-                ShapingEdge::Empty => continue,
-                ShapingEdge::Break => return false,
-                ShapingEdge::Char(ch) => {
+            match boundary_inline_edge(doc, cascade, sib, dir, |_| false) {
+                InlineEdge::Empty => continue,
+                InlineEdge::Break => return false,
+                InlineEdge::Char(ch) => {
                     return ch == '\u{200d}' || is_boundary_shaping_char(ch);
                 }
             }
@@ -6161,7 +6204,7 @@ fn boundary_shaping_adjacent(
 
 /// What a subtree contributes at the edge facing a shaping boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ShapingEdge {
+enum InlineEdge {
     /// The subtree renders nothing inline; look further along the boundary.
     Empty,
     /// The subtree ends the joining context before any character.
@@ -6171,27 +6214,28 @@ enum ShapingEdge {
 }
 
 /// Walk into `idx` from the side facing the boundary (`dir` +1 enters from
-/// the start, -1 from the end) and report the first character it renders.
-/// Out-of-flow and `display:none` boxes render nothing inline; atomic
+/// the start, -1 from the end) and report the first character it renders,
+/// ignoring characters for which `skip` returns true. Out-of-flow and `display:none` boxes render nothing inline; atomic
 /// inlines, `<br>`, bidi isolates, and inline boxes with nonzero inline-edge
 /// margin/border/padding break the context.
-fn boundary_shaping_edge(
+fn boundary_inline_edge(
     doc: &Document,
     cascade: &CascadeResult,
     idx: usize,
     dir: i8,
-) -> ShapingEdge {
+    skip: fn(char) -> bool,
+) -> InlineEdge {
     let node = &doc.nodes[idx];
     if !node.is_in_document() {
-        return ShapingEdge::Empty;
+        return InlineEdge::Empty;
     }
     if let Some(text) = text_of(doc, idx) {
         let edge = if dir < 0 {
-            text.chars().next_back()
+            text.chars().rev().find(|&ch| !skip(ch))
         } else {
-            text.chars().next()
+            text.chars().find(|&ch| !skip(ch))
         };
-        return edge.map_or(ShapingEdge::Empty, ShapingEdge::Char);
+        return edge.map_or(InlineEdge::Empty, InlineEdge::Char);
     }
     // Comments and processing instructions never carry the in-document flag,
     // so any remaining node here is an element.
@@ -6199,13 +6243,13 @@ fn boundary_shaping_edge(
     if cv.display == DisplayValue::None
         || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
     {
-        return ShapingEdge::Empty;
+        return InlineEdge::Empty;
     }
     if !is_inline_for_trim(doc, cascade, idx)
         || is_shaping_isolation_boundary(doc, idx)
         || boundary_shaping_box_breaks(cascade, idx)
     {
-        return ShapingEdge::Break;
+        return InlineEdge::Break;
     }
     let children = &node.children;
     let ordered: Box<dyn Iterator<Item = &usize>> = if dir < 0 {
@@ -6214,12 +6258,12 @@ fn boundary_shaping_edge(
         Box::new(children.iter())
     };
     for &child in ordered {
-        match boundary_shaping_edge(doc, cascade, child, dir) {
-            ShapingEdge::Empty => continue,
+        match boundary_inline_edge(doc, cascade, child, dir, skip) {
+            InlineEdge::Empty => continue,
             edge => return edge,
         }
     }
-    ShapingEdge::Empty
+    InlineEdge::Empty
 }
 
 /// Raw text content of a text node.
@@ -6556,6 +6600,187 @@ fn collapse_text_for_shaping(
         text: out,
         migrate_count: trailing_kept as u32,
     }
+}
+
+/// A coarse CSS Text 4 autospace class.  The style layer preserves the
+/// complete `text-autospace` value; this layout slice only needs the boundary
+/// classes to create non-painting in-flow advances.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TextAutospaceClass {
+    Ideograph,
+    Letter,
+    Numeric,
+    Other,
+}
+
+fn text_autospace_class(c: char) -> TextAutospaceClass {
+    use icu_properties::props::{GeneralCategoryGroup, Script};
+
+    let gc =
+        icu_properties::CodePointMapDataBorrowed::<icu_properties::props::GeneralCategory>::new()
+            .get(c);
+    let eaw = east_asian_width_map().get(c);
+    let wide = matches!(
+        eaw,
+        icu_properties::props::EastAsianWidth::Fullwidth
+            | icu_properties::props::EastAsianWidth::Wide
+    );
+    // CSS Text's ideographic set includes Han and the Japanese kana/stroke
+    // ranges. Punctuation in the shared ranges is not an ideograph.
+    let ideograph =
+        (icu_properties::CodePointMapDataBorrowed::<icu_properties::props::Script>::new().get(c)
+            == Script::Han
+            || matches!(c, '\u{3041}'..='\u{30ff}' | '\u{31c0}'..='\u{31ff}'))
+            && !GeneralCategoryGroup::Punctuation.contains(gc);
+    if ideograph {
+        return TextAutospaceClass::Ideograph;
+    }
+    if !wide
+        && (GeneralCategoryGroup::Letter.contains(gc) || GeneralCategoryGroup::Mark.contains(gc))
+    {
+        return TextAutospaceClass::Letter;
+    }
+    if !wide && GeneralCategoryGroup::Number.contains(gc) {
+        return TextAutospaceClass::Numeric;
+    }
+    TextAutospaceClass::Other
+}
+
+fn text_autospace_ascii_punctuation(c: char) -> bool {
+    // CSS Text 4's `punctuation` class is language-sensitive. Chromium's
+    // current behavior (and the zh WPT slice) inserts around these ASCII
+    // punctuation marks, but not around fullwidth/CJK punctuation.
+    matches!(c, '!' | '#' | ':' | ';' | '?')
+}
+
+#[cfg(test)]
+fn text_autospace_boxes(
+    text: &str,
+    value: TextAutospace,
+    language: &str,
+    font_size: f32,
+) -> Vec<InlineBox> {
+    text_autospace_boxes_with_edges(text, value, language, font_size, None, None)
+}
+
+fn text_autospace_boxes_with_edges(
+    text: &str,
+    value: TextAutospace,
+    language: &str,
+    font_size: f32,
+    before: Option<char>,
+    after: Option<char>,
+) -> Vec<InlineBox> {
+    let (ideograph_alpha, ideograph_numeric, punctuation) = match value {
+        TextAutospace::Normal | TextAutospace::Auto => {
+            (true, true, language_matches(language, "zh"))
+        }
+        TextAutospace::NoAutospace => (false, false, false),
+        TextAutospace::Custom {
+            ideograph_alpha,
+            ideograph_numeric,
+            punctuation,
+            ..
+        } => (
+            ideograph_alpha,
+            ideograph_numeric,
+            punctuation && language_matches(language, "zh"),
+        ),
+        // `TextAutospace` is non-exhaustive so downstream crates remain
+        // source-compatible when the style layer gains another keyword.
+        _ => (true, true, language_matches(language, "zh")), // cov:ignore: no future non-exhaustive variant exists in the pinned style crate.
+    };
+    if !ideograph_alpha && !ideograph_numeric && !punctuation {
+        return Vec::new();
+    }
+    let width = (font_size * 0.125).max(0.0);
+    if !width.is_finite() || width == 0.0 {
+        return Vec::new();
+    }
+
+    let mut previous =
+        before.and_then(|c| (!is_segment_break_ignorable(c)).then(|| (c, text_autospace_class(c))));
+    let mut last = None;
+    let mut boxes = Vec::new();
+    for (index, c) in text.char_indices() {
+        // Default-ignorable characters, including variation selectors, do not
+        // break the neighboring-character test. The VS WPT expects `国` + VS
+        // + `A` to use the same autospace boundary as `国A`.
+        if is_segment_break_ignorable(c) {
+            continue;
+        }
+        let class = text_autospace_class(c);
+        if let Some((previous_char, previous_class)) = previous
+            && text_autospace_pair_needs_box(
+                previous_char,
+                previous_class,
+                c,
+                class,
+                ideograph_alpha,
+                ideograph_numeric,
+                punctuation,
+            )
+        {
+            boxes.push(InlineBox {
+                // Reserve the high ID range for autospace boxes so paint can
+                // distinguish their inline baseline semantics from tabs.
+                id: u64::MAX - boxes.len() as u64,
+                kind: InlineBoxKind::InFlow,
+                index,
+                width,
+                height: 0.0,
+            });
+        }
+        previous = Some((c, class));
+        last = Some((c, class));
+    }
+    if let (Some((previous_char, previous_class)), Some(next)) = (last, after)
+        && !is_segment_break_ignorable(next)
+        && text_autospace_pair_needs_box(
+            previous_char,
+            previous_class,
+            next,
+            text_autospace_class(next),
+            ideograph_alpha,
+            ideograph_numeric,
+            punctuation,
+        )
+    {
+        boxes.push(InlineBox {
+            // Reserve the high ID range for autospace boxes so paint can
+            // distinguish their inline baseline semantics from tabs.
+            id: u64::MAX - boxes.len() as u64,
+            kind: InlineBoxKind::InFlow,
+            index: text.len(),
+            width,
+            height: 0.0,
+        });
+    }
+    boxes
+}
+
+fn text_autospace_pair_needs_box(
+    previous_char: char,
+    previous_class: TextAutospaceClass,
+    current_char: char,
+    current_class: TextAutospaceClass,
+    ideograph_alpha: bool,
+    ideograph_numeric: bool,
+    punctuation: bool,
+) -> bool {
+    let class_boundary = match (previous_class, current_class) {
+        (TextAutospaceClass::Ideograph, TextAutospaceClass::Letter)
+        | (TextAutospaceClass::Letter, TextAutospaceClass::Ideograph) => ideograph_alpha,
+        (TextAutospaceClass::Ideograph, TextAutospaceClass::Numeric)
+        | (TextAutospaceClass::Numeric, TextAutospaceClass::Ideograph) => ideograph_numeric,
+        _ => false,
+    };
+    let punctuation_boundary = punctuation
+        && ((text_autospace_ascii_punctuation(previous_char)
+            && current_class == TextAutospaceClass::Ideograph)
+            || (previous_class == TextAutospaceClass::Ideograph
+                && text_autospace_ascii_punctuation(current_char)));
+    class_boundary || punctuation_boundary
 }
 
 fn effective_language_for_text(
@@ -8137,6 +8362,7 @@ fn preshape_text(
         line_break: LineBreak,
         overflow_wrap: OverflowWrap,
         text_wrap_mode: TextWrapMode,
+        autospace_boxes: Vec<InlineBox>,
         // Soft wrapping suppressed (`white-space: nowrap` or
         // `text-wrap: nowrap`).
         nowrap: bool,
@@ -8446,6 +8672,24 @@ fn preshape_text(
         } else {
             max_advance
         };
+        let autospace_value = if has_vertical_writing_mode(cascade, &parent_of, idx) {
+            // This implementation normalizes vertical autospace to the
+            // horizontal layout path until vertical inline metrics are implemented.
+            TextAutospace::NoAutospace // cov:ignore: vertical-writing autospace is exercised by the ignored vertical WPT runs.
+        } else {
+            cv.text_autospace
+        };
+        // Own a cross-node boundary on the following nonempty text run.
+        // Assigning it to both neighbors would double the advance.
+        let autospace_before = autospace_adjacent_edge_char(doc, cascade, &parent_of, idx, -1);
+        let autospace_boxes = text_autospace_boxes_with_edges(
+            &text,
+            autospace_value,
+            &language,
+            cv.font_size.px(),
+            autospace_before,
+            None,
+        );
         let simple_pre_block = matches!(cv.white_space, WhiteSpace::Pre)
             && parent_of[idx].is_some_and(|parent| {
                 matches!(
@@ -8477,6 +8721,7 @@ fn preshape_text(
             line_break: cv.line_break,
             overflow_wrap: cv.overflow_wrap,
             text_wrap_mode: cv.text_wrap,
+            autospace_boxes,
             // A simple `white-space: pre` block is non-wrapping; this also
             // keeps its measured tab cursor independent of later line breaks.
             nowrap: simple_pre_block
@@ -8694,6 +8939,9 @@ fn preshape_text(
                 job.text_wrap_mode,
                 job.nowrap,
             )));
+            for inline_box in &job.autospace_boxes {
+                builder.push_inline_box(inline_box.clone());
+            }
             let mut layout: Layout<()> = builder.build(&job.text);
             layout.break_all_lines(if job.nowrap {
                 None
@@ -8780,6 +9028,10 @@ fn preshape_text(
                     job.text_wrap_mode,
                     job.nowrap,
                 )));
+                // cov:ignore: the parallel preshape path is exercised by resource-backed WPT runs with large inline job sets.
+                for inline_box in &job.autospace_boxes {
+                    builder.push_inline_box(inline_box.clone());
+                }
                 let mut layout: Layout<()> = builder.build(&job.text);
                 layout.break_all_lines(if job.nowrap {
                     None
@@ -20334,6 +20586,146 @@ mod tests {
             paragraph_y >= 50.0 - 0.001,
             "widows:2 should also move a 3-line fitting paragraph when only one line would remain, got y={paragraph_y}"
         );
+    }
+
+    #[test]
+    fn text_autospace_boxes_insert_expected_boundary_advances() {
+        use raikiri_style::property::{TextAutospace, TextAutospaceMode};
+
+        let boxes = text_autospace_boxes("国A国1A", TextAutospace::Normal, "", 40.0);
+        assert_eq!(
+            boxes
+                .iter()
+                .map(|inline_box| inline_box.index)
+                .collect::<Vec<_>>(),
+            vec![3, 4, 7]
+        );
+        assert!(boxes.iter().all(|inline_box| {
+            inline_box.kind == InlineBoxKind::InFlow
+                && inline_box.width == 5.0
+                && inline_box.height == 0.0
+        }));
+
+        let zh_punctuation = text_autospace_boxes("国!国", TextAutospace::Normal, "zh", 40.0);
+        assert_eq!(
+            zh_punctuation
+                .iter()
+                .map(|inline_box| inline_box.index)
+                .collect::<Vec<_>>(),
+            vec![3, 4]
+        );
+        assert!(text_autospace_boxes("国!国", TextAutospace::Normal, "en", 40.0).is_empty());
+
+        let custom = text_autospace_boxes(
+            "国A",
+            TextAutospace::Custom {
+                ideograph_alpha: true,
+                ideograph_numeric: false,
+                punctuation: false,
+                mode: TextAutospaceMode::None,
+            },
+            "en",
+            40.0,
+        );
+        assert_eq!(
+            custom
+                .iter()
+                .map(|inline_box| inline_box.index)
+                .collect::<Vec<_>>(),
+            vec![3]
+        );
+
+        let cross_before =
+            text_autospace_boxes_with_edges("A", TextAutospace::Normal, "", 40.0, Some('国'), None);
+        assert_eq!(cross_before[0].index, 0);
+        let cross_after =
+            text_autospace_boxes_with_edges("国", TextAutospace::Normal, "", 40.0, None, Some('A'));
+        assert_eq!(cross_after[0].index, 3);
+    }
+
+    #[test]
+    fn autospace_edges_cross_plain_inline_elements() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let div = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+        let left = doc.append_text(div, "国");
+        let span = doc.append_element(Some(div), "span", Style::default(), Some("display:inline"));
+        let right = doc.append_text(span, "A");
+        doc.mark_in_document_flags();
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut parent_of = vec![None; doc.nodes.len()];
+        for parent in 0..doc.nodes.len() {
+            for &child in &doc.nodes[parent].children {
+                parent_of[child] = Some(parent);
+            }
+        }
+        assert_eq!(
+            autospace_adjacent_edge_char(&doc, &cascade, &parent_of, right, -1),
+            Some('国')
+        );
+        assert_eq!(
+            autospace_adjacent_edge_char(&doc, &cascade, &parent_of, left, 1),
+            Some('A')
+        );
+    }
+
+    #[test]
+    fn layout_owns_cross_inline_autospace_once() {
+        use parley::{FontContext, PositionedLayoutItem};
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let div = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("font-family:Ahem;font-size:40px;text-autospace:normal"),
+        );
+        let left = doc.append_text(div, "国");
+        let span = doc.append_element(Some(div), "span", Style::default(), Some("display:inline"));
+        let right = doc.append_text(span, "A");
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let inline_box_count = |idx: usize| {
+            doc.nodes[idx]
+                .text_layout()
+                .expect("text shaped")
+                .lines()
+                .flat_map(|line| line.items())
+                .filter(|item| matches!(item, PositionedLayoutItem::InlineBox(_)))
+                .count()
+        };
+        assert_eq!(inline_box_count(left), 0);
+        assert_eq!(inline_box_count(right), 1);
+    }
+
+    #[test]
+    fn text_autospace_boxes_skip_default_ignorables_for_boundaries() {
+        use raikiri_style::property::TextAutospace;
+
+        let variation_selector =
+            text_autospace_boxes("国\u{fe00}A", TextAutospace::Normal, "", 40.0);
+        assert_eq!(
+            variation_selector
+                .iter()
+                .map(|inline_box| inline_box.index)
+                .collect::<Vec<_>>(),
+            vec![6]
+        );
+
+        let disabled = text_autospace_boxes("国A", TextAutospace::NoAutospace, "", 40.0);
+        assert!(disabled.is_empty());
     }
 
     #[test]
