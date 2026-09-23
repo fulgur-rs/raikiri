@@ -1214,181 +1214,49 @@ impl ResolvedAgainstInherited {
 /// Cascade winner 1 つを staging 表現 ([`SpecifiedValues`]) に書き込む
 /// (**phase 1**)。
 ///
-/// length を運ぶ property は **specified 表現のまま**格納する — 絶対化は
-/// [`SpecifiedValues::finalize`] (phase 2 + phase 3) の責務であり、本関数の中で
-/// 行うことは意図的に禁じられている (`padding: 2em` の
-/// 基準となる font-size は**その node の全 winner を適用し終える**まで確定せず、
-/// 本関数は winner 1 つ分しか見ていないため)。
+/// length を運ぶ property は specified 表現のまま格納し、絶対化は
+/// [`SpecifiedValues::finalize`] に任せる (`em` などの基準 font-size は、その node の
+/// 全 winner を適用し終えるまで確定しない)。winner の適用順は任意なので、他
+/// property の値に依存する解決 (`text-align: match-parent` など) もここでは行わない。
 ///
 /// 例外は `font-weight` の `bolder` / `lighter` と `font-size` の `larger` /
-/// `smaller` — どちらも**継承元**の computed 値だけで解ける (自 node の他
-/// winner に依存しない) ため、ここで絶対値に落とす。詳細は該当 arm の comment
-/// を参照。
+/// `smaller`。`target` は [`SpecifiedValues::inherit_from`] で親の computed 値に
+/// seed 済みなので、これらの arm は上書き前に `target` から継承値を読んで絶対値に
+/// 解決する。
 ///
-/// `pub(crate)` は他 module の doc からの intra-doc link のため — private 化で gate が red (規約 3)。
+/// shorthand の arm は、[`crate::rule::expand_shorthand_into`] が cascade 前に
+/// longhand へ展開するため通常は到達しない。直接呼ばれても panic しないよう残してある。
+///
+/// `pub(crate)` は他 module の doc からの intra-doc link のため。
 pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
     match value {
         PropertyValue::Color(c) => target.color = c,
-        // CSS Backgrounds 3 §2.2。sibling `Color` と対称的な
-        // 単純代入 (non-inherited、per-node で cascade winner を直接反映)。
         PropertyValue::BackgroundColor(c) => target.background_color = c,
         PropertyValue::FontFamily(f) => target.font_family = f,
         PropertyValue::FontSize(s) => target.font_size = s,
-        // CSS Fonts 4 §2.5 `<relative-size>` (`larger` / `smaller`)。
-        // `font-weight` の `bolder` / `lighter` arm
-        // (次項) と同型の read-modify-write だが、継承値の出所は D5 invariant
-        // (`font_weight: u16`) とは少し違う形で成立する:
-        //
-        // - `target.font_size` は `SpecifiedValues::inherit_from(parent)` で
-        //   `lift_font_size(parent.font_size)` = 常に `Length::Px(親の px)`
-        //   に seed される (root では `SpecifiedValues::initial()` が同じく
-        //   `Length::Px(INITIAL_FONT_SIZE_PX)`)。したがって本 arm が
-        //   `target.font_size` を**上書きする前に読む**限り、変数の中身は
-        //   単位に関わらず「親 (または root の initial) の computed
-        //   font-size」の px 表現である。
-        // - `font_size` の他の値 (`em` / `rem` / `%`) は絶対化を
-        //   `SpecifiedValues::finalize` (phase 2) に **意図的に遅延**する
-        //   (本関数冒頭の doc 参照) が、
-        //   `larger` / `smaller` は基準が「親の computed font-size」のみで
-        //   自 node の他 winner に依存しないため、`font-weight` と同じく
-        //   ここ (phase 1) で解決してよい。解決結果は `Length::Px` — 通常の
-        //   author 指定 px 値と区別が付かなくなり、phase 2 (`resolve_font_size`
-        //   の `Px` arm は identity) を通しても二重適用にならない。
-        // - 全 `Length` variant を OR-pattern で受ける下の抽出は
-        //   「実際には常に `Px`」を panic-free に表現したもの — panic surface を
-        //   作らない方針 (`Margin` shorthand fall-through arm と同じ
-        //   理由) により `unreachable!` は採らない。
-        //
-        // `FontSize` と同じ `PropertyKey` を共有するため (`PropertyValue::key()`
-        // 参照) `pick_winners` の slot は 1 つ — 本 arm と直上の `FontSize` arm が
-        // 同一 node で両方走ることはない。
         PropertyValue::FontSizeRelative(rel) => {
-            // cov:ignore: per the doc comment above, `target.font_size` is
-            // always `Length::Px` at this point (post phase-2 resolution) —
-            // only the `Px` arm is ever exercised. The other 15 arms exist
-            // to make this extraction panic-free (no `unreachable!`), not
-            // because any test constructs a non-Px font_size here.
-            //
-            // Re-examined after `font-size: 1lh` / `1rlh` became
-            // parse-accepted, removing the *previous* reason
-            // this was unreachable — that `parse_font_size` dropped them at
-            // parse time. The `Lh`/`Rlh` arms remain unreachable, but for a
-            // different, still-true reason: `FontSize` and `FontSizeRelative`
-            // share one `PropertyKey::FontSize` slot per node
-            // (`PropertyValue::key()`), so at most one of them is the winner
-            // applied to any given node. Whenever *this* arm runs for a
-            // node, the `FontSize` arm (above) did *not* also run for that
-            // same node — so `target.font_size` was never overwritten by
-            // this node's own declaration and still holds the seed from
-            // `SpecifiedValues::inherit_from`, which is always
-            // `lift_font_size(parent.font_size) == Length::Px(_)`
-            // (`lift_font_size` always returns `Px`, regardless of what unit
-            // the parent's own font-size declaration used, since the parent
-            // has already been absolutized to a `ComputedLength` by the time
-            // this node inherits from it). This invariant does not depend on
-            // which `Length` units `parse_font_size` accepts.
-            let inherited_px = match target.font_size {
-                Length::Px(v)
-                | Length::Em(v)
-                | Length::Rem(v)
-                | Length::Percent(v)
-                | Length::Pt(v)
-                | Length::Ex(v)
-                | Length::Rex(v)
-                | Length::Ch(v)
-                | Length::Rch(v)
-                | Length::Ic(v)
-                | Length::Ric(v)
-                | Length::Cm(v)
-                | Length::Mm(v)
-                | Length::Q(v)
-                | Length::In(v)
-                | Length::Pc(v)
-                | Length::Lh(v)
-                | Length::Rlh(v) => v,
-            };
+            // Always the `Length::Px` parent seed: `FontSize` shares this
+            // key's single winner slot, so it has not overwritten the seed.
+            let inherited_px = target.font_size.payload();
             target.font_size = Length::Px(resolve_relative_font_size(rel, inherited_px));
         }
-        // CSS Fonts 4 §2.2。specified
-        // value は `FontWeightValue` (relative keyword を保持)、computed value
-        // は resolve 済み `f32` (`u16` から格上げ済み) —
-        // `bolder` / `lighter` はここで絶対値に落とす。
-        //
-        // 継承値の出所: `target` は直前に `SpecifiedValues::inherit_from(parent)`
-        // で seed されており (`resolve_inheritance` 参照)、`font_weight` は
-        // inherited property なので **この時点の `target.font_weight` は親の
-        // computed font-weight そのもの**。`SpecifiedValues` が
-        // `font_weight: f32` を「既に computed-equivalent」として持つのはこの
-        // invariant のため — `SpecifiedValues::initial()` から seed する実装に
-        // 変えると `bolder` が常に 400 起点になり、compile error にも既存 test の
-        // 失敗にもならずに壊れる (D5 invariant)。
-        // さらに `pick_winners` は
-        // `PropertyKey` ごとに slot を 1 つだけ埋めるため `FontWeight` arm が同一
-        // node で 2 回走ることはなく、winner の適用順にも依存しない
-        // (`winner_does_not_leak_into_next_sibling` test がこの "1 回だけ" を check
-        // する — 二重適用は 400 → 700 → 900 と複合するので観測可能)。
-        // この 2 つが relative-weight resolution の正しさを支える invariant。
-        //
-        // なお本 arm は `apply_value` 中の read-modify-write の 1 つ (`FontSizeRelative`
-        // arm が 2 つ目に加わった。それ以外はすべて冪等な
-        // 単純代入)。`Padding` / `Margin` / `Border` shorthand fall-through arm
-        // のような二重適用経路を font-weight に足すと `bolder` が 400 → 700 → 900
-        // と複合するため、上記 2 invariant を崩す変更は不可。`FontSizeRelative` も
-        // 同じ理由で二重適用経路を持たない (`FontSize` と同一 `PropertyKey`
-        // を共有し slot は 1 つ、詳細は該当 arm の comment)。
-        //
-        // **契約**: 継承元依存の解決を持つ property を新しく
-        // 追加するときは、本 arm だけでなく sibling の
-        // `resolve_against_inherited` にも arm を足すこと — そちらは
-        // `PropertyValue` を返す形で同じ解決を提供し、
-        // `crate::page::cascade_page` (`apply_value` を通らない第 2 の public
-        // entry point) が使う。両者とも wildcard 無しの exhaustive match なので
-        // variant 追加時は compiler が 2 経路を数え上げさせる。
-        //
-        // **例外**: `text-align: match-parent` は
-        // `resolve_against_inherited` に arm があるが、**本 arm (`apply_value`)
-        // には無い** — 下の `TextAlign` arm のコメント参照。この property の
-        // 解決は `self.font_weight` のような自 field の read-modify-write では
-        // 済まない (**他 property `direction` の親の値**を要する) ため、
-        // 「本 arm と sibling の 2 経路だけ数え上げればよい」という上記契約の
-        // 前提が破れる — 実際には 3 箇所目 (`crate::specified::SpecifiedValues::
-        // finalize` / `finalize_as_root`) が element 経路の解決を担う。
         PropertyValue::FontWeight(fw) => {
             let inherited = target.font_weight;
             target.font_weight = resolve_relative_weight(fw, inherited);
         }
-        // CSS Inline 3 §5.1: line-height は inherited、cascade winner が
-        // raw value (Normal / Number / Length) を保持。number-vs-length
-        // distinction は下流 (paint) の resolve context で意味を持つ。
         PropertyValue::LineHeight(lh) => target.line_height = lh,
         PropertyValue::Display(d) => target.display = d,
         PropertyValue::ListStyleType(v) => target.list_style_type = v,
         PropertyValue::ListStyleImage(v) => target.list_style_image = v,
         PropertyValue::ListStylePosition(v) => target.list_style_position = v,
-        // counter-* は将来の GCPM (paged media generated content) 対応に
-        // 向けた足場 — parse 結果をそのまま computed value に格納。counter
-        // tree の実際の resolve は将来の本実装で行う。
         PropertyValue::CounterReset(v) => target.counter_reset = v,
         PropertyValue::CounterResetInherit => {
             target.counter_reset = crate::property::empty_counter_entries();
         }
         PropertyValue::CounterIncrement(v) => target.counter_increment = v,
         PropertyValue::CounterSet(v) => target.counter_set = v,
-        // content は将来の GCPM directive-emit の static-side 実装。
-        // 下流 (raikiri-dom) runtime resolve が counter()/string()/target-*() の
-        // 実値を組み立てる際に本 field を参照。
         PropertyValue::Content(v) => target.content = v,
-        // string-set は将来の GCPM static-side 実装の一部 (CSS GCPM 3 §1.1.1)。
-        // Named-string runtime resolve は下流 (raikiri-dom) 責務。
         PropertyValue::StringSet(v) => target.string_set = v,
-        // position は将来の GCPM static-side 実装の一部 (CSS GCPM 3 §1.2.1)。
-        // - `Static` は no-op: `inherit_from` が running_templates を空で初期化
-        //   するため、`position: static` が cascade winner のとき running_templates
-        //   は空のままで正しい (先行 running(hdr) を上書きして
-        //   template 登録を suppress する用途)。
-        // - `Running(name)` は 1-item seed を push。per-node で常に 0/1 要素
-        //   (position は spec 上 単一値)、per-document 集約は下流 (raikiri-dom)
-        //   の 2-tier キャッシュ static side 責務 (design doc §7.3)。
         PropertyValue::Position(pv) => match pv {
             PositionValue::Static => {
                 target.position = PositionValue::Static;
@@ -1409,42 +1277,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
                 target.running_templates.push(RunningTemplate { name });
             }
         },
-        // text-align (CSS Text 3 §6.1) の初期実装。
-        // inherited property のため cascade winner が無い child は inherit_from で
-        // 親値を引き継ぐ (color / font_family / font_size / font_weight と同じ
-        // handling)。TextAlign は Copy、by-value 代入で十分。
-        //
-        // **`match-parent` はここでは解決しない** — この
-        // 単純代入は他 arm と同じく素朴なコピーのままにしてある。解決は
-        // `crate::specified::SpecifiedValues::finalize` /
-        // `finalize_as_root` が全 winner 適用**後**に、明示的な親
-        // `ComputedValues` を受け取って行う。理由: 本 arm の中で
-        // `target.direction` (= 親から継承した direction) を読んで解決しようと
-        // すると、**同一 node が `direction` winner も持つ場合**にその適用順序
-        // (`crate::property::PropertyKey` の宣言順) 次第で親ではなく
-        // **自分の** direction を読んでしまう —
-        // `resolve_inheritance` が保証する「winner の適用順に依存しない」
-        // invariant への違反になる。詳細は
-        // `crate::property::resolve_text_align_match_parent` の doc。
         PropertyValue::TextAlign(t) => target.text_align = t,
-        // CSS Text 3 §8.2.1: inherited keyword, simple by-value assignment.
         PropertyValue::HangingPunctuation(v) => target.hanging_punctuation = v,
-        // CSS Text 3 §6.2 text-justify — **inherited** keyword、単純代入。
         PropertyValue::TextJustify(v) => target.text_justify = v,
-        // CSS Text 3 §6.1 text-align-last — **inherited** keyword、単純代入。
-        // `auto` の解決は consumer 側 (raikiri-dom realign)。
         PropertyValue::TextAlignLast(v) => target.text_align_last = v,
-        // CSS Text 3 §8.1 text-indent — **inherited**. `Length` is `Copy`,
-        // by-value assignment suffices (sibling `TextAlign`/`Direction`
-        // pattern). Absolutization (`em`/`rem`/`%` etc.) happens later in
-        // `SpecifiedValues::finalize` / `finalize_as_root`, mirroring
-        // `padding`'s phase-3 handling — the only difference from `padding`
-        // is that this field is inherited, so `SpecifiedValues::inherit_from`
-        // (not this function) is what seeds a child with no winner of its
-        // own.
-        // CSS Text 3 §8.1 text-indent — **inherited**. The length goes to
-        // `text_indent`; the flags go to their own staging fields so the
-        // specified/computed layers keep the full grammar.
         PropertyValue::TextIndent(v) => {
             target.text_indent = v.length;
             target.text_indent_ch_factor = match v.length {
@@ -1456,40 +1292,12 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.text_indent_hanging = v.hanging;
             target.text_indent_each_line = v.each_line;
         }
-        // direction は CSS Writing Modes 4 §2.1。
-        // inherited property、computed value = specified value (相対解決なし) —
-        // text-align と同じく単純代入で十分。
         PropertyValue::Direction(d) => target.direction = d,
-        // CSS Box 3 §4.1 <https://www.w3.org/TR/css-box-3/#padding-physical>
-        // padding physical longhand。
-        // 4 side を独立に上書き。shorthand `PropertyValue::Padding` は
-        // `crate::rule::expand_shorthand_into` により parse 出口と element cascade 入口
-        // (`collect_cascaded`) の両方で 4 longhand に展開されるため、cascade 段に
-        // 届く declaration は per-side longhand
-        // のみ = shorthand/longhand の cross-key dependency が消え、winner の
-        // 適用順に依存しない per-key determinism が成立する
-        // (margin の parse-time expansion model と同じ設計に migrate 済み)。
         PropertyValue::PaddingTop(v) => target.padding.top = v,
         PropertyValue::PaddingRight(v) => target.padding.right = v,
         PropertyValue::PaddingBottom(v) => target.padding.bottom = v,
         PropertyValue::PaddingLeft(v) => target.padding.left = v,
-        // CSS Box 3 §4.2 <https://www.w3.org/TR/css-box-3/#padding-shorthand>
-        // padding shorthand fall-through (normal flow では展開済み)。
-        // sibling `PropertyValue::Margin` arm と同じく **safety net ではない** —
-        // 到達すれば 4 longhand winner を破壊し spec と食い違う。
-        // Sides<Length>: Copy のため move で `target.padding` に代入。
         PropertyValue::Padding(sides) => target.padding = sides,
-        // `padding-inline`/`padding-block` shorthand fall-through — sibling
-        // `PropertyValue::Padding` arm と同じく **safety net ではない**。
-        // cascade 経路では unreachable (`crate::rule::expand_shorthand_into`
-        // が `padding-left`/`padding-right` (block なら `padding-top`/
-        // `padding-bottom`) の 2 longhand に展開する)。物理写像 (inline axis
-        // は `direction: ltr` 仮定の近似、block axis は厳密) の rationale は
-        // `crate::property::PropertyValue::PaddingInline` doc 参照。挙動は
-        // `apply_value_direct_padding_inline_shorthand_fall_through` /
-        // `apply_value_direct_padding_block_shorthand_fall_through` test が
-        // 直接叩いて check (`Margin` arm 上の
-        // `apply_value_direct_margin_shorthand_fall_through` precedent)。
         PropertyValue::PaddingInline(pair) => {
             target.padding.left = pair.start;
             target.padding.right = pair.end;
@@ -1498,14 +1306,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.padding.top = pair.start;
             target.padding.bottom = pair.end;
         }
-        // 4 longhand margin sides (CSS Box 3 §3.1)。
-        // shorthand `PropertyValue::Margin` は `crate::rule::expand_shorthand_into`
-        // により parse 出口と element cascade 入口の両方で 4 longhand に展開されるため、
-        // cascade 段に届く declaration
-        // は per-side longhand のみ = winner の適用順に依存しない per-key
-        // determinism が成立する (詳細は `crate::rule::expand_shorthand_into` doc)。
-        // Page-only inherit markers are never produced by the element parser;
-        // keep the staging path panic-free if an internal caller supplies one.
+        // Page-cascade-only inherit markers; the element parser never produces them.
         PropertyValue::BorderRadiusInherit
         | PropertyValue::MarginTopInherit
         | PropertyValue::MarginRightInherit
@@ -1516,19 +1317,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::MarginRight(v) => target.margin.right = v,
         PropertyValue::MarginBottom(v) => target.margin.bottom = v,
         PropertyValue::MarginLeft(v) => target.margin.left = v,
-        // Parsed shorthands normally arrive as longhands. If a shorthand is
-        // supplied directly, retain its value without panicking; normal
-        // cascade entry points expand it before this stage.
         PropertyValue::Margin(sides) => target.margin = sides,
-        // `margin-inline`/`margin-block` shorthand fall-through — sibling
-        // `PropertyValue::Margin` arm と同じく **safety net ではない**。
-        // cascade 経路では unreachable (`crate::rule::expand_shorthand_into`
-        // が `margin-left`/`margin-right` (block なら `margin-top`/
-        // `margin-bottom`) の 2 longhand に展開する)。物理写像の rationale は
-        // `crate::property::PropertyValue::MarginInline` doc 参照。挙動は
-        // `apply_value_direct_margin_inline_shorthand_fall_through` /
-        // `apply_value_direct_margin_block_shorthand_fall_through` test が
-        // 直接叩いて pin。
         PropertyValue::MarginInline(pair) => {
             target.margin.left = pair.start;
             target.margin.right = pair.end;
@@ -1537,14 +1326,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.margin.top = pair.start;
             target.margin.bottom = pair.end;
         }
-        // CSS Backgrounds 3 §3.3/§3.2/§3.1 border physical longhand。
-        // 4 side × 3 sub-property の 12 arm。shorthand
-        // `PropertyValue::Border` は `crate::rule::expand_shorthand_into` により
-        // parse 出口と element cascade 入口の両方で 12 longhand に展開されるため、
-        // cascade 段に届く declaration
-        // は per-side / per-sub-property longhand のみ = winner の適用順に
-        // 依存しない per-key determinism が成立する (margin / padding precedent
-        // 踏襲)。
         PropertyValue::BorderTopWidth(v) => target.border.top.width = v,
         PropertyValue::BorderRightWidth(v) => target.border.right.width = v,
         PropertyValue::BorderBottomWidth(v) => target.border.bottom.width = v,
@@ -1557,18 +1338,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BorderRightColor(v) => target.border.right.color = v,
         PropertyValue::BorderBottomColor(v) => target.border.bottom.color = v,
         PropertyValue::BorderLeftColor(v) => target.border.left.color = v,
-        // `border` shorthand fall-through。sibling `PropertyValue::Margin` arm と
-        // 同じく **safety net ではない** — 到達すれば 12 longhand winner を一括で
-        // 破壊し spec と食い違う。cascade 経路では unreachable
-        // (`expand_shorthand_into` が 12 longhand に展開する)。詳細な framing と
-        // その unreachability の compile-time 強制は
-        // `Margin` arm の comment 参照。
         PropertyValue::Border(sides) => target.border = sides,
-        // CSS Sizing 3 §3.1.1 width。single-value property、
-        // `LengthOrAuto` は Copy shape (Length variant は Copy)。sibling
-        // `PropertyValue::TextAlign` と対称的な単純代入 (non-inherited、cascade
-        // winner を直接反映)。`auto` は下流 layout の automatic size calculation
-        // (CSS Sizing 3 §5) で解決される — margin `auto` の余白分配とは別意味。
         PropertyValue::CalcLengthPercentage { key, value } => match key {
             crate::property::PropertyKey::Width => target.width = LengthOrAuto::Calc(value),
             crate::property::PropertyKey::Height => target.height = LengthOrAuto::Calc(value),
@@ -1590,10 +1360,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             _ => {}
         },
         PropertyValue::Width(v) => target.width = v,
-        // CSS Sizing 3 §3.1.1 height。sibling `Width` /
-        // `Padding*` / `Margin*` と同じ per-node winner 直接代入 (non-inherited、
-        // `LengthOrAuto` は Copy)。resolve (`Percent` / `Auto` の実 layout 高さ
-        // 計算) は下流責務。
         PropertyValue::Height(v) => target.height = v,
         PropertyValue::MaxWidth(v) => target.max_width = v,
         PropertyValue::MaxHeight(v) => target.max_height = v,
@@ -1604,100 +1370,28 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::Right(v) => target.right = v,
         PropertyValue::Bottom(v) => target.bottom = v,
         PropertyValue::Left(v) => target.left = v,
-        // CSS Sizing 3 §3.3 box-sizing。non-inherited、
-        // cascade winner が specified keyword をそのまま computed value に反映。
-        // BoxSizing は Copy、by-value 代入で十分。
         PropertyValue::BoxSizing(bs) => target.box_sizing = bs,
-        // CSS Overflow 3 §3.1 overflow-x/overflow-y physical longhand。
-        // non-inherited、per-axis winner を staging の
-        // `overflow.x`/`overflow.y` へ直接代入。cross-axis の computed-value
-        // coupling (`resolve_overflow`) はここでは**適用しない** —
-        // `target.overflow` は winner 適用の途中経過であり、まだ他方の axis の
-        // 最終 winner を反映し終えていない可能性がある。coupling は全 winner
-        // 適用後の phase 3 (`SpecifiedValues::finalize` → `absolutize_with`)
-        // でのみ解決する (border style→width gating と同じ順序、
-        // `resolve_overflow` doc 参照)。
         PropertyValue::OverflowX(v) => target.overflow.x = v,
         PropertyValue::OverflowY(v) => target.overflow.y = v,
-        // `overflow` shorthand fall-through。sibling `PropertyValue::Padding`
-        // arm と同じく **safety net ではない** — 到達すれば 2 longhand winner
-        // を一括で破壊し spec と食い違う。cascade 経路では unreachable
-        // (`expand_shorthand_into` が 2 longhand に展開する)。詳細な framing
-        // とその unreachability の compile-time 強制は `Margin` arm の
-        // comment 参照。
         PropertyValue::Overflow(pair) => target.overflow = pair,
-        // CSS Text Decoration Module Level 3 §2.1-§2.3。3 longhand とも
-        // non-inherited、cascade winner が specified keyword/color をそのまま
-        // computed value に反映。いずれも Copy、by-value 代入で十分
-        // (`BoxSizing` arm と同型)。
         PropertyValue::TextDecorationLine(v) => target.text_decoration_line = v,
         PropertyValue::TextDecorationStyle(v) => target.text_decoration_style = v,
         PropertyValue::TextDecorationColor(v) => target.text_decoration_color = v,
-        // CSS Text Decoration 4 §2.9.1: non-inherited, but font-relative
-        // lengths remain in staging until `SpecifiedValues::finalize`.
         PropertyValue::TextDecorationInset(v) => target.text_decoration_inset = v,
-        // CSS Text Decoration 4 §2.8: inherited; fixed lengths remain in
-        // staging until `SpecifiedValues::finalize` resolves them.
         PropertyValue::TextUnderlineOffset(v) => target.text_underline_offset = v,
-        // `text-decoration` shorthand fall-through。sibling `PropertyValue::Margin`
-        // arm と同じく **safety net ではない** — 到達すれば 3 longhand winner を
-        // 一括で破壊し spec と食い違う。cascade 経路では unreachable
-        // (`expand_shorthand_into` が 3 longhand に展開する)。詳細な framing と
-        // その unreachability の compile-time 強制は `Margin` arm の comment
-        // 参照。
         PropertyValue::TextDecoration(shorthand) => {
             target.text_decoration_line = shorthand.line;
             target.text_decoration_style = shorthand.style;
             target.text_decoration_color = shorthand.color;
-            // `thickness` has no staging field (parsing-only,
-            // `PropertyValue::TextDecorationThickness` doc) — nothing to
-            // write here. Same unreachability contract as the 3 staged
-            // longhands above.
         }
-        // CSS 2.1 §10.8.1 vertical-align。non-inherited、cascade winner を
-        // このまま staging (`SpecifiedValues`) へ書き込む — `<length>`
-        // variant の絶対化 (`em`/`rem` 等) は phase 3
-        // (`SpecifiedValues::absolutize_with`'s `resolve_vertical_align`
-        // call) の役目でここでは行わない (`FlexBasis` arm と同型)。
-        // `VerticalAlign` は Copy、by-value 代入で十分 (`BoxSizing` /
-        // `TextDecorationLine` arm と同型)。
         PropertyValue::VerticalAlign(va) => target.vertical_align = va,
-        // CSS Fonts 4 §2.4。
-        // inherited property のため cascade winner が無い child は
-        // inherit_from で親値を引き継ぐ (`Direction` arm と同じ handling)。
-        // `FontStyle` は Copy、by-value 代入で十分。
         PropertyValue::FontStyle(fs) => target.font_style = fs,
-        // CSS Text Module Level 3 §2.1。
-        // inherited property のため cascade winner が無い child は
-        // inherit_from で親値を引き継ぐ (`FontStyle` arm と同じ handling)。
-        // `TextTransform` は Copy、by-value 代入で十分。
         PropertyValue::TextTransform(tt) => target.text_transform = tt,
-        // CSS Display 3 §4。
-        // inherited property のため cascade winner が無い child は
-        // inherit_from で親値を引き継ぐ (`Direction` / `FontStyle` arm と同じ
-        // handling)。`Visibility` は Copy、by-value 代入で十分。
         PropertyValue::Visibility(v) => target.visibility = v,
-        // CSS2 §9.9.1 z-index。non-inherited、cascade winner が specified
-        // value をそのまま computed value に反映。`ZIndexValue` は Copy、
-        // by-value 代入で十分 (`BoxSizing` / `VerticalAlign` arm と同型)。
         PropertyValue::ZIndex(z) => target.z_index = z,
-        // word-break は CSS Text 3 §5.1。inherited property、
-        // computed value = specified value (相対解決なし) — sibling
-        // `FontStyle` と同じく単純代入で十分。
         PropertyValue::WordBreak(wb) => target.word_break = wb,
-        // line-break is inherited and its keyword is already computed-equivalent.
         PropertyValue::LineBreak(lb) => target.line_break = lb,
-        // overflow-wrap (legacy alias 名 word-wrap も同じ variant/field に
-        // 落ちる、`OverflowWrap` doc 参照) は CSS Text 3 §5.4。
-        // inherited property、computed value = specified value
-        // (相対解決なし) — sibling `WordBreak` と同じく単純代入で十分。
         PropertyValue::OverflowWrap(ow) => target.overflow_wrap = ow,
-        // CSS Text 3 §7.2。specified 表現 (`LengthOrNormal`) のまま格納 —
-        // 絶対化は phase 3 (`SpecifiedValues::finalize` / `absolutize_with`)
-        // に委ねる (関数冒頭の doc「length を運ぶ property は specified 表現の
-        // まま格納する」節)。inherited property のため cascade winner が無い
-        // child は inherit_from で親値を引き継ぐ (`FontStyle` arm と同じ
-        // handling)。`LengthOrNormal` は Copy、by-value 代入で十分。
         PropertyValue::LetterSpacing(ls) => {
             target.letter_spacing = ls;
             target.letter_spacing_ch_factor = match ls {
@@ -1705,7 +1399,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
                 _ => None,
             };
         }
-        // CSS Text 3 §7.1。直上の LetterSpacing arm と同型。
         PropertyValue::WordSpacing(ws) => {
             target.word_spacing = ws;
             target.word_spacing_ch_factor = match ws {
@@ -1713,62 +1406,20 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
                 _ => None,
             };
         }
-        // CSS Text Module Level 3 §4.2。specified 表現 (`TabSize`) のまま
-        // 格納 — `<length>` 側の絶対化は phase 3 に委ねる (`LetterSpacing`
-        // arm と同じ handling)。inherited property のため cascade winner が
-        // 無い child は inherit_from で親値を引き継ぐ。`TabSize` は Copy、
-        // by-value 代入で十分。
         PropertyValue::TabSize(ts) => target.tab_size = ts,
-        // CSS Fragmentation Module Level 3 §3.1 break-before / break-after
-        // (legacy shorthand page-break-before / page-break-after も同じ
-        // variant/field に落ちる、`BreakBetween` doc 参照)。non-inherited、
-        // cascade winner が specified keyword をそのまま computed value に
-        // 反映。`BreakBetween` は Copy、by-value 代入で十分 (`ZIndex` arm と
-        // 同型)。
         PropertyValue::BreakBefore(bb) => target.break_before = bb,
         PropertyValue::BreakAfter(bb) => target.break_after = bb,
-        // CSS Fragmentation Module Level 3 §3.2 break-inside (legacy
-        // shorthand page-break-inside も同じ field に落ちる、`BreakInside`
-        // doc 参照)。直上の BreakBefore/BreakAfter arm と同型。
         PropertyValue::BreakInside(bi) => target.break_inside = bi,
-        // CSS2 §9.5.1 float。non-inherited、cascade winner が specified
-        // value をそのまま格納する。`display` への §9.7 の強制変換は
-        // ここでは行わない — phase 3 (`SpecifiedValues::absolutize_with`)
-        // が両 field 確定後にまとめて解決する (`resolve_display_for_float`
-        // doc)。`FloatValue` は Copy、by-value 代入で十分 (`ZIndexValue`
-        // arm と同型)。
         PropertyValue::Float(f) => target.float = f,
-        // CSS2 §9.5.2 clear。non-inherited、cascade winner が specified
-        // value をそのまま格納する — sibling `Float` arm と同じく単純代入で
-        // 十分。
         PropertyValue::Clear(c) => target.clear = c,
-        // CSS Text 3 §3 white-space。inherited property、computed value =
-        // specified value (相対解決なし) — sibling `WordBreak` と同じく
-        // 単純代入で十分。
         PropertyValue::WhiteSpace(ws) => target.white_space = ws,
-        // CSS Text 4 §5 text-wrap (subset). Inherited keyword, computed value =
-        // specified keyword — simple assignment like `WhiteSpace` above.
         PropertyValue::TextWrap(v) => target.text_wrap = v,
-        // CSS Text 3 §5.3 hyphens。inherited property、computed value =
-        // specified keyword (相対解決なし、`Hyphens` doc 参照) — sibling
-        // `WordBreak` と同じく単純代入で十分。
         PropertyValue::Hyphens(h) => target.hyphens = h,
-        // CSS Flexible Box Layout Module Level 1 §5.1/§5.2。non-inherited、
-        // computed value = specified keyword (相対解決なし) — 単純代入で十分。
         PropertyValue::FlexDirection(fd) => target.flex_direction = fd,
         PropertyValue::FlexWrap(fw) => target.flex_wrap = fw,
-        // CSS Flexible Box Layout Module Level 1 §7.2.1/§7.2.2。
-        // non-inherited、computed value = specified number — 単純代入で十分。
         PropertyValue::FlexGrow(g) => target.flex_grow = g,
         PropertyValue::FlexShrink(s) => target.flex_shrink = s,
-        // CSS Flexible Box Layout Module Level 1 §7.2.3。specified 表現
-        // (`FlexBasisValue`) のまま格納 — 絶対化は phase 3 に委ねる
-        // (`LetterSpacing` arm と同じ handling)。non-inherited。
         PropertyValue::FlexBasis(fb) => target.flex_basis = fb,
-        // `flex` shorthand fall-through — 通常は `expand_shorthand_into` が
-        // 3 longhand に展開済みのため cascade 経路には到達しない
-        // (`Margin`/`Padding`/`Border` shorthand fall-through と同じ
-        // "safety net ではない" 位置付け、`PropertyKey::Padding` doc 参照)。
         // cov:ignore: exercised by apply_value_direct_flex_shorthand_fall_through
         // (a passing test in this same file) but cargo-llvm-cov does not
         // attribute hits to this arm's lines within apply_value's large
@@ -1778,58 +1429,30 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.flex_shrink = f.shrink;
             target.flex_basis = f.basis;
         }
-        // `flex-flow` shorthand fall-through (`Flex` arm と同じ位置付け)。
         PropertyValue::FlexFlow(f) => {
             target.flex_direction = f.direction;
             target.flex_wrap = f.wrap;
         }
-        // CSS Flexible Box Layout Module Level 1 §4.2。non-inherited、
-        // computed value = specified integer — 単純代入で十分。
         PropertyValue::Order(o) => target.order = o,
-        // CSS Box Alignment Module Level 3 §5.1 (justify-content /
-        // align-content) / §7.2 (align-items) / §6.2 (align-self)。
-        // non-inherited、computed value = specified keyword(s) —
-        // 単純代入で十分。
         PropertyValue::JustifyContent(jc) => target.justify_content = jc,
         PropertyValue::AlignContent(ac) => target.align_content = ac,
         PropertyValue::AlignItems(ai) => target.align_items = ai,
         PropertyValue::AlignSelf(as_) => target.align_self = as_,
-        // CSS Box Alignment Module Level 3 §8.1。specified 表現
-        // (`LengthOrNormal`) のまま格納 — 絶対化は phase 3 に委ねる。
-        // non-inherited。
         PropertyValue::RowGap(rg) => target.row_gap = rg,
         PropertyValue::ColumnGap(cg) => target.column_gap = cg,
-        // `gap` shorthand fall-through (`Flex` arm と同じ位置付け)。
         PropertyValue::Gap(g) => {
             target.row_gap = g.row;
             target.column_gap = g.column;
         }
-        // `place-content` shorthand fall-through (`Flex` arm と同じ位置付け)。
         PropertyValue::PlaceContent(p) => {
             target.align_content = p.align;
             target.justify_content = p.justify;
         }
-        // CSS Fonts Module Level 3 §6.6。
-        // inherited property のため cascade winner が無い child は
-        // inherit_from で親値を引き継ぐ (`FontStyle` arm と同じ handling)。
-        // `FontVariantCaps` は Copy、by-value 代入で十分。
         PropertyValue::FontVariantCaps(fvc) => target.font_variant_caps = fvc,
-        // CSS Content 3 §2.4.1: quotes は将来の GCPM (paged media generated
-        // content) 対応に向けた足場 — parse 結果をそのまま computed value に
-        // 格納する (`CounterReset`/`Content` arm と同じ位置付け、
-        // `ComputedValues::quotes` doc 参照)。nesting depth → 実際の
-        // 引用符文字列への解決は下流 (raikiri-dom) 責務。
         PropertyValue::Quotes(v) => {
             target.quotes_auto = false;
             target.quotes = v;
         }
-        // CSS Text Decoration Module Level 3 §4。specified 表現
-        // (`Arc<Vec<TextShadowItem>>`) のまま格納 — 絶対化 (各 item の length
-        // 3 本) は phase 3 (`SpecifiedValues::finalize` / `absolutize_with`)
-        // に委ねる (`LetterSpacing`/`FlexBasis` arm と同じ handling)。
-        // inherited property のため、cascade winner が無い child は
-        // `inherit_from` で親値 (lift 済み) を引き継ぐ。`Arc` は Clone が
-        // bump のみなので by-value 代入で十分。
         PropertyValue::TextShadow(shadows) => target.text_shadow = shadows,
         PropertyValue::BorderRadius(v) => target.border_radius = v,
         PropertyValue::BorderRadiusTopLeft(v) => target.border_radius.top_left = v,
@@ -1842,15 +1465,12 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::OutlineStyle(v) => target.outline.style = v,
         PropertyValue::OutlineColor(v) => target.outline.color = v,
         PropertyValue::OutlineOffset(v) => target.outline_offset = v,
-        // CSS Grid Layout Module Level 1 §8.4 `grid-area` shorthand.
         PropertyValue::GridArea(area) => {
             target.grid_row_start = area.row_start;
             target.grid_column_start = area.column_start;
             target.grid_row_end = area.row_end;
             target.grid_column_end = area.column_end;
         }
-        // CSS Grid Layout Module Level 1 `grid` shorthand. Its supported
-        // explicit-track form also resets the other grid sub-properties.
         PropertyValue::Grid(shorthand) => {
             target.grid_template_rows = shorthand.rows;
             target.grid_template_columns = shorthand.columns;
@@ -1863,9 +1483,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.grid_column_start = GridLineValue::Auto;
             target.grid_column_end = GridLineValue::Auto;
         }
-        // CSS Grid Layout Module Level 1 §7.2/§7.3/§7.6/§7.7/§8.3。
-        // non-inherited、specified 表現のまま格納 — 絶対化は phase 3 に
-        // 委ねる (`LetterSpacing`/`FlexBasis` arm と同じ handling)。
         PropertyValue::GridTemplateColumns(v) => target.grid_template_columns = v,
         PropertyValue::GridTemplateRows(v) => target.grid_template_rows = v,
         PropertyValue::GridTemplateAreas(v) => target.grid_template_areas = v,
@@ -1876,9 +1493,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::GridRowEnd(v) => target.grid_row_end = v,
         PropertyValue::GridColumnStart(v) => target.grid_column_start = v,
         PropertyValue::GridColumnEnd(v) => target.grid_column_end = v,
-        // `grid-row` / `grid-column` shorthand fall-through — 通常は
-        // `expand_shorthand_into` が 2 longhand に展開済みのため cascade
-        // 経路には到達しない (`Flex` arm と同じ位置付け)。
         PropertyValue::GridRow(shorthand) => {
             target.grid_row_start = shorthand.start;
             target.grid_row_end = shorthand.end;
@@ -1887,13 +1501,8 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.grid_column_start = shorthand.start;
             target.grid_column_end = shorthand.end;
         }
-        // CSS Box Alignment Module Level 3 §7.1 (justify-items) / §6.1
-        // (justify-self)。non-inherited、computed value = specified
-        // keyword(s) — 単純代入で十分。
         PropertyValue::JustifyItems(v) => target.justify_items = v,
         PropertyValue::JustifySelf(v) => target.justify_self = v,
-        // `place-items` / `place-self` shorthand fall-through (`Flex` arm
-        // と同じ位置付け)。
         PropertyValue::PlaceItems(p) => {
             target.align_items = p.align;
             target.justify_items = p.justify;
@@ -1902,44 +1511,17 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.align_self = p.align;
             target.justify_self = p.justify;
         }
-        // CSS Fragmentation Module Level 3 §3.3. inherited、computed value =
-        // specified integer — simple assignment (`FlexGrow`/`FlexShrink` arm
-        // と同じ shape、length を運ばないため絶対化不要)。
         PropertyValue::Orphans(n) => target.orphans = n,
         PropertyValue::Widows(n) => target.widows = n,
-        // CSS Writing Modes 4 §3.2. inherited, simple assignment — the
-        // `HorizontalTb` collapse for the 4 non-horizontal keywords does
-        // *not* happen here (`resolve_writing_mode` runs later, in
-        // `SpecifiedValues::absolutize_with`, same "staging isn't resolved
-        // yet" split `TextAlign`'s `match-parent` uses). `target.writing_mode`
-        // is a `SpecifiedValues` field, not `ComputedValues` — see
-        // `WritingMode` doc's Non-goal section.
         PropertyValue::WritingMode(v) => target.writing_mode = v,
         PropertyValue::RubyPosition(v) => target.ruby_position = v,
-        // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.7/§2.8. non-inherited,
-        // computed value = specified keyword(s) — simple assignment, no
-        // length payload (`BackgroundColor`/`Orphans` arm と同じ shape)。
         PropertyValue::BackgroundRepeat(v) => target.background_repeat = v,
         PropertyValue::BackgroundAttachment(v) => target.background_attachment = v,
         PropertyValue::BackgroundClip(v) => target.background_clip = v,
         PropertyValue::BackgroundOrigin(v) => target.background_origin = v,
-        // CSS Backgrounds and Borders 3 §2.9/§2.6. non-inherited、
-        // `<length-percentage>` を含むため specified 表現のまま格納 —
-        // 絶対化は phase 3 (`SpecifiedValues::absolutize_with`) に委ねる
-        // (`Width`/`Padding` arm と同じ shape)。
         PropertyValue::BackgroundSize(v) => target.background_size = v,
         PropertyValue::BackgroundPosition(v) => target.background_position = v,
-        // CSS Backgrounds and Borders 3 §2.3. non-inherited, computed value
-        // = specified value — simple assignment, no length payload
-        // (`BackgroundRepeat` arm と同じ shape)。
         PropertyValue::BackgroundImage(v) => target.background_image = v,
-        // `background` shorthand fall-through (see `Padding`/`Flex` arm docs
-        // above for the "not a safety net" framing) — unreachable in
-        // practice, `expand_shorthand_into` expands it to the 8
-        // `BackgroundColor`/`BackgroundImage`/`BackgroundRepeat`/
-        // `BackgroundAttachment`/`BackgroundPosition`/`BackgroundSize`/
-        // `BackgroundClip`/`BackgroundOrigin` longhands before `apply_value`
-        // ever sees it.
         PropertyValue::Background(shorthand) => {
             target.background_color = shorthand.color;
             target.background_image = shorthand.image;
@@ -1950,20 +1532,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.background_clip = shorthand.clip;
             target.background_origin = shorthand.origin;
         }
-        // `font` shorthand fall-through (see `Padding`/`Flex`/`Background` arm
-        // docs above for the "not a safety net" framing) — unreachable in
-        // practice, `expand_shorthand_into` expands it to the 6
-        // `FontStyle`/`FontVariantCaps`/`FontWeight`/`FontSize`-or-
-        // `FontSizeRelative`/`LineHeight`/`FontFamily` longhands before
-        // `apply_value` ever sees it. Delegates to the 6 longhand arms
-        // above (rather than duplicating their logic) so the
-        // inheritance-seed reads (`FontWeight`'s `bolder`/`lighter`,
-        // `FontSizeRelative`'s `larger`/`smaller`) behave exactly as if
-        // the shorthand had been expanded — `target` still holds the
-        // parent seeds here since no longhand arm ran yet for this node.
-        // `border-style` / `border-width` / `border-color` shorthands
-        // decompose into their side longhands (same shape as `Font`
-        // below; reached when rule.rs expansion is bypassed).
         PropertyValue::BorderStyle(sides) => {
             apply_value(PropertyValue::BorderTopStyle(sides.top), target);
             apply_value(PropertyValue::BorderRightStyle(sides.right), target);
@@ -1997,64 +1565,21 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             apply_value(PropertyValue::LineHeight(shorthand.line_height), target);
             apply_value(PropertyValue::FontFamily(shorthand.family), target);
         }
-        // CSS Images Module Level 3 §5.1. non-inherited, computed value =
-        // specified keyword — simple assignment, no length payload
-        // (`BackgroundRepeat` arm と同じ shape)。
         PropertyValue::ObjectFit(v) => target.object_fit = v,
-        // CSS Images Module Level 3 §5.2. non-inherited、`<length-percentage>`
-        // を含むため specified 表現のまま格納 — 絶対化は phase 3
-        // (`SpecifiedValues::absolutize_with`) に委ねる (`BackgroundPosition`
-        // arm と同じ shape)。
         PropertyValue::ObjectPosition(v) => target.object_position = v,
-        // CSS Color 4 §3.3. non-inherited — simple assignment, **not**
-        // clamped here (`PropertyValue::Opacity` doc's "specified preserves,
-        // computed clamps" note). The `[0,1]` clamp happens in
-        // `SpecifiedValues::absolutize_with` (phase 3), not at winner
-        // application time.
         PropertyValue::Opacity(v) => target.opacity = v,
-        // CSS Compositing and Blending Level 1 §3.4.2. non-inherited,
-        // keyword-only — simple assignment.
         PropertyValue::Isolation(v) => target.isolation = v,
-        // CSS Compositing and Blending Level 1 §3.4.1. non-inherited,
-        // keyword-only — simple assignment.
         PropertyValue::MixBlendMode(v) => target.mix_blend_mode = v,
-        // CSS Masking Level 1 §7.1/§5.1. non-inherited — simple assignment,
-        // no phase-3 transform (`MaskImage`/`ClipPath` doc's scope notes).
         PropertyValue::MaskImage(v) => target.mask_image = v,
         PropertyValue::ClipPath(v) => target.clip_path = v,
-        // CSS Transforms Level 1 §4 / CSS Filter Effects Level 1 §5.
-        // non-inherited — simple assignment, no phase-3 transform
-        // (`TransformFunction`/`FilterFunction` doc's scope notes).
         PropertyValue::Transform(v) => target.transform = v,
         PropertyValue::Filter(v) => target.filter = v,
-        // CSS Tables 3 §4 table-layout。non-inherited、computed value =
-        // specified keyword — simple assignment、length payload 無し
-        // (`BackgroundRepeat` arm と同じ shape)。
         PropertyValue::TableLayout(v) => target.table_layout = v,
-        // CSS Tables 3 §6 border-collapse。inherited だが keyword のため
-        // inherit 解決は `SpecifiedValues::inherit_from` の素朴なコピーが担い、
-        // ここは winner の単純代入 (`Visibility` arm と同じ shape)。
         PropertyValue::BorderCollapse(v) => target.border_collapse = v,
-        // CSS Tables 3 §6.1 border-spacing。inherited だが `<length>` のため
-        // inherit 解決は `SpecifiedValues::inherit_from` の lift
-        // (`lift_border_spacing`、`tab_size` の `Length` arm と同じ) が担い、
-        // ここは winner の単純代入 (`BorderCollapse` arm と同じ shape —
-        // 絶対化は phase 3 `finalize` の仕事)。
         PropertyValue::BorderSpacing(v) => target.border_spacing = v,
-        // CSS Tables 3 §7 caption-side。inherited だが keyword のため
-        // inherit 解決は `SpecifiedValues::inherit_from` の素朴なコピーが担い、
-        // ここは winner の単純代入 (`Visibility` arm と同じ shape)。
         PropertyValue::CaptionSide(v) => target.caption_side = v,
-        // CSS Tables 3 §8 empty-cells。inherited だが keyword のため
-        // inherit 解決は `SpecifiedValues::inherit_from` の素朴なコピーが担い、
-        // ここは winner の単純代入 (`Visibility` arm と同じ shape)。
         PropertyValue::EmptyCells(v) => target.empty_cells = v,
-        // New Text 3 / Writing Modes 3 / Text Decoration 4 properties with no
-        // element staging field yet (parsing only). The keyword-only ones
-        // (`LineBreak`...`UnicodeBidi`, `TextDecorationSkipInk`...
-        // `TextUnderlinePosition`) carry no length. `TextDecorationThickness`
-        // remains parsing-only; `TextDecorationInset` is handled by the
-        // ordinary specified/computed element path above.
+        // Parsed but not yet staged for elements.
         PropertyValue::TextAlignAll(_)
         | PropertyValue::TextCombineUpright(_)
         | PropertyValue::TextOrientation(_)
@@ -2064,24 +1589,15 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         | PropertyValue::TextDecorationThickness(_)
         | PropertyValue::TextEmphasisPosition(_)
         | PropertyValue::TextUnderlinePosition(_) => {}
-        // CSS Paged Media 3 §8.1: retain the non-inherited named-page value
-        // in the specified staging bag; the page driver consumes it when it
-        // selects the next page context.
         PropertyValue::Page(value) => target.page = value,
-        // CSS Multi-column Layout 1: both longhands are non-inherited and
-        // retain their specified representations until finalization.
         PropertyValue::ColumnCount(value) => target.column_count = value,
         PropertyValue::ColumnWidth(value) => target.column_width = value,
-        // `columns` is expanded by `rule::expand_shorthand_into`; keep this
-        // arm defensive for callers that construct declarations directly.
         // cov:ignore: direct unexpanded shorthand callers are defensive-only.
         PropertyValue::Columns(value) => {
             target.column_count = value.count;
             target.column_width = value.width;
         }
-        // These values are resolved before ordinary winners reach this
-        // function. Keeping an explicit no-op makes direct internal callers
-        // panic-free without allowing raw deferred data into a computed field.
+        // Resolved before ordinary winners reach this function.
         PropertyValue::CustomProperty(_) | PropertyValue::Deferred(_) => {}
     }
 }

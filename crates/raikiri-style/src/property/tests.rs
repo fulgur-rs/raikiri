@@ -2200,7 +2200,7 @@ fn font_size_rejects_negative() {
     assert_eq!(parse("-2rem", "font-size"), None);
     assert_eq!(parse("-12pt", "font-size"), None);
     assert_eq!(parse("-50%", "font-size"), None);
-    // 追加した unit も `length_payload` 経由で同じ
+    // 追加した unit も `Length::payload` 経由で同じ
     // non-negative check を通ることを pin。
     assert_eq!(parse("-1ex", "font-size"), None);
     assert_eq!(parse("-1cm", "font-size"), None);
@@ -2248,7 +2248,7 @@ fn font_size_accepts_lh_and_rlh() {
 fn font_size_rejects_negative_lh_and_rlh() {
     // The grammar's `[0,∞]` non-negative constraint (`parse_font_size`
     // doc "Non-negative constraint" 節) applies to `lh`/`rlh` the same as
-    // every other `Length` variant — `length_payload` reads their inner
+    // every other `Length` variant — `Length::payload` reads their inner
     // `f32` generically, so this falls out of the existing post-filter
     // without a dedicated branch.
     assert_eq!(parse("-1lh", "font-size"), None);
@@ -4685,16 +4685,16 @@ fn padding_top_rejects_negative_ex() {
 #[test]
 fn padding_top_rejects_negative_lh() {
     // 全 Length variant 経路の non-negative check check (`lh`/`rlh`、
-    // `length_payload` の OR-pattern に `Lh`/`Rlh`
+    // `Length::payload` の OR-pattern に `Lh`/`Rlh`
     // を足し忘れていないことの直接 pin)。
     assert_eq!(parse("-1lh", "padding-top"), None);
     assert_eq!(parse("-1rlh", "padding-top"), None);
 }
 
 /// 追加した残り unit (`rex` / `rch` / `ic` / `ric` /
-/// `mm` / `Q`) を `length_payload` 経由で直接 exercise する — 他 call site
+/// `mm` / `Q`) を `Length::payload` 経由で直接 exercise する — 他 call site
 /// (font-size / width / height / margin / border-width / line-height) の
-/// テストは Ex / Ch / Cm / In / Pc しか通さないため、`length_payload` の
+/// テストは Ex / Ch / Cm / In / Pc しか通さないため、`Length::payload` の
 /// OR-pattern 全 arm の patch coverage には本 test が要る。
 #[test]
 fn padding_top_accepts_remaining_additional_units() {
@@ -12600,7 +12600,7 @@ fn box_shadow_blur_radius_zero_mantissa_huge_exponent_resolves_to_zero() {
     // `box_shadow_zero_mantissa_huge_exponent_offset_or_spread_resolves_to_zero`
     // above, for blur-radius (3rd slot) — `0e999px` resolves to
     // `Length::Px(0.0)` before `parse_box_shadow_lengths`'s
-    // `length_payload(value) >= 0.0` check ever runs, so it is accepted
+    // `value.payload() >= 0.0` check ever runs, so it is accepted
     // normally rather than incidentally rejected.
     assert_eq!(
         parse("1px 1px 0e999px", "box-shadow"),
@@ -13582,7 +13582,7 @@ fn background_size_rejects_negative_length() {
 fn background_size_rejects_negative_percentage() {
     // Sibling of `background_size_rejects_negative_length` — the
     // `[0,∞]` bound applies to the whole `<length-percentage>`, not
-    // just its `<length>` alternative. `length_payload` extracts the
+    // just its `<length>` alternative. `Length::payload` extracts the
     // numeric payload uniformly across `Length` variants including
     // `Percent`, so `parse_background_size_axis`'s `>= 0.0` gate
     // covers this case identically.
@@ -15921,6 +15921,30 @@ fn clip_path_inset_round_and_polygon_fill_rule() {
         parse("path(evenodd, 'M0 0 L10 10 Z')", "clip-path"),
         Some(PropertyValue::ClipPath(ClipPath::BasicShape { .. }))
     ));
+}
+
+#[test]
+fn clip_path_inset_vertical_radius_and_polygon_round() {
+    for source in [
+        "inset(10px round 5px / 8px)",
+        "inset(10px round 5px 6px / 7px 8px 9px 10px)",
+        "polygon(round 4px, 0 0, 100% 0, 100% 100%)",
+        "polygon(evenodd, round 4px, 0 0, 100% 0, 100% 100%)",
+    ] {
+        assert!(
+            matches!(
+                parse(source, "clip-path"),
+                Some(PropertyValue::ClipPath(ClipPath::BasicShape { .. }))
+            ),
+            "{source}"
+        );
+    }
+    for source in [
+        "inset(10px round 5px / -8px)",
+        "polygon(round -4px, 0 0, 100% 0, 100% 100%)",
+    ] {
+        assert_eq!(parse(source, "clip-path"), None, "{source}");
+    }
 }
 
 #[test]
