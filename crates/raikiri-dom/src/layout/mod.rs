@@ -6026,6 +6026,181 @@ fn has_inline_adjacent(
     }
 }
 
+/// Whether a text run contains a script whose joining behavior must continue
+/// across inline box boundaries. The CSS Text boundary-shaping cases covered
+/// here exercise Arabic, N'Ko, and Mongolian; a zero-width joiner at an
+/// inline boundary lets Parley retain the same joining context when the DOM
+/// stores each styled text node in a separate layout.
+fn has_boundary_shaping_script(text: &str) -> bool {
+    text.chars().any(|ch| {
+        matches!(
+            ch as u32,
+            0x0600..=0x06ff
+                | 0x0750..=0x077f
+                | 0x07c0..=0x07ff
+                | 0x08a0..=0x08ff
+                | 0x1800..=0x18af
+                | 0xfb50..=0xfdff
+                | 0xfe70..=0xfeff
+        )
+    })
+}
+
+/// Add the zero-width joiners needed to preserve joining-script context at
+/// inline box boundaries while each DOM text node is shaped independently.
+fn add_boundary_shaping_joiners(mut text: String, before: bool, after: bool) -> String {
+    // An authored ZWNJ is an explicit shaping barrier. Do not add a ZWJ
+    // around the same run and accidentally undo the author's request.
+    if text.contains('\u{200c}') || !has_boundary_shaping_script(&text) {
+        return text;
+    }
+    if before {
+        text.insert(0, '\u{200d}');
+    }
+    if after {
+        text.push('\u{200d}');
+    }
+    text
+}
+
+/// Whether an element creates a bidi isolation boundary for shaping.
+///
+/// The current style bridge does not expose `unicode-bidi` in computed values,
+/// so cover the HTML isolation forms used by the WPT boundary-shaping tests:
+/// `<bdi>` and an inline element with `dir="auto"`.
+fn is_shaping_isolation_boundary(doc: &Document, node_id: usize) -> bool {
+    doc.nodes[node_id].tag_name() == Some("bdi")
+        || doc.nodes[node_id]
+            .attribute("dir")
+            .is_some_and(|value| value.eq_ignore_ascii_case("auto"))
+}
+
+/// Whether a boundary box prevents joining across its inline content.
+///
+/// Nonzero physical inline-edge margins, padding, and borders are shaping
+/// boundaries; outline and text decoration are not. The current style bridge
+/// normalizes writing mode to horizontal-tb, so the inline edges are left and
+/// right. Atomic inline-level boxes also cannot share a shaping context with
+/// their siblings.
+fn boundary_shaping_box_breaks(cascade: &CascadeResult, node_id: usize) -> bool {
+    let cv = &cascade.computed[node_id];
+    if !matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents) {
+        return true;
+    }
+    let nonzero_length_percentage = |value: ComputedLengthPercentage| match value {
+        ComputedLengthPercentage::Px(px) | ComputedLengthPercentage::Percent(px) => {
+            px.abs() > f32::EPSILON
+        }
+    };
+    let nonzero_length_percentage_or_auto = |value: ComputedLengthPercentageOrAuto| match value {
+        ComputedLengthPercentageOrAuto::Px(px) | ComputedLengthPercentageOrAuto::Percent(px) => {
+            px.abs() > f32::EPSILON
+        }
+        ComputedLengthPercentageOrAuto::Calc(_) => true,
+        ComputedLengthPercentageOrAuto::Auto => false,
+    };
+    [cv.margin.left, cv.margin.right]
+        .into_iter()
+        .any(nonzero_length_percentage_or_auto)
+        || [cv.padding.left, cv.padding.right]
+            .into_iter()
+            .any(nonzero_length_percentage)
+        || [cv.border.left.width().px(), cv.border.right.width().px()]
+            .into_iter()
+            .any(|width| width.abs() > f32::EPSILON)
+}
+
+/// Whether a joining-script shaping context may cross the selected inline
+/// boundary. This mirrors [`has_inline_adjacent`] but rejects box-model
+/// boundaries that CSS Text requires to break shaping.
+fn boundary_shaping_adjacent(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    idx: usize,
+    dir: i8,
+) -> bool {
+    let mut node = idx;
+    loop {
+        let p = match parent_of[node] {
+            Some(p) => p,
+            None => return false,
+        };
+        let kids = &doc.nodes[p].children;
+        let pos = match kids.iter().position(|&c| c == node) {
+            Some(pos) => pos,
+            None => return false,
+        };
+        if let Some(sib) = significant_sibling(doc, cascade, p, pos, dir) {
+            if !is_inline_for_trim(doc, cascade, sib) || is_shaping_isolation_boundary(doc, sib) {
+                return false;
+            }
+            if boundary_edge_contains_char(doc, sib, dir, '\u{200c}')
+                || (!boundary_edge_contains_boundary_script(doc, sib, dir)
+                    && !boundary_edge_contains_char(doc, sib, dir, '\u{200d}'))
+            {
+                return false;
+            }
+            return !boundary_shaping_box_breaks(cascade, sib);
+        }
+        if doc.nodes[p].kind() == NodeKind::Element && is_inline_element_box(cascade, p) {
+            if is_shaping_isolation_boundary(doc, p) || boundary_shaping_box_breaks(cascade, p) {
+                return false;
+            }
+            node = p;
+            continue;
+        }
+        return false;
+    }
+}
+
+/// Whether the first non-whitespace text descendant at a boundary contains
+/// the requested character. Traversing only the edge avoids joining across an
+/// inline subtree whose boundary starts with unrelated text.
+fn boundary_edge_contains_char(doc: &Document, root: usize, dir: i8, needle: char) -> bool {
+    boundary_edge_text_matches(doc, root, dir, |text| text.contains(needle))
+}
+
+/// Whether the first non-whitespace text descendant at a boundary belongs to
+/// a joining script that can share the selected shaping context.
+fn boundary_edge_contains_boundary_script(doc: &Document, root: usize, dir: i8) -> bool {
+    boundary_edge_text_matches(doc, root, dir, has_boundary_shaping_script)
+}
+
+fn boundary_edge_text_matches<F>(doc: &Document, root: usize, dir: i8, matcher: F) -> bool
+where
+    F: Fn(&str) -> bool + Copy,
+{
+    fn visit<F>(doc: &Document, idx: usize, dir: i8, matcher: F) -> Option<bool>
+    where
+        F: Fn(&str) -> bool + Copy,
+    {
+        if let NodeData::Text(text) = &doc.nodes[idx].data {
+            if text.text_content.chars().all(is_css_white_space) {
+                return None;
+            }
+            return Some(matcher(&text.text_content));
+        }
+        let children = &doc.nodes[idx].children;
+        if dir < 0 {
+            for &child in children.iter().rev() {
+                if let Some(result) = visit(doc, child, dir, matcher) {
+                    return Some(result);
+                }
+            }
+        } else {
+            for &child in children {
+                if let Some(result) = visit(doc, child, dir, matcher) {
+                    return Some(result);
+                }
+            }
+        }
+        None
+    }
+
+    visit(doc, root, dir, matcher).unwrap_or(false)
+}
+
 /// Raw text content of a text node.
 fn text_of(doc: &Document, idx: usize) -> Option<&str> {
     match &doc.nodes[idx].data {
@@ -8205,6 +8380,15 @@ fn preshape_text(
             continue;
         }
         text = transformed;
+        // Each DOM text node gets its own Parley layout today. Preserve the
+        // joining context that CSS Text requires across adjacent inline boxes
+        // by mirroring the WPT reference's zero-width joiners at the edges of
+        // joining-script runs. The joiner has no painted glyph or advance.
+        text = add_boundary_shaping_joiners(
+            text,
+            boundary_shaping_adjacent(doc, cascade, &parent_of, idx, -1),
+            boundary_shaping_adjacent(doc, cascade, &parent_of, idx, 1),
+        );
         // A soft hyphen is only an opportunity when hyphenation is enabled.
         // Removing it for `hyphens: none` also prevents the shaping and line
         // breaker from treating it as a discretionary break.
@@ -10845,6 +11029,174 @@ mod tests {
         let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
         let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
         assert_eq!(find_body(&doc), Some(body));
+    }
+
+    #[test]
+    fn boundary_shaping_joiners_cover_joining_scripts_without_touching_latin() {
+        assert_eq!(
+            add_boundary_shaping_joiners("ع".to_owned(), true, true),
+            "\u{200d}ع\u{200d}"
+        );
+        assert_eq!(
+            add_boundary_shaping_joiners("ߞ".to_owned(), true, false),
+            "\u{200d}ߞ"
+        );
+        assert_eq!(
+            add_boundary_shaping_joiners("ᠨ".to_owned(), false, true),
+            "ᠨ\u{200d}"
+        );
+        assert_eq!(
+            add_boundary_shaping_joiners("A".to_owned(), true, true),
+            "A"
+        );
+        assert_eq!(
+            add_boundary_shaping_joiners("ع\u{200c}".to_owned(), true, true),
+            "ع\u{200c}"
+        );
+    }
+
+    #[test]
+    fn boundary_shaping_adjacency_respects_inline_box_model_boundaries() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let block = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let left = doc.append_text(block, "ع");
+        let spaced = doc.append_element(
+            Some(block),
+            "span",
+            Style::default(),
+            Some("display:inline;margin:1px"),
+        );
+        let inner = doc.append_text(spaced, "ع");
+        let right = doc.append_text(block, "ع");
+        let plain_block =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let plain_left = doc.append_text(plain_block, "ع");
+        let plain_span = doc.append_element(
+            Some(plain_block),
+            "span",
+            Style::default(),
+            Some("display:inline"),
+        );
+        let plain_inner = doc.append_text(plain_span, "ع");
+        let zwnj_block =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let zwnj_left = doc.append_text(zwnj_block, "ع");
+        let zwnj_span = doc.append_element(
+            Some(zwnj_block),
+            "span",
+            Style::default(),
+            Some("display:inline"),
+        );
+        let _zwnj = doc.append_text(zwnj_span, "\u{200c}");
+        let zwnj_right = doc.append_text(zwnj_block, "ع");
+        let mixed_block =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let mixed_arabic = doc.append_text(mixed_block, "ع");
+        let mixed_latin_span = doc.append_element(
+            Some(mixed_block),
+            "span",
+            Style::default(),
+            Some("display:inline"),
+        );
+        let _mixed_latin = doc.append_text(mixed_latin_span, "A");
+        let bdi_block =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let bdi_left = doc.append_text(bdi_block, "ع");
+        let bdi = doc.append_element(Some(bdi_block), "bdi", Style::default(), None::<&str>);
+        let bdi_inner = doc.append_text(bdi, "ع");
+        let bdi_right = doc.append_text(bdi_block, "ع");
+        let auto_block =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let auto_left = doc.append_text(auto_block, "ع");
+        let auto_span = doc.append_element(
+            Some(auto_block),
+            "span",
+            Style::default(),
+            Some("display:inline"),
+        );
+        doc.set_element_attributes(auto_span, vec![("dir".into(), "auto".into())]);
+        let auto_inner = doc.append_text(auto_span, "ع");
+        let auto_right = doc.append_text(auto_block, "ع");
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let mut cr = cascade(&doc, &rules).expect("cascade Ok");
+        cr.computed[spaced].margin.top = ComputedLengthPercentageOrAuto::Px(0.0);
+        cr.computed[spaced].margin.bottom = ComputedLengthPercentageOrAuto::Px(0.0);
+        cr.computed[spaced].margin.left =
+            ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+                percent: 25.0,
+                px: 1.0,
+            });
+        cr.computed[spaced].margin.right = ComputedLengthPercentageOrAuto::Auto;
+        let mut parent_of = vec![None; doc.nodes.len()];
+        for idx in 0..doc.nodes.len() {
+            for &child in &doc.nodes[idx].children.clone() {
+                parent_of[child] = Some(idx);
+            }
+        }
+
+        assert!(!boundary_shaping_adjacent(&doc, &cr, &parent_of, left, 1));
+        assert!(!boundary_shaping_adjacent(&doc, &cr, &parent_of, inner, -1));
+        assert!(!boundary_shaping_adjacent(&doc, &cr, &parent_of, inner, 1));
+        assert!(!boundary_shaping_adjacent(&doc, &cr, &parent_of, right, -1));
+        assert!(boundary_shaping_adjacent(
+            &doc, &cr, &parent_of, plain_left, 1
+        ));
+        assert!(boundary_shaping_adjacent(
+            &doc,
+            &cr,
+            &parent_of,
+            plain_inner,
+            -1
+        ));
+        assert!(!boundary_shaping_adjacent(
+            &doc, &cr, &parent_of, zwnj_left, 1
+        ));
+        assert!(!boundary_shaping_adjacent(
+            &doc, &cr, &parent_of, zwnj_right, -1
+        ));
+        assert!(!boundary_shaping_adjacent(&doc, &cr, &parent_of, 0, 1));
+        assert!(!boundary_shaping_adjacent(
+            &doc,
+            &cr,
+            &parent_of,
+            mixed_arabic,
+            1
+        ));
+        assert!(is_shaping_isolation_boundary(&doc, bdi));
+        assert!(is_shaping_isolation_boundary(&doc, auto_span));
+        assert!(!is_shaping_isolation_boundary(&doc, plain_span));
+        assert!(!boundary_shaping_adjacent(
+            &doc, &cr, &parent_of, bdi_left, 1
+        ));
+        assert!(!boundary_shaping_adjacent(
+            &doc, &cr, &parent_of, bdi_inner, -1
+        ));
+        assert!(!boundary_shaping_adjacent(
+            &doc, &cr, &parent_of, bdi_right, -1
+        ));
+        assert!(!boundary_shaping_adjacent(
+            &doc, &cr, &parent_of, auto_left, 1
+        ));
+        assert!(!boundary_shaping_adjacent(
+            &doc, &cr, &parent_of, auto_inner, -1
+        ));
+        assert!(!boundary_shaping_adjacent(
+            &doc, &cr, &parent_of, auto_right, -1
+        ));
+        let mut broken_parent_of = parent_of.clone();
+        broken_parent_of[plain_left] = Some(body);
+        assert!(!boundary_shaping_adjacent(
+            &doc,
+            &cr,
+            &broken_parent_of,
+            plain_left,
+            1
+        ));
     }
 
     #[test]

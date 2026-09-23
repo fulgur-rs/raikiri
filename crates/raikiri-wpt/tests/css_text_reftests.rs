@@ -212,9 +212,22 @@ fn shaping_unpinned_exact_passes() {
     // PASS-only subset; the Fulgur-PASS/Raikiri-FAIL remainder is tracked in
     // raikiri-spike-0vv.32.8 rather than being allowed to fail this suite.
     let candidates = [
+        "css/css-text/shaping/shaping-001.html",
+        "css/css-text/shaping/shaping-002.html",
+        "css/css-text/shaping/shaping-003.html",
         "css/css-text/shaping/shaping-009.html",
         "css/css-text/shaping/shaping-010.html",
         "css/css-text/shaping/shaping-011.html",
+        "css/css-text/shaping/shaping-014.html",
+        "css/css-text/shaping/shaping-016.html",
+        "css/css-text/shaping/shaping-017.html",
+        "css/css-text/shaping/shaping-018.html",
+        "css/css-text/shaping/shaping-020.html",
+        "css/css-text/shaping/shaping-021.html",
+        "css/css-text/shaping/shaping-022.html",
+        "css/css-text/shaping/shaping-023.html",
+        "css/css-text/shaping/shaping-024.html",
+        "css/css-text/shaping/shaping-025.html",
         "css/css-text/shaping/shaping-arabic-diacritics-001.html",
     ];
     assert_exact_passes(&root, &candidates);
@@ -255,13 +268,13 @@ fn text_encoding_unpinned_diagnostics() {
     let candidates = [
         ("css/css-text/text-encoding/shaping-join-001.html", 0),
         ("css/css-text/text-encoding/shaping-join-002.html", 0),
-        ("css/css-text/text-encoding/shaping-join-003.html", 3545),
+        ("css/css-text/text-encoding/shaping-join-003.html", 936),
         ("css/css-text/text-encoding/shaping-no-join-001.html", 0),
         ("css/css-text/text-encoding/shaping-no-join-002.html", 0),
         ("css/css-text/text-encoding/shaping-no-join-003.html", 1784),
         ("css/css-text/text-encoding/shaping-tatweel-001.html", 0),
         ("css/css-text/text-encoding/shaping-tatweel-002.html", 3899),
-        ("css/css-text/text-encoding/shaping-tatweel-003.html", 2283),
+        ("css/css-text/text-encoding/shaping-tatweel-003.html", 0),
     ];
     let mut config = ReftestConfig::default();
     config.width = 800;

@@ -1283,8 +1283,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Text letter-spacing ligatures slice (+1).
         // + CSS Text writing-system font slice (+1).
         // + CSS Text text-group-align/text-spacing-trim/hanging-punctuation slice (+28).
-        // + CSS Text shaping slice (+18).
-        // + CSS Text text-autospace slice (+4).
+        // + CSS Text shaping slice (+17).
+        // + CSS Text text-autospace PASS-only slice (+2).
         // + CSS Images gradients and CSS Page image-resource slices (+6).
         // + CSS Page :left/:right spread-pseudo content-width slice (+1).
         // + CSS Page named-page column-flex propagation slice (+2).
@@ -1316,7 +1316,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Text negative word-spacing exact 800x600 review-approved pair (+1).
         // + CSS Inline anonymous inline/baseline PASS slice (+2).
         // + CSS Text Decoration percentage underline-offset exact slice (+1).
-        assert_eq!(set.baseline.entries.len(), 1282);
+        // - Drop CSS Text shaping/autospace pins that do not pass exactly (-5).
+        assert_eq!(set.baseline.entries.len(), 1277);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }

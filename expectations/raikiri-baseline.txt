@@ -831,10 +831,8 @@ css/css-text/text-align/text-align-match-parent-root-logical.html
 css/css-text/text-align/text-align-match-parent-root-ltr.html
 css/css-text/text-align/text-align-match-parent-root-rtl.html
 css/css-text/text-align/text-align-start-last-default.html
-css/css-text/text-encoding/shaping-join-003.html
 css/css-text/text-encoding/shaping-no-join-001.html
 css/css-text/text-encoding/shaping-no-join-002.html
-css/css-text/text-encoding/shaping-no-join-003.html
 css/css-text/text-encoding/shaping-tatweel-001.html
 css/css-text/text-encoding/shaping-tatweel-003.html
 css/css-text/text-indent/text-indent-abspos-hanging-001.html
@@ -1386,11 +1384,10 @@ css/css-text/hanging-punctuation/hanging-punctuation-last-ascii-quote.html
 css/css-text/hanging-punctuation/hanging-punctuation-last-whitespace.html
 css/css-text/hanging-punctuation/hanging-punctuation-last.html
 css/css-text/hanging-punctuation/hanging-punctuation-with-bidi.html
-# --- CSS Text shaping exact 800x600 PASS-only pins 2026-09-21 ---
+# --- CSS Text shaping exact 800x600 PASS-only pins 2026-09-23 ---
 css/css-text/shaping/shaping-001.html
 css/css-text/shaping/shaping-002.html
 css/css-text/shaping/shaping-003.html
-css/css-text/shaping/shaping-008.html
 css/css-text/shaping/shaping-009.html
 css/css-text/shaping/shaping-010.html
 css/css-text/shaping/shaping-011.html
@@ -1405,11 +1402,9 @@ css/css-text/shaping/shaping-023.html
 css/css-text/shaping/shaping-024.html
 css/css-text/shaping/shaping-025.html
 css/css-text/shaping/shaping-arabic-diacritics-001.html
-# --- CSS Text text-autospace exact 800x600 PASS-only pins 2026-09-21 ---
+# --- CSS Text text-autospace exact 800x600 PASS-only pins 2026-09-23 ---
 css/css-text/text-autospace/text-autospace-vertical-combine-001.html
 css/css-text/text-autospace/text-autospace-vertical-upright-001.html
-css/css-text/text-autospace/text-autospace-vs-001.html
-css/css-text/text-autospace/text-autospace-zh-001.html
 # --- css-text white-space/line-breaking resource exact slice (800x600) ---
 css/css-text/white-space/break-spaces-002.html
 css/css-text/white-space/break-spaces-004.html
