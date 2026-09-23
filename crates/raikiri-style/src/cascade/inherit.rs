@@ -797,6 +797,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::StringSet(_)
         | PropertyValue::Position(_)
         | PropertyValue::HangingPunctuation(_)
+        | PropertyValue::TextAutospace(_)
         | PropertyValue::Direction(_)
         | PropertyValue::TextIndent(_)
         | PropertyValue::PaddingTop(_)
@@ -1286,6 +1287,8 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         },
         PropertyValue::TextAlign(t) => target.text_align = t,
         PropertyValue::HangingPunctuation(v) => target.hanging_punctuation = v,
+        // CSS Text 4: inherited keyword/flag set, simple by-value assignment.
+        PropertyValue::TextAutospace(v) => target.text_autospace = v,
         PropertyValue::TextJustify(v) => target.text_justify = v,
         PropertyValue::TextAlignLast(v) => target.text_align_last = v,
         PropertyValue::TextIndent(v) => {

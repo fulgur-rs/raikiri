@@ -679,6 +679,56 @@ pub(super) fn parse_text_justify(input: &mut Parser<'_, '_>) -> Option<TextJusti
     }
 }
 
+/// `text-autospace: normal | <autospace> | auto` を parse する
+/// (CSS Text 4 §6.2.1 <https://drafts.csswg.org/css-text-4/#text-autospace-property>)。
+/// `<autospace>` is `no-autospace | [ ideograph-alpha || ideograph-numeric ||
+/// punctuation ] || [ insert | replace ]`.
+pub(super) fn parse_text_autospace(input: &mut Parser<'_, '_>) -> Option<TextAutospace> {
+    let first = input.expect_ident().ok()?.clone();
+    let first = first.to_ascii_lowercase();
+    match first.as_str() {
+        "normal" => return Some(TextAutospace::Normal),
+        "auto" => return Some(TextAutospace::Auto),
+        "no-autospace" => return Some(TextAutospace::NoAutospace),
+        _ => {}
+    }
+
+    let mut ideograph_alpha = false;
+    let mut ideograph_numeric = false;
+    let mut punctuation = false;
+    let mut mode = TextAutospaceMode::None;
+
+    let mut consume = |ident: &str| -> Option<()> {
+        match ident {
+            "ideograph-alpha" if !ideograph_alpha => ideograph_alpha = true,
+            "ideograph-numeric" if !ideograph_numeric => ideograph_numeric = true,
+            "punctuation" if !punctuation => punctuation = true,
+            "insert" if matches!(mode, TextAutospaceMode::None) => mode = TextAutospaceMode::Insert,
+            "replace" if matches!(mode, TextAutospaceMode::None) => {
+                mode = TextAutospaceMode::Replace
+            }
+            _ => return None,
+        }
+        Some(())
+    };
+    consume(first.as_str())?;
+
+    loop {
+        match input.next() {
+            Ok(Token::Ident(ident)) => consume(ident.to_ascii_lowercase().as_str())?,
+            Ok(_) => return None,
+            Err(_) => break,
+        }
+    }
+
+    Some(TextAutospace::Custom {
+        ideograph_alpha,
+        ideograph_numeric,
+        punctuation,
+        mode,
+    })
+}
+
 pub(super) fn parse_text_align_all(input: &mut Parser<'_, '_>) -> Option<TextAlignAll> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {

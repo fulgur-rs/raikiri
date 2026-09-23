@@ -247,6 +247,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "hanging-punctuation" => {
             parse_hanging_punctuation(input).map(PropertyValue::HangingPunctuation)
         }
+        // CSS Text 4 text-autospace. The computed value is an inherited
+        // keyword/flag set; layout support consumes the `normal` and
+        // `no-autospace` forms first, while the full grammar is preserved.
+        "text-autospace" => parse_text_autospace(input).map(PropertyValue::TextAutospace),
         // CSS Text 3 §8.1 text-indent — `<length-percentage>` component only
         // (`hanging`/`each-line` out of scope, `PropertyValue::TextIndent` doc).
         "text-indent" => parse_text_indent(input).map(PropertyValue::TextIndent),

@@ -2573,6 +2573,34 @@ mod tests {
     }
 
     #[test]
+    fn preformatted_ua_rule_disables_text_autospace() {
+        // CSS Text 4 Appendix C sets `text-spacing: none` on preformatted
+        // elements; minimal.css lands its `text-autospace` longhand.
+        use raikiri_style::Origin;
+        use raikiri_style::property::TextAutospace;
+
+        let html = b"<html><body><p>x</p><pre>x</pre><code>x</code><kbd>x</kbd>\
+                     <samp>x</samp><tt>x</tt><listing>x</listing><xmp>x</xmp>\
+                     </body></html>";
+        let opts = empty_options();
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+        let autospace = |tag: &str| {
+            let id = find_first_by_tag(&uncascaded.dom, tag)
+                .unwrap_or_else(|| panic!("<{tag}> should exist"))
+                .0 as usize;
+            cascade.computed[id].text_autospace
+        };
+
+        assert_eq!(autospace("p"), TextAutospace::Normal);
+        for tag in ["pre", "code", "kbd", "samp", "tt", "listing", "xmp"] {
+            assert_eq!(autospace(tag), TextAutospace::NoAutospace, "<{tag}>");
+        }
+    }
+
+    #[test]
     fn del_s_strike_and_abbr_acronym_ua_rules_survive_real_parse_and_cascade() {
         // HTML LS §phrasing-content-3's
         //   del, s, strike { text-decoration: line-through; }

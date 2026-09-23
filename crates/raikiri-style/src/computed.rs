@@ -23,9 +23,9 @@ use crate::property::{
     Isolation, LineBreak, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit,
     OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
     RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextAlignLast,
-    TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextJustify, TextTransform,
-    TextWrapMode, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak, WritingMode,
-    ZIndexValue, empty_content_list, empty_counter_entries, empty_filter_list,
+    TextAutospace, TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextJustify,
+    TextTransform, TextWrapMode, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak,
+    WritingMode, ZIndexValue, empty_content_list, empty_counter_entries, empty_filter_list,
     empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
@@ -484,6 +484,9 @@ pub struct ComputedValues {
     /// `hanging-punctuation`. **inherited**, initial `none` (CSS Text 3
     /// §8.2.1). The consumer currently uses the `first` subset.
     pub hanging_punctuation: HangingPunctuation,
+    /// `text-autospace` (CSS Text 4)。**inherited**、initial: `normal`。
+    /// The keyword/flag set is preserved for the inline text layout consumer.
+    pub text_autospace: TextAutospace,
     /// `text-justify` (CSS Text 3 §6.2)。**inherited**、initial: `auto`。
     /// keyword のため computed = specified (by-value copy、`Copy`)。
     /// `distribute` は legacy 値として受理し parley 側では `Justify` と
@@ -1667,6 +1670,8 @@ impl ComputedValues {
             text_align: TextAlign::Start,
             // CSS Text 3 §8.2.1: hanging-punctuation initial is `none`.
             hanging_punctuation: HangingPunctuation::None,
+            // CSS Text 4: text-autospace initial is `normal`.
+            text_autospace: TextAutospace::Normal,
             // CSS Text 3 §6.2: text-justify initial is `auto`.
             text_justify: TextJustify::Auto,
             // CSS Text 3 §6.1: text-align-last initial is `auto`.
@@ -2194,6 +2199,8 @@ mod tests {
             }],
             text_align: TextAlign::Center,
             hanging_punctuation: HangingPunctuation::First,
+            // CSS Text 4: explicit autospace value for inheritance coverage.
+            text_autospace: TextAutospace::NoAutospace,
             // non-initial 値 (上記 fixture doc の全 field 非 initial 方針)。
             text_justify: TextJustify::InterWord,
             text_align_last: TextAlignLast::Justify,
@@ -2530,6 +2537,8 @@ mod tests {
         assert_eq!(child.text_align, parent.text_align);
         // CSS Text 3 §8.2.1: hanging-punctuation は inherited。
         assert_eq!(child.hanging_punctuation, parent.hanging_punctuation);
+        // CSS Text 4: text-autospace is inherited.
+        assert_eq!(child.text_autospace, parent.text_autospace);
         // CSS Writing Modes 4 §2.1: direction は inherited。
         assert_eq!(child.direction, parent.direction);
         // CSS Writing Modes 4 §3.2: writing-mode は inherited だが、

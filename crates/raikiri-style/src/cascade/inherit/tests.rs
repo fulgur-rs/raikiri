@@ -1469,6 +1469,18 @@ fn text_justify_inherits_from_parent_element() {
 }
 
 #[test]
+fn text_autospace_wired_through_cascade_and_inheritance() {
+    use crate::property::TextAutospace;
+    let mut doc = TestDoc::new();
+    let p = doc.push_element(0, "p", Some("text-autospace: no-autospace"));
+    let span = doc.push_element(p, "span", None);
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[p].text_autospace, TextAutospace::NoAutospace);
+    assert_eq!(r.computed[span].text_autospace, TextAutospace::NoAutospace);
+}
+
+#[test]
 fn text_align_last_wired_through_cascade_from_inline_style() {
     // <p style="text-align-last: justify"> → ComputedValues.text_align_last。
     use crate::property::TextAlignLast;
