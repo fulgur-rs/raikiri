@@ -15,6 +15,13 @@ use crate::resolve::{
     ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ResolveContext,
     used_line_height_length,
 };
+use crate::rule::{
+    expand_background, expand_border, expand_border_color, expand_border_style,
+    expand_border_width, expand_flex, expand_flex_flow, expand_font, expand_gap,
+    expand_grid_column, expand_grid_row, expand_margin, expand_margin_block, expand_margin_inline,
+    expand_outline, expand_overflow, expand_padding, expand_padding_block, expand_padding_inline,
+    expand_place_content, expand_place_items, expand_place_self, expand_text_decoration,
+};
 use crate::ruletree::Origin;
 use crate::specified::SpecifiedValues;
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
@@ -1225,7 +1232,8 @@ impl ResolvedAgainstInherited {
 /// 解決する。
 ///
 /// shorthand の arm は、[`crate::rule::expand_shorthand_into`] が cascade 前に
-/// longhand へ展開するため通常は到達しない。直接呼ばれても panic しないよう残してある。
+/// longhand へ展開するため通常は到達しない。直接呼ばれた場合は cascade と同じ
+/// `crate::rule` の per-family expander (例: [`crate::rule::expand_border`]) に委譲する。
 ///
 /// `pub(crate)` は他 module の doc からの intra-doc link のため。
 pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
@@ -1297,15 +1305,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::PaddingRight(v) => target.padding.right = v,
         PropertyValue::PaddingBottom(v) => target.padding.bottom = v,
         PropertyValue::PaddingLeft(v) => target.padding.left = v,
-        PropertyValue::Padding(sides) => target.padding = sides,
+        PropertyValue::Padding(sides) => expand_padding(sides, |v| apply_value(v, target)),
         PropertyValue::PaddingInline(pair) => {
-            target.padding.left = pair.start;
-            target.padding.right = pair.end;
+            expand_padding_inline(pair, |v| apply_value(v, target))
         }
-        PropertyValue::PaddingBlock(pair) => {
-            target.padding.top = pair.start;
-            target.padding.bottom = pair.end;
-        }
+        PropertyValue::PaddingBlock(pair) => expand_padding_block(pair, |v| apply_value(v, target)),
         // Page-cascade-only inherit markers; the element parser never produces them.
         PropertyValue::BorderRadiusInherit
         | PropertyValue::MarginTopInherit
@@ -1317,15 +1321,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::MarginRight(v) => target.margin.right = v,
         PropertyValue::MarginBottom(v) => target.margin.bottom = v,
         PropertyValue::MarginLeft(v) => target.margin.left = v,
-        PropertyValue::Margin(sides) => target.margin = sides,
-        PropertyValue::MarginInline(pair) => {
-            target.margin.left = pair.start;
-            target.margin.right = pair.end;
-        }
-        PropertyValue::MarginBlock(pair) => {
-            target.margin.top = pair.start;
-            target.margin.bottom = pair.end;
-        }
+        PropertyValue::Margin(sides) => expand_margin(sides, |v| apply_value(v, target)),
+        PropertyValue::MarginInline(pair) => expand_margin_inline(pair, |v| apply_value(v, target)),
+        PropertyValue::MarginBlock(pair) => expand_margin_block(pair, |v| apply_value(v, target)),
         PropertyValue::BorderTopWidth(v) => target.border.top.width = v,
         PropertyValue::BorderRightWidth(v) => target.border.right.width = v,
         PropertyValue::BorderBottomWidth(v) => target.border.bottom.width = v,
@@ -1338,7 +1336,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BorderRightColor(v) => target.border.right.color = v,
         PropertyValue::BorderBottomColor(v) => target.border.bottom.color = v,
         PropertyValue::BorderLeftColor(v) => target.border.left.color = v,
-        PropertyValue::Border(sides) => target.border = sides,
+        PropertyValue::Border(sides) => expand_border(sides, |v| apply_value(v, target)),
         PropertyValue::CalcLengthPercentage { key, value } => match key {
             crate::property::PropertyKey::Width => target.width = LengthOrAuto::Calc(value),
             crate::property::PropertyKey::Height => target.height = LengthOrAuto::Calc(value),
@@ -1373,16 +1371,14 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BoxSizing(bs) => target.box_sizing = bs,
         PropertyValue::OverflowX(v) => target.overflow.x = v,
         PropertyValue::OverflowY(v) => target.overflow.y = v,
-        PropertyValue::Overflow(pair) => target.overflow = pair,
+        PropertyValue::Overflow(pair) => expand_overflow(pair, |v| apply_value(v, target)),
         PropertyValue::TextDecorationLine(v) => target.text_decoration_line = v,
         PropertyValue::TextDecorationStyle(v) => target.text_decoration_style = v,
         PropertyValue::TextDecorationColor(v) => target.text_decoration_color = v,
         PropertyValue::TextDecorationInset(v) => target.text_decoration_inset = v,
         PropertyValue::TextUnderlineOffset(v) => target.text_underline_offset = v,
         PropertyValue::TextDecoration(shorthand) => {
-            target.text_decoration_line = shorthand.line;
-            target.text_decoration_style = shorthand.style;
-            target.text_decoration_color = shorthand.color;
+            expand_text_decoration(shorthand, |v| apply_value(v, target))
         }
         PropertyValue::VerticalAlign(va) => target.vertical_align = va,
         PropertyValue::FontStyle(fs) => target.font_style = fs,
@@ -1420,19 +1416,8 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::FlexGrow(g) => target.flex_grow = g,
         PropertyValue::FlexShrink(s) => target.flex_shrink = s,
         PropertyValue::FlexBasis(fb) => target.flex_basis = fb,
-        // cov:ignore: exercised by apply_value_direct_flex_shorthand_fall_through
-        // (a passing test in this same file) but cargo-llvm-cov does not
-        // attribute hits to this arm's lines within apply_value's large
-        // match statement.
-        PropertyValue::Flex(f) => {
-            target.flex_grow = f.grow;
-            target.flex_shrink = f.shrink;
-            target.flex_basis = f.basis;
-        }
-        PropertyValue::FlexFlow(f) => {
-            target.flex_direction = f.direction;
-            target.flex_wrap = f.wrap;
-        }
+        PropertyValue::Flex(f) => expand_flex(f, |v| apply_value(v, target)),
+        PropertyValue::FlexFlow(f) => expand_flex_flow(f, |v| apply_value(v, target)),
         PropertyValue::Order(o) => target.order = o,
         PropertyValue::JustifyContent(jc) => target.justify_content = jc,
         PropertyValue::AlignContent(ac) => target.align_content = ac,
@@ -1440,14 +1425,8 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::AlignSelf(as_) => target.align_self = as_,
         PropertyValue::RowGap(rg) => target.row_gap = rg,
         PropertyValue::ColumnGap(cg) => target.column_gap = cg,
-        PropertyValue::Gap(g) => {
-            target.row_gap = g.row;
-            target.column_gap = g.column;
-        }
-        PropertyValue::PlaceContent(p) => {
-            target.align_content = p.align;
-            target.justify_content = p.justify;
-        }
+        PropertyValue::Gap(g) => expand_gap(g, |v| apply_value(v, target)),
+        PropertyValue::PlaceContent(p) => expand_place_content(p, |v| apply_value(v, target)),
         PropertyValue::FontVariantCaps(fvc) => target.font_variant_caps = fvc,
         PropertyValue::Quotes(v) => {
             target.quotes_auto = false;
@@ -1460,7 +1439,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BorderRadiusBottomRight(v) => target.border_radius.bottom_right = v,
         PropertyValue::BorderRadiusBottomLeft(v) => target.border_radius.bottom_left = v,
         PropertyValue::BoxShadow(shadows) => target.box_shadow = shadows,
-        PropertyValue::Outline(v) => target.outline = v,
+        PropertyValue::Outline(outline) => expand_outline(outline, |v| apply_value(v, target)),
         PropertyValue::OutlineWidth(v) => target.outline.width = v,
         PropertyValue::OutlineStyle(v) => target.outline.style = v,
         PropertyValue::OutlineColor(v) => target.outline.color = v,
@@ -1494,23 +1473,15 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::GridColumnStart(v) => target.grid_column_start = v,
         PropertyValue::GridColumnEnd(v) => target.grid_column_end = v,
         PropertyValue::GridRow(shorthand) => {
-            target.grid_row_start = shorthand.start;
-            target.grid_row_end = shorthand.end;
+            expand_grid_row(&shorthand, |v| apply_value(v, target))
         }
         PropertyValue::GridColumn(shorthand) => {
-            target.grid_column_start = shorthand.start;
-            target.grid_column_end = shorthand.end;
+            expand_grid_column(&shorthand, |v| apply_value(v, target))
         }
         PropertyValue::JustifyItems(v) => target.justify_items = v,
         PropertyValue::JustifySelf(v) => target.justify_self = v,
-        PropertyValue::PlaceItems(p) => {
-            target.align_items = p.align;
-            target.justify_items = p.justify;
-        }
-        PropertyValue::PlaceSelf(p) => {
-            target.align_self = p.align;
-            target.justify_self = p.justify;
-        }
+        PropertyValue::PlaceItems(p) => expand_place_items(p, |v| apply_value(v, target)),
+        PropertyValue::PlaceSelf(p) => expand_place_self(p, |v| apply_value(v, target)),
         PropertyValue::Orphans(n) => target.orphans = n,
         PropertyValue::Widows(n) => target.widows = n,
         PropertyValue::WritingMode(v) => target.writing_mode = v,
@@ -1523,48 +1494,12 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BackgroundPosition(v) => target.background_position = v,
         PropertyValue::BackgroundImage(v) => target.background_image = v,
         PropertyValue::Background(shorthand) => {
-            target.background_color = shorthand.color;
-            target.background_image = shorthand.image;
-            target.background_repeat = shorthand.repeat;
-            target.background_attachment = shorthand.attachment;
-            target.background_position = shorthand.position;
-            target.background_size = shorthand.size;
-            target.background_clip = shorthand.clip;
-            target.background_origin = shorthand.origin;
+            expand_background(&shorthand, |v| apply_value(v, target))
         }
-        PropertyValue::BorderStyle(sides) => {
-            apply_value(PropertyValue::BorderTopStyle(sides.top), target);
-            apply_value(PropertyValue::BorderRightStyle(sides.right), target);
-            apply_value(PropertyValue::BorderBottomStyle(sides.bottom), target);
-            apply_value(PropertyValue::BorderLeftStyle(sides.left), target);
-        }
-        PropertyValue::BorderWidth(sides) => {
-            apply_value(PropertyValue::BorderTopWidth(sides.top), target);
-            apply_value(PropertyValue::BorderRightWidth(sides.right), target);
-            apply_value(PropertyValue::BorderBottomWidth(sides.bottom), target);
-            apply_value(PropertyValue::BorderLeftWidth(sides.left), target);
-        }
-        PropertyValue::BorderColor(sides) => {
-            apply_value(PropertyValue::BorderTopColor(sides.top), target);
-            apply_value(PropertyValue::BorderRightColor(sides.right), target);
-            apply_value(PropertyValue::BorderBottomColor(sides.bottom), target);
-            apply_value(PropertyValue::BorderLeftColor(sides.left), target);
-        }
-        PropertyValue::Font(shorthand) => {
-            apply_value(PropertyValue::FontStyle(shorthand.style), target);
-            apply_value(PropertyValue::FontVariantCaps(shorthand.variant), target);
-            apply_value(PropertyValue::FontWeight(shorthand.weight), target);
-            match shorthand.size {
-                crate::property::FontShorthandSize::Absolute(length) => {
-                    apply_value(PropertyValue::FontSize(length), target);
-                }
-                crate::property::FontShorthandSize::Relative(relative) => {
-                    apply_value(PropertyValue::FontSizeRelative(relative), target);
-                }
-            }
-            apply_value(PropertyValue::LineHeight(shorthand.line_height), target);
-            apply_value(PropertyValue::FontFamily(shorthand.family), target);
-        }
+        PropertyValue::BorderStyle(sides) => expand_border_style(sides, |v| apply_value(v, target)),
+        PropertyValue::BorderWidth(sides) => expand_border_width(sides, |v| apply_value(v, target)),
+        PropertyValue::BorderColor(sides) => expand_border_color(sides, |v| apply_value(v, target)),
+        PropertyValue::Font(shorthand) => expand_font(&shorthand, |v| apply_value(v, target)),
         PropertyValue::ObjectFit(v) => target.object_fit = v,
         PropertyValue::ObjectPosition(v) => target.object_position = v,
         PropertyValue::Opacity(v) => target.opacity = v,

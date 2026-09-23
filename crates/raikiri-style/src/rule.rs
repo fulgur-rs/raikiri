@@ -198,28 +198,34 @@ pub(crate) fn parse_declaration_block_with_consumer_properties(
 /// requires an explicit decision about its expansion here.
 #[inline]
 pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declaration)) {
+    let push_longhand = |value| {
+        push(Declaration {
+            value,
+            important: d.important,
+        })
+    };
     match d.value {
-        PropertyValue::Margin(sides) => expand_margin(sides, d.important, push),
-        PropertyValue::MarginInherit => expand_margin_inherit(d.important, push),
-        PropertyValue::Padding(sides) => expand_padding(sides, d.important, push),
-        PropertyValue::MarginInline(pair) => expand_margin_inline(pair, d.important, push),
-        PropertyValue::MarginBlock(pair) => expand_margin_block(pair, d.important, push),
-        PropertyValue::PaddingInline(pair) => expand_padding_inline(pair, d.important, push),
-        PropertyValue::PaddingBlock(pair) => expand_padding_block(pair, d.important, push),
-        PropertyValue::Border(sides) => expand_border(sides, d.important, push),
-        PropertyValue::BorderStyle(sides) => expand_border_style(sides, d.important, push),
-        PropertyValue::BorderWidth(sides) => expand_border_width(sides, d.important, push),
-        PropertyValue::BorderColor(sides) => expand_border_color(sides, d.important, push),
-        PropertyValue::Overflow(pair) => expand_overflow(pair, d.important, push),
+        PropertyValue::Margin(sides) => expand_margin(sides, push_longhand),
+        PropertyValue::MarginInherit => expand_margin_inherit(push_longhand),
+        PropertyValue::Padding(sides) => expand_padding(sides, push_longhand),
+        PropertyValue::MarginInline(pair) => expand_margin_inline(pair, push_longhand),
+        PropertyValue::MarginBlock(pair) => expand_margin_block(pair, push_longhand),
+        PropertyValue::PaddingInline(pair) => expand_padding_inline(pair, push_longhand),
+        PropertyValue::PaddingBlock(pair) => expand_padding_block(pair, push_longhand),
+        PropertyValue::Border(sides) => expand_border(sides, push_longhand),
+        PropertyValue::BorderStyle(sides) => expand_border_style(sides, push_longhand),
+        PropertyValue::BorderWidth(sides) => expand_border_width(sides, push_longhand),
+        PropertyValue::BorderColor(sides) => expand_border_color(sides, push_longhand),
+        PropertyValue::Overflow(pair) => expand_overflow(pair, push_longhand),
         PropertyValue::TextDecoration(shorthand) => {
-            expand_text_decoration(shorthand, d.important, push)
+            expand_text_decoration(shorthand, push_longhand)
         }
-        PropertyValue::Outline(outline) => expand_outline(outline, d.important, push),
+        PropertyValue::Outline(outline) => expand_outline(outline, push_longhand),
         // `FontShorthand` は `family: Arc<Vec<Atom>>` を持ち `Copy` ではない —
         // 他の shorthand payload (`Sides<..>` / `FlexShorthand` 等、全て Copy)
         // と異なり値を move できないため、`ref` binding で参照のまま渡す
         // (`Background` arm と同じ理由、`GridRow` arm の comment 参照)。
-        PropertyValue::Font(ref shorthand) => expand_font(shorthand, d.important, push),
+        PropertyValue::Font(ref shorthand) => expand_font(shorthand, push_longhand),
         PropertyValue::Deferred(ref deferred) => {
             expand_deferred(d, deferred, d.important, push)
         }
@@ -429,30 +435,26 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
                 important: d.important,
             });
         }
-        PropertyValue::Flex(f) => expand_flex(f, d.important, push),
-        PropertyValue::FlexFlow(f) => expand_flex_flow(f, d.important, push),
-        PropertyValue::Gap(g) => expand_gap(g, d.important, push),
-        PropertyValue::PlaceContent(p) => expand_place_content(p, d.important, push),
+        PropertyValue::Flex(f) => expand_flex(f, push_longhand),
+        PropertyValue::FlexFlow(f) => expand_flex_flow(f, push_longhand),
+        PropertyValue::Gap(g) => expand_gap(g, push_longhand),
+        PropertyValue::PlaceContent(p) => expand_place_content(p, push_longhand),
         // `GridLineShorthand` は `SmolStr` を持ち Copy ではない — 他の
         // shorthand payload (`Sides<..>` / `FlexShorthand` / `GapShorthand`
         // 等、全て Copy) と異なり値を `d.value` (`&Declaration` 経由の
         // place) から move できないため、`ref` binding で参照のまま
         // `expand_grid_row` / `expand_grid_column` に渡す
         // (`expand_grid_row` doc 参照)。
-        PropertyValue::GridRow(ref shorthand) => expand_grid_row(shorthand, d.important, push),
-        PropertyValue::GridColumn(ref shorthand) => {
-            expand_grid_column(shorthand, d.important, push)
-        }
-        PropertyValue::PlaceItems(p) => expand_place_items(p, d.important, push),
-        PropertyValue::PlaceSelf(p) => expand_place_self(p, d.important, push),
+        PropertyValue::GridRow(ref shorthand) => expand_grid_row(shorthand, push_longhand),
+        PropertyValue::GridColumn(ref shorthand) => expand_grid_column(shorthand, push_longhand),
+        PropertyValue::PlaceItems(p) => expand_place_items(p, push_longhand),
+        PropertyValue::PlaceSelf(p) => expand_place_self(p, push_longhand),
         // `BackgroundShorthand` holds a `BackgroundImage` field, which is not
         // `Copy` (it can carry a `Gradient`) — same reason `GridLineShorthand`
         // needs `ref` binding here (`GridRow` arm's comment above), not the
         // `Sides<..>`/`FlexShorthand`/`GapShorthand` by-value pattern the
         // other shorthand arms use.
-        PropertyValue::Background(ref shorthand) => {
-            expand_background(shorthand, d.important, push)
-        }
+        PropertyValue::Background(ref shorthand) => expand_background(shorthand, push_longhand),
     }
 }
 
@@ -592,65 +594,29 @@ fn expand_deferred(
 
 /// `margin` shorthand を 4 longhand に展開する cold helper。
 #[inline(never)]
-fn expand_margin(sides: Sides<LengthOrAuto>, important: bool, mut push: impl FnMut(Declaration)) {
-    push(Declaration {
-        value: PropertyValue::MarginTop(sides.top),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::MarginRight(sides.right),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::MarginBottom(sides.bottom),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::MarginLeft(sides.left),
-        important,
-    });
+pub(crate) fn expand_margin(sides: Sides<LengthOrAuto>, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::MarginTop(sides.top));
+    push(PropertyValue::MarginRight(sides.right));
+    push(PropertyValue::MarginBottom(sides.bottom));
+    push(PropertyValue::MarginLeft(sides.left));
 }
 
 /// Page-context `margin: inherit` shorthand marker expansion.
 #[inline(never)]
-fn expand_margin_inherit(important: bool, mut push: impl FnMut(Declaration)) {
-    push(Declaration {
-        value: PropertyValue::MarginTopInherit,
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::MarginRightInherit,
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::MarginBottomInherit,
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::MarginLeftInherit,
-        important,
-    });
+pub(crate) fn expand_margin_inherit(mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::MarginTopInherit);
+    push(PropertyValue::MarginRightInherit);
+    push(PropertyValue::MarginBottomInherit);
+    push(PropertyValue::MarginLeftInherit);
 }
 
 /// `padding` shorthand を 4 longhand に展開する cold helper。
 #[inline(never)]
-fn expand_padding(sides: Sides<Length>, important: bool, mut push: impl FnMut(Declaration)) {
-    push(Declaration {
-        value: PropertyValue::PaddingTop(sides.top),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::PaddingRight(sides.right),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::PaddingBottom(sides.bottom),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::PaddingLeft(sides.left),
-        important,
-    });
+pub(crate) fn expand_padding(sides: Sides<Length>, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::PaddingTop(sides.top));
+    push(PropertyValue::PaddingRight(sides.right));
+    push(PropertyValue::PaddingBottom(sides.bottom));
+    push(PropertyValue::PaddingLeft(sides.left));
 }
 
 /// `margin-inline` shorthand を `margin-left`/`margin-right` の 2 longhand に
@@ -660,19 +626,12 @@ fn expand_padding(sides: Sides<Length>, important: bool, mut push: impl FnMut(De
 /// 物理写像 (inline axis → left/right、`direction: ltr` 仮定の近似) の
 /// rationale は [`crate::property::PropertyValue::MarginInline`] doc 参照。
 #[inline(never)]
-fn expand_margin_inline(
+pub(crate) fn expand_margin_inline(
     pair: StartEnd<LengthOrAuto>,
-    important: bool,
-    mut push: impl FnMut(Declaration),
+    mut push: impl FnMut(PropertyValue),
 ) {
-    push(Declaration {
-        value: PropertyValue::MarginLeft(pair.start),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::MarginRight(pair.end),
-        important,
-    });
+    push(PropertyValue::MarginLeft(pair.start));
+    push(PropertyValue::MarginRight(pair.end));
 }
 
 /// `margin-block` shorthand を `margin-top`/`margin-bottom` の 2 longhand に
@@ -680,57 +639,30 @@ fn expand_margin_inline(
 /// (block axis は `direction` に依存しない厳密写像、
 /// [`crate::property::PropertyValue::PaddingInline`] doc の「非対称」節参照)。
 #[inline(never)]
-fn expand_margin_block(
+pub(crate) fn expand_margin_block(
     pair: StartEnd<LengthOrAuto>,
-    important: bool,
-    mut push: impl FnMut(Declaration),
+    mut push: impl FnMut(PropertyValue),
 ) {
-    push(Declaration {
-        value: PropertyValue::MarginTop(pair.start),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::MarginBottom(pair.end),
-        important,
-    });
+    push(PropertyValue::MarginTop(pair.start));
+    push(PropertyValue::MarginBottom(pair.end));
 }
 
 /// `padding-inline` shorthand を `padding-left`/`padding-right` の 2
 /// longhand に展開する cold helper — [`expand_margin_inline`] の padding
 /// sibling。
 #[inline(never)]
-fn expand_padding_inline(
-    pair: StartEnd<Length>,
-    important: bool,
-    mut push: impl FnMut(Declaration),
-) {
-    push(Declaration {
-        value: PropertyValue::PaddingLeft(pair.start),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::PaddingRight(pair.end),
-        important,
-    });
+pub(crate) fn expand_padding_inline(pair: StartEnd<Length>, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::PaddingLeft(pair.start));
+    push(PropertyValue::PaddingRight(pair.end));
 }
 
 /// `padding-block` shorthand を `padding-top`/`padding-bottom` の 2
 /// longhand に展開する cold helper — [`expand_margin_block`] の padding
 /// sibling。
 #[inline(never)]
-fn expand_padding_block(
-    pair: StartEnd<Length>,
-    important: bool,
-    mut push: impl FnMut(Declaration),
-) {
-    push(Declaration {
-        value: PropertyValue::PaddingTop(pair.start),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::PaddingBottom(pair.end),
-        important,
-    });
+pub(crate) fn expand_padding_block(pair: StartEnd<Length>, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::PaddingTop(pair.start));
+    push(PropertyValue::PaddingBottom(pair.end));
 }
 
 /// `border` shorthand (CSS Backgrounds 3 §3.4 "Border Shorthand Properties"
@@ -742,129 +674,49 @@ fn expand_padding_block(
 /// border-top-color: blue;` のような longhand override が per-side
 /// determinism で解決する。
 #[inline(never)]
-fn expand_border(sides: Sides<Border>, important: bool, mut push: impl FnMut(Declaration)) {
-    push(Declaration {
-        value: PropertyValue::BorderTopWidth(sides.top.width),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderTopStyle(sides.top.style),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderTopColor(sides.top.color),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderRightWidth(sides.right.width),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderRightStyle(sides.right.style),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderRightColor(sides.right.color),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderBottomWidth(sides.bottom.width),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderBottomStyle(sides.bottom.style),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderBottomColor(sides.bottom.color),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderLeftWidth(sides.left.width),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderLeftStyle(sides.left.style),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderLeftColor(sides.left.color),
-        important,
-    });
+pub(crate) fn expand_border(sides: Sides<Border>, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::BorderTopWidth(sides.top.width));
+    push(PropertyValue::BorderTopStyle(sides.top.style));
+    push(PropertyValue::BorderTopColor(sides.top.color));
+    push(PropertyValue::BorderRightWidth(sides.right.width));
+    push(PropertyValue::BorderRightStyle(sides.right.style));
+    push(PropertyValue::BorderRightColor(sides.right.color));
+    push(PropertyValue::BorderBottomWidth(sides.bottom.width));
+    push(PropertyValue::BorderBottomStyle(sides.bottom.style));
+    push(PropertyValue::BorderBottomColor(sides.bottom.color));
+    push(PropertyValue::BorderLeftWidth(sides.left.width));
+    push(PropertyValue::BorderLeftStyle(sides.left.style));
+    push(PropertyValue::BorderLeftColor(sides.left.color));
 }
 
 /// `border-style` shorthand を 4 longhand (`border-*-style`) に展開する
 /// cold helper。margin/padding/border shorthand precedent と同 pattern。
 #[inline(never)]
-fn expand_border_style(
-    sides: Sides<BorderStyle>,
-    important: bool,
-    mut push: impl FnMut(Declaration),
-) {
-    push(Declaration {
-        value: PropertyValue::BorderTopStyle(sides.top),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderRightStyle(sides.right),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderBottomStyle(sides.bottom),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderLeftStyle(sides.left),
-        important,
-    });
+pub(crate) fn expand_border_style(sides: Sides<BorderStyle>, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::BorderTopStyle(sides.top));
+    push(PropertyValue::BorderRightStyle(sides.right));
+    push(PropertyValue::BorderBottomStyle(sides.bottom));
+    push(PropertyValue::BorderLeftStyle(sides.left));
 }
 
 /// `border-width` shorthand を 4 longhand (`border-*-width`) に展開する
 /// cold helper。margin/padding/border shorthand precedent と同 pattern。
 #[inline(never)]
-fn expand_border_width(sides: Sides<Length>, important: bool, mut push: impl FnMut(Declaration)) {
-    push(Declaration {
-        value: PropertyValue::BorderTopWidth(sides.top),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderRightWidth(sides.right),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderBottomWidth(sides.bottom),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderLeftWidth(sides.left),
-        important,
-    });
+pub(crate) fn expand_border_width(sides: Sides<Length>, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::BorderTopWidth(sides.top));
+    push(PropertyValue::BorderRightWidth(sides.right));
+    push(PropertyValue::BorderBottomWidth(sides.bottom));
+    push(PropertyValue::BorderLeftWidth(sides.left));
 }
 
 /// `border-color` shorthand を 4 longhand (`border-*-color`) に展開する
 /// cold helper。margin/padding/border shorthand precedent と同 pattern。
 #[inline(never)]
-fn expand_border_color(
-    sides: Sides<BorderColor>,
-    important: bool,
-    mut push: impl FnMut(Declaration),
-) {
-    push(Declaration {
-        value: PropertyValue::BorderTopColor(sides.top),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderRightColor(sides.right),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderBottomColor(sides.bottom),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BorderLeftColor(sides.left),
-        important,
-    });
+pub(crate) fn expand_border_color(sides: Sides<BorderColor>, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::BorderTopColor(sides.top));
+    push(PropertyValue::BorderRightColor(sides.right));
+    push(PropertyValue::BorderBottomColor(sides.bottom));
+    push(PropertyValue::BorderLeftColor(sides.left));
 }
 
 /// `overflow` shorthand (CSS Overflow 3 §3.1
@@ -873,15 +725,9 @@ fn expand_border_color(
 /// margin / padding / border shorthand precedent と
 /// 同 pattern — 2-axis なので push は 2 回のみ。
 #[inline(never)]
-fn expand_overflow(pair: OverflowXY, important: bool, mut push: impl FnMut(Declaration)) {
-    push(Declaration {
-        value: PropertyValue::OverflowX(pair.x),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::OverflowY(pair.y),
-        important,
-    });
+pub(crate) fn expand_overflow(pair: OverflowXY, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::OverflowX(pair.x));
+    push(PropertyValue::OverflowY(pair.y));
 }
 
 /// `flex` shorthand を `flex-grow` / `flex-shrink` / `flex-basis` の 3
@@ -892,19 +738,10 @@ fn expand_overflow(pair: OverflowXY, important: bool, mut push: impl FnMut(Decla
 /// ([`FlexShorthand`] doc の "Omitted-component defaults" 節参照)、本関数は
 /// 3 field をそのまま 3 declaration に分配するだけでよい。
 #[inline(never)]
-fn expand_flex(f: FlexShorthand, important: bool, mut push: impl FnMut(Declaration)) {
-    push(Declaration {
-        value: PropertyValue::FlexGrow(f.grow),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::FlexShrink(f.shrink),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::FlexBasis(f.basis),
-        important,
-    });
+pub(crate) fn expand_flex(f: FlexShorthand, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::FlexGrow(f.grow));
+    push(PropertyValue::FlexShrink(f.shrink));
+    push(PropertyValue::FlexBasis(f.basis));
 }
 
 /// `flex-flow` shorthand を `flex-direction` / `flex-wrap` の 2 longhand に
@@ -912,15 +749,9 @@ fn expand_flex(f: FlexShorthand, important: bool, mut push: impl FnMut(Declarati
 /// (`parse_flex_flow`) が既に省略成分の initial (row / nowrap) を埋めて
 /// いるため、本関数は 2 field をそのまま 2 declaration に分配するだけでよい。
 #[inline(never)]
-fn expand_flex_flow(f: FlexFlow, important: bool, mut push: impl FnMut(Declaration)) {
-    push(Declaration {
-        value: PropertyValue::FlexDirection(f.direction),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::FlexWrap(f.wrap),
-        important,
-    });
+pub(crate) fn expand_flex_flow(f: FlexFlow, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::FlexDirection(f.direction));
+    push(PropertyValue::FlexWrap(f.wrap));
 }
 
 /// `gap` shorthand を `row-gap` / `column-gap` の 2 longhand に展開する cold
@@ -928,34 +759,18 @@ fn expand_flex_flow(f: FlexFlow, important: bool, mut push: impl FnMut(Declarati
 /// (`parse_gap_shorthand`) が既に適用済み — 本関数は 2 field をそのまま 2
 /// declaration に分配するだけでよい。
 #[inline(never)]
-fn expand_gap(g: GapShorthand, important: bool, mut push: impl FnMut(Declaration)) {
-    push(Declaration {
-        value: PropertyValue::RowGap(g.row),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::ColumnGap(g.column),
-        important,
-    });
+pub(crate) fn expand_gap(g: GapShorthand, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::RowGap(g.row));
+    push(PropertyValue::ColumnGap(g.column));
 }
 
 /// `place-content` shorthand を `align-content` / `justify-content` の 2
 /// longhand に展開する cold helper — [`expand_gap`] と同じ shape
 /// ([`PlaceContentShorthand`] doc 参照)。
 #[inline(never)]
-fn expand_place_content(
-    p: PlaceContentShorthand,
-    important: bool,
-    mut push: impl FnMut(Declaration),
-) {
-    push(Declaration {
-        value: PropertyValue::AlignContent(p.align),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::JustifyContent(p.justify),
-        important,
-    });
+pub(crate) fn expand_place_content(p: PlaceContentShorthand, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::AlignContent(p.align));
+    push(PropertyValue::JustifyContent(p.justify));
 }
 
 /// `grid-row` shorthand を `grid-row-start` / `grid-row-end` の 2 longhand
@@ -968,67 +783,38 @@ fn expand_place_content(
 /// expand helper (`expand_flex` 等) と異なり参照を受け取り `.clone()` する
 /// (`GridLineValue` が `SmolStr` を持ち Copy ではないため)。
 #[inline(never)]
-fn expand_grid_row(
-    shorthand: &GridLineShorthand,
-    important: bool,
-    mut push: impl FnMut(Declaration),
-) {
-    push(Declaration {
-        value: PropertyValue::GridRowStart(shorthand.start.clone()),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::GridRowEnd(shorthand.end.clone()),
-        important,
-    });
+pub(crate) fn expand_grid_row(shorthand: &GridLineShorthand, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::GridRowStart(shorthand.start.clone()));
+    push(PropertyValue::GridRowEnd(shorthand.end.clone()));
 }
 
 /// `grid-column` shorthand を `grid-column-start` / `grid-column-end` の 2
 /// longhand に展開する cold helper — [`expand_grid_row`] と同じ shape。
 #[inline(never)]
-fn expand_grid_column(
+pub(crate) fn expand_grid_column(
     shorthand: &GridLineShorthand,
-    important: bool,
-    mut push: impl FnMut(Declaration),
+    mut push: impl FnMut(PropertyValue),
 ) {
-    push(Declaration {
-        value: PropertyValue::GridColumnStart(shorthand.start.clone()),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::GridColumnEnd(shorthand.end.clone()),
-        important,
-    });
+    push(PropertyValue::GridColumnStart(shorthand.start.clone()));
+    push(PropertyValue::GridColumnEnd(shorthand.end.clone()));
 }
 
 /// `place-items` shorthand を `align-items` / `justify-items` の 2 longhand
 /// に展開する cold helper — [`expand_gap`] と同じ shape
 /// ([`PlaceItemsShorthand`] doc 参照)。
 #[inline(never)]
-fn expand_place_items(p: PlaceItemsShorthand, important: bool, mut push: impl FnMut(Declaration)) {
-    push(Declaration {
-        value: PropertyValue::AlignItems(p.align),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::JustifyItems(p.justify),
-        important,
-    });
+pub(crate) fn expand_place_items(p: PlaceItemsShorthand, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::AlignItems(p.align));
+    push(PropertyValue::JustifyItems(p.justify));
 }
 
 /// `place-self` shorthand を `align-self` / `justify-self` の 2 longhand に
 /// 展開する cold helper — [`expand_place_items`] と同じ shape
 /// ([`PlaceSelfShorthand`] doc 参照)。
 #[inline(never)]
-fn expand_place_self(p: PlaceSelfShorthand, important: bool, mut push: impl FnMut(Declaration)) {
-    push(Declaration {
-        value: PropertyValue::AlignSelf(p.align),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::JustifySelf(p.justify),
-        important,
-    });
+pub(crate) fn expand_place_self(p: PlaceSelfShorthand, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::AlignSelf(p.align));
+    push(PropertyValue::JustifySelf(p.justify));
 }
 
 /// `text-decoration` shorthand (CSS Text Decoration 4 ED §2.6
@@ -1046,44 +832,22 @@ fn expand_place_self(p: PlaceSelfShorthand, important: bool, mut push: impl FnMu
 /// margin/padding/border の各 side にも既に initial fill 済みの値が入って
 /// いるのと同じ形。
 #[inline(never)]
-fn expand_text_decoration(
+pub(crate) fn expand_text_decoration(
     shorthand: TextDecorationShorthand,
-    important: bool,
-    mut push: impl FnMut(Declaration),
+    mut push: impl FnMut(PropertyValue),
 ) {
-    push(Declaration {
-        value: PropertyValue::TextDecorationLine(shorthand.line),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::TextDecorationThickness(shorthand.thickness),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::TextDecorationStyle(shorthand.style),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::TextDecorationColor(shorthand.color),
-        important,
-    });
+    push(PropertyValue::TextDecorationLine(shorthand.line));
+    push(PropertyValue::TextDecorationThickness(shorthand.thickness));
+    push(PropertyValue::TextDecorationStyle(shorthand.style));
+    push(PropertyValue::TextDecorationColor(shorthand.color));
 }
 
 /// `outline` shorthand を width/style/color の longhand に展開する。
 #[inline(never)]
-fn expand_outline(outline: Outline, important: bool, mut push: impl FnMut(Declaration)) {
-    push(Declaration {
-        value: PropertyValue::OutlineWidth(outline.width),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::OutlineStyle(outline.style),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::OutlineColor(outline.color),
-        important,
-    });
+pub(crate) fn expand_outline(outline: Outline, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::OutlineWidth(outline.width));
+    push(PropertyValue::OutlineStyle(outline.style));
+    push(PropertyValue::OutlineColor(outline.color));
 }
 
 /// `font` shorthand を 6 longhand (style/variant-caps/weight/size/
@@ -1097,34 +861,16 @@ fn expand_outline(outline: Outline, important: bool, mut push: impl FnMut(Declar
 /// `size` の 2 通りは対応する [`PropertyValue`] variant にそのまま載せる
 /// (どちらも key は [`PropertyKey::FontSize`])。
 #[inline(never)]
-fn expand_font(shorthand: &FontShorthand, important: bool, mut push: impl FnMut(Declaration)) {
-    push(Declaration {
-        value: PropertyValue::FontStyle(shorthand.style),
-        important,
+pub(crate) fn expand_font(shorthand: &FontShorthand, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::FontStyle(shorthand.style));
+    push(PropertyValue::FontVariantCaps(shorthand.variant));
+    push(PropertyValue::FontWeight(shorthand.weight));
+    push(match shorthand.size {
+        FontShorthandSize::Absolute(length) => PropertyValue::FontSize(length),
+        FontShorthandSize::Relative(relative) => PropertyValue::FontSizeRelative(relative),
     });
-    push(Declaration {
-        value: PropertyValue::FontVariantCaps(shorthand.variant),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::FontWeight(shorthand.weight),
-        important,
-    });
-    push(Declaration {
-        value: match shorthand.size {
-            FontShorthandSize::Absolute(length) => PropertyValue::FontSize(length),
-            FontShorthandSize::Relative(relative) => PropertyValue::FontSizeRelative(relative),
-        },
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::LineHeight(shorthand.line_height),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::FontFamily(shorthand.family.clone()),
-        important,
-    });
+    push(PropertyValue::LineHeight(shorthand.line_height));
+    push(PropertyValue::FontFamily(shorthand.family.clone()));
 }
 
 /// `background` shorthand を 8 longhand (color/image/repeat/attachment/
@@ -1133,43 +879,18 @@ fn expand_font(shorthand: &FontShorthand, important: bool, mut push: impl FnMut(
 /// `.clone()` する — `expand_grid_row`/`expand_grid_column` が `GridLineValue`
 /// の `Named`/`NamedLine` 成分に対して行うのと同じ理由。
 #[inline(never)]
-fn expand_background(
+pub(crate) fn expand_background(
     shorthand: &BackgroundShorthand,
-    important: bool,
-    mut push: impl FnMut(Declaration),
+    mut push: impl FnMut(PropertyValue),
 ) {
-    push(Declaration {
-        value: PropertyValue::BackgroundColor(shorthand.color),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BackgroundImage(shorthand.image.clone()),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BackgroundRepeat(shorthand.repeat),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BackgroundAttachment(shorthand.attachment),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BackgroundPosition(shorthand.position),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BackgroundSize(shorthand.size),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BackgroundClip(shorthand.clip),
-        important,
-    });
-    push(Declaration {
-        value: PropertyValue::BackgroundOrigin(shorthand.origin),
-        important,
-    });
+    push(PropertyValue::BackgroundColor(shorthand.color));
+    push(PropertyValue::BackgroundImage(shorthand.image.clone()));
+    push(PropertyValue::BackgroundRepeat(shorthand.repeat));
+    push(PropertyValue::BackgroundAttachment(shorthand.attachment));
+    push(PropertyValue::BackgroundPosition(shorthand.position));
+    push(PropertyValue::BackgroundSize(shorthand.size));
+    push(PropertyValue::BackgroundClip(shorthand.clip));
+    push(PropertyValue::BackgroundOrigin(shorthand.origin));
 }
 
 fn parse_registered_consumer_value(
@@ -1938,6 +1659,43 @@ mod tests {
             decls[0].value,
             PropertyValue::BorderTopWidth(Length::Px(10.0))
         );
+    }
+
+    #[test]
+    fn border_side_family_shorthands_expand_into_four_longhands() {
+        use crate::property::PropertyKey as K;
+        let decls = parse_block(
+            "border-style: solid dashed; border-width: 1px 2px 3px 4px; \
+             border-color: red !important;",
+        );
+        let keys: Vec<_> = decls.iter().map(|d| d.value.key()).collect();
+        assert_eq!(
+            keys,
+            [
+                K::BorderTopStyle,
+                K::BorderRightStyle,
+                K::BorderBottomStyle,
+                K::BorderLeftStyle,
+                K::BorderTopWidth,
+                K::BorderRightWidth,
+                K::BorderBottomWidth,
+                K::BorderLeftWidth,
+                K::BorderTopColor,
+                K::BorderRightColor,
+                K::BorderBottomColor,
+                K::BorderLeftColor,
+            ]
+        );
+        assert_eq!(
+            decls[1].value,
+            PropertyValue::BorderRightStyle(BorderStyle::Dashed)
+        );
+        assert_eq!(
+            decls[7].value,
+            PropertyValue::BorderLeftWidth(Length::Px(4.0))
+        );
+        assert!(decls[..8].iter().all(|d| !d.important));
+        assert!(decls[8..].iter().all(|d| d.important));
     }
 
     #[test]
