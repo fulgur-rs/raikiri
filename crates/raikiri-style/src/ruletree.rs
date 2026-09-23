@@ -2416,13 +2416,12 @@ mod tests {
             .map(|rule| rule.source_order)
             .collect();
         assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "{order:?}");
-        let color = |index: usize| match tree.style_rules[index].declarations[0].value {
-            crate::property::PropertyValue::Color(color) => (color.r, color.g, color.b),
-            ref other => panic!("expected color, got {other:?}"),
+        let color = |r, g, b| {
+            crate::property::PropertyValue::Color(crate::property::CssColor { r, g, b, a: 255 })
         };
-        assert_eq!(color(0), (255, 0, 0));
-        assert_eq!(color(1), (0, 128, 0));
-        assert_eq!(color(2), (0, 0, 255));
+        assert_eq!(tree.style_rules[0].declarations[0].value, color(255, 0, 0));
+        assert_eq!(tree.style_rules[1].declarations[0].value, color(0, 128, 0));
+        assert_eq!(tree.style_rules[2].declarations[0].value, color(0, 0, 255));
     }
 
     #[test]
