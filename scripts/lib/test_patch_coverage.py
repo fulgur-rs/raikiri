@@ -398,6 +398,20 @@ class ClassifyNoLcovRecordLinesTests(unittest.TestCase):
         self.assertEqual(uncovered, [])
         self.assertEqual(exempted, [])
 
+    def test_module_declaration_lines_are_not_uncovered(self) -> None:
+        file_lines = [
+            "mod absolutize;",
+            "pub(crate) mod cascade;",
+            "pub use cascade::{PageCascadeResult, cascade_page};",
+            "use crate::property::Length;",
+            "mod inline { fn f() {} }",
+        ]
+        uncovered, exempted = classify_no_lcov_record_lines(
+            added_lines=[1, 2, 3, 4, 5], file_lines=file_lines, exempt=set()
+        )
+        self.assertEqual(uncovered, [5])
+        self.assertEqual(exempted, [])
+
     def test_real_code_line_is_still_uncovered(self) -> None:
         # Discrimination check: mixing a comment line (3) with a genuine
         # code line (6, `pub struct TagName {`) in the same diff must

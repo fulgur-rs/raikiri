@@ -130,6 +130,8 @@ import sys
 from dataclasses import dataclass, field
 
 COMMENT_LINE_RE = re.compile(r"^\s*//")
+# A single-line `mod` / `use` declaration: never executable code.
+MODULE_DECL_LINE_RE = re.compile(r"^\s*(pub(\([^)]*\))?\s+)?(use\s[^;]*|mod\s+\w+\s*);\s*$")
 ATTRIBUTE_LINE_RE = re.compile(r"^\s*#!?\[.*\]\s*$")
 # Anchored to the start of an actual `//` comment (see comment_part() below,
 # which finds that `//` while honoring string/char literals) and requires a
@@ -459,7 +461,7 @@ def classify_no_lcov_record_lines(
     exempted: list[int] = []
     for ln in added_lines:
         raw = file_lines[ln - 1] if 0 <= ln - 1 < len(file_lines) else ""
-        if not raw.strip() or COMMENT_LINE_RE.match(raw):
+        if not raw.strip() or COMMENT_LINE_RE.match(raw) or MODULE_DECL_LINE_RE.match(raw):
             continue
         if ln in exempt:
             exempted.append(ln)
