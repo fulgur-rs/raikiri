@@ -155,6 +155,36 @@ fn hanging_punctuation_unpinned_exact_passes() {
     assert_exact_passes(&root, &candidates);
 }
 
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_indent_current_exact_passes() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let candidates = [
+        "css/css-text/text-indent/text-indent-abspos-hanging-001.html",
+        "css/css-text/text-indent/text-indent-length-001.html",
+        "css/css-text/text-indent/text-indent-overflow.html",
+    ];
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    for relative in candidates {
+        let test = root.join(relative);
+        let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
+            .unwrap_or_else(|error| panic!("discover {relative}: {error}"));
+        assert_eq!(pairs.len(), 1, "expected one reference pair for {relative}");
+        let result = run_pair_with_images(&pairs[0], config)
+            .unwrap_or_else(|error| panic!("run {relative}: {error}"));
+        assert!(
+            matches!(&result.outcome, TestOutcome::Pass),
+            "{relative}: outcome={:?}, mismatches={}",
+            result.outcome,
+            result.mismatched_pixels
+        );
+    }
+}
+
 fn assert_exact_passes(root: &std::path::Path, candidates: &[&str]) {
     let mut config = ReftestConfig::default();
     config.width = 800;

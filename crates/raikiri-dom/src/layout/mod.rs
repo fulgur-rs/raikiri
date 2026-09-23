@@ -2655,6 +2655,85 @@ fn realign_inline_replaced_children(doc: &mut Document, cascade: &CascadeResult)
     }
 }
 
+// Text indentation is otherwise applied to TextData layouts, so an empty
+// inline block has no text layout to receive the first-line offset. Keep this
+// post-layout bridge narrow: only one empty inline-block in a horizontal LTR
+// block, with optional collapsible whitespace, no modifiers or forced breaks,
+// and normal-flow positioning can be offset without reflowing a line.
+fn realign_single_empty_inline_block_indent(doc: &mut Document, cascade: &CascadeResult) {
+    for parent_id in 0..doc.nodes.len() {
+        let cv = &cascade.computed[parent_id];
+        if !matches!(cv.display, DisplayValue::Block | DisplayValue::InlineBlock) {
+            continue;
+        }
+        if cv.direction != Direction::Ltr
+            || cv.writing_mode != WritingMode::HorizontalTb
+            || cv.text_indent_hanging
+            || cv.text_indent_each_line
+            || cv.text_indent_ch_factor.is_some()
+            || !matches!(
+                cv.text_align,
+                TextAlign::Start | TextAlign::Left | TextAlign::Right
+            )
+        {
+            continue;
+        }
+
+        let mut inline_block = None;
+        let mut unsupported_content = false;
+        for &child in &doc.nodes[parent_id].children {
+            if !doc.nodes[child].is_in_document() {
+                continue;
+            }
+            if is_forced_line_break(doc, child, cascade) {
+                unsupported_content = true;
+                break;
+            }
+            match &doc.nodes[child].data {
+                NodeData::Text(text)
+                    if matches!(
+                        cascade.computed[child].white_space,
+                        WhiteSpace::Normal | WhiteSpace::Nowrap
+                    ) && text.text_content.chars().all(is_css_white_space) => {}
+                NodeData::Element(_)
+                    if cascade.computed[child].display == DisplayValue::InlineBlock
+                        && cascade.computed[child].float == FloatValue::None
+                        && matches!(
+                            cascade.computed[child].position,
+                            PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+                        )
+                        && doc.nodes[child].children.is_empty() =>
+                {
+                    if inline_block.replace(child).is_some() {
+                        unsupported_content = true;
+                        break;
+                    }
+                }
+                _ => {
+                    unsupported_content = true;
+                    break;
+                }
+            }
+        }
+        if unsupported_content {
+            continue;
+        }
+        let Some(inline_block) = inline_block else {
+            continue;
+        };
+
+        let content_width = doc.nodes[parent_id].unrounded_layout.content_box_width();
+        if !content_width.is_finite() || content_width < 0.0 {
+            continue;
+        }
+        let indent = bounded_text_indent_amount(cv.text_indent, content_width, None);
+        if !indent.is_finite() || indent == 0.0 {
+            continue;
+        }
+        doc.nodes[inline_block].unrounded_layout.location.x += indent;
+    }
+}
+
 /// Find the nearest synthetic inline formatting root for a text node.
 fn inline_root_for_text(
     doc: &Document,
@@ -8809,6 +8888,7 @@ pub fn layout_single_page(
         },
     );
     realign_inline_replaced_children(document, cascade); // cov:ignore: resource-enabled ignored WPT path.
+    realign_single_empty_inline_block_indent(document, cascade);
     // Step 5a: taffy 確定幅基準の text 再配置 (`text-align: center` 等)。
     // glyph offset のみを変え、box geometry は変えないため invariant 検査の前後
     // どちらでもよいが、確定幅を読む側として compute 直後に置く。
@@ -11860,6 +11940,86 @@ mod tests {
             "indented first glyph x={} must be near indent 20px",
             first_x
         );
+    }
+
+    #[test]
+    fn text_indent_offsets_empty_inline_block_by_content_box_percentage() {
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let block = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;box-sizing:border-box;width:120px;padding-right:10px;text-indent:50%"),
+        );
+        let inline_block = doc.append_element(
+            Some(block),
+            "span",
+            Style::default(),
+            Some("display:inline-block;width:10px;height:10px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        assert!((doc.nodes[block].unrounded_layout.content_box_width() - 110.0).abs() < 0.01);
+        assert!((doc.nodes[inline_block].unrounded_layout.location.x - 55.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn text_indent_does_not_shift_floated_or_out_of_flow_inline_blocks() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let absolute_parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;text-indent:20px"),
+        );
+        let absolute_child = doc.append_element(
+            Some(absolute_parent),
+            "span",
+            Style::default(),
+            Some("display:inline-block;width:10px;height:10px;position:absolute"),
+        );
+        let float_parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;text-indent:20px"),
+        );
+        let float_child = doc.append_element(
+            Some(float_parent),
+            "span",
+            Style::default(),
+            Some("display:inline-block;width:10px;height:10px;float:left"),
+        );
+        doc.mark_in_document_flags();
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        assert_eq!(
+            cascade.computed[absolute_child].position,
+            PositionValue::Absolute
+        );
+        assert_eq!(cascade.computed[float_child].float, FloatValue::Left);
+
+        doc.nodes[absolute_parent].unrounded_layout.size.width = 100.0;
+        doc.nodes[absolute_child].unrounded_layout.location.x = 3.0;
+        doc.nodes[float_parent].unrounded_layout.size.width = 100.0;
+        doc.nodes[float_child].unrounded_layout.location.x = 7.0;
+        realign_single_empty_inline_block_indent(&mut doc, &cascade);
+
+        assert_eq!(doc.nodes[absolute_child].unrounded_layout.location.x, 3.0);
+        assert_eq!(doc.nodes[float_child].unrounded_layout.location.x, 7.0);
     }
 
     #[test]

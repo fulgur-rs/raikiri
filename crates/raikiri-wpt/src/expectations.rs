@@ -1312,7 +1312,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Page hidden-child named-page boundary exact slice (+1).
         // + CSS Page inline canvas named-page boundary exact slice (+2).
         // + CSS Page nested named-page propagation exact slice (+2).
-        assert_eq!(set.baseline.entries.len(), 1275);
+        // + CSS Text text-indent exact 800x600 review-approved slice (+3).
+        assert_eq!(set.baseline.entries.len(), 1278);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
