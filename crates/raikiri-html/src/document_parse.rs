@@ -2,7 +2,7 @@
 //! orchestrator。
 //!
 //! spec §L1060 の pub API 相当。内部 pipeline は
-//! [`crate::parse`] → rule-tree build and first-page cascade → assemble。
+//! [`crate::parse`](fn@crate::parse) → rule-tree build and first-page cascade → assemble。
 //! 現状 cascade は
 //! 常に `Ok` を返すため、`RenderError::Parse` のみが bubble する。
 //!
