@@ -355,3 +355,57 @@ fn overflow_wrap_span_boundaries_are_pixel_exact_at_800x600() {
     ];
     assert_exact_passes(&root, &candidates);
 }
+/// Run the complete word-spacing matrix with the bundled WPT fonts.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn word_spacing_matrix_at_800x600_with_bundled_fonts() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    // Keep existing baseline controls green while exposing the one static
+    // negative-length slice supported by this test. Other mismatches remain
+    // diagnostic and must not be added to the baseline.
+    let candidates = [
+        ("css/css-text/word-spacing/word-spacing-001.html", 27200),
+        ("css/css-text/word-spacing/word-spacing-002.html", 4798),
+        ("css/css-text/word-spacing/word-spacing-003.html", 0),
+        (
+            "css/css-text/word-spacing/word-spacing-animating-font-size.html",
+            1790,
+        ),
+        (
+            "css/css-text/word-spacing/word-spacing-animating-word-spacing.html",
+            0,
+        ),
+        (
+            "css/css-text/word-spacing/word-spacing-negative-value-001.html",
+            0,
+        ),
+        ("css/css-text/word-spacing/word-spacing-percent-001.html", 0),
+    ];
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    for (relative, expected_mismatches) in candidates {
+        let test = root.join(relative);
+        let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
+            .unwrap_or_else(|error| panic!("discover {relative}: {error}"));
+        assert_eq!(pairs.len(), 1, "expected one reference pair for {relative}");
+        let result = run_pair_with_images(&pairs[0], config)
+            .unwrap_or_else(|error| panic!("run bundled-font pair {relative}: {error}"));
+        assert_eq!(result.mismatched_pixels, expected_mismatches, "{relative}");
+        if expected_mismatches == 0 {
+            assert!(
+                matches!(&result.outcome, TestOutcome::Pass),
+                "{relative}: expected exact pass, got {:?}",
+                result.outcome
+            );
+        } else {
+            assert!(
+                matches!(&result.outcome, TestOutcome::Fail(_)),
+                "{relative}: expected an unbaselined mismatch, got {:?}",
+                result.outcome
+            );
+        }
+    }
+}
