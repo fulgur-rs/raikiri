@@ -105,22 +105,23 @@ fn page_name_flex_003_is_pixel_exact_at_800x600() {
     );
 }
 
-/// Nested named-page propagation through a column flex container is pixel exact.
+/// Named-page values on the first in-flow descendant propagate through an
+/// anonymous block without creating an extra leading page.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn page_name_flex_004_is_pixel_exact_at_800x600() {
+fn nested_named_page_propagation_pairs_are_pixel_exact_at_800x600() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let mut config = ReftestConfig::default();
     config.width = 800;
     config.height = 600;
     config.tolerance = Tolerance::EXACT;
 
-    run_exact_pair(
-        &root,
-        "css/css-page",
-        "page-name-flex-004-print.html",
-        config,
-    );
+    for name in [
+        "page-name-propagated-008-print.html",
+        "page-name-propagated-009-print.html",
+    ] {
+        run_exact_pair(&root, "css/css-page", name, config);
+    }
 }
 
 fn run_exact_pair(root: &std::path::Path, dir: &str, name: &str, config: ReftestConfig) {
