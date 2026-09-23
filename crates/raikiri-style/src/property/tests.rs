@@ -15924,6 +15924,30 @@ fn clip_path_inset_round_and_polygon_fill_rule() {
 }
 
 #[test]
+fn clip_path_inset_vertical_radius_and_polygon_round() {
+    for source in [
+        "inset(10px round 5px / 8px)",
+        "inset(10px round 5px 6px / 7px 8px 9px 10px)",
+        "polygon(round 4px, 0 0, 100% 0, 100% 100%)",
+        "polygon(evenodd, round 4px, 0 0, 100% 0, 100% 100%)",
+    ] {
+        assert!(
+            matches!(
+                parse(source, "clip-path"),
+                Some(PropertyValue::ClipPath(ClipPath::BasicShape { .. }))
+            ),
+            "{source}"
+        );
+    }
+    for source in [
+        "inset(10px round 5px / -8px)",
+        "polygon(round -4px, 0 0, 100% 0, 100% 100%)",
+    ] {
+        assert_eq!(parse(source, "clip-path"), None, "{source}");
+    }
+}
+
+#[test]
 fn clip_path_circle_ellipse_position_variants() {
     // circle with position, ellipse with at center, plain circle()
     for source in [
