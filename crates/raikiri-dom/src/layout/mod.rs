@@ -5076,6 +5076,9 @@ fn tab_stop_advance(tab_size: ComputedTabSize, block_space_advance: f32) -> f32 
     }
 }
 
+/// Byte ranges of tab replacement spaces and the word spacing each needs.
+type TabSpacingRanges = Vec<(std::ops::Range<usize>, f32)>;
+
 /// Replace each tab by an invisible U+0020 with ranged WordSpacing so its
 /// advance exactly reaches the next stop. Keeping a normal glyph run preserves
 /// the text's font metrics and line height; the ranged spacing supplies the
@@ -5087,7 +5090,7 @@ fn replace_tabs_with_styled_spaces(
     interval: f32,
     space_base_advance: f32,
     mut measure_segment: impl FnMut(&str) -> f32,
-) -> (String, Vec<(std::ops::Range<usize>, f32)>, Vec<usize>) {
+) -> (String, TabSpacingRanges, Vec<usize>) {
     if !text.contains('\t') {
         return (text.to_owned(), Vec::new(), Vec::new());
     }
