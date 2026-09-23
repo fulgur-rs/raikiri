@@ -4996,7 +4996,13 @@ fn computed_length_to_taffy_length_percentage(
 ///
 /// Preserve the previous per-text-node expansion for inline contexts whose
 /// shared line cursor and wrap positions are not available to pre-shaping.
-fn expand_tabs_locally(text: &str, tab_size: ComputedTabSize, space_advance: f32) -> String {
+/// Also returns the byte length each tab was replaced by (in source order) so
+/// offsets into `text` can be remapped.
+fn expand_tabs_locally(
+    text: &str,
+    tab_size: ComputedTabSize,
+    space_advance: f32,
+) -> (String, Vec<usize>) {
     let stop = match tab_size {
         ComputedTabSize::Number(number) if number > 0.0 && number.is_finite() => number,
         ComputedTabSize::Length(length)
@@ -5007,9 +5013,11 @@ fn expand_tabs_locally(text: &str, tab_size: ComputedTabSize, space_advance: f32
         _ => 0.0,
     };
     let mut output = String::with_capacity(text.len());
+    let mut tab_lens = Vec::new();
     if stop <= 0.0 {
         output.extend(text.chars().filter(|&character| character != '\t'));
-        return output;
+        tab_lens.resize(text.matches('\t').count(), 0);
+        return (output, tab_lens);
     }
     let mut column = 0.0_f32;
     for character in text.chars() {
@@ -5023,6 +5031,7 @@ fn expand_tabs_locally(text: &str, tab_size: ComputedTabSize, space_advance: f32
                 let count = (next.round() - column.round()).max(0.0) as usize;
                 column = next;
                 output.extend(std::iter::repeat_n(' ', count));
+                tab_lens.push(count);
             }
             _ => {
                 column += 1.0;
@@ -5030,7 +5039,26 @@ fn expand_tabs_locally(text: &str, tab_size: ComputedTabSize, space_advance: f32
             }
         }
     }
-    output
+    (output, tab_lens)
+}
+
+/// Move inline-box offsets computed on `original` onto the text produced by a
+/// rewrite that replaced its tabs (in source order) by `tab_lens` bytes and
+/// kept every other character. Autospace boundaries are detected before tabs
+/// are rewritten so a tab still separates its neighbors even when it expands
+/// to nothing.
+fn remap_boxes_through_tab_rewrite(original: &str, tab_lens: &[usize], boxes: &mut [InlineBox]) {
+    let tabs: Vec<usize> = original.match_indices('\t').map(|(at, _)| at).collect();
+    debug_assert_eq!(tabs.len(), tab_lens.len());
+    for inline_box in boxes {
+        let shift: isize = tabs
+            .iter()
+            .zip(tab_lens)
+            .take_while(|&(&at, _)| at < inline_box.index)
+            .map(|(_, &len)| len as isize - 1)
+            .sum();
+        inline_box.index = inline_box.index.saturating_add_signed(shift);
+    }
 }
 
 /// Resolve `tab-size` to an absolute stop interval in CSS pixels.
@@ -5052,15 +5080,18 @@ fn tab_stop_advance(tab_size: ComputedTabSize, block_space_advance: f32) -> f32 
 /// advance exactly reaches the next stop. Keeping a normal glyph run preserves
 /// the text's font metrics and line height; the ranged spacing supplies the
 /// block-container-derived physical width when the inline font differs.
+///
+/// Also returns the byte length each tab was replaced by (in source order).
 fn replace_tabs_with_styled_spaces(
     text: &str,
     interval: f32,
     space_base_advance: f32,
     mut measure_segment: impl FnMut(&str) -> f32,
-) -> (String, Vec<(std::ops::Range<usize>, f32)>) {
+) -> (String, Vec<(std::ops::Range<usize>, f32)>, Vec<usize>) {
     if !text.contains('\t') {
-        return (text.to_owned(), Vec::new());
+        return (text.to_owned(), Vec::new(), Vec::new());
     }
+    let mut tab_lens = Vec::new();
     let mut output = String::with_capacity(text.len());
     let mut spacing_ranges = Vec::new();
     let mut segment = String::new();
@@ -5080,6 +5111,7 @@ fn replace_tabs_with_styled_spaces(
         match character {
             '\t' => {
                 flush_segment(&mut segment, &mut output, &mut cursor);
+                let before = output.len();
                 if interval > 0.0 && interval.is_finite() {
                     let next = ((cursor / interval).floor() + 1.0) * interval;
                     let gap = (next - cursor).max(0.0);
@@ -5092,6 +5124,7 @@ fn replace_tabs_with_styled_spaces(
                     }
                     cursor = next.min(MAX_TAFFY_MAGNITUDE);
                 }
+                tab_lens.push(output.len() - before);
             }
             '\n' => {
                 flush_segment(&mut segment, &mut output, &mut cursor);
@@ -5102,7 +5135,7 @@ fn replace_tabs_with_styled_spaces(
         }
     }
     flush_segment(&mut segment, &mut output, &mut cursor);
-    (output, spacing_ranges)
+    (output, spacing_ranges, tab_lens)
 }
 
 /// Measure one probe glyph/character advance (px) with Parley.
@@ -8818,7 +8851,9 @@ fn preshape_text(
                 job.metrics_weight,
                 job.metrics_style,
             );
-            job.text = expand_tabs_locally(&job.text, job.tab_size, space_advance);
+            let (text, tab_lens) = expand_tabs_locally(&job.text, job.tab_size, space_advance);
+            remap_boxes_through_tab_rewrite(&job.text, &tab_lens, &mut job.autospace_boxes);
+            job.text = text;
             continue;
         }
         let block_space_advance = probe_text_full_width(
@@ -8853,7 +8888,7 @@ fn preshape_text(
         } else {
             0.0
         };
-        let (text, spacing_ranges) =
+        let (text, spacing_ranges, tab_lens) =
             replace_tabs_with_styled_spaces(&job.text, interval, space_base_advance, |segment| {
                 probe_text_full_width(
                     fonts,
@@ -8869,6 +8904,7 @@ fn preshape_text(
                     },
                 )
             });
+        remap_boxes_through_tab_rewrite(&job.text, &tab_lens, &mut job.autospace_boxes);
         job.text = text;
         job.tab_spacing_ranges = spacing_ranges;
     }
@@ -14005,11 +14041,11 @@ mod tests {
     #[test]
     fn local_tab_fallback_keeps_per_text_run_behavior() {
         assert_eq!(
-            expand_tabs_locally("a\tb", ComputedTabSize::Number(4.0), 10.0),
+            expand_tabs_locally("a\tb", ComputedTabSize::Number(4.0), 10.0).0,
             "a   b"
         );
         assert_eq!(
-            expand_tabs_locally("ab\n\tc", ComputedTabSize::Number(4.0), 10.0),
+            expand_tabs_locally("ab\n\tc", ComputedTabSize::Number(4.0), 10.0).0,
             "ab\n    c"
         );
     }
@@ -14017,15 +14053,15 @@ mod tests {
     #[test]
     fn local_tab_fallback_handles_length_stops_and_zero_intervals() {
         assert_eq!(
-            expand_tabs_locally("a\tb", ComputedTabSize::Length(ComputedLength(20.0)), 10.0,),
+            expand_tabs_locally("a\tb", ComputedTabSize::Length(ComputedLength(20.0)), 10.0,).0,
             "a b"
         );
         assert_eq!(
-            expand_tabs_locally("a\tb", ComputedTabSize::Length(ComputedLength(20.0)), 0.0,),
+            expand_tabs_locally("a\tb", ComputedTabSize::Length(ComputedLength(20.0)), 0.0,).0,
             "ab"
         );
         assert_eq!(
-            expand_tabs_locally("a\tb", ComputedTabSize::Number(0.0), 10.0),
+            expand_tabs_locally("a\tb", ComputedTabSize::Number(0.0), 10.0).0,
             "ab"
         );
     }
@@ -14044,7 +14080,7 @@ mod tests {
 
     #[test]
     fn tab_replacement_without_tabs_preserves_text() {
-        let (text, ranges) = replace_tabs_with_styled_spaces("plain", 20.0, 10.0, |_| 10.0);
+        let (text, ranges, _) = replace_tabs_with_styled_spaces("plain", 20.0, 10.0, |_| 10.0);
         assert_eq!(text, "plain");
         assert!(ranges.is_empty());
     }
@@ -14145,7 +14181,7 @@ mod tests {
 
     #[test]
     fn tab_replacement_measures_prefix_and_ranges_the_gap() {
-        let (text, ranges) = replace_tabs_with_styled_spaces("ab\tc", 20.0, 10.0, |segment| {
+        let (text, ranges, _) = replace_tabs_with_styled_spaces("ab\tc", 20.0, 10.0, |segment| {
             segment.len() as f32 * 6.0
         });
         assert_eq!(text, "ab c");
@@ -14154,7 +14190,7 @@ mod tests {
 
     #[test]
     fn tab_replacement_resets_its_cursor_after_newline() {
-        let (text, ranges) = replace_tabs_with_styled_spaces("ab\n\tc", 20.0, 10.0, |segment| {
+        let (text, ranges, _) = replace_tabs_with_styled_spaces("ab\n\tc", 20.0, 10.0, |segment| {
             segment.len() as f32 * 6.0
         });
         assert_eq!(text, "ab\n c");
@@ -14163,7 +14199,7 @@ mod tests {
 
     #[test]
     fn tab_replacement_with_zero_interval_removes_tabs() {
-        let (text, ranges) = replace_tabs_with_styled_spaces("a\tb", 0.0, 10.0, |_| 10.0);
+        let (text, ranges, _) = replace_tabs_with_styled_spaces("a\tb", 0.0, 10.0, |_| 10.0);
         assert_eq!(text, "ab");
         assert!(ranges.is_empty());
     }
@@ -20654,6 +20690,24 @@ mod tests {
         let left = doc.append_text(div, "国");
         let span = doc.append_element(Some(div), "span", Style::default(), Some("display:inline"));
         let right = doc.append_text(span, "A");
+        // An atomic inline nested at the neighbor's edge stops the search
+        // instead of being looked past.
+        let atomic_div = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+        let atomic_left = doc.append_text(atomic_div, "国");
+        let outer = doc.append_element(
+            Some(atomic_div),
+            "span",
+            Style::default(),
+            Some("display:inline"),
+        );
+        let atomic = doc.append_element(
+            Some(outer),
+            "span",
+            Style::default(),
+            Some("display:inline-block"),
+        );
+        let _ = doc.append_text(atomic, "B");
+        let _ = doc.append_text(outer, "A");
         doc.mark_in_document_flags();
 
         let rules = build_rule_tree(&doc);
@@ -20671,6 +20725,10 @@ mod tests {
         assert_eq!(
             autospace_adjacent_edge_char(&doc, &cascade, &parent_of, left, 1),
             Some('A')
+        );
+        assert_eq!(
+            autospace_adjacent_edge_char(&doc, &cascade, &parent_of, atomic_left, 1),
+            None
         );
     }
 
@@ -20708,6 +20766,65 @@ mod tests {
         };
         assert_eq!(inline_box_count(left), 0);
         assert_eq!(inline_box_count(right), 1);
+    }
+
+    #[test]
+    fn autospace_boxes_follow_tab_rewrites() {
+        use parley::{FontContext, PositionedLayoutItem};
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let style = "display:block;font-size:40px;text-autospace:normal;white-space:pre";
+        let mut run = |tab_size: &str, text: &str, with_sibling: bool| {
+            let block = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some(format!("{style};tab-size:{tab_size}")),
+            );
+            let text = doc.append_text(block, text);
+            if with_sibling {
+                let sibling = doc.append_element(
+                    Some(block),
+                    "span",
+                    Style::default(),
+                    Some("display:inline"),
+                );
+                let _ = doc.append_text(sibling, "x");
+            }
+            text
+        };
+        // A lone text run in a `pre` block drops the tab for `tab-size:0`.
+        let dropped = run("0", "\t国A", false);
+        let dropped_ref = run("0", "国A", false);
+        // With an inline sibling the tab expands to two spaces, which moves
+        // the boundary by one byte and would otherwise land inside `国`.
+        let expanded = run("2", "\t国A", true);
+        let expanded_ref = run("2", "  国A", true);
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let box_x = |idx: usize| {
+            doc.nodes[idx]
+                .text_layout()
+                .expect("text shaped")
+                .lines()
+                .flat_map(|line| line.items())
+                .filter_map(|item| match item {
+                    PositionedLayoutItem::InlineBox(inline_box) => Some(inline_box.x),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(box_x(dropped).len(), 1);
+        assert_eq!(box_x(dropped), box_x(dropped_ref));
+        assert_eq!(box_x(expanded).len(), 1);
+        assert_eq!(box_x(expanded), box_x(expanded_ref));
     }
 
     #[test]
