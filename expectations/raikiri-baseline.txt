@@ -498,6 +498,9 @@ css/css-display/display-flow-root-002.html
 css/CSS2/linebox/vertical-align-top-bottom-padding.html
 # --- css-inline block-in-inline margin collapse (exact static reftest, 800x600) ---
 css/CSS2/box-display/block-in-inline-007.xht
+# --- css-inline anonymous inline/baseline PASS slice (exact, 800x600, 2026-09-23) ---
+css/CSS2/linebox/anonymous-inline-inherit-001.html
+css/CSS2/linebox/vertical-align-baseline-007.xht
 css/css-lists/list-style-position-001.html
 css/css-lists/parsing/counter-increment-invalid.html
 css/css-lists/parsing/counter-reset-invalid.html

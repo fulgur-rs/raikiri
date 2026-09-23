@@ -1314,7 +1314,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Page nested named-page propagation exact slice (+2).
         // + CSS Text text-indent exact 800x600 review-approved slice (+3).
         // + CSS Text negative word-spacing exact 800x600 review-approved pair (+1).
-        assert_eq!(set.baseline.entries.len(), 1279);
+        // + CSS Inline anonymous inline/baseline PASS slice (+2).
+        assert_eq!(set.baseline.entries.len(), 1281);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
