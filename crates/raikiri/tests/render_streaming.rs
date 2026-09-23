@@ -1,17 +1,33 @@
 //! Focused tests for neutral page emission and completion semantics.
 
 use raikiri::{
-    AbortController, PageBox, PageDefaults, PageEventObserver, PageFragment, PageFragmentEvent,
-    RenderOptions, RenderResources, RenderSink, RenderStatus, RenderSummary, ReplacedResolver,
-    ResolvedIntrinsic, ResolverError, ResolverRequest, StreamingConfig, parse_html,
-    render_streaming,
+    AbortController, IntrinsicBox, PageBox, PageDefaults, PageEventObserver, PageFragment,
+    PageFragmentEvent, RenderOptions, RenderResources, RenderSink, RenderStatus, RenderSummary,
+    ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError, ResolverRequest,
+    StreamingConfig, parse_html, render_streaming,
 };
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct NoopResolver;
 
 impl ReplacedResolver for NoopResolver {
     fn resolve(&self, _request: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
         unreachable!("test documents contain no replaced elements")
+    }
+}
+
+struct FixedIntrinsicResolver {
+    width: f32,
+    calls: AtomicUsize,
+}
+
+impl ReplacedResolver for FixedIntrinsicResolver {
+    fn resolve(&self, _request: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
+        self.calls.fetch_add(1, Ordering::Relaxed);
+        Ok(ResolvedIntrinsic {
+            intrinsic: IntrinsicBox::new(self.width, 40.0),
+            disposition: ResolveDisposition::Ok,
+        })
     }
 }
 
@@ -334,6 +350,120 @@ fn render_streaming_resolves_named_first_page_before_layout() {
     assert_eq!(first.page_box.width, 130.0);
     assert_eq!(first.page_box.height, 140.0);
     assert_eq!(first.margins.left, 11.0);
+}
+
+#[test]
+fn render_streaming_resolves_nested_grid_page_before_layout() {
+    let stylesheet = r#"
+        @page wide { size: 200px 300px; margin: 5px; }
+        @page narrow { size: 120px 180px; margin: 12px; }
+    "#;
+    let options = raikiri::ParseOptions {
+        extra_stylesheets: &[stylesheet],
+        network: None,
+        base_url: None,
+    };
+    let doc = parse_html(
+        &br#"<html><body style="margin:0"><div style="display:grid;grid-template-columns:100%;grid-template-rows:auto auto"><div style="grid-row:2;order:0;page:wide;height:10px">wide</div><div style="grid-row:1;order:1;page:narrow;font-size:10px;line-height:12px">narrow page text</div></div></body></html>"#[..],
+        &options,
+    )
+    .expect("parse");
+    let mut sink = RecordingSink::default();
+    let resources = RenderResources::new().replaced_resolver(&NoopResolver);
+    render_streaming(
+        &doc,
+        defaults(100.0, 100.0),
+        StreamingConfig::default(),
+        RenderOptions::new().resources(&resources),
+        &mut sink,
+    )
+    .expect("render");
+
+    let first = sink.pages.first().expect("first page");
+    assert_eq!(first.page_name.as_deref(), Some("narrow"));
+    assert_eq!(
+        (first.page_box.width, first.page_box.height),
+        (120.0, 180.0)
+    );
+    assert_eq!(first.margins.left, 12.0);
+}
+
+#[test]
+fn render_streaming_preflight_uses_resolved_image_size_for_grid_page_selection() {
+    let html = &br#"<!doctype html><style>
+        @page wide { size:200px 300px; margin:5px }
+        @page narrow { size:120px 180px; margin:12px }
+        body { margin:0 }
+        .flex { display:flex; width:300px }
+        .grid { display:grid; order:0; flex:1 1 0; min-width:0;
+                grid-template-columns:repeat(auto-fit,minmax(100px,1fr));
+                grid-template-rows:auto auto }
+        img { order:1; flex:0 0 auto }
+    </style><body><div class="flex"><div class="grid">
+        <div style="display:block;grid-row:2;order:0;page:wide;height:10px">wide</div>
+        <div style="display:block;grid-row:1;order:1;page:narrow;font-size:10px;line-height:12px">narrow page text</div>
+    </div><img src="image.png"></div></body>"#[..];
+    let base_url = raikiri::Url::parse("https://example.test/assets/").expect("base URL");
+    let options = raikiri::ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let doc = parse_html(html, &options).expect("parse");
+    assert!((0..doc.dom().node_count()).any(|node_id| {
+        doc.dom()
+            .get_node(node_id)
+            .is_some_and(|node| node.tag_name() == Some("img") && node.attribute("src").is_some())
+    }));
+
+    let small_resolver = FixedIntrinsicResolver {
+        width: 50.0,
+        calls: AtomicUsize::new(0),
+    };
+    let small_resources = RenderResources::new()
+        .base_url(base_url.clone())
+        .replaced_resolver(&small_resolver);
+    let mut small_sink = RecordingSink::default();
+    render_streaming(
+        &doc,
+        defaults(100.0, 100.0),
+        StreamingConfig::default(),
+        RenderOptions::new().resources(&small_resources),
+        &mut small_sink,
+    )
+    .expect("small-image render");
+
+    let large_resolver = FixedIntrinsicResolver {
+        width: 250.0,
+        calls: AtomicUsize::new(0),
+    };
+    let large_resources = RenderResources::new()
+        .base_url(base_url)
+        .replaced_resolver(&large_resolver);
+    let mut large_sink = RecordingSink::default();
+    render_streaming(
+        &doc,
+        defaults(100.0, 100.0),
+        StreamingConfig::default(),
+        RenderOptions::new().resources(&large_resources),
+        &mut large_sink,
+    )
+    .expect("large-image render");
+
+    assert!(small_resolver.calls.load(Ordering::Relaxed) >= 2);
+    assert!(large_resolver.calls.load(Ordering::Relaxed) >= 3);
+    let small_first = small_sink.pages.first().expect("small first page");
+    let large_first = large_sink.pages.first().expect("large first page");
+    assert_eq!(small_first.page_name.as_deref(), Some("wide"));
+    assert_eq!(large_first.page_name.as_deref(), Some("narrow"));
+    assert_eq!(
+        (small_first.page_box.width, small_first.page_box.height),
+        (200.0, 300.0)
+    );
+    assert_eq!(
+        (large_first.page_box.width, large_first.page_box.height),
+        (120.0, 180.0)
+    );
 }
 
 #[test]

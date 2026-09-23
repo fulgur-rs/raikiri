@@ -7,10 +7,11 @@
 
 use parley::FontContext;
 use raikiri_dom::{
-    FontFaceLoader, PageSlice, apply_font_faces, first_page_name,
-    layout_pages_with_page_geometry_and_resolver_and_base_url,
+    FontFaceLoader, InitialPageContextError, InitialPageProbeResources, PageSlice,
+    apply_font_faces, first_page_name, layout_pages_with_page_geometry_and_resolver_and_base_url,
     layout_pages_with_resolver_and_base_url, page_fragment_events_from_pages,
-    page_fragments_from_slices_with_page_geometry, resolve_page_fragment_geometry,
+    page_fragments_from_slices_with_page_geometry, resolve_initial_page_context,
+    resolve_page_fragment_geometry,
 };
 use raikiri_style::FontFaceRegistry;
 use raikiri_traits::{
@@ -757,6 +758,15 @@ pub fn render_streaming(
     )
 }
 
+fn map_initial_page_context_error(error: InitialPageContextError) -> RenderError {
+    match error {
+        InitialPageContextError::Layout(error) => RenderError::from(error),
+        InitialPageContextError::PageGeometryDidNotConverge { iterations } => {
+            RenderError::PageGeometryDidNotConverge { iterations }
+        }
+    }
+}
+
 #[allow(clippy::result_large_err, clippy::too_many_arguments)]
 fn render_streaming_inner(
     doc: &HtmlDocument,
@@ -799,13 +809,46 @@ fn render_streaming_inner(
         );
     }
     let mut font_context = runtime.font_context.clone();
-    let report = apply_font_faces(
+    let mut font_report = apply_font_faces(
         &mut font_context,
         &mut first_cascade.computed,
         runtime.font_faces,
         runtime.font_face_loader,
     );
-    for family in report.skipped {
+    let page_box = page_box_for_cascade(&first_cascade, &defaults);
+
+    let resolved_initial_context = resolve_initial_page_context(
+        &doc.uncascaded.dom,
+        first_query.page_name.as_ref().map(ToString::to_string),
+        first_cascade,
+        page_box,
+        font_context,
+        InitialPageProbeResources::new(Some(resolver), runtime.effective_base_url),
+        |page_name| {
+            first_query.page_name = page_name.map(Atom::from);
+            let mut cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
+                &doc.uncascaded,
+                &MediaContext::default(),
+                &first_query,
+                consumer_properties,
+            );
+            let mut recascade_font_context = runtime.font_context.clone();
+            font_report = apply_font_faces(
+                &mut recascade_font_context,
+                &mut cascade.computed,
+                runtime.font_faces,
+                runtime.font_face_loader,
+            );
+            let page_box = page_box_for_cascade(&cascade, &defaults);
+            (cascade, page_box, recascade_font_context)
+        },
+    )
+    .map_err(map_initial_page_context_error)?;
+    let first_cascade = resolved_initial_context.cascade;
+    let page_box = resolved_initial_context.page_box;
+    let font_context = resolved_initial_context.font_context;
+
+    for family in font_report.skipped {
         push_resource_warning(
             &runtime.warnings,
             RenderWarning {
@@ -820,7 +863,6 @@ fn render_streaming_inner(
             },
         );
     }
-    let page_box = page_box_for_cascade(&first_cascade, &defaults);
     let mut document = doc.uncascaded.dom.clone();
     let mut slices = layout_pages_with_resolver_and_base_url(
         &mut document,
@@ -982,4 +1024,25 @@ fn render_streaming_inner(
     sink.finish_render(summary.clone())
         .map_err(RenderError::Sink)?;
     Ok(Completed(summary))
+}
+
+#[cfg(test)]
+mod initial_page_context_error_tests {
+    use super::*;
+
+    #[test]
+    fn initial_page_context_errors_map_to_render_errors() {
+        let layout_error = map_initial_page_context_error(InitialPageContextError::Layout(
+            raikiri_traits::LayoutError::Internal {
+                message: "test".to_owned(),
+            },
+        ));
+        assert!(matches!(layout_error, RenderError::Layout(_)));
+        assert!(matches!(
+            map_initial_page_context_error(InitialPageContextError::PageGeometryDidNotConverge {
+                iterations: 3
+            }),
+            RenderError::PageGeometryDidNotConverge { iterations: 3 }
+        ));
+    }
 }

@@ -27,6 +27,7 @@
 //! winner 適用の途中で絶対化することはできない)。
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::PseudoElem;
 use crate::computed::ComputedValues;
@@ -40,6 +41,8 @@ use crate::ruletree::Origin;
 use crate::ruletree::RuleTree;
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 
+static NEXT_CASCADE_GENERATION: AtomicU64 = AtomicU64::new(1);
+
 /// Cascade 結果。
 ///
 /// 将来の GCPM (paged media generated content) static-side 実装では、per-node
@@ -51,6 +54,7 @@ use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct CascadeResult {
+    generation: u64,
     /// Per-node computed values (NodeId.0 as usize で index)。
     /// Element / Text / Document 全 kind に populate、範囲外は panic (caller 責任)。
     pub computed: Vec<ComputedValues>,
@@ -145,6 +149,16 @@ pub struct CascadeResult {
     /// the same empty list on a **pseudo**'s [`Self::pseudo`] entry means
     /// "no box" (§4.1's `content: not none` condition above).
     pub pseudo: HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
+}
+
+impl CascadeResult {
+    /// Opaque identity for the cascade run that produced this result.
+    ///
+    /// Layout caches use it to avoid reusing placement data after a new cascade.
+    #[doc(hidden)]
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
 }
 
 /// DOM + RuleTree から per-node ComputedValues を produce。
@@ -247,6 +261,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
     );
 
     Ok(CascadeResult {
+        generation: NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed),
         computed,
         non_ua_margin_sides,
         authored_writing_modes,

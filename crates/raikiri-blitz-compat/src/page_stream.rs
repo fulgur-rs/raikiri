@@ -116,6 +116,15 @@ struct PageRenderData {
     pages: Vec<(PageScene, raikiri::CascadeResult, PageBox)>,
 }
 
+fn map_initial_page_context_error(error: raikiri_dom::InitialPageContextError) -> RenderError {
+    match error {
+        raikiri_dom::InitialPageContextError::Layout(error) => RenderError::Layout(error),
+        raikiri_dom::InitialPageContextError::PageGeometryDidNotConverge { iterations } => {
+            RenderError::PageGeometryDidNotConverge { iterations }
+        }
+    }
+}
+
 #[allow(clippy::result_large_err)]
 fn layout_page_render_data(html: &str, page_box: PageBox) -> Result<PageRenderData, RenderError> {
     let opts = ParseOptions {
@@ -141,11 +150,32 @@ fn layout_page_render_data(html: &str, page_box: PageBox) -> Result<PageRenderDa
     } else {
         page_box
     };
+    let initial_context = raikiri_dom::resolve_initial_page_context(
+        &uncascaded.dom,
+        first_query.page_name.as_ref().map(ToString::to_string),
+        first_cascade,
+        first_page_box,
+        FontContext::new(),
+        raikiri_dom::InitialPageProbeResources::default(),
+        |page_name| {
+            first_query.page_name = page_name.map(raikiri::Atom::from);
+            let cascade = raikiri::build_cascaded_for_page(&uncascaded, &first_query);
+            let page_box = if cascade.page.size().is_some() {
+                PageBox::from_page_size(cascade.page.size())
+            } else {
+                page_box
+            };
+            (cascade, page_box, FontContext::new())
+        },
+    )
+    .map_err(map_initial_page_context_error)?;
+    let first_cascade = initial_context.cascade;
+    let first_page_box = initial_context.page_box;
     let slices = raikiri_dom::layout_pages(
         &mut uncascaded.dom,
         &first_cascade,
         first_page_box,
-        FontContext::new(),
+        initial_context.font_context,
     )
     .map_err(RenderError::Layout)?;
 
@@ -285,6 +315,22 @@ pub fn html_to_png_via_page_stream(html: &str, page_box: PageBox) -> Result<Vec<
 mod tests {
     use super::*;
 
+    #[test]
+    fn initial_page_context_errors_map_to_render_errors() {
+        let layout_error = map_initial_page_context_error(
+            raikiri_dom::InitialPageContextError::Layout(raikiri_traits::LayoutError::Internal {
+                message: "test".to_owned(),
+            }),
+        );
+        assert!(matches!(layout_error, RenderError::Layout(_)));
+        assert!(matches!(
+            map_initial_page_context_error(
+                raikiri_dom::InitialPageContextError::PageGeometryDidNotConverge { iterations: 3 }
+            ),
+            RenderError::PageGeometryDidNotConverge { iterations: 3 }
+        ));
+    }
+
     const RECEIPT_HTML: &str = r#"<!DOCTYPE html><html><body>
         <h1>Receipt</h1>
         <p>Thank you for your purchase.</p>
@@ -307,6 +353,62 @@ mod tests {
         assert_eq!(pages[0].page_metadata.page_index, 0);
         assert_eq!(pages[1].page_metadata.page_index, 1);
         assert!(pages[1].content_origin_y > pages[0].content_origin_y);
+    }
+
+    #[test]
+    fn resolved_grid_order_selects_first_named_page_before_text_layout() {
+        const TEXT: &str = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu";
+        let prefix = r#"<!doctype html><style>
+            @page wide { size:200px 300px; margin:5px }
+            @page narrow { size:120px 180px; margin:12px }
+            body { margin:0 }
+            .grid { display:grid; grid-template-columns:100%; grid-template-rows:auto auto }
+        </style><body><div class="grid">"#;
+        let wide_first = format!(
+            r#"{prefix}<div style="display:block;grid-row:2;order:0;page:wide;height:10px">wide</div><div style="display:block;grid-row:1;order:1;page:narrow;font-size:10px;line-height:12px">{TEXT}</div></div></body>"#
+        );
+        let narrow_first = format!(
+            r#"{prefix}<div style="display:block;grid-row:1;order:1;page:narrow;font-size:10px;line-height:12px">{TEXT}</div><div style="display:block;grid-row:2;order:0;page:wide;height:10px">wide</div></div></body>"#
+        );
+
+        let actual = layout_page_render_data(&wide_first, PageBox::A4).expect("actual layout");
+        let expected = layout_page_render_data(&narrow_first, PageBox::A4).expect("control layout");
+        let (actual_scene, actual_cascade, actual_page_box) = &actual.pages[0];
+        let (expected_scene, expected_cascade, expected_page_box) = &expected.pages[0];
+
+        assert_eq!(
+            actual_scene.page_metadata.page_name.as_deref(),
+            Some("narrow")
+        );
+        assert_eq!(
+            (actual_page_box.width, actual_page_box.height),
+            (120.0, 180.0)
+        );
+        assert_eq!(
+            actual_scene.rasterize(&actual.dom, actual_cascade, *actual_page_box),
+            expected_scene.rasterize(&expected.dom, expected_cascade, *expected_page_box),
+            "the first page text should wrap at the resolved narrow-page width", // cov:ignore: assert_eq! only formats this message when the images differ
+        );
+    }
+
+    #[test]
+    fn resolved_grid_page_without_size_keeps_the_caller_page_box() {
+        let html = r#"<!doctype html><style>
+            @page wide { size:200px 300px; margin:5px }
+            @page narrow { margin:12px }
+            body { display:grid; grid-template-columns:100%; grid-template-rows:auto auto; margin:0 }
+        </style><body>
+            <div style="grid-row:2;order:0;page:wide;height:10px">wide</div>
+            <div style="grid-row:1;order:1;page:narrow;height:10px">narrow</div>
+        </body>"#;
+        let mut fallback = PageBox::A4;
+        fallback.width = 320.0;
+        fallback.height = 240.0;
+        let data = layout_page_render_data(html, fallback).expect("layout");
+        let (scene, _, page_box) = &data.pages[0];
+
+        assert_eq!(scene.page_metadata.page_name.as_deref(), Some("narrow"));
+        assert_eq!((page_box.width, page_box.height), (320.0, 240.0));
     }
 
     #[test]

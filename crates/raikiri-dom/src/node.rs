@@ -292,6 +292,15 @@ pub struct Node {
     /// to Taffy's physical min-size fields, while fragmentation needs the
     /// provenance to avoid changing physical `min-height` behavior.
     pub(crate) has_logical_min_block_size: bool,
+    /// Computed CSS `order`; consumed only when this node is a flex/grid item.
+    pub(crate) order: i32,
+    /// Optional order-modified child view for the last style bridge. This is
+    /// derived layout state, never a replacement for the DOM-order `children`.
+    pub(crate) order_modified_children: Box<[usize]>,
+    /// Taffy's resolved grid row start for each in-flow child, in source-view order.
+    pub(crate) grid_item_row_starts: Box<[(usize, u16)]>,
+    /// Resolved grid column count from Taffy's detailed layout information.
+    pub(crate) grid_column_count: usize,
     /// Child arena indices (`Document::nodes` の usize)。
     pub children: Vec<usize>,
     /// Taffy layout cache (per-node)。
@@ -361,6 +370,10 @@ impl Node {
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
+            order: 0,
+            order_modified_children: Box::new([]),
+            grid_item_row_starts: Box::new([]),
+            grid_column_count: 0,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -391,6 +404,10 @@ impl Node {
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
+            order: 0,
+            order_modified_children: Box::new([]),
+            grid_item_row_starts: Box::new([]),
+            grid_column_count: 0,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -422,6 +439,10 @@ impl Node {
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
+            order: 0,
+            order_modified_children: Box::new([]),
+            grid_item_row_starts: Box::new([]),
+            grid_column_count: 0,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -460,6 +481,10 @@ impl Node {
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
+            order: 0,
+            order_modified_children: Box::new([]),
+            grid_item_row_starts: Box::new([]),
+            grid_column_count: 0,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -486,6 +511,10 @@ impl Node {
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
+            order: 0,
+            order_modified_children: Box::new([]),
+            grid_item_row_starts: Box::new([]),
+            grid_column_count: 0,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -514,6 +543,10 @@ impl Node {
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
+            order: 0,
+            order_modified_children: Box::new([]),
+            grid_item_row_starts: Box::new([]),
+            grid_column_count: 0,
             children: Vec::new(),
             cache: Cache::new(),
             unrounded_layout: Layout::with_order(0),
@@ -537,6 +570,20 @@ impl Node {
             NodeData::Comment(_) => NodeKind::Comment,
             NodeData::ProcessingInstruction { .. } => NodeKind::ProcessingInstruction,
             NodeData::DocumentFragment => NodeKind::DocumentFragment,
+        }
+    }
+
+    /// Children in this node's layout and paint order.
+    ///
+    /// Flex and grid containers with non-zero item `order` use a derived stable
+    /// projection. Other nodes return their DOM-order child slice unchanged.
+    #[doc(hidden)]
+    #[inline]
+    pub fn layout_children(&self) -> &[usize] {
+        if self.order_modified_children.is_empty() {
+            &self.children
+        } else {
+            &self.order_modified_children
         }
     }
 

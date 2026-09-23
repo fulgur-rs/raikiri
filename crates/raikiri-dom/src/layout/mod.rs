@@ -12,7 +12,7 @@ use raikiri_traits::{
     NodeId, NodeKind, PageFragment, PageFragmentEvent, PageFragmentGeometry,
     PageFragmentGeometryTable, PageFragmentInsets, PageFragmentItem, PageFragmentKind,
     PageFragmentLineRange, PageFragmentLink, PageFragmentLinkEvent, PageFragmentOrientation,
-    PageFragmentPageGeometry, PageFragmentRect,
+    PageFragmentPageGeometry, PageFragmentRect, ReplacedResolver,
 };
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -42,7 +42,7 @@ use raikiri_style::{
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
     ComputedTabSize, ComputedValues,
 };
-use raikiri_traits::{LayoutError, PageBox, ReplacedResolver};
+use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
     AlignContent as TaffyAlignContent, AlignItems as TaffyAlignItems, AlignSelf as TaffyAlignSelf,
     AvailableSpace, BlockContext, BoxSizing as TaffyBoxSizing, Clear as TaffyClear, CompactLength,
@@ -537,25 +537,132 @@ pub fn page_margins(cascade: &CascadeResult, page_box: PageBox) -> PageMargins {
     margins
 }
 
+/// Resolve the first page-context scan's child order from cascaded styles.
+/// This runs before the first Taffy layout, so it can use order-modified source
+/// order for flex items and grid items with auto row start/end and column
+/// placement at auto or line 1, but not Taffy's resolved grid row details.
+fn initial_page_child_order(
+    document: &Document,
+    cascade: &CascadeResult,
+    parent_id: usize,
+) -> Vec<usize> {
+    let children = document.nodes[parent_id].children.clone();
+    let parent_style = &cascade.computed[parent_id];
+    let is_flex = matches!(
+        parent_style.display,
+        DisplayValue::Flex | DisplayValue::InlineFlex
+    );
+    let is_auto_row_grid = matches!(
+        parent_style.display,
+        DisplayValue::Grid | DisplayValue::InlineGrid
+    ) && children
+        .iter()
+        .copied()
+        .filter(|&child_id| {
+            !matches!(
+                cascade.computed[child_id].position,
+                PositionValue::Absolute | PositionValue::Fixed
+            ) && cascade.computed[child_id].display != DisplayValue::None
+        })
+        .all(|child_id| {
+            matches!(
+                &cascade.computed[child_id].grid_row_start,
+                GridLineValue::Auto
+            ) && matches!(
+                &cascade.computed[child_id].grid_row_end,
+                GridLineValue::Auto
+            ) && matches!(
+                &cascade.computed[child_id].grid_column_start,
+                GridLineValue::Auto | GridLineValue::Line(1)
+            )
+        });
+    if !is_flex && !is_auto_row_grid {
+        return children;
+    }
+
+    let is_in_flow = |child_id: usize| {
+        cascade.computed[child_id].display != DisplayValue::None
+            && !matches!(
+                cascade.computed[child_id].position,
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+    };
+    let mut ordered_items: Vec<_> = children
+        .iter()
+        .copied()
+        .filter(|&child_id| is_in_flow(child_id))
+        .collect();
+    ordered_items.sort_by_key(|&child_id| cascade.computed[child_id].order);
+    if is_flex
+        && matches!(
+            parent_style.flex_direction,
+            FlexDirectionValue::ColumnReverse
+        )
+    {
+        ordered_items.reverse();
+    }
+
+    let mut ordered_items = ordered_items.into_iter();
+    let mut ordered_children = children;
+    for child_id in &mut ordered_children {
+        if is_in_flow(*child_id) {
+            *child_id = ordered_items
+                .next()
+                .expect("every in-flow child has one initial-page order entry");
+        }
+    }
+    ordered_children
+}
+
+/// Cached child order and Grid rows are usable only for the exact cascade run
+/// that produced the layout, while the tree is clean and stored `order` values
+/// still match the cascade the caller wants to inspect.
+fn document_has_resolved_pagination_order(document: &Document, cascade: &CascadeResult) -> bool {
+    let has_resolved_order = document.nodes.iter().any(|node| {
+        node.grid_column_count > 0
+            || !node.grid_item_row_starts.is_empty()
+            || !node.order_modified_children.is_empty()
+    });
+    let cascade_order_matches_layout = document.nodes.iter().enumerate().all(|(node_id, node)| {
+        cascade
+            .computed
+            .get(node_id)
+            .is_some_and(|computed| node.order == computed.order)
+    });
+    has_resolved_order
+        && !document.layout_dirty
+        && document.layout_cascade_generation == Some(cascade.generation())
+        && cascade_order_matches_layout
+}
+
 /// Find the named page requested by the first rendered in-flow class-A box.
 ///
 /// A named page on the first in-flow box selects the initial page context, so
 /// callers must resolve its `@page` size and margins before the first layout
-/// pass. Later named descendants belong to a pagination transition and must
-/// not change the geometry of the initial layout pass. The scan therefore
-/// stops after the first rendered in-flow body child.
+/// pass. Before layout, recursive scans use cascaded flex/grid order where
+/// placement is known; after layout, they use order projections and resolved
+/// grid rows. Later named descendants belong to a pagination transition and
+/// must not change the initial layout geometry. The scan therefore stops after
+/// the first rendered in-flow body child.
 pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<String> {
     let body_id = (0..document.nodes.len())
         .find(|&node_id| document.nodes[node_id].tag_name() == Some("body"))?;
+    let resolved_layout = document_has_resolved_pagination_order(document, cascade);
     if let Some(raikiri_style::property::PageValue::Named(name)) = cascade.page_values.get(body_id)
     {
         return Some(name.to_string());
     }
-    for &child_id in &document.nodes[body_id].children {
+    let child_order = if resolved_layout {
+        pagination_child_order(document, cascade, body_id)
+    } else {
+        initial_page_child_order(document, cascade, body_id)
+    };
+    for child_id in child_order {
         let node = document.get_node(child_id)?;
         if !node.is_in_document()
             || node.is_non_rendered_html_element()
-            || (node.kind() == NodeKind::Element && node.is_display_none())
+            || (node.kind() == NodeKind::Element
+                && cascade.computed[child_id].display == DisplayValue::None)
         {
             continue;
         }
@@ -587,13 +694,163 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
                 // an anonymous block. Resolve that propagation before falling
                 // back to the anonymous initial page; later siblings must not
                 // change the initial page context.
-                let (_, propagated) = propagated_start_page_name(document, cascade, child_id, None);
+                let (_, propagated) = propagated_start_page_name_with_order(
+                    document,
+                    cascade,
+                    child_id,
+                    None,
+                    resolved_layout,
+                );
                 return propagated;
             }
             _ => {}
         }
     }
     None
+}
+
+/// Cascaded state selected for the first page after verifying resolved Grid placement.
+///
+/// `page_name` is the query name used to build `cascade`; `page_box` and
+/// `font_context` are the matching layout inputs. Callers rebuild these values
+/// in `recascade` when the resolved first in-flow box selects a different page.
+pub struct InitialPageContext {
+    /// Named page used by the current first-page cascade, if any.
+    pub page_name: Option<String>,
+    /// Cascade for the current first-page query.
+    pub cascade: CascadeResult,
+    /// Physical page dimensions derived from that cascade or caller defaults.
+    pub page_box: PageBox,
+    /// Font context used when probing the first-page layout.
+    pub font_context: FontContext,
+}
+
+/// Failure while resolving the page context selected by the first placed Grid item.
+#[derive(Debug)]
+pub enum InitialPageContextError {
+    /// The single-page placement probe failed.
+    Layout(LayoutError),
+    /// Named-page size changes kept changing the first resolved Grid item.
+    PageGeometryDidNotConverge {
+        /// Number of placement passes attempted.
+        iterations: u32,
+    },
+}
+
+impl std::fmt::Display for InitialPageContextError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Layout(error) => write!(f, "initial page placement failed: {error}"),
+            Self::PageGeometryDidNotConverge { iterations } => write!(
+                f,
+                "initial page context did not converge after {iterations} placement passes"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InitialPageContextError {}
+
+/// Optional resources used by the initial-page layout probe.
+///
+/// Provide the same resolver and base URL as the final layout pass so image
+/// intrinsic sizes produce matching Flex/Grid placement.
+#[derive(Clone, Copy, Default)]
+pub struct InitialPageProbeResources<'a> {
+    resolver: Option<&'a dyn ReplacedResolver>,
+    base_url: Option<&'a url::Url>,
+}
+
+impl<'a> InitialPageProbeResources<'a> {
+    /// Create probe resources from the caller's optional image resolver and base URL.
+    pub const fn new(
+        resolver: Option<&'a dyn ReplacedResolver>,
+        base_url: Option<&'a url::Url>,
+    ) -> Self {
+        Self { resolver, base_url }
+    }
+}
+
+/// Resolve and rebuild the initial page context using the first placed Grid box.
+///
+/// Flex/Grid order and Grid placement may change which named-page descendant
+/// starts a document. When a document has both a named page and a Flex/Grid
+/// container, this helper probes placement, asks [`first_page_name`] for the
+/// resolved first box, and invokes `recascade` when that name differs from the
+/// current page query. Every probe uses the caller's replaced-resource resolver
+/// and base URL so intrinsic sizes match the final layout. The operation is
+/// bounded so self-referential page-size changes fail explicitly. Documents
+/// without both features return their input state without a probe.
+#[allow(clippy::result_large_err)]
+pub fn resolve_initial_page_context(
+    document: &Document,
+    page_name: Option<String>,
+    cascade: CascadeResult,
+    page_box: PageBox,
+    font_context: FontContext,
+    resources: InitialPageProbeResources<'_>,
+    mut recascade: impl FnMut(Option<&str>) -> (CascadeResult, PageBox, FontContext),
+) -> Result<InitialPageContext, InitialPageContextError> {
+    let mut context = InitialPageContext {
+        page_name,
+        cascade,
+        page_box,
+        font_context,
+    };
+    let has_named_page = context
+        .cascade
+        .page_values
+        .iter()
+        .any(|page_value| matches!(page_value, raikiri_style::property::PageValue::Named(_)));
+    let has_flex_or_grid = context.cascade.computed.iter().any(|computed| {
+        matches!(
+            computed.display,
+            DisplayValue::Flex
+                | DisplayValue::InlineFlex
+                | DisplayValue::Grid
+                | DisplayValue::InlineGrid
+        )
+    });
+    if !has_named_page || !has_flex_or_grid {
+        return Ok(context);
+    }
+
+    const MAX_INITIAL_PAGE_CONTEXT_PASSES: u32 = 3;
+    for _ in 0..MAX_INITIAL_PAGE_CONTEXT_PASSES {
+        let mut probe_document = document.clone();
+        let probe_layout = if let Some(resolver) = resources.resolver {
+            layout_single_page_with_resolver_and_base_url(
+                &mut probe_document,
+                &context.cascade,
+                context.page_box,
+                context.font_context.clone(),
+                resolver,
+                resources.base_url,
+            )
+        } else {
+            layout_single_page(
+                &mut probe_document,
+                &context.cascade,
+                context.page_box,
+                context.font_context.clone(),
+            )
+        };
+        probe_layout.map_err(InitialPageContextError::Layout)?;
+        let resolved_name = first_page_name(&probe_document, &context.cascade);
+        if resolved_name == context.page_name {
+            return Ok(context);
+        }
+
+        context.page_name = resolved_name;
+        let (cascade, page_box, font_context) = recascade(context.page_name.as_deref());
+        context.cascade = cascade;
+        context.page_box = page_box;
+        context.font_context = font_context;
+    }
+    // cov:ignore: an oscillating named-grid page query needs a self-referential page-size fixture; callers expose a structured terminal error.
+    Err(InitialPageContextError::PageGeometryDidNotConverge {
+        iterations: MAX_INITIAL_PAGE_CONTEXT_PASSES,
+    })
 }
 
 // cov:ignore: computed multicol bridge is exercised by ignored WPT reftests.
@@ -682,6 +939,9 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         let cv = &cascade.computed[idx];
         // Preserve full DisplayValue for table dispatch before taffy collapses it.
         doc.nodes[idx].display = cv.display;
+        // Taffy does not carry CSS `order` in Style. Retain the computed value
+        // on Node so flex/grid child traversal can build order-modified order.
+        doc.nodes[idx].order = cv.order;
         // Carry multicol settings into the Taffy dispatch seam. Taffy has no
         // native multicol style fields, so the custom strategy reads this
         // side-channel while the ordinary Style remains Taffy-compatible.
@@ -741,6 +1001,7 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
         bridge_gap(style, cv, &mut doc.layout_warnings);
         bridge_grid(style, cv, &mut doc.layout_warnings);
     }
+    refresh_order_modified_children(doc);
     establish_minimal_line_boxes(doc, cascade);
     // Mark table formatting roots for blitz-compat bit preservation.
     for idx in 0..doc.nodes.len() {
@@ -757,6 +1018,203 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
             doc.nodes[idx].flags.remove(NodeFlags::IS_TABLE_ROOT);
         }
     }
+}
+
+/// Rebuild the derived child-order view after every computed-style bridge.
+///
+/// CSS Flexbox and Grid consume flex/grid items in order-modified document
+/// order, while the DOM child vector must remain in source order for traversal,
+/// selectors, counters, and serialization. Taffy has no CSS `order` input in
+/// `Style`, so retain a stable sorted projection only for containers with a
+/// non-zero ordered child. `TaffyChildIter` applies its existing flat-tree and
+/// whitespace filtering to this view.
+fn refresh_order_modified_children(doc: &mut Document) {
+    let mut projection_changed = false;
+    let grid_details_stale = doc.layout_dirty;
+    for parent_idx in 0..doc.nodes.len() {
+        let should_sort = {
+            let parent = &doc.nodes[parent_idx];
+            matches!(parent.style.display, Display::Flex | Display::Grid)
+                && parent.children.iter().any(|&child| {
+                    doc.nodes[child].style.position != TaffyPosition::Absolute
+                        && doc.nodes[child].order != 0
+                })
+        };
+        let new_projection = if should_sort {
+            let children = doc.nodes[parent_idx].children.clone();
+            let mut ordered_items: Vec<usize> = children
+                .iter()
+                .copied()
+                .filter(|&child| doc.nodes[child].style.position != TaffyPosition::Absolute)
+                .collect();
+            // `sort_by_key` is stable, so equal `order` values retain DOM order.
+            ordered_items.sort_by_key(|&child| doc.nodes[child].order);
+            let mut ordered_items = ordered_items.into_iter();
+            let mut ordered_children = children;
+            for child in &mut ordered_children {
+                if doc.nodes[*child].style.position != TaffyPosition::Absolute {
+                    *child = ordered_items
+                        .next()
+                        .expect("every in-flow child has one ordered entry");
+                }
+            }
+            ordered_children.into_boxed_slice()
+        } else {
+            Box::new([])
+        };
+
+        if doc.nodes[parent_idx].order_modified_children.as_ref() != new_projection.as_ref() {
+            projection_changed = true;
+            doc.nodes[parent_idx].order_modified_children = new_projection;
+        }
+    }
+
+    if projection_changed {
+        // Reordering changes Taffy's child traversal. Clear every cache before
+        // layout starts: a root/ancestor cache hit would otherwise skip the
+        // normal lazy invalidation hook and preserve stale item positions.
+        for node in &mut doc.nodes {
+            node.cache.clear();
+            node.grid_item_row_starts = Box::new([]);
+            node.grid_column_count = 0;
+        }
+    } else if grid_details_stale {
+        // A DOM mutation will invalidate layout caches in Taffy's normal path;
+        // discard placement metadata until the next grid layout repopulates it.
+        for node in &mut doc.nodes {
+            node.grid_item_row_starts = Box::new([]);
+            node.grid_column_count = 0;
+        }
+    }
+}
+
+/// Whether `child_id` participates in its flex parent's ordered item sequence.
+/// Match Taffy's flat-tree, box-generation, out-of-flow, and whitespace-text
+/// filters so reversing the sequence changes only actual flex items.
+fn is_in_flow_flex_child_for_pagination(
+    document: &Document,
+    parent_id: usize,
+    child_id: usize,
+) -> bool {
+    let child = &document.nodes[child_id];
+    child.is_in_document()
+        && child.style.display != Display::None
+        && child.style.position != TaffyPosition::Absolute
+        && !matches!(
+            &child.data,
+            NodeData::Text(text)
+                if text.text_content.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
+        )
+        && document.nodes[parent_id].style.display == Display::Flex
+}
+
+/// Return a flex parent's page-traversal order, which follows top-to-bottom
+/// visual order for `column-reverse` and Taffy's order-modified order otherwise.
+fn flex_pagination_child_order(
+    document: &Document,
+    cascade: &CascadeResult,
+    parent_id: usize,
+) -> Vec<usize> {
+    let mut children = document.nodes[parent_id].layout_children().to_vec();
+    if !matches!(
+        cascade.computed[parent_id].flex_direction,
+        FlexDirectionValue::ColumnReverse
+    ) {
+        return children;
+    }
+
+    let mut ordered_items: Vec<_> = children
+        .iter()
+        .copied()
+        .filter(|&child_id| is_in_flow_flex_child_for_pagination(document, parent_id, child_id))
+        .collect();
+    ordered_items.reverse();
+    let mut ordered_items = ordered_items.into_iter();
+    for child_id in &mut children {
+        if is_in_flow_flex_child_for_pagination(document, parent_id, *child_id) {
+            *child_id = ordered_items
+                .next()
+                .expect("each in-flow flex child has one reversed entry");
+        }
+    }
+    children
+}
+
+fn is_in_flow_grid_item_for_pagination(
+    document: &Document,
+    cascade: &CascadeResult,
+    child_id: usize,
+) -> bool {
+    match document.nodes[child_id].kind() {
+        NodeKind::Element => {
+            cascade.computed[child_id].display != DisplayValue::None
+                && matches!(
+                    cascade.computed[child_id].position,
+                    PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+                )
+        }
+        NodeKind::Text => matches!(
+            &document.nodes[child_id].data,
+            NodeData::Text(text) if !text.text_content.trim().is_empty()
+        ),
+        _ => false,
+    }
+}
+
+/// Child order shared by page-candidate collection and named-page propagation.
+fn pagination_child_order(
+    document: &Document,
+    cascade: &CascadeResult,
+    parent_id: usize,
+) -> Vec<usize> {
+    let computed = &cascade.computed[parent_id];
+    if matches!(
+        computed.display,
+        DisplayValue::Flex | DisplayValue::InlineFlex
+    ) {
+        return flex_pagination_child_order(document, cascade, parent_id);
+    }
+    let is_single_column_grid = matches!(
+        computed.display,
+        DisplayValue::Grid | DisplayValue::InlineGrid
+    ) && document.nodes[parent_id].grid_column_count == 1;
+    if !is_single_column_grid {
+        if matches!(
+            computed.display,
+            DisplayValue::Grid | DisplayValue::InlineGrid
+        ) {
+            // Multi-column pagination is not implemented, but named-page
+            // propagation and candidate traversal must retain Grid's
+            // order-modified child sequence.
+            return document.nodes[parent_id].layout_children().to_vec();
+        }
+        return document.nodes[parent_id].children.clone();
+    }
+
+    let mut children = document.nodes[parent_id].layout_children().to_vec();
+    let mut in_flow_items: Vec<_> = document.nodes[parent_id]
+        .grid_item_row_starts
+        .iter()
+        .copied()
+        .filter(|(child_id, _)| is_in_flow_grid_item_for_pagination(document, cascade, *child_id))
+        .collect();
+    let pageable_count = children
+        .iter()
+        .filter(|&&child_id| is_in_flow_grid_item_for_pagination(document, cascade, child_id))
+        .count();
+    if in_flow_items.len() == pageable_count {
+        // Stable sorting keeps order-modified order within a resolved row.
+        in_flow_items.sort_by_key(|&(_, row_start)| row_start);
+        let mut ordered_items = in_flow_items.into_iter().map(|(child_id, _)| child_id);
+        for child_id in &mut children {
+            if is_in_flow_grid_item_for_pagination(document, cascade, *child_id) {
+                *child_id = ordered_items
+                    .next()
+                    .expect("Taffy row details cover each in-flow grid item");
+            }
+        }
+    }
+    children
 }
 
 /// [`Direction`] → [`taffy::Direction`] mapping.
@@ -9276,6 +9734,13 @@ pub fn layout_single_page(
     // されない)。layout はここで sync することで少なくとも layout/paint 段に
     // stale bit を持ち込まないことを保証する。
     document.mark_in_document_flags();
+    if document.layout_cascade_generation != Some(cascade.generation()) {
+        // Computed Grid/Flex style can change without a DOM tree mutation. Do
+        // not let Taffy's per-node cache or resolved Grid rows survive that
+        // cascade transition.
+        document.layout_dirty = true;
+    }
+    document.layout_cascade_generation = None;
 
     // Step 0: text_layout re-entrance clear
     for node in document.nodes.iter_mut() {
@@ -9428,6 +9893,7 @@ pub fn layout_single_page(
     for event in document.layout_warnings.drain(..) {
         emit_layout_warn(&mut observer, event);
     }
+    document.layout_cascade_generation = Some(cascade.generation());
 
     Ok(())
 }
@@ -10109,6 +10575,16 @@ fn propagated_start_page_name(
     node_id: usize,
     inherited_page_name: Option<&str>,
 ) -> (bool, Option<String>) {
+    propagated_start_page_name_with_order(document, cascade, node_id, inherited_page_name, true)
+}
+
+fn propagated_start_page_name_with_order(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    inherited_page_name: Option<&str>,
+    resolved_layout: bool,
+) -> (bool, Option<String>) {
     let Some(node) = document.get_node(node_id) else {
         return (false, None);
     };
@@ -10138,7 +10614,12 @@ fn propagated_start_page_name(
     let used_page_name = explicit_page_name
         .clone()
         .or_else(|| inherited_page_name.map(ToOwned::to_owned));
-    for &child_id in &node.children {
+    let child_order = if resolved_layout {
+        pagination_child_order(document, cascade, node_id)
+    } else {
+        initial_page_child_order(document, cascade, node_id)
+    };
+    for child_id in child_order {
         if child_id >= cascade.computed.len() {
             continue;
         }
@@ -10150,8 +10631,13 @@ fn propagated_start_page_name(
         {
             continue;
         }
-        let (has_box, child_start) =
-            propagated_start_page_name(document, cascade, child_id, used_page_name.as_deref());
+        let (has_box, child_start) = propagated_start_page_name_with_order(
+            document,
+            cascade,
+            child_id,
+            used_page_name.as_deref(),
+            resolved_layout,
+        );
         if has_box {
             return (true, child_start);
         }
@@ -10581,8 +11067,10 @@ pub fn layout_pages_with_page_geometry(
                     && matches!(computed.display, DisplayValue::TableRow)
                     && !inside_float
                     && !inside_flex;
-                let flex_item_candidate = flex_column_parent && !inside_float;
-                let grid_item_candidate = grid_single_column_parent && !inside_float;
+                let flex_item_candidate =
+                    flex_column_parent && !inside_float && !out_of_flow_subtree;
+                let grid_item_candidate =
+                    grid_single_column_parent && !inside_float && !out_of_flow_subtree;
                 // The table engine stores row geometry on its cells rather
                 // than on the anonymous row box. Derive the row border box
                 // from those direct cells so pagination can keep the row
@@ -10638,7 +11126,8 @@ pub fn layout_pages_with_page_geometry(
                     });
                 }
                 let child_is_direct_body = node_id == body_id;
-                for &child_id in &node.children {
+                let child_order = pagination_child_order(document, cascade, node_id);
+                for child_id in child_order {
                     collect_candidates(
                         document,
                         cascade,
@@ -10669,15 +11158,7 @@ pub fn layout_pages_with_page_geometry(
                         matches!(
                             computed.display,
                             DisplayValue::Grid | DisplayValue::InlineGrid
-                        ) && matches!(
-                            &computed.grid_template_columns,
-                            ComputedGridTemplateTracks::List(list)
-                                if list.components.len() == 1
-                                    && matches!(
-                                        list.components.first(),
-                                        Some(ComputedGridTrackListComponent::Size(_))
-                                    )
-                        ),
+                        ) && document.nodes[node_id].grid_column_count == 1,
                         inside_flex || matches!(computed.display, DisplayValue::Flex),
                         float_subtree,
                         out_of_flow_subtree,
@@ -10725,6 +11206,7 @@ pub fn layout_pages_with_page_geometry(
     // This coalesces zero-height named runs such as a/b/c/d/e without creating
     // one blank page per zero-height box.
     let mut last_named_raw_y: Option<f32> = None;
+    let mut last_named_was_zero_height = false;
     let mut last_named_had_display_none_descendant = false;
     let mut saw_child = false;
     // Direct fixed-height blocks are the only class-A boxes for which this
@@ -10740,6 +11222,7 @@ pub fn layout_pages_with_page_geometry(
         selected_page_name(cascade, body_id).or_else(|| first_page_name(document, cascade));
     let mut page_names = vec![current_page_name.clone()];
 
+    let mut trailing_flex_child_by_parent = HashMap::<usize, Option<usize>>::new();
     for candidate in candidates {
         let node_id = candidate.node_id;
         if let Some((ancestor_id, correction)) = pending_underflow
@@ -11008,6 +11491,8 @@ pub fn layout_pages_with_page_geometry(
         // this matters for chains of empty named boxes with overflowing text.
         let same_named_coordinate = candidate.is_named
             && candidate.is_direct_body_element
+            && height <= 0.001
+            && last_named_was_zero_height
             && !last_named_had_display_none_descendant
             && last_named_raw_y.is_some_and(|previous| (raw_y - previous).abs() <= 0.001);
         let named_page_change =
@@ -11044,17 +11529,26 @@ pub fn layout_pages_with_page_geometry(
         // flex pagination behavior.
         let flex_item_is_last = candidate.is_flex_item
             && parent_of[node_id].is_some_and(|parent_id| {
-                document.nodes[parent_id]
-                    .children
-                    .iter()
-                    .rev()
-                    .find(|&&child_id| {
-                        document.nodes[child_id].is_in_document()
-                            && document.nodes[child_id].kind() == NodeKind::Element
-                            && !document.nodes[child_id].is_display_none()
-                    })
-                    .copied()
-                    == Some(node_id)
+                let trailing_child = trailing_flex_child_by_parent
+                    .entry(parent_id)
+                    .or_insert_with(|| {
+                        let children = document.nodes[parent_id].layout_children();
+                        let is_column_reverse = matches!(
+                            cascade.computed[parent_id].flex_direction,
+                            FlexDirectionValue::ColumnReverse
+                        );
+                        if is_column_reverse {
+                            children.iter().find(|&&child_id| {
+                                is_in_flow_flex_child_for_pagination(document, parent_id, child_id)
+                            })
+                        } else {
+                            children.iter().rev().find(|&&child_id| {
+                                is_in_flow_flex_child_for_pagination(document, parent_id, child_id)
+                            })
+                        }
+                        .copied()
+                    });
+                *trailing_child == Some(node_id)
             });
         let flex_item_overflow = candidate.is_flex_item
             && !flex_item_is_last
@@ -11180,6 +11674,7 @@ pub fn layout_pages_with_page_geometry(
             current_page_name = candidate_page_name;
             if candidate.is_direct_body_element {
                 last_named_raw_y = candidate.is_named.then_some(raw_y);
+                last_named_was_zero_height = candidate.is_named && height <= 0.001;
                 last_named_had_display_none_descendant =
                     candidate.is_named && has_display_none_descendant(document, node_id);
             }
@@ -11332,6 +11827,22 @@ pub fn layout_single_page_with_resolver_and_base_url(
 mod tests {
     use super::*;
     use taffy::Style;
+
+    #[test]
+    fn initial_page_context_errors_have_descriptive_messages() {
+        let layout_error = InitialPageContextError::Layout(LayoutError::Internal {
+            message: "missing body".to_owned(),
+        });
+        assert_eq!(
+            layout_error.to_string(),
+            "initial page placement failed: Layout internal error: missing body"
+        );
+        let geometry_error = InitialPageContextError::PageGeometryDidNotConverge { iterations: 3 };
+        assert_eq!(
+            geometry_error.to_string(),
+            "initial page context did not converge after 3 placement passes"
+        );
+    }
 
     #[test]
     fn find_body_returns_index_when_present() {
@@ -16242,6 +16753,159 @@ mod tests {
     }
 
     #[test]
+    fn flex_items_follow_order_modified_source_order() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let flex = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flex;width:160px;height:20px"),
+        );
+        let a = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("order:2;width:40px;height:20px"),
+        );
+        let absolute = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("position:absolute;order:-100;width:10px;height:10px"),
+        );
+        let b = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("order:-1;width:40px;height:20px"),
+        );
+        let c = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("order:2;width:40px;height:20px"),
+        );
+        let d = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("width:40px;height:20px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        assert_eq!(doc.nodes[flex].children, vec![a, absolute, b, c, d]);
+        assert_eq!(
+            doc.nodes[flex].order_modified_children.as_ref(),
+            &[b, absolute, d, a, c]
+        );
+        let x = |id: usize| doc.nodes[id].unrounded_layout.location.x;
+        assert!((x(d) - x(b) - 40.0).abs() < 0.5);
+        assert!((x(a) - x(d) - 40.0).abs() < 0.5);
+        assert!((x(c) - x(a) - 40.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn relayout_invalidates_cache_when_order_modified_view_returns_to_dom_order() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let flex = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flex;width:60px;height:20px"),
+        );
+        let first = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("order:1;width:30px;height:20px"),
+        );
+        let second = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("order:0;width:30px;height:20px"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cascade_result = cascade(&doc, &rules).expect("initial cascade Ok");
+        layout_single_page(&mut doc, &cascade_result, PageBox::A4, FontContext::new())
+            .expect("initial layout Ok");
+        assert_eq!(
+            doc.nodes[flex].order_modified_children.as_ref(),
+            &[second, first]
+        );
+        assert!(
+            doc.nodes[second].unrounded_layout.location.x
+                < doc.nodes[first].unrounded_layout.location.x
+        );
+
+        // Keep the same Document and page size, but remove the nonzero order.
+        // The derived child view becomes empty, which must invalidate cached
+        // flex positions rather than reusing the prior reversed placement.
+        doc.set_element_inline_style(first, Some("order:0;width:30px;height:20px".into()));
+        doc.set_element_inline_style(second, Some("order:0;width:30px;height:20px".into()));
+        let rules = build_rule_tree(&doc);
+        let updated_cascade = cascade(&doc, &rules).expect("updated cascade Ok");
+        layout_single_page(&mut doc, &updated_cascade, PageBox::A4, FontContext::new())
+            .expect("updated layout Ok");
+
+        assert!(doc.nodes[flex].order_modified_children.is_empty());
+        assert!(
+            doc.nodes[first].unrounded_layout.location.x
+                < doc.nodes[second].unrounded_layout.location.x
+        );
+    }
+
+    #[test]
+    fn order_is_ignored_for_non_flex_grid_children() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let block = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+        let a = doc.append_element(
+            Some(block),
+            "div",
+            Style::default(),
+            Some("order:2;height:20px"),
+        );
+        let b = doc.append_element(
+            Some(block),
+            "div",
+            Style::default(),
+            Some("order:-1;height:20px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        assert!(doc.nodes[block].order_modified_children.is_empty());
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            doc.nodes[b].unrounded_layout.location.y > doc.nodes[a].unrounded_layout.location.y,
+            "ordinary block children must retain source order despite CSS order"
+        );
+    }
+
+    #[test]
     fn flex_grow_absorbs_free_space() {
         // `bridge_flex`'s `flex_grow` field reaching taffy's flexible-length
         // resolution algorithm (§9.7 "Resolving Flexible Lengths") — a
@@ -19561,6 +20225,42 @@ mod tests {
     }
 
     #[test]
+    fn grid_auto_placement_uses_order_modified_source_order() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;width:200px;grid-template-columns:100px 100px;grid-auto-rows:20px"),
+        );
+        let a = doc.append_element(Some(grid), "div", Style::default(), Some("order:2"));
+        let b = doc.append_element(Some(grid), "div", Style::default(), Some("order:-1"));
+        let c = doc.append_element(Some(grid), "div", Style::default(), Some("order:2"));
+        let d = doc.append_element(Some(grid), "div", Style::default(), None::<&str>);
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        assert_eq!(doc.nodes[grid].children, vec![a, b, c, d]);
+        assert_eq!(
+            doc.nodes[grid].order_modified_children.as_ref(),
+            &[b, d, a, c]
+        );
+        let loc = |id: usize| doc.nodes[id].unrounded_layout.location;
+        assert!((loc(d).x - loc(b).x - 100.0).abs() < 0.5);
+        assert!((loc(a).y - loc(b).y - 20.0).abs() < 0.5);
+        assert!((loc(c).x - loc(a).x - 100.0).abs() < 0.5);
+        assert!((loc(c).y - loc(d).y - 20.0).abs() < 0.5);
+    }
+
+    #[test]
     fn grid_auto_flow_column_places_implicit_items_column_wise_through_taffy() {
         // `bridge_grid`'s `grid_auto_flow` field reaching taffy's
         // auto-placement algorithm — with `grid-auto-flow: column` and no
@@ -20533,6 +21233,1177 @@ mod tests {
         assert_eq!(geometry.fragments[0].page_index, 0);
         assert_eq!(geometry.fragments[1].page_index, 1);
         assert_eq!(geometry.fragments[1].fragment_index, 1);
+    }
+
+    #[test]
+    fn first_page_name_follows_ordered_auto_grid_items() {
+        use raikiri_style::{Origin, build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:grid;grid-template-columns:100px"),
+        );
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("order:1;page:wide;height:10px"),
+        );
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("order:0;page:narrow;height:10px"),
+        );
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:none;order:-1;page:wide"),
+        );
+        let mut rules = build_rule_tree(&doc);
+        rules.add_stylesheet(
+            "@page wide { size:200px 300px; margin:5px; } \
+             @page narrow { size:120px 180px; margin:12px; }",
+            Origin::Author,
+        );
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+
+        assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("narrow"));
+    }
+
+    #[test]
+    fn propagated_start_page_name_uses_resolved_grid_child_order() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:grid;grid-template-columns:100px"),
+        );
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;order:1;page:a;height:10px"),
+        );
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;order:0;page:b;height:10px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+        assert_eq!(
+            propagated_start_page_name(&doc, &cascade, body, None),
+            (true, Some("b".to_owned()))
+        );
+    }
+
+    #[test]
+    fn first_page_name_uses_order_in_nested_flex_before_layout() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let flex = doc.append_element(
+            Some(body),
+            "section",
+            Style::default(),
+            Some("display:flex;flex-direction:column"),
+        );
+        doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("display:block;order:1;page:wide"),
+        );
+        doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("display:block;order:0;page:narrow"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("nested flex cascade Ok");
+
+        assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("narrow"));
+    }
+
+    #[test]
+    fn resolved_image_intrinsic_size_changes_flex_grid_column_count_and_page_order() {
+        struct FixedImageResolver(f32);
+        impl raikiri_traits::ReplacedResolver for FixedImageResolver {
+            fn resolve(
+                &self,
+                _request: raikiri_traits::ResolverRequest<'_>,
+            ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError>
+            {
+                Ok(raikiri_traits::ResolvedIntrinsic {
+                    intrinsic: raikiri_traits::IntrinsicBox::new(self.0, 40.0),
+                    disposition: raikiri_traits::ResolveDisposition::Ok,
+                })
+            }
+        }
+
+        let layout_for_image_width = |image_width| {
+            use raikiri_style::{build_rule_tree, cascade};
+
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let flex = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:flex;width:300px"),
+            );
+            let grid = doc.append_element(
+                Some(flex),
+                "section",
+                Style::default(),
+                Some("display:grid;order:0;flex:1 1 0;min-width:0;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));grid-template-rows:auto auto"),
+            );
+            doc.append_element(
+                Some(grid),
+                "div",
+                Style::default(),
+                Some("display:block;grid-row:2;order:0;page:wide;height:10px"),
+            );
+            doc.append_element(
+                Some(grid),
+                "div",
+                Style::default(),
+                Some("display:block;grid-row:1;order:1;page:narrow;height:10px"),
+            );
+            let image = doc.append_element(
+                Some(flex),
+                "img",
+                Style::default(),
+                Some("order:1;flex:0 0 auto"),
+            );
+            doc.set_element_attributes(
+                image,
+                vec![("src".into(), "https://example.test/image.png".into())],
+            );
+            doc.mark_in_document_flags();
+            let rules = build_rule_tree(&doc);
+            let cascade = cascade(&doc, &rules).expect("cascade Ok");
+            layout_single_page_with_resolver_and_base_url(
+                &mut doc,
+                &cascade,
+                PageBox::A4,
+                FontContext::new(),
+                &FixedImageResolver(image_width),
+                None,
+            )
+            .expect("layout Ok");
+            (
+                doc.nodes[grid].grid_column_count,
+                first_page_name(&doc, &cascade),
+            )
+        };
+
+        let (small_columns, small_page) = layout_for_image_width(50.0);
+        let (large_columns, large_page) = layout_for_image_width(250.0);
+        assert_eq!(small_columns, 2);
+        assert_eq!(small_page.as_deref(), Some("wide"));
+        assert_eq!(large_columns, 1);
+        assert_eq!(large_page.as_deref(), Some("narrow"));
+    }
+
+    #[test]
+    fn first_page_name_ignores_resolved_order_from_an_older_cascade() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let flex = doc.append_element(
+            Some(body),
+            "section",
+            Style::default(),
+            Some("display:flex;flex-direction:column"),
+        );
+        let wide = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("display:block;order:1;page:wide"),
+        );
+        let narrow = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("display:block;order:0;page:narrow"),
+        );
+        doc.mark_in_document_flags();
+        let old_rules = build_rule_tree(&doc);
+        let old_cascade = cascade(&doc, &old_rules).expect("initial cascade Ok");
+        layout_single_page(&mut doc, &old_cascade, PageBox::A4, FontContext::new())
+            .expect("initial layout Ok");
+        assert!(!doc.layout_dirty);
+        assert!(document_has_resolved_pagination_order(&doc, &old_cascade));
+        assert_eq!(doc.nodes[flex].layout_children(), &[narrow, wide]);
+
+        doc.nodes[wide].data.as_element_mut().unwrap().inline_style =
+            Some("display:block;order:-1;page:wide".into());
+        let new_rules = build_rule_tree(&doc);
+        let new_cascade = cascade(&doc, &new_rules).expect("updated cascade Ok");
+        assert_eq!(old_cascade.computed[wide].order, 1);
+        assert_eq!(new_cascade.computed[wide].order, -1);
+        assert!(!document_has_resolved_pagination_order(&doc, &new_cascade));
+
+        assert_eq!(first_page_name(&doc, &new_cascade).as_deref(), Some("wide"));
+    }
+
+    #[test]
+    fn first_page_name_ignores_resolved_grid_rows_from_an_older_cascade() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let grid = doc.append_element(
+            Some(body),
+            "section",
+            Style::default(),
+            Some("display:grid;grid-template-columns:100%;grid-template-rows:auto auto"),
+        );
+        let wide = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("display:block;grid-row:2;order:0;page:wide"),
+        );
+        let narrow = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("display:block;grid-row:1;order:0;page:narrow"),
+        );
+        doc.mark_in_document_flags();
+        let old_rules = build_rule_tree(&doc);
+        let old_cascade = cascade(&doc, &old_rules).expect("initial cascade Ok");
+        layout_single_page(&mut doc, &old_cascade, PageBox::A4, FontContext::new())
+            .expect("initial layout Ok");
+        assert!(document_has_resolved_pagination_order(&doc, &old_cascade));
+        assert_eq!(
+            first_page_name(&doc, &old_cascade).as_deref(),
+            Some("narrow")
+        );
+
+        doc.nodes[wide].data.as_element_mut().unwrap().inline_style =
+            Some("display:block;grid-row:1;order:0;page:wide".into());
+        doc.nodes[narrow]
+            .data
+            .as_element_mut()
+            .unwrap()
+            .inline_style = Some("display:block;grid-row:2;order:0;page:narrow".into());
+        let new_rules = build_rule_tree(&doc);
+        let new_cascade = cascade(&doc, &new_rules).expect("updated cascade Ok");
+        assert_ne!(old_cascade.generation(), new_cascade.generation());
+        assert_eq!(
+            old_cascade.computed[wide].grid_row_start,
+            raikiri_style::property::GridLineValue::Line(2)
+        );
+        assert_eq!(
+            old_cascade.computed[narrow].grid_row_start,
+            raikiri_style::property::GridLineValue::Line(1)
+        );
+        assert_eq!(
+            new_cascade.computed[wide].grid_row_start,
+            raikiri_style::property::GridLineValue::Line(1)
+        );
+        assert_eq!(
+            new_cascade.computed[narrow].grid_row_start,
+            raikiri_style::property::GridLineValue::Line(2)
+        );
+        assert_eq!(
+            old_cascade.computed[wide].order,
+            new_cascade.computed[wide].order
+        );
+        assert_eq!(
+            old_cascade.computed[narrow].order,
+            new_cascade.computed[narrow].order
+        );
+        assert!(!document_has_resolved_pagination_order(&doc, &new_cascade));
+
+        assert_eq!(first_page_name(&doc, &new_cascade).as_deref(), Some("wide"));
+
+        layout_single_page(&mut doc, &new_cascade, PageBox::A4, FontContext::new())
+            .expect("updated layout Ok");
+        assert!(document_has_resolved_pagination_order(&doc, &new_cascade));
+        assert_eq!(first_page_name(&doc, &new_cascade).as_deref(), Some("wide"));
+    }
+
+    #[test]
+    fn first_page_name_follows_order_and_column_reverse_for_flex_children() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut normal_doc = Document::new();
+        let html = normal_doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = normal_doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:flex;flex-direction:column"),
+        );
+        normal_doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("order:1;page:wide"),
+        );
+        normal_doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("order:0;page:narrow"),
+        );
+        let rules = build_rule_tree(&normal_doc);
+        let normal_cascade = cascade(&normal_doc, &rules).expect("normal flex cascade Ok");
+        assert_eq!(
+            first_page_name(&normal_doc, &normal_cascade).as_deref(),
+            Some("narrow")
+        );
+
+        let mut reverse_doc = Document::new();
+        let html = reverse_doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = reverse_doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:flex;flex-direction:column-reverse"),
+        );
+        reverse_doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("order:0;page:wide"),
+        );
+        reverse_doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("order:1;page:narrow"),
+        );
+        let rules = build_rule_tree(&reverse_doc);
+        let reverse_cascade = cascade(&reverse_doc, &rules).expect("reverse flex cascade Ok");
+        assert_eq!(
+            first_page_name(&reverse_doc, &reverse_cascade).as_deref(),
+            Some("narrow")
+        );
+    }
+
+    #[test]
+    fn layout_pages_uses_order_modified_flex_sequence_for_forced_breaks() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let flex = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flex;flex-direction:column;width:40px;height:20px"),
+        );
+        let break_later_in_visual_order = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("order:1;break-before:page;height:10px"),
+        );
+        let first_in_visual_order = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("order:0;height:10px"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let slices =
+            layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+
+        assert!(slices.len() >= 2, "the forced break must create page 1+");
+        let first_y = doc.nodes[first_in_visual_order].unrounded_layout.location.y;
+        let later_y = doc.nodes[break_later_in_visual_order]
+            .unrounded_layout
+            .location
+            .y;
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            first_y.abs() < 0.01,
+            "the visual first item stays on page 0: y={first_y}"
+        );
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            later_y > first_y + 50.0,
+            "the forced-break item moves later: y={later_y}"
+        );
+        assert_eq!(
+            doc.nodes[flex].layout_children(),
+            &[first_in_visual_order, break_later_in_visual_order]
+        );
+    }
+
+    #[test]
+    fn layout_pages_uses_order_modified_flex_last_item_for_overflow() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let flex = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flex;flex-direction:column;width:40px"),
+        );
+        let visual_last = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("order:1;height:70px"),
+        );
+        let visual_first = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("order:0;height:40px"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let _slices =
+            layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+
+        let first_y = doc.nodes[visual_first].unrounded_layout.location.y;
+        let last_y = doc.nodes[visual_last].unrounded_layout.location.y;
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            first_y.abs() < 0.01,
+            "the visual first item stays at y=0: {first_y}"
+        );
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            last_y < 60.0,
+            "the visual last item may continue across the page edge: y={last_y}"
+        );
+        assert_eq!(
+            doc.nodes[flex].layout_children(),
+            &[visual_first, visual_last]
+        );
+    }
+
+    #[test]
+    fn layout_pages_uses_column_reverse_visual_order_for_forced_breaks() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let flex = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flex;flex-direction:column-reverse;width:40px;height:20px"),
+        );
+        let visual_top = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("order:1;height:10px"),
+        );
+        let visual_bottom_forced_break = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("order:0;break-before:page;height:10px"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let slices =
+            layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+
+        assert!(slices.len() >= 2, "the forced break must create page 1+");
+        assert_eq!(
+            doc.nodes[flex].layout_children(),
+            &[visual_bottom_forced_break, visual_top]
+        );
+        let top_y = doc.nodes[visual_top].unrounded_layout.location.y;
+        let bottom_y = doc.nodes[visual_bottom_forced_break]
+            .unrounded_layout
+            .location
+            .y;
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            top_y.abs() < 0.01,
+            "the visual top stays on page 0: {top_y}"
+        );
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            bottom_y >= 100.0,
+            "the lower item moves to page 1+: {bottom_y}"
+        );
+    }
+
+    #[test]
+    fn layout_pages_keeps_column_reverse_visual_last_item_at_page_edge() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let flex = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flex;flex-direction:column-reverse;width:40px"),
+        );
+        let visual_top = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("order:1;height:40px"),
+        );
+        let visual_bottom = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("order:0;height:70px"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let _slices =
+            layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+
+        assert_eq!(
+            doc.nodes[flex].layout_children(),
+            &[visual_bottom, visual_top]
+        );
+        let top_y = doc.nodes[visual_top].unrounded_layout.location.y;
+        let bottom_y = doc.nodes[visual_bottom].unrounded_layout.location.y;
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            top_y.abs() < 0.01,
+            "visual first item starts at y=0: {top_y}"
+        );
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            bottom_y < 60.0 && bottom_y + 70.0 > 100.0,
+            "visual last item may continue across the page edge: y={bottom_y}"
+        );
+    }
+
+    #[test]
+    fn layout_pages_orders_grid_rows_by_resolved_placement_before_forced_break() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;grid-template-columns:40px;grid-template-rows:60px 60px"),
+        );
+        let row_two = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("grid-column:1;grid-row:2;order:0;break-before:page;height:60px"),
+        );
+        let _comment = doc.append_comment(Some(grid), "not a grid item");
+        let row_one = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("grid-column:1;grid-row:1;order:1;height:60px"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let slices =
+            layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+
+        assert!(slices.len() >= 2, "the forced break must create page 1+");
+        assert_eq!(
+            doc.nodes[grid].layout_children(),
+            &[row_two, _comment, row_one]
+        );
+        let row_one_y = doc.nodes[row_one].unrounded_layout.location.y;
+        let row_two_y = doc.nodes[row_two].unrounded_layout.location.y;
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            row_one_y.abs() < 0.01,
+            "resolved row 1 stays on page 0: {row_one_y}"
+        );
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            row_two_y >= 100.0,
+            "resolved row 2 moves after the break: {row_two_y}"
+        );
+    }
+
+    #[test]
+    fn layout_pages_processes_single_column_grid_in_placed_row_order() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;grid-template-columns:40px;grid-template-rows:60px 60px"),
+        );
+        let first_row = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("grid-column:1;grid-row:1;order:1;height:60px"),
+        );
+        let second_row = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("grid-column:1;grid-row:2;order:0;height:60px"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let slices =
+            layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            slices.len() >= 2,
+            "the second grid row should continue to page 1+"
+        );
+        assert_eq!(doc.nodes[grid].layout_children(), &[second_row, first_row]);
+        let first_y = doc.nodes[first_row].unrounded_layout.location.y;
+        let second_y = doc.nodes[second_row].unrounded_layout.location.y;
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            first_y.abs() < 0.01,
+            "explicit row 1 stays at y=0: {first_y}"
+        );
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            second_y > first_y + 50.0,
+            "explicit row 2 moves after row 1: y={second_y}"
+        );
+    }
+
+    #[test]
+    fn layout_pages_orders_implicit_and_repeated_single_column_grids() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        for grid_style in [
+            "display:grid",
+            "display:grid;grid-template-columns:repeat(1,40px)",
+        ] {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), Some(grid_style));
+            doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;grid-column:1;order:1;page:wide;height:10px"),
+            );
+            doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;grid-column:1;order:0;page:narrow;height:10px"),
+            );
+            let rules = build_rule_tree(&doc);
+            let cascade = cascade(&doc, &rules).expect("cascade Ok");
+            assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("narrow"));
+
+            let slices = layout_pages(&mut doc, &cascade, PageBox::A4, FontContext::new())
+                .expect("pagination Ok");
+            assert_eq!(doc.nodes[body].grid_column_count, 1);
+            assert_eq!(slices.len(), 2);
+            assert_eq!(slices[0].page_name.as_deref(), Some("narrow"));
+            assert_eq!(slices[1].page_name.as_deref(), Some("wide"));
+        }
+    }
+
+    #[test]
+    fn layout_pages_coalesces_zero_height_named_boxes_at_same_position() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;page:first;height:0px"),
+        );
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;page:last;height:0px"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let slices = layout_pages(&mut doc, &cascade, PageBox::A4, FontContext::new())
+            .expect("pagination Ok");
+
+        assert_eq!(slices.len(), 1);
+        assert_eq!(slices[0].page_name.as_deref(), Some("last"));
+    }
+
+    #[test]
+    fn initial_page_child_order_keeps_explicit_grid_columns_in_source_order() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:grid;grid-template-columns:100px 100px"),
+        );
+        let second_column = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("order:0;grid-column:2;page:wide;height:10px"),
+        );
+        let first_column = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("order:1;grid-column:1;page:narrow;height:10px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+
+        assert_eq!(
+            initial_page_child_order(&doc, &cascade, body),
+            vec![second_column, first_column]
+        );
+    }
+
+    #[test]
+    fn grid_pagination_item_filter_matches_in_flow_boxes_and_text() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let static_box = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+        let relative_box = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("position:relative"),
+        );
+        let hidden_box =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:none"));
+        let absolute_box = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("position:absolute"),
+        );
+        let text = doc.append_text(body, "content");
+        let whitespace = doc.append_text(body, "   ");
+        let comment = doc.append_comment(Some(body), "not a grid item");
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+
+        assert!(is_in_flow_grid_item_for_pagination(
+            &doc, &cascade, static_box
+        ));
+        assert!(is_in_flow_grid_item_for_pagination(
+            &doc,
+            &cascade,
+            relative_box
+        ));
+        assert!(!is_in_flow_grid_item_for_pagination(
+            &doc, &cascade, hidden_box
+        ));
+        assert!(!is_in_flow_grid_item_for_pagination(
+            &doc,
+            &cascade,
+            absolute_box
+        ));
+        assert!(is_in_flow_grid_item_for_pagination(&doc, &cascade, text));
+        assert!(!is_in_flow_grid_item_for_pagination(
+            &doc, &cascade, whitespace
+        ));
+        assert!(!is_in_flow_grid_item_for_pagination(
+            &doc, &cascade, comment
+        ));
+    }
+
+    #[test]
+    fn pagination_child_order_falls_back_when_grid_row_details_are_incomplete() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;grid-template-columns:100px"),
+        );
+        let later = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("order:1;height:10px"),
+        );
+        let earlier = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("order:0;height:10px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+        assert_eq!(doc.nodes[grid].grid_column_count, 1);
+        doc.nodes[grid].grid_item_row_starts = Vec::new().into_boxed_slice();
+
+        assert_eq!(
+            pagination_child_order(&doc, &cascade, grid),
+            vec![earlier, later]
+        );
+    }
+
+    #[test]
+    fn layout_pages_processes_mixed_auto_and_explicit_grid_rows_by_resolved_placement() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;grid-template-columns:40px;grid-template-rows:60px 60px"),
+        );
+        let auto_row_one = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("order:1;height:60px"),
+        );
+        let explicit_row_two = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("grid-column:1;grid-row:2;order:0;height:60px"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let slices =
+            layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            slices.len() >= 2,
+            "the second grid row should continue to page 1+"
+        );
+        assert_eq!(
+            doc.nodes[grid].layout_children(),
+            &[explicit_row_two, auto_row_one]
+        );
+        let row_one_y = doc.nodes[auto_row_one].unrounded_layout.location.y;
+        let row_two_y = doc.nodes[explicit_row_two].unrounded_layout.location.y;
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            row_one_y.abs() < 0.01,
+            "auto row 1 stays at y=0: {row_one_y}"
+        );
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            row_two_y > row_one_y + 50.0,
+            "explicit row 2 follows row 1: {row_two_y}"
+        );
+    }
+
+    #[test]
+    fn layout_pages_orders_direct_grid_text_before_later_forced_break() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;grid-template-columns:100px;grid-template-rows:60px 60px"),
+        );
+        let first_row_text = doc.append_text(grid, "first row text");
+        let later_row_forced_break = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("grid-column:1;grid-row:2;order:-1;break-before:page;height:60px"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let slices =
+            layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+
+        assert!(slices.len() >= 2, "the forced break must create page 1+");
+        assert_eq!(
+            doc.nodes[grid].layout_children(),
+            &[later_row_forced_break, first_row_text]
+        );
+        let text_y = doc.nodes[first_row_text].unrounded_layout.location.y;
+        let later_y = doc.nodes[later_row_forced_break]
+            .unrounded_layout
+            .location
+            .y;
+        assert!(text_y.abs() < 0.01, "row 1 text stays on page 0: {text_y}");
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            later_y >= 100.0,
+            "row 2 moves after the forced break: {later_y}"
+        );
+    }
+
+    #[test]
+    fn layout_pages_orders_negative_explicit_grid_rows_by_placement() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;grid-template-columns:40px;grid-template-rows:60px 60px"),
+        );
+        let first_row = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("grid-column:1;grid-row:-3;order:1;height:60px"),
+        );
+        let second_row = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("grid-column:1;grid-row:-2;order:0;height:60px"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let slices =
+            layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            slices.len() >= 2,
+            "the second grid row should continue to page 1+"
+        );
+        assert_eq!(doc.nodes[grid].layout_children(), &[second_row, first_row]);
+        let first_y = doc.nodes[first_row].unrounded_layout.location.y;
+        let second_y = doc.nodes[second_row].unrounded_layout.location.y;
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            first_y.abs() < 0.01,
+            "negative row line -3 is first: {first_y}"
+        );
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            second_y > first_y + 50.0,
+            "negative row line -2 follows: {second_y}"
+        );
+    }
+
+    #[test]
+    fn layout_pages_uses_resolved_rows_for_reversed_grid_lines_and_order() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;grid-template-columns:40px;grid-template-rows:60px 60px"),
+        );
+        let reversed_row_lines = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("grid-column:1;grid-row:2 / 1;height:60px"),
+        );
+        let later_row_forced_break = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("grid-column:1;grid-row:2 / 3;order:-1;break-before:page;height:60px"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let slices =
+            layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+
+        assert!(slices.len() >= 2, "the forced break must create page 1+");
+        assert_eq!(
+            doc.nodes[grid].layout_children(),
+            &[later_row_forced_break, reversed_row_lines]
+        );
+        let first_row_y = doc.nodes[reversed_row_lines].unrounded_layout.location.y;
+        let second_row_y = doc.nodes[later_row_forced_break]
+            .unrounded_layout
+            .location
+            .y;
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            first_row_y.abs() < 0.01,
+            "reversed lines resolve to row 1 and stay before the forced break: {first_row_y}"
+        );
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            second_row_y >= 100.0,
+            "row 2's break-before moves only that item to page 1+: {second_row_y}"
+        );
+    }
+
+    #[test]
+    fn layout_pages_orders_relative_grid_items_by_resolved_placement() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;grid-template-columns:40px;grid-template-rows:20px 20px"),
+        );
+        let relative_first_row = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("grid-column:1;grid-row:1;position:relative;top:60px;height:20px"),
+        );
+        let page_break_after_second_row = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("grid-column:1;grid-row:2;break-after:page;height:20px"),
+        );
+        let following =
+            doc.append_element(Some(body), "div", Style::default(), Some("height:10px"));
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let slices =
+            layout_pages(&mut doc, &cascade, page, FontContext::new()).expect("pagination Ok");
+
+        assert!(slices.len() >= 2, "the forced break must create page 1+");
+        let first_row_y = doc.nodes[relative_first_row].unrounded_layout.location.y;
+        let second_row_y = doc.nodes[page_break_after_second_row]
+            .unrounded_layout
+            .location
+            .y;
+        let following_y = doc.nodes[following].unrounded_layout.location.y;
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            (first_row_y - 60.0).abs() < 0.01,
+            "row 1 keeps its relative visual offset without being page-shifted: y={first_row_y}"
+        );
+        // cov:ignore: panic-message text is only executed when the assertion fails.
+        assert!(
+            (second_row_y - 20.0).abs() < 0.01,
+            "row 2 remains in its placed row: y={second_row_y}"
+        );
+        assert!(following_y > second_row_y + 50.0);
     }
 
     #[test]

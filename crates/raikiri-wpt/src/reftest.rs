@@ -1674,6 +1674,43 @@ fn render_raikiri_pages_inner(
     } else {
         fallback_page_box
     };
+    let initial_context = raikiri_dom::resolve_initial_page_context(
+        &uncascaded.dom,
+        first_query.page_name.as_ref().map(ToString::to_string),
+        first_cascade,
+        first_page_box,
+        font_ctx.clone(),
+        raikiri_dom::InitialPageProbeResources::new(
+            image_resolver
+                .as_ref()
+                .map(|resolver| resolver as &dyn raikiri_traits::ReplacedResolver),
+            None,
+        ),
+        |page_name| {
+            first_query.page_name = page_name.map(Atom::from);
+            let mut cascade = build_cascaded_with_media_context_for_page(
+                &uncascaded,
+                &media_context,
+                &first_query,
+            );
+            let mut recascade_font_ctx = font_ctx.clone();
+            raikiri_dom::expand_font_face_aliases(
+                &mut cascade.computed,
+                font_face_tree.font_faces(),
+                &mut recascade_font_ctx,
+            );
+            let page_box = if page_has_explicit_dimensions(&cascade) {
+                page_box_from_cascade(&cascade, fallback_page_box)
+            } else {
+                fallback_page_box
+            };
+            (cascade, page_box, recascade_font_ctx)
+        },
+    )
+    .map_err(|error| format!("initial page context: {error:?}"))?;
+    let first_cascade = initial_context.cascade;
+    let first_page_box = initial_context.page_box;
+    font_ctx = initial_context.font_context;
     // `font_ctx` is still needed below (fresh-cascade expansion, per-slice
     // expansion, relayout), so the layout passes get clones — cheaper than
     // the fresh `resolve_font_ctx()` builds these replaced (no file re-read,
@@ -2425,6 +2462,53 @@ mod tests {
         assert_eq!(rendered.pages.len(), 1);
         assert_eq!(rendered.pages[0].width, 32);
         assert_eq!(rendered.pages[0].height, 32);
+    }
+
+    #[test]
+    fn resolved_grid_order_uses_the_first_named_page_width_for_text_wrapping() {
+        const TEXT: &str = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu";
+        let prefix = r#"<!doctype html><style>
+            @page wide { size:200px 300px; margin:5px }
+            @page narrow { size:120px 180px; margin:12px }
+            body { margin:0 }
+            .grid { display:grid; grid-template-columns:100%; grid-template-rows:auto auto }
+        </style><body><div class="grid">"#;
+        let wide_first = format!(
+            r#"{prefix}<div style="display:block;grid-row:2;order:0;page:wide;height:10px">wide</div><div style="display:block;grid-row:1;order:1;page:narrow;font-size:10px;line-height:12px">{TEXT}</div></div></body>"#
+        );
+        let narrow_first = format!(
+            r#"{prefix}<div style="display:block;grid-row:1;order:1;page:narrow;font-size:10px;line-height:12px">{TEXT}</div><div style="display:block;grid-row:2;order:0;page:wide;height:10px">wide</div></div></body>"#
+        );
+
+        let actual = render_raikiri_pages_inner(&wide_first, 800, 600, None, None)
+            .expect("misordered grid should render");
+        let expected = render_raikiri_pages_inner(&narrow_first, 800, 600, None, None)
+            .expect("resolved-order control should render");
+        assert!(actual.pages.len() >= 2);
+        assert_eq!((actual.pages[0].width, actual.pages[0].height), (120, 180));
+        assert_eq!(
+            actual.pages[0].rgba, expected.pages[0].rgba,
+            "first-page content should wrap at the resolved narrow-page width", // cov:ignore: assert_eq! only formats this message when the images differ
+        );
+    }
+
+    #[test]
+    fn resolved_named_page_without_size_keeps_the_wpt_viewport_box() {
+        let html = r#"<!doctype html><style>
+            @page wide { size:200px 300px; margin:5px }
+            @page narrow { margin:12px }
+            body { display:grid; grid-template-columns:100%; grid-template-rows:auto auto; margin:0 }
+        </style><body>
+            <div style="grid-row:2;order:0;page:wide;height:10px">wide</div>
+            <div style="grid-row:1;order:1;page:narrow;height:10px">narrow</div>
+        </body>"#;
+        let rendered = render_raikiri_pages_inner(html, 800, 600, None, None)
+            .expect("named-page document should render");
+
+        assert_eq!(
+            (rendered.pages[0].width, rendered.pages[0].height),
+            (800, 600)
+        );
     }
 
     #[test]
