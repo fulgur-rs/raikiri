@@ -8883,6 +8883,10 @@ fn preshape_text(
         metrics_word_spacing_raw: f32,
         metrics_word_spacing_ch_factor: Option<f32>,
         simple_pre_block: bool,
+        // Preserve the metric quantization used by a simple pre block when
+        // one inline wrapper contains the only text run and a terminal
+        // preserved newline is the sole sibling.
+        simple_preserved_run: bool,
         tab_spacing_ranges: Vec<(std::ops::Range<usize>, f32)>,
     }
 
@@ -9203,6 +9207,42 @@ fn preshape_text(
                         .count()
                         == 1
             });
+        // A single preserved text run wrapped in inline elements should use
+        // the same metric quantization as a direct simple pre block.  Ignore
+        // an otherwise-empty inline sibling containing only the terminal
+        // preserved newline; it does not establish another line box.
+        let simple_preserved_run = matches!(cv.white_space, WhiteSpace::PreWrap)
+            && !text.contains('\n')
+            && has_authored_non_whitespace_text(doc, idx)
+            && parent_of[idx].is_some_and(|parent| {
+                let parent_display = cascade.computed[parent].display;
+                (parent_display == DisplayValue::Inline || parent_display == DisplayValue::Contents)
+                    && doc.nodes[parent]
+                        .children
+                        .iter()
+                        .filter(|&&child| has_authored_non_whitespace_text(doc, child))
+                        .count()
+                        == 1
+                    && nearest_block_container(doc, cascade, &parent_of, idx).is_some_and(|block| {
+                        doc.nodes[block].children.len() > 1
+                            && matches!(cascade.computed[block].display, DisplayValue::InlineBlock)
+                            && doc.nodes[block].children.iter().all(|&child| {
+                                child == parent
+                                    || (doc.nodes[child].kind() == NodeKind::Element
+                                        && is_inline_element_box(cascade, child)
+                                        && doc.nodes[child].tag_name() != Some("br")
+                                        && !has_authored_non_whitespace_text(doc, child))
+                                    || (doc.nodes[child].kind() == NodeKind::Text
+                                        && text_of(doc, child) == Some("\n"))
+                            })
+                    })
+            });
+        // A terminal preserved newline establishes no following empty line.
+        // Keeping it as a standalone Parley layout would nevertheless create
+        // two line metrics, and letter-spacing makes that artifact visible.
+        if text == "\n" && !has_inline_adjacent(doc, cascade, &parent_of, idx, 1) {
+            continue;
+        }
         jobs.push(Job {
             idx,
             text,
@@ -9237,6 +9277,7 @@ fn preshape_text(
             metrics_word_spacing_raw: mcv.word_spacing.px(),
             metrics_word_spacing_ch_factor: mcv.word_spacing_ch_factor,
             simple_pre_block,
+            simple_preserved_run,
             tab_spacing_ranges: Vec::new(),
         });
     }
@@ -9409,7 +9450,7 @@ fn preshape_text(
             let font_family = FontFamily::from(job.family_str.as_str());
             // In this simple block run, Taffy's fractional line flow must use
             // the same metrics as Parley's painted baselines.
-            let quantize_metrics = !job.simple_pre_block;
+            let quantize_metrics = !job.simple_pre_block && !job.simple_preserved_run;
             let mut builder = layout_cx.ranged_builder(fonts, &job.text, 1.0, quantize_metrics);
             builder.push_default(StyleProperty::FontFamily(font_family));
             builder.push_default(StyleProperty::FontSize(font_size_px));
@@ -9455,7 +9496,7 @@ fn preshape_text(
             doc.layout_warnings.extend(warnings);
             if let Some(t) = doc.nodes[job.idx].data.as_text_mut() {
                 t.text_layout = Some(layout);
-                t.snap_glyph_x_to_1_64 = job.simple_pre_block;
+                t.snap_glyph_x_to_1_64 = job.simple_pre_block || job.simple_preserved_run;
             }
         }
         return;
@@ -9499,7 +9540,7 @@ fn preshape_text(
                     &mut warnings,
                 );
                 let font_family = FontFamily::from(job.family_str.as_str());
-                let quantize_metrics = !job.simple_pre_block;
+                let quantize_metrics = !job.simple_pre_block && !job.simple_preserved_run;
                 let mut builder =
                     lcx.ranged_builder(&mut fonts_thread, &job.text, 1.0, quantize_metrics);
                 builder.push_default(StyleProperty::FontFamily(font_family));
@@ -9542,7 +9583,12 @@ fn preshape_text(
                     Some(job.max_advance)
                 });
                 layout.align(Alignment::Start, AlignmentOptions::default());
-                out.push((job.idx, layout, warnings, job.simple_pre_block));
+                out.push((
+                    job.idx,
+                    layout,
+                    warnings,
+                    job.simple_pre_block || job.simple_preserved_run,
+                ));
             }
             out
         })
@@ -13290,6 +13336,66 @@ mod tests {
             "centered text must not sit at the left edge, got x={}",
             first_x
         );
+    }
+
+    #[test]
+    fn terminal_preserved_newline_does_not_create_an_empty_line_box() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let block = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(
+                "display:inline-block;font:24px monospace;white-space:pre-wrap;letter-spacing:10px",
+            ),
+        );
+        let content_span = doc.append_element(Some(block), "span", Style::default(), None::<&str>);
+        let content = doc.append_text(content_span, "1. a");
+        let newline_span = doc.append_element(Some(block), "span", Style::default(), None::<&str>);
+        let newline = doc.append_text(newline_span, "\n");
+
+        let _separator =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let direct_block = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(
+                "display:inline-block;font:24px monospace;white-space:pre-wrap;letter-spacing:10px",
+            ),
+        );
+        let direct_content_span =
+            doc.append_element(Some(direct_block), "span", Style::default(), None::<&str>);
+        let direct_content = doc.append_text(direct_content_span, "2. b");
+        let direct_newline = doc.append_text(direct_block, "\n");
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        assert_eq!(
+            doc.nodes[content]
+                .text_layout()
+                .expect("content shaped")
+                .len(),
+            1
+        );
+        assert!(doc.nodes[newline].text_layout().is_none());
+        assert!(doc.nodes[block].unrounded_layout.size.height < 40.0);
+        assert_eq!(
+            doc.nodes[direct_content]
+                .text_layout()
+                .expect("direct content shaped")
+                .len(),
+            1
+        );
+        assert!(doc.nodes[direct_newline].text_layout().is_none());
+        assert!(doc.nodes[direct_block].unrounded_layout.size.height < 40.0);
     }
 
     #[test]
