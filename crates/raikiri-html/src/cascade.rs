@@ -19,13 +19,13 @@ use crate::UncascadedDocument;
 /// 現状 `raikiri_style::cascade` は常に `Ok` を返すため、内部で `expect` する
 /// (将来 Result 反映を検討)。
 ///
-/// Consumer は [`crate::parse`] → [`build_cascaded`] の 2 step だけで
+/// Consumer は [`crate::parse`](fn@crate::parse) → [`build_cascaded`] の 2 step だけで
 /// per-node ComputedValues を得られる。
 ///
 /// # DOM `<style>` の集約 scope
 ///
 /// `UncascadedDocument::stylesheet_sources` を Author として消費する。
-/// この Vec は parse 時に [`crate::parse`] 内の `extract_inline_stylesheets`
+/// この Vec は parse 時に [`crate::parse`](fn@crate::parse) 内の `extract_inline_stylesheets`
 /// が head の stylesheet-bearing elements を元の順序で集約し、その後に
 /// head 外の inline `<style>` elements を document order で追加する。
 /// HTML/XHTML と SVG の `<style>` は対象だが、MathML の同名 element は対象外。

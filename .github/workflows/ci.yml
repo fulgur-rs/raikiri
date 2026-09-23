@@ -113,6 +113,15 @@ jobs:
       - name: Clippy (all targets, deny warnings)
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      - name: Rustdoc (private items, deny warnings)
+        # scripts/gate.sh §8.1(b) と同一コマンド。CI に無かったため、曖昧な
+        # intra-doc link (`crate::parse` が fn と mod の両方に解決) が CI green
+        # のまま main に入り、以降の全 branch の gate を FAIL させた。job 名は
+        # required status check に使われうるため変えず、step として追加する。
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --workspace --document-private-items --locked
+
   coverage:
     name: coverage
     needs: changes
