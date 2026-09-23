@@ -7,7 +7,7 @@
 //! `RenderError::LimitExceeded { kind: LimitKind::InputBytes, .. }` として
 //! 返る。html5ever は truncated input を silently accept するため、単純
 //! `Read::take` だけでは cap 到達を検出できない。実装は
-//! `take(cap + 1) + read_to_end` の "+1 probe" pattern (crates/raikiri/src/parse.rs)。
+//! `take(cap + 1) + read_to_end` の "+1 probe" pattern (crates/raikiri-html/src/document_parse.rs)。
 //!
 //! Consumer は [`RenderLimitsBuilder::max_input_bytes`] (または field への
 //! 直接代入) で cap を調整、`None` で無効化できる (`None` の security 上の

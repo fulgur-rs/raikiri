@@ -17,7 +17,7 @@ use crate::resolver::ResolverError;
 // and `impl From<CascadeError> for RenderError` below (which reference
 // `CascadeError` by unqualified path) keep the same identity, and downstream
 // consumers observing `raikiri_traits::CascadeError` (raikiri umbrella's
-// re-export at `crates/raikiri/src/lib.rs:51`) are unchanged.
+// re-export in `crates/raikiri/src/lib.rs`) are unchanged.
 pub use raikiri_style::CascadeError;
 
 /// Terminal render error。すべての variant は "rendering がそこで停止した" を意味。

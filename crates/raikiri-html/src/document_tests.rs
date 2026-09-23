@@ -355,6 +355,29 @@ mod stub_tests {
     }
 
     #[test]
+    fn render_options_debug_reports_configured_parts_without_observer_contents() {
+        struct Observer;
+        impl raikiri_traits::PageEventObserver for Observer {
+            fn observe_event(
+                &mut self,
+                _event: raikiri_traits::PageFragmentEvent,
+            ) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let resources = RenderResources::new();
+        let mut observer = Observer;
+        let options = RenderOptions::new()
+            .resources(&resources)
+            .page_observer(&mut observer);
+        let debug = format!("{options:?}");
+        assert!(debug.contains("has_page_observer: true"), "{debug}");
+        assert!(debug.contains("consumer_property_count: 0"), "{debug}");
+        assert!(debug.contains("has_property_observer: false"), "{debug}");
+        assert!(debug.contains("RenderResources"), "{debug}");
+    }
+
+    #[test]
     fn render_streaming_abort_skips_completion() {
         let doc = hello_world_doc();
         let controller = AbortController::new();
