@@ -13,8 +13,8 @@ use raikiri_html::{
 };
 use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue, PageDefaults,
-    PageEventObserver, PageFragment, PageFragmentEvent, RenderSink, RenderStatus, RenderSummary,
-    ResourceKind, StreamingConfig, WarningKind,
+    PageEventObserver, PageFragment, PageFragmentEvent, PageFragmentKind, RenderSink, RenderStatus,
+    RenderSummary, ResourceKind, StreamingConfig, WarningKind,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -37,6 +37,21 @@ impl RenderSink for Sink {
 
     fn finish_render(&mut self, _summary: RenderSummary) -> std::io::Result<()> {
         self.0.lock().unwrap().push(Delivery::Finish);
+        Ok(())
+    }
+}
+
+type PageLog = Arc<Mutex<Vec<PageFragment>>>;
+
+struct GeometrySink(PageLog);
+
+impl RenderSink for GeometrySink {
+    fn accept_page(&mut self, page: PageFragment) -> std::io::Result<()> {
+        self.0.lock().unwrap().push(page);
+        Ok(())
+    }
+
+    fn finish_render(&mut self, _summary: RenderSummary) -> std::io::Result<()> {
         Ok(())
     }
 }
@@ -145,4 +160,171 @@ fn one_render_combines_links_consumer_properties_and_resource_warnings() {
         ],
         "consumer properties precede the first page; each page's links follow that page"
     );
+}
+
+#[test]
+fn first_ordered_grid_item_selects_initial_named_page_geometry() {
+    let html = br#"<!doctype html>
+        <style>
+          @page wide { size: 200px 300px; margin: 5px; }
+          @page narrow { size: 120px 180px; margin: 12px; }
+        </style>
+        <body style="display:grid;grid-template-columns:100px">
+          <div style="grid-column:1;order:1;page:wide;height:10px">wide</div>
+          <div style="grid-column:1;order:0;page:narrow;height:10px">narrow</div>
+        </body>"#;
+    let resources = RenderResources::new();
+    let doc = parse_html_with_resources(&html[..], &resources).expect("parse");
+    let pages: PageLog = Arc::default();
+    let mut sink = GeometrySink(Arc::clone(&pages));
+
+    let status = render_streaming(
+        &doc,
+        defaults(400.0, 400.0),
+        StreamingConfig::default(),
+        RenderOptions::new().resources(&resources),
+        &mut sink,
+    )
+    .expect("render");
+    let RenderStatus::Completed(_) = status else {
+        panic!("expected a complete render");
+    };
+
+    let pages = pages.lock().unwrap();
+    assert_eq!(pages.len(), 2);
+    let first = pages.first().expect("the render emits a first page");
+    assert_eq!(first.page_name.as_deref(), Some("narrow"));
+    assert_eq!(first.page_box.width, 120.0);
+    assert_eq!(first.page_box.height, 180.0);
+    assert_eq!(first.margins.left, 12.0);
+    assert_eq!(first.margins.right, 12.0);
+    assert_eq!(first.margins.top, 12.0);
+    assert_eq!(first.margins.bottom, 12.0);
+
+    let second = &pages[1];
+    assert_eq!(second.page_name.as_deref(), Some("wide"));
+    assert_eq!(second.page_box.width, 200.0);
+    assert_eq!(second.page_box.height, 300.0);
+}
+
+#[test]
+fn explicit_grid_row_ends_select_initial_page_from_resolved_grid_placement() {
+    let html = br#"<!doctype html>
+        <style>
+          @page wide { size: 200px 300px; margin: 5px; }
+          @page narrow { size: 120px 180px; margin: 12px; }
+        </style>
+        <body style="display:grid;grid-template-columns:100px">
+          <div style="display:block;grid-row:auto / 2;order:1;page:wide;height:10px">wide</div>
+          <div style="display:block;grid-row:auto / 3;order:0;page:narrow;height:10px">narrow</div>
+        </body>"#;
+    let resources = RenderResources::new();
+    let doc = parse_html_with_resources(&html[..], &resources).expect("parse");
+    let pages: PageLog = Arc::default();
+    let mut sink = GeometrySink(Arc::clone(&pages));
+
+    let status = render_streaming(
+        &doc,
+        defaults(400.0, 400.0),
+        StreamingConfig::default(),
+        RenderOptions::new().resources(&resources),
+        &mut sink,
+    )
+    .expect("render");
+    let RenderStatus::Completed(_) = status else {
+        panic!("expected a complete render");
+    };
+
+    let pages = pages.lock().unwrap();
+    let first = pages.first().expect("the render emits a first page");
+    assert_eq!(first.page_name.as_deref(), Some("wide"));
+    assert_eq!(first.page_box.width, 200.0);
+    assert_eq!(first.page_box.height, 300.0);
+    assert_eq!(first.margins.left, 5.0);
+    assert_eq!(first.margins.right, 5.0);
+    assert_eq!(first.margins.top, 5.0);
+    assert_eq!(first.margins.bottom, 5.0);
+}
+
+#[test]
+fn explicit_grid_rows_resolve_first_page_before_sizing_and_wrapping() {
+    let html = br#"<!doctype html>
+        <style>
+          @page wide { size: 200px 300px; margin: 5px; }
+          @page narrow { size: 120px 180px; margin: 12px; }
+        </style>
+        <body style="display:grid;grid-template-columns:100%">
+          <div style="display:block;grid-row:2;order:1;page:wide;height:10px">wide</div>
+          <div style="display:block;grid-row:1;order:0;page:narrow;font-family:monospace;font-size:16px">alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau</div>
+        </body>"#;
+    let resources = RenderResources::new();
+    let doc = parse_html_with_resources(&html[..], &resources).expect("parse");
+    let pages: PageLog = Arc::default();
+    let mut sink = GeometrySink(Arc::clone(&pages));
+
+    let status = render_streaming(
+        &doc,
+        defaults(400.0, 400.0),
+        StreamingConfig::default(),
+        RenderOptions::new().resources(&resources),
+        &mut sink,
+    )
+    .expect("render");
+    let RenderStatus::Completed(_) = status else {
+        panic!("expected a complete render");
+    };
+
+    let pages = pages.lock().unwrap();
+    let first = pages.first().expect("the render emits a first page");
+    assert_eq!(first.page_name.as_deref(), Some("narrow"));
+    assert_eq!(first.page_box.width, 120.0);
+    assert_eq!(first.page_box.height, 180.0);
+    assert_eq!(first.margins.left, 12.0);
+    assert!((first.content_box.width - 96.0).abs() < 0.5);
+    let text_lines = first
+        .items
+        .iter()
+        .filter(|item| item.kind == PageFragmentKind::Text)
+        .filter_map(|item| item.line_range)
+        .map(|range| range.end - range.start)
+        .max()
+        .expect("the named grid item emits text lines");
+    assert!(text_lines >= 4);
+}
+
+#[test]
+fn multi_column_grid_order_selects_initial_named_page_geometry() {
+    let html = br#"<!doctype html>
+        <style>
+          @page wide { size: 200px 300px; margin: 5px; }
+          @page narrow { size: 120px 180px; margin: 12px; }
+        </style>
+        <body style="display:grid;grid-template-columns:50% 50%">
+          <div style="display:block;order:1;page:wide;height:10px">wide</div>
+          <div style="display:block;order:0;page:narrow;height:10px">narrow</div>
+        </body>"#;
+    let resources = RenderResources::new();
+    let doc = parse_html_with_resources(&html[..], &resources).expect("parse");
+    let pages: PageLog = Arc::default();
+    let mut sink = GeometrySink(Arc::clone(&pages));
+
+    let status = render_streaming(
+        &doc,
+        defaults(400.0, 400.0),
+        StreamingConfig::default(),
+        RenderOptions::new().resources(&resources),
+        &mut sink,
+    )
+    .expect("render");
+    let RenderStatus::Completed(_) = status else {
+        panic!("expected a complete render");
+    };
+
+    let pages = pages.lock().unwrap();
+    let first = pages.first().expect("the render emits a first page");
+    assert_eq!(first.page_name.as_deref(), Some("narrow"));
+    assert_eq!(first.page_box.width, 120.0);
+    assert_eq!(first.page_box.height, 180.0);
+    assert_eq!(first.margins.left, 12.0);
+    assert_eq!(first.margins.right, 12.0);
 }

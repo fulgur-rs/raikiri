@@ -61,14 +61,15 @@ pub use fonts::{
     build_wpt_font_ctx_with_observer, expand_font_face_aliases, register_font_face_sources,
 };
 pub use layout::{
-    PageContentInsets, PageMargins, PageSlice, first_page_name, layout_page_fragments,
-    layout_pages, layout_pages_with_page_geometry, layout_pages_with_page_geometry_and_resolver,
+    InitialPageContext, InitialPageContextError, InitialPageProbeResources, PageContentInsets,
+    PageMargins, PageSlice, first_page_name, layout_page_fragments, layout_pages,
+    layout_pages_with_page_geometry, layout_pages_with_page_geometry_and_resolver,
     layout_pages_with_page_geometry_and_resolver_and_base_url, layout_pages_with_page_steps,
     layout_pages_with_resolver, layout_pages_with_resolver_and_base_url, layout_single_page,
     layout_single_page_with_resolver, layout_single_page_with_resolver_and_base_url,
     page_content_insets, page_fragment_events_from_pages, page_fragment_geometry_table,
     page_fragments_from_slices, page_fragments_from_slices_with_page_geometry, page_margins,
-    relayout_text_for_width, resolve_page_fragment_geometry,
+    relayout_text_for_width, resolve_initial_page_context, resolve_page_fragment_geometry,
 };
 pub use node::{ElementData, Node, NodeData, NodeFlags, TextData};
 pub use raikiri_traits::{

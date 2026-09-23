@@ -51,6 +51,7 @@ taffy = { version = "0.14", default-features = false, features = [
     "content_size",
     "calc",
     "float_layout",
+    "detailed_layout_info",
 ] }
 
 # ── Text (parley) ──────────────────────────────────────────────────────

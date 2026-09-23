@@ -50,6 +50,9 @@ pub struct Document {
     /// する。O(1) per-mutation cost + O(N) per-layout-batch cost で
     /// invalidation の amortized O(1) を実現。
     pub(crate) layout_dirty: bool,
+    /// Cascade generation used by the most recent successful layout. Resolved
+    /// order projections and Grid row placements are valid only for this run.
+    pub(crate) layout_cascade_generation: Option<u64>,
     /// IS_IN_DOCUMENT bit dirty flag。任意の tree-mutation primitive
     /// (append_* / attach_child / insert_child_before / detach_from_parent /
     /// reparent_children / retain_children) で set される。observation-side
@@ -136,6 +139,7 @@ impl Document {
             nodes,
             root: 0,
             layout_dirty: false,
+            layout_cascade_generation: None,
             // 初期 root node は Node::new_document() が IS_IN_DOCUMENT=true を
             // 立てているため、"attached under root" として consistent。まだ
             // template も detached node も無いので dirty ではない。

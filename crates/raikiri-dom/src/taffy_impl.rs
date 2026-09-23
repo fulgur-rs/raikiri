@@ -10,10 +10,11 @@
 
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{
-    AvailableSpace, BlockContext, CacheTree, Display, Layout, LayoutBlockContainer,
-    LayoutFlexboxContainer, LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree,
-    NodeId, Size, Style, TraversePartialTree, TraverseTree, compute_block_layout,
-    compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
+    AvailableSpace, BlockContext, BoxGenerationMode, CacheTree, CoreStyle, DetailedGridInfo,
+    Display, Layout, LayoutBlockContainer, LayoutFlexboxContainer, LayoutGridContainer,
+    LayoutInput, LayoutOutput, LayoutPartialTree, NodeId, Position as TaffyPosition, Size, Style,
+    TraversePartialTree, TraverseTree, compute_block_layout, compute_cached_layout,
+    compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
 };
 
 use crate::document::Document;
@@ -54,6 +55,10 @@ pub struct TaffyChildIter<'a> {
 }
 
 impl TaffyChildIter<'_> {
+    fn children(doc: &Document, parent: NodeId) -> &[usize] {
+        doc.nodes[usize::from(parent)].layout_children()
+    }
+
     fn includes(doc: &Document, parent: NodeId, child: usize) -> bool {
         if !doc.nodes[child].is_in_document() {
             return false;
@@ -99,14 +104,13 @@ impl TraversePartialTree for Document {
         TaffyChildIter {
             doc: self,
             parent: node_id,
-            inner: self.nodes[usize::from(node_id)].children.iter(),
+            inner: TaffyChildIter::children(self, node_id).iter(),
         }
     }
 
     fn child_count(&self, node_id: NodeId) -> usize {
         // Filter に一致する必要あり (is_in_document children のみ数える)。
-        self.nodes[usize::from(node_id)]
-            .children
+        TaffyChildIter::children(self, node_id)
             .iter()
             .filter(|&&c| TaffyChildIter::includes(self, node_id, c))
             .count()
@@ -114,8 +118,7 @@ impl TraversePartialTree for Document {
 
     fn get_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
         // Filtered index — child_ids iterator と同じ view で n 番目を返す。
-        let idx = self.nodes[usize::from(node_id)]
-            .children
+        let idx = TaffyChildIter::children(self, node_id)
             .iter()
             .copied()
             .filter(|&c| TaffyChildIter::includes(self, node_id, c))
@@ -582,6 +585,38 @@ impl LayoutGridContainer for Document {
 
     fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_> {
         &self.nodes[usize::from(child_node_id)].style
+    }
+
+    fn set_detailed_grid_info(
+        &mut self,
+        node_id: NodeId,
+        detailed_grid_info: DetailedGridInfo<Self::CustomIdent>,
+    ) {
+        let parent = usize::from(node_id);
+        let children = TaffyChildIter::children(self, node_id)
+            .iter()
+            .copied()
+            .filter(|&child| TaffyChildIter::includes(self, node_id, child))
+            .filter(|&child| {
+                let style = &self.nodes[child].style;
+                style.box_generation_mode() != BoxGenerationMode::None
+                    && style.position != TaffyPosition::Absolute
+            })
+            .collect::<Vec<_>>();
+
+        // Taffy builds `DetailedGridInfo.items` from its in-flow children in
+        // source order. Pair those resolved rows with the same child projection
+        // that Taffy received, so pagination can order by actual placement rather
+        // than trying to reconstruct auto-placement or relative offsets.
+        let grid_column_count = detailed_grid_info.columns.positions.len();
+        debug_assert_eq!(children.len(), detailed_grid_info.items.len());
+        self.nodes[parent].grid_item_row_starts = children
+            .into_iter()
+            .zip(detailed_grid_info.items.iter())
+            .map(|(child, item)| (child, item.row_start))
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        self.nodes[parent].grid_column_count = grid_column_count;
     }
 }
 
