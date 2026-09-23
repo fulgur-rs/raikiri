@@ -3793,47 +3793,11 @@ pub(crate) fn parse_length_value(
     }
 }
 
-/// [`Length`] の authored payload (`f32`) を variant によらず取り出す。
-///
-/// `parse_width` / `parse_font_size` / `parse_padding_side` /
-/// `parse_border_width_side` / `parse_height` / `parse_line_height` /
-/// [`parse_non_negative_length`] は grammar
-/// の `[0,∞]` non-negative constraint を "全 variant の payload を取り出して
-/// `>= 0.0` を確認" という同一 pattern で parse-time enforce する
-/// (`parse_length_value` 自体は sign check しない仕様 — 同関数の "Sign / range"
-/// doc 参照)。
-///
-/// The exhaustive match keeps the non-negative range check consistent across
-/// all supported length units.
-fn length_payload(length: Length) -> f32 {
-    match length {
-        Length::Px(v)
-        | Length::Em(v)
-        | Length::Rem(v)
-        | Length::Percent(v)
-        | Length::Pt(v)
-        | Length::Ex(v)
-        | Length::Rex(v)
-        | Length::Ch(v)
-        | Length::Rch(v)
-        | Length::Ic(v)
-        | Length::Ric(v)
-        | Length::Cm(v)
-        | Length::Mm(v)
-        | Length::Q(v)
-        | Length::In(v)
-        | Length::Pc(v)
-        | Length::Lh(v)
-        | Length::Rlh(v) => v,
-    }
-}
-
 /// `<length [0,∞]>` — [`parse_length_value`] with `allow_percentage=false`
 /// (no `<percentage>` alternative), then the same `[0,∞]` non-negative
-/// filter [`length_payload`]'s doc describes (`(length_payload(length) >=
+/// filter the box-property parsers use (`(length.payload() >=
 /// 0.0).then_some(length)`), so [`crate::page`]'s `size` descriptor parser
-/// (the 7th caller in [`length_payload`]'s roster) doesn't have to
-/// re-enumerate [`Length`] variants by hand.
+/// doesn't have to re-enumerate [`Length`] variants by hand.
 ///
 /// `pub(crate)` for the one caller outside this module: [`crate::page`]'s
 /// `size` descriptor parser. CSS Paged Media Level 3 §7.1 "Page size: the
@@ -3841,10 +3805,10 @@ fn length_payload(length: Length) -> f32 {
 /// grammar is `<length>{1,2} | auto | …` — `<length>`, not
 /// `<length-percentage>` — and states "Negative lengths are illegal", the
 /// same `[0,∞]` shape this crate's box properties already enforce via
-/// [`length_payload`].
+/// [`Length::payload`].
 pub(crate) fn parse_non_negative_length(input: &mut Parser<'_, '_>) -> Option<Length> {
     let length = parse_length_value(input, false)?;
-    (length_payload(length) >= 0.0).then_some(length)
+    (length.payload() >= 0.0).then_some(length)
 }
 
 /// `<length>` with no `<percentage>` alternative and no sign restriction —
@@ -4112,7 +4076,7 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
         return Some(LengthOrAuto::Auto);
     }
     let length = parse_length_value(input, true)?;
-    (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
+    (length.payload() >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
 /// `font-size: <absolute-size> | <relative-size> | <length-percentage [0,∞]> |
@@ -4146,7 +4110,7 @@ fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 /// # Non-negative constraint
 ///
 /// grammar の `[0,∞]` を parse-time enforce する。[`parse_padding_side`] /
-/// [`parse_width`] と同じ [`length_payload`] 経由の全 [`Length`] variant check
+/// [`parse_width`] と同じ [`Length::payload`] 経由の全 [`Length`] variant check
 /// — `-5px` だけでなく `-50%` / `-1em` も drop する。`<absolute-size>` /
 /// `<relative-size>` は grammar 上そもそも符号を持たないので本 constraint の
 /// 対象外 (ident 分岐は `parse_length_value` に達する前に return する)。
@@ -4176,7 +4140,7 @@ pub(crate) fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValu
         return parse_font_size_keyword(&ident);
     }
     let length = parse_length_value(input, true)?;
-    (length_payload(length) >= 0.0).then_some(PropertyValue::FontSize(length))
+    (length.payload() >= 0.0).then_some(PropertyValue::FontSize(length))
 }
 
 /// `<absolute-size>` / `<relative-size>` / `math` の ident 部分を parse する
@@ -4241,7 +4205,7 @@ fn parse_font_size_keyword(ident: &str) -> Option<PropertyValue> {
 /// 1. [`parse_length_value`] を `allow_percentage=true` で呼ぶ (grammar が
 ///    `<length-percentage>`)。dimension 未対応 unit / `auto` keyword / non-numeric
 ///    token は同 helper が `None` に落とす (font-size 経路と同 pattern)。
-/// 2. 全 [`Length`] variant の payload ([`length_payload`] 経由) に対し
+/// 2. 全 [`Length`] variant の payload ([`Length::payload`] 経由) に対し
 ///    `>= 0.0` を確認、負値は `None` 返し (`Percent(-10.0)` = `-10%` も含む —
 ///    Verification #5 で pin)。
 ///
@@ -4249,7 +4213,7 @@ fn parse_font_size_keyword(ident: &str) -> Option<PropertyValue> {
 ///
 /// [`parse_font_size`] の `<length-percentage>` 分岐 (ident 分岐で `None` に
 /// なった後の tail) と同形 — どちらも `allow_percentage=true` で
-/// [`parse_length_value`] を呼び、[`length_payload`] で全 [`Length`] variant の
+/// [`parse_length_value`] を呼び、[`Length::payload`] で全 [`Length`] variant の
 /// payload を抽出して `>= 0.0` を post-filter する (tail 部分の body は
 /// identical)。`parse_font_size` は後に `<absolute-size>` /
 /// `<relative-size>` / `math` の ident 分岐 (`parse_font_size_keyword`) が
@@ -4262,7 +4226,7 @@ fn parse_font_size_keyword(ident: &str) -> Option<PropertyValue> {
 fn parse_padding_side(input: &mut Parser<'_, '_>) -> Option<Length> {
     let length = parse_length_value(input, true)?;
     // spec (CSS Box 3) §4.1: "Negative values for padding properties are invalid."。
-    (length_payload(length) >= 0.0).then_some(length)
+    (length.payload() >= 0.0).then_some(length)
 }
 
 /// `padding: <'padding-top'>{1,4}` shorthand を [`Sides<Length>`] に expand する。
@@ -4422,12 +4386,12 @@ fn parse_border_width_side(input: &mut Parser<'_, '_>) -> Option<Length> {
     // 2. `<length [0,∞]>` — allow_percentage=false で `<length>` mode
     //    (Percentage token は reject される、`<percentage>` は grammar 外)。
     let length = parse_length_value(input, false)?;
-    // spec `<length [0,∞]>` の non-negative constraint — `length_payload` は
+    // spec `<length [0,∞]>` の non-negative constraint — `Length::payload` は
     // `Percent` も含む全 variant に対して定義されているが、`Percent` は
     // `allow_percentage=false` により本関数へは到達し得ない (unreachable、
     // dead value であって dead code ではない — helper 自体は border-width
     // 専用ではないため分岐を割ることはしない)。
-    (length_payload(length) >= 0.0).then_some(length)
+    (length.payload() >= 0.0).then_some(length)
 }
 
 /// [`parse_border_width_side`] の `Result` 版 — `try_parse` は closure 内で
@@ -4749,7 +4713,7 @@ pub(crate) fn parse_border_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides
 ///
 /// # Non-negative filter (sibling: [`parse_padding_side`])
 ///
-/// spec `<length-percentage [0,∞]>` (§3.1.1) の非負制約は [`length_payload`]
+/// spec `<length-percentage [0,∞]>` (§3.1.1) の非負制約は [`Length::payload`]
 /// 経由で全 [`Length`] variant の payload に対し `>= 0.0` を確認 —
 /// [`parse_padding_side`] の同名 pattern を踏襲 (`<length-percentage [0,∞]>`
 /// grammar と非負フィルタが対応する sibling)。`Percent(-10.0)` = `-10%` も
@@ -4799,7 +4763,7 @@ fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
         return Some(LengthOrAuto::Auto);
     }
     let length = parse_length_value(input, true)?;
-    (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
+    (length.payload() >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
 /// `min-width` / `min-height` / `min-block-size: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content` を parse する。
@@ -4809,7 +4773,7 @@ fn parse_height(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 /// `auto`、Inheritance `No`。sibling [`parse_max_size`] (CSS Sizing 3 §5) と
 /// 同 shape で、`none` keyword 分岐が `auto` に置き換わる点だけが異なる
 /// (min の initial は `auto`、`none` は max-only grammar)。
-/// 非負制約 (`[0,∞]` → [`length_payload`] post-filter) と intrinsic keyword の
+/// 非負制約 (`[0,∞]` → [`Length::payload`] post-filter) と intrinsic keyword の
 /// Auto placeholder mapping は sibling と同一。
 fn parse_max_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
@@ -4856,7 +4820,7 @@ fn parse_max_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
         return Some(LengthOrAuto::Auto);
     }
     let length = parse_length_value(input, true)?;
-    (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
+    (length.payload() >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
 /// `min-width` / `min-height: auto | <length-percentage [0,∞]> | min-content | max-content | fit-content` を parse する.
@@ -4866,7 +4830,7 @@ fn parse_max_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 /// `auto`、Inheritance `No`。sibling `parse_max_size` (CSS Sizing 3 §5) と
 /// 同 shape で、`none` keyword 分岐が `auto` に置き換わる点だけが異なる
 /// (min の initial は `auto`、`none` は max-only grammar)。
-/// 非負制約 (`[0,∞]` → `length_payload` post-filter) と intrinsic keyword の
+/// 非負制約 (`[0,∞]` → `Length::payload` post-filter) と intrinsic keyword の
 /// Auto placeholder mapping は sibling と同一。
 fn parse_min_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
@@ -4913,7 +4877,7 @@ fn parse_min_size(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
         return Some(LengthOrAuto::Auto);
     }
     let length = parse_length_value(input, true)?;
-    (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
+    (length.payload() >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
 /// `line-height: normal | <number> | <length-percentage>` を parse する。
@@ -4986,7 +4950,7 @@ fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
     //    parse_length_value doc "Sign / range" 参照)。
     let l = parse_length_value(input, true)?;
     // spec `[0,∞]`: 負値は grammar 違反 → declaration drop。
-    (length_payload(l) >= 0.0).then_some(LineHeight::Length(l))
+    (l.payload() >= 0.0).then_some(LineHeight::Length(l))
 }
 
 /// `tab-size: <number [0,∞]> | <length [0,∞]>` を parse する (CSS Text
@@ -5033,7 +4997,7 @@ fn parse_tab_size(input: &mut Parser<'_, '_>) -> Option<TabSize> {
     }
     // 2. `<length [0,∞]>` — percentage 非対応 (allow_percentage = false)。
     let l = parse_length_value(input, false)?;
-    (length_payload(l) >= 0.0).then_some(TabSize::Length(l))
+    (l.payload() >= 0.0).then_some(TabSize::Length(l))
 }
 
 /// `letter-spacing: normal | <length>` / `word-spacing: normal | <length>`
@@ -5062,7 +5026,7 @@ fn parse_tab_size(input: &mut Parser<'_, '_>) -> Option<TabSize> {
 /// # Negative length は許容 (non-negative filter を掛けない)
 ///
 /// [`parse_line_height`] / [`parse_font_size`] 等の `[0,∞]` callers とは
-/// 異なり、本関数は [`length_payload`] による `>= 0.0` post-filter を
+/// 異なり、本関数は [`Length::payload`] による `>= 0.0` post-filter を
 /// **意図的に行わない**。CSS Text 3 §7.2 (letter-spacing) / §7.1
 /// (word-spacing) がいずれも "Values may be negative, but there may be
 /// implementation-dependent limits." と明記するため — spec 自身が sign を
@@ -5198,7 +5162,7 @@ pub(crate) fn parse_flex_basis(input: &mut Parser<'_, '_>) -> Option<FlexBasisVa
     let length = parse_length_value(input, true)?;
     // `<'width'>` reuse: CSS Sizing 3 §3.1.1 の `[0,∞]` non-negative
     // constraint (`parse_width` と同 pattern)。
-    (length_payload(length) >= 0.0).then_some(FlexBasisValue::Length(length))
+    (length.payload() >= 0.0).then_some(FlexBasisValue::Length(length))
 }
 
 /// [`parse_flex_basis`] の `Result` 版 ([`parse_padding_side_res`] と同じ
@@ -5520,7 +5484,7 @@ pub(crate) fn parse_gap_value(input: &mut Parser<'_, '_>) -> Option<LengthOrNorm
         return Some(LengthOrNormal::Normal);
     }
     let length = parse_length_value(input, true)?;
-    (length_payload(length) >= 0.0).then_some(LengthOrNormal::Length(length))
+    (length.payload() >= 0.0).then_some(LengthOrNormal::Length(length))
 }
 
 /// [`parse_gap_value`] の `Result` 版 ([`parse_padding_side_res`] と同じ
@@ -5692,7 +5656,7 @@ fn parse_track_breadth(input: &mut Parser<'_, '_>) -> Option<GridTrackBreadth> {
     let length = input
         .try_parse(|i| parse_length_value(i, true).ok_or_else(|| i.new_custom_error::<(), ()>(())))
         .ok()?;
-    (length_payload(length) >= 0.0).then_some(GridTrackBreadth::Length(length))
+    (length.payload() >= 0.0).then_some(GridTrackBreadth::Length(length))
 }
 
 /// `<inflexible-breadth> = <length-percentage [0,∞]> | min-content |
@@ -5718,7 +5682,7 @@ fn parse_inflexible_breadth(input: &mut Parser<'_, '_>) -> Option<GridInflexible
     let length = input
         .try_parse(|i| parse_length_value(i, true).ok_or_else(|| i.new_custom_error::<(), ()>(())))
         .ok()?;
-    (length_payload(length) >= 0.0).then_some(GridInflexibleBreadth::Length(length))
+    (length.payload() >= 0.0).then_some(GridInflexibleBreadth::Length(length))
 }
 
 /// `minmax( <inflexible-breadth>, <track-breadth> )` を parse する (CSS Grid
@@ -5745,7 +5709,7 @@ fn parse_grid_fit_content_res<'i>(
     input.expect_function_matching("fit-content")?;
     input.parse_nested_block(|inner| {
         let len = parse_length_value(inner, true).ok_or_else(|| inner.new_custom_error(()))?;
-        if length_payload(len) >= 0.0 {
+        if len.payload() >= 0.0 {
             Ok(len)
         } else {
             Err(inner.new_custom_error(()))
@@ -8796,7 +8760,7 @@ fn parse_length_allow_negative_res<'i>(
 /// (and so this function) goes through — already routes its token
 /// acquisition through `next_numeric_stable`, which corrects exactly this
 /// class of `NaN` before this function ever sees the `Length`. So in
-/// ordinary use `length_payload(length)` here is never `NaN` for a
+/// ordinary use `length.payload()` here is never `NaN` for a
 /// zero-mantissa literal; this `!is_nan()` check is kept as
 /// defense-in-depth, same precedent as [`parse_opacity_value`]'s guard.
 ///
@@ -8820,7 +8784,7 @@ fn parse_length_allow_negative_res<'i>(
 /// and are preserved unfiltered.
 fn parse_shadow_length_reject_nan(input: &mut Parser<'_, '_>) -> Option<Length> {
     let length = parse_length_allow_negative(input)?;
-    (!length_payload(length).is_nan()).then_some(length)
+    (!length.payload().is_nan()).then_some(length)
 }
 
 fn parse_shadow_length_reject_nan_res<'i>(
@@ -9436,7 +9400,7 @@ fn try_parse_shape_radius(input: &mut Parser<'_, '_>) -> Option<ShapeRadius> {
         return Some(sr);
     }
     let length = parse_length_value(input, true)?;
-    if length_payload(length) < 0.0 || length_payload(length).is_nan() {
+    if length.payload() < 0.0 || length.payload().is_nan() {
         return None;
     }
     Some(ShapeRadius::Length(length))
@@ -9497,7 +9461,7 @@ fn parse_inset_shape(input: &mut Parser<'_, '_>) -> Option<InsetShape> {
         if let Ok(lp) = input.try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
             parse_length_value(i, true).ok_or_else(|| i.new_custom_error(()))
         }) {
-            if length_payload(lp).is_nan() {
+            if lp.payload().is_nan() {
                 return None;
             }
             insets.push(lp);
@@ -9540,7 +9504,7 @@ fn parse_inset_border_radius(input: &mut Parser<'_, '_>) -> Option<InsetBorderRa
     for _ in 0..4 {
         if let Ok(lp) = input.try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
             let l = parse_length_value(i, true).ok_or_else(|| i.new_custom_error(()))?;
-            if length_payload(l) < 0.0 || length_payload(l).is_nan() {
+            if l.payload() < 0.0 || l.payload().is_nan() {
                 return Err(i.new_custom_error(()));
             }
             Ok(l)
@@ -9558,7 +9522,7 @@ fn parse_inset_border_radius(input: &mut Parser<'_, '_>) -> Option<InsetBorderRa
         for _ in 0..4 {
             if let Ok(lp) = input.try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
                 let l = parse_length_value(i, true).ok_or_else(|| i.new_custom_error(()))?;
-                if length_payload(l) < 0.0 || length_payload(l).is_nan() {
+                if l.payload() < 0.0 || l.payload().is_nan() {
                     return Err(i.new_custom_error(()));
                 }
                 Ok(l)
@@ -9610,7 +9574,7 @@ fn parse_polygon_shape(input: &mut Parser<'_, '_>) -> Option<PolygonShape> {
         .is_ok()
     {
         let len = parse_length_value(input, true)?;
-        if length_payload(len) < 0.0 || length_payload(len).is_nan() {
+        if len.payload() < 0.0 || len.payload().is_nan() {
             return None;
         }
         let _ = input.try_parse(|i| i.expect_comma()).ok();
@@ -9622,11 +9586,11 @@ fn parse_polygon_shape(input: &mut Parser<'_, '_>) -> Option<PolygonShape> {
     loop {
         let point = input.try_parse(|i| -> Result<(Length, Length), ParseError<'_, ()>> {
             let x = parse_length_value(i, true).ok_or_else(|| i.new_custom_error(()))?;
-            if length_payload(x).is_nan() {
+            if x.payload().is_nan() {
                 return Err(i.new_custom_error(()));
             }
             let y = parse_length_value(i, true).ok_or_else(|| i.new_custom_error(()))?;
-            if length_payload(y).is_nan() {
+            if y.payload().is_nan() {
                 return Err(i.new_custom_error(()));
             }
             Ok((x, y))
@@ -9722,7 +9686,7 @@ pub(crate) fn parse_transform_number(input: &mut Parser<'_, '_>) -> Option<f32> 
 /// use.
 pub(crate) fn parse_transform_length_percentage(input: &mut Parser<'_, '_>) -> Option<Length> {
     let length = parse_length_value(input, true)?;
-    (!length_payload(length).is_nan()).then_some(length)
+    (!length.payload().is_nan()).then_some(length)
 }
 
 /// `[<angle> | <zero>]` for `transform`'s `rotate()`/`skew()`/`skewX()`/
@@ -10199,14 +10163,14 @@ fn parse_percent_number<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseErro
 }
 
 /// `<length-percentage [0,∞]>` — [`parse_length_percentage_res`] に
-/// non-negative filter ([`length_payload`]の doc の `[0,∞]` pattern) を足した
+/// non-negative filter ([`Length::payload`] による `[0,∞]` pattern) を足した
 /// もの。`radial-gradient()`のellipse 2-radii form
 /// (`<length-percentage [0,∞]>{2}`、[`RadialSize::Ellipse`]) が使う。
 fn parse_non_negative_length_percentage_res<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<Length, ParseError<'i, ()>> {
     let length = parse_length_value(input, true).ok_or_else(|| input.new_custom_error(()))?;
-    if length_payload(length) >= 0.0 {
+    if length.payload() >= 0.0 {
         Ok(length)
     } else {
         Err(input.new_custom_error(()))
@@ -10817,7 +10781,7 @@ fn parse_background_size_axis(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto
         return Some(LengthOrAuto::Auto);
     }
     let length = parse_length_value(input, true)?;
-    (length_payload(length) >= 0.0).then_some(LengthOrAuto::Length(length))
+    (length.payload() >= 0.0).then_some(LengthOrAuto::Length(length))
 }
 
 fn parse_background_size_axis_res<'i>(
@@ -11266,7 +11230,7 @@ pub(crate) fn parse_background_shorthand(
 /// offset-x/offset-y/spread-radius はいずれも sign 制限なしのため、
 /// [`parse_shadow_length_reject_nan`]/`_res` 経由で `!is_nan()` guard を
 /// 通す (同関数 doc 参照)。blur-radius (3rd slot) は既存の
-/// `length_payload(value) >= 0.0` チェックが NaN も incidental に
+/// `value.payload() >= 0.0` チェックが NaN も incidental に
 /// 弾くため、追加 guard は不要 (`NaN >= 0.0` は IEEE 754 で `false`)。
 fn parse_box_shadow_lengths<'i>(
     input: &mut Parser<'i, '_>,
@@ -11277,7 +11241,7 @@ fn parse_box_shadow_lengths<'i>(
     // the fourth (spread) slot.  The grammar's third length is blur-radius,
     // which is non-negative; only the fourth spread-radius may be negative.
     let blur_radius = match input.try_parse(parse_length_allow_negative_res) {
-        Ok(value) if length_payload(value) >= 0.0 => value,
+        Ok(value) if value.payload() >= 0.0 => value,
         Ok(_) => return Err(input.new_custom_error(())),
         Err(_) => Length::Px(0.0),
     };

@@ -489,6 +489,32 @@ pub enum Length {
     Rlh(f32),
 }
 
+impl Length {
+    /// The numeric value regardless of unit.
+    pub(crate) fn payload(self) -> f32 {
+        match self {
+            Length::Px(v)
+            | Length::Em(v)
+            | Length::Rem(v)
+            | Length::Percent(v)
+            | Length::Pt(v)
+            | Length::Ex(v)
+            | Length::Rex(v)
+            | Length::Ch(v)
+            | Length::Rch(v)
+            | Length::Ic(v)
+            | Length::Ric(v)
+            | Length::Cm(v)
+            | Length::Mm(v)
+            | Length::Q(v)
+            | Length::In(v)
+            | Length::Pc(v)
+            | Length::Lh(v)
+            | Length::Rlh(v) => v,
+        }
+    }
+}
+
 /// `<length-percentage> | auto` — margin / width で共有される Author CSS seed
 /// (margin longhand 用に導入し、後に `width` からも reuse)。
 ///
@@ -6920,7 +6946,7 @@ pub enum PropertyValue {
     /// (framing を訂正済み) — `ComputedValues.padding` field
     /// 全 4 side を無条件に上書きし、4 longhand winner を必ず破壊する。到達した
     /// 時点で既に bug であり、穏当に degrade はしない (canonical な記述は
-    /// [`crate::cascade::apply_value`] の `Margin`/`Border` arm doc、および
+    /// [`crate::cascade::apply_value`] doc、および
     /// [`crate::rule::expand_shorthand_into`] doc 参照)。
     /// margin と同じ parse-time expansion model への migrate を検討 (follow-up task)。
     Padding(Sides<Length>),
@@ -7059,7 +7085,7 @@ pub enum PropertyValue {
     /// (framing を訂正済み) — `ComputedValues.margin` field
     /// 全 4 side を無条件に上書きし、4 longhand winner を必ず破壊する。到達した
     /// 時点で既に bug であり、穏当に degrade はしない (canonical な記述は
-    /// [`crate::cascade::apply_value`] の `Margin` arm doc、および
+    /// [`crate::cascade::apply_value`] doc、および
     /// [`crate::rule::expand_shorthand_into`] doc 参照)。
     Margin(Sides<LengthOrAuto>),
     /// `margin-inline: <'margin-top'>{1,2}` shorthand — CSS Logical
@@ -7147,7 +7173,7 @@ pub enum PropertyValue {
     /// (framing を訂正済み) — `ComputedValues.border` field 全
     /// 4 side × 3 sub-property を無条件に上書きし、12 longhand winner を必ず
     /// 破壊する。到達した時点で既に bug であり、穏当に degrade はしない
-    /// (canonical な記述は [`crate::cascade::apply_value`] の `Border` arm doc、
+    /// (canonical な記述は [`crate::cascade::apply_value`] doc、
     /// および [`crate::rule::expand_shorthand_into`] doc 参照)。
     ///
     /// ⚠️ spec の "all of its longhand sub-properties" には reset-only の

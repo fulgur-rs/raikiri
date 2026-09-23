@@ -865,8 +865,8 @@ pub fn cascade_page(
 /// **That invariant is what makes the read below total**: any other `Length` variant under
 /// `PropertyKey::FontSize` is unreachable, and the catch-all falls back to the
 /// inherited value rather than panicking (crate policy: no panic surface in
-/// the cascade — see the `PropertyValue::Margin` fall-through arm in
-/// [`crate::cascade::apply_value`]). If that arm ever stops normalising to
+/// the cascade — see the shorthand fall-through note in
+/// [`crate::cascade::apply_value`]'s doc). If that arm ever stops normalising to
 /// `Px`, this function silently starts using the wrong basis, so the two must
 /// be changed together.
 fn page_context_font_size(
@@ -1863,9 +1863,10 @@ fn absolutize_in_page_context(
         // The arm still exists — not folded into the `Color`/`FontSize`/…
         // bucket above, and not `unreachable!` — for the same two reasons the
         // shorthand fall-throughs keep real arms: the crate keeps the cascade
-        // panic-free (a deliberate design policy, see the `Margin` fall-through
-        // in `crate::cascade::apply_value`), and this function's `pub(crate)`
-        // visibility means test code *can* call it directly with an
+        // panic-free (a deliberate design policy, see the shorthand
+        // fall-through note in `crate::cascade::apply_value`'s doc), and this
+        // function's `pub(crate)` visibility means test code *can* call it
+        // directly with an
         // unresolved `FontSizeRelative`, bypassing step 3 (as
         // `absolutize_in_page_context_font_size_relative_safety_net` does).
         //
