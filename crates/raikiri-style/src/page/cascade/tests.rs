@@ -5758,3 +5758,26 @@ fn cascade_page_deterministic_across_10_runs() {
         );
     }
 }
+
+#[test]
+fn absolutize_in_page_context_resolves_single_axis_translate() {
+    let transform = PropertyValue::Transform(Arc::new(vec![
+        TransformFunction::TranslateX(Length::Em(2.0)),
+        TransformFunction::TranslateY(Length::Percent(50.0)),
+    ]));
+    assert_eq!(
+        absolutize_in_page_context(
+            ResolvedAgainstInherited::for_test(transform),
+            ComputedLength(10.0),
+            None,
+            &ResolveContext::new(ComputedLength(16.0)),
+            Sides::all(BorderStyle::None),
+            OutlineStyle::None,
+            OverflowXY::both(OverflowValue::Visible),
+        ),
+        PropertyValue::Transform(Arc::new(vec![
+            TransformFunction::TranslateX(Length::Px(20.0)),
+            TransformFunction::TranslateY(Length::Percent(50.0)),
+        ])),
+    );
+}
