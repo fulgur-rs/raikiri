@@ -8468,7 +8468,9 @@ fn preshape_text(
                 line_height,
             )));
             builder.push_default(StyleProperty::LetterSpacing(letter_spacing));
-            if job.word_spacing_ch_factor.is_some() {
+            // Apply negative CSS word-spacing lengths in addition to the existing
+            // font-metric-aware `ch` path. Other non-`ch` values remain deferred.
+            if job.word_spacing_ch_factor.is_some() || job.word_spacing_raw < 0.0 {
                 builder.push_default(StyleProperty::WordSpacing(word_spacing));
             }
             for (range, tab_word_spacing) in &job.tab_spacing_ranges {
@@ -8554,7 +8556,7 @@ fn preshape_text(
                     line_height,
                 )));
                 builder.push_default(StyleProperty::LetterSpacing(letter_spacing));
-                if job.word_spacing_ch_factor.is_some() {
+                if job.word_spacing_ch_factor.is_some() || job.word_spacing_raw < 0.0 {
                     builder.push_default(StyleProperty::WordSpacing(word_spacing));
                 }
                 for (range, tab_word_spacing) in &job.tab_spacing_ranges {
