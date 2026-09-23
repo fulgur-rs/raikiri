@@ -42,14 +42,20 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
+import subprocess
+import tempfile
 import unittest
 
 from patch_coverage import (
+    MOVED_SGR,
     classify_no_lcov_record_lines,
+    collect_moved_added_lines,
     code_only,
     compute_exempt_lines,
     cov_ignore_reason,
     is_structurally_unreported,
+    parse_moved_added_lines,
     structurally_unreported_paths,
 )
 
@@ -270,6 +276,63 @@ class IsStructurallyUnreportedTests(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertFalse(is_structurally_unreported(path, self.unreported_paths))
+
+
+class ParseMovedAddedLinesTests(unittest.TestCase):
+    def test_only_moved_colored_added_lines_are_reported(self) -> None:
+        green = "\x1b[32m"
+        reset = "\x1b[m"
+        diff = "\n".join(
+            [
+                "\x1b[1mdiff --git a/src/b.rs b/src/b.rs\x1b[m",
+                "\x1b[1m+++ b/src/b.rs\x1b[m",
+                "\x1b[36m@@ -0,0 +10,3 @@\x1b[m",
+                f"{MOVED_SGR}+fn moved() {{{reset}",
+                f"{green}+fn fresh() {{}}{reset}",
+                f"{MOVED_SGR}+}}{reset}",
+                "\x1b[1m+++ /dev/null\x1b[m",
+                "\x1b[36m@@ -1,2 +0,0 @@\x1b[m",
+                "\x1b[31m-gone\x1b[m",
+            ]
+        )
+        self.assertEqual(parse_moved_added_lines(diff), {"src/b.rs": {10, 12}})
+
+
+class CollectMovedAddedLinesGitTests(unittest.TestCase):
+    """Runs real `git` so the forced color config is exercised end to end."""
+
+    def _git(self, repo: str, *args: str) -> str:
+        env = {
+            **os.environ,
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_SYSTEM": os.devnull,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@example.com",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@example.com",
+        }
+        return subprocess.run(
+            ["git", "-C", repo, *args], check=True, capture_output=True, text=True, env=env
+        ).stdout.strip()
+
+    def test_block_moved_to_another_file_is_moved_and_new_code_is_not(self) -> None:
+        body = [f"    let value_{i} = compute_something_long({i});" for i in range(8)]
+        block = ["fn moved_function() {", *body, "}"]
+        with tempfile.TemporaryDirectory() as repo:
+            self._git(repo, "init", "-q")
+            with open(os.path.join(repo, "a.rs"), "w") as f:
+                f.write("\n".join(["fn keep() {}", *block, ""]))
+            self._git(repo, "add", ".")
+            self._git(repo, "commit", "-qm", "base")
+            base = self._git(repo, "rev-parse", "HEAD")
+            with open(os.path.join(repo, "a.rs"), "w") as f:
+                f.write("fn keep() {}\n")
+            with open(os.path.join(repo, "b.rs"), "w") as f:
+                f.write("\n".join(["fn brand_new_function_here() { unique_body(); }", *block, ""]))
+            self._git(repo, "add", ".")
+            self._git(repo, "commit", "-qm", "move")
+            moved = collect_moved_added_lines(repo, base, "HEAD")
+        self.assertEqual(moved.get("b.rs"), set(range(2, 2 + len(block))))
 
 
 class ClassifyNoLcovRecordLinesTests(unittest.TestCase):

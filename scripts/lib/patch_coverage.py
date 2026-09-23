@@ -112,6 +112,12 @@ this workspace's `cargo-llvm-cov 0.8.7` output rather than assumed:
     built-in default `--ignore-filename-regex`, so they get no SF: record
     even though their tests ran. Also classified **unreported**; see
     `is_structurally_unreported()`.
+
+Uncovered added lines that git's moved-block detection reports as moved
+from elsewhere in the same diff (e.g. splitting one file into modules) are
+reported as **moved** and not counted as a failure: the move does not change
+whether they are covered, so the gap predates the diff. See
+`collect_moved_added_lines()`.
 """
 
 from __future__ import annotations
@@ -601,6 +607,7 @@ class FileResult:
     uncovered: list[int] = field(default_factory=list)
     exempted: list[int] = field(default_factory=list)
     unreported: list[int] = field(default_factory=list)
+    moved: list[int] = field(default_factory=list)
     no_lcov_record: bool = False
 
 
@@ -641,6 +648,82 @@ def parse_added_lines(diff_text: str) -> dict[str, list[int]]:
                 pass  # deletion, does not consume an added-line slot
             # context lines shouldn't appear under -U0, but ignore defensively
     return result
+
+
+# `git diff --color-moved` marks moved lines only through color. Every
+# "moved, new side" color slot is forced to one SGR sequence that plain added
+# lines never get (they are forced to green), so the parser can tell them
+# apart regardless of the user's git color config.
+MOVED_COLOR = "bold magenta"
+MOVED_SGR = "\x1b[1;35m"
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def parse_moved_added_lines(colored_diff: str) -> dict[str, set[int]]:
+    """Parse the colored `-U0` diff produced by `collect_moved_added_lines()`
+    into {path: {added line # that git classified as moved}}."""
+    result: dict[str, set[int]] = {}
+    current_path: str | None = None
+    next_line: int | None = None
+    for raw in colored_diff.splitlines():
+        line = ANSI_RE.sub("", raw)
+        if line.startswith("+++ "):
+            path = line[4:]
+            current_path = None if path == "/dev/null" else (
+                path.split("/", 1)[1] if path.startswith("b/") else path
+            )
+            continue
+        if line.startswith("@@"):
+            m = HUNK_HEADER_RE.match(line)
+            next_line = int(m.group(1)) if m and current_path is not None else None
+            continue
+        if next_line is None or current_path is None:
+            continue
+        if line.startswith("+") and not line.startswith("+++"):
+            if MOVED_SGR in raw:
+                result.setdefault(current_path, set()).add(next_line)
+            next_line += 1
+    return result
+
+
+def collect_moved_added_lines(repo_root: str, base: str, head: str) -> dict[str, set[int]]:
+    """Added lines between `base` and `head` that git's own moved-block
+    detection (`--color-moved=blocks`, indentation changes allowed) reports
+    as moved from elsewhere in the same diff, across files.
+
+    A moved line carries the coverage it had before the move, so it is not
+    new code this diff has to cover; see `main()` for how it is reported.
+    """
+    config = ["-c", "color.diff.new=green"]
+    for slot in (
+        "newMoved",
+        "newMovedAlternative",
+        "newMovedDimmed",
+        "newMovedAlternativeDimmed",
+    ):
+        config += ["-c", f"color.diff.{slot}={MOVED_COLOR}"]
+    proc = subprocess.run(
+        [
+            "git",
+            "-C",
+            repo_root,
+            *config,
+            "diff",
+            "--no-renames",
+            "--color=always",
+            "--color-moved=blocks",
+            "--color-moved-ws=allow-indentation-change",
+            "-U0",
+            base,
+            head,
+            "--",
+            "*.rs",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return parse_moved_added_lines(proc.stdout)
 
 
 def parse_lcov(lcov_text: str, repo_root: str) -> dict[str, dict[int, int]]:
@@ -707,6 +790,7 @@ def main() -> int:
         check=True,
     )
     added_by_file = parse_added_lines(diff_proc.stdout)
+    moved_by_file = collect_moved_added_lines(args.repo_root, args.base, args.head)
 
     with open(args.lcov, encoding="utf-8", errors="replace") as f:
         lcov_by_file = parse_lcov(f.read(), args.repo_root)
@@ -723,6 +807,7 @@ def main() -> int:
             continue
         file_lines = head_content.splitlines()
         exempt = compute_exempt_lines(file_lines)
+        moved = moved_by_file.get(path, set())
 
         da_map = lcov_by_file.get(path)
         if da_map is None:
@@ -744,7 +829,8 @@ def main() -> int:
                 uncovered, exempted = classify_no_lcov_record_lines(
                     fr.added_lines, file_lines, exempt
                 )
-                fr.uncovered.extend(uncovered)
+                fr.uncovered.extend(ln for ln in uncovered if ln not in moved)
+                fr.moved.extend(ln for ln in uncovered if ln in moved)
                 fr.exempted.extend(exempted)
         else:
             for ln in fr.added_lines:
@@ -754,6 +840,8 @@ def main() -> int:
                     continue  # covered
                 if ln in exempt:
                     fr.exempted.append(ln)
+                elif ln in moved:
+                    fr.moved.append(ln)
                 else:
                     fr.uncovered.append(ln)
         results.append(fr)
@@ -762,14 +850,25 @@ def main() -> int:
     total_uncovered = sum(len(r.uncovered) for r in results)
     total_exempted = sum(len(r.exempted) for r in results)
     total_unreported = sum(len(r.unreported) for r in results)
+    total_moved = sum(len(r.moved) for r in results)
 
     print(f"patch coverage: base={args.base} head={args.head}")
     print(f"changed .rs files with added lines: {len(results)}")
     print(f"total added lines (diff): {total_added}")
     print(f"total cov:ignore-exempted added lines: {total_exempted}")
     print(f"total unreported added lines (test/example targets, tests.rs files; informational): {total_unreported}")
+    print(f"total moved uncovered lines (moved by this diff, not new; informational): {total_moved}")
     print(f"total uncovered added lines (FAIL if > 0): {total_uncovered}")
     print()
+
+    if total_moved:
+        print("Moved uncovered lines per file — git reports these lines as moved")
+        print("from elsewhere in this diff, so their coverage gap predates it; not")
+        print("counted toward PASS/FAIL:")
+        for r in results:
+            if r.moved:
+                print(f"  {r.path}: {len(r.moved)}")
+        print()
 
     if total_unreported:
         print("Unreported changed lines (file:line) — cargo-llvm-cov does not")
@@ -793,6 +892,11 @@ def main() -> int:
             )
         else:
             print("PASS: all changed lines are covered or cov:ignore-exempted.")
+        if total_moved:
+            print(
+                f"({total_moved} uncovered line(s) were only moved by this diff; "
+                "see 'Moved uncovered lines' above.)"
+            )
         return 0
 
     print("Uncovered changed lines (file:line):")
