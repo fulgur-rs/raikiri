@@ -71,6 +71,306 @@ fn expand_supports(source: &str) -> String {
     output
 }
 
+/// Expand qualified CSS nesting into the flat selector rules understood by the
+/// rule tree. The parser intentionally keeps this pass source-based: it handles
+/// nested qualified rules, preserves at-rules, and leaves declaration values,
+/// strings, comments, and function arguments opaque to the brace scanner.
+fn expand_css_nesting(source: &str) -> String {
+    let mut output = String::with_capacity(source.len());
+    let mut cursor = 0;
+    while let Some((kind, index)) = next_css_top_level_construct(source, cursor) {
+        match kind {
+            b';' => {
+                output.push_str(&source[cursor..=index]);
+                cursor = index + 1;
+            }
+            b'{' => {
+                let Some(close) = matching_brace(source, index) else {
+                    output.push_str(&source[cursor..]);
+                    return output;
+                };
+                let prelude = &source[cursor..index];
+                let body = &source[index + 1..close];
+                if prelude.trim_start().starts_with('@') {
+                    output.push_str(prelude);
+                    output.push('{');
+                    output.push_str(&expand_css_nesting(body));
+                    output.push('}');
+                } else {
+                    output.push_str(&flatten_css_style_rule(prelude, body));
+                }
+                cursor = close + 1;
+            }
+            _ => unreachable!("next_css_top_level_construct only returns ; or {{"), // cov:ignore: helper returns only semicolon or block-opener tags.
+        }
+    }
+    output.push_str(&source[cursor..]);
+    output
+}
+
+/// Return the next top-level declaration terminator or block opener.
+fn next_css_top_level_construct(source: &str, from: usize) -> Option<(u8, usize)> {
+    let bytes = source.as_bytes();
+    let mut index = from;
+    let mut paren_depth = 0_u32;
+    let mut bracket_depth = 0_u32;
+    let mut quote = None;
+    let mut comment = false;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if comment {
+            if byte == b'*' && bytes.get(index + 1) == Some(&b'/') {
+                comment = false;
+                index += 2;
+            } else {
+                index += 1;
+            }
+            continue;
+        }
+        if let Some(delimiter) = quote {
+            if byte == b'\\' {
+                index = index.saturating_add(2);
+            } else {
+                if byte == delimiter {
+                    quote = None;
+                }
+                index += 1;
+            }
+            continue;
+        }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            comment = true;
+            index += 2;
+            continue;
+        }
+        if byte == b'\'' || byte == b'"' {
+            quote = Some(byte);
+            index += 1;
+            continue;
+        }
+        match byte {
+            b'(' => paren_depth = paren_depth.saturating_add(1),
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth = bracket_depth.saturating_add(1),
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b';' | b'{' if paren_depth == 0 && bracket_depth == 0 => {
+                return Some((byte, index));
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+fn flatten_css_style_rule(prelude: &str, body: &str) -> String {
+    let unchanged = || {
+        let mut unchanged = String::with_capacity(prelude.len() + body.len() + 2);
+        unchanged.push_str(prelude);
+        unchanged.push('{');
+        unchanged.push_str(body);
+        unchanged.push('}');
+        unchanged
+    };
+    let Some(segments) = split_css_nested_body(body) else {
+        return unchanged();
+    };
+    let selector = prelude.trim();
+    // cov:ignore: callers only pass qualified-rule preludes; at-rules are routed elsewhere.
+    if selector.is_empty() || selector.starts_with('@') {
+        return unchanged(); // cov:ignore: see above.
+    }
+
+    let leading_len = prelude.len() - prelude.trim_start().len();
+    let mut output = String::with_capacity(prelude.len() + body.len() + 32);
+    output.push_str(&prelude[..leading_len]);
+    for segment in segments {
+        match segment {
+            // Declarations keep their source position relative to nested
+            // rules: CSS Nesting wraps declarations that follow a nested rule
+            // in a nested declarations rule matching the parent's elements
+            // with the parent's specificity, i.e. a repeat of the parent rule.
+            NestedSegment::Declarations(declarations) => {
+                if declarations.trim().is_empty() {
+                    continue;
+                }
+                output.push_str(selector);
+                output.push('{');
+                output.push_str(&declarations);
+                output.push_str("}\n");
+            }
+            NestedSegment::Rule(nested_selector, nested_body) => {
+                let combined = combine_nested_selectors(selector, &nested_selector);
+                output.push_str(&flatten_css_style_rule(&combined, &nested_body));
+                output.push('\n');
+            }
+        }
+    }
+    output
+}
+
+/// A rule body split in source order.
+enum NestedSegment {
+    /// A run of declarations between nested rules.
+    Declarations(String),
+    /// A nested qualified rule: its selector and its body.
+    Rule(String, String),
+}
+
+/// Split a rule body into declaration runs and nested qualified-rule blocks,
+/// in source order. Returns `None` when the body has no nested rules or
+/// contains a nested construct outside this pass's qualified-rule subset.
+fn split_css_nested_body(body: &str) -> Option<Vec<NestedSegment>> {
+    let mut segments = Vec::new();
+    let mut has_nested_rule = false;
+    let mut segment_start = 0;
+    let mut cursor = 0;
+    while let Some((kind, index)) = next_css_top_level_construct(body, cursor) {
+        match kind {
+            b';' => cursor = index + 1,
+            b'{' => {
+                let close = matching_brace(body, index)?;
+                let nested_selector = body[cursor..index].trim();
+                // cov:ignore: at-rules and empty nested preludes remain opaque to this qualified-rule pass.
+                if nested_selector.is_empty() || nested_selector.starts_with('@') {
+                    return None;
+                }
+                segments.push(NestedSegment::Declarations(
+                    body[segment_start..cursor].to_owned(),
+                ));
+                segments.push(NestedSegment::Rule(
+                    nested_selector.to_owned(),
+                    body[index + 1..close].to_owned(),
+                ));
+                has_nested_rule = true;
+                cursor = close + 1;
+                segment_start = cursor;
+            }
+            _ => unreachable!("next_css_top_level_construct only returns ; or {{"), // cov:ignore: helper returns only semicolon or block-opener tags.
+        }
+    }
+    if !has_nested_rule {
+        return None;
+    }
+    segments.push(NestedSegment::Declarations(
+        body[segment_start..].to_owned(),
+    ));
+    Some(segments)
+}
+
+/// Resolve a nested selector list against its parent selector list.
+///
+/// CSS Nesting gives `&` the meaning of `:is(<parent list>)`, which the
+/// selector matcher does not support. Each `&` is therefore expanded
+/// independently over the parent list, so `.a, .b { & + & {} }` covers all
+/// four pairings. Matching is equivalent; specificity differs from `:is()`
+/// only when the parent list mixes selectors of different specificity. A
+/// nested selector without `&` is relative to the parent as a descendant.
+fn combine_nested_selectors(parent: &str, nested: &str) -> String {
+    let parents = split_top_level_selector_list(parent);
+    let mut combined = Vec::new();
+    for nested in split_top_level_selector_list(nested) {
+        let pieces = split_on_nesting_selector(&nested);
+        if pieces.len() == 1 {
+            for parent in &parents {
+                combined.push(format!("{parent} {nested}"));
+            }
+            continue;
+        }
+        let mut expansions = vec![pieces[0].to_owned()];
+        for piece in &pieces[1..] {
+            expansions = expansions
+                .iter()
+                .flat_map(|prefix| {
+                    parents
+                        .iter()
+                        .map(move |parent| format!("{prefix}{parent}{piece}"))
+                })
+                .collect();
+        }
+        combined.extend(expansions);
+    }
+    combined.join(", ")
+}
+
+/// Split `selector` around each nesting selector `&`, skipping `&` inside
+/// quoted strings and escaped `\&`.
+fn split_on_nesting_selector(selector: &str) -> Vec<&str> {
+    let bytes = selector.as_bytes();
+    let mut pieces = Vec::new();
+    let mut start = 0;
+    let mut index = 0;
+    let mut quote = None;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte == b'\\' {
+            index = index.saturating_add(2);
+            continue;
+        }
+        match quote {
+            Some(delimiter) if byte == delimiter => quote = None,
+            Some(_) => {}
+            None if byte == b'\'' || byte == b'"' => quote = Some(byte),
+            None if byte == b'&' => {
+                pieces.push(&selector[start..index]);
+                start = index + 1;
+            }
+            None => {}
+        }
+        index += 1;
+    }
+    pieces.push(&selector[start.min(selector.len())..]);
+    pieces
+}
+
+fn split_top_level_selector_list(value: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut start = 0;
+    let mut index = 0;
+    let mut paren_depth = 0_u32;
+    let mut bracket_depth = 0_u32;
+    let bytes = value.as_bytes();
+    let mut quote = None;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if let Some(delimiter) = quote {
+            if byte == b'\\' {
+                index = index.saturating_add(2);
+            } else {
+                if byte == delimiter {
+                    quote = None;
+                }
+                index += 1;
+            }
+            continue;
+        }
+        if byte == b'\'' || byte == b'"' {
+            quote = Some(byte);
+        } else {
+            match byte {
+                b'(' => paren_depth = paren_depth.saturating_add(1),
+                b')' => paren_depth = paren_depth.saturating_sub(1),
+                b'[' => bracket_depth = bracket_depth.saturating_add(1),
+                b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                b',' if paren_depth == 0 && bracket_depth == 0 => {
+                    let item = value[start..index].trim();
+                    if !item.is_empty() {
+                        result.push(item.to_owned());
+                    }
+                    start = index + 1;
+                }
+                _ => {}
+            }
+        }
+        index += 1;
+    }
+    let item = value[start..].trim();
+    if !item.is_empty() {
+        result.push(item.to_owned());
+    }
+    result
+}
+
 fn supports_condition(raw: &str) -> bool {
     let condition = raw.trim();
     if let Some(rest) = condition.strip_prefix("not ") {
@@ -811,7 +1111,7 @@ impl RuleTree {
     ///   gate により無条件 drop されていたが) `counter_styles` に反映される
     ///   ようになった。
     pub fn add_stylesheet(&mut self, source: &str, origin: Origin) {
-        let source = expand_supports(source);
+        let source = expand_css_nesting(&expand_supports(source));
         for (layer_order, chunk) in expand_cascade_layers(&source) {
             self.add_stylesheet_chunk(&chunk, origin, layer_order);
         }
@@ -2070,6 +2370,88 @@ mod tests {
         assert_eq!(tree.style_rules.len(), 1);
         assert_eq!(tree.style_rules[0].source_order, 0);
         assert_eq!(tree.style_rules[0].declarations.len(), 1);
+    }
+
+    #[test]
+    fn nested_qualified_rules_flatten_to_descendant_selectors() {
+        let doc =
+            dom_with_style(".test { color: red; span { margin-left: 5px; margin-right: 5px; } }");
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 2);
+        assert_eq!(tree.style_rules[0].declarations.len(), 1);
+        assert_eq!(tree.style_rules[1].declarations.len(), 2);
+    }
+
+    #[test]
+    fn nested_ampersand_rules_flatten_to_combined_selectors() {
+        use cssparser::ToCss;
+
+        let doc = dom_with_style(".test, .other { & > span { color: red } }");
+        let tree = build_rule_tree(&doc);
+        assert_eq!(tree.style_rules.len(), 1);
+        assert_eq!(tree.style_rules[0].declarations.len(), 1);
+        let mut selector = String::new();
+        tree.style_rules[0]
+            .selectors
+            .to_css(&mut selector)
+            .expect("selector serialization");
+        assert_eq!(selector, ".test > span, .other > span");
+    }
+
+    #[test]
+    fn declarations_after_a_nested_rule_keep_their_cascade_position() {
+        // `color: blue` follows the nested rule, so it must come after it in
+        // source order (and win over it for `.a` itself on equal footing).
+        let doc = dom_with_style(".a { color: red; & { color: green } color: blue; }");
+        let tree = build_rule_tree(&doc);
+        let colors: Vec<_> = tree
+            .style_rules
+            .iter()
+            .map(|rule| rule.declarations.len())
+            .collect();
+        assert_eq!(colors, vec![1, 1, 1]);
+        let order: Vec<_> = tree
+            .style_rules
+            .iter()
+            .map(|rule| rule.source_order)
+            .collect();
+        assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "{order:?}");
+        let color = |r, g, b| {
+            crate::property::PropertyValue::Color(crate::property::CssColor { r, g, b, a: 255 })
+        };
+        assert_eq!(tree.style_rules[0].declarations[0].value, color(255, 0, 0));
+        assert_eq!(tree.style_rules[1].declarations[0].value, color(0, 128, 0));
+        assert_eq!(tree.style_rules[2].declarations[0].value, color(0, 0, 255));
+    }
+
+    #[test]
+    fn each_nesting_selector_expands_over_the_parent_list() {
+        assert_eq!(
+            combine_nested_selectors(".a, .b", "& + &"),
+            ".a + .a, .a + .b, .b + .a, .b + .b"
+        );
+        assert_eq!(
+            combine_nested_selectors(".a", "> span, &:hover"),
+            ".a > span, .a:hover"
+        );
+        // `&` inside a string or escaped is not a nesting selector.
+        assert_eq!(
+            combine_nested_selectors(".a", r#"&[title="x&y"]"#),
+            r#".a[title="x&y"]"#
+        );
+        assert_eq!(combine_nested_selectors(".a", r"&.x\&y"), r".a.x\&y");
+    }
+
+    #[test]
+    fn nested_selector_split_handles_quotes_parentheses_and_brackets() {
+        assert_eq!(
+            split_top_level_selector_list(r#":is(.a, .b), [data-x="a\,b"], [data-x="c,d"]"#),
+            vec![
+                ":is(.a, .b)".to_owned(),
+                r#"[data-x="a\,b"]"#.to_owned(),
+                r#"[data-x="c,d"]"#.to_owned(),
+            ]
+        );
     }
 
     #[test]
