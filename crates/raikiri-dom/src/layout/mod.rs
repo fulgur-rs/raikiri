@@ -19097,6 +19097,7 @@ mod tests {
 
         let normal = first_shaped_width("word-spacing: 0px");
         let negative = first_shaped_width("word-spacing: -4px");
+        // cov:ignore: assertion text is evaluated only when this test fails.
         assert!(
             negative < normal - 1.0,
             "negative non-ch word spacing should reduce parallel shaped width: normal={normal}, negative={negative}"
