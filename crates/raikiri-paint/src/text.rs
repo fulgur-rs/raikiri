@@ -468,21 +468,17 @@ pub(crate) fn draw_text_node(
             // in this first line, including the U+3000 glyph itself.
             let mut hanging_offset = 0.0_f32;
             let mut find_hanging_offset = hanging_glyph_count.is_some() && line_index == 0;
-            let line_items: Vec<_> = line.items().collect();
-            for item_index in 0..line_items.len() {
-                let item = &line_items[item_index];
+            // A line that carries an autospace boundary gives every glyph run
+            // the baseline it would get as its own inline text box, matching
+            // how the same content renders when split across elements. Runs
+            // in one font therefore stay on one baseline.
+            let line_has_autospace = line.items().any(|item| is_autospace_inline_box(&item));
+            for item in line.items() {
                 let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
-                    // Inline boxes are normally non-painting layout advances. Autospace
-                    // boxes are retained in the sequence because they also mark the
-                    // fallback-font baseline boundary handled below.
-                    continue; // cov:ignore: non-painting autospace inline boxes are visited by resource-backed WPT runs.
+                    // Inline boxes are non-painting layout advances.
+                    continue;
                 };
-                let autospace_neighbor = (item_index > 0
-                    && is_autospace_inline_box(&line_items[item_index - 1]))
-                    || (item_index + 1 < line_items.len()
-                        && is_autospace_inline_box(&line_items[item_index + 1]));
-                // cov:ignore: baseline correction is exercised by the ignored resource-backed autospace WPT runs.
-                let autospace_baseline_delta = if autospace_neighbor {
+                let autospace_baseline_delta = if line_has_autospace {
                     autospace_run_baseline_delta(metrics, glyph_run.run().metrics())
                 } else {
                     0.0
