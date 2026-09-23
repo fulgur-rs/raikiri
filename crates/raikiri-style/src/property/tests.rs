@@ -17441,3 +17441,30 @@ fn serialize_color_value_returns_none_for_relative_lab_syntax() {
         None
     );
 }
+
+#[test]
+fn keyword_and_grid_shorthand_parsers_are_reachable_from_parse_value() {
+    let accepted = [
+        ("start", "text-align-all"),
+        ("match-parent", "text-align-all"),
+        ("all", "text-combine-upright"),
+        ("none", "text-combine-upright"),
+        ("upright", "text-orientation"),
+        ("sideways", "text-orientation"),
+        ("isolate", "unicode-bidi"),
+        ("plaintext", "unicode-bidi"),
+        ("1 / 2 / 3 / 4", "grid-area"),
+        ("100px / 50px", "grid"),
+    ];
+    for (source, property) in accepted {
+        assert!(parse(source, property).is_some(), "{property}: {source}");
+    }
+    for property in [
+        "text-align-all",
+        "text-combine-upright",
+        "text-orientation",
+        "unicode-bidi",
+    ] {
+        assert_eq!(parse("bogus", property), None, "{property}");
+    }
+}
