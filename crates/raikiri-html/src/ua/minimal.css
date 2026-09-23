@@ -408,6 +408,17 @@ code, kbd, samp, tt { font-family: monospace; }
  * and not resolved by this rule. */
 listing, plaintext, pre, xmp { font-family: monospace; white-space: pre; }
 
+/* CSS Text Module Level 4 Appendix C "Default UA Stylesheet"
+ * <https://drafts.csswg.org/css-text-4/#default-stylesheet> preserves the
+ * character grid in preformatted text:
+ *   pre, code, kbd, samp, tt, listing, xmp, plaintext { text-spacing: none; }
+ *
+ * The `text-spacing` shorthand is not parsed yet, so this lands its
+ * `text-autospace` longhand only (`text-spacing: none` sets it to
+ * `no-autospace`). Without it, the initial `text-autospace: normal` would
+ * insert ideograph/alpha gaps inside code and preformatted text. */
+pre, code, kbd, samp, tt, listing, xmp, plaintext { text-autospace: no-autospace; }
+
 /* HTML Living Standard §15.3.4 "The display property": <img> is a
  * replaced element whose UA default is `inline-block` (CSS 2.1 Appendix D
  * lists replaced elements as inline-level by default; `inline-block`
