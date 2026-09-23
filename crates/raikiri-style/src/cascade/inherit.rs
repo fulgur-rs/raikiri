@@ -1157,7 +1157,6 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Deferred(_)
         | PropertyValue::Grid(_)
         | PropertyValue::GridArea(_)
-        | PropertyValue::CalcLengthPercentage { .. }
         | PropertyValue::LineBreak(_)
         | PropertyValue::TextJustify(_)
         | PropertyValue::TextAlignAll(_)
@@ -1337,26 +1336,6 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BorderBottomColor(v) => target.border.bottom.color = v,
         PropertyValue::BorderLeftColor(v) => target.border.left.color = v,
         PropertyValue::Border(sides) => expand_border(sides, |v| apply_value(v, target)),
-        PropertyValue::CalcLengthPercentage { key, value } => match key {
-            crate::property::PropertyKey::Width => target.width = LengthOrAuto::Calc(value),
-            crate::property::PropertyKey::Height => target.height = LengthOrAuto::Calc(value),
-            crate::property::PropertyKey::MaxWidth => target.max_width = LengthOrAuto::Calc(value),
-            crate::property::PropertyKey::MaxHeight => {
-                target.max_height = LengthOrAuto::Calc(value)
-            }
-            crate::property::PropertyKey::MinWidth => target.min_width = LengthOrAuto::Calc(value),
-            crate::property::PropertyKey::MinHeight => {
-                target.min_height = LengthOrAuto::Calc(value)
-            }
-            crate::property::PropertyKey::MinBlockSize => {
-                target.min_block_size = Some(LengthOrAuto::Calc(value))
-            }
-            crate::property::PropertyKey::Top => target.top = LengthOrAuto::Calc(value),
-            crate::property::PropertyKey::Right => target.right = LengthOrAuto::Calc(value),
-            crate::property::PropertyKey::Bottom => target.bottom = LengthOrAuto::Calc(value),
-            crate::property::PropertyKey::Left => target.left = LengthOrAuto::Calc(value),
-            _ => {}
-        },
         PropertyValue::Width(v) => target.width = v,
         PropertyValue::Height(v) => target.height = v,
         PropertyValue::MaxWidth(v) => target.max_width = v,

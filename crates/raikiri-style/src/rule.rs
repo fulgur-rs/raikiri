@@ -234,7 +234,6 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         // ここへ variant を足すことは「展開先が無い」という主張である。
         PropertyValue::Grid(_)
         | PropertyValue::GridArea(_)
-        | PropertyValue::CalcLengthPercentage { .. }
         | PropertyValue::Color(_)
         | PropertyValue::BackgroundColor(_)
         | PropertyValue::FontFamily(_)

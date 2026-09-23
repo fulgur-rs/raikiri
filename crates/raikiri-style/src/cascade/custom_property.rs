@@ -6,8 +6,9 @@ use smol_str::SmolStr;
 
 use crate::computed::CustomPropertyEnvironment;
 use crate::property::{
-    CalcLengthPercentage, CustomProperty, DeferredValue, MAX_DEFERRED_VALUE_NESTING_DEPTH,
-    MAX_SUBSTITUTED_VALUE_BYTES, PropertyValue, is_custom_property_name, parse_value,
+    CalcLengthPercentage, CustomProperty, DeferredValue, LengthOrAuto,
+    MAX_DEFERRED_VALUE_NESTING_DEPTH, MAX_SUBSTITUTED_VALUE_BYTES, PropertyKey, PropertyValue,
+    is_custom_property_name, parse_value,
 };
 
 use super::collect::{CustomCascadedDecl, RankedDecl, beats, cascade_rank};
@@ -26,10 +27,7 @@ pub(crate) fn resolve_deferred_value(
         Some(value) => value,
         None => {
             let value = parse_simple_calc_length_percentage(&substituted)?;
-            return Some(PropertyValue::CalcLengthPercentage {
-                key: deferred.key,
-                value,
-            });
+            return calc_length_percentage_value(deferred.key, value);
         }
     };
     let mut input = ParserInput::new(simplified.as_ref());
@@ -37,6 +35,30 @@ pub(crate) fn resolve_deferred_value(
     let value = parse_value(&deferred.property, &mut parser)?;
     parser.expect_exhausted().ok()?;
     project_deferred_value(value, deferred.key)
+}
+
+/// Wrap a mixed-unit `calc()` in the value of the property it was declared
+/// for. Only the sizing and inset properties can carry one; for any other
+/// property the declaration is invalid at computed-value time.
+fn calc_length_percentage_value(
+    key: PropertyKey,
+    value: CalcLengthPercentage,
+) -> Option<PropertyValue> {
+    let calc = LengthOrAuto::Calc(value);
+    Some(match key {
+        PropertyKey::Width => PropertyValue::Width(calc),
+        PropertyKey::Height => PropertyValue::Height(calc),
+        PropertyKey::MaxWidth => PropertyValue::MaxWidth(calc),
+        PropertyKey::MaxHeight => PropertyValue::MaxHeight(calc),
+        PropertyKey::MinWidth => PropertyValue::MinWidth(calc),
+        PropertyKey::MinHeight => PropertyValue::MinHeight(calc),
+        PropertyKey::MinBlockSize => PropertyValue::MinBlockSize(calc),
+        PropertyKey::Top => PropertyValue::Top(calc),
+        PropertyKey::Right => PropertyValue::Right(calc),
+        PropertyKey::Bottom => PropertyValue::Bottom(calc),
+        PropertyKey::Left => PropertyValue::Left(calc),
+        _ => return None,
+    })
 }
 
 /// Parse mixed-unit calc forms that need a used containing-block basis.
@@ -2288,6 +2310,35 @@ mod tests {
             Some("--spacing: 10px; width: calc(var(--spacing) + 5px)"),
         );
         assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(15.0));
+    }
+
+    #[test]
+    fn calc_length_percentage_value_targets_sizing_and_inset_properties() {
+        let value = CalcLengthPercentage {
+            percent: 50.0,
+            px: 10.0,
+        };
+        let calc = LengthOrAuto::Calc(value);
+        let cases = [
+            (PropertyKey::Width, PropertyValue::Width(calc)),
+            (PropertyKey::Height, PropertyValue::Height(calc)),
+            (PropertyKey::MaxWidth, PropertyValue::MaxWidth(calc)),
+            (PropertyKey::MaxHeight, PropertyValue::MaxHeight(calc)),
+            (PropertyKey::MinWidth, PropertyValue::MinWidth(calc)),
+            (PropertyKey::MinHeight, PropertyValue::MinHeight(calc)),
+            (PropertyKey::MinBlockSize, PropertyValue::MinBlockSize(calc)),
+            (PropertyKey::Top, PropertyValue::Top(calc)),
+            (PropertyKey::Right, PropertyValue::Right(calc)),
+            (PropertyKey::Bottom, PropertyValue::Bottom(calc)),
+            (PropertyKey::Left, PropertyValue::Left(calc)),
+        ];
+        for (key, expected) in cases {
+            assert_eq!(calc_length_percentage_value(key, value), Some(expected));
+        }
+        assert_eq!(
+            calc_length_percentage_value(PropertyKey::Color, value),
+            None
+        );
     }
 
     #[test]

@@ -6655,13 +6655,6 @@ pub enum PropertyValue {
     CustomProperty(CustomProperty),
     /// A known property value containing `var()` or a math function.
     Deferred(DeferredValue),
-    /// A resolved simple mixed-unit `calc()` for a length-percentage property.
-    CalcLengthPercentage {
-        /// The property key this value belongs to.
-        key: PropertyKey,
-        /// Percentage and absolute-length terms.
-        value: CalcLengthPercentage,
-    },
     /// `color: <color>` — inherited、initial: black。
     Color(CssColor),
     /// `background-color: <color>` — **non-inherited**、initial: `transparent`。
@@ -8532,7 +8525,6 @@ impl PropertyValue {
         match self {
             PropertyValue::CustomProperty(_) => PropertyKey::Custom,
             PropertyValue::Deferred(value) => value.key,
-            PropertyValue::CalcLengthPercentage { key, .. } => *key,
             PropertyValue::Grid(_) => PropertyKey::Grid,
             PropertyValue::GridArea(_) => PropertyKey::GridArea,
             PropertyValue::Color(_) => PropertyKey::Color,
