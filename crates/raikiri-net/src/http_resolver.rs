@@ -20,7 +20,6 @@ use crate::ssrf_guard::is_globally_routable;
 /// apart from an ordinary DNS problem — see `super::http_provider`'s error
 /// mapping.
 #[derive(Debug)]
-#[allow(dead_code)] // constructed only inside `SsrfSafeResolver::resolve`, itself unconstructed outside `#[cfg(test)]` until this crate's HTTP-fetching `NetworkProvider` is wired up to use it
 pub(crate) struct SsrfBlocked;
 
 impl fmt::Display for SsrfBlocked {
@@ -36,7 +35,6 @@ impl std::error::Error for SsrfBlocked {}
 /// [`is_globally_routable`]. If no candidate survives, returns
 /// `Error::Other(Box::new(SsrfBlocked))`.
 #[derive(Debug, Default)]
-#[allow(dead_code)] // unconstructed outside `#[cfg(test)]` until this crate's HTTP-fetching `NetworkProvider` is wired up to use it
 pub(crate) struct SsrfSafeResolver {
     inner: DefaultResolver,
 }
