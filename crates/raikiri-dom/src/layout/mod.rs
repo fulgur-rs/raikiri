@@ -2189,17 +2189,15 @@ fn grid_line_value_to_taffy_placement(v: &GridLineValue) -> GridPlacement {
 /// 埋めるべき behavioral gap が無く、既存の block code path を乱す理由も
 /// 無い。
 ///
-/// plain な [`DisplayValue::Inline`] の node は、自身の children が
-/// inline-level 2 個以上でも本条件を満たさ**ない**: `block` /
-/// `inline-block` と異なり、non-replaced な `inline` box は CSS 2.1
-/// §9.2.1.1 上、自身の content に対して block container を生成しない —
-/// その content は `inline` box 自身と*同じ* inline formatting context
-/// に流れ込む ordinary な inline-level content である (nested な
-/// inline box は新しい formatting context を開始しない)。本 pass は
-/// element の境界を越えた nested inline content の flatten は行わない
-/// (下記 "Non-goals" 参照) ため、`inline` な node の children は
-/// [`bridge_display`] が mapping した状態のまま、本 pass によって変更
-/// されない。
+/// plain な [`DisplayValue::Inline`] の node は、direct text children
+/// だけなら本条件を満たさない: `block` / `inline-block` と異なり、
+/// non-replaced な `inline` box は CSS 2.1 §9.2.1.1 上、自身の content に
+/// 対して block container を生成しない — その content は `inline` box 自身と
+/// *同じ* inline formatting context に流れ込む ordinary な inline-level
+/// content である。nested な inline element child を持つ場合だけは例外として
+/// synthetic flex line root を作る。taffy の block path ではその child の
+/// descendants が縦に積まれるためであり、これは DOM の flatten ではなく
+/// nested wrapper ごとの最小 line-box bridge である。
 ///
 /// block-level / flex / grid な in-document child を 1 個でも持つ
 /// container も同様に変更しない (block-level と inline-level が混在する
@@ -2394,12 +2392,10 @@ fn grid_line_value_to_taffy_placement(v: &GridLineValue) -> GridPlacement {
 ///   両方とも、`<br>` が childless leaf で text layout を持たないために
 ///   measure が `0` を返すという同じ機構の帰結であり、別々の special
 ///   case ではない。
-/// - nested な inline element を ancestor の line box へ flatten する
-///   ことは行わない — qualify する各 container 自身の IFC は直接の
-///   children のみを対象とし、さらに nested した inline の descendant
-///   には及ばない (line box 内の `<b>` は、本 pass が存在しなかった時と
-///   全く同じく、自身の children を独立に何らかの code path で
-///   layout する)。
+/// - nested な inline element を ancestor の DOM line box へ flatten する
+///   ことは行わない。nested wrapper が inline element child を持つ場合は
+///   wrapper自身を最小 flex line root にするが、各 wrapper の children は
+///   その wrapper 内で独立に layout する。
 /// - [`preshape_text`] は本 pass の後 (`apply_computed_to_style` 完了後、
 ///   `layout_single_page` の後段) に、各 text node の glyph run を full
 ///   page width に対して shape・soft-wrap する。これは本 pass が最終的に
@@ -3601,7 +3597,94 @@ fn collapse_adjacent_block_margins(doc: &mut Document, previous: usize, next: us
     }
 }
 
+/// Return the nearest block-like inline formatting context for a node.
+///
+/// The nested-inline bridge must not be enabled by an autospace pair in an
+/// unrelated sibling block. Low-level DOM tests do not install the HTML UA
+/// stylesheet, so if no block-like ancestor is visible the highest reachable
+/// ancestor is used as the conservative context fallback.
+fn inline_formatting_context_root(
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    node_id: usize,
+) -> usize {
+    let mut current = node_id;
+    let mut fallback = node_id;
+    while let Some(parent) = parent_of.get(current).copied().flatten() {
+        fallback = parent;
+        if matches!(
+            cascade.computed[parent].display,
+            DisplayValue::Block
+                | DisplayValue::InlineBlock
+                | DisplayValue::Flex
+                | DisplayValue::InlineFlex
+                | DisplayValue::Grid
+                | DisplayValue::InlineGrid
+                | DisplayValue::Table
+                | DisplayValue::InlineTable
+                | DisplayValue::TableRow
+                | DisplayValue::TableCell
+                | DisplayValue::TableCaption
+        ) {
+            return parent;
+        }
+        current = parent;
+    }
+    fallback
+}
+
+/// Return whether one inline formatting context contains an actual autospace
+/// boundary. This reuses the same edge discovery and `text-autospace` option
+/// handling as `preshape_text`, instead of combining character classes from
+/// unrelated text nodes or ignoring custom values and language gating.
+fn inline_context_has_autospace_candidate(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    context_root: usize,
+) -> bool {
+    for (idx, node) in doc.nodes.iter().enumerate() {
+        if node.kind() != NodeKind::Text
+            || !node.is_in_document()
+            || inline_formatting_context_root(cascade, parent_of, idx) != context_root
+            || cascade.computed[idx].text_autospace == TextAutospace::NoAutospace
+            || has_vertical_writing_mode(cascade, parent_of, idx)
+        {
+            continue;
+        }
+        let NodeData::Text(text) = &node.data else {
+            // cov:ignore: NodeKind::Text always carries NodeData::Text; this is a defensive match arm.
+            continue;
+        };
+        let language = effective_language_for_text(doc, parent_of, idx);
+        let before = autospace_adjacent_edge_char(doc, cascade, parent_of, idx, -1);
+        let after = autospace_adjacent_edge_char(doc, cascade, parent_of, idx, 1);
+        if !text_autospace_boxes_with_edges(
+            &text.text_content,
+            cascade.computed[idx].text_autospace,
+            &language,
+            1.0,
+            before,
+            after,
+        )
+        .is_empty()
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
+    let mut parent_of = vec![None; doc.nodes.len()];
+    for parent in 0..doc.nodes.len() {
+        for &child in &doc.nodes[parent].children {
+            if child < parent_of.len() {
+                parent_of[child] = Some(parent);
+            }
+        }
+    }
+    let mut autospace_candidates_by_root = HashMap::new();
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
             continue;
@@ -3621,7 +3704,17 @@ fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
             continue;
         }
         collapse_block_in_inline_margins(doc, idx, cascade);
-        let qualifies = qualifies_for_minimal_line_box(doc, idx, cascade);
+        let has_autospace_candidate = if cascade.computed[idx].display == DisplayValue::Inline {
+            let context_root = inline_formatting_context_root(cascade, &parent_of, idx);
+            *autospace_candidates_by_root
+                .entry(context_root)
+                .or_insert_with(|| {
+                    inline_context_has_autospace_candidate(doc, cascade, &parent_of, context_root)
+                })
+        } else {
+            false
+        };
+        let qualifies = qualifies_for_minimal_line_box(doc, idx, cascade, has_autospace_candidate);
         doc.nodes[idx]
             .flags
             .set(NodeFlags::IS_INLINE_ROOT, qualifies);
@@ -3724,10 +3817,11 @@ fn is_forced_line_break(doc: &Document, idx: usize, cascade: &CascadeResult) -> 
 /// Return whether an inline wrapper contains a descendant whose aligned
 /// subtree is explicitly pinned to a line-box edge.
 ///
-/// The minimal bridge keeps nested inline wrappers on taffy's block path.  A
-/// wrapper with `padding-top`/`padding-bottom` would therefore move both its
-/// text and the aligned descendant, unlike the CSS line-box model.  The
-/// caller uses this predicate only for the focused `top`/`bottom` slice.
+/// The minimal bridge may keep a nested inline wrapper on taffy's block path
+/// when it has no inline element child. A wrapper with
+/// `padding-top`/`padding-bottom` would therefore move both its text and the
+/// aligned descendant, unlike the CSS line-box model. The caller uses this
+/// predicate only for the focused `top`/`bottom` slice.
 fn has_line_box_edge_aligned_descendant(
     doc: &Document,
     idx: usize,
@@ -3751,19 +3845,35 @@ fn has_line_box_edge_aligned_descendant(
 /// `idx` (ある [`NodeKind::Element`]) が
 /// [`establish_minimal_line_boxes`] の minimal-line-box 処理の対象かどうか
 /// — qualifying condition とその根拠は同関数の doc 参照。
-fn qualifies_for_minimal_line_box(doc: &Document, idx: usize, cascade: &CascadeResult) -> bool {
+fn qualifies_for_minimal_line_box(
+    doc: &Document,
+    idx: usize,
+    cascade: &CascadeResult,
+    has_autospace_candidate: bool,
+) -> bool {
     // ここでは意図的に pre-bridge の `DisplayValue` を読む
     // (post-`bridge_display` の `taffy::Display` ではない — この second
     // pass が走る時点で `Block` / `Inline` / `InlineBlock` は既に全て
-    // `Display::Block` に collapse 済み)。plain な `Inline` の container
-    // は qualify させては**ならない** (この module の doc 参照)。
+    // `Display::Block` に collapse 済み)。plain な `Inline` は direct text
+    // children だけなら除外し、nested inline element child を持つ wrapper
+    // だけを qualify する (この module の doc 参照)。
     // table 系 (`Table` / `InlineTable` / `TableRow` / `TableCell` /
     // `TableCaption`) は全 child inline の場合に限り qualify する —
     // match arm 上の注記参照。taffy dispatch 側
     // (`taffy_impl.rs` の table dispatch) は `IS_INLINE_ROOT` flag を見て
     // table engine を bypass する。
+    let is_plain_inline = has_autospace_candidate
+        && cascade.computed[idx].display == DisplayValue::Inline
+        && cascade.computed[idx].text_autospace != TextAutospace::NoAutospace;
+    if cascade.computed[idx].display == DisplayValue::Inline && !is_plain_inline {
+        return false;
+    }
+    let has_inline_element_child = is_plain_inline
+        && doc.nodes[idx].children.iter().any(|&child| {
+            doc.nodes[child].kind() == NodeKind::Element && is_inline_element_box(cascade, child)
+        });
     match cascade.computed[idx].display {
-        DisplayValue::Block | DisplayValue::InlineBlock => {}
+        DisplayValue::Block | DisplayValue::InlineBlock | DisplayValue::Inline => {}
         // Table-internal boxes whose children are ALL inline-level get no
         // anonymous fixup from the table engine (it only collects rows and
         // cells) — without this they stack vertically in taffy's block
@@ -3804,7 +3914,16 @@ fn qualifies_for_minimal_line_box(doc: &Document, idx: usize, cascade: &CascadeR
             _ => return false,
         }
     }
-    inline_level_count >= 2
+    if is_plain_inline {
+        // A plain inline with a nested inline element needs a synthetic line
+        // container so nested descendants do not take the block path and
+        // stack vertically. Keep direct text-only inline containers on the
+        // historical path; their content already participates in the parent
+        // line box and existing layout behavior remains unchanged.
+        has_inline_element_child && inline_level_count >= 1
+    } else {
+        inline_level_count >= 2
+    }
 }
 
 /// Saturating `i32` → `i16` cast — [`grid_line_value_to_taffy_placement`]
@@ -6790,6 +6909,14 @@ struct CollapsedText {
     migrate_count: u32,
 }
 
+fn has_authored_non_whitespace_text(doc: &Document, idx: usize) -> bool {
+    text_of(doc, idx).is_some_and(|text| text.chars().any(|ch| !is_css_white_space(ch)))
+        || doc.nodes[idx]
+            .children
+            .iter()
+            .any(|&child| has_authored_non_whitespace_text(doc, child))
+}
+
 // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
 fn preserves_inline_whitespace_item(
     doc: &Document,
@@ -6821,6 +6948,7 @@ fn preserves_inline_whitespace_item(
             doc.nodes[child].kind() == NodeKind::Element
                 && is_inline_element_box(cascade, child)
                 && cascade.computed[child].display != DisplayValue::None
+                && has_authored_non_whitespace_text(doc, child)
         })
     };
     has_inline_element(&doc.nodes[parent].children[..pos])
@@ -8874,6 +9002,10 @@ fn preshape_text(
         metrics_word_spacing_raw: f32,
         metrics_word_spacing_ch_factor: Option<f32>,
         simple_pre_block: bool,
+        // Preserve the metric quantization used by a simple pre block when
+        // one inline wrapper contains the only text run and a terminal
+        // preserved newline is the sole sibling.
+        simple_preserved_run: bool,
         tab_spacing_ranges: Vec<(std::ops::Range<usize>, f32)>,
     }
 
@@ -9019,25 +9151,19 @@ fn preshape_text(
             // cov:ignore: preserved inline whitespace sizing is exercised by the ignored foundation WPT run.
             if inline_space_count > 0 {
                 let family = family_str_of(cv);
-                let glyph = probe_text_advance(
+                let space_advance = probe_text_full_width(
                     fonts,
                     layout_cx,
-                    "x",
-                    &family,
-                    cv.font_size.px(),
-                    cv.font_weight,
-                    cv.font_style,
+                    " ",
+                    TextProbeStyle {
+                        family_str: &family,
+                        font_size_px: cv.font_size.px(),
+                        font_weight: cv.font_weight,
+                        font_style: cv.font_style,
+                        letter_spacing: cv.letter_spacing.px(),
+                        word_spacing: cv.word_spacing.px(),
+                    },
                 );
-                let nbsp = probe_text_advance(
-                    fonts,
-                    layout_cx,
-                    "\u{00a0}x",
-                    &family,
-                    cv.font_size.px(),
-                    cv.font_weight,
-                    cv.font_style,
-                );
-                let space_advance = (nbsp - glyph).max(cv.font_size.px() * 0.5);
                 doc.nodes[idx].style.size.width =
                     Dimension::length(space_advance * inline_space_count as f32);
                 migrate_pending = 0;
@@ -9200,6 +9326,42 @@ fn preshape_text(
                         .count()
                         == 1
             });
+        // A single preserved text run wrapped in inline elements should use
+        // the same metric quantization as a direct simple pre block.  Ignore
+        // an otherwise-empty inline sibling containing only the terminal
+        // preserved newline; it does not establish another line box.
+        let simple_preserved_run = matches!(cv.white_space, WhiteSpace::PreWrap)
+            && !text.contains('\n')
+            && has_authored_non_whitespace_text(doc, idx)
+            && parent_of[idx].is_some_and(|parent| {
+                let parent_display = cascade.computed[parent].display;
+                (parent_display == DisplayValue::Inline || parent_display == DisplayValue::Contents)
+                    && doc.nodes[parent]
+                        .children
+                        .iter()
+                        .filter(|&&child| has_authored_non_whitespace_text(doc, child))
+                        .count()
+                        == 1
+                    && nearest_block_container(doc, cascade, &parent_of, idx).is_some_and(|block| {
+                        doc.nodes[block].children.len() > 1
+                            && matches!(cascade.computed[block].display, DisplayValue::InlineBlock)
+                            && doc.nodes[block].children.iter().all(|&child| {
+                                child == parent
+                                    || (doc.nodes[child].kind() == NodeKind::Element
+                                        && is_inline_element_box(cascade, child)
+                                        && doc.nodes[child].tag_name() != Some("br")
+                                        && !has_authored_non_whitespace_text(doc, child))
+                                    || (doc.nodes[child].kind() == NodeKind::Text
+                                        && text_of(doc, child) == Some("\n"))
+                            })
+                    })
+            });
+        // A terminal preserved newline establishes no following empty line.
+        // Keeping it as a standalone Parley layout would nevertheless create
+        // two line metrics, and letter-spacing makes that artifact visible.
+        if text == "\n" && !has_inline_adjacent(doc, cascade, &parent_of, idx, 1) {
+            continue;
+        }
         jobs.push(Job {
             idx,
             text,
@@ -9234,6 +9396,7 @@ fn preshape_text(
             metrics_word_spacing_raw: mcv.word_spacing.px(),
             metrics_word_spacing_ch_factor: mcv.word_spacing_ch_factor,
             simple_pre_block,
+            simple_preserved_run,
             tab_spacing_ranges: Vec::new(),
         });
     }
@@ -9406,7 +9569,7 @@ fn preshape_text(
             let font_family = FontFamily::from(job.family_str.as_str());
             // In this simple block run, Taffy's fractional line flow must use
             // the same metrics as Parley's painted baselines.
-            let quantize_metrics = !job.simple_pre_block;
+            let quantize_metrics = !job.simple_pre_block && !job.simple_preserved_run;
             let mut builder = layout_cx.ranged_builder(fonts, &job.text, 1.0, quantize_metrics);
             builder.push_default(StyleProperty::FontFamily(font_family));
             builder.push_default(StyleProperty::FontSize(font_size_px));
@@ -9452,7 +9615,7 @@ fn preshape_text(
             doc.layout_warnings.extend(warnings);
             if let Some(t) = doc.nodes[job.idx].data.as_text_mut() {
                 t.text_layout = Some(layout);
-                t.snap_glyph_x_to_1_64 = job.simple_pre_block;
+                t.snap_glyph_x_to_1_64 = job.simple_pre_block || job.simple_preserved_run;
             }
         }
         return;
@@ -9496,7 +9659,7 @@ fn preshape_text(
                     &mut warnings,
                 );
                 let font_family = FontFamily::from(job.family_str.as_str());
-                let quantize_metrics = !job.simple_pre_block;
+                let quantize_metrics = !job.simple_pre_block && !job.simple_preserved_run;
                 let mut builder =
                     lcx.ranged_builder(&mut fonts_thread, &job.text, 1.0, quantize_metrics);
                 builder.push_default(StyleProperty::FontFamily(font_family));
@@ -9539,7 +9702,12 @@ fn preshape_text(
                     Some(job.max_advance)
                 });
                 layout.align(Alignment::Start, AlignmentOptions::default());
-                out.push((job.idx, layout, warnings, job.simple_pre_block));
+                out.push((
+                    job.idx,
+                    layout,
+                    warnings,
+                    job.simple_pre_block || job.simple_preserved_run,
+                ));
             }
             out
         })
@@ -12607,6 +12775,87 @@ mod tests {
     }
 
     #[test]
+    fn preshape_text_measures_preserved_inline_whitespace_item() {
+        use parley::{FontContext, LayoutContext};
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let block = doc.append_element(Some(body), "div", Style::default(), Some("display: block"));
+        let left = doc.append_element(
+            Some(block),
+            "span",
+            Style::default(),
+            Some("display: inline"),
+        );
+        doc.append_text(left, "left");
+        let whitespace = doc.append_text(block, "\n  ");
+        let right = doc.append_element(
+            Some(block),
+            "span",
+            Style::default(),
+            Some("display: inline"),
+        );
+        doc.append_text(right, "right");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        preshape_text(
+            &mut doc,
+            &cr,
+            &mut fonts,
+            &mut layout_cx,
+            PageBox::A4.width,
+            PageBox::A4.width,
+        );
+
+        assert!(
+            doc.nodes[whitespace]
+                .style
+                .size
+                .width
+                .into_option()
+                .is_some_and(|width| width > 0.0)
+        );
+    }
+
+    #[test]
+    fn has_authored_non_whitespace_text_walks_nested_inline_content() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let whitespace_only = doc.append_element(
+            Some(body),
+            "span",
+            Style::default(),
+            Some("display: inline"),
+        );
+        let whitespace = doc.append_text(whitespace_only, "\n  ");
+        assert!(!has_authored_non_whitespace_text(&doc, whitespace_only));
+        assert!(!has_authored_non_whitespace_text(&doc, whitespace));
+
+        let wrapper = doc.append_element(
+            Some(body),
+            "span",
+            Style::default(),
+            Some("display: inline"),
+        );
+        let nested = doc.append_element(
+            Some(wrapper),
+            "em",
+            Style::default(),
+            Some("display: inline"),
+        );
+        let text = doc.append_text(nested, "content");
+        assert!(has_authored_non_whitespace_text(&doc, wrapper));
+        assert!(has_authored_non_whitespace_text(&doc, nested));
+        assert!(has_authored_non_whitespace_text(&doc, text));
+    }
+
+    #[test]
     fn preshape_text_respects_computed_font_size() {
         use parley::{FontContext, LayoutContext};
         use raikiri_style::{build_rule_tree, cascade};
@@ -13001,6 +13250,87 @@ mod tests {
     }
 
     #[test]
+    fn establish_minimal_line_boxes_bridges_nested_plain_inline_children() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let outer = doc.append_element(
+            Some(body),
+            "span",
+            Style::default(),
+            Some("display: inline"),
+        );
+        let inner = doc.append_element(Some(outer), "b", Style::default(), Some("display: inline"));
+        let _text = doc.append_text(inner, "永X");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+
+        assert!(doc.nodes[outer].flags.contains(NodeFlags::IS_INLINE_ROOT));
+        assert!(!doc.nodes[inner].flags.contains(NodeFlags::IS_INLINE_ROOT));
+        assert_eq!(doc.nodes[outer].style.display, Display::Flex);
+        assert_eq!(doc.nodes[inner].style.display, Display::Block);
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_scopes_autospace_to_the_inline_context() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let trigger =
+            doc.append_element(Some(body), "div", Style::default(), Some("display: block"));
+        let _trigger_text = doc.append_text(trigger, "永X");
+
+        let unrelated =
+            doc.append_element(Some(body), "div", Style::default(), Some("display: block"));
+        let outer = doc.append_element(
+            Some(unrelated),
+            "span",
+            Style::default(),
+            Some("display: inline; text-autospace: no-autospace"),
+        );
+        let inner = doc.append_element(Some(outer), "b", Style::default(), Some("display: inline"));
+        let _text = doc.append_text(inner, "永X");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+
+        assert!(!doc.nodes[outer].flags.contains(NodeFlags::IS_INLINE_ROOT));
+        assert_eq!(doc.nodes[outer].style.display, Display::Block);
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_bridges_stylesheet_authored_inline_wrapper() {
+        use raikiri_style::{Origin, build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let outer = doc.append_element(Some(body), "x-inline", Style::default(), None::<&str>);
+        let inner = doc.append_element(
+            Some(outer),
+            "span",
+            Style::default(),
+            Some("display: inline"),
+        );
+        let _text = doc.append_text(inner, "永X");
+
+        let mut rules = build_rule_tree(&doc);
+        rules.add_stylesheet("x-inline { display: inline !important; }", Origin::Author);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+
+        assert!(doc.nodes[outer].flags.contains(NodeFlags::IS_INLINE_ROOT));
+        assert_eq!(doc.nodes[outer].style.display, Display::Flex);
+    }
+
+    #[test]
     fn establish_minimal_line_boxes_qualifies_inline_block_container() {
         use raikiri_style::{build_rule_tree, cascade};
 
@@ -13206,6 +13536,66 @@ mod tests {
             "centered text must not sit at the left edge, got x={}",
             first_x
         );
+    }
+
+    #[test]
+    fn terminal_preserved_newline_does_not_create_an_empty_line_box() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let block = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(
+                "display:inline-block;font:24px monospace;white-space:pre-wrap;letter-spacing:10px",
+            ),
+        );
+        let content_span = doc.append_element(Some(block), "span", Style::default(), None::<&str>);
+        let content = doc.append_text(content_span, "1. a");
+        let newline_span = doc.append_element(Some(block), "span", Style::default(), None::<&str>);
+        let newline = doc.append_text(newline_span, "\n");
+
+        let _separator =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let direct_block = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(
+                "display:inline-block;font:24px monospace;white-space:pre-wrap;letter-spacing:10px",
+            ),
+        );
+        let direct_content_span =
+            doc.append_element(Some(direct_block), "span", Style::default(), None::<&str>);
+        let direct_content = doc.append_text(direct_content_span, "2. b");
+        let direct_newline = doc.append_text(direct_block, "\n");
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        assert_eq!(
+            doc.nodes[content]
+                .text_layout()
+                .expect("content shaped")
+                .len(),
+            1
+        );
+        assert!(doc.nodes[newline].text_layout().is_none());
+        assert!(doc.nodes[block].unrounded_layout.size.height < 40.0);
+        assert_eq!(
+            doc.nodes[direct_content]
+                .text_layout()
+                .expect("direct content shaped")
+                .len(),
+            1
+        );
+        assert!(doc.nodes[direct_newline].text_layout().is_none());
+        assert!(doc.nodes[direct_block].unrounded_layout.size.height < 40.0);
     }
 
     #[test]

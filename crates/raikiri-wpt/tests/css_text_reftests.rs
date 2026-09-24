@@ -263,10 +263,16 @@ fn text_autospace_unpinned_exact_passes() {
     // The Ahem stylesheet is a local WPT resource, and the vs/zh references
     // use nested CSS rules, so run with local resources enabled.
     let candidates = [
+        "css/css-text/text-autospace/text-autospace-ideogram-alpha-001.html",
+        "css/css-text/text-autospace/text-autospace-ligature-001.html",
         "css/css-text/text-autospace/text-autospace-vertical-combine-001.html",
         "css/css-text/text-autospace/text-autospace-vertical-upright-001.html",
         "css/css-text/text-autospace/text-autospace-vs-001.html",
         "css/css-text/text-autospace/text-autospace-zh-001.html",
+        // Nested inline wrappers must remain on one synthetic line box while
+        // autospace reserves its boundary advances.
+        "css/css-text/text-autospace/text-autospace-elements-005.html",
+        "css/css-text/text-autospace/text-autospace-elements-005b.html",
     ];
     assert_resource_exact_passes(&root, &candidates);
 }
@@ -508,4 +514,27 @@ fn boundary_shaping_does_not_join_across_spaces() {
             result.mismatched_pixels
         );
     }
+}
+
+/// Preserve a trailing newline without treating its letter spacing as a wrap.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn letter_spacing_preserved_newline_does_not_wrap() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test = root.join("css/css-text/letter-spacing/letter-spacing-end-of-line-002.html");
+    let pairs =
+        discover_pairs_for_file_with_wpt_root(&test, Some(&root)).expect("discover WPT pair");
+    assert_eq!(pairs.len(), 1);
+
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+    let result = run_pair(&pairs[0], config).expect("run WPT pair");
+    assert!(
+        matches!(result.outcome, TestOutcome::Pass),
+        "outcome={:?}, mismatches={}",
+        result.outcome,
+        result.mismatched_pixels
+    );
 }

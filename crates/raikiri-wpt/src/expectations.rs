@@ -1317,8 +1317,9 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Text Decoration percentage underline-offset exact slice (+1).
         // - Drop CSS Text shaping/autospace pins that do not pass exactly (-4).
         // + CSS Text text-autospace vs/zh exact resource slice (+2).
+        // + CSS Inline collapsed whitespace between inline boxes (+1).
         // + CSS Flexbox order-painting exact 800x600 pair (+1).
-        assert_eq!(set.baseline.entries.len(), 1281);
+        assert_eq!(set.baseline.entries.len(), 1282);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }

@@ -494,6 +494,8 @@ css/css-page/margin-boxes/background-001-print.html
 css/css-display/display-flow-root-002.html
 # --- css-inline minimal line-box foundation (exact static reftest, 800x600) ---
 css/CSS2/linebox/vertical-align-top-bottom-padding.html
+# --- css-inline collapsed whitespace between inline boxes (exact, 800x600) ---
+css/CSS2/linebox/inline-formatting-context-001.xht
 # --- css-inline block-in-inline margin collapse (exact static reftest, 800x600) ---
 css/CSS2/box-display/block-in-inline-007.xht
 # --- css-inline anonymous inline/baseline PASS slice (exact, 800x600, 2026-09-23) ---
