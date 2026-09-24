@@ -2022,6 +2022,22 @@ mod tests {
         }
     }
 
+    /// `collect_recursive`'s own `std::fs::read_dir` error arm.
+    /// `build_wpt_font_ctx` intercepts a missing path earlier via its own
+    /// `DirNotFound` check (see `missing_dir_returns_err`), so reaching this
+    /// specific arm requires calling `walk_fonts` directly against a path
+    /// that exists (passing `.exists()`) but is not a directory.
+    #[test]
+    fn walk_fonts_on_regular_file_returns_io_err() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("not_a_dir.ttf");
+        std::fs::write(&path, b"regular file, not a directory").unwrap();
+        match walk_fonts(&path, &mut None) {
+            Err(FontError::Io { path: p, .. }) => assert_eq!(p, path),
+            other => panic!("expected FontError::Io, got {other:?}"),
+        }
+    }
+
     #[test]
     #[cfg(unix)]
     fn walker_skips_named_pipe_font_entry() {
@@ -2217,6 +2233,42 @@ mod tests {
         // implementation's scope, with the controller ambiguity already
         // resolved.
         let _ = ctx;
+    }
+
+    /// End-to-end success path for `build_wpt_font_ctx_with_observer`: the
+    /// registration loop actually registering a font, the
+    /// `registered_preferred_basenames` bookkeeping, the PREFERRED_FIRST
+    /// invariant check passing (falling through instead of returning
+    /// `PreferredFontUnavailable`), and the generic-family alias remap
+    /// loop. None of this is reachable from a synthetic `write_fake_ttf`
+    /// body (fontique refuses to register one — see `checked_in_ahem_bytes`'s
+    /// doc), so this uses the checked-in Ahem.ttf fixture in a tempdir
+    /// instead of `target/wpt/fonts/`, unlike
+    /// `build_wpt_font_ctx_registers_generic_serif` above.
+    #[test]
+    fn build_wpt_font_ctx_with_observer_registers_real_ahem_and_aliases_generics() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("Ahem.ttf"), checked_in_ahem_bytes()).unwrap();
+        // A garbage non-preferred file: fontique must refuse to register it
+        // (RegisterEmpty warn+skip) without blocking Ahem from satisfying
+        // the PREFERRED_FIRST invariant.
+        std::fs::write(tmp.path().join("Bad.ttf"), b"not a font").unwrap();
+
+        let mut events: Vec<String> = Vec::new();
+        let mut ctx = build_wpt_font_ctx_with_observer(
+            tmp.path(),
+            Some(&mut |warn: &FontWarn<'_>| events.push(warn.to_string())),
+        )
+        .expect("build Ok with a real Ahem.ttf present");
+
+        assert!(
+            ctx.collection.family_id("Ahem").is_some(),
+            "Ahem.ttf's own name-table family must resolve after registration"
+        );
+        assert!(
+            events.iter().any(|e| e.contains("no family registered")),
+            "Bad.ttf must warn+skip via RegisterEmpty rather than silently vanish: {events:?}"
+        );
     }
 
     /// End-to-end check: `read_bounded_font_file` rejects a symlink at the
@@ -2555,6 +2607,26 @@ mod tests {
         assert!(s.contains("/fonts/root"), "missing root: {s}");
     }
 
+    /// `FontWarn::ReadRejectedPathEscape`'s `Display` output (the
+    /// non-post-open variant — `font_warn_display_reproduces_legacy_message_bodies`
+    /// below only pins `ReadRejectedPathEscapePostOpen`).
+    #[test]
+    fn font_warn_display_read_rejected_path_escape_contains_paths() {
+        let p = Path::new("/tmp/fake.ttf");
+        let s = format!(
+            "{}",
+            FontWarn::ReadRejectedPathEscape {
+                path: p,
+                canonical: Path::new("/tmp/outside/font.ttf"),
+                root: Path::new("/tmp/fonts"),
+            }
+        );
+        assert_eq!(
+            s,
+            "skipping /tmp/fake.ttf (canonicalizes to /tmp/outside/font.ttf which escapes fonts root /tmp/fonts)"
+        );
+    }
+
     // ------------------------------------------------------------------
     // Apple-platform post-open fd-bound containment tests (the
     // Apple-platform arm of the same defense the
@@ -2711,6 +2783,64 @@ mod tests {
                 FontWarn::RegisterEmpty { path } => Self::RegisterEmpty(path.into()),
             }
         }
+    }
+
+    /// `OwnedWarn::from_ref` maps every `FontWarn::ReadRejected*` variant.
+    /// The real observer call sites for these all require a genuine
+    /// walk-then-read TOCTOU race (see `build_wpt_font_ctx_with_observer`'s
+    /// `Err(reason)` arm, `cov:ignore`d for the same reason), so — mirroring
+    /// `read_reject_to_warn_maps_all_non_io_variants`'s direct-construction
+    /// approach — this constructs each `FontWarn` variant directly rather
+    /// than trying to trigger the race.
+    #[test]
+    fn owned_warn_from_ref_maps_all_read_rejected_variants() {
+        let p = Path::new("/tmp/fake.ttf");
+        assert_eq!(
+            OwnedWarn::from_ref(&FontWarn::ReadRejectedSymlink { path: p }),
+            OwnedWarn::ReadRejectedSymlink(p.into())
+        );
+        assert_eq!(
+            OwnedWarn::from_ref(&FontWarn::ReadRejectedNotRegularFile { path: p }),
+            OwnedWarn::ReadRejectedNotRegularFile(p.into())
+        );
+        assert_eq!(
+            OwnedWarn::from_ref(&FontWarn::ReadRejectedNotRegularFilePostOpen { path: p }),
+            OwnedWarn::ReadRejectedNotRegularFilePostOpen(p.into())
+        );
+        assert_eq!(
+            OwnedWarn::from_ref(&FontWarn::ReadRejectedOversizedPreOpen {
+                path: p,
+                size: 8,
+                cap: 4
+            }),
+            OwnedWarn::ReadRejectedOversizedPreOpen(p.into(), 8, 4)
+        );
+        assert_eq!(
+            OwnedWarn::from_ref(&FontWarn::ReadRejectedOversizedDuringRead {
+                path: p,
+                size: 101,
+                cap: 100
+            }),
+            OwnedWarn::ReadRejectedOversizedDuringRead(p.into(), 101, 100)
+        );
+        let canonical = Path::new("/tmp/outside/font.ttf");
+        let root = Path::new("/tmp/fonts");
+        assert_eq!(
+            OwnedWarn::from_ref(&FontWarn::ReadRejectedPathEscape {
+                path: p,
+                canonical,
+                root,
+            }),
+            OwnedWarn::ReadRejectedPathEscape(p.into(), canonical.into(), root.into())
+        );
+        assert_eq!(
+            OwnedWarn::from_ref(&FontWarn::ReadRejectedPathEscapePostOpen {
+                path: p,
+                canonical,
+                root,
+            }),
+            OwnedWarn::ReadRejectedPathEscapePostOpen(p.into(), canonical.into(), root.into())
+        );
     }
 
     /// Observer fires `WalkerSkippedSymlink` when a symlink entry sits
@@ -2937,6 +3067,23 @@ mod tests {
         ));
     }
 
+    /// `read_reject_to_warn`'s `FontReadReject::Io(_)` arm is a defensive
+    /// contract check, not a normal mapping: `Io` is always hard-propagated
+    /// as `FontError::Io` before the observer emit site (see this
+    /// function's own doc), so reaching this arm at all means a future
+    /// refactor routed `Io` through here by mistake. The `debug_assert!`
+    /// exists to catch exactly that, so this test drives the arm directly
+    /// and checks it actually fires rather than silently falling back.
+    /// Debug-assert-only: release builds skip the assert and return the
+    /// fallback value instead of panicking, so this is gated the same way.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "Io must be peeled off before observer emit")]
+    fn read_reject_to_warn_debug_asserts_on_io_variant() {
+        let path = Path::new("/tmp/fake.ttf");
+        let _ = read_reject_to_warn(path, &FontReadReject::Io(std::io::Error::other("boom")));
+    }
+
     /// `FontWarn`'s `Display` output must reproduce the pre-observer
     /// `eprintln!` message bodies verbatim.  Warn-message wording is a
     /// behavior-change surface; this test pins
@@ -3069,31 +3216,20 @@ mod tests {
         }
     }
 
-    /// Real WPT font bytes (target/wpt/fonts/Ahem.ttf) for the positive
-    /// registration paths. fontique rejects synthetic headers, so only real
-    /// bytes prove `applied`/`aliased`. Skips (early return) when
-    /// `scripts/wpt/fetch.sh` hasn't been run yet — same convention as
-    /// `build_wpt_font_ctx_registers_generic_serif`; CI runs without the
-    /// fetch, so this must not hard-require it.
-    fn wpt_ahem_bytes() -> Option<Vec<u8>> {
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok()?;
-        let path = std::path::PathBuf::from(&manifest_dir)
-            .join("..")
-            .join("..")
-            .join("target")
-            .join("wpt")
-            .join("fonts")
-            .join("Ahem.ttf");
-        match std::fs::read(&path) {
-            Ok(bytes) => Some(bytes),
-            Err(_) => {
-                eprintln!(
-                    "skipping @font-face positive-path test: Ahem.ttf not found under {}                      (run scripts/wpt/fetch.sh first)",
-                    path.display()
-                );
-                None
-            }
-        }
+    /// Real Ahem.ttf bytes for the positive registration paths. fontique
+    /// rejects synthetic headers (a zero-fill body with only a valid sfnt
+    /// magic does not register — see `write_fake_ttf`'s own doc for the
+    /// walker-only case that *does* tolerate that), so only real font bytes
+    /// prove `applied`/`aliased`. Embedded from the same crate's checked-in
+    /// `tests/data/text-autospace/Ahem.ttf` fixture (byte-identical to the
+    /// WPT-fetched copy) rather than the `target/wpt/fonts/` tree, so these
+    /// tests run without a `scripts/wpt/fetch.sh` prerequisite.
+    fn checked_in_ahem_bytes() -> Vec<u8> {
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/data/text-autospace/Ahem.ttf"
+        ))
+        .to_vec()
     }
 
     fn computed_with_family(family: &str) -> ComputedValues {
@@ -3145,11 +3281,52 @@ mod tests {
         assert_eq!(computed, before);
     }
 
+    /// Loader that hands back a fresh `FONT_SIZE_CAP + 1`-byte buffer on
+    /// every call, without holding one as a stored/cloned field (a stored
+    /// `Vec` this size, plus `MapLoader`'s own clone-on-load, would double
+    /// peak memory for no reason here).
+    struct OversizedLoader;
+    impl super::FontFaceLoader for OversizedLoader {
+        fn load(&self, _url: &str) -> Option<Vec<u8>> {
+            Some(vec![0u8; (FONT_SIZE_CAP + 1) as usize])
+        }
+    }
+
+    /// `register_font_face_sources`'s own size-cap skip (checked before
+    /// `decode_web_font`, ahead of and independent from the walker's
+    /// on-disk size cap for `build_wpt_font_ctx`'s files).
+    #[test]
+    fn register_font_face_sources_skips_oversized_url_bytes() {
+        let mut fonts = FontContext::new();
+        let faces = FontFaceRegistry::from_source(
+            "@font-face { font-family: Custom; src: url(huge.ttf); }",
+        );
+        let applied = super::register_font_face_sources(&mut fonts, &faces, &OversizedLoader);
+        assert!(applied.is_empty());
+    }
+
+    /// `register_font_face_sources`'s own `decode_web_font` rejection
+    /// fallthrough for a URL source — distinct from
+    /// `apply_font_faces_garbage_bytes_are_rejected_fail_closed` above,
+    /// whose bytes don't match a WOFF/WOFF2 signature at all (so
+    /// `decode_web_font` passes them through unchanged and they're instead
+    /// rejected later by fontique). Here the signature matches but the
+    /// container is truncated, so `woff1_within_cap` itself fails and
+    /// `decode_web_font` returns `None`.
+    #[test]
+    fn register_font_face_sources_skips_malformed_woff_container() {
+        let mut fonts = FontContext::new();
+        let faces = FontFaceRegistry::from_source(
+            "@font-face { font-family: Custom; src: url(bad.woff); }",
+        );
+        let loader = MapLoader::serving(b"wOFF".to_vec());
+        let applied = super::register_font_face_sources(&mut fonts, &faces, &loader);
+        assert!(applied.is_empty());
+    }
+
     #[test]
     fn apply_font_faces_registers_url_bytes_under_face_name() {
-        let Some(ahem) = wpt_ahem_bytes() else {
-            return;
-        };
+        let ahem = checked_in_ahem_bytes();
         let mut fonts = FontContext::new();
         let mut computed = vec![computed_with_family("Custom")];
         let faces = FontFaceRegistry::from_source(
@@ -3170,9 +3347,7 @@ mod tests {
 
     #[test]
     fn apply_font_faces_format_hint_does_not_force_container_decode() {
-        let Some(ahem) = wpt_ahem_bytes() else {
-            return;
-        };
+        let ahem = checked_in_ahem_bytes();
         let mut fonts = FontContext::new();
         let mut computed = vec![computed_with_family("Hinted")];
         let faces = FontFaceRegistry::from_source(
@@ -3268,9 +3443,7 @@ mod tests {
             }
         }
 
-        let Some(ahem) = wpt_ahem_bytes() else {
-            return;
-        };
+        let ahem = checked_in_ahem_bytes();
         let mut fonts = FontContext::new();
         let mut computed = vec![computed_with_family("Fallback")];
         let faces = FontFaceRegistry::from_source(
@@ -3305,9 +3478,7 @@ mod tests {
 
     #[test]
     fn apply_font_faces_local_alias_expands_computed_lists() {
-        let Some(ahem) = wpt_ahem_bytes() else {
-            return;
-        };
+        let ahem = checked_in_ahem_bytes();
         let mut fonts = FontContext::new();
         // Seed a resolvable family first (standalone registration, no
         // @font-face involved).
@@ -3427,10 +3598,7 @@ mod tests {
 
     #[test]
     fn apply_font_faces_unicode_range_removes_ch_provenance_only() {
-        // cov:ignore: this positive-path test is intentionally skippable when the shared WPT checkout is absent.
-        let Some(ahem) = wpt_ahem_bytes() else {
-            return;
-        };
+        let ahem = checked_in_ahem_bytes();
         let mut fonts = FontContext::new();
         {
             use parley::fontique::FontInfoOverride;
