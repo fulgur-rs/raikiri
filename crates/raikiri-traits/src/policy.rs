@@ -150,6 +150,12 @@ pub enum ViolationType {
         /// The recursion depth that exceeded the limit.
         depth: u32,
     },
+    /// The resolved connection address failed the non-overridable
+    /// SSRF safety floor (private, loopback, link-local, CGNAT, or
+    /// metadata-range destination). Distinct from `HostNotAllowed`,
+    /// which is a Consumer-configured `ResourcePolicy` decision — this
+    /// variant fires regardless of policy configuration.
+    PrivateNetworkBlocked,
     /// その他。
     Other,
 }
@@ -173,6 +179,9 @@ impl std::fmt::Display for ViolationType {
             Self::MimeNotAllowed { mime } => write!(f, "MIME type not allowed: {mime}"),
             Self::RecursionExceeded { depth } => {
                 write!(f, "recursion depth exceeded ({depth})")
+            }
+            Self::PrivateNetworkBlocked => {
+                write!(f, "destination is a private network address")
             }
             Self::Other => write!(f, "unspecified policy violation"),
         }
@@ -225,5 +234,28 @@ mod tests {
             s.contains("expected text/css"),
             "display must include details: got {s:?}"
         );
+    }
+
+    #[test]
+    fn private_network_blocked_display_is_distinct_from_host_not_allowed() {
+        let blocked = PolicyViolation {
+            kind: ResourceKind::Image,
+            url: Url::parse("https://example.test/x.png").expect("valid url"),
+            violation_type: ViolationType::PrivateNetworkBlocked,
+            details: "resolved IP is not globally routable".to_string(),
+        };
+        let host_denied = PolicyViolation {
+            violation_type: ViolationType::HostNotAllowed,
+            ..blocked.clone()
+        };
+        let blocked_display = format!("{blocked}");
+        let host_denied_display = format!("{host_denied}");
+        assert_ne!(
+            blocked_display, host_denied_display,
+            "PrivateNetworkBlocked must render distinctly from HostNotAllowed \
+             so logs/telemetry can tell an SSRF-floor rejection apart from an \
+             ordinary Consumer-policy host denial"
+        );
+        assert!(blocked_display.contains("private network"));
     }
 }
