@@ -845,6 +845,22 @@ fn preshape_text_measures_preserved_inline_whitespace_item() {
     );
     doc.append_text(right, "right");
 
+    let image_block =
+        doc.append_element(Some(body), "div", Style::default(), Some("display: block"));
+    doc.append_element(
+        Some(image_block),
+        "img",
+        Style::default(),
+        Some("display: inline; width: 20px; height: 20px"),
+    );
+    let image_whitespace = doc.append_text(image_block, "\u{00a0}\u{00a0}\u{00a0}\u{00a0}");
+    doc.append_element(
+        Some(image_block),
+        "img",
+        Style::default(),
+        Some("display: inline; width: 20px; height: 20px"),
+    );
+
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     let mut fonts = FontContext::new();
@@ -865,6 +881,15 @@ fn preshape_text_measures_preserved_inline_whitespace_item() {
             .width
             .into_option()
             .is_some_and(|width| width > 0.0)
+    );
+    assert!(
+        doc.nodes[image_whitespace]
+            .style
+            .size
+            .width
+            .into_option()
+            .is_some_and(|width| width > 0.0),
+        "NBSPs between inline images keep a measured advance"
     );
 }
 
