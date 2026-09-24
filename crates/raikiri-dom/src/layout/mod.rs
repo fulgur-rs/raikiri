@@ -6020,6 +6020,198 @@ fn probe_ch_text_advance(
     ) * 0.5
 }
 
+/// Return whether a named face maps U+6C34, the character used by CSS `ic`.
+fn family_candidate_has_ic_glyph(
+    fonts: &mut FontContext,
+    family: &str,
+    font_weight: f32,
+    font_style: StyleFontStyle,
+) -> bool {
+    use parley::fontique::{Attributes, FontWeight, FontWidth, QueryStatus};
+
+    let weight = sanitize_font_weight(font_weight, &mut Vec::new());
+    let mut query = fonts.collection.query(&mut fonts.source_cache);
+    query.set_families([family]);
+    query.set_attributes(Attributes::new(
+        FontWidth::default(),
+        font_style_to_parley(font_style),
+        FontWeight::new(weight),
+    ));
+    let mut has_glyph = false;
+    query.matches_with(|font| {
+        has_glyph = font
+            .charmap()
+            .is_some_and(|charmap| charmap.map(0x6C34_u32).is_some_and(|glyph| glyph != 0));
+        if has_glyph {
+            QueryStatus::Stop
+        } else {
+            QueryStatus::Continue
+        }
+    });
+    has_glyph
+}
+
+/// Return whether a generic family has any face mapping U+6C34.
+fn generic_family_has_ic_glyph(
+    fonts: &mut FontContext,
+    generic: parley::fontique::GenericFamily,
+    font_weight: f32,
+    font_style: StyleFontStyle,
+) -> bool {
+    use parley::fontique::{Attributes, FontWeight, FontWidth, QueryStatus};
+
+    let families: Vec<_> = fonts.collection.generic_families(generic).collect();
+    if families.is_empty() {
+        // cov:ignore: generic-family availability is platform-dependent and may be empty.
+        return false;
+    }
+    let weight = sanitize_font_weight(font_weight, &mut Vec::new());
+    let mut query = fonts.collection.query(&mut fonts.source_cache);
+    query.set_families(families);
+    query.set_attributes(Attributes::new(
+        FontWidth::default(),
+        font_style_to_parley(font_style),
+        FontWeight::new(weight),
+    ));
+    let mut has_glyph = false;
+    query.matches_with(|font| {
+        has_glyph = font
+            .charmap()
+            .is_some_and(|charmap| charmap.map(0x6C34_u32).is_some_and(|glyph| glyph != 0));
+        if has_glyph {
+            QueryStatus::Stop
+        } else {
+            QueryStatus::Continue
+        }
+    });
+    has_glyph
+}
+
+/// Measure U+6C34 using the first available family that maps it.
+///
+/// CSS `ic` uses the ideographic advance from a mapped face. Do not accept a
+/// `.notdef` advance when a family lacks U+6C34, and preserve a genuine zero
+/// advance. If no candidate maps the character, use the specified 1em fallback.
+///
+/// The computed family list currently does not retain `@font-face`
+/// `unicode-range` provenance for this metric. Such alias-specific filtering
+/// remains a known limitation; ordinary registered-family and generic fallback
+/// selection is still checked against cmap metadata here.
+fn probe_ic_text_advance(
+    fonts: &mut FontContext,
+    layout_cx: &mut LayoutContext<()>,
+    family_str: &str,
+    font_size_px: f32,
+    font_weight: f32,
+    font_style: StyleFontStyle,
+) -> f32 {
+    let candidates: Vec<&str> = family_str
+        .split(',')
+        .map(str::trim)
+        .filter(|candidate| !candidate.is_empty())
+        .collect();
+    let mut saw_unregistered_named = false;
+    for (index, raw_candidate) in candidates.iter().copied().enumerate() {
+        let was_quoted = raw_candidate.starts_with('"') || raw_candidate.starts_with('\'');
+        let name = raw_candidate
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .or_else(|| {
+                raw_candidate
+                    .strip_prefix('\'')
+                    .and_then(|value| value.strip_suffix('\''))
+            })
+            .unwrap_or(raw_candidate)
+            .trim();
+        let generic = if was_quoted {
+            // Quoted generic-looking names are ordinary family names.
+            None
+        } else {
+            parley::fontique::GenericFamily::parse(&name.to_ascii_lowercase())
+        };
+        let registered = fonts.collection.family_id(name).is_some();
+        if !registered && generic.is_none() {
+            saw_unregistered_named = true;
+        }
+        if let Some(generic) = generic {
+            if saw_unregistered_named
+                || !generic_family_has_ic_glyph(fonts, generic, font_weight, font_style)
+            {
+                // An earlier unavailable family prevents this generic fallback.
+                continue;
+            }
+            let remaining_families = candidates[index..].join(", ");
+            return probe_ic_zero_advance(
+                fonts,
+                layout_cx,
+                &remaining_families,
+                font_size_px,
+                font_weight,
+                font_style,
+            );
+        }
+        if registered && family_candidate_has_ic_glyph(fonts, name, font_weight, font_style) {
+            return probe_ic_zero_advance(
+                fonts,
+                layout_cx,
+                raw_candidate,
+                font_size_px,
+                font_weight,
+                font_style,
+            );
+        }
+    }
+    sanitize_finite(
+        font_size_px,
+        0.0,
+        MAX_FONT_SIZE_PX,
+        "font-size",
+        &mut Vec::new(),
+    )
+}
+
+fn probe_ic_zero_advance(
+    fonts: &mut FontContext,
+    layout_cx: &mut LayoutContext<()>,
+    family_str: &str,
+    font_size_px: f32,
+    font_weight: f32,
+    font_style: StyleFontStyle,
+) -> f32 {
+    let size = sanitize_finite(
+        font_size_px,
+        0.0,
+        MAX_FONT_SIZE_PX,
+        "font-size",
+        &mut Vec::new(),
+    );
+    let weight = sanitize_font_weight(font_weight, &mut Vec::new());
+    let mut builder = layout_cx.ranged_builder(fonts, "水", 1.0, false);
+    builder.push_default(StyleProperty::FontFamily(FontFamily::from(family_str)));
+    builder.push_default(StyleProperty::FontSize(size));
+    builder.push_default(StyleProperty::FontWeight(FontWeight::new(weight)));
+    builder.push_default(StyleProperty::FontStyle(font_style_to_parley(font_style)));
+    let mut layout: Layout<()> = builder.build("水");
+    layout.break_all_lines(None);
+    let has_glyph = layout
+        .lines()
+        .flat_map(|line| line.items())
+        .any(|item| match item {
+            PositionedLayoutItem::GlyphRun(run) => run.glyphs().any(|glyph| glyph.id != 0),
+            // cov:ignore: a plain single-character metric layout is expected to contain only glyph runs.
+            _ => false,
+        });
+    let width = layout.full_width();
+    // Keep the same 4em malformed-font guard used by the existing `ch`
+    // metric probe while accepting zero as a valid mapped advance.
+    if has_glyph && width.is_finite() && width >= 0.0 && width <= size * 4.0 {
+        width
+    } else {
+        // cov:ignore: malformed or missing-glyph metric fallback is defensive.
+        size
+    }
+}
+
 /// Measure the `ch` advance needed by a computed `text-indent` value.
 ///
 /// The cache key mirrors the text shaping face selection used by
@@ -7296,6 +7488,24 @@ fn text_autospace_boxes_with_edges(
     before: Option<char>,
     after: Option<char>,
 ) -> Vec<InlineBox> {
+    text_autospace_boxes_with_width(
+        text,
+        value,
+        language,
+        (font_size * 0.125).max(0.0),
+        before,
+        after,
+    )
+}
+
+fn text_autospace_boxes_with_width(
+    text: &str,
+    value: TextAutospace,
+    language: &str,
+    width: f32,
+    before: Option<char>,
+    after: Option<char>,
+) -> Vec<InlineBox> {
     let (ideograph_alpha, ideograph_numeric, punctuation) = match value {
         TextAutospace::Normal | TextAutospace::Auto => {
             (true, true, language_matches(language, "zh"))
@@ -7318,8 +7528,7 @@ fn text_autospace_boxes_with_edges(
     if !ideograph_alpha && !ideograph_numeric && !punctuation {
         return Vec::new();
     }
-    let width = (font_size * 0.125).max(0.0);
-    if !width.is_finite() || width == 0.0 {
+    if !width.is_finite() || width <= 0.0 {
         return Vec::new();
     }
 
@@ -9061,6 +9270,9 @@ fn preshape_text(
             .join(", ")
     }
     let mut jobs: Vec<Job> = Vec::with_capacity(doc.nodes.len() / 2);
+    // CSS Text 4 `ic` probes are shared by text nodes with the same font
+    // selection, just like the existing `ch` probe cache below.
+    let mut ic_probes: HashMap<(String, u32, u32, u8), f32> = HashMap::new();
     // Outstanding forward-migrated spaces (counted: collapsible space
     // runs collapse to one via dedupe, but NBSPs never collapse so each
     // migrating NBSP node adds one).
@@ -9305,11 +9517,39 @@ fn preshape_text(
         // Own a cross-node boundary on the following nonempty text run.
         // Assigning it to both neighbors would double the advance.
         let autospace_before = autospace_adjacent_edge_char(doc, cascade, &parent_of, idx, -1);
-        let autospace_boxes = text_autospace_boxes_with_edges(
+        let autospace_width = if matches!(autospace_value, TextAutospace::NoAutospace) {
+            0.0
+        } else {
+            let style = match cv.font_style {
+                StyleFontStyle::Normal => 0,
+                StyleFontStyle::Italic => 1,
+                StyleFontStyle::Oblique => 2,
+                // cov:ignore: StyleFontStyle currently has only three variants.
+                _ => 0,
+            };
+            let key = (
+                family_str.clone(),
+                cv.font_size.px().to_bits(),
+                cv.font_weight.to_bits(),
+                style,
+            );
+            if let std::collections::hash_map::Entry::Vacant(entry) = ic_probes.entry(key.clone()) {
+                entry.insert(probe_ic_text_advance(
+                    fonts,
+                    layout_cx,
+                    &family_str,
+                    cv.font_size.px(),
+                    cv.font_weight,
+                    cv.font_style,
+                ));
+            }
+            ic_probes.get(&key).copied().unwrap_or(0.0) * 0.125
+        };
+        let autospace_boxes = text_autospace_boxes_with_width(
             &text,
             autospace_value,
             &language,
-            cv.font_size.px(),
+            autospace_width,
             autospace_before,
             None,
         );
@@ -20747,6 +20987,168 @@ mod tests {
         assert_eq!(shaped_text_end("hyphens: manual"), 4);
     }
 
+    fn embedded_ic_font_dir() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("temporary embedded ic font directory");
+        for (name, bytes) in [
+            (
+                "Ahem.ttf",
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/data/text-autospace/Ahem.ttf"
+                )) as &[u8],
+            ),
+            (
+                "CanvasTest-nospace.ttf",
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/data/text-autospace/CanvasTest-nospace.ttf"
+                )) as &[u8],
+            ),
+        ] {
+            std::fs::write(tmp.path().join(name), bytes).expect("write embedded font");
+        }
+        for (name, bytes) in [
+            (
+                "ZeroWidth",
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/data/text-autospace/IcTestZeroWidth.woff2"
+                )) as &[u8],
+            ),
+            (
+                "HalfWidth",
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/data/text-autospace/IcTestHalfWidth.woff2"
+                )) as &[u8],
+            ),
+            (
+                "FullWidth",
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/data/text-autospace/IcTestFullWidth.woff2"
+                )) as &[u8],
+            ),
+        ] {
+            let decoded = wuff::decompress_woff2(bytes).expect("decode embedded ic fixture");
+            std::fs::write(tmp.path().join(format!("IcTest{name}.ttf")), decoded)
+                .expect("write decoded embedded ic fixture");
+        }
+        tmp
+    }
+
+    #[test]
+    fn probe_ic_text_advance_uses_mapped_wpt_metrics() {
+        let tmp = embedded_ic_font_dir();
+
+        let mut fonts = crate::fonts::build_wpt_font_ctx(tmp.path()).expect("register WPT fonts");
+        let mut layout_cx = LayoutContext::<()>::new();
+        let probe =
+            |family: &str, fonts: &mut FontContext, layout_cx: &mut LayoutContext<()>| -> f32 {
+                probe_ic_text_advance(
+                    fonts,
+                    layout_cx,
+                    family,
+                    16.0,
+                    400.0,
+                    StyleFontStyle::Normal,
+                )
+            };
+
+        assert!((probe("IcTestZeroWidth", &mut fonts, &mut layout_cx) - 0.0).abs() < 0.001);
+        assert!((probe("IcTestHalfWidth", &mut fonts, &mut layout_cx) - 8.0).abs() < 0.001);
+        assert!((probe("IcTestFullWidth", &mut fonts, &mut layout_cx) - 16.0).abs() < 0.001);
+        assert!((probe("CanvasTestNoSpace", &mut fonts, &mut layout_cx) - 16.0).abs() < 0.001);
+        assert!(
+            (probe(
+                "CanvasTestNoSpace, IcTestHalfWidth",
+                &mut fonts,
+                &mut layout_cx,
+            ) - 8.0)
+                .abs()
+                < 0.001
+        );
+        assert!((probe("\"IcTestHalfWidth\"", &mut fonts, &mut layout_cx) - 8.0).abs() < 0.001);
+        assert!((probe("MissingFamily, serif", &mut fonts, &mut layout_cx) - 16.0).abs() < 0.001);
+        assert!(
+            (probe_ic_zero_advance(
+                &mut fonts,
+                &mut layout_cx,
+                "CanvasTestNoSpace",
+                16.0,
+                400.0,
+                StyleFontStyle::Normal,
+            ) - 16.0)
+                .abs()
+                < 0.001
+        );
+    }
+
+    #[test]
+    fn preshape_text_uses_mapped_ic_width_for_autospace_boxes() {
+        use parley::{LayoutContext, PositionedLayoutItem};
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let tmp = embedded_ic_font_dir();
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let block = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;font-family:IcTestHalfWidth;font-size:16px;text-autospace:normal"),
+        );
+        let text = doc.append_text(block, "水A");
+        let noauto = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;font-family:IcTestHalfWidth;font-size:16px;text-autospace:no-autospace"),
+        );
+        let _noauto_text = doc.append_text(noauto, "水A");
+        let oblique = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;font-family:IcTestHalfWidth;font-size:16px;font-style:oblique;text-autospace:normal"),
+        );
+        let _oblique_text = doc.append_text(oblique, "水A");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut fonts = crate::fonts::build_wpt_font_ctx(tmp.path()).expect("register WPT fonts");
+        let mut layout_cx = LayoutContext::<()>::new();
+        preshape_text(
+            &mut doc,
+            &cr,
+            &mut fonts,
+            &mut layout_cx,
+            PageBox::A4.width,
+            PageBox::A4.width,
+        );
+
+        let boxes: Vec<f32> = doc.nodes[text]
+            .text_layout()
+            .expect("text should be shaped")
+            .lines()
+            .flat_map(|line| line.items())
+            .filter_map(|item| match item {
+                PositionedLayoutItem::InlineBox(inline_box) => Some(inline_box.width),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(boxes.len(), 1, "水|A should have one autospace box");
+        assert!(
+            // cov:ignore: panic-message text is only executed when the assertion fails.
+            (boxes[0] - 1.0).abs() < 0.001,
+            // cov:ignore: panic-message text is only executed when the assertion fails.
+            "expected 1px half-width ic gap, got {boxes:?}"
+        );
+    }
+
     #[test]
     fn probe_text_advance_distinguishes_ahem_and_proportional_wpt_fonts() {
         use std::path::PathBuf;
@@ -22904,6 +23306,22 @@ mod tests {
                 && inline_box.width == 5.0
                 && inline_box.height == 0.0
         }));
+
+        // The caller supplies the measured `ic` advance; the placement helper
+        // must preserve its one-eighth width rather than recomputing from a
+        // font-size approximation.
+        let measured_ic = 37.25;
+        let measured_gap = measured_ic * 0.125;
+        let measured = text_autospace_boxes_with_width(
+            "国A",
+            TextAutospace::Normal,
+            "",
+            measured_gap,
+            None,
+            None,
+        );
+        assert_eq!(measured.len(), 1);
+        assert_eq!(measured[0].width, measured_gap);
 
         let zh_punctuation = text_autospace_boxes("国!国", TextAutospace::Normal, "zh", 40.0);
         assert_eq!(
