@@ -194,6 +194,18 @@ mod tests {
         assert!(matches!(err, NetworkError::Http(404)));
     }
 
+    // This test asserts that `proxy()` reports `None` regardless of the
+    // process environment. It only actively *discriminates* the fix (fails
+    // without it) when a proxy environment variable ureq reads
+    // (`ALL_PROXY`/`HTTP_PROXY`/`HTTPS_PROXY`, upper or lower case) happens
+    // to be set in the process running the test — otherwise
+    // `Proxy::try_from_env()` itself already returns `None`, so an
+    // unfixed `Config::default()` would also pass this assertion.
+    // Confirmed manually rather than by mutating `std::env` in-process
+    // (which is racy against Rust's default parallel test execution):
+    // running with `HTTPS_PROXY=http://127.0.0.1:9 cargo test ...` this
+    // test passes against `Config::builder().proxy(None)` and fails
+    // against a reverted `Config::default()`.
     #[test]
     fn new_disables_proxy_pickup_so_the_ssrf_floor_cannot_be_silently_bypassed() {
         let provider = UreqHttpProvider::new();
@@ -204,6 +216,39 @@ mod tests {
              route connections through a proxy's address instead of the \
              fetch target's, making SsrfSafeResolver never see (and never \
              filter) the real destination"
+        );
+    }
+
+    #[test]
+    fn floor_blocks_a_get_to_a_loopback_ip_literal_through_the_real_agent() {
+        // Unlike the unit-level `floor_rejection_maps_to_private_network_blocked`
+        // test above (which constructs `Error::Other(SsrfBlocked)` by hand),
+        // this drives the full path: `UreqHttpProvider::new()`'s real
+        // `Agent` (built with `SsrfSafeResolver`) resolving and attempting
+        // to connect to an IP-literal URL. No DNS lookup or successful
+        // connection is needed either way: 127.0.0.1 is an IP literal (no
+        // DNS), and `SsrfSafeResolver` rejects it before any socket is
+        // opened, so this is deterministic and makes no real network I/O.
+        let provider = UreqHttpProvider::new();
+        let request = Request {
+            url: Url::parse("http://127.0.0.1:1/").unwrap(),
+            method: RaikiriMethod::Get,
+            content_type: None,
+            headers: Vec::new(),
+            body: Body::Empty,
+            signal: None,
+            kind: ResourceKind::Image,
+        };
+        let err = provider
+            .fetch(request)
+            .expect_err("loopback IP literal must be blocked by the SSRF floor");
+        assert!(
+            matches!(
+                &err,
+                NetworkError::PolicyViolation(v)
+                    if matches!(v.violation_type, ViolationType::PrivateNetworkBlocked)
+            ),
+            "expected NetworkError::PolicyViolation(PrivateNetworkBlocked), got {err:?}"
         );
     }
 
