@@ -3522,4 +3522,687 @@ mod tests {
         assert_eq!(report.skipped, vec!["AliasFam".to_string()]);
         assert_eq!(computed, before);
     }
+
+    // ------------------------------------------------------------------
+    // FontError / FontReadReject — Display and Error::source coverage.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn font_error_display_reproduces_expected_message_bodies() {
+        let dir = PathBuf::from("/fonts/wpt");
+        assert_eq!(
+            format!("{}", FontError::DirNotFound(dir.clone())),
+            "fonts dir not found: /fonts/wpt"
+        );
+        assert_eq!(
+            format!("{}", FontError::EmptyDir(dir.clone())),
+            "fonts dir has no .ttf/.otf files: /fonts/wpt (did you run scripts/wpt/fetch.sh?)"
+        );
+        assert_eq!(
+            format!("{}", FontError::NoFontsRegistered(dir.clone())),
+            "no font families registered from /fonts/wpt (all .ttf/.otf files rejected by parley/fontique — check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                FontError::PreferredFontUnavailable {
+                    name: "Ahem.ttf".to_string(),
+                    dir: dir.clone(),
+                }
+            ),
+            "preferred font 'Ahem.ttf' not registered under /fonts/wpt — missing from dir or rejected by parley/fontique; silent fallback would break cascade determinism (check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)"
+        );
+        // The wrapped io::Error's own Display text is not this module's
+        // contract to pin exactly, so only the fixed prefix/suffix wording
+        // and the source message's presence are asserted.
+        let io_display = format!(
+            "{}",
+            FontError::Io {
+                path: dir,
+                source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
+            }
+        );
+        assert!(io_display.starts_with("io error reading /fonts/wpt: "));
+        assert!(io_display.contains("denied"));
+    }
+
+    #[test]
+    fn font_error_source_returns_io_error_only_for_io_variant() {
+        use std::error::Error as _;
+        let io_err = FontError::Io {
+            path: PathBuf::from("/fonts/wpt/Ahem.ttf"),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing"),
+        };
+        let source = io_err.source().expect("Io variant must expose its source");
+        assert!(source.to_string().contains("missing"));
+
+        let non_io_err = FontError::EmptyDir(PathBuf::from("/fonts/wpt"));
+        assert!(non_io_err.source().is_none());
+    }
+
+    /// `FontReadReject::PathEscapePostOpen`'s Display is already pinned by
+    /// `font_read_reject_path_escape_post_open_display_contains_paths` above;
+    /// this covers the remaining seven variants.
+    #[test]
+    fn font_read_reject_display_reproduces_expected_message_bodies() {
+        assert_eq!(FontReadReject::Symlink.to_string(), "path is a symlink");
+        assert_eq!(
+            FontReadReject::NotRegularFile.to_string(),
+            "path is not a regular file"
+        );
+        assert_eq!(
+            FontReadReject::NotRegularFilePostOpen.to_string(),
+            "opened fd resolves to a non-regular file (TOCTOU-swap between pre-open metadata and open)"
+        );
+        assert_eq!(
+            FontReadReject::OversizedPreOpen { size: 8, cap: 4 }.to_string(),
+            "file size 8 bytes exceeds cap 4 bytes"
+        );
+        assert_eq!(
+            FontReadReject::OversizedDuringRead {
+                size: 101,
+                cap: 100
+            }
+            .to_string(),
+            "file grew past cap during read: 101 bytes read, cap 100 bytes (TOCTOU-grow)"
+        );
+        assert_eq!(
+            FontReadReject::PathEscape {
+                canonical: PathBuf::from("/outside/leaf.ttf"),
+                root: PathBuf::from("/fonts/root"),
+            }
+            .to_string(),
+            "canonicalizes to /outside/leaf.ttf which escapes fonts root /fonts/root"
+        );
+        let display = FontReadReject::Io(std::io::Error::other("boom")).to_string();
+        assert!(display.starts_with("I/O error: "));
+        assert!(display.contains("boom"));
+    }
+
+    // ------------------------------------------------------------------
+    // woff1_within_cap / woff2_within_cap / decode_web_font — WOFF
+    // container validation, exercised with fully synthetic bytes (no
+    // filesystem fixtures) so every arithmetic-bounds branch can be
+    // perturbed independently.
+    // ------------------------------------------------------------------
+
+    /// Build a well-formed, self-consistent WOFF1 buffer: 44-byte header +
+    /// one 20-byte table-directory entry + `table_data`, stored
+    /// uncompressed (`compLength == origLength`, wuff's convention for "no
+    /// compression applied to this table" — see `decompress_woff1`'s
+    /// `is_compressed` check). Every length field is derived from
+    /// `table_data`, so a test can start from this and perturb exactly the
+    /// field it wants to test. `table_data.len()` should stay a multiple of
+    /// 4 so the caller doesn't have to reason about sfnt padding.
+    fn build_woff1(table_data: &[u8]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"wOFF"); // signature
+        buf.extend_from_slice(&0u32.to_be_bytes()); // flavor
+        buf.extend_from_slice(&0u32.to_be_bytes()); // length (patched below)
+        buf.extend_from_slice(&1u16.to_be_bytes()); // numTables
+        buf.extend_from_slice(&0u16.to_be_bytes()); // reserved
+        buf.extend_from_slice(&0u32.to_be_bytes()); // totalSfntSize (patched below)
+        buf.extend_from_slice(&1u16.to_be_bytes()); // majorVersion
+        buf.extend_from_slice(&0u16.to_be_bytes()); // minorVersion
+        buf.extend_from_slice(&0u32.to_be_bytes()); // metaOffset
+        buf.extend_from_slice(&0u32.to_be_bytes()); // metaLength
+        buf.extend_from_slice(&0u32.to_be_bytes()); // metaOrigLength
+        buf.extend_from_slice(&0u32.to_be_bytes()); // privOffset
+        buf.extend_from_slice(&0u32.to_be_bytes()); // privLength
+        assert_eq!(buf.len(), 44, "WOFF1 header must be exactly 44 bytes");
+
+        const DIRECTORY_END: u32 = 64; // 44-byte header + one 20-byte entry
+        buf.extend_from_slice(b"TEST"); // tag
+        buf.extend_from_slice(&DIRECTORY_END.to_be_bytes()); // offset
+        buf.extend_from_slice(&(table_data.len() as u32).to_be_bytes()); // compLength
+        buf.extend_from_slice(&(table_data.len() as u32).to_be_bytes()); // origLength (== compLength: stored uncompressed)
+        buf.extend_from_slice(&0u32.to_be_bytes()); // origChecksum (unchecked by wuff's decoder)
+        assert_eq!(buf.len(), DIRECTORY_END as usize);
+
+        buf.extend_from_slice(table_data);
+        let total_len = buf.len() as u32;
+        buf[8..12].copy_from_slice(&total_len.to_be_bytes());
+
+        let padded = (table_data.len() as u32).div_ceil(4) * 4;
+        let sfnt_size = 12 + 16 + padded; // sfnt header + one 16-byte sfnt dir entry + table bytes
+        buf[16..20].copy_from_slice(&sfnt_size.to_be_bytes());
+
+        buf
+    }
+
+    /// Build a 48-byte WOFF2 header only — `woff2_within_cap` never reads
+    /// past the header, so no table directory or compressed data is needed.
+    /// `num_tables` is written but deliberately NOT inspected by
+    /// `woff2_within_cap` (only by wuff's real parser), which is what makes
+    /// `decode_web_font_rejects_woff2_that_fails_to_decompress` below useful.
+    fn build_woff2_header(length: u32, num_tables: u16, total_sfnt_size: u32) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"wOF2"); // signature
+        buf.extend_from_slice(&0u32.to_be_bytes()); // flavor
+        buf.extend_from_slice(&length.to_be_bytes()); // length
+        buf.extend_from_slice(&num_tables.to_be_bytes()); // numTables
+        buf.extend_from_slice(&0u16.to_be_bytes()); // reserved
+        buf.extend_from_slice(&total_sfnt_size.to_be_bytes()); // totalSfntSize
+        buf.extend_from_slice(&0u32.to_be_bytes()); // totalCompressedSize
+        buf.extend_from_slice(&1u16.to_be_bytes()); // majorVersion
+        buf.extend_from_slice(&0u16.to_be_bytes()); // minorVersion
+        buf.extend_from_slice(&0u32.to_be_bytes()); // metaOffset
+        buf.extend_from_slice(&0u32.to_be_bytes()); // metaLength
+        buf.extend_from_slice(&0u32.to_be_bytes()); // metaOrigLength
+        buf.extend_from_slice(&0u32.to_be_bytes()); // privOffset
+        buf.extend_from_slice(&0u32.to_be_bytes()); // privLength
+        assert_eq!(buf.len(), 48, "WOFF2 header must be exactly 48 bytes");
+        buf
+    }
+
+    #[test]
+    fn woff1_within_cap_accepts_well_formed_header() {
+        assert!(woff1_within_cap(&build_woff1(b"ABCDEFGH")));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_short_buffer() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        bytes.truncate(43); // one byte short of the 44-byte header
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_missing_signature() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        bytes[0..4].copy_from_slice(b"OTTO");
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_directory_exceeding_buffer() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        // Truncate below the declared table-directory end (64 bytes) while
+        // leaving the >=44-byte header-length check satisfied.
+        bytes.truncate(50);
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_declared_length_below_directory_end() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        bytes[8..12].copy_from_slice(&60u32.to_be_bytes()); // < the 64-byte directory end
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_declared_length_exceeding_buffer() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        bytes[8..12].copy_from_slice(&1000u32.to_be_bytes());
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_table_offset_inside_directory() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        // Claim the table's data starts at byte 40 -- inside the
+        // header/directory region rather than after it (an overlap a
+        // well-formed WOFF1 can never have).
+        bytes[48..52].copy_from_slice(&40u32.to_be_bytes());
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_table_end_exceeding_declared_length() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        bytes[52..56].copy_from_slice(&1000u32.to_be_bytes()); // compLength
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_sfnt_size_mismatch() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        bytes[16..20].copy_from_slice(&999u32.to_be_bytes()); // wrong totalSfntSize
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_oversized_declared_sfnt_size() {
+        // No compressed-data section is needed (compLength stays 0) -- only
+        // the directory's declared origLength needs to push the recomputed
+        // sfnt size past FONT_SIZE_CAP.
+        let mut bytes = build_woff1(&[]);
+        let huge_orig_length: u32 = 200 * 1024 * 1024;
+        bytes[56..60].copy_from_slice(&huge_orig_length.to_be_bytes()); // origLength
+        let sfnt_size = 12u64 + 16 + huge_orig_length as u64; // already 4-byte aligned
+        assert!(sfnt_size > FONT_SIZE_CAP);
+        // totalSfntSize matches the recomputed size, so only the cap check
+        // (not the equality check) can be what rejects this buffer.
+        bytes[16..20].copy_from_slice(&(sfnt_size as u32).to_be_bytes());
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff2_within_cap_accepts_well_formed_header() {
+        assert!(woff2_within_cap(&build_woff2_header(48, 1, 1000)));
+    }
+
+    #[test]
+    fn woff2_within_cap_rejects_missing_signature() {
+        let mut bytes = build_woff2_header(48, 1, 1000);
+        bytes[0..4].copy_from_slice(b"wOFF");
+        assert!(!woff2_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff2_within_cap_rejects_short_buffer() {
+        let mut bytes = build_woff2_header(48, 1, 1000);
+        bytes.truncate(47);
+        assert!(!woff2_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff2_within_cap_rejects_declared_length_below_header_size() {
+        assert!(!woff2_within_cap(&build_woff2_header(40, 1, 1000)));
+    }
+
+    #[test]
+    fn woff2_within_cap_rejects_declared_length_exceeding_buffer() {
+        assert!(!woff2_within_cap(&build_woff2_header(1000, 1, 1000)));
+    }
+
+    #[test]
+    fn woff2_within_cap_rejects_oversized_total_sfnt_size() {
+        let over_cap = FONT_SIZE_CAP as u32 + 1;
+        assert!(!woff2_within_cap(&build_woff2_header(48, 1, over_cap)));
+    }
+
+    #[test]
+    fn decode_web_font_passes_through_unrecognized_signature() {
+        // Neither a WOFF nor a WOFF2 signature -- e.g. a bare sfnt (TTF/OTF)
+        // already resolved by `local()`/direct bytes. `format(...)` hints
+        // are capability hints, not byte-format assertions (CSS Fonts 4
+        // §4.2), so this must pass through unchanged rather than reject.
+        let bytes = b"not a web font container at all".to_vec();
+        let decoded = decode_web_font(bytes.clone())
+            .expect("unrecognized signature must pass through unchanged");
+        assert_eq!(decoded, bytes);
+    }
+
+    #[test]
+    fn decode_web_font_rejects_malformed_woff1_container() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        bytes[16..20].copy_from_slice(&999u32.to_be_bytes()); // wrong totalSfntSize
+        assert!(!woff1_within_cap(&bytes), "fixture must fail the cap gate");
+        assert!(decode_web_font(bytes).is_none());
+    }
+
+    #[test]
+    fn decode_web_font_rejects_malformed_woff2_container() {
+        let bytes = build_woff2_header(1000, 1, 1000); // declared length exceeds actual buffer
+        assert!(!woff2_within_cap(&bytes), "fixture must fail the cap gate");
+        assert!(decode_web_font(bytes).is_none());
+    }
+
+    #[test]
+    fn decode_web_font_rejects_woff1_that_fails_to_decompress() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        // woff1_within_cap only checks structural bounds, not the reserved
+        // field -- flip it nonzero so the container passes this module's
+        // cap/bounds gate but wuff's own parser (which the WOFF1 spec
+        // requires to reject a nonzero reserved field) still refuses it.
+        bytes[14..16].copy_from_slice(&1u16.to_be_bytes());
+        assert!(
+            woff1_within_cap(&bytes),
+            "reserved field is not part of the cap/bounds gate"
+        );
+        assert!(decode_web_font(bytes).is_none());
+    }
+
+    #[test]
+    fn decode_web_font_rejects_woff2_that_fails_to_decompress() {
+        // woff2_within_cap never inspects numTables; a zero count passes the
+        // cap/bounds gate but wuff's header parser requires at least one
+        // table and refuses to decode.
+        let bytes = build_woff2_header(48, 0, 1000);
+        assert!(
+            woff2_within_cap(&bytes),
+            "numTables is not part of the cap/bounds gate"
+        );
+        assert!(decode_web_font(bytes).is_none());
+    }
+
+    #[test]
+    fn decode_web_font_decodes_well_formed_woff1() {
+        let bytes = build_woff1(b"ABCDEFGH");
+        assert!(
+            woff1_within_cap(&bytes),
+            "fixture must be a valid WOFF1 container"
+        );
+        let decoded = decode_web_font(bytes).expect("well-formed uncompressed WOFF1 must decode");
+        // sfnt header (12 bytes) + one 16-byte sfnt directory entry +
+        // the 8-byte table body, exactly the totalSfntSize declared above.
+        assert_eq!(decoded.len(), 36);
+        assert_eq!(&decoded[28..36], b"ABCDEFGH");
+    }
+
+    // ------------------------------------------------------------------
+    // font_face_weight_override / font_face_style_override — descriptor to
+    // fontique-override mapping.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn font_face_weight_override_maps_named_and_numeric_descriptors() {
+        assert_eq!(
+            font_face_weight_override(FontFaceWeight::Normal),
+            parley::fontique::FontWeight::NORMAL
+        );
+        assert_eq!(
+            font_face_weight_override(FontFaceWeight::Bold),
+            parley::fontique::FontWeight::BOLD
+        );
+        assert_eq!(
+            font_face_weight_override(FontFaceWeight::Number(550.0)),
+            parley::fontique::FontWeight::new(550.0)
+        );
+        // Range keeps its lower bound -- registration records one face, and
+        // full range matching is the deferred matcher's job.
+        assert_eq!(
+            font_face_weight_override(FontFaceWeight::Range(300.0, 700.0)),
+            parley::fontique::FontWeight::new(300.0)
+        );
+    }
+
+    #[test]
+    fn font_face_style_override_maps_named_descriptors() {
+        assert_eq!(
+            font_face_style_override(FontFaceStyle::Normal),
+            parley::fontique::FontStyle::Normal
+        );
+        assert_eq!(
+            font_face_style_override(FontFaceStyle::Italic),
+            parley::fontique::FontStyle::Italic
+        );
+        // Oblique drops its angle -- the parser already stripped it (see
+        // `FontFaceStyle::Oblique`'s own doc), so the registration override
+        // always requests the engine's default oblique angle.
+        assert_eq!(
+            font_face_style_override(FontFaceStyle::Oblique),
+            parley::fontique::FontStyle::Oblique(None)
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // expand_font_face_alias / remove_unavailable_ch_family — direct calls
+    // exercising branches not reached by the apply_font_faces integration
+    // tests above (all synthetic; no FontContext/WPT fixture involved,
+    // since neither function ever consults `fonts.collection`).
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn expand_font_face_alias_is_noop_when_face_absent_from_list() {
+        let mut cv = computed_with_family("Other");
+        cv.font_family = std::sync::Arc::new(vec![
+            Atom(SmolStr::new("Other")),
+            Atom(SmolStr::new("Fallback")),
+        ]);
+        let before = cv.font_family.clone();
+        let mut computed = vec![cv];
+        super::expand_font_face_alias(&mut computed, "Face", "Target");
+        assert_eq!(computed[0].font_family, before);
+    }
+
+    #[test]
+    fn expand_font_face_alias_repositions_an_existing_later_target() {
+        let mut cv = computed_with_family("Face");
+        cv.font_family = std::sync::Arc::new(vec![
+            Atom(SmolStr::new("Face")),
+            Atom(SmolStr::new("Other")),
+            Atom(SmolStr::new("Target")),
+        ]);
+        let mut computed = vec![cv];
+        super::expand_font_face_alias(&mut computed, "Face", "Target");
+        let names: Vec<&str> = computed[0]
+            .font_family
+            .iter()
+            .map(|a| a.0.as_str())
+            .collect();
+        // Target already appeared, but after Face -- it must be
+        // deduplicated and reinserted immediately after Face rather than
+        // left duplicated or in its old spot (idempotency requires this:
+        // re-applying an already-expanded list must reach a fixed point).
+        assert_eq!(names, vec!["Face", "Target", "Other"]);
+    }
+
+    #[test]
+    fn expand_font_face_alias_is_case_insensitive_for_face_and_target_matching() {
+        let cv = computed_with_family("AliasFam");
+        let mut computed = vec![cv];
+        // Args use different casing than what's authored in the computed
+        // list; CSS family-name matching is ASCII case-insensitive.
+        super::expand_font_face_alias(&mut computed, "ALIASFAM", "realfam");
+        let names: Vec<&str> = computed[0]
+            .font_family
+            .iter()
+            .map(|a| a.0.as_str())
+            .collect();
+        assert_eq!(names, vec!["AliasFam", "realfam"]);
+    }
+
+    #[test]
+    fn expand_font_face_alias_updates_every_ch_provenance_field_independently() {
+        let mut cv = ComputedValues::initial();
+        // font_family deliberately omits "Face" so this assertion proves
+        // each field below is resolved from its own family list, not from
+        // `font_family`.
+        cv.font_family = std::sync::Arc::new(vec![Atom(SmolStr::new("Other"))]);
+
+        let key_with = |extra: &str| ChFontKey {
+            family: std::sync::Arc::new(vec![
+                Atom(SmolStr::new("Face")),
+                Atom(SmolStr::new(extra)),
+            ]),
+            size: cv.font_size,
+            weight: cv.font_weight,
+            style: cv.font_style,
+        };
+        let prov_with = |extra: &str| ChLengthProvenance {
+            factor: 1.0,
+            font: key_with(extra),
+        };
+
+        cv.text_indent_ch_font = Some(key_with("Indent"));
+        cv.width_ch = Some(prov_with("Width"));
+        cv.height_ch = Some(prov_with("Height"));
+        cv.padding_ch.top = Some(prov_with("PadTop"));
+        cv.padding_ch.right = Some(prov_with("PadRight"));
+        cv.padding_ch.bottom = Some(prov_with("PadBottom"));
+        cv.padding_ch.left = Some(prov_with("PadLeft"));
+        cv.margin_ch.top = Some(prov_with("MarTop"));
+        cv.margin_ch.right = Some(prov_with("MarRight"));
+        cv.margin_ch.bottom = Some(prov_with("MarBottom"));
+        cv.margin_ch.left = Some(prov_with("MarLeft"));
+
+        let mut computed = vec![cv];
+        super::expand_font_face_alias(&mut computed, "Face", "Target");
+
+        assert_eq!(
+            computed[0]
+                .font_family
+                .iter()
+                .map(|a| a.0.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Other"],
+            "font_family never mentioned Face and must stay untouched"
+        );
+
+        let names = |key: &ChFontKey| -> Vec<String> {
+            key.family.iter().map(|a| a.0.to_string()).collect()
+        };
+        assert_eq!(
+            names(computed[0].text_indent_ch_font.as_ref().unwrap()),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "Indent".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].width_ch.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "Width".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].height_ch.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "Height".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].padding_ch.top.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "PadTop".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].padding_ch.right.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "PadRight".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].padding_ch.bottom.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "PadBottom".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].padding_ch.left.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "PadLeft".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].margin_ch.top.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "MarTop".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].margin_ch.right.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "MarRight".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].margin_ch.bottom.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "MarBottom".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].margin_ch.left.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "MarLeft".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn remove_unavailable_ch_family_removes_case_insensitively_from_every_ch_field() {
+        let mut cv = ComputedValues::initial();
+        let key_with = |first: &str, extra: &str| ChFontKey {
+            family: std::sync::Arc::new(vec![Atom(SmolStr::new(first)), Atom(SmolStr::new(extra))]),
+            size: cv.font_size,
+            weight: cv.font_weight,
+            style: cv.font_style,
+        };
+        let prov_with = |first: &str, extra: &str| ChLengthProvenance {
+            factor: 1.0,
+            font: key_with(first, extra),
+        };
+
+        // Different casing than the "DropMe" argument below -- the removal
+        // must still match via `eq_ignore_ascii_case`.
+        cv.text_indent_ch_font = Some(key_with("DROPME", "Keep"));
+        cv.width_ch = Some(prov_with("DropMe", "Keep"));
+        cv.height_ch = Some(prov_with("dropme", "Keep"));
+        cv.padding_ch.top = Some(prov_with("DropMe", "Keep"));
+        cv.padding_ch.right = Some(prov_with("DropMe", "Keep"));
+        cv.padding_ch.bottom = Some(prov_with("DropMe", "Keep"));
+        cv.padding_ch.left = Some(prov_with("DropMe", "Keep"));
+        cv.margin_ch.top = Some(prov_with("DropMe", "Keep"));
+        cv.margin_ch.right = Some(prov_with("DropMe", "Keep"));
+        cv.margin_ch.bottom = Some(prov_with("DropMe", "Keep"));
+        cv.margin_ch.left = Some(prov_with("DropMe", "Keep"));
+
+        let mut computed = vec![cv];
+        super::remove_unavailable_ch_family(&mut computed, "dropme");
+
+        let names = |key: &ChFontKey| -> Vec<String> {
+            key.family.iter().map(|a| a.0.to_string()).collect()
+        };
+        assert_eq!(
+            names(computed[0].text_indent_ch_font.as_ref().unwrap()),
+            vec!["Keep".to_string()]
+        );
+        for provenance in [
+            computed[0].width_ch.as_ref().unwrap(),
+            computed[0].height_ch.as_ref().unwrap(),
+            computed[0].padding_ch.top.as_ref().unwrap(),
+            computed[0].padding_ch.right.as_ref().unwrap(),
+            computed[0].padding_ch.bottom.as_ref().unwrap(),
+            computed[0].padding_ch.left.as_ref().unwrap(),
+            computed[0].margin_ch.top.as_ref().unwrap(),
+            computed[0].margin_ch.right.as_ref().unwrap(),
+            computed[0].margin_ch.bottom.as_ref().unwrap(),
+            computed[0].margin_ch.left.as_ref().unwrap(),
+        ] {
+            assert_eq!(names(&provenance.font), vec!["Keep".to_string()]);
+        }
+    }
+
+    #[test]
+    fn remove_unavailable_ch_family_is_noop_when_family_absent_and_skips_unset_fields() {
+        let mut cv = ComputedValues::initial();
+        cv.text_indent_ch_font = Some(ChFontKey {
+            family: std::sync::Arc::new(vec![Atom(SmolStr::new("Unrelated"))]),
+            size: cv.font_size,
+            weight: cv.font_weight,
+            style: cv.font_style,
+        });
+        // width_ch / height_ch / padding_ch / margin_ch all stay `None` --
+        // remove_unavailable_ch_family must not panic on the unset fields.
+        let mut computed = vec![cv];
+        super::remove_unavailable_ch_family(&mut computed, "NoSuchFamily");
+        assert_eq!(
+            computed[0]
+                .text_indent_ch_font
+                .as_ref()
+                .unwrap()
+                .family
+                .iter()
+                .map(|a| a.0.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Unrelated"]
+        );
+        assert!(computed[0].width_ch.is_none());
+        assert!(computed[0].height_ch.is_none());
+    }
 }
