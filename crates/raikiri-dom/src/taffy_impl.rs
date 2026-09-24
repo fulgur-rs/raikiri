@@ -236,7 +236,7 @@ impl Document {
             }
             self.layout_dirty = false;
         }
-        compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
+        let mut output = compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
             let idx = usize::from(node_id);
             // Table dispatch uses preserved DisplayValue (not taffy's collapsed Display::Block).
             // Taffy 0.12 has no table layout; we route to native table engine in parallel with
@@ -359,8 +359,77 @@ impl Document {
                     Display::None => unreachable!("Display::None handled above"),
                 }
             }
-        })
+        });
+        if let Some(baseline) = first_inline_baseline(self, usize::from(node_id)) {
+            output.baselines.first = Some(baseline);
+        }
+        output
     }
+}
+
+/// Return the first baseline for text leaves from Parley's first line. Taffy's
+/// block algorithm propagates that baseline through ordinary inline wrappers;
+/// inline-blocks use the baseline of their last in-flow line box, so recover
+/// the last in-flow text line from the descendant layout tree. See CSS 2.1
+/// §10.8.1: <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>
+fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
+    use raikiri_style::property::DisplayValue;
+    let root_node = doc.nodes.get(root)?;
+    if root_node.style.display == Display::None {
+        return None;
+    }
+    if let NodeData::Text(text) = &root_node.data {
+        let baseline = text
+            .text_layout
+            .as_ref()?
+            .lines()
+            .next()?
+            .metrics()
+            .baseline;
+        return baseline.is_finite().then_some(baseline);
+    }
+    if root_node.display != DisplayValue::InlineBlock {
+        return None;
+    }
+
+    let mut stack = Vec::new();
+    for &child in root_node.children.iter().rev() {
+        if doc.nodes[child].is_in_document()
+            && doc.nodes[child].style.display != Display::None
+            && doc.nodes[child].style.position != TaffyPosition::Absolute
+        {
+            stack.push((child, doc.nodes[child].unrounded_layout.location.y));
+        }
+    }
+    let mut last_baseline = None;
+    while let Some((idx, offset_y)) = stack.pop() {
+        let node = &doc.nodes[idx];
+        if let NodeData::Text(text) = &node.data {
+            if let Some(line) = text
+                .text_layout
+                .as_ref()
+                .and_then(|layout| layout.lines().last())
+            {
+                let baseline = offset_y + line.metrics().baseline;
+                if baseline.is_finite() {
+                    last_baseline = Some(baseline);
+                }
+            }
+            continue;
+        }
+        for &child in node.children.iter().rev() {
+            if doc.nodes[child].is_in_document()
+                && doc.nodes[child].style.display != Display::None
+                && doc.nodes[child].style.position != TaffyPosition::Absolute
+            {
+                stack.push((
+                    child,
+                    offset_y + doc.nodes[child].unrounded_layout.location.y,
+                ));
+            }
+        }
+    }
+    last_baseline
 }
 
 /// Shrink-to-fit layout for a width:auto inline-block.

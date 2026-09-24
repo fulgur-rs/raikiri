@@ -3,7 +3,8 @@
 use std::path::PathBuf;
 
 use raikiri_wpt::reftest::{
-    ReftestConfig, discover_pairs_for_file_with_wpt_root, run_pair, run_pair_with_images,
+    ReftestConfig, ReftestTolerance, discover_pairs_for_file_with_wpt_root, run_pair,
+    run_pair_with_images,
 };
 use raikiri_wpt::runner::TestOutcome;
 
@@ -50,12 +51,20 @@ fn vertical_align_length_96px_wpt_pair_matches_at_800x600() {
     let mut config = ReftestConfig::default();
     config.width = 800;
     config.height = 600;
+    config.tolerance = ReftestTolerance::TIER2;
     let result =
         run_pair_with_images(&pairs[0], config).expect("run vertical-align length WPT pair");
     assert!(
         matches!(result.outcome, TestOutcome::Pass),
         "{:?} ({} mismatched pixels)",
         result.outcome,
+        result.mismatched_pixels
+    );
+    // This WPT scales a 15×15 PNG to 20×20 at a fractional origin. Its four
+    // edge rows differ from hinted Ahem glyphs; cap that known fringe at 80.
+    assert!(
+        result.mismatched_pixels <= 80,
+        "image/Ahem edge-AA fringe exceeded 80 pixels: {}",
         result.mismatched_pixels
     );
 }
