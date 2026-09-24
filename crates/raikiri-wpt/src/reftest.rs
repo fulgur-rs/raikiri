@@ -10,6 +10,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::runner::{TestOutcome, Tolerance};
+use raikiri_js::dom::{DomSnapshot, ElementGeometry};
 
 // ── Public constants ───────────────────────────────────────────────────
 
@@ -1546,6 +1547,45 @@ fn render_raikiri_pages_inner(
     resource_base: Option<&Path>,
     font_base: Option<&Path>,
 ) -> Result<RenderedDocument, Box<dyn std::error::Error>> {
+    render_raikiri_pages_inner_with_snapshot(
+        html,
+        width,
+        height,
+        resource_base,
+        font_base,
+        false,
+        true,
+    )
+    .map(|(rendered, _)| rendered)
+}
+
+pub(crate) fn layout_raikiri_wpt_document(
+    html: &str,
+    width: u32,
+    height: u32,
+    wpt_root: &Path,
+) -> Result<DomSnapshot, Box<dyn std::error::Error>> {
+    render_raikiri_pages_inner_with_snapshot(
+        html,
+        width,
+        height,
+        Some(wpt_root),
+        Some(wpt_root),
+        true,
+        false,
+    )
+    .map(|(_, snapshot)| snapshot)
+}
+
+fn render_raikiri_pages_inner_with_snapshot(
+    html: &str,
+    width: u32,
+    height: u32,
+    resource_base: Option<&Path>,
+    font_base: Option<&Path>,
+    capture_snapshot: bool,
+    rasterize: bool,
+) -> Result<(RenderedDocument, DomSnapshot), Box<dyn std::error::Error>> {
     use anyrender::render_to_buffer;
     use anyrender_vello_cpu::VelloCpuImageRenderer;
     use raikiri::ParseOptions;
@@ -1823,6 +1863,7 @@ fn render_raikiri_pages_inner(
 
     let page_count = slices.len() as u32;
     let mut pages = Vec::with_capacity(slices.len());
+    let mut snapshot = DomSnapshot::default();
     for slice in slices {
         let mut query = PageContextQuery::default();
         query.page_name = slice
@@ -1895,52 +1936,74 @@ fn render_raikiri_pages_inner(
             slice.content_origin_y,
             active_page_name.clone(),
         );
-        let _ = &scene;
-        let page_width = page_box.width.ceil() as u32;
-        let page_height = page_box.height.ceil() as u32;
-        let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
-            |painter| {
-                if let Some(resolver) = image_resolver.as_ref() {
-                    raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_images(
-                        painter,
-                        &uncascaded.dom,
-                        &cascade,
-                        page_box,
-                        slice.content_origin_y,
-                        slice.page_index,
-                        page_count,
-                        query.is_left,
-                        paired_page_increment,
-                        active_page_name.as_deref(),
-                        fixed_page_width,
-                        resolver,
-                    );
-                } else {
-                    raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(
-                        painter,
-                        &uncascaded.dom,
-                        &cascade,
-                        page_box,
-                        slice.content_origin_y,
-                        slice.page_index,
-                        page_count,
-                        query.is_left,
-                        paired_page_increment,
-                        active_page_name.as_deref(),
-                        fixed_page_width,
-                    );
-                }
-            },
-            page_width,
-            page_height,
-        );
-        pages.push(RenderedImage {
-            width: page_width,
-            height: page_height,
-            rgba,
-        });
+        if capture_snapshot {
+            for (node_id, entry) in scene.drawables.block_styles.iter() {
+                let (Some(id), Some((_width, height))) = (entry.id.as_ref(), entry.layout_size)
+                else {
+                    continue;
+                };
+                let left = scene
+                    .fragments
+                    .get(node_id)
+                    .and_then(|fragments| fragments.first())
+                    .map(|fragment| fragment.x + scene.body_offset_pt.0)
+                    .unwrap_or(0.0);
+                snapshot
+                    .elements
+                    .entry(id.clone())
+                    .or_insert(ElementGeometry {
+                        offset_height: f64::from(height.round()),
+                        left: f64::from(left),
+                    });
+            }
+        }
+        if rasterize {
+            let page_width = page_box.width.ceil() as u32;
+            let page_height = page_box.height.ceil() as u32;
+            let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
+                |painter| {
+                    if let Some(resolver) = image_resolver.as_ref() {
+                        raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_images(
+                            painter,
+                            &uncascaded.dom,
+                            &cascade,
+                            page_box,
+                            slice.content_origin_y,
+                            slice.page_index,
+                            page_count,
+                            query.is_left,
+                            paired_page_increment,
+                            active_page_name.as_deref(),
+                            fixed_page_width,
+                            resolver,
+                        );
+                    } else {
+                        raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(
+                            painter,
+                            &uncascaded.dom,
+                            &cascade,
+                            page_box,
+                            slice.content_origin_y,
+                            slice.page_index,
+                            page_count,
+                            query.is_left,
+                            paired_page_increment,
+                            active_page_name.as_deref(),
+                            fixed_page_width,
+                        );
+                    }
+                },
+                page_width,
+                page_height,
+            );
+            pages.push(RenderedImage {
+                width: page_width,
+                height: page_height,
+                rgba,
+            });
+        }
     }
-    Ok(RenderedDocument { pages })
+    Ok((RenderedDocument { pages }, snapshot))
 }
 /// Load `@font-face` `src: url(...)` bytes from the WPT tree.
 ///

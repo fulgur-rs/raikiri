@@ -50,3 +50,7 @@ path = "src/bin/prepare-meta-assert-review.rs"
 [[bin]]
 name = "run-parsing-invalid"
 path = "src/bin/run-parsing-invalid.rs"
+
+[[bin]]
+name = "run-css-text-i18n"
+path = "src/bin/run-css-text-i18n.rs"
