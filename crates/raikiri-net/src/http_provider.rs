@@ -5,6 +5,7 @@
 //! [`UreqHttpProvider::new`] disables proxy pickup so a proxy environment
 //! variable cannot silently reroute connections around that filtering.
 
+use std::io::{self, Read as _};
 use std::time::Duration;
 
 use raikiri_traits::{
@@ -21,6 +22,15 @@ use crate::http_resolver::{SsrfBlocked, SsrfSafeResolver};
 /// (redirects included). Sized for one sub-resource (image, stylesheet,
 /// font).
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Upper bound on a response body's size *after* content decoding (gzip),
+/// which is the size that actually gets materialized in memory. 32 MiB, the
+/// same value `raikiri-html` uses as its default per-resource limit
+/// (`raikiri_html::resources::DEFAULT_MAX_RESOURCE_BYTES`), so a document
+/// rendered through that layer is never cut off here first. Duplicated as a
+/// literal rather than imported: this crate sits below `raikiri-html` and
+/// must not depend on it.
+const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
 
 /// Real HTTP(S) `NetworkProvider`. Always resolves through this crate's
 /// internal `SsrfSafeResolver`, which rejects any address that
@@ -107,8 +117,50 @@ fn map_ureq_error(url: &Url, kind: ResourceKind, err: ureq::Error) -> NetworkErr
     match err {
         ureq::Error::StatusCode(code) => NetworkError::Http(code),
         ureq::Error::Io(io_err) => NetworkError::Io(io_err),
+        ureq::Error::BodyExceedsLimit(limit) => NetworkError::PolicyViolation(PolicyViolation {
+            kind,
+            url: url.clone(),
+            // A limit trips mid-stream, before the full size is known, so
+            // `actual` is only a lower bound: the body was at least `limit`
+            // bytes long.
+            violation_type: ViolationType::FetchTooLarge {
+                limit,
+                actual: limit,
+            },
+            details: format!("response body exceeds the {limit}-byte limit"),
+        }),
+        timeout @ ureq::Error::Timeout(_) => {
+            NetworkError::Io(io::Error::new(io::ErrorKind::TimedOut, timeout))
+        }
         other => NetworkError::Other(other.to_string()),
     }
+}
+
+/// Reads `body` to the end, content decoding included, and fails with
+/// `ureq::Error::BodyExceedsLimit(cap)` if the *decoded* output is longer
+/// than `cap` bytes.
+///
+/// `ureq`'s own `Body::read_to_vec` limit counts bytes read off the wire,
+/// underneath the gzip decoder, so a small compressed body can still
+/// decompress to an arbitrarily large `Vec` (a decompression bomb). This
+/// instead bounds the decoder's output: reading at most `cap + 1` bytes
+/// tells an over-long body apart from one that is exactly `cap` bytes long,
+/// without ever buffering more than that. The wire side is not separately
+/// capped here; for an unencoded body the output cap bounds it too, and
+/// compressed input that yields no output only costs time, which the
+/// agent's global timeout bounds.
+fn read_body_capped(body: &mut ureq::Body, cap: u64) -> Result<Vec<u8>, ureq::Error> {
+    let mut bytes = Vec::new();
+    body.as_reader()
+        .take(cap.saturating_add(1))
+        .read_to_end(&mut bytes)
+        // Body-read failures come back as `io::Error`s that may wrap a
+        // `ureq::Error` (for example a timeout); `From` unwraps those.
+        .map_err(ureq::Error::from)?;
+    if bytes.len() as u64 > cap {
+        return Err(ureq::Error::BodyExceedsLimit(cap));
+    }
+    Ok(bytes)
 }
 
 impl NetworkProvider for UreqHttpProvider {
@@ -171,9 +223,7 @@ impl NetworkProvider for UreqHttpProvider {
             .map_err(|e| NetworkError::Other(format!("invalid final URL: {e}")))?;
         let content_type = response.body().mime_type().map(str::to_owned);
         let encoding = response.body().charset().map(str::to_owned);
-        let bytes = response
-            .body_mut()
-            .read_to_vec()
+        let bytes = read_body_capped(response.body_mut(), MAX_RESPONSE_BYTES)
             .map_err(|e| map_ureq_error(&request.url, kind, e))?;
 
         Ok(FetchedResource {

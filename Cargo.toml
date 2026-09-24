@@ -116,6 +116,12 @@ blitz-paint         = "=0.3.0-beta.2"
 tempfile   = "3"
 assert_cmd = "2"
 
+# ── Dev-only: gzip fixtures for raikiri-net's decompression-bomb test ───
+# Already in the build graph through ureq's `gzip` feature; the dev-dep only
+# lets the test build a compressed response body. Default backend
+# (miniz_oxide) is Pure Rust.
+flate2 = "1"
+
 # ── Dev-only: benchmarking (raikiri-spike-zpui origin, promoted here by
 # raikiri-spike-vvf6 now that a second crate — raikiri-bench — legitimately
 # grows a `[[bench]]` target; raikiri-style/Cargo.toml documented this exact

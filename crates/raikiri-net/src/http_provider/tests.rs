@@ -299,3 +299,182 @@ fn fetch_reads_back_a_real_successful_response_end_to_end() {
     assert_eq!(resource.content_type.as_deref(), Some("text/plain"));
     assert_eq!(resource.final_url, url);
 }
+
+/// Like `serve_one_response`, but for a response whose body is arbitrary
+/// bytes (for example gzip data, which is not valid UTF-8). Write errors
+/// are ignored: a client that stops reading at its size cap may close the
+/// connection while the server is still writing.
+fn serve_one_raw_response(stream: std::net::TcpStream, head: &str, body: &[u8]) {
+    let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+    let mut line = String::new();
+    reader.read_line(&mut line).expect("read request line");
+    loop {
+        let mut header_line = String::new();
+        reader
+            .read_line(&mut header_line)
+            .expect("read header line");
+        if header_line == "\r\n" || header_line.is_empty() {
+            break;
+        }
+    }
+    let mut stream = stream;
+    let _ = stream.write_all(head.as_bytes());
+    let _ = stream.write_all(body);
+}
+
+/// Builds a gzip body that is small on the wire but decompresses to
+/// `members` MiB of zeros: one 1 MiB gzip member (about 1 KiB compressed)
+/// repeated `members` times. Concatenated members are a valid gzip stream
+/// (RFC 1952 §2.2) and `ureq` decodes them with a multi-member decoder.
+fn gzip_bomb(members: usize) -> Vec<u8> {
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+
+    let mut encoder = GzEncoder::new(Vec::new(), Compression::best());
+    encoder
+        .write_all(&vec![0u8; 1024 * 1024])
+        .expect("compress");
+    let member = encoder.finish().expect("finish gzip member");
+    member.repeat(members)
+}
+
+#[test]
+fn gzip_decompression_bomb_is_rejected_instead_of_materialized() {
+    // 64 MiB decompressed, roughly 64 KiB on the wire: far below ureq's
+    // default 10 MiB wire-byte limit, far above the decompressed cap.
+    let body = gzip_bomb(64);
+    assert!(
+        body.len() < 200 * 1024,
+        "fixture must stay small on the wire, got {} bytes",
+        body.len()
+    );
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+    let port = listener.local_addr().unwrap().port();
+    thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept conn");
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n\
+             Content-Encoding: gzip\r\nContent-Length: {}\r\n\
+             Connection: close\r\n\r\n",
+            body.len()
+        );
+        serve_one_raw_response(stream, &head, &body);
+    });
+
+    let agent = ureq::Agent::with_parts(
+        no_proxy_config(),
+        DefaultConnector::default(),
+        DefaultResolver::default(),
+    );
+    let provider = UreqHttpProvider::with_agent(agent);
+    let request = Request {
+        url: Url::parse(&format!("http://127.0.0.1:{port}/bomb")).unwrap(),
+        method: RaikiriMethod::Get,
+        content_type: None,
+        headers: Vec::new(),
+        body: Body::Empty,
+        signal: None,
+        kind: ResourceKind::Image,
+    };
+
+    match provider.fetch(request) {
+        Ok(resource) => panic!(
+            "a gzip body decompressing past the cap must be rejected, but \
+             fetch returned Ok with {} decompressed bytes",
+            resource.bytes.len()
+        ),
+        Err(err) => assert!(
+            matches!(
+                &err,
+                NetworkError::PolicyViolation(v)
+                    if matches!(v.violation_type, ViolationType::FetchTooLarge { .. })
+            ),
+            "expected PolicyViolation(FetchTooLarge), got {err:?}"
+        ),
+    }
+}
+
+#[test]
+fn read_body_capped_accepts_exactly_cap_bytes_and_rejects_one_more() {
+    let mut exact = ureq::Body::builder().data(vec![7u8; 16]);
+    assert_eq!(read_body_capped(&mut exact, 16).unwrap(), vec![7u8; 16]);
+
+    let mut over = ureq::Body::builder().data(vec![7u8; 17]);
+    let err = read_body_capped(&mut over, 16).expect_err("17 bytes must exceed a 16-byte cap");
+    assert!(
+        matches!(err, ureq::Error::BodyExceedsLimit(16)),
+        "expected BodyExceedsLimit(16), got {err:?}"
+    );
+}
+
+#[test]
+fn body_exceeds_limit_maps_to_fetch_too_large_policy_violation() {
+    let err = map_ureq_error(
+        &test_url(),
+        ResourceKind::Image,
+        ureq::Error::BodyExceedsLimit(1024),
+    );
+    match err {
+        NetworkError::PolicyViolation(v) => {
+            assert!(matches!(
+                v.violation_type,
+                ViolationType::FetchTooLarge {
+                    limit: 1024,
+                    actual: 1024
+                }
+            ));
+            assert_eq!(v.url, test_url());
+        }
+        other => panic!("expected PolicyViolation(FetchTooLarge), got {other:?}"),
+    }
+}
+
+#[test]
+fn timeout_maps_to_a_typed_timed_out_io_error() {
+    let err = map_ureq_error(
+        &test_url(),
+        ResourceKind::Image,
+        ureq::Error::Timeout(ureq::Timeout::Global),
+    );
+    assert!(
+        matches!(&err, NetworkError::Io(e) if e.kind() == std::io::ErrorKind::TimedOut),
+        "expected NetworkError::Io(TimedOut), got {err:?}"
+    );
+}
+
+#[test]
+fn a_small_gzip_body_is_still_decoded_end_to_end() {
+    // Guards the capped read path against silently dropping content
+    // decoding: the provider must still hand back decompressed bytes.
+    let body = gzip_bomb(1);
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+    let port = listener.local_addr().unwrap().port();
+    thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept conn");
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\n\
+             Connection: close\r\n\r\n",
+            body.len()
+        );
+        serve_one_raw_response(stream, &head, &body);
+    });
+    let agent = ureq::Agent::with_parts(
+        no_proxy_config(),
+        DefaultConnector::default(),
+        DefaultResolver::default(),
+    );
+    let provider = UreqHttpProvider::with_agent(agent);
+    let request = Request {
+        url: Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(),
+        method: RaikiriMethod::Get,
+        content_type: None,
+        headers: Vec::new(),
+        body: Body::Empty,
+        signal: None,
+        kind: ResourceKind::Image,
+    };
+    let resource = provider.fetch(request).expect("fetch must succeed");
+    assert_eq!(resource.bytes.len(), 1024 * 1024);
+    assert!(resource.bytes.iter().all(|&b| b == 0));
+}

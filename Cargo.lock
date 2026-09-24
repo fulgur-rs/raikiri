@@ -2380,6 +2380,7 @@ name = "raikiri-net"
 version = "0.1.0"
 dependencies = [
  "data-url",
+ "flate2",
  "image",
  "png",
  "raikiri-traits",
