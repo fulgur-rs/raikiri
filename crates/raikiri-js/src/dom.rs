@@ -24,19 +24,32 @@ pub type DomNodeId = u64;
 pub struct ElementGeometry {
     /// CSSOM `offsetHeight`, rounded to an integer CSS pixel by the producer.
     pub offset_height: f64,
-    /// `getBoundingClientRect().left` in CSS pixels.
-    pub left: f64,
+    /// Measured `getBoundingClientRect()` border-box geometry.
+    pub bounding_client_rect: DomRect,
 }
 
-/// Measured element geometry keyed by the element's HTML `id` attribute.
+/// One element and its measured geometry in the initial snapshot backend.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct SnapshotNode {
+    /// Parent element handle; `None` when the parent is not an exposed element.
+    pub parent: Option<DomNodeId>,
+    /// Measured geometry. Elements without a layout box use the CSSOM zero rect.
+    pub geometry: ElementGeometry,
+}
+
+/// A compact snapshot of the parsed element tree and its measured geometry.
 ///
 /// This is only a convenient input for the initial snapshot backend. A live
 /// DOM backend should implement [`DomBackend`] directly instead of building
-/// this map.
+/// this snapshot.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DomSnapshot {
-    /// Element ID to measured geometry.
-    pub elements: BTreeMap<String, ElementGeometry>,
+    /// In-document elements keyed by stable host node handle.
+    pub nodes: BTreeMap<DomNodeId, SnapshotNode>,
+    /// HTML `id` attribute to its first matching node handle.
+    pub elements_by_id: BTreeMap<String, DomNodeId>,
+    /// Handle of the document body element, when present.
+    pub body: Option<DomNodeId>,
 }
 
 /// The geometry returned by `Element.getBoundingClientRect()`.
@@ -370,13 +383,12 @@ fn backend_call<T>(
 }
 
 fn node_id(argument: Option<&JsValue>, context: &mut Context) -> JsResult<DomNodeId> {
-    let id = argument.cloned().unwrap_or_default().to_number(context)?;
-    if !id.is_finite() || id < 0.0 || id.fract() != 0.0 {
-        return Err(JsNativeError::typ()
+    let value = string_argument(argument, context)?;
+    value.parse().map_err(|_| {
+        JsNativeError::typ()
             .with_message("invalid DOM node handle")
-            .into());
-    }
-    Ok(id as DomNodeId)
+            .into()
+    })
 }
 
 fn string_argument(argument: Option<&JsValue>, context: &mut Context) -> JsResult<String> {
@@ -392,7 +404,10 @@ fn host_error(error: String) -> JsError {
 }
 
 fn optional_node_id(node: Option<DomNodeId>) -> JsValue {
-    node.map_or_else(JsValue::null, |id| JsValue::new(id as f64))
+    node.map_or_else(JsValue::null, |id| {
+        let id = id.to_string();
+        JsValue::from(js_string!(id))
+    })
 }
 
 fn host_get_element_by_id(

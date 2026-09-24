@@ -8,7 +8,11 @@ use raikiri_wpt::text_css_i18n::run_css_text_i18n;
 fn main() -> ExitCode {
     let wpt_root = match parse_args() {
         Ok(root) => root,
-        Err(message) => {
+        Err(ParseArgsError::Help) => {
+            println!("{}", usage());
+            return ExitCode::SUCCESS;
+        }
+        Err(ParseArgsError::Invalid(message)) => {
             eprintln!("{message}");
             return ExitCode::from(2);
         }
@@ -60,26 +64,33 @@ fn main() -> ExitCode {
     }
 }
 
-fn parse_args() -> Result<PathBuf, String> {
+enum ParseArgsError {
+    Help,
+    Invalid(String),
+}
+
+fn parse_args() -> Result<PathBuf, ParseArgsError> {
     let mut args = std::env::args().skip(1);
     let mut wpt_root = PathBuf::from("target/wpt");
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--wpt-root" => {
-                wpt_root = PathBuf::from(
-                    args.next()
-                        .ok_or_else(|| "--wpt-root requires a path".to_owned())?,
-                );
+                wpt_root = PathBuf::from(args.next().ok_or_else(|| {
+                    ParseArgsError::Invalid("--wpt-root requires a path".to_owned())
+                })?);
             }
-            "--help" | "-h" => {
-                return Err(usage());
+            "--help" | "-h" => return Err(ParseArgsError::Help),
+            unknown => {
+                return Err(ParseArgsError::Invalid(format!(
+                    "unknown argument: {unknown}\n{}",
+                    usage()
+                )));
             }
-            unknown => return Err(format!("unknown argument: {unknown}\n{}", usage())),
         }
     }
     Ok(wpt_root)
 }
 
-fn usage() -> String {
-    "Usage: run-css-text-i18n [--wpt-root PATH]\n\nRuns testharness-only pages under css/css-text/i18n.\nReport-only: does not modify expectations files.".to_owned()
+fn usage() -> &'static str {
+    "Usage: run-css-text-i18n [--wpt-root PATH]\n\nRuns testharness-only pages under css/css-text/i18n.\nReport-only: does not modify expectations files."
 }

@@ -74,9 +74,6 @@ impl std::error::Error for TestHarnessRunError {}
 struct LayoutSnapshotBackend<F> {
     snapshot: DomSnapshot,
     body_html: String,
-    next_node: DomNodeId,
-    id_to_node: BTreeMap<String, DomNodeId>,
-    node_to_id: BTreeMap<DomNodeId, String>,
     styles: BTreeMap<(DomNodeId, String), String>,
     layout_after_body_inner_html: F,
 }
@@ -86,41 +83,20 @@ where
     F: FnMut(&str) -> Result<DomSnapshot, String>,
 {
     fn new(snapshot: DomSnapshot, layout_after_body_inner_html: F) -> Self {
-        let mut backend = Self {
+        Self {
             snapshot,
             body_html: String::new(),
-            next_node: 1,
-            id_to_node: BTreeMap::new(),
-            node_to_id: BTreeMap::new(),
             styles: BTreeMap::new(),
             layout_after_body_inner_html,
-        };
-        backend.sync_node_ids();
-        backend
-    }
-
-    fn sync_node_ids(&mut self) {
-        for id in self.snapshot.elements.keys() {
-            if self.id_to_node.contains_key(id) {
-                continue;
-            }
-            let node = self.next_node;
-            self.next_node = self.next_node.saturating_add(1);
-            self.id_to_node.insert(id.clone(), node);
-            self.node_to_id.insert(node, id.clone());
         }
     }
 
     fn geometry(&self, node: DomNodeId) -> Result<ElementGeometry, String> {
-        let id = self
-            .node_to_id
-            .get(&node)
-            .ok_or_else(|| format!("no element for node handle {node}"))?;
         self.snapshot
-            .elements
-            .get(id)
-            .copied()
-            .ok_or_else(|| format!("no layout geometry for element #{id}"))
+            .nodes
+            .get(&node)
+            .map(|node| node.geometry)
+            .ok_or_else(|| format!("no DOM element for node handle {node}"))
     }
 }
 
@@ -129,17 +105,13 @@ where
     F: FnMut(&str) -> Result<DomSnapshot, String> + 'static,
 {
     fn get_element_by_id(&mut self, id: &str) -> Result<Option<DomNodeId>, String> {
-        if !self.snapshot.elements.contains_key(id) {
-            return Ok(None);
-        }
-        self.sync_node_ids();
-        Ok(self.id_to_node.get(id).copied())
+        Ok(self.snapshot.elements_by_id.get(id).copied())
     }
 
     fn query_selector(&mut self, selector: &str) -> Result<Option<DomNodeId>, String> {
         let selector = selector.trim();
         if selector.eq_ignore_ascii_case("body") {
-            return Ok(Some(0));
+            return Ok(self.snapshot.body);
         }
         if let Some(id) = selector.strip_prefix('#') {
             return self.get_element_by_id(id);
@@ -148,38 +120,30 @@ where
     }
 
     fn parent_node(&mut self, node: DomNodeId) -> Result<Option<DomNodeId>, String> {
-        Ok((node != 0).then_some(0))
+        self.snapshot
+            .nodes
+            .get(&node)
+            .map(|node| node.parent)
+            .ok_or_else(|| format!("no DOM element for node handle {node}"))
     }
 
     fn offset_height(&mut self, node: DomNodeId) -> Result<f64, String> {
-        if node == 0 {
-            return Ok(0.0);
-        }
         Ok(self.geometry(node)?.offset_height)
     }
 
     fn bounding_client_rect(&mut self, node: DomNodeId) -> Result<DomRect, String> {
-        if node == 0 {
-            return Ok(DomRect::default());
-        }
-        let geometry = self.geometry(node)?;
-        Ok(DomRect {
-            left: geometry.left,
-            right: geometry.left,
-            height: geometry.offset_height,
-            ..DomRect::default()
-        })
+        Ok(self.geometry(node)?.bounding_client_rect)
     }
 
     fn inner_html(&mut self, node: DomNodeId) -> Result<String, String> {
-        if node != 0 {
+        if self.snapshot.body != Some(node) {
             return Err("innerHTML is only available on body in the snapshot backend".into());
         }
         Ok(self.body_html.clone())
     }
 
     fn set_inner_html(&mut self, node: DomNodeId, value: &str) -> Result<(), String> {
-        if node != 0 {
+        if self.snapshot.body != Some(node) {
             return Err(
                 "innerHTML mutation is only available on body in the snapshot backend".into(),
             );
@@ -187,7 +151,6 @@ where
         let snapshot = (self.layout_after_body_inner_html)(value)?;
         self.snapshot = snapshot;
         self.body_html = value.to_owned();
-        self.sync_node_ids();
         Ok(())
     }
 
@@ -486,6 +449,87 @@ mod tests {
     fn missing_body_start_or_end_is_an_error() {
         assert!(replace_body_inner_html("<html></html>", "x").is_err());
         assert!(replace_body_inner_html("<body>x", "y").is_err());
+    }
+
+    fn write_test_page(wpt_root: &Path, name: &str, html: &str) {
+        let test_dir = wpt_root.join(TEST_DIR);
+        fs::create_dir_all(&test_dir).unwrap();
+        fs::write(test_dir.join(name), html).unwrap();
+    }
+
+    #[test]
+    fn layout_snapshot_preserves_hidden_nodes_body_geometry_and_parent_links() {
+        let wpt_root = tempfile::tempdir().unwrap();
+        write_test_page(
+            wpt_root.path(),
+            "hidden.html",
+            r#"<!doctype html><html><head>
+                <style>#hidden { display: none }</style>
+                <script src="/resources/testharness.js"></script>
+            </head><body><div id="hidden">hidden</div><script>
+                test(function() {
+                    var hidden = document.getElementById('hidden');
+                    assert_true(hidden !== null, 'hidden element remains in the DOM');
+                    assert_approx_equals(hidden.offsetHeight, 0, 0);
+                    var rect = hidden.getBoundingClientRect();
+                    assert_approx_equals(rect.left, 0, 0);
+                    assert_approx_equals(rect.top, 0, 0);
+                    assert_approx_equals(rect.right, 0, 0);
+                    assert_approx_equals(rect.bottom, 0, 0);
+                    assert_approx_equals(rect.width, 0, 0);
+                    assert_approx_equals(rect.height, 0, 0);
+                    assert_true(document.body.getBoundingClientRect().width > 0,
+                        'body geometry comes from layout');
+                }, 'hidden geometry');
+            </script></body></html>"#,
+        );
+        write_test_page(
+            wpt_root.path(),
+            "parent.html",
+            r#"<!doctype html><html><head>
+                <script src="/resources/testharness.js"></script>
+            </head><body><script>
+                document.body.innerHTML = '<div id="wrapper"><span id="target">text</span></div>';
+                setup({explicit_done: true});
+                document.fonts.ready.then(function() {
+                    test(function() {
+                        document.getElementById('target').parentNode.style.display = 'none';
+                        assert_true(document.getElementById('wrapper').style.display === 'none',
+                            'parentNode refers to the real parent element');
+                    }, 'parent style');
+                    done();
+                });
+            </script></body></html>"#,
+        );
+
+        let results = run_css_text_i18n(wpt_root.path()).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|result| result.error.is_none()));
+        assert!(results.iter().all(TestHarnessFileResult::all_passed));
+        assert_eq!(results[0].total(), 1);
+        assert_eq!(results[1].total(), 1);
+    }
+
+    #[test]
+    fn missing_and_empty_test_roots_report_distinct_errors() {
+        let wpt_root = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            run_css_text_i18n(&wpt_root.path().join("missing")),
+            Err(TestHarnessRunError::Io(_))
+        ));
+        fs::create_dir_all(wpt_root.path().join(TEST_DIR)).unwrap();
+        assert!(matches!(
+            run_css_text_i18n(wpt_root.path()),
+            Err(TestHarnessRunError::NoTests)
+        ));
+    }
+
+    #[test]
+    fn unreadable_test_file_is_reported_as_an_execution_error() {
+        let wpt_root = tempfile::tempdir().unwrap();
+        let result = run_testharness_file(&wpt_root.path().join("missing.html"), wpt_root.path());
+        assert!(result.outcomes.is_empty());
+        assert!(result.error.unwrap().starts_with("read test HTML:"));
     }
 
     #[test]

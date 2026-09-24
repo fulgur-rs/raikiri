@@ -86,12 +86,17 @@ function assert_approx_equals(actual, expected, epsilon, message) {
             ": expected " + expected + " ± " + epsilon + ", got " + actual);
     }
 }
-function __raikiri_run_font_callbacks() {
-    while (__raikiri_font_callbacks.length > 0) {
+function __raikiri_run_font_callbacks(limit) {
+    var invoked = 0;
+    while (__raikiri_font_callbacks.length > 0 && invoked < limit) {
+        invoked += 1;
         __raikiri_font_callbacks.shift()();
     }
 }
 "#;
+
+const FONT_CALLBACKS_PER_TURN: usize = 64;
+const MAX_FONT_CALLBACK_TURNS: usize = 16;
 
 /// Run an unmodified inline WPT script using the supplied DOM implementation
 /// and a small testharness API shim.
@@ -112,12 +117,14 @@ where
         .map_err(map_script_error)?;
     runtime.evaluate(inline_script).map_err(map_script_error)?;
 
-    for _ in 0..16 {
+    for _ in 0..MAX_FONT_CALLBACK_TURNS {
         if has_pending_font_callbacks(runtime.context_mut())
             .map_err(|error| TestHarnessError::JavaScript(error.to_string()))?
         {
             runtime
-                .evaluate("__raikiri_run_font_callbacks()")
+                .evaluate(&format!(
+                    "__raikiri_run_font_callbacks({FONT_CALLBACKS_PER_TURN})"
+                ))
                 .map_err(map_script_error)?;
         }
 
@@ -212,6 +219,26 @@ mod tests {
         }
     }
 
+    fn test_geometry(
+        offset_height: f64,
+        left: f64,
+        top: f64,
+        width: f64,
+        height: f64,
+    ) -> ElementGeometry {
+        ElementGeometry {
+            offset_height,
+            bounding_client_rect: DomRect {
+                left,
+                top,
+                right: left + width,
+                bottom: top + height,
+                width,
+                height,
+            },
+        }
+    }
+
     impl DomBackend for TestDom {
         fn get_element_by_id(&mut self, id: &str) -> Result<Option<DomNodeId>, String> {
             Ok(self.by_id.get(id).map(|(node, _)| *node))
@@ -241,12 +268,7 @@ mod tests {
             let geometry = self
                 .geometry(node)
                 .ok_or_else(|| format!("no layout for node {node}"))?;
-            Ok(DomRect {
-                left: geometry.left,
-                right: geometry.left,
-                height: geometry.offset_height,
-                ..DomRect::default()
-            })
+            Ok(geometry.bounding_client_rect)
         }
 
         fn inner_html(&mut self, _node: DomNodeId) -> Result<String, String> {
@@ -289,16 +311,14 @@ mod tests {
 
     #[test]
     fn raw_script_uses_the_dom_facade_without_testharness_globals() {
+        let large_node_id = (1_u64 << 53) + 1;
         let backend = TestDom::default().with_element(
             "line",
-            1,
-            ElementGeometry {
-                offset_height: 60.0,
-                left: 12.0,
-            },
+            large_node_id,
+            test_geometry(60.0, 12.0, 4.0, 50.0, 60.0),
         );
         crate::dom::run_script(
-            "if (document.body === null || document.getElementById('line').offsetHeight !== 60) throw new Error('DOM binding failed');",
+            "var line = document.getElementById('line'); var rect = line.getBoundingClientRect(); if (document.body === null || line !== document.getElementById('line') || line.offsetHeight !== 60 || rect.left !== 12 || rect.top !== 4 || rect.right !== 62 || rect.bottom !== 64 || rect.width !== 50 || rect.height !== 60) throw new Error('DOM binding lost identity or geometry'); line.style.display = 'none'; if (line.style.display !== 'none') throw new Error('style mutation did not round-trip');",
             backend,
         )
         .unwrap();
@@ -306,14 +326,8 @@ mod tests {
 
     #[test]
     fn runs_assertions_against_the_dom_backend() {
-        let backend = TestDom::default().with_element(
-            "line",
-            1,
-            ElementGeometry {
-                offset_height: 60.0,
-                left: 12.0,
-            },
-        );
+        let backend =
+            TestDom::default().with_element("line", 1, test_geometry(60.0, 12.0, 0.0, 20.0, 60.0));
         let outcomes = run_testharness_script(
             "test(function() { assert_true(document.getElementById('line').offsetHeight > 35); }, 'height');",
             backend,
@@ -321,6 +335,18 @@ mod tests {
         .unwrap();
         assert_eq!(outcomes.len(), 1);
         assert!(outcomes[0].passed, "{:?}", outcomes[0]);
+    }
+
+    #[test]
+    fn empty_script_is_reported_as_no_tests() {
+        let result = run_testharness_script("", TestDom::default());
+        assert!(matches!(result, Err(TestHarnessError::NoTests)));
+    }
+
+    #[test]
+    fn uncaught_javascript_errors_are_not_assertion_failures() {
+        let result = run_testharness_script("throw new Error('uncaught');", TestDom::default());
+        assert!(matches!(result, Err(TestHarnessError::JavaScript(_))));
     }
 
     #[test]
@@ -337,14 +363,8 @@ mod tests {
 
     #[test]
     fn inner_html_mutation_is_visible_to_deferred_font_callback() {
-        let backend = TestDom::default().with_element(
-            "span",
-            2,
-            ElementGeometry {
-                offset_height: 30.0,
-                left: 42.0,
-            },
-        );
+        let backend =
+            TestDom::default().with_element("span", 2, test_geometry(30.0, 42.0, 0.0, 20.0, 30.0));
         let result = run_testharness_script(
             r#"
                 document.querySelector('body').innerHTML = '<span id="span">text</span>';
@@ -367,14 +387,7 @@ mod tests {
     #[test]
     fn backend_failures_are_reported_as_dom_errors() {
         let backend = TestDom::default()
-            .with_element(
-                "broken",
-                3,
-                ElementGeometry {
-                    offset_height: 0.0,
-                    left: 0.0,
-                },
-            )
+            .with_element("broken", 3, test_geometry(0.0, 0.0, 0.0, 0.0, 0.0))
             .with_failing_geometry();
         // The test harness catches the JS exception. The adapter still reports
         // the underlying failed geometry lookup as a DOM error, not an assertion.
@@ -383,5 +396,14 @@ mod tests {
             backend,
         );
         assert!(matches!(result, Err(TestHarnessError::Dom(_))));
+    }
+
+    #[test]
+    fn callbacks_that_requeue_themselves_hit_the_event_loop_limit() {
+        let result = run_testharness_script(
+            "document.fonts.ready.then(function repeat() { document.fonts.ready.then(repeat); }); test(function() { assert_true(true); }, 'initial');",
+            TestDom::default(),
+        );
+        assert!(matches!(result, Err(TestHarnessError::EventLoopLimit)));
     }
 }
