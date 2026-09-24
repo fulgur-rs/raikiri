@@ -8,6 +8,8 @@
 //! `description`).
 
 mod file_provider;
+#[cfg(feature = "http-ureq")]
+mod http_resolver;
 mod image_decoder; // cov:ignore: module declaration has no executable line
 mod image_resolver;
 mod resource_loader; // cov:ignore: module declaration has no executable line

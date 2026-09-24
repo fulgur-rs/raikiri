@@ -11,10 +11,17 @@ data-url       = { workspace = true }
 image          = { workspace = true }
 raikiri-traits = { workspace = true }
 url            = { workspace = true }
+ureq           = { workspace = true, optional = true }
 
 [dev-dependencies]
 png      = { workspace = true }
 tempfile = { workspace = true }
+
+[features]
+# Off by default: `FileNetworkProvider`-only consumers (tests, examples)
+# must not gain the `ureq`/`rustls`/`ring` dependency chain. See root
+# Cargo.toml's `ureq` entry for the Pure-Rust/WASM rationale.
+http-ureq = ["dep:ureq"]
 
 [lints]
 workspace = true
