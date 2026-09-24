@@ -139,3 +139,38 @@ fn blocks_the_local_use_nat64_prefix_outright_without_unwrapping() {
 fn allows_ordinary_public_v6_addresses() {
     assert!(is_globally_routable(v6("2606:4700:4700::1111")));
 }
+
+/// Pins the `url` crate's WHATWG host parsing of non-canonical IPv4 host
+/// literals (decimal, hex, octal, shorthand) to canonical dotted-quad form.
+/// This crate's IP floor classifies real resolved `SocketAddr`s and does not
+/// depend on this normalization itself, but hostname-string checks layered
+/// above it (`raikiri_traits::ResourcePolicy::is_host_allowed` receives
+/// `Url::host_str()`) do: if a future `url` release stopped normalizing
+/// these forms, a string-based deny rule for `127.0.0.1` could be bypassed
+/// with `http://2130706433/`. This test makes such a change fail CI instead
+/// of passing silently.
+#[test]
+fn url_crate_normalizes_alternate_ipv4_host_literals_to_dotted_form() {
+    for input in [
+        "http://2130706433/",   // decimal
+        "http://0x7f000001/",   // hex
+        "http://017700000001/", // octal
+        "http://127.1/",        // shorthand
+        "http://0x7f.0.0.1/",   // per-part hex
+        "http://0177.0.0.1/",   // per-part octal
+    ] {
+        let url = url::Url::parse(input).unwrap();
+        assert_eq!(
+            url.host_str(),
+            Some("127.0.0.1"),
+            "{input} must normalize to the canonical dotted-quad host"
+        );
+        assert!(
+            matches!(url.host(), Some(url::Host::Ipv4(ip)) if ip == Ipv4Addr::LOCALHOST),
+            "{input} must parse as an IPv4 host, not a domain"
+        );
+    }
+    // An already-canonical address must be left exactly as written.
+    let metadata = url::Url::parse("http://169.254.169.254/").unwrap();
+    assert_eq!(metadata.host_str(), Some("169.254.169.254"));
+}
