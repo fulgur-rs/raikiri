@@ -369,6 +369,52 @@ sprint/coord/7 = global Sprint 38)。
 本節はそれとは別に、gate 由来かどうかに関わらず **あらゆる scratch worktree に
 適用される repo 全体の規約**。
 
+## unit test は `tests.rs` に分離する
+
+**新規に書く `#[cfg(test)]` unit test は、対象ファイルへの inline `mod tests { ... }`
+ではなく、同名の `tests.rs` (同階層に `<parent>/tests.rs`、または `mod.rs` 構成なら
+同ディレクトリの `tests.rs`) に分離すること。** private item へのアクセスは
+`tests.rs` 冒頭の `use super::*;` で維持される。1 ファイルに複数の独立した
+test group がある場合は `crates/raikiri-style/src/property/tests.rs` +
+`property/tests/*.rs`、`crates/raikiri-dom/src/document/tests.rs` +
+`document/tests/*.rs` の形 (hub file が `mod <group>_tests;` を並べ、各 group を
+`tests/<group>_tests.rs` に置く) に倣う。
+
+### なぜ
+
+`assert_eq!(a, b, "msg")` の message 部分は assertion 失敗時のみ評価される。
+成功する test では実行されないため、coverage 計測 (line-level region) では
+必ず未カバーとして表示される。inline `mod tests` は対象ファイルと同一ファイルなので、
+この「テストコードの構造上カバーできない行」が本体コードの coverage 表示に
+混入する (Codecov 上、本体のロジック行と見分けがつかない赤として出る)。
+
+`tests.rs` / `*_tests.rs` / `*-tests.rs` というファイル名は cargo-llvm-cov の
+**default `--ignore-filename-regex`** (`tests\.rs` / `[...]_tests\.rs` /
+`[...]-tests\.rs`、`scripts/lib/patch_coverage.py` の `LLVM_COV_IGNORED_FILENAME_RE`
+参照) に一致し、無設定で coverage report から除外される。つまり分離するだけで
+CI / Codecov 側の設定変更は不要。ローカル gate の patch coverage
+(`scripts/patch-coverage.sh`) も同じパターンを structurally-unreported として
+扱っており、両者は整合している。
+
+先例: rustc 自身が tidy の `unit_tests` check でこの分離を強制している
+(`{coretests,alloctests}`/`tests.rs`/`benches.rs`/`tests/`/`benches/` 以外での
+`#[test]`/`#[bench]` 直書きを禁止)。本 repo でも `raikiri-style` が既にこの形。
+
+### 適用範囲 (段階移行、一括強制ではない)
+
+既存の inline test を全ファイル一括で移行する義務はない。触ったファイルの
+inline test は分離する、新規ファイルは最初から `tests.rs` で書く、という
+段階移行 (bd raikiri-spike-fqhs)。一括移行は並行 worktree の diff 衝突を招くため
+意図的に避けている。
+
+### orphan tests.rs の検出
+
+`tests.rs` は **親ファイルに `mod tests;` 宣言が無いと、rustc が warning も error も
+出さずに黙って一切コンパイルしない** (module tree 外のファイルは存在しないのと
+同じ扱い)。分離の際は `scripts/orphan-tests-lint.sh` (gate §8.1(b) と CI の両方に
+組み込み済み) で宣言漏れが無いことを確認すること。検出ロジックは
+`scripts/lib/orphan_tests_check.py` 参照。
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:970c3bf2 -->
 ## Beads Issue Tracker
 

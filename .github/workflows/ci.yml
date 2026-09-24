@@ -101,6 +101,11 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
 
+      - name: Orphan tests.rs lint
+        # scripts/gate.sh §8.1(b) と同一コマンド。Rust toolchain 不要な純粋な
+        # python3 static check だが、他の cheap lint と同じ job に置く。
+        run: scripts/orphan-tests-lint.sh
+
       - name: Test (workspace, locked)
         # lib + integration + doctest + bin unittests を全カバー。yps landing 済の
         # validate_expectations_bin.rs (assert_cmd 経由の bin end-to-end) と全 crate
