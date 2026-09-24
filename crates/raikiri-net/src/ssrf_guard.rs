@@ -11,7 +11,8 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 /// Returns `true` only if `ip` is safe to connect to when fetching a
-/// Consumer-supplied resource URL: not private, loopback, link-local, CGNAT,
+/// Consumer-supplied resource URL: not "this network" (0.0.0.0/8), private,
+/// loopback, link-local, CGNAT,
 /// documentation, benchmarking, reserved, multicast, broadcast, or an
 /// IPv4-mapped / NAT64-embedded address whose embedded IPv4 address itself
 /// fails this same check.
@@ -27,7 +28,8 @@ pub fn is_globally_routable(ip: IpAddr) -> bool {
 }
 
 fn is_v4_globally_routable(ip: Ipv4Addr) -> bool {
-    !(ip.is_private()
+    !(is_this_network(ip)
+        || ip.is_private()
         || ip.is_loopback()
         || ip.is_link_local()
         || ip.is_multicast()
@@ -38,6 +40,15 @@ fn is_v4_globally_routable(ip: Ipv4Addr) -> bool {
         || is_6to4_relay_anycast(ip)
         || is_benchmarking(ip)
         || is_reserved(ip))
+}
+
+/// 0.0.0.0/8 (RFC 1122 §3.2.1.3 / RFC 6890, "this network"). Not a valid
+/// destination, but on Linux a connect to any address in this range reaches
+/// sockets listening on the local host, so it is a loopback bypass unless
+/// blocked. `Ipv4Addr::is_unspecified` only matches the single address
+/// 0.0.0.0, not the whole /8, so the range is checked here explicitly.
+fn is_this_network(ip: Ipv4Addr) -> bool {
+    ip.octets()[0] == 0
 }
 
 /// 100.64.0.0/10 (RFC 6598, "Shared Address Space" / CGNAT). Not covered by
@@ -136,6 +147,21 @@ mod tests {
     fn blocks_loopback() {
         assert!(!is_globally_routable(v4("127.0.0.1")));
         assert!(!is_globally_routable(v6("::1")));
+    }
+
+    #[test]
+    fn blocks_this_network_range_which_reaches_localhost_on_linux() {
+        // 0.0.0.0/8: a connect to any of these reaches 127.0.0.1-bound
+        // services on Linux, so the whole /8 must be blocked, not just
+        // the single unspecified address.
+        assert!(!is_globally_routable(v4("0.0.0.0")));
+        assert!(!is_globally_routable(v4("0.1.2.3")));
+        assert!(!is_globally_routable(v4("0.255.255.255")));
+        // Same range reached through the IPv4-mapped and NAT64 unwrap paths.
+        assert!(!is_globally_routable(v6("::ffff:0.0.0.0")));
+        assert!(!is_globally_routable(v6("64:ff9b::")));
+        // Just outside the range.
+        assert!(is_globally_routable(v4("1.0.0.0")));
     }
 
     #[test]
