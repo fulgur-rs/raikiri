@@ -1112,6 +1112,49 @@ mod tests {
     }
 
     #[test]
+    fn later_siblings_counter_reset_evicts_an_earlier_siblings_implicitly_instantiated_frame() {
+        // CSS Lists 3 §4.3's "obscuring" rule doesn't care HOW the earlier
+        // sibling's frame came into being — module doc "Counter-scope exit"
+        // is explicit that the parent's bucket records a name "opened by an
+        // earlier sibling's `CounterReset`, OR by an earlier sibling's
+        // `CounterIncrement`/`CounterSet` implicit instantiation (both
+        // record into this same bucket)". The sibling eviction test above
+        // only exercises reset-vs-reset; this one gives the earlier sibling
+        // a bare `counter-increment` (no `counter-reset` for the name, so
+        // CSS Lists 3 §4.4.2's implicit-instantiation clause creates its
+        // frame) to confirm a later sibling's own `counter-reset` evicts
+        // that implicitly-created frame exactly the same way.
+        let mut doc = Document::new();
+        doc.append_element(
+            Some(0),
+            "section",
+            Style::default(),
+            Some("counter-increment: c 5"),
+        );
+        doc.append_element(
+            Some(0),
+            "section",
+            Style::default(),
+            Some("counter-reset: c 1; string-set: probe counters(c, \".\")"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+        let mut ctx = PageContext::default();
+        drive_document(&mut ctx, &doc, &cr);
+
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        assert_eq!(
+            ctx.string_state(&Symbol::new("probe"))
+                .and_then(|s| s.running()),
+            Some("1"),
+            "the later sibling's counters() reading must see only its own reset frame"
+        );
+    }
+
+    #[test]
     fn root_level_counter_reset_is_never_erroneously_popped_mid_walk() {
         // A counter-reset applied by the walk's own `root` argument (rather
         // than by a descendant reached from it) has no enclosing
