@@ -566,21 +566,12 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         let line_height = run.metrics().line_height;
                         let max_height_exceeded = self.state.line.max_height_exceeded;
                         let style = &self.layout.data.styles[cluster.data.style_index as usize];
-
                         // Lag text_wrap_mode style by one cluster
                         let text_wrap_mode = self.state.line.text_wrap_mode;
                         self.state.line.text_wrap_mode = style.text_wrap_mode;
 
-                        if boundary == Boundary::Line && text_wrap_mode == TextWrapMode::Wrap {
-                            // We do not currently handle breaking within a ligature, so we ignore boundaries in such a position.
-                            //
-                            // We also don't record boundaries when the advance is 0. As we do not want overflowing content to cause extra consecutive
-                            // line breaks. We should accept the overflowing fragment in that scenario.
-                            if !is_ligature_continuation && self.state.line.x != 0.0 {
-                                self.state.mark_line_break_opportunity();
-                                // break_opportunity = true;
-                            }
-                        } else if is_newline {
+                        // Mandatory breaks must win over a soft boundary before the newline.
+                        if is_newline {
                             if max_height_exceeded {
                                 return self.max_height_break_data(line_height);
                             }
@@ -591,6 +582,15 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                 max_advance,
                                 line_indent,
                             );
+                        } else if boundary == Boundary::Line && text_wrap_mode == TextWrapMode::Wrap {
+                            // We do not currently handle breaking within a ligature, so we ignore boundaries in such a position.
+                            //
+                            // We also don't record boundaries when the advance is 0. As we do not want overflowing content to cause extra consecutive
+                            // line breaks. We should accept the overflowing fragment in that scenario.
+                            if !is_ligature_continuation && self.state.line.x != 0.0 {
+                                self.state.mark_line_break_opportunity();
+                                // break_opportunity = true;
+                            }
                         } else if
                         // This text can contribute "emergency" line breaks.
                         style.overflow_wrap != OverflowWrap::Normal && !is_ligature_continuation
@@ -638,10 +638,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         // in the line. If there is no such line-breaking opportunity (such as if wrapping is disabled), then
                         // we fall back to appending the content to the line anyway.
                         else {
-                            // A CSS `line-break:anywhere` boundary before a space must
-                            // outrank hanging that space. Keep the normal priority for all
-                            // other line-breaking modes.
-                            if style.line_break_anywhere {
+                            // Under `line-break:anywhere`, a boundary before
+                            // `break-spaces` whitespace or NBSP must outrank the normal
+                            // hanging path. Regular pre-wrap U+0020 spaces stay attached
+                            // to the preceding line.
+                            if style.line_break_anywhere
+                                && (style.break_spaces || whitespace == Whitespace::NoBreakSpace)
+                            {
                                 if let Some(prev) = self.state.prev_boundary.take() {
                                     self.state.reset_to(prev);
                                     return self.start_new_line(
@@ -659,6 +662,20 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                     return self.max_height_break_data(line_height);
                                 }
                                 self.state.append_cluster_to_line(next_x, line_height);
+                                if style.hang_spaces && whitespace == Whitespace::Space {
+                                    let mut hanging_next_x = next_x;
+                                    while self.state.cluster_idx < cluster_end {
+                                        let next_cluster = run
+                                            .get(self.state.cluster_idx - cluster_start)
+                                            .unwrap();
+                                        if next_cluster.info().whitespace() != Whitespace::Space {
+                                            break;
+                                        }
+                                        hanging_next_x += next_cluster.advance();
+                                        self.state
+                                            .append_cluster_to_line(hanging_next_x, line_height);
+                                    }
+                                }
                                 return self.start_new_line(
                                     BreakReason::Regular,
                                     max_advance,

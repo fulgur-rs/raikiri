@@ -106,6 +106,8 @@ impl<B: Brush> LayoutContext<B> {
             fcx,
             line_break_override: None,
             line_break_anywhere: false,
+            break_spaces: false,
+            hang_spaces: false,
         }
     }
 

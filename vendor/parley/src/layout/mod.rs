@@ -64,6 +64,10 @@ pub struct Style<B: Brush> {
     pub(crate) text_wrap_mode: TextWrapMode,
     /// Whether CSS `line-break: anywhere` is active for the cluster.
     pub(crate) line_break_anywhere: bool,
+    /// Whether CSS `white-space: break-spaces` is active for the cluster.
+    pub(crate) break_spaces: bool,
+    /// Whether preserved spaces at the end of a line hang (`white-space: pre-wrap`).
+    pub(crate) hang_spaces: bool,
     #[cfg(feature = "accesskit")]
     /// Locale if any, so we can set the corresponding AccessKit property
     pub(crate) locale: Option<fontique::Language>,

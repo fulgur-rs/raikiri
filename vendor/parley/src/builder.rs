@@ -26,6 +26,8 @@ pub struct RangedBuilder<'a, B: Brush> {
     pub(crate) fcx: &'a mut FontContext,
     pub(crate) line_break_override: Option<&'a LineBreakOverrideFn>,
     pub(crate) line_break_anywhere: bool,
+    pub(crate) break_spaces: bool,
+    pub(crate) hang_spaces: bool,
 }
 
 impl<'b, B: Brush> RangedBuilder<'b, B> {
@@ -65,6 +67,16 @@ impl<'b, B: Brush> RangedBuilder<'b, B> {
         self.line_break_anywhere = enabled;
     }
 
+    /// Mark this layout as using CSS `white-space: break-spaces`.
+    pub fn set_break_spaces(&mut self, enabled: bool) {
+        self.break_spaces = enabled;
+    }
+
+    /// Mark this layout as hanging preserved end-of-line spaces (`pre-wrap`).
+    pub fn set_hang_spaces(&mut self, enabled: bool) {
+        self.hang_spaces = enabled;
+    }
+
     pub fn build_into(self, layout: &mut Layout<B>, text: impl AsRef<str>) {
         // Apply RangedStyleBuilder styles directly to style-table/style-run state.
         self.lcx
@@ -81,6 +93,8 @@ impl<'b, B: Brush> RangedBuilder<'b, B> {
             self.fcx,
             self.line_break_override,
             self.line_break_anywhere,
+            self.break_spaces,
+            self.hang_spaces,
         );
     }
 
@@ -181,6 +195,8 @@ impl<'b, B: Brush> StyleRunBuilder<'b, B> {
             self.fcx,
             self.line_break_override,
             false,
+            false,
+            false,
         );
     }
 
@@ -277,6 +293,8 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
             self.fcx,
             self.line_break_override,
             false,
+            false,
+            false,
         );
 
         text
@@ -299,6 +317,8 @@ fn build_into_layout<B: Brush>(
     fcx: &mut FontContext,
     line_break_override: Option<&LineBreakOverrideFn>,
     line_break_anywhere: bool,
+    break_spaces: bool,
+    hang_spaces: bool,
 ) {
     if text.is_empty() && lcx.style_runs.is_empty() {
         lcx.style_table.push(ResolvedStyle::default());
@@ -333,10 +353,10 @@ fn build_into_layout<B: Brush>(
         .data
         .styles
         .extend(lcx.style_table.iter().map(|s| s.as_layout_style()));
-    if line_break_anywhere {
-        for style in &mut layout.data.styles {
-            style.line_break_anywhere = true;
-        }
+    for style in &mut layout.data.styles {
+        style.line_break_anywhere = line_break_anywhere;
+        style.break_spaces = break_spaces;
+        style.hang_spaces = hang_spaces;
     }
 
     // Sort the inline boxes as subsequent code assumes that they are in text index order.
