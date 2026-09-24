@@ -638,27 +638,39 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                         // in the line. If there is no such line-breaking opportunity (such as if wrapping is disabled), then
                         // we fall back to appending the content to the line anyway.
                         else {
-                            // A previously marked regular opportunity takes priority over
-                            // hanging an overflowing space. CSS `line-break:anywhere` can
-                            // create a break immediately before whitespace, including GL
-                            // spaces; that explicit opportunity must not be skipped.
-                            if let Some(prev) = self.state.prev_boundary.take() {
-                                self.state.reset_to(prev);
+                            // A CSS `line-break:anywhere` boundary before a space must
+                            // outrank hanging that space. Keep the normal priority for all
+                            // other line-breaking modes.
+                            if style.line_break_anywhere {
+                                if let Some(prev) = self.state.prev_boundary.take() {
+                                    self.state.reset_to(prev);
+                                    return self.start_new_line(
+                                        BreakReason::Regular,
+                                        max_advance,
+                                        line_indent,
+                                    );
+                                }
+                            }
+                            // Case: cluster is a space character (and wrapping is enabled)
+                            //
+                            // We hang any overflowing whitespace and then line-break.
+                            if is_space && text_wrap_mode == TextWrapMode::Wrap {
+                                if max_height_exceeded {
+                                    return self.max_height_break_data(line_height);
+                                }
+                                self.state.append_cluster_to_line(next_x, line_height);
                                 return self.start_new_line(
                                     BreakReason::Regular,
                                     max_advance,
                                     line_indent,
                                 );
                             }
-                            // Case: cluster is a space character (and wrapping is enabled)
+                            // Case: we have previously encountered a REGULAR line-breaking opportunity in the current line
                             //
-                            // With no earlier regular opportunity, hang overflowing
-                            // whitespace and then line-break as before.
-                            else if is_space && text_wrap_mode == TextWrapMode::Wrap {
-                                if max_height_exceeded {
-                                    return self.max_height_break_data(line_height);
-                                }
-                                self.state.append_cluster_to_line(next_x, line_height);
+                            // We "take" the line-breaking opportunity by starting a new line and resetting our
+                            // item/run/cluster iteration state back to how it was when the line-breaking opportunity was encountered
+                            else if let Some(prev) = self.state.prev_boundary.take() {
+                                self.state.reset_to(prev);
                                 return self.start_new_line(
                                     BreakReason::Regular,
                                     max_advance,

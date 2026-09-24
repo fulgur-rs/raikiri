@@ -25,6 +25,7 @@ pub struct RangedBuilder<'a, B: Brush> {
     pub(crate) lcx: &'a mut LayoutContext<B>,
     pub(crate) fcx: &'a mut FontContext,
     pub(crate) line_break_override: Option<&'a LineBreakOverrideFn>,
+    pub(crate) line_break_anywhere: bool,
 }
 
 impl<'b, B: Brush> RangedBuilder<'b, B> {
@@ -59,6 +60,11 @@ impl<'b, B: Brush> RangedBuilder<'b, B> {
         self.line_break_override = overrides;
     }
 
+    /// Mark this layout as using CSS `line-break: anywhere`.
+    pub fn set_line_break_anywhere(&mut self, enabled: bool) {
+        self.line_break_anywhere = enabled;
+    }
+
     pub fn build_into(self, layout: &mut Layout<B>, text: impl AsRef<str>) {
         // Apply RangedStyleBuilder styles directly to style-table/style-run state.
         self.lcx
@@ -74,6 +80,7 @@ impl<'b, B: Brush> RangedBuilder<'b, B> {
             self.lcx,
             self.fcx,
             self.line_break_override,
+            self.line_break_anywhere,
         );
     }
 
@@ -173,6 +180,7 @@ impl<'b, B: Brush> StyleRunBuilder<'b, B> {
             self.lcx,
             self.fcx,
             self.line_break_override,
+            false,
         );
     }
 
@@ -268,6 +276,7 @@ impl<'b, B: Brush> TreeBuilder<'b, B> {
             self.lcx,
             self.fcx,
             self.line_break_override,
+            false,
         );
 
         text
@@ -289,6 +298,7 @@ fn build_into_layout<B: Brush>(
     lcx: &mut LayoutContext<B>,
     fcx: &mut FontContext,
     line_break_override: Option<&LineBreakOverrideFn>,
+    line_break_anywhere: bool,
 ) {
     if text.is_empty() && lcx.style_runs.is_empty() {
         lcx.style_table.push(ResolvedStyle::default());
@@ -323,6 +333,11 @@ fn build_into_layout<B: Brush>(
         .data
         .styles
         .extend(lcx.style_table.iter().map(|s| s.as_layout_style()));
+    if line_break_anywhere {
+        for style in &mut layout.data.styles {
+            style.line_break_anywhere = true;
+        }
+    }
 
     // Sort the inline boxes as subsequent code assumes that they are in text index order.
     // Note: It's important that this is a stable sort to allow users to control the order of contiguous inline boxes

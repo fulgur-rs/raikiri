@@ -5273,6 +5273,7 @@ pub(crate) fn preshape_text(
             let quantize_metrics = !job.simple_pre_block && !job.simple_preserved_run;
             let mut builder = layout_cx.ranged_builder(fonts, &job.text, 1.0, quantize_metrics);
             builder.set_line_break_override(parley_line_break_override(job.line_break));
+            builder.set_line_break_anywhere(matches!(job.line_break, LineBreak::Anywhere));
             builder.push_default(StyleProperty::FontFamily(font_family));
             builder.push_default(StyleProperty::FontSize(font_size_px));
             builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
@@ -5365,6 +5366,7 @@ pub(crate) fn preshape_text(
                 let mut builder =
                     lcx.ranged_builder(&mut fonts_thread, &job.text, 1.0, quantize_metrics);
                 builder.set_line_break_override(parley_line_break_override(job.line_break));
+                builder.set_line_break_anywhere(matches!(job.line_break, LineBreak::Anywhere));
                 builder.push_default(StyleProperty::FontFamily(font_family));
                 builder.push_default(StyleProperty::FontSize(font_size_px));
                 builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));

@@ -496,6 +496,7 @@ impl<B: Brush> ResolvedStyle<B> {
             line_height: self.line_height,
             overflow_wrap: self.overflow_wrap,
             text_wrap_mode: self.text_wrap_mode,
+            line_break_anywhere: false,
             #[cfg(feature = "accesskit")]
             locale: self.locale,
         }
