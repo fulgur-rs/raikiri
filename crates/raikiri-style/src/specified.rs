@@ -300,9 +300,10 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::vertical_align`] と同じ** [`VerticalAlign`] だが、
     /// 層は field 一律ではない — `baseline`/`sub`/`super`/`middle`/
     /// `text-top`/`text-bottom` の 6 keyword は computed-equivalent (length
-    /// を運ばない) な一方、[`VerticalAlign::Length`] は specified 層のまま
-    /// (`em`/`rem` 等を保持、絶対化は [`Self::absolutize_with`] の
-    /// [`crate::resolve::resolve_vertical_align`] 呼び出しに委ねる) — 型を
+    /// を運ばない) な一方、[`VerticalAlign::Length`] / [`VerticalAlign::Calc`]
+    /// は specified 層のまま (`em`/`rem` 等または mixed px/% を保持、絶対化は
+    /// [`Self::absolutize_with`] の [`crate::resolve::resolve_vertical_align`]
+    /// 呼び出しに委ねる) — 型を
     /// 分けない理由は同関数 doc 参照。
     pub vertical_align: VerticalAlign,
     /// [`ComputedValues::font_style`] の staging。層は computed-equivalent
@@ -1664,11 +1665,11 @@ impl SpecifiedValues {
                 ctx,
             ),
             // 6 keyword (`baseline`/`sub`/`super`/`middle`/`text-top`/
-            // `text-bottom`) は computed value = specified keyword、
-            // `VerticalAlign::Length` (`<length>` / `<percentage>`) だけ own
-            // node の `font_size` / `own_line_height` 基準で絶対化する
-            // (`resolve_vertical_align` doc 参照 — `<percentage>` は
-            // `line-height: normal` 時 `0px` fallback)。
+            // `text-bottom`) は computed value = specified keyword。
+            // `VerticalAlign::Length` / `VerticalAlign::Calc` は own node の
+            // `font_size` / `own_line_height` 基準で絶対化する
+            // (`resolve_vertical_align` doc 参照 — percentage term は
+            // `line-height: normal` 時 `0px` として扱う)。
             vertical_align: resolve_vertical_align(
                 self.vertical_align,
                 font_size,

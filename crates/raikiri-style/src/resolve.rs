@@ -1973,6 +1973,9 @@ pub fn resolve_border_spacing(
 /// `<length>` the absolute length, otherwise as specified" — bare keywords are
 /// passed through unchanged.
 /// computed 層でもそのまま keyword、`<length>` / `<percentage>` が絶対化対象。
+/// Shared math processing also supplies mixed `calc()` expressions as
+/// [`VerticalAlign::Calc`]; this function resolves their percentage term and
+/// returns the result as [`VerticalAlign::Length`] with an absolute px value.
 ///
 /// `<percentage>` は要素自身の used line-height に対する比率として解決する
 /// (propdef "Percentages: refer to the 'line-height' of the element itself")。
@@ -2022,6 +2025,12 @@ pub fn resolve_vertical_align(
         VerticalAlign::Length(l) => VerticalAlign::Length(Length::Px(
             resolve_length(l, font_size, own_line_height, ctx).px(),
         )),
+        VerticalAlign::Calc(value) => {
+            let percent_px = own_line_height
+                .map(|line_height| line_height.0 * value.percent / 100.0)
+                .unwrap_or(0.0);
+            VerticalAlign::Length(Length::Px(value.px + percent_px))
+        }
     }
 }
 

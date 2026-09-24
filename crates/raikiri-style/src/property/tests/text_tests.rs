@@ -2077,10 +2077,10 @@ fn text_decoration_key_maps_to_text_decoration_property_key() {
 // ── vertical-align (CSS 2.1 §10.8.1) ──
 //
 // Value grammar (`VerticalAlign` doc's "Scope carving" section):
-// baseline | sub | super | middle | text-top | text-bottom | <length>.
-// `top` / `bottom` / `<percentage>` remain out of scope. Initial:
-// baseline / Inherited: no / Computed value: keyword as specified,
-// `<length>` absolutized.
+// baseline | sub | super | middle | text-top | text-bottom | top | bottom |
+// <length> | <percentage>, plus supported length / length-percentage calc().
+// Initial: baseline / Inherited: no / Computed value: keyword as specified,
+// length, percentage, and mixed calc() absolutized.
 
 #[test]
 fn vertical_align_parse_all_keywords() {
@@ -2222,6 +2222,23 @@ fn vertical_align_parse_percentage() {
 }
 
 #[test]
+fn vertical_align_parse_accepts_wpt_calc_expressions() {
+    for expression in [
+        "calc(50px)",
+        "calc(50%)",
+        "calc(25px + 50%)",
+        "calc(150% / 2 - 30px)",
+        "calc(40px + 10% - 20% / 2)",
+        "calc(40px - 10%)",
+    ] {
+        assert!(
+            parse_entire(expression, "vertical-align").is_some(),
+            "{expression}"
+        );
+    }
+}
+
+#[test]
 fn vertical_align_key_maps_to_vertical_align_property_key() {
     for va in [
         VerticalAlign::Baseline,
@@ -2233,6 +2250,10 @@ fn vertical_align_key_maps_to_vertical_align_property_key() {
         VerticalAlign::Top,
         VerticalAlign::Bottom,
         VerticalAlign::Length(Length::Px(3.0)),
+        VerticalAlign::Calc(CalcLengthPercentage {
+            percent: 50.0,
+            px: 3.0,
+        }),
     ] {
         assert_eq!(
             PropertyValue::VerticalAlign(va).key(),

@@ -4005,6 +4005,11 @@ pub enum PageValue {
 ///   `baseline`" と同型)。負値も spec-valid として受理する (`<length>`
 ///   と同じ "Raise/lower"  semantics)。
 ///
+/// - **実装済み**: mixed-unit `calc()` values flow through the shared
+///   deferred CSS math path as [`CalcLengthPercentage`]. The px term is kept,
+///   and the percentage term resolves against this element's used
+///   `line-height`; the result is stored as [`Length::Px`] before paint.
+///
 ///   **`line-height: normal` 時の spec-deviation fallback**: `line-height:
 ///   normal` (spec initial value、宣言が無い要素の既定) の下では
 ///   [`crate::resolve::used_line_height_length`] が `None` を返す —
@@ -4110,8 +4115,14 @@ pub enum VerticalAlign {
     /// により `line-height` 基準で絶対長へ解決)。computed 層では絶対化済みの
     /// `Length::Px` を運ぶ ([`Self`] doc の「実装済み: `<percentage>`」節および
     /// [`crate::resolve::resolve_vertical_align`] doc 参照 — `normal` 時は
-    /// `0px` fallback)。
+    /// `0px` fallback)。単一の length / percentage へ簡約できる `calc()` も
+    /// この variant に入る。
     Length(Length),
+    /// Deferred mixed `<length-percentage>` `calc()` value. The shared CSS
+    /// math path preserves its px and percentage coefficients; phase 3 resolves
+    /// the percentage against this element's used `line-height` and replaces
+    /// this variant with [`Self::Length`] before paint.
+    Calc(CalcLengthPercentage),
 }
 
 /// `z-index` property の value。
@@ -7376,11 +7387,12 @@ pub enum PropertyValue {
     /// [`Self::Margin`] / [`Self::Border`] / [`Self::Overflow`] と同じ並び)
     TextDecoration(TextDecorationShorthand),
     /// `vertical-align: baseline | sub | super | middle | text-top |
-    /// text-bottom | <length>` — **non-inherited**、initial:
+    /// text-bottom | <length> | <percentage>` — **non-inherited**、initial:
     /// [`VerticalAlign::Baseline`] (CSS 2.1 §10.8.1
     /// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>)。
-    /// computed value = keyword はそのまま、`<length>` は絶対化済み
-    /// ([`VerticalAlign`] doc の "Scope carving" 節参照)。
+    /// computed value = keyword はそのまま、length / percentage および
+    /// mixed `calc()` は絶対化済み ([`VerticalAlign`] doc の "Scope
+    /// carving" 節参照)。
     /// (末尾に追加 — 既存 variant の discriminant を
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)

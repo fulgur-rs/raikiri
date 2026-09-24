@@ -1,7 +1,7 @@
 use super::*;
 use crate::property::{
-    BorderRadius, BorderStyle, BoxShadowItem, CssColor, Outline, OutlineColor, OutlineStyle, Sides,
-    TextShadowColor,
+    BorderRadius, BorderStyle, BoxShadowItem, CalcLengthPercentage, CssColor, Outline,
+    OutlineColor, OutlineStyle, Sides, TextShadowColor,
 };
 use crate::specified::SpecifiedValues;
 
@@ -1324,6 +1324,29 @@ fn resolve_vertical_align_percentage_falls_back_to_zero_when_line_height_normal(
         ),
         VerticalAlign::Length(Length::Px(0.0)),
     );
+}
+
+#[test]
+fn resolve_vertical_align_mixed_calc_uses_own_line_height() {
+    let cases = [
+        (50.0, 25.0, Some(ComputedLength(100.0)), 75.0),
+        (75.0, -30.0, Some(ComputedLength(100.0)), 45.0),
+        (0.0, 40.0, Some(ComputedLength(100.0)), 40.0),
+        (-10.0, 40.0, Some(ComputedLength(100.0)), 30.0),
+        // Keep the absolute term when the percentage basis is unavailable.
+        (50.0, 25.0, None, 25.0),
+    ];
+    for (percent, px, line_height, expected_px) in cases {
+        assert_eq!(
+            resolve_vertical_align(
+                VerticalAlign::Calc(CalcLengthPercentage { percent, px }),
+                ComputedLength(16.0),
+                line_height,
+                &CTX,
+            ),
+            VerticalAlign::Length(Length::Px(expected_px)),
+        );
+    }
 }
 
 // -----------------------------------------------------------------
