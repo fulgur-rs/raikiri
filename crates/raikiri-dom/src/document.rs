@@ -204,6 +204,14 @@ impl Document {
         }
     }
 
+    /// Create an HTML element without attaching it to a parent.
+    pub fn create_detached_element(&mut self, tag: &str) -> Result<usize, String> {
+        if !is_valid_xml_name(tag) {
+            return Err(format!("invalid HTML element name: {tag:?}"));
+        }
+        Ok(self.append_element(None, tag, Style::default(), None::<&str>))
+    }
+
     /// Element node を arena に追加する。`parent` が `Some(idx)` の場合
     /// その node の children に append される。`None` の場合 detached (どこにも
     /// 属さない fragment、後で attach する用途)。
@@ -382,6 +390,46 @@ impl Document {
         }
         self.invalidate_layout_cache();
         self.flags_dirty = true;
+    }
+
+    /// Append a detached or already-connected child to an element using DOM move semantics.
+    ///
+    /// The child is detached from its current parent before it is appended. This
+    /// also rejects cycles; low-level parser operations should keep using
+    /// [`Document::attach_child`] and detach explicitly as required by TreeSink.
+    pub fn append_child(&mut self, parent: usize, child: usize) -> Result<(), String> {
+        let Some(parent_node) = self.nodes.get(parent) else {
+            return Err(format!("appendChild parent index {parent} is out of range"));
+        };
+        if !matches!(&parent_node.data, NodeData::Element(_)) {
+            return Err("appendChild parent must be an Element".into());
+        }
+        let Some(child_node) = self.nodes.get(child) else {
+            return Err(format!("appendChild child index {child} is out of range"));
+        };
+        if !matches!(
+            &child_node.data,
+            NodeData::Element(_) | NodeData::Text(_) | NodeData::DocumentFragment
+        ) {
+            return Err("appendChild child must be an Element, Text, or DocumentFragment".into());
+        }
+
+        let mut pending = vec![child];
+        let mut visited = std::collections::HashSet::new();
+        while let Some(descendant) = pending.pop() {
+            if descendant == parent {
+                return Err("appendChild would create a DOM cycle".into());
+            }
+            if visited.insert(descendant)
+                && let Some(node) = self.nodes.get(descendant)
+            {
+                pending.extend(node.children.iter().copied());
+            }
+        }
+
+        self.detach_from_parent(child);
+        self.attach_child(parent, child);
+        Ok(())
     }
 
     /// `parent` の children 配列内、`before` の直前 index に `child` を挿入する。
@@ -679,6 +727,51 @@ impl Document {
             .attributes
             .retain(|attr| attr.local.as_str() != local);
         Ok(first_value)
+    }
+
+    /// Return an element's concatenated descendant text, excluding comments and processing instructions.
+    pub fn element_text_content(&self, id: usize) -> Option<String> {
+        let element = self.nodes.get(id)?;
+        if !matches!(&element.data, NodeData::Element(_)) {
+            return None;
+        }
+        let mut text = String::new();
+        let mut pending: Vec<usize> = element.children.iter().rev().copied().collect();
+        while let Some(child) = pending.pop() {
+            let node = self.nodes.get(child)?;
+            if let Some(content) = node.text_content() {
+                text.push_str(content);
+            } else {
+                pending.extend(node.children.iter().rev().copied());
+            }
+        }
+        Some(text)
+    }
+
+    /// Replace an element's children with a single text node, or no children for empty text.
+    ///
+    /// Removed nodes remain allocated in the arena but are detached, preserving stable handles.
+    pub fn set_element_text_content(
+        &mut self,
+        id: usize,
+        text: impl Into<SmolStr>,
+    ) -> Result<(), String> {
+        let Some(node) = self.nodes.get(id) else {
+            return Err(format!("textContent target index {id} is out of range"));
+        };
+        if !matches!(&node.data, NodeData::Element(_)) {
+            return Err(format!("textContent target index {id} is not an Element"));
+        }
+        let text = text.into();
+        self.nodes[id].children.clear();
+        if !text.is_empty() {
+            let text_id = self.nodes.len();
+            self.nodes.push(Node::new_text(text));
+            self.nodes[id].children.push(text_id);
+        }
+        self.invalidate_layout_cache();
+        self.flags_dirty = true;
+        Ok(())
     }
 
     /// Replace `target_parent`'s children with deep copies of
@@ -1301,7 +1394,7 @@ impl Document {
     /// tree mutation を layout cache dirty として mark する。実際の cache
     /// clear は次回 `compute_child_layout` (taffy_impl 経由) で lazy に発火する。
     /// per-mutation は O(1)、per-layout-batch で amortized O(N)。
-    fn invalidate_layout_cache(&mut self) {
+    pub(crate) fn invalidate_layout_cache(&mut self) {
         self.layout_dirty = true;
     }
 
