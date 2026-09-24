@@ -207,8 +207,7 @@ impl KnownIssues {
 
 /// Parsed `raikiri-baseline.txt`: the T2 gate set (spec §12.10).
 ///
-/// Regressions against this set block merge; additions/removals require
-/// 2-reviewer approval per the baseline-migration policy.
+/// Regressions against this set block merge.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct Baseline {
@@ -1319,7 +1318,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // - Drop CSS Text shaping/autospace pins that do not pass exactly (-4).
         // + CSS Text text-autospace vs/zh exact resource slice (+2).
         // + CSS Inline collapsed whitespace between inline boxes (+1).
-        assert_eq!(set.baseline.entries.len(), 1281);
+        // + CSS Flexbox order-painting exact 800x600 pair (+1).
+        assert_eq!(set.baseline.entries.len(), 1282);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
