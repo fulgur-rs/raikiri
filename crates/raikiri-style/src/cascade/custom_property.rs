@@ -8,7 +8,7 @@ use crate::computed::CustomPropertyEnvironment;
 use crate::property::{
     CalcLengthPercentage, CustomProperty, DeferredValue, LengthOrAuto,
     MAX_DEFERRED_VALUE_NESTING_DEPTH, MAX_SUBSTITUTED_VALUE_BYTES, PropertyKey, PropertyValue,
-    is_custom_property_name, parse_value,
+    VerticalAlign, is_custom_property_name, parse_value,
 };
 
 use super::collect::{CustomCascadedDecl, RankedDecl, beats, cascade_rank};
@@ -38,8 +38,8 @@ pub(crate) fn resolve_deferred_value(
 }
 
 /// Wrap a mixed-unit `calc()` in the value of the property it was declared
-/// for. Only the sizing and inset properties can carry one; for any other
-/// property the declaration is invalid at computed-value time.
+/// for. Sizing, inset, and `vertical-align` values can carry one; for any
+/// other property the declaration is invalid at computed-value time.
 fn calc_length_percentage_value(
     key: PropertyKey,
     value: CalcLengthPercentage,
@@ -57,6 +57,7 @@ fn calc_length_percentage_value(
         PropertyKey::Right => PropertyValue::Right(calc),
         PropertyKey::Bottom => PropertyValue::Bottom(calc),
         PropertyKey::Left => PropertyValue::Left(calc),
+        PropertyKey::VerticalAlign => PropertyValue::VerticalAlign(VerticalAlign::Calc(value)),
         _ => return None,
     })
 }
@@ -1375,7 +1376,9 @@ mod tests {
     use super::*;
     use crate::cascade::test_support::*;
     use crate::cascade::{apply_value, cascade};
-    use crate::property::{CssColor, OutlineColor, OutlineStyle, PropertyKey};
+    use crate::property::{
+        CssColor, Length, OutlineColor, OutlineStyle, PropertyKey, VerticalAlign,
+    };
     use crate::resolve::{
         ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
         ComputedLineHeight,
@@ -2313,7 +2316,7 @@ mod tests {
     }
 
     #[test]
-    fn calc_length_percentage_value_targets_sizing_and_inset_properties() {
+    fn calc_length_percentage_value_targets_sizing_inset_and_vertical_align() {
         let value = CalcLengthPercentage {
             percent: 50.0,
             px: 10.0,
@@ -2331,6 +2334,10 @@ mod tests {
             (PropertyKey::Right, PropertyValue::Right(calc)),
             (PropertyKey::Bottom, PropertyValue::Bottom(calc)),
             (PropertyKey::Left, PropertyValue::Left(calc)),
+            (
+                PropertyKey::VerticalAlign,
+                PropertyValue::VerticalAlign(VerticalAlign::Calc(value)),
+            ),
         ];
         for (key, expected) in cases {
             assert_eq!(calc_length_percentage_value(key, value), Some(expected));
@@ -2339,6 +2346,27 @@ mod tests {
             calc_length_percentage_value(PropertyKey::Color, value),
             None
         );
+    }
+
+    #[test]
+    fn vertical_align_wpt_calc_expressions_resolve_to_px() {
+        let cases = [
+            ("calc(50px)", 50.0),
+            ("calc(50%)", 50.0),
+            ("calc(25px + 50%)", 75.0),
+            ("calc(150% / 2 - 30px)", 45.0),
+            ("calc(40px + 10% - 20% / 2)", 40.0),
+            ("calc(40px - 10%)", 30.0),
+        ];
+        for (expression, expected_px) in cases {
+            let inline = format!("line-height: 100px; vertical-align: {expression}");
+            let cv = cascade_doc("", "span", Some(&inline));
+            assert_eq!(
+                cv.vertical_align,
+                VerticalAlign::Length(Length::Px(expected_px)),
+                "{expression}"
+            );
+        }
     }
 
     #[test]

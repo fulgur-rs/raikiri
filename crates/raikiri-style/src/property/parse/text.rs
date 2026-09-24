@@ -1367,8 +1367,10 @@ pub(super) fn parse_text_underline_position(
     Some(pos)
 }
 
-/// `vertical-align: <ident> | <length>` を parse する (CSS 2.1 §10.8.1
+/// `vertical-align: <ident> | <length-percentage>` を parse する (CSS 2.1 §10.8.1
 /// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>)。
+/// `calc()` functions are handled earlier by `parse_value`'s shared math path;
+/// this helper receives their simplified value or a plain length/percentage.
 ///
 /// Ident は ASCII case-insensitive で比較する (sibling [`parse_direction`]
 /// / [`parse_text_decoration_style`] と同 flavor)。ident 側を先に

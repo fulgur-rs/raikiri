@@ -853,18 +853,17 @@ pub struct ComputedValues {
     /// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>,
     /// "Initial: baseline" / "Inherited: no"). Computed value: the 6
     /// keywords (`baseline`/`sub`/`super`/`middle`/`text-top`/`text-bottom`)
-    /// stay the specified keyword; [`VerticalAlign::Length`] absolutizes to
-    /// `Length::Px` ([`crate::resolve::resolve_vertical_align`] doc,
-    /// `<percentage>` は `used_line_height_length` 基準で解決し、`normal` 時は
-    /// `0px` fallback — 同 doc 参照).
+    /// stay the specified keyword; [`VerticalAlign::Length`] and mixed
+    /// [`VerticalAlign::Calc`] values absolutize to `Length::Px`
+    /// ([`crate::resolve::resolve_vertical_align`] doc, percentages use the
+    /// element's used line-height, with the existing `normal` fallback).
     ///
     /// # Scope carving
     ///
-    /// This field holds the subset described on [`VerticalAlign`]'s own
-    /// "Scope carving" doc — `top` / `bottom` keywords remain explicit
-    /// follow-up, not represented by this field (`<percentage>` は
-    /// `<length>` と同じ `Length` variant で表現し、computed では `Px` に
-    /// 絶対化済み).
+    /// This field holds the values described on [`VerticalAlign`]'s own
+    /// "Scope carving" doc. `top` / `bottom` stay as explicit keyword
+    /// variants; lengths, percentages, and mixed `calc()` values are
+    /// absolutized to `Length::Px` before paint.
     ///
     /// # Same type at both the specified and computed layer
     ///
@@ -878,8 +877,8 @@ pub struct ComputedValues {
     /// computed-only type here would require a raikiri-paint signature
     /// change this crate's scope does not include. See
     /// [`crate::resolve::resolve_vertical_align`] doc for how the
-    /// [`VerticalAlign::Length`] variant is absolutized without changing
-    /// this field's type.
+    /// [`VerticalAlign::Length`] and [`VerticalAlign::Calc`] variants are
+    /// absolutized without changing this field's type.
     ///
     /// # Downstream handoff
     ///

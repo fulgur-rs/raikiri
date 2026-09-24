@@ -28,6 +28,10 @@ fn vertical_align_pairs_are_pixel_exact_at_800x600() {
             result.outcome,
             result.mismatched_pixels
         );
+        assert_eq!(
+            result.mismatched_pixels, 0,
+            "{relative}: expected zero mismatched pixels at exact tolerance"
+        );
     }
 }
 

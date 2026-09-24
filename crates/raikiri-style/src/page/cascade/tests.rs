@@ -23,23 +23,23 @@ use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{
     AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
     BackgroundRepeatKeyword, BackgroundShorthand, BorderRadius, BoxShadowItem, BoxSizing,
-    BreakBetween, BreakInside, ClearValue, ClipPath, ContentAlignmentValue, ContentComponent,
-    CssColor, CustomProperty, Direction, DisplayValue, FilterFunction, FlexDirectionValue,
-    FlexWrapValue, FloatValue, FontShorthand, FontShorthandSize, FontStyle, FontVariantCaps,
-    FontWeightValue, GeometryBox, GridAreaShorthand, GridAutoFlowValue, GridInflexibleBreadth,
-    GridLineShorthand, GridLineValue, GridRepeatCount, GridShorthand, GridTemplateAreaEntry,
-    GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
-    GridTrackListComponent, GridTrackRepeat, GridTrackSize, HangingPunctuation, Hyphens, Isolation,
-    Length, LengthOrAuto, LengthOrNormal, LineBreak, LineHeight, ListStylePosition, ListStyleType,
-    MaskImage, MixBlendMode, ObjectFit, Outline, OutlineStyle, OverflowValue, OverflowWrap,
-    OverflowXY, PageValue, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand,
-    PositionValue, RelativeFontSize, RubyPosition, SelfAlignmentValue, StartEnd, TabSize,
-    TextAlign, TextAlignAll, TextAlignLast, TextAutospace, TextDecorationColor,
-    TextDecorationInset, TextDecorationLine, TextDecorationShorthand, TextDecorationSkipInk,
-    TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge,
-    TextEmphasisPosition, TextEmphasisVEdge, TextJustify, TextShadowColor, TextTransform,
-    TextUnderlinePosition, TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace,
-    WordBreak, WritingMode, ZIndexValue,
+    BreakBetween, BreakInside, CalcLengthPercentage, ClearValue, ClipPath, ContentAlignmentValue,
+    ContentComponent, CssColor, CustomProperty, Direction, DisplayValue, FilterFunction,
+    FlexDirectionValue, FlexWrapValue, FloatValue, FontShorthand, FontShorthandSize, FontStyle,
+    FontVariantCaps, FontWeightValue, GeometryBox, GridAreaShorthand, GridAutoFlowValue,
+    GridInflexibleBreadth, GridLineShorthand, GridLineValue, GridRepeatCount, GridShorthand,
+    GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks,
+    GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize,
+    HangingPunctuation, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal, LineBreak,
+    LineHeight, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline,
+    OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue, PlaceContentShorthand,
+    PlaceItemsShorthand, PlaceSelfShorthand, PositionValue, RelativeFontSize, RubyPosition,
+    SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextAlignAll, TextAlignLast, TextAutospace,
+    TextDecorationColor, TextDecorationInset, TextDecorationLine, TextDecorationShorthand,
+    TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness,
+    TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisVEdge, TextJustify, TextShadowColor,
+    TextTransform, TextUnderlinePosition, TransformFunction, VerticalAlign, Visibility, VisualBox,
+    WhiteSpace, WordBreak, WritingMode, ZIndexValue,
 };
 use crate::resolve::{ComputedLength, ComputedLineHeight};
 use crate::ruletree::build_rule_tree;
@@ -2495,6 +2495,13 @@ fn absolutize_in_page_context_covers_vertical_align_length_arm() {
             VerticalAlign::Length(Length::Em(2.0)),
             VerticalAlign::Length(Length::Px(40.0)),
         ),
+        (
+            VerticalAlign::Calc(CalcLengthPercentage {
+                percent: 50.0,
+                px: 20.0,
+            }),
+            VerticalAlign::Length(Length::Px(20.0)),
+        ),
     ] {
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -3975,6 +3982,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | VerticalAlign::Top
             | VerticalAlign::Bottom => None,
             VerticalAlign::Length(l) => length(l),
+            VerticalAlign::Calc(_) => Some("CalcLengthPercentage"),
         }
     }
     /// `letter-spacing` / `word-spacing` の `normal | <length>`. `normal`
@@ -4972,6 +4980,15 @@ fn vertical_align_keywords_are_not_specified_layer_residue() {
             Length::Em(1.0)
         ))),
         Some("Length::Em"),
+    );
+    assert_eq!(
+        specified_layer_residue(&PropertyValue::VerticalAlign(VerticalAlign::Calc(
+            CalcLengthPercentage {
+                percent: 50.0,
+                px: 10.0,
+            },
+        ))),
+        Some("CalcLengthPercentage"),
     );
 }
 
