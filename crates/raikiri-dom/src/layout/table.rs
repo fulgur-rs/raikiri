@@ -1816,9 +1816,11 @@ fn compute_collapsed_lines(
 mod tests {
     use crate::document::Document;
     use parley::FontContext;
+    use raikiri_style::property::DisplayValue;
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
-    use taffy::Style;
+    use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
+    use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 
     fn build_simple_2x2() -> Document {
         let mut doc = Document::new();
@@ -2811,6 +2813,1074 @@ mod tests {
             (table_layout.size.width - 100.0).abs() < 1.0,
             "table width was {}",
             table_layout.size.width
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // distribute_columns — pure column distributor (avail/min/max/pct).
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn distribute_columns_exact_fit_uses_min_widths_unchanged() {
+        // avail exactly matches the summed min: neither the grow nor the
+        // shrink branch fires, so the result is just `min`.
+        let widths = super::distribute_columns(30.0, &[10.0, 20.0], &[50.0, 50.0], &[0.0, 0.0]);
+        assert_eq!(widths, [10.0, 20.0]);
+    }
+
+    #[test]
+    fn distribute_columns_grows_toward_max_then_shares_remainder_equally() {
+        // avail exceeds the summed max: every column first grows to its
+        // own max, then the still-leftover space is split equally.
+        let widths = super::distribute_columns(30.0, &[0.0, 0.0], &[10.0, 10.0], &[0.0, 0.0]);
+        assert_eq!(widths, [15.0, 15.0]);
+    }
+
+    #[test]
+    fn distribute_columns_percentage_over_100_percent_is_scaled_down() {
+        // pct sums to 120% of avail: the `psum > 1.0` branch scales every
+        // percentage down by 1/psum before applying it.
+        let widths = super::distribute_columns(100.0, &[0.0, 0.0], &[100.0, 100.0], &[0.6, 0.6]);
+        assert!((widths[0] - 50.0).abs() < 0.01, "widths: {widths:?}");
+        assert!((widths[1] - 50.0).abs() < 0.01, "widths: {widths:?}");
+    }
+
+    #[test]
+    fn distribute_columns_shrinks_percentage_driven_column_when_over_avail() {
+        // The pct-driven column (50px) plus the min-floored column (20px)
+        // exceed avail (50px): shrink comes only out of the pct column's
+        // slack above its own min (column 1 already sits at its min).
+        let widths = super::distribute_columns(50.0, &[0.0, 20.0], &[100.0, 100.0], &[1.0, 0.0]);
+        assert_eq!(widths, [30.0, 20.0]);
+    }
+
+    #[test]
+    fn distribute_columns_min_floor_holds_when_shrink_budget_is_zero() {
+        // Over-constrained input (avail below the summed min) with no
+        // percentage columns: every column already sits at its own min,
+        // so the shrink budget is zero and the table overflows rather
+        // than compressing columns below their intrinsic minimum.
+        let widths = super::distribute_columns(10.0, &[20.0, 30.0], &[20.0, 30.0], &[0.0, 0.0]);
+        assert_eq!(widths, [20.0, 30.0]);
+    }
+
+    // -----------------------------------------------------------------
+    // distribute_extra_width — pure min-width grower for resolved columns.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn distribute_extra_width_grows_columns_proportionally_to_current_width() {
+        let mut widths = [10.0, 30.0];
+        super::distribute_extra_width(&mut widths, 80.0);
+        assert_eq!(widths, [20.0, 60.0]);
+    }
+
+    #[test]
+    fn distribute_extra_width_splits_equally_when_all_columns_are_zero() {
+        let mut widths = [0.0, 0.0, 0.0];
+        super::distribute_extra_width(&mut widths, 30.0);
+        assert_eq!(widths, [10.0, 10.0, 10.0]);
+    }
+
+    #[test]
+    fn distribute_extra_width_is_noop_when_current_already_meets_target() {
+        let mut widths = [50.0, 50.0]; // sum 100.0, above the 80.0 target
+        super::distribute_extra_width(&mut widths, 80.0);
+        assert_eq!(widths, [50.0, 50.0]);
+    }
+
+    #[test]
+    fn distribute_extra_width_is_noop_on_empty_slice() {
+        let mut widths: [f32; 0] = [];
+        super::distribute_extra_width(&mut widths, 30.0);
+        assert!(widths.is_empty());
+    }
+
+    // -----------------------------------------------------------------
+    // resolve_fixed_column_widths — CSS 2.1 §17.5.2.1 fixed algorithm.
+    // -----------------------------------------------------------------
+
+    fn fixed_cell(
+        row: u16,
+        col_start: u16,
+        col_span: u16,
+        width: Dimension,
+    ) -> super::CellPlacement {
+        super::CellPlacement {
+            node_id: 0,
+            row,
+            col_start,
+            col_span,
+            row_span: 1,
+            specified_width: width,
+            resolved: None,
+        }
+    }
+
+    #[test]
+    fn resolve_fixed_column_widths_first_row_length_fixes_column_remainder_splits() {
+        let grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![],
+            cells: vec![
+                fixed_cell(0, 0, 1, Dimension::length(100.0)),
+                fixed_cell(0, 1, 1, Dimension::auto()),
+            ],
+            col_widths: vec![],
+        };
+        let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+        assert_eq!(widths, [100.0, 300.0]);
+    }
+
+    #[test]
+    fn resolve_fixed_column_widths_first_row_percent_resolves_against_avail() {
+        let grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![],
+            cells: vec![
+                fixed_cell(0, 0, 1, Dimension::percent(0.25)),
+                fixed_cell(0, 1, 1, Dimension::auto()),
+            ],
+            col_widths: vec![],
+        };
+        let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+        assert_eq!(widths, [100.0, 300.0]);
+    }
+
+    #[test]
+    fn resolve_fixed_column_widths_ignores_non_first_row_width() {
+        // A length on a *second*-row cell must not fix its column.
+        let grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![],
+            cells: vec![
+                fixed_cell(0, 0, 1, Dimension::auto()),
+                fixed_cell(0, 1, 1, Dimension::auto()),
+                fixed_cell(1, 0, 1, Dimension::length(300.0)),
+            ],
+            col_widths: vec![],
+        };
+        let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+        assert_eq!(widths, [200.0, 200.0]);
+    }
+
+    #[test]
+    fn resolve_fixed_column_widths_ignores_colspan_first_row_width() {
+        // A first-row cell with colspan > 1 never fixes a column — only
+        // colspan == 1 first-row cells participate in §17.5.2.1 fixing.
+        let grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![],
+            cells: vec![fixed_cell(0, 0, 2, Dimension::length(300.0))],
+            col_widths: vec![],
+        };
+        let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+        assert_eq!(widths, [200.0, 200.0]);
+    }
+
+    #[test]
+    fn resolve_fixed_column_widths_col_element_length_fixes_unspecified_column() {
+        // No first-row cell width at all: a `<col>` length still fixes
+        // the column (the §17.5.2.1 `<col>` fallback).
+        let grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![],
+            cells: vec![
+                fixed_cell(0, 0, 1, Dimension::auto()),
+                fixed_cell(0, 1, 1, Dimension::auto()),
+            ],
+            col_widths: vec![
+                super::ColSizing {
+                    width: Dimension::length(60.0),
+                    min_width: Dimension::auto(),
+                    max_width: Dimension::auto(),
+                },
+                super::ColSizing {
+                    width: Dimension::auto(),
+                    min_width: Dimension::auto(),
+                    max_width: Dimension::auto(),
+                },
+            ],
+        };
+        let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+        assert_eq!(widths, [60.0, 340.0]);
+    }
+
+    #[test]
+    fn resolve_fixed_column_widths_col_element_percent_resolves_against_avail() {
+        let grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![],
+            cells: vec![],
+            col_widths: vec![
+                super::ColSizing {
+                    width: Dimension::percent(0.5),
+                    min_width: Dimension::auto(),
+                    max_width: Dimension::auto(),
+                },
+                super::ColSizing {
+                    width: Dimension::auto(),
+                    min_width: Dimension::auto(),
+                    max_width: Dimension::auto(),
+                },
+            ],
+        };
+        let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+        assert_eq!(widths, [200.0, 200.0]);
+    }
+
+    #[test]
+    fn resolve_fixed_column_widths_col_element_min_only_floors_column() {
+        // A `<col>` with no width but a length min-width still fixes the
+        // column (`v.is_none() && is_len(min_width)` fallback).
+        let grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![],
+            cells: vec![],
+            col_widths: vec![
+                super::ColSizing {
+                    width: Dimension::auto(),
+                    min_width: Dimension::length(50.0),
+                    max_width: Dimension::auto(),
+                },
+                super::ColSizing {
+                    width: Dimension::auto(),
+                    min_width: Dimension::auto(),
+                    max_width: Dimension::auto(),
+                },
+            ],
+        };
+        let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+        assert_eq!(widths, [50.0, 350.0]);
+    }
+
+    #[test]
+    fn resolve_fixed_column_widths_col_element_width_clamped_by_max_width() {
+        let grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![],
+            cells: vec![],
+            col_widths: vec![
+                super::ColSizing {
+                    width: Dimension::length(100.0),
+                    min_width: Dimension::auto(),
+                    max_width: Dimension::length(60.0),
+                },
+                super::ColSizing {
+                    width: Dimension::auto(),
+                    min_width: Dimension::auto(),
+                    max_width: Dimension::auto(),
+                },
+            ],
+        };
+        let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+        assert_eq!(widths, [60.0, 340.0]);
+    }
+
+    #[test]
+    fn resolve_fixed_column_widths_underflow_clamps_unfixed_columns_to_zero() {
+        // The single fixed column already exceeds avail: the leftover
+        // for the unfixed column clamps to zero rather than going
+        // negative — the table overflows instead of shrinking it.
+        let grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![],
+            cells: vec![fixed_cell(0, 0, 1, Dimension::length(500.0))],
+            col_widths: vec![],
+        };
+        let widths = super::resolve_fixed_column_widths(&grid, 400.0);
+        assert_eq!(widths, [500.0, 0.0]);
+    }
+
+    // -----------------------------------------------------------------
+    // collect_col_widths / collect_rows_inner / flush_pending — grid
+    // construction helpers, called directly on a minimal html/body/table
+    // shell (display + attributes set on Node directly, bypassing
+    // cascade — these functions only read `Node::display`/attributes,
+    // not computed CSS).
+    // -----------------------------------------------------------------
+
+    fn table_shell() -> (Document, usize) {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let table = doc.append_element(Some(body), "table", Style::default(), None::<&str>);
+        (doc, table)
+    }
+
+    #[test]
+    fn collect_col_widths_expands_span_and_reads_colgroup_and_bare_col() {
+        let (mut doc, table) = table_shell();
+        let colgroup = doc.append_element(Some(table), "colgroup", Style::default(), None::<&str>);
+        doc.nodes[colgroup].display = DisplayValue::TableColumnGroup;
+
+        let col_a = doc.append_element(
+            Some(colgroup),
+            "col",
+            Style {
+                size: Size {
+                    width: Dimension::length(40.0),
+                    height: Dimension::auto(),
+                },
+                ..Style::default()
+            },
+            None::<&str>,
+        );
+        doc.nodes[col_a].display = DisplayValue::TableColumn;
+
+        let col_b = doc.append_element(
+            Some(colgroup),
+            "col",
+            Style {
+                min_size: Size {
+                    width: LengthPercentageAuto::length(20.0),
+                    height: LengthPercentageAuto::auto(),
+                },
+                ..Style::default()
+            },
+            None::<&str>,
+        );
+        doc.nodes[col_b].display = DisplayValue::TableColumn;
+        doc.set_element_attributes(col_b, vec![("span".into(), "2".into())]);
+
+        // A `<tr>` sibling of the colgroup must be skipped, not treated
+        // as a column.
+        let tr = doc.append_element(Some(table), "tr", Style::default(), None::<&str>);
+        doc.nodes[tr].display = DisplayValue::TableRow;
+
+        // A bare `<col>` directly under the table (anonymous colgroup).
+        let col_c = doc.append_element(
+            Some(table),
+            "col",
+            Style {
+                size: Size {
+                    width: Dimension::percent(0.25),
+                    height: Dimension::auto(),
+                },
+                ..Style::default()
+            },
+            None::<&str>,
+        );
+        doc.nodes[col_c].display = DisplayValue::TableColumn;
+
+        doc.mark_in_document_flags();
+        let sizing = super::collect_col_widths(&doc, table);
+
+        assert_eq!(sizing.len(), 4, "col_a + col_b(span=2) + col_c = 4 entries");
+        assert_eq!(sizing[0].width, Dimension::length(40.0));
+        assert_eq!(sizing[1].min_width, Dimension::length(20.0));
+        assert_eq!(
+            sizing[2].min_width,
+            Dimension::length(20.0),
+            "span=2 expands to two identical entries"
+        );
+        assert_eq!(sizing[3].width, Dimension::percent(0.25));
+    }
+
+    #[test]
+    fn collect_rows_wraps_bare_cells_in_anonymous_row() {
+        let (mut doc, table) = table_shell();
+        let td1 = doc.append_element(Some(table), "td", Style::default(), None::<&str>);
+        doc.nodes[td1].display = DisplayValue::TableCell;
+        let td2 = doc.append_element(Some(table), "td", Style::default(), None::<&str>);
+        doc.nodes[td2].display = DisplayValue::TableCell;
+        doc.mark_in_document_flags();
+
+        let mut rows = Vec::new();
+        let mut cells = Vec::new();
+        let mut n_cols = 0u16;
+        super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols);
+
+        assert_eq!(rows.len(), 1, "bare cells wrap into a single anonymous row");
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells[0].col_start, 0);
+        assert_eq!(cells[1].col_start, 1);
+        assert_eq!(n_cols, 2);
+    }
+
+    fn head_body_fixture() -> (Document, usize, usize, usize) {
+        let (mut doc, table) = table_shell();
+        // DOM order: tbody first, thead second — reorder must float the
+        // header group up regardless.
+        let tbody = doc.append_element(Some(table), "tbody", Style::default(), None::<&str>);
+        doc.nodes[tbody].display = DisplayValue::TableRowGroup;
+        let tr_body = doc.append_element(Some(tbody), "tr", Style::default(), None::<&str>);
+        doc.nodes[tr_body].display = DisplayValue::TableRow;
+        let body_cell = doc.append_element(Some(tr_body), "td", Style::default(), None::<&str>);
+        doc.nodes[body_cell].display = DisplayValue::TableCell;
+
+        let thead = doc.append_element(Some(table), "thead", Style::default(), None::<&str>);
+        doc.nodes[thead].display = DisplayValue::TableHeaderGroup;
+        let tr_head = doc.append_element(Some(thead), "tr", Style::default(), None::<&str>);
+        doc.nodes[tr_head].display = DisplayValue::TableRow;
+        let head_cell = doc.append_element(Some(tr_head), "td", Style::default(), None::<&str>);
+        doc.nodes[head_cell].display = DisplayValue::TableCell;
+
+        doc.mark_in_document_flags();
+        (doc, table, head_cell, body_cell)
+    }
+
+    #[test]
+    fn collect_rows_floats_first_header_group_to_top() {
+        let (doc, table, head_cell, body_cell) = head_body_fixture();
+        let mut rows = Vec::new();
+        let mut cells = Vec::new();
+        let mut n_cols = 0u16;
+        super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols);
+
+        assert_eq!(cells.len(), 2);
+        assert_eq!(
+            cells[0].node_id, head_cell,
+            "thead row must come first despite DOM order"
+        );
+        assert_eq!(cells[1].node_id, body_cell);
+    }
+
+    #[test]
+    fn collect_rows_inner_no_reorder_keeps_dom_order_for_nested_call() {
+        let (doc, table, head_cell, body_cell) = head_body_fixture();
+        let mut rows = Vec::new();
+        let mut cells = Vec::new();
+        let mut n_cols = 0u16;
+        super::collect_rows_inner(&doc, table, &mut rows, &mut cells, &mut n_cols, false);
+
+        assert_eq!(cells.len(), 2);
+        assert_eq!(
+            cells[0].node_id, body_cell,
+            "DOM order preserved: tbody before thead"
+        );
+        assert_eq!(cells[1].node_id, head_cell);
+    }
+
+    #[test]
+    fn collect_rows_inner_skips_character_data_between_rows() {
+        let (mut doc, table) = table_shell();
+        let tr1 = doc.append_element(Some(table), "tr", Style::default(), None::<&str>);
+        doc.nodes[tr1].display = DisplayValue::TableRow;
+        let td1 = doc.append_element(Some(tr1), "td", Style::default(), None::<&str>);
+        doc.nodes[td1].display = DisplayValue::TableCell;
+
+        doc.append_text(table, "   ");
+
+        let tr2 = doc.append_element(Some(table), "tr", Style::default(), None::<&str>);
+        doc.nodes[tr2].display = DisplayValue::TableRow;
+        let td2 = doc.append_element(Some(tr2), "td", Style::default(), None::<&str>);
+        doc.nodes[td2].display = DisplayValue::TableCell;
+
+        doc.mark_in_document_flags();
+        let mut rows = Vec::new();
+        let mut cells = Vec::new();
+        let mut n_cols = 0u16;
+        super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols);
+
+        assert_eq!(
+            rows.len(),
+            2,
+            "inter-row whitespace must not create a spurious row"
+        );
+        assert_eq!(cells.len(), 2);
+    }
+
+    #[test]
+    fn collect_rows_inner_recurses_into_non_row_group_wrapper() {
+        let (mut doc, table) = table_shell();
+        // A plain wrapper (e.g. an authoring-error `<div>` directly under
+        // `<table>`) is neither a row, a cell, nor a row-group — the
+        // catch-all branch still recurses into it looking for rows.
+        let wrapper = doc.append_element(Some(table), "div", Style::default(), None::<&str>);
+        let tr = doc.append_element(Some(wrapper), "tr", Style::default(), None::<&str>);
+        doc.nodes[tr].display = DisplayValue::TableRow;
+        let td = doc.append_element(Some(tr), "td", Style::default(), None::<&str>);
+        doc.nodes[td].display = DisplayValue::TableCell;
+
+        doc.mark_in_document_flags();
+        let mut rows = Vec::new();
+        let mut cells = Vec::new();
+        let mut n_cols = 0u16;
+        super::collect_rows(&doc, table, &mut rows, &mut cells, &mut n_cols);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(cells.len(), 1);
+        assert_eq!(cells[0].node_id, td);
+    }
+
+    #[test]
+    fn flush_pending_assigns_sequential_columns_respecting_colspan() {
+        let (mut doc, table) = table_shell();
+        let td_a = doc.append_element(Some(table), "td", Style::default(), None::<&str>);
+        doc.set_element_attributes(td_a, vec![("colspan".into(), "2".into())]);
+        let td_b = doc.append_element(Some(table), "td", Style::default(), None::<&str>);
+        doc.mark_in_document_flags();
+
+        let mut pending = vec![td_a, td_b];
+        let mut rows = Vec::new();
+        let mut cells = Vec::new();
+        let mut n_cols = 0u16;
+        super::flush_pending(&doc, &mut pending, &mut rows, &mut cells, &mut n_cols);
+
+        assert!(pending.is_empty());
+        assert_eq!(rows, vec![td_a]);
+        assert_eq!(cells.len(), 2);
+        assert_eq!((cells[0].col_start, cells[0].col_span), (0, 2));
+        assert_eq!((cells[1].col_start, cells[1].col_span), (2, 1));
+        assert_eq!(n_cols, 3);
+    }
+
+    #[test]
+    fn flush_pending_on_empty_pending_is_noop() {
+        let doc = Document::new();
+        let mut pending: Vec<usize> = Vec::new();
+        let mut rows = Vec::new();
+        let mut cells = Vec::new();
+        let mut n_cols = 0u16;
+        super::flush_pending(&doc, &mut pending, &mut rows, &mut cells, &mut n_cols);
+        assert!(rows.is_empty());
+        assert!(cells.is_empty());
+        assert_eq!(n_cols, 0);
+    }
+
+    // -----------------------------------------------------------------
+    // compute_collapsed_lines — CSS 2.1 §17.6.2 simplified max-width
+    // conflict resolution (max of adjoining borders; absorbed overlap
+    // is the pairwise min).
+    // -----------------------------------------------------------------
+
+    fn make_cell(
+        node_id: usize,
+        row: u16,
+        col_start: u16,
+        col_span: u16,
+        row_span: u16,
+        width: Dimension,
+    ) -> super::CellPlacement {
+        super::CellPlacement {
+            node_id,
+            row,
+            col_start,
+            col_span,
+            row_span,
+            specified_width: width,
+            resolved: None,
+        }
+    }
+
+    fn bordered_cell(doc: &mut Document, px: f32) -> usize {
+        doc.append_element(
+            None,
+            "td",
+            Style {
+                border: Rect {
+                    left: LengthPercentage::length(px),
+                    right: LengthPercentage::length(px),
+                    top: LengthPercentage::length(px),
+                    bottom: LengthPercentage::length(px),
+                },
+                ..Style::default()
+            },
+            None::<&str>,
+        )
+    }
+
+    #[test]
+    fn compute_collapsed_lines_resolves_2x2_grid_overlaps_and_outers() {
+        let mut doc = Document::new();
+        let c00 = bordered_cell(&mut doc, 4.0);
+        let c01 = bordered_cell(&mut doc, 2.0);
+        let c10 = bordered_cell(&mut doc, 6.0);
+        let c11 = bordered_cell(&mut doc, 3.0);
+        let grid = super::TableGrid {
+            n_cols: 2,
+            // Only the row *count* matters here (`compute_collapsed_lines`
+            // reads `grid.rows.len()` for its boundary loop bounds; row
+            // node ids are never dereferenced), so these are placeholders.
+            rows: vec![0, 0],
+            cells: vec![
+                make_cell(c00, 0, 0, 1, 1, Dimension::auto()),
+                make_cell(c01, 0, 1, 1, 1, Dimension::auto()),
+                make_cell(c10, 1, 0, 1, 1, Dimension::auto()),
+                make_cell(c11, 1, 1, 1, 1, Dimension::auto()),
+            ],
+            col_widths: vec![],
+        };
+        let table_border = Rect {
+            left: 1.0,
+            right: 1.0,
+            top: 1.0,
+            bottom: 1.0,
+        };
+        let lines = super::compute_collapsed_lines(&doc, &grid, &table_border, None);
+
+        assert_eq!(
+            lines.col_overlaps,
+            vec![3.0],
+            "row0 min(4,2)=2 vs row1 min(6,3)=3 -> max 3"
+        );
+        assert_eq!(
+            lines.row_overlaps,
+            vec![4.0],
+            "col0 min(4,6)=4 vs col1 min(2,3)=2 -> max 4"
+        );
+        assert_eq!(lines.outer_left, 6.0);
+        assert_eq!(lines.outer_right, 3.0);
+        assert_eq!(lines.outer_top, 4.0);
+        assert_eq!(lines.outer_bottom, 6.0);
+    }
+
+    #[test]
+    fn compute_collapsed_lines_colspan_cell_only_absorbs_from_its_own_row() {
+        // 3 columns x 2 rows: row 0 has one cell spanning columns 0-1
+        // (colspan=2, border 6) plus a column-2 cell (border 2); row 1
+        // has three ordinary cells (borders 4, 1, 1). The interior
+        // boundary under the span (boundary 0) has no adjoining pair in
+        // row 0 (both sides belong to the same cell) so it comes only
+        // from row 1; boundary 1 sees the span's own right edge in row 0.
+        let mut doc = Document::new();
+        let span = bordered_cell(&mut doc, 6.0);
+        let r0c2 = bordered_cell(&mut doc, 2.0);
+        let r1c0 = bordered_cell(&mut doc, 4.0);
+        let r1c1 = bordered_cell(&mut doc, 1.0);
+        let r1c2 = bordered_cell(&mut doc, 1.0);
+        let grid = super::TableGrid {
+            n_cols: 3,
+            rows: vec![0, 0], // row count only — see note above.
+            cells: vec![
+                make_cell(span, 0, 0, 2, 1, Dimension::auto()),
+                make_cell(r0c2, 0, 2, 1, 1, Dimension::auto()),
+                make_cell(r1c0, 1, 0, 1, 1, Dimension::auto()),
+                make_cell(r1c1, 1, 1, 1, 1, Dimension::auto()),
+                make_cell(r1c2, 1, 2, 1, 1, Dimension::auto()),
+            ],
+            col_widths: vec![],
+        };
+        let lines = super::compute_collapsed_lines(&doc, &grid, &Rect::ZERO, None);
+
+        assert_eq!(
+            lines.col_overlaps,
+            vec![1.0, 2.0],
+            "boundary 0 comes only from row 1 (min(4,1)=1); boundary 1 comes from \
+             the wider row-0 span edge (min(6,2)=2) over row 1's min(1,1)=1"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // resolve_column_widths — auto column-sizing aggregation (colspan
+    // excess distribution, `<col>` authored floors, percent handling).
+    // -----------------------------------------------------------------
+
+    fn column_probe_input() -> LayoutInput {
+        LayoutInput {
+            run_mode: taffy::tree::RunMode::PerformLayout,
+            sizing_mode: taffy::tree::SizingMode::InherentSize,
+            axis: taffy::tree::RequestedAxis::Horizontal,
+            known_dimensions: Size {
+                width: None,
+                height: None,
+            },
+            parent_size: Size {
+                width: None,
+                height: None,
+            },
+            available_space: Size {
+                width: AvailableSpace::MaxContent,
+                height: AvailableSpace::MaxContent,
+            },
+            known_dimensions_are_definite: Size {
+                width: false,
+                height: false,
+            },
+            vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+        }
+    }
+
+    #[test]
+    fn resolve_column_widths_colspan_one_percent_cell_sets_column_percentage() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let pct_cell = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
+        let auto_cell = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
+        doc.mark_in_document_flags();
+
+        let grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![],
+            cells: vec![
+                make_cell(pct_cell, 0, 0, 1, 1, Dimension::percent(0.4)),
+                make_cell(auto_cell, 0, 1, 1, 1, Dimension::auto()),
+            ],
+            col_widths: vec![],
+        };
+        let inputs = LayoutInput {
+            known_dimensions: Size {
+                width: Some(200.0),
+                height: None,
+            },
+            ..column_probe_input()
+        };
+        let widths = super::resolve_column_widths(
+            &mut doc,
+            &grid,
+            inputs,
+            Size {
+                width: 0.0,
+                height: 0.0,
+            },
+        );
+        assert!(
+            (widths[0] - 80.0).abs() < 0.5,
+            "40% of 200 -> 80: {widths:?}"
+        );
+    }
+
+    #[test]
+    fn resolve_column_widths_colspan_excess_distributes_min_and_max_across_targets() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let span_cell = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
+        doc.append_element(
+            Some(span_cell),
+            "div",
+            Style {
+                size: Size {
+                    width: Dimension::length(100.0),
+                    height: Dimension::length(10.0),
+                },
+                ..Style::default()
+            },
+            None::<&str>,
+        );
+        let c0 = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
+        let c1 = doc.append_element(Some(html), "td", Style::default(), None::<&str>);
+        doc.mark_in_document_flags();
+
+        let grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![],
+            cells: vec![
+                make_cell(span_cell, 0, 0, 2, 1, Dimension::auto()),
+                make_cell(c0, 1, 0, 1, 1, Dimension::auto()),
+                make_cell(c1, 1, 1, 1, 1, Dimension::auto()),
+            ],
+            col_widths: vec![],
+        };
+        let inputs = LayoutInput {
+            known_dimensions: Size {
+                width: Some(300.0),
+                height: None,
+            },
+            ..column_probe_input()
+        };
+        let widths = super::resolve_column_widths(
+            &mut doc,
+            &grid,
+            inputs,
+            Size {
+                width: 0.0,
+                height: 0.0,
+            },
+        );
+
+        assert!((widths[0] - 150.0).abs() < 1.0, "widths: {widths:?}");
+        assert!((widths[1] - 150.0).abs() < 1.0, "widths: {widths:?}");
+        assert!(
+            (widths[0] - widths[1]).abs() < 0.01,
+            "a colspan cell's min/max excess splits evenly across its non-authored targets"
+        );
+    }
+
+    #[test]
+    fn resolve_column_widths_col_percent_ignored_for_unoccupied_column() {
+        let mut doc = Document::new();
+        let grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![], // no cells at all: column 1 is unoccupied
+            cells: vec![],
+            col_widths: vec![
+                super::ColSizing {
+                    width: Dimension::length(60.0),
+                    min_width: Dimension::auto(),
+                    max_width: Dimension::auto(),
+                },
+                super::ColSizing {
+                    width: Dimension::percent(0.25),
+                    min_width: Dimension::auto(),
+                    max_width: Dimension::auto(),
+                },
+            ],
+        };
+        let inputs = LayoutInput {
+            known_dimensions: Size {
+                width: Some(200.0),
+                height: None,
+            },
+            ..column_probe_input()
+        };
+        let widths = super::resolve_column_widths(
+            &mut doc,
+            &grid,
+            inputs,
+            Size {
+                width: 0.0,
+                height: 0.0,
+            },
+        );
+
+        // If the 25% were (incorrectly) applied despite no cell occupying
+        // the column, column 1 would be pct-driven and would stop
+        // receiving a share of the leftover space; instead it behaves as
+        // a plain auto column here.
+        assert!((widths[0] - 130.0).abs() < 1.0, "widths: {widths:?}");
+        assert!((widths[1] - 70.0).abs() < 1.0, "widths: {widths:?}");
+    }
+
+    #[test]
+    fn resolve_column_widths_col_length_floors_even_unoccupied_column() {
+        let mut doc = Document::new();
+        let grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![],
+            cells: vec![],
+            col_widths: vec![
+                super::ColSizing {
+                    width: Dimension::length(90.0),
+                    min_width: Dimension::auto(),
+                    max_width: Dimension::auto(),
+                },
+                super::ColSizing {
+                    width: Dimension::auto(),
+                    min_width: Dimension::auto(),
+                    max_width: Dimension::auto(),
+                },
+            ],
+        };
+        let inputs = LayoutInput {
+            known_dimensions: Size {
+                width: Some(200.0),
+                height: None,
+            },
+            ..column_probe_input()
+        };
+        let widths = super::resolve_column_widths(
+            &mut doc,
+            &grid,
+            inputs,
+            Size {
+                width: 0.0,
+                height: 0.0,
+            },
+        );
+
+        assert!(widths[0] > widths[1], "widths: {widths:?}");
+        assert!((widths[0] - 145.0).abs() < 1.0, "widths: {widths:?}");
+        assert!((widths[1] - 55.0).abs() < 1.0, "widths: {widths:?}");
+    }
+
+    #[test]
+    fn resolve_column_widths_col_min_over_max_resolves_to_min() {
+        // CSS Sizing 3 §4/§5: min > max resolves to min (max is
+        // ignored), even though a base `width` is also specified.
+        let mut doc = Document::new();
+        let grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![],
+            cells: vec![],
+            col_widths: vec![
+                super::ColSizing {
+                    width: Dimension::length(50.0),
+                    min_width: Dimension::length(80.0),
+                    max_width: Dimension::length(30.0),
+                },
+                super::ColSizing {
+                    width: Dimension::auto(),
+                    min_width: Dimension::auto(),
+                    max_width: Dimension::auto(),
+                },
+            ],
+        };
+        let inputs = LayoutInput {
+            known_dimensions: Size {
+                width: Some(80.0),
+                height: None,
+            },
+            ..column_probe_input()
+        };
+        let widths = super::resolve_column_widths(
+            &mut doc,
+            &grid,
+            inputs,
+            Size {
+                width: 0.0,
+                height: 0.0,
+            },
+        );
+
+        assert_eq!(widths, [80.0, 0.0]);
+    }
+
+    #[test]
+    fn resolve_column_widths_col_width_clamped_by_max_width() {
+        let mut doc = Document::new();
+        let grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![],
+            cells: vec![],
+            col_widths: vec![
+                super::ColSizing {
+                    width: Dimension::length(100.0),
+                    min_width: Dimension::auto(),
+                    max_width: Dimension::length(60.0),
+                },
+                super::ColSizing {
+                    width: Dimension::auto(),
+                    min_width: Dimension::auto(),
+                    max_width: Dimension::auto(),
+                },
+            ],
+        };
+        let inputs = LayoutInput {
+            known_dimensions: Size {
+                width: Some(60.0),
+                height: None,
+            },
+            ..column_probe_input()
+        };
+        let widths = super::resolve_column_widths(
+            &mut doc,
+            &grid,
+            inputs,
+            Size {
+                width: 0.0,
+                height: 0.0,
+            },
+        );
+
+        assert_eq!(widths, [60.0, 0.0]);
+    }
+
+    // -----------------------------------------------------------------
+    // compute_table_layout — higher-level integration coverage for
+    // branches not exercised by the fixtures above.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn compute_table_layout_empty_table_as_flex_item_uses_container_width() {
+        // An empty table (no rows at all) inside a flex container must
+        // fill the flex-resolved main size rather than shrink-wrapping
+        // to its padding/border (the `parent_is_flex_or_grid` branch).
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let flex = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display: flex; width: 300px"),
+        );
+        let table = doc.append_element(
+            Some(flex),
+            "table",
+            Style::default(),
+            Some("display: table; flex-grow: 1"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).unwrap();
+        crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+
+        let table_layout = doc.nodes[table].unrounded_layout;
+        assert!(
+            table_layout.size.width >= 299.0,
+            "empty table as sole flex item should fill the 300px flex container, got {}",
+            table_layout.size.width
+        );
+    }
+
+    #[test]
+    fn compute_table_layout_max_width_never_shrinks_below_intrinsic_content() {
+        // csswg-drafts#5336 / Mozilla bug 1651530: max-width never
+        // shrinks a table below its intrinsic content width — only
+        // min-width grows it. A max-width smaller than the natural
+        // content width is therefore a no-op.
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display: table; max-width: 60px"),
+        );
+        let tr = doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display: table-row"),
+        );
+        let td1 = doc.append_element(
+            Some(tr),
+            "td",
+            Style::default(),
+            Some("display: table-cell"),
+        );
+        doc.append_element(
+            Some(td1),
+            "div",
+            Style::default(),
+            Some("width: 100px; height: 10px"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).unwrap();
+        crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+
+        let table_layout = doc.nodes[table].unrounded_layout;
+        assert!(
+            table_layout.size.width >= 99.0,
+            "max-width below intrinsic content must not shrink the table, got {}",
+            table_layout.size.width
+        );
+    }
+
+    #[test]
+    fn compute_table_layout_single_column_separate_border_spacing_adds_both_gaps() {
+        // A single-column separate-border table needs the *two* outer
+        // spacing gaps folded into its one track's used width.
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display: table; border-spacing: 10px"),
+        );
+        let tr = doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display: table-row"),
+        );
+        let td = doc.append_element(
+            Some(tr),
+            "td",
+            Style::default(),
+            Some("display: table-cell"),
+        );
+        doc.append_element(
+            Some(td),
+            "div",
+            Style::default(),
+            Some("width: 40px; height: 10px"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).unwrap();
+        crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).unwrap();
+
+        let td_layout = doc.nodes[td].unrounded_layout;
+        assert!(
+            (td_layout.size.width - 60.0).abs() < 2.0,
+            "single track should include both 10px spacing gaps (40 + 2*10 = 60), got {}",
+            td_layout.size.width
         );
     }
 }
