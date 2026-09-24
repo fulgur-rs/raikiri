@@ -4225,15 +4225,19 @@ fn paint_image(
 ///
 /// # 実装範囲
 ///
-/// [`VerticalAlign::Sub`] / [`VerticalAlign::Super`] のみ shift を計算する。
-/// `top` / `text-top` / `middle` / `bottom` / `text-bottom` は
-/// raikiri-style の parser がそもそも受理しない (silent drop —
-/// [`raikiri_style::property::VerticalAlign`] doc の "Scope carving" 節)
-/// ためこの関数に届かない。`_` arm はこの関数を total にするための
-/// defensive default であり (`VerticalAlign` は `#[non_exhaustive]`)、
-/// [`VerticalAlign::Baseline`] も同じ 0 shift になる (CSS 2.1 §10.8.1
-/// verbatim: "Align the baseline of the box with the baseline of the
-/// parent box" — 追加の shift なし)。
+/// [`VerticalAlign::Sub`] / [`VerticalAlign::Super`] は parent font-size
+/// 基準、[`VerticalAlign::Length`] は computed px 値を使って shift する。
+/// CSS 2.1 §10.8.1 の length は正値で上げ、負値で下げるため、paint の
+/// Y-down 座標では符号を反転する。
+///
+/// [`VerticalAlign::Middle`] / [`VerticalAlign::TextTop`] /
+/// [`VerticalAlign::TextBottom`] は font metrics を使う shift が未実装のため
+/// 0 shift のまま。`Top` / `Bottom` はこの関数では shift せず、対象となる
+/// minimal line-box layout が box 位置を決める。`_` arm はこの関数を total
+/// にするための defensive default (`VerticalAlign` は `#[non_exhaustive]`)。
+/// [`VerticalAlign::Baseline`] も 0 shift になる (CSS 2.1 §10.8.1 verbatim:
+/// "Align the baseline of the box with the baseline of the parent box" —
+/// 追加の shift なし)。
 ///
 /// CSS 2.1 §10.8.1 "Applies to: inline-level and 'table-cell' elements"
 /// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>
@@ -5465,16 +5469,12 @@ fn vertical_align_shift_px(
     match va {
         VerticalAlign::Sub => parent_font_size_px / 5.0,
         VerticalAlign::Super => -(parent_font_size_px / 3.0),
-        // `VerticalAlign` は `#[non_exhaustive]` — この関数を total に
-        // するための defensive default で、今日は `Baseline` だけがここへ
-        // 落ちる (0 shift、spec 通り)。将来 `VerticalAlign` に新しい
-        // keyword が加われば、raikiri-style 側で明示的に shift 計算が
-        // 実装されるまでこの arm がその keyword を黙って 0 shift にする
-        // — `raikiri_style::property::VerticalAlign` doc の "Scope
-        // carving" 節が parse 層で戒めている「実装が追いつくまで受理し
-        // ない」規律を、この consumption 側では compile time に強制でき
-        // ない。新しい variant を追加する際は、まずここを明示的な match
-        // arm にすること。
+        // CSS 2.1 §10.8.1 raises a box for positive values. Paint uses a
+        // Y-down coordinate system, so the offset sign is reversed.
+        VerticalAlign::Length(Length::Px(px)) => -px,
+        // Computed style resolves lengths to Px. Baseline and the not-yet-
+        // measured font-metric keywords retain zero shift here; top/bottom
+        // alignment is handled by the minimal line-box layout when applicable.
         _ => 0.0,
     }
 }
@@ -5583,6 +5583,34 @@ mod tests {
     use raikiri_dom::Document;
     use raikiri_style::{build_rule_tree, cascade};
     use taffy::Style;
+
+    #[test]
+    fn vertical_align_length_uses_css_raise_lower_sign_in_y_down_space() {
+        assert_eq!(
+            vertical_align_shift_px(
+                VerticalAlign::Length(Length::Px(96.0)),
+                DisplayValue::Inline,
+                16.0,
+            ),
+            -96.0
+        );
+        assert_eq!(
+            vertical_align_shift_px(
+                VerticalAlign::Length(Length::Px(-12.0)),
+                DisplayValue::InlineBlock,
+                16.0,
+            ),
+            12.0
+        );
+        assert_eq!(
+            vertical_align_shift_px(
+                VerticalAlign::Length(Length::Px(96.0)),
+                DisplayValue::Block,
+                16.0,
+            ),
+            0.0
+        );
+    }
 
     fn list_fixture(
         first_style: &str,

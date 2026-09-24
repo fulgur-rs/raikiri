@@ -1540,6 +1540,24 @@ mod tests {
     }
 
     #[test]
+    fn paint_single_page_vertical_align_length_raises_or_lowers_glyph_by_px_value() {
+        let baseline_y = span_text_glyph_y(None);
+        let raised_y = span_text_glyph_y(Some("vertical-align: 96px"));
+        let lowered_y = span_text_glyph_y(Some("vertical-align: -12px"));
+        let epsilon = 1e-4;
+        assert!(
+            (raised_y - baseline_y + 96.0).abs() < epsilon,
+            "positive 96px vertical-align delta = {}, expected -96px",
+            raised_y - baseline_y
+        );
+        assert!(
+            (lowered_y - baseline_y - 12.0).abs() < epsilon,
+            "negative 12px vertical-align delta = {}, expected +12px",
+            lowered_y - baseline_y
+        );
+    }
+
+    #[test]
     fn paint_single_page_vertical_align_explicit_baseline_matches_implicit_default() {
         // `vertical-align: baseline` (explicit author value, spec initial)
         // must contribute the same zero shift as no author declaration at

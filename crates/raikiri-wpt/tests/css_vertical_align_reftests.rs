@@ -2,7 +2,9 @@
 
 use std::path::PathBuf;
 
-use raikiri_wpt::reftest::{ReftestConfig, discover_pairs_for_file_with_wpt_root, run_pair};
+use raikiri_wpt::reftest::{
+    ReftestConfig, discover_pairs_for_file_with_wpt_root, run_pair, run_pair_with_images,
+};
 use raikiri_wpt::runner::TestOutcome;
 
 #[test]
@@ -27,4 +29,29 @@ fn vertical_align_pairs_are_pixel_exact_at_800x600() {
             result.mismatched_pixels
         );
     }
+}
+
+/// The CSS2 .xht case verifies a positive length shift against positioned
+/// image references. Keep the explicit pair because the survey does not
+/// auto-discover .xht files.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn vertical_align_length_96px_wpt_pair_matches_at_800x600() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test = root.join("css/CSS2/linebox/vertical-align-007.xht");
+    let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
+        .expect("discover vertical-align length WPT pair");
+    assert_eq!(pairs.len(), 1);
+
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    let result =
+        run_pair_with_images(&pairs[0], config).expect("run vertical-align length WPT pair");
+    assert!(
+        matches!(result.outcome, TestOutcome::Pass),
+        "{:?} ({} mismatched pixels)",
+        result.outcome,
+        result.mismatched_pixels
+    );
 }
