@@ -4577,6 +4577,19 @@ fn parley_word_break(value: WordBreak, line_break: LineBreak) -> ParleyWordBreak
     }
 }
 
+fn line_break_anywhere_override(_context: parley::LineBreakContext) -> Option<bool> {
+    Some(true)
+}
+
+static LINE_BREAK_ANYWHERE_OVERRIDE: &parley::LineBreakOverrideFn =
+    &(line_break_anywhere_override as fn(parley::LineBreakContext) -> Option<bool>);
+
+fn parley_line_break_override(
+    line_break: LineBreak,
+) -> Option<&'static parley::LineBreakOverrideFn> {
+    matches!(line_break, LineBreak::Anywhere).then_some(LINE_BREAK_ANYWHERE_OVERRIDE)
+}
+
 fn parley_overflow_wrap(
     word_break: WordBreak,
     line_break: LineBreak,
@@ -4939,7 +4952,7 @@ pub(crate) fn preshape_text(
             multicol_column_width_for_text(cascade, &parent_of, idx, max_advance);
         // cov:ignore: authored auto-width fallback is exercised by the ignored foundation WPT run.
         let authored_advance = if multicol_advance.is_none() {
-            authored_containing_width(cascade, &parent_of, idx, max_advance)
+            authored_containing_width_with_resolved_ch(doc, cascade, &parent_of, idx, max_advance)
         } else {
             None
         };
@@ -5259,6 +5272,7 @@ pub(crate) fn preshape_text(
             // the same metrics as Parley's painted baselines.
             let quantize_metrics = !job.simple_pre_block && !job.simple_preserved_run;
             let mut builder = layout_cx.ranged_builder(fonts, &job.text, 1.0, quantize_metrics);
+            builder.set_line_break_override(parley_line_break_override(job.line_break));
             builder.push_default(StyleProperty::FontFamily(font_family));
             builder.push_default(StyleProperty::FontSize(font_size_px));
             builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
@@ -5350,6 +5364,7 @@ pub(crate) fn preshape_text(
                 let quantize_metrics = !job.simple_pre_block && !job.simple_preserved_run;
                 let mut builder =
                     lcx.ranged_builder(&mut fonts_thread, &job.text, 1.0, quantize_metrics);
+                builder.set_line_break_override(parley_line_break_override(job.line_break));
                 builder.push_default(StyleProperty::FontFamily(font_family));
                 builder.push_default(StyleProperty::FontSize(font_size_px));
                 builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));

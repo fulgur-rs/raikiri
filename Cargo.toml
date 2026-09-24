@@ -20,6 +20,12 @@ edition = "2024"
 rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
 
+[patch.crates-io]
+# Vendored Parley 0.11.1 at eea3503dd6cf17130cbb07348e0ff2c918300e94.
+# The local patch lets explicit CSS line-break opportunities win over the
+# trailing-whitespace hang when implementing `line-break:anywhere`.
+parley = { path = "vendor/parley" }
+
 [workspace.dependencies]
 # ── In-repo (populated per crate as they land in Tasks 2–6) ────────────
 raikiri-traits       = { version = "0.2.0", path = "./crates/raikiri-traits" }
