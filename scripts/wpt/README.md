@@ -65,6 +65,32 @@ does not mean every file is supported by the runner. Keep the shared roots
 stable while runner coverage grows; use a reviewed project-level change if the
 shared checkout scope must expand.
 
+## Running CSS Text i18n testharness pages
+
+The `run-css-text-i18n` binary runs the testharness-only pages under
+`css/css-text/i18n` with Raikiri layout geometry. It executes the inline WPT
+JavaScript unchanged. It does not load the external `testharness.js` or
+`testharnessreport.js`; it supplies the small helper API used by this test set.
+It does not change either expectations file. The command can return nonzero
+when a WPT assertion fails or when a file cannot run; both are reported
+separately.
+
+```sh
+scripts/wpt/fetch.sh
+cargo run --locked -p raikiri-wpt --bin run-css-text-i18n -- \
+    --wpt-root target/wpt
+```
+
+This route is intentionally limited to the CSS Text i18n testharness APIs. The
+158 reftest-only files in the directory remain on the visual reftest path; this
+command does not run arbitrary WPT JavaScript or implement unsupported DOM APIs.
+
+General scripts can use `raikiri_js::run_script` or keep a shared global scope
+with `raikiri_js::JsRuntime`. DOM access goes through `raikiri_js::dom::DomBackend`.
+The current runner uses a measured-layout snapshot adapter. A live DOM adapter
+can replace it behind the same JavaScript facade, without changing the WPT
+scripts or the CSS parsing runner.
+
 ## Surveying WPT reftests
 
 `survey_reftests.py` builds an inventory of actual `<link rel="match|mismatch">`

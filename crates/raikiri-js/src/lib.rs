@@ -1,17 +1,22 @@
-//! Run a WPT CSS parsing test script inside a pure-Rust JS engine (Boa),
-//! backed by `raikiri_style::property::parse_value`/`serialize_value`/
-//! `serialize_color_value` for the actual CSS validity and serialization
-//! decisions.
+//! JavaScript runtime support for WPT scripts, backed by the pure-Rust Boa
+//! engine.
 //!
-//! Scope: `test_invalid_value` and the parts of `test_valid_value` that
-//! `raikiri_style::property::serialize_value`/`serialize_color_value` cover
-//! (falls back to echoing the input for the rest — see those functions'
-//! doc comments). `test_valid_selector`/`test_valid_rule` need a
-//! `CSSStyleSheet`/`CSSRule` surface this crate doesn't implement.
+//! The existing CSS parsing API uses `raikiri_style` for CSS value parsing and
+//! serialization. The [`dom`] module provides a replaceable host boundary for
+//! JavaScript DOM access; its initial surface supports the CSS Text i18n WPT
+//! corpus while allowing a future live Raikiri DOM backend.
+//!
+//! CSS parsing coverage remains limited to `test_invalid_value` and the parts
+//! of `test_valid_value` supported by the value serializer. Tests that require
+//! a `CSSStyleSheet`/`CSSRule` surface remain outside that path.
 
 use boa_engine::object::builtins::JsArray;
 use boa_engine::{Context, JsResult, JsValue, NativeFunction, Source, js_string};
+
+pub mod dom;
+pub mod testharness;
 use cssparser::{ParseError, Parser, ParserInput};
+pub use dom::{DomBackend, DomNodeId, DomRect, JsRuntime, ScriptError, run_script};
 use raikiri_style::property::PropertyValue;
 
 /// One WPT `test()` call's outcome, as recorded by the JS-side harness shim.

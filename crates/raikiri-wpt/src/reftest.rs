@@ -6,10 +6,11 @@
 //! The default viewport is 800×600 CSS px (WPT reftest test setup default).
 //! Callers may supply a custom size via [`ReftestConfig`].
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::runner::{TestOutcome, Tolerance};
+use raikiri_js::dom::{DomSnapshot, ElementGeometry, SnapshotNode};
 
 // ── Public constants ───────────────────────────────────────────────────
 
@@ -1546,6 +1547,45 @@ fn render_raikiri_pages_inner(
     resource_base: Option<&Path>,
     font_base: Option<&Path>,
 ) -> Result<RenderedDocument, Box<dyn std::error::Error>> {
+    render_raikiri_pages_inner_with_snapshot(
+        html,
+        width,
+        height,
+        resource_base,
+        font_base,
+        false,
+        true,
+    )
+    .map(|(rendered, _)| rendered)
+}
+
+pub(crate) fn layout_raikiri_wpt_document(
+    html: &str,
+    width: u32,
+    height: u32,
+    wpt_root: &Path,
+) -> Result<DomSnapshot, Box<dyn std::error::Error>> {
+    render_raikiri_pages_inner_with_snapshot(
+        html,
+        width,
+        height,
+        Some(wpt_root),
+        Some(wpt_root),
+        true,
+        false,
+    )
+    .map(|(_, snapshot)| snapshot)
+}
+
+fn render_raikiri_pages_inner_with_snapshot(
+    html: &str,
+    width: u32,
+    height: u32,
+    resource_base: Option<&Path>,
+    font_base: Option<&Path>,
+    capture_snapshot: bool,
+    rasterize: bool,
+) -> Result<(RenderedDocument, DomSnapshot), Box<dyn std::error::Error>> {
     use anyrender::render_to_buffer;
     use anyrender_vello_cpu::VelloCpuImageRenderer;
     use raikiri::ParseOptions;
@@ -1558,6 +1598,7 @@ fn render_raikiri_pages_inner(
         relayout_text_for_width,
     };
     use raikiri_html::parse;
+    use raikiri_traits::{Dom as _, Element as _, Node as _};
 
     // URL construction requires an absolute directory. Normalize caller
     // paths here so resource and stylesheet loading work for relative test
@@ -1823,6 +1864,52 @@ fn render_raikiri_pages_inner(
 
     let page_count = slices.len() as u32;
     let mut pages = Vec::with_capacity(slices.len());
+    let mut snapshot = DomSnapshot::default();
+    if capture_snapshot {
+        let mut parent_by_node = BTreeMap::new();
+        for index in 0..uncascaded.dom.node_count() {
+            let parent = raikiri_traits::NodeId::new(index as u64);
+            for child in uncascaded.dom.child_ids(parent) {
+                parent_by_node.entry(child).or_insert(parent);
+            }
+        }
+
+        for index in 0..uncascaded.dom.node_count() {
+            let node_id = raikiri_traits::NodeId::new(index as u64);
+            let Some(node) = uncascaded.dom.node(node_id) else {
+                continue;
+            };
+            if !node.is_in_document() {
+                continue;
+            }
+            let Some(element) = node.as_element() else {
+                continue;
+            };
+            let handle = node_id.0;
+            let parent = parent_by_node.get(&node_id).and_then(|parent_id| {
+                let parent = uncascaded.dom.node(*parent_id)?;
+                parent.as_element().is_some().then_some(parent_id.0)
+            });
+            snapshot.nodes.insert(
+                handle,
+                SnapshotNode {
+                    parent,
+                    geometry: ElementGeometry::default(),
+                },
+            );
+            if element.tag_name().eq_ignore_ascii_case("body") {
+                // If the body has no layout box, CSSOM geometry is zero.
+                // Visible body geometry is filled from PageScene below.
+                snapshot.body = Some(handle);
+            }
+            if let Some(id) = element.id() {
+                snapshot
+                    .elements_by_id
+                    .entry(id.to_owned())
+                    .or_insert(handle);
+            }
+        }
+    }
     for slice in slices {
         let mut query = PageContextQuery::default();
         query.page_name = slice
@@ -1895,52 +1982,86 @@ fn render_raikiri_pages_inner(
             slice.content_origin_y,
             active_page_name.clone(),
         );
-        let _ = &scene;
-        let page_width = page_box.width.ceil() as u32;
-        let page_height = page_box.height.ceil() as u32;
-        let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
-            |painter| {
-                if let Some(resolver) = image_resolver.as_ref() {
-                    raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_images(
-                        painter,
-                        &uncascaded.dom,
-                        &cascade,
-                        page_box,
-                        slice.content_origin_y,
-                        slice.page_index,
-                        page_count,
-                        query.is_left,
-                        paired_page_increment,
-                        active_page_name.as_deref(),
-                        fixed_page_width,
-                        resolver,
-                    );
-                } else {
-                    raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(
-                        painter,
-                        &uncascaded.dom,
-                        &cascade,
-                        page_box,
-                        slice.content_origin_y,
-                        slice.page_index,
-                        page_count,
-                        query.is_left,
-                        paired_page_increment,
-                        active_page_name.as_deref(),
-                        fixed_page_width,
-                    );
+        if capture_snapshot {
+            let geometry_for_node =
+                |node_id: raikiri_traits::NodeId, (width, height): (f32, f32)| {
+                    let fragment = scene.fragments.get(&node_id)?.first()?;
+                    let left = f64::from(fragment.x + scene.body_offset_pt.0);
+                    let top = f64::from(fragment.y + scene.body_offset_pt.1);
+                    let width = f64::from(width);
+                    let height = f64::from(height);
+                    Some(ElementGeometry {
+                        offset_height: height.round(),
+                        bounding_client_rect: raikiri_js::DomRect {
+                            left,
+                            top,
+                            right: left + width,
+                            bottom: top + height,
+                            width,
+                            height,
+                        },
+                    })
+                };
+
+            for (node_id, entry) in scene.drawables.block_styles.iter() {
+                let Some(layout_size) = entry.layout_size else {
+                    continue;
+                };
+                let Some(geometry) = geometry_for_node(*node_id, layout_size) else {
+                    continue;
+                };
+                if let Some(snapshot_node) = snapshot.nodes.get_mut(&node_id.0) {
+                    snapshot_node.geometry = geometry;
                 }
-            },
-            page_width,
-            page_height,
-        );
-        pages.push(RenderedImage {
-            width: page_width,
-            height: page_height,
-            rgba,
-        });
+            }
+        }
+        if rasterize {
+            let page_width = page_box.width.ceil() as u32;
+            let page_height = page_box.height.ceil() as u32;
+            let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
+                |painter| {
+                    if let Some(resolver) = image_resolver.as_ref() {
+                        raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_images(
+                            painter,
+                            &uncascaded.dom,
+                            &cascade,
+                            page_box,
+                            slice.content_origin_y,
+                            slice.page_index,
+                            page_count,
+                            query.is_left,
+                            paired_page_increment,
+                            active_page_name.as_deref(),
+                            fixed_page_width,
+                            resolver,
+                        );
+                    } else {
+                        raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(
+                            painter,
+                            &uncascaded.dom,
+                            &cascade,
+                            page_box,
+                            slice.content_origin_y,
+                            slice.page_index,
+                            page_count,
+                            query.is_left,
+                            paired_page_increment,
+                            active_page_name.as_deref(),
+                            fixed_page_width,
+                        );
+                    }
+                },
+                page_width,
+                page_height,
+            );
+            pages.push(RenderedImage {
+                width: page_width,
+                height: page_height,
+                rgba,
+            });
+        }
     }
-    Ok(RenderedDocument { pages })
+    Ok((RenderedDocument { pages }, snapshot))
 }
 /// Load `@font-face` `src: url(...)` bytes from the WPT tree.
 ///
