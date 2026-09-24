@@ -8,8 +8,7 @@
 //! loopback / link-local / CGNAT / metadata ranges). `UreqHttpProvider`
 //! (behind the `http-ureq` feature) is the first real HTTP(S)
 //! `NetworkProvider`, hardened with that floor at connect time and on every
-//! redirect hop. See
-//! `docs/superpowers/specs/2026-09-25-ssrf-protection-design.md`.
+//! redirect hop.
 
 mod file_provider;
 #[cfg(feature = "http-ureq")]

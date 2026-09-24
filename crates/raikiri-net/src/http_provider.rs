@@ -1,5 +1,9 @@
 //! Real HTTP(S) `NetworkProvider`, backed by `ureq` and hardened against
-//! SSRF per `docs/superpowers/specs/2026-09-25-ssrf-protection-design.md`.
+//! SSRF: every address `ureq` would connect to is resolved through
+//! [`crate::http_resolver::SsrfSafeResolver`], which filters candidates
+//! through [`crate::ssrf_guard`] before a connection is ever attempted, and
+//! [`UreqHttpProvider::new`] disables proxy pickup so a proxy environment
+//! variable cannot silently reroute connections around that filtering.
 
 use raikiri_traits::{
     Body, FetchedResource, Method as RaikiriMethod, NetworkError, NetworkProvider, PolicyViolation,
@@ -200,12 +204,16 @@ mod tests {
     // (`ALL_PROXY`/`HTTP_PROXY`/`HTTPS_PROXY`, upper or lower case) happens
     // to be set in the process running the test — otherwise
     // `Proxy::try_from_env()` itself already returns `None`, so an
-    // unfixed `Config::default()` would also pass this assertion.
-    // Confirmed manually rather than by mutating `std::env` in-process
-    // (which is racy against Rust's default parallel test execution):
-    // running with `HTTPS_PROXY=http://127.0.0.1:9 cargo test ...` this
-    // test passes against `Config::builder().proxy(None)` and fails
-    // against a reverted `Config::default()`.
+    // unfixed `Config::default()` would also pass this assertion. Not
+    // mutated via `std::env` in-process here, since that is racy against
+    // Rust's default parallel test execution. To independently verify this
+    // assertion is exercising real behavior rather than an environment
+    // that already has no proxy set, run with a proxy variable present,
+    // e.g. `HTTPS_PROXY=http://127.0.0.1:9 cargo test -p raikiri-net
+    // --features http-ureq new_disables_proxy_pickup`, and confirm it
+    // still passes; then swap `UreqHttpProvider::new`'s `Config` back to
+    // `ureq::config::Config::default()` and confirm the same command now
+    // fails.
     #[test]
     fn new_disables_proxy_pickup_so_the_ssrf_floor_cannot_be_silently_bypassed() {
         let provider = UreqHttpProvider::new();

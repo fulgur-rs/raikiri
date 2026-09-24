@@ -1,7 +1,6 @@
 //! Custom `ureq` DNS resolver that enforces [`crate::ssrf_guard`] on every
 //! address it returns — including the re-resolution `ureq` performs for
 //! each redirect hop, since a hop is just a fresh request to a new URL.
-//! See `docs/superpowers/specs/2026-09-25-ssrf-protection-design.md` §3.2.
 
 use std::fmt;
 

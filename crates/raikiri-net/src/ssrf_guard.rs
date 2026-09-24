@@ -6,8 +6,7 @@
 //! `crate::http_resolver::SsrfSafeResolver`) and passes each candidate
 //! `IpAddr` through [`is_globally_routable`] before connecting. This applies
 //! *underneath* `raikiri_traits::ResourcePolicy` — a policy that returns
-//! `true` from `is_host_allowed` never bypasses this floor. See
-//! `docs/superpowers/specs/2026-09-25-ssrf-protection-design.md` §3.
+//! `true` from `is_host_allowed` never bypasses this floor.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -17,10 +16,9 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 /// IPv4-mapped / NAT64-embedded address whose embedded IPv4 address itself
 /// fails this same check.
 ///
-/// This is the floor described in
-/// `docs/superpowers/specs/2026-09-25-ssrf-protection-design.md` §3.1. It is
-/// independent of `raikiri_traits::ResourcePolicy` and cannot be loosened by
-/// one.
+/// This is the crate's SSRF safety floor: it is independent of
+/// `raikiri_traits::ResourcePolicy` and cannot be loosened by one — a
+/// policy that allows a host does not bypass this check.
 pub fn is_globally_routable(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_v4_globally_routable(v4),
