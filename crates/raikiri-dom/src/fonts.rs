@@ -1,13 +1,15 @@
-//! WPT bundled font dir を register し、system_fonts: false と generic
-//! family alias で cross-machine 決定性 FontContext を構築する。
+//! Registers the WPT bundled font dir and builds a cross-machine
+//! deterministic `FontContext` via `system_fonts: false` plus generic
+//! family aliasing.
 //!
-//! - Fetch は `scripts/wpt/fetch.sh` (dev prerequisite)、本 module は
-//!   fetch 済 `target/wpt/fonts/` を Path で受けるだけ
-//! - production runtime は `parley::FontContext::new()` を今のまま使う
-//! - bundled `.ttf` / `.otf` は直接登録し、`@font-face` URL sources の
-//!   WOFF/WOFF2 は `wuff` で sfnt に戻してから登録する
+//! - Fetching is `scripts/wpt/fetch.sh` (a dev prerequisite); this module
+//!   only takes the already-fetched `target/wpt/fonts/` as a `Path`
+//! - Production runtime still uses `parley::FontContext::new()` as-is
+//! - Bundled `.ttf` / `.otf` are registered directly; `@font-face` URL
+//!   sources' WOFF/WOFF2 are converted back to sfnt via `wuff` before
+//!   registration
 //!
-//! 参考実装:
+//! Reference implementations:
 //! - fulgur `crates/fulgur-wpt/src/fonts.rs::load_fonts_dir` (walker + sort)
 //! - blitz `packages/blitz-dom/src/lib.rs::build_single_font_ctx`
 //!   (system_fonts: false + generic alias append)
@@ -27,48 +29,54 @@ use raikiri_style::{
 use smol_str::SmolStr;
 use std::path::{Path, PathBuf};
 
-/// [`build_wpt_font_ctx`] が個別 font file を読み込む際に許容する最大 byte 数。
-/// 100 MiB は現実の bundled font (Ahem: ~12 KiB, Noto CJK: ~20 MiB 前後) に対して
-/// 十分な余裕を残しつつ、attacker が用意した巨大 regular file による memory
-/// exhaustion を弾く閾値。
+/// Maximum byte count [`build_wpt_font_ctx`] allows when reading an
+/// individual font file. 100 MiB leaves ample headroom for real bundled
+/// fonts (Ahem: ~12 KiB, Noto CJK: ~20 MiB or so) while still rejecting the
+/// memory exhaustion an attacker-supplied oversized regular file would
+/// otherwise cause.
 ///
 /// **Threat surface coverage**:
 ///
-/// - **symlink → /dev/zero**: `collect_recursive` 側の
-///   `file_type.is_symlink()` skip で既に closed
-/// - **FIFO / device / socket** (indefinite block): `collect_recursive` 側の
-///   `file_type.is_file()` gate で walk 段階で closed。`Read::take(N)` は memory を
-///   bound するが writer 未定の FIFO に対して time は bound しないので、walk 段階で
-///   排除するのが 1st line of defense。read 段階の TOCTOU-swap (regular → FIFO /
-///   device 差し替え) は下記 leaf-swap 項の後段で defended
-/// - **oversized regular file** (memory exhaustion): `metadata.len() >
-///   FONT_SIZE_CAP` skip で closed
+/// - **symlink → /dev/zero**: already closed by `collect_recursive`'s own
+///   `file_type.is_symlink()` skip
+/// - **FIFO / device / socket** (indefinite block): closed at walk time by
+///   `collect_recursive`'s own `file_type.is_file()` gate. `Read::take(N)`
+///   bounds memory but not time against a writer-less FIFO, so excluding it
+///   at walk time is the 1st line of defense. The read-time TOCTOU-swap
+///   (regular → FIFO / device substitution) is defended further down in the
+///   leaf-swap item below
+/// - **oversized regular file** (memory exhaustion): closed by the
+///   `metadata.len() > FONT_SIZE_CAP` skip
 /// - **mid-read grow (TOCTOU)**: the `+1-probe` inside
 ///   `raikiri_traits::io::read_bounded_from_open_file` (`take(FONT_SIZE_CAP +
 ///   1) + post-read bytes.len > cap` reject) prevents silent truncation and
 ///   surfaces TOCTOU-grow as `OversizedDuringRead`.
-/// - **leaf-swap (TOCTOU)**: walker と `raikiri_traits::io::open_bounded_regular_file`
-///   の pre-open `symlink_metadata` の間で regular file が symlink に差し替わる
-///   vector は、`open_bounded_regular_file` の open-time `O_NOFOLLOW` (unix) /
-///   reparse-point-aware open (Windows) で closed。ELOOP (POSIX 準拠、Linux /
-///   macOS が該当。FreeBSD は全バージョンで意図的に EMLINK を返す非準拠) or 事後
-///   `symlink_metadata` recheck (FreeBSD/NetBSD/OpenBSD の EMLINK / EFTYPE、
-///   あるいは Windows の synthesized reject) を「leaf-swap
-///   symlink 相当」として warn+skip し、Ahem の drop は下流の aggregate
-///   `PreferredFontUnavailable` check が catch する。
+/// - **leaf-swap (TOCTOU)**: the vector where a regular file is swapped for
+///   a symlink between the walker's and
+///   `raikiri_traits::io::open_bounded_regular_file`'s pre-open
+///   `symlink_metadata` calls is closed by `open_bounded_regular_file`'s
+///   open-time `O_NOFOLLOW` (unix) / reparse-point-aware open (Windows).
+///   Either ELOOP (POSIX-compliant; applies on Linux/macOS — FreeBSD is
+///   non-compliant across every version and deliberately returns EMLINK
+///   instead) or a fallback `symlink_metadata` recheck (FreeBSD/NetBSD/
+///   OpenBSD's EMLINK / EFTYPE, or Windows' synthesized reject) is treated
+///   as "equivalent to a leaf-swap symlink" and warn+skipped; the resulting
+///   drop of Ahem is caught downstream by the aggregate
+///   `PreferredFontUnavailable` check.
 ///
-/// - **FIFO / device-swap (TOCTOU) after pre-open metadata**: walker skip と
-///   `open_bounded_regular_file` の pre-open `symlink_metadata` の間に regular
-///   file が FIFO / character device / block device に差し替わる vector は、
-///   `open_bounded_regular_file` の open (unix: `O_NOFOLLOW | O_NONBLOCK`) +
-///   post-open fd-based fstat で closed。`O_NONBLOCK` が writer 未定 FIFO の
-///   `open()` block を防ぎ (time-DoS の 1st defense)、post-open
-///   `File::metadata().file_type().is_file()` の fd-based check が非 regular
-///   kind を race-free に reject する (`NotRegularFilePostOpen`)。pre-open
-///   path-based check と違い fd 発行後の stat なので path-swap TOCTOU では
-///   bypass 不可能。
+/// - **FIFO / device-swap (TOCTOU) after pre-open metadata**: the vector
+///   where a regular file is swapped for a FIFO / character device / block
+///   device between the walker's skip and
+///   `open_bounded_regular_file`'s pre-open `symlink_metadata` is closed by
+///   `open_bounded_regular_file`'s open (unix: `O_NOFOLLOW | O_NONBLOCK`)
+///   plus a post-open fd-based fstat. `O_NONBLOCK` prevents `open()` from
+///   blocking on a writer-less FIFO (the 1st defense against a time-DoS),
+///   and the post-open `File::metadata().file_type().is_file()` fd-based
+///   check race-freely rejects a non-regular kind
+///   (`NotRegularFilePostOpen`). Unlike the pre-open path-based check, this
+///   stats the already-opened fd, so a path-swap TOCTOU cannot bypass it.
 ///
-/// TODO: 将来 RenderLimits と連動させる。
+/// TODO: wire this up to `RenderLimits` in the future.
 const FONT_SIZE_CAP: u64 = 100 * 1024 * 1024;
 
 /// Reason `read_bounded_font_file` rejected a candidate font path.
@@ -814,9 +822,9 @@ fn read_reject_to_warn<'a>(path: &'a Path, reject: &'a FontReadReject) -> FontWa
     }
 }
 
-/// WPT bundled fonts dir から FontContext を構築する。system font
-/// resolver は完全 disable、generic family (`serif`/`sans-serif`/...)
-/// は register 済 family の先頭 (Ahem) に解決される。
+/// Builds a `FontContext` from the WPT bundled fonts dir. The system font
+/// resolver is fully disabled, and generic families (`serif`/`sans-serif`/
+/// ...) resolve to the head of the registered family list (Ahem).
 ///
 /// Delegates to [`build_wpt_font_ctx_with_observer`] with a `None` observer,
 /// preserving the CLI-facing `eprintln!` warn output.  Consumers wanting a
@@ -831,9 +839,9 @@ pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
     build_wpt_font_ctx_with_observer(fonts_dir, None)
 }
 
-/// WPT bundled fonts dir から FontContext を構築する。system font
-/// resolver は完全 disable、generic family (`serif`/`sans-serif`/...)
-/// は register 済 family の先頭 (Ahem) に解決される。
+/// Builds a `FontContext` from the WPT bundled fonts dir. The system font
+/// resolver is fully disabled, and generic families (`serif`/`sans-serif`/
+/// ...) resolve to the head of the registered family list (Ahem).
 ///
 /// The `observer` receives a [`FontWarn`] for every warn+skip site — walker
 /// (symlink / non-regular / oversized), read-time TOCTOU (`ReadRejected*`),
@@ -841,18 +849,21 @@ pub fn build_wpt_font_ctx(fonts_dir: &Path) -> Result<FontContext, FontError> {
 /// legacy `eprintln!` shape so CLI use is unaffected.
 ///
 /// # Errors
-/// - [`FontError::DirNotFound`] — `fonts_dir` が存在しない
-/// - [`FontError::EmptyDir`] — dir は存在するが `.ttf`/`.otf` が 1 個も無い
-/// - [`FontError::PreferredFontUnavailable`] — `PREFERRED_FIRST` に list した
-///   font (現在は Ahem.ttf) が dir に無い、または fontique が register を
-///   拒否した (silent fallback は cascade 決定性を破壊するため Err にする)
-/// - [`FontError::NoFontsRegistered`] — dir には `.ttf`/`.otf` があるが 1 個も
-///   register できなかった (PREFERRED_FIRST 経路で先に catch されるので
-///   PREFERRED_FIRST が空の future 想定でのみ到達)
-/// - [`FontError::Io`] — dir walk 中、または font read
-///   (callsite-local `read_bounded_font_file` 経由) の Io error propagate
-///   (`FontReadReject::Io(_)` -> `FontError::Io`、他 reject reason は warn+skip
-///   経由で `FontWarn::ReadRejected*` として observer にも surface)
+/// - [`FontError::DirNotFound`] — `fonts_dir` does not exist
+/// - [`FontError::EmptyDir`] — the dir exists but has zero `.ttf`/`.otf`
+///   files
+/// - [`FontError::PreferredFontUnavailable`] — a font listed in
+///   `PREFERRED_FIRST` (currently Ahem.ttf) is missing from the dir, or
+///   fontique refused to register it (silent fallback would break cascade
+///   determinism, hence the dedicated `Err`)
+/// - [`FontError::NoFontsRegistered`] — the dir has `.ttf`/`.otf` files but
+///   none registered (the `PREFERRED_FIRST` path catches this first, so this
+///   is only reached in a future where `PREFERRED_FIRST` is empty)
+/// - [`FontError::Io`] — an Io error propagated from the dir walk, or from a
+///   font read (via the callsite-local `read_bounded_font_file`)
+///   (`FontReadReject::Io(_)` -> `FontError::Io`; other reject reasons are
+///   warn+skipped and also surfaced to the observer as
+///   `FontWarn::ReadRejected*`)
 pub fn build_wpt_font_ctx_with_observer(
     fonts_dir: &Path,
     mut observer: FontWarnObserver<'_>,
@@ -887,7 +898,7 @@ pub fn build_wpt_font_ctx_with_observer(
     }
 
     // blitz pattern (packages/blitz-dom/src/lib.rs::build_single_font_ctx):
-    // system_fonts: false で fontique の platform resolver を完全 disable
+    // system_fonts: false fully disables fontique's platform resolver
     let mut ctx = FontContext {
         source_cache: SourceCache::new_shared(),
         collection: Collection::new(CollectionOptions {
@@ -896,23 +907,28 @@ pub fn build_wpt_font_ctx_with_observer(
         }),
     };
 
-    // Register 順 = fallback 順。walker が PREFERRED_FIRST を先頭に置く。
+    // Registration order = fallback order. The walker places PREFERRED_FIRST
+    // at the head.
     //
-    // File read failure は **hard error として propagate**する
-    // (Ahem.ttf の silent drop を防ぐため): 従来の eprintln! warn skip では、
-    // Ahem.ttf (PREFERRED_FIRST`[0]`) が read failed 時に silently 次候補
-    // (CSSTest 等) が register され、cascade "serif" が想定外の font に解決
-    // されてしまう。walker が返した path は既に存在確認済 (read_dir で
-    // 列挙された) なので、read 段階で失敗するのは permission 変更や symlink
-    // 損傷など明確な異常。ここで停止する方が「default で silent regression」
-    // より安全。個別 file の fontique reject (register.is_empty) は
-    // aggregate check (`family_ids.is_empty` → NoFontsRegistered) が catch する
-    // ので warn+skip のまま維持。
+    // A file read failure is propagated as a **hard error**
+    // (to prevent Ahem.ttf from being silently dropped): with the previous
+    // eprintln! warn+skip behavior, a read failure on Ahem.ttf
+    // (PREFERRED_FIRST`[0]`) would silently register the next candidate
+    // (e.g. CSSTest) instead, so the "serif" cascade would resolve to an
+    // unintended font. A path returned by the walker has already been
+    // confirmed to exist (it was enumerated via read_dir), so a read-time
+    // failure means something unambiguous went wrong — a permission change,
+    // a corrupted symlink, etc. Aborting here is safer than a "silent
+    // regression by default". Fontique rejecting an individual file
+    // (register.is_empty) is still caught by the aggregate check
+    // (`family_ids.is_empty` → NoFontsRegistered), so that case remains
+    // warn+skip.
     let mut family_ids = Vec::new();
     // PREFERRED_FIRST invariant tracking:
-    // path が PREFERRED_FIRST member かつ register 成功したものを basename
-    // 単位で記録。loop 後にこの set と PREFERRED_FIRST を照合し、欠落 or
-    // register-empty があれば PreferredFontUnavailable。silent fallback を防ぐ。
+    // Record, by basename, which PREFERRED_FIRST members' paths registered
+    // successfully. After the loop, cross-check this set against
+    // PREFERRED_FIRST — any that are missing or register-empty become
+    // PreferredFontUnavailable, preventing a silent fallback.
     let mut registered_preferred_basenames: std::collections::HashSet<String> =
         std::collections::HashSet::new();
     for path in paths {
@@ -1005,7 +1021,8 @@ pub fn build_wpt_font_ctx_with_observer(
             emit_warn(&mut observer, FontWarn::RegisterEmpty { path: &path });
             continue;
         }
-        // register 成功した path が PREFERRED_FIRST 対象なら record
+        // Record the basename if a successfully-registered path is a
+        // PREFERRED_FIRST member
         if let Some(basename) = path.file_name().and_then(|f| f.to_str())
             && PREFERRED_FIRST.contains(&basename)
         {
@@ -1015,10 +1032,10 @@ pub fn build_wpt_font_ctx_with_observer(
     }
 
     // PREFERRED_FIRST invariant enforce:
-    // PREFERRED_FIRST 全 member が register 成功したことを確認。missing (walker
-    // で拾えなかった) or register-empty (fontique reject) の場合、他の valid
-    // font が silent fallback として cascade "serif" に解決されないよう
-    // dedicated Err を返す。
+    // Confirm every PREFERRED_FIRST member registered successfully. If one
+    // is missing (not picked up by the walker) or register-empty (rejected
+    // by fontique), return a dedicated Err rather than letting some other
+    // valid font silently fall back into the "serif" cascade.
     for expected in PREFERRED_FIRST {
         if !registered_preferred_basenames.contains(*expected) {
             return Err(FontError::PreferredFontUnavailable {
@@ -1028,17 +1045,18 @@ pub fn build_wpt_font_ctx_with_observer(
         }
     }
 
-    // Backstop: PREFERRED_FIRST が空である将来 (現在は unreachable path、
-    // PREFERRED_FIRST=`["Ahem.ttf"]` の invariant check が先に fire する)
-    // に備えた defensive check。cascade "serif" が空の family_ids に対して
-    // 何にも解決されない状態を Err で surface する。
+    // Backstop: a defensive check for a future where PREFERRED_FIRST is
+    // empty (currently unreachable — the PREFERRED_FIRST=`["Ahem.ttf"]`
+    // invariant check above fires first). Surfaces as an Err rather than
+    // letting the "serif" cascade resolve to nothing against an empty
+    // family_ids.
     if family_ids.is_empty() {
         return Err(FontError::NoFontsRegistered(fonts_dir.to_path_buf()));
     }
 
     // Generic family alias remap (blitz pattern):
-    // UA CSS default "serif" cascade を bundled family (先頭 = Ahem)
-    // に解決させる
+    // Resolve the UA CSS default "serif" cascade to the bundled family
+    // (head = Ahem)
     for generic in [
         GenericFamily::Serif,
         GenericFamily::SansSerif,
@@ -1054,36 +1072,40 @@ pub fn build_wpt_font_ctx_with_observer(
     Ok(ctx)
 }
 
-/// [`build_wpt_font_ctx`] の error 型。std のみ、`thiserror` 依存なし
-/// (raikiri workspace 慣習準拠)。
+/// Error type for [`build_wpt_font_ctx`]. `std`-only, no `thiserror`
+/// dependency (per raikiri workspace convention).
 #[derive(Debug)]
 pub enum FontError {
-    /// `fonts_dir` が存在しない (fetch 未実行の場合など)
+    /// `fonts_dir` does not exist (e.g. fetch was never run)
     DirNotFound(PathBuf),
-    /// `fonts_dir` は存在するが `.ttf`/`.otf` が 1 個も見つからない
+    /// `fonts_dir` exists but has zero `.ttf`/`.otf` files
     EmptyDir(PathBuf),
-    /// dir に `.ttf`/`.otf` はあったが 1 個も fontique に register されなかった
-    /// (全 file が parse-invalid、または check drift で asset が壊れた等)。
-    /// `PREFERRED_FIRST` が空の future 想定でのみ到達する defensive backstop。
+    /// The dir had `.ttf`/`.otf` files, but none registered with fontique
+    /// (every file was parse-invalid, or an asset got corrupted by check
+    /// drift, etc.). A defensive backstop only reached in a future where
+    /// `PREFERRED_FIRST` is empty.
     NoFontsRegistered(PathBuf),
-    /// `PREFERRED_FIRST` に list された font が dir に存在しない、または
-    /// fontique が register を拒否した。
-    /// silent fallback で cascade 決定性を破壊しないよう dedicated Err。
+    /// A font listed in `PREFERRED_FIRST` is not present in the dir, or
+    /// fontique refused to register it.
+    /// A dedicated Err so a silent fallback doesn't break cascade
+    /// determinism.
     PreferredFontUnavailable {
-        /// 期待されたが register 成功しなかった font の basename
+        /// Basename of the font that was expected but didn't register
+        /// successfully
         name: String,
-        /// scan 対象の fonts dir
+        /// The fonts dir that was scanned
         dir: PathBuf,
     },
-    /// dir walk 中の io failure、または font read (callsite-local
-    /// `read_bounded_font_file` 経由) の `FontReadReject::Io(_)` propagate。
-    /// 他の reject reason は warn+skip される (詳細は
-    /// [`build_wpt_font_ctx`] の callsite comment 参照 — one source of
-    /// truth for the full variant list, so this doc doesn't drift from it)。
+    /// An io failure during the dir walk, or a `FontReadReject::Io(_)`
+    /// propagated from a font read (via the callsite-local
+    /// `read_bounded_font_file`).
+    /// Other reject reasons are warn+skipped (see the callsite comment on
+    /// [`build_wpt_font_ctx`] for details — one source of
+    /// truth for the full variant list, so this doc doesn't drift from it).
     Io {
-        /// io error が発生した path (walk 段階または read 段階)
+        /// Path where the io error occurred (during the walk or read stage)
         path: PathBuf,
-        /// 元の io error
+        /// The underlying io error
         source: std::io::Error,
     },
 }
@@ -1126,16 +1148,19 @@ impl std::error::Error for FontError {
     }
 }
 
-/// PREFERRED_FIRST に list した family は walker sort の結果に関わらず
-/// **配列 index 順に**先頭に register される。cascade `"serif"` の
-/// resolve 順の決定性と、hello-world VRT visual (Ahem square "Hi") のため。
+/// Families listed in PREFERRED_FIRST are registered at the head, **in
+/// array index order**, regardless of the walker's own sort result. This is
+/// for the determinism of the `"serif"` cascade's resolve order, and for the
+/// hello-world VRT visual (Ahem square "Hi").
 ///
-/// 現在は Ahem のみ (fulgur check では Lato-Regular が不在)。将来 Lato-Medium 等の
-/// real-text primary を追加したい場合は array に append する。
+/// Currently only Ahem (the fulgur check found Lato-Regular absent). Append
+/// to the array in the future if a real-text primary such as Lato-Medium
+/// needs to be added.
 const PREFERRED_FIRST: &[&str] = &["Ahem.ttf"];
 
-/// dir を recursive walk して `.ttf`/`.otf` を collect + sort + PREFERRED_FIRST
-/// を先頭に move する。file_name の case は `.ttf`/`.otf` (小文字 normalize)。
+/// Recursively walks `dir`, collecting + sorting `.ttf`/`.otf` files and
+/// moving PREFERRED_FIRST to the head. `file_name` matching is
+/// case-normalized to lowercase for `.ttf`/`.otf`.
 ///
 /// Walker warn+skip sites (symlink / non-regular / oversized) route through
 /// the shared `observer` so `_with_observer` consumers get walker-level
@@ -1144,22 +1169,22 @@ const PREFERRED_FIRST: &[&str] = &["Ahem.ttf"];
 fn walk_fonts(dir: &Path, observer: &mut FontWarnObserver<'_>) -> Result<Vec<PathBuf>, FontError> {
     let mut collected: Vec<PathBuf> = Vec::new();
     collect_recursive(dir, &mut collected, observer)?;
-    // 1. path sort (決定性)
+    // 1. path sort (for determinism)
     collected.sort();
-    // 2. PREFERRED_FIRST を先頭に partition
+    // 2. partition PREFERRED_FIRST to the front
     let (preferred, rest): (Vec<PathBuf>, Vec<PathBuf>) = collected.into_iter().partition(|p| {
         p.file_name()
             .and_then(|f| f.to_str())
             .map(|n| PREFERRED_FIRST.contains(&n))
             .unwrap_or(false)
     });
-    // 3. preferred は PREFERRED_FIRST の配列 index 順に再ソート。
-    // 同一 basename が複数 subdir に存在するケース (例: 将来の WPT check で
-    // Ahem.ttf が fonts/ と fonts/CSSTest/ 両方に存在) では **全 match** を
-    // drain する — `.find()` を 1 回だけ呼ぶと最初の match 以外が
-    // ordered_preferred からも rest からも silently drop されてしまう。
-    // `Vec::retain` で target にマッチする要素を全部
-    // 抜き取ることで、複数 match を取りこぼさない。
+    // 3. Re-sort `preferred` into PREFERRED_FIRST's own array index order.
+    // When the same basename exists under multiple subdirs (e.g. a future
+    // WPT check where Ahem.ttf exists under both fonts/ and
+    // fonts/CSSTest/), drain **every match** — calling `.find()` only once
+    // would silently drop every match after the first from both
+    // ordered_preferred and rest. `Vec::retain` pulls out every element
+    // matching `target` so multiple matches are never lost.
     let mut ordered_preferred: Vec<PathBuf> = Vec::new();
     let mut remaining_preferred = preferred;
     for target in PREFERRED_FIRST {
@@ -1174,10 +1199,10 @@ fn walk_fonts(dir: &Path, observer: &mut FontWarnObserver<'_>) -> Result<Vec<Pat
         });
         ordered_preferred.extend(matched);
     }
-    // 4. preferred + rest を結合。remaining_preferred は理論上 empty
-    // (partition の条件が PREFERRED_FIRST.contains と一致する為) だが、
-    // 万一 unmatched な要素が残っても rest 側に足すことで silent drop を
-    // 防ぐための対策。
+    // 4. Concatenate preferred + rest. `remaining_preferred` should be
+    // empty in theory (the partition condition matches
+    // PREFERRED_FIRST.contains exactly), but appending any unmatched
+    // leftovers to `rest` guards against a silent drop just in case.
     let mut result = ordered_preferred;
     result.extend(rest);
     result.extend(remaining_preferred);
@@ -1193,13 +1218,14 @@ fn collect_recursive(
         path: dir.to_path_buf(),
         source,
     })?;
-    // 各 DirEntry を preserve して `file_type()` で kind を照会する。
-    // 過去の `Path::is_dir()` 経由は:
-    // (a) symlink を follow するため `fonts/loop -> .` の cycle で無限再帰
-    //     → stack overflow abort、
-    // (b) metadata error を silently `false` として扱い entry を落とす、
-    // という 2 つの穴があった。`file_type()` は symlink を follow せず、
-    // io error も Result で返すので propagate 可能。
+    // Preserve each `DirEntry` and query its kind via `file_type()`.
+    // The previous approach via `Path::is_dir()` had two holes:
+    // (a) it follows symlinks, so a `fonts/loop -> .` cycle recursed
+    //     infinitely → stack overflow abort,
+    // (b) it silently treated a metadata error as `false` and dropped the
+    //     entry.
+    // `file_type()` doesn't follow symlinks, and returns io errors as a
+    // `Result` so they can be propagated.
     let mut entries_with_type: Vec<(PathBuf, std::fs::FileType)> = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|source| FontError::Io {
@@ -1213,13 +1239,14 @@ fn collect_recursive(
         })?;
         entries_with_type.push((path, file_type));
     }
-    // path sort で decl-order 非依存の決定性を保つ
+    // Sort by path to keep determinism independent of declaration order
     entries_with_type.sort_by(|a, b| a.0.cmp(&b.0));
 
     for (path, file_type) in entries_with_type {
-        // symlink (dir でも file でも) は skip: cycle-safe。将来 WPT check に
-        // 意図的な symlink が含まれるようになったら別途 canonicalize+visited
-        // set 方式に拡張する。今は WPT font tree は plain hierarchy 前提。
+        // Skip symlinks (whether dir or file): cycle-safe. If a future WPT
+        // check intentionally includes symlinks, extend this separately to
+        // a canonicalize+visited-set approach. For now the WPT font tree is
+        // assumed to be a plain hierarchy.
         if file_type.is_symlink() {
             emit_warn(observer, FontWarn::WalkerSkippedSymlink { path: &path });
             continue;
@@ -1228,11 +1255,13 @@ fn collect_recursive(
             collect_recursive(&path, out, observer)?;
             continue;
         }
-        // regular file 以外 (FIFO / device / socket / BlockDevice / CharDevice) は
-        // skip: FIFO は `std::fs::read` 経由で writer 未定なら無限 block、device は
-        // /dev/zero symlink 経路が閉じられた後の直接配置 attack vector。
-        // `Read::take(N)` は memory bound しか担保しないので、時間軸の DoS
-        // (blocking read) は walk 段階で file_type filter するのが load-bearing。
+        // Skip anything that isn't a regular file (FIFO / device / socket /
+        // BlockDevice / CharDevice): a FIFO with no writer would block
+        // `std::fs::read` indefinitely, and a device is the direct-placement
+        // attack vector left once the /dev/zero symlink route is closed.
+        // `Read::take(N)` only bounds memory, not time, so filtering by
+        // `file_type` at walk time is what's load-bearing against a
+        // time-axis DoS (a blocking read).
         if !file_type.is_file() {
             emit_warn(
                 observer,
@@ -1243,7 +1272,7 @@ fn collect_recursive(
             );
             continue;
         }
-        // 通常 file: extension check
+        // Ordinary file: extension check
         let is_font = path
             .extension()
             .and_then(|e| e.to_str())
@@ -1255,10 +1284,11 @@ fn collect_recursive(
         if !is_font {
             continue;
         }
-        // Size cap: attacker が用意した巨大 regular font file による memory
-        // exhaustion を弾く。境界値 (== FONT_SIZE_CAP) は
-        // 通す (build_wpt_font_ctx 側の `take(FONT_SIZE_CAP)` bounded read が
-        // 完全 consume するので truncation は起きない)。
+        // Size cap: rejects the memory exhaustion an attacker-supplied
+        // oversized regular font file would cause. The boundary value
+        // (== FONT_SIZE_CAP) is let through (build_wpt_font_ctx's
+        // `take(FONT_SIZE_CAP)` bounded read fully consumes it, so no
+        // truncation occurs).
         let metadata = std::fs::symlink_metadata(&path).map_err(|source| FontError::Io {
             path: path.clone(),
             source,
@@ -1822,8 +1852,9 @@ mod tests {
     use std::path::Path;
 
     /// Minimal valid TTF header (magic 0x00010000 + zero-fill).
-    /// fontique の register_fonts は header 検査後 zero-fill body でも
-    /// family_id を割り当てる (parse-invalid だが walker exercise には十分)。
+    /// fontique's `register_fonts` assigns a `family_id` even to a
+    /// zero-fill body once the header check passes (parse-invalid, but
+    /// good enough for exercising the walker).
     fn write_fake_ttf(dir: &Path, name: &str) {
         let mut f = std::fs::File::create(dir.join(name)).unwrap();
         f.write_all(&[0x00, 0x01, 0x00, 0x00]).unwrap();
@@ -1889,11 +1920,12 @@ mod tests {
     #[test]
     fn walker_preferred_first_orders_ahem_before_csstest() {
         let tmp = tempfile::tempdir().unwrap();
-        // "AAA-non-preferred.ttf" は plain alphabetical sort だと Ahem.ttf
-        // より前に来る ('A' == 'A' だが "AAA" < "Ahem" byte-wise: 'A' < 'h').
-        // これを混ぜることで、PREFERRED_FIRST の explicit reorder が本当に
-        // 効いていることを検証する (これが無いと Ahem が
-        // alphabetically 先頭なだけの偶然と reorder 適用が区別できない)。
+        // "AAA-non-preferred.ttf" sorts before Ahem.ttf under plain
+        // alphabetical sort ('A' == 'A' but "AAA" < "Ahem" byte-wise:
+        // 'A' < 'h'). Mixing this in verifies that PREFERRED_FIRST's
+        // explicit reorder is actually taking effect (without it, there'd
+        // be no way to distinguish Ahem merely happening to sort first
+        // alphabetically from the reorder actually being applied).
         write_fake_ttf(tmp.path(), "AAA-non-preferred.ttf");
         write_fake_ttf(tmp.path(), "Ahem.ttf");
         write_fake_ttf(tmp.path(), "CSSTest-Regular.ttf");
@@ -1903,8 +1935,8 @@ mod tests {
             .iter()
             .map(|p| p.file_name().and_then(|f| f.to_str()).unwrap().to_string())
             .collect();
-        // Ahem (PREFERRED_FIRST`[0]`) が alphabetically 先頭の
-        // AAA-non-preferred.ttf を override → 残りは path sort
+        // Ahem (PREFERRED_FIRST`[0]`) overrides AAA-non-preferred.ttf, which
+        // is alphabetically first → the rest stay in path sort order
         // (AAA-non-preferred, CSSTest, Lato-Bold)
         assert_eq!(
             names,
@@ -1919,11 +1951,12 @@ mod tests {
 
     #[test]
     fn walker_handles_duplicate_preferred_basename_in_subdirs() {
-        // Regression check: 同一 basename (Ahem.ttf) が top-level と
-        // subdir 両方に存在するケース (将来の WPT check で fonts/Ahem.ttf +
-        // fonts/CSSTest/Ahem.ttf のような構成があり得る)。旧実装は
-        // `.find()` を 1 回しか呼ばない為、2 個目以降の match が
-        // ordered_preferred からも rest からも silently drop されていた。
+        // Regression check: the same basename (Ahem.ttf) exists both at the
+        // top level and under a subdir (a future WPT check could plausibly
+        // have a layout like fonts/Ahem.ttf + fonts/CSSTest/Ahem.ttf). The
+        // old implementation called `.find()` only once, so every match
+        // after the first was silently dropped from both ordered_preferred
+        // and rest.
         let tmp = tempfile::tempdir().unwrap();
         let sub = tmp.path().join("subdir");
         std::fs::create_dir(&sub).unwrap();
@@ -1939,7 +1972,8 @@ mod tests {
             paths
         );
 
-        // 両方の Ahem.ttf copy が結果に含まれる (basename 重複でも drop されない)
+        // Both Ahem.ttf copies are included in the result (a duplicate
+        // basename does not get dropped)
         let ahem_count = paths
             .iter()
             .filter(|p| p.file_name().and_then(|f| f.to_str()) == Some("Ahem.ttf"))
@@ -1949,8 +1983,8 @@ mod tests {
             "duplicate Ahem.ttf basenames must both survive"
         );
 
-        // PREFERRED_FIRST の Ahem.ttf 2 個は先頭 2 slot を占める (path sort順:
-        // top-level "Ahem.ttf" < "subdir/Ahem.ttf")
+        // The 2 PREFERRED_FIRST Ahem.ttf entries occupy the first 2 slots
+        // (path sort order: top-level "Ahem.ttf" < "subdir/Ahem.ttf")
         assert_eq!(
             paths[0].file_name().and_then(|f| f.to_str()),
             Some("Ahem.ttf")
@@ -1991,11 +2025,12 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn walker_skips_named_pipe_font_entry() {
-        // Regression check: 攻撃者が制御下 fonts dir に
-        // `evil.ttf` という名前の FIFO を配置した場合、`std::fs::read` が
-        // writer 未定の FIFO で無限 block してしまう。walk 段階で
-        // `file_type.is_file()` filter が named pipe を弾くことを check する。
-        // このテストが落ちる = time-DoS surface が再度開いた合図。
+        // Regression check: if an attacker places a FIFO named `evil.ttf` in
+        // a fonts dir they control, `std::fs::read` would block indefinitely
+        // on a writer-less FIFO. Checks that the walk-time
+        // `file_type.is_file()` filter rejects a named pipe.
+        // If this test fails, that's the signal the time-DoS surface has
+        // reopened.
         let tmp = tempfile::tempdir().unwrap();
         write_fake_ttf(tmp.path(), "good.ttf");
         let fifo = tmp.path().join("evil.ttf");
@@ -2006,7 +2041,7 @@ mod tests {
         assert!(status.success(), "mkfifo failed for {}", fifo.display());
 
         let paths = walk_fonts(tmp.path(), &mut None).expect("walker Ok with FIFO present");
-        // FIFO は skip、good.ttf のみ通過
+        // The FIFO is skipped; only good.ttf passes through
         assert_eq!(
             paths.len(),
             1,
@@ -2021,12 +2056,12 @@ mod tests {
 
     #[test]
     fn walker_skips_oversized_font_file() {
-        // Regression check: FONT_SIZE_CAP + 1 byte の
-        // sparse regular file (実際には zero-block、`set_len` で logical size
-        // のみ膨らむ) を walker が skip することを check する。
-        // sparse file を使うのは、テスト実行時に 100 MiB+ の実 block 消費を
-        // 避けるため (metadata.len() は logical size を返すので filter は
-        // 正しく発火する)。
+        // Regression check: verifies the walker skips a FONT_SIZE_CAP + 1
+        // byte sparse regular file (actually zero-block; `set_len` only
+        // inflates the logical size). A sparse file is used to avoid
+        // consuming 100 MiB+ of real blocks while the test runs
+        // (`metadata.len()` returns the logical size, so the filter still
+        // fires correctly).
         let tmp = tempfile::tempdir().unwrap();
         write_fake_ttf(tmp.path(), "ok.ttf");
         let big = tmp.path().join("big.ttf");
@@ -2048,14 +2083,15 @@ mod tests {
 
     #[test]
     fn walker_accepts_regular_file_at_size_cap_boundary() {
-        // Regression check: filter が silently over-reject していないことを
-        // check する (境界値 == FONT_SIZE_CAP は通す — build_wpt_font_ctx 側の
-        // `take(FONT_SIZE_CAP)` bounded read は境界を全 consume する)。
-        // boundary.ttf: `File::set_len(FONT_SIZE_CAP)` で sparse file を作り、
-        // 境界値ちょうど (`metadata.len() == FONT_SIZE_CAP`) が accept 側に
-        // 落ちる (`>` cap で skip、`<= cap` で accept) ことを直接 check する
-        // (tiny file では境界を実際に触れず silent over-reject を
-        // 捕捉できないため)。
+        // Regression check: verifies the filter doesn't silently
+        // over-reject (the boundary value == FONT_SIZE_CAP is let through —
+        // build_wpt_font_ctx's `take(FONT_SIZE_CAP)` bounded read fully
+        // consumes exactly the boundary). boundary.ttf: creates a sparse
+        // file via `File::set_len(FONT_SIZE_CAP)`, then checks directly that
+        // exactly the boundary value (`metadata.len() == FONT_SIZE_CAP`)
+        // lands on the accept side (`>` cap skips, `<= cap` accepts) —
+        // a tiny file would never actually touch the boundary and so
+        // couldn't catch a silent over-reject.
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("boundary.ttf");
         let f = std::fs::File::create(&path).expect("create boundary.ttf");
@@ -2073,19 +2109,19 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn walker_skips_symlink_dirs_no_cycle_overflow() {
-        // Regression check: `Path::is_dir()`
-        // が symlink を follow して recursion loop に入る問題。`fonts/loop → .`
-        // のような self-cycle でも walker が有限時間で return することを pin。
+        // Regression check: `Path::is_dir()` follows symlinks and can enter
+        // a recursion loop. Pins that the walker returns in finite time even
+        // for a self-cycle like `fonts/loop → .`.
         let tmp = tempfile::tempdir().unwrap();
         write_fake_ttf(tmp.path(), "real.ttf");
         // symlink loop: tmp/loop → tmp (self-reference cycle)
         let loop_path = tmp.path().join("loop");
         std::os::unix::fs::symlink(tmp.path(), &loop_path).unwrap();
 
-        // 過去実装 (`Path::is_dir()`) では stack overflow していた
+        // The previous implementation (`Path::is_dir()`) would stack overflow here
         let paths = walk_fonts(tmp.path(), &mut None).expect("walker Ok even with symlink cycle");
-        // symlink を skip したので real.ttf のみ (loop 経由で発見される
-        // 追加 real.ttf は無い)。
+        // The symlink is skipped, so only real.ttf (no additional real.ttf
+        // is discovered via the loop).
         assert_eq!(paths.len(), 1, "expected only real.ttf, got: {:?}", paths);
         assert_eq!(
             paths[0].file_name().and_then(|f| f.to_str()),
@@ -2095,12 +2131,12 @@ mod tests {
 
     #[test]
     fn preferred_font_missing_from_disk_returns_err() {
-        // Regression check: PREFERRED_FIRST
-        // font (Ahem.ttf) が dir に存在しない場合、他の valid font (Other.ttf)
-        // が silent fallback として cascade "serif" に解決されてはならない。
+        // Regression check: when the PREFERRED_FIRST font (Ahem.ttf) is
+        // absent from the dir, another valid font (Other.ttf) must not
+        // silently fall back into the "serif" cascade.
         let tmp = tempfile::tempdir().unwrap();
         write_fake_ttf(tmp.path(), "Other.ttf"); // valid ttf (fontique accepts)
-        // Ahem.ttf は書かない → PREFERRED_FIRST invariant 違反
+        // Ahem.ttf is deliberately not written -> violates the PREFERRED_FIRST invariant
         match build_wpt_font_ctx(tmp.path()) {
             Err(FontError::PreferredFontUnavailable { name, dir }) => {
                 assert_eq!(name, "Ahem.ttf");
@@ -2119,15 +2155,15 @@ mod tests {
 
     #[test]
     fn preferred_font_register_failure_returns_err() {
-        // Regression check: PREFERRED_FIRST
-        // font (Ahem.ttf) が disk に存在するが fontique に reject された場合、
-        // 他の valid font が silent fallback として cascade "serif" に解決
-        // されてはならない (read failure を hard-error に昇格させたのと
-        // 同じ精神で、register failure も dedicated Err に昇格)。
+        // Regression check: when the PREFERRED_FIRST font (Ahem.ttf) is
+        // present on disk but rejected by fontique, another valid font must
+        // not silently fall back into the "serif" cascade (register failure
+        // is escalated to a dedicated Err in the same spirit as read
+        // failure being escalated to a hard error).
         let tmp = tempfile::tempdir().unwrap();
-        // Ahem.ttf: garbage bytes → fontique が register 拒否
+        // Ahem.ttf: garbage bytes -> fontique refuses to register it
         std::fs::write(tmp.path().join("Ahem.ttf"), b"not a valid font").unwrap();
-        // Other.ttf: valid fake ttf → fontique が register 成功
+        // Other.ttf: a valid fake ttf -> fontique registers it successfully
         write_fake_ttf(tmp.path(), "Other.ttf");
         match build_wpt_font_ctx(tmp.path()) {
             Err(FontError::PreferredFontUnavailable { name, dir }) => {
@@ -2145,15 +2181,15 @@ mod tests {
         }
     }
 
-    /// 実 WPT font (target/wpt/fonts/) を使った integration-style test。
-    /// scripts/wpt/fetch.sh 未実行時は skip (should_panic 相当ではなく early return
-    /// で clean skip)。
+    /// Integration-style test using the real WPT fonts (target/wpt/fonts/).
+    /// Skips (a clean early return, not a `should_panic`-style skip) when
+    /// `scripts/wpt/fetch.sh` hasn't been run yet.
     #[test]
     fn build_wpt_font_ctx_registers_generic_serif() {
         use std::path::PathBuf;
 
-        // Locate target/wpt/fonts (workspace root からの相対)。cargo test 実行時の
-        // CWD は crate dir なので `../..` で root。
+        // Locate target/wpt/fonts (relative to the workspace root). The CWD
+        // during `cargo test` is the crate dir, so `../..` reaches the root.
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
         let fonts_dir = PathBuf::from(&manifest_dir)
             .join("..")
@@ -2173,11 +2209,13 @@ mod tests {
         }
 
         let ctx = build_wpt_font_ctx(&fonts_dir).expect("build Ok with Ahem present");
-        // parley 0.10 の resolution API 経由で "serif" generic が非空 family
-        // に解決されることを assert する完全な検証は将来の end-to-end VRT
-        // が担保する。ここでは build_wpt_font_ctx が real WPT font dir
-        // (Ahem.ttf 含む) に対して panic せず Ok を返すことのみを smoke
-        // check する (current implementation scope。controller ambiguity は解決済み)。
+        // A full check asserting via parley 0.10's resolution API that the
+        // "serif" generic resolves to a non-empty family is left to a
+        // future end-to-end VRT. Here we only smoke-check that
+        // build_wpt_font_ctx returns Ok without panicking against a real
+        // WPT font dir (including Ahem.ttf) — within the current
+        // implementation's scope, with the controller ambiguity already
+        // resolved.
         let _ = ctx;
     }
 
@@ -3033,9 +3071,10 @@ mod tests {
 
     /// Real WPT font bytes (target/wpt/fonts/Ahem.ttf) for the positive
     /// registration paths. fontique rejects synthetic headers, so only real
-    /// bytes prove `applied`/`aliased`. scripts/wpt/fetch.sh 未実行時は
-    /// skip (early return — `build_wpt_font_ctx_registers_generic_serif`
-    /// と同じ規約; CI は fetch なしで走るため hard-require 禁止).
+    /// bytes prove `applied`/`aliased`. Skips (early return) when
+    /// `scripts/wpt/fetch.sh` hasn't been run yet — same convention as
+    /// `build_wpt_font_ctx_registers_generic_serif`; CI runs without the
+    /// fetch, so this must not hard-require it.
     fn wpt_ahem_bytes() -> Option<Vec<u8>> {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").ok()?;
         let path = std::path::PathBuf::from(&manifest_dir)
@@ -3521,5 +3560,688 @@ mod tests {
             super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
         assert_eq!(report.skipped, vec!["AliasFam".to_string()]);
         assert_eq!(computed, before);
+    }
+
+    // ------------------------------------------------------------------
+    // FontError / FontReadReject — Display and Error::source coverage.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn font_error_display_reproduces_expected_message_bodies() {
+        let dir = PathBuf::from("/fonts/wpt");
+        assert_eq!(
+            format!("{}", FontError::DirNotFound(dir.clone())),
+            "fonts dir not found: /fonts/wpt"
+        );
+        assert_eq!(
+            format!("{}", FontError::EmptyDir(dir.clone())),
+            "fonts dir has no .ttf/.otf files: /fonts/wpt (did you run scripts/wpt/fetch.sh?)"
+        );
+        assert_eq!(
+            format!("{}", FontError::NoFontsRegistered(dir.clone())),
+            "no font families registered from /fonts/wpt (all .ttf/.otf files rejected by parley/fontique — check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                FontError::PreferredFontUnavailable {
+                    name: "Ahem.ttf".to_string(),
+                    dir: dir.clone(),
+                }
+            ),
+            "preferred font 'Ahem.ttf' not registered under /fonts/wpt — missing from dir or rejected by parley/fontique; silent fallback would break cascade determinism (check scripts/wpt/pinned_sha.txt or run scripts/wpt/fetch.sh)"
+        );
+        // The wrapped io::Error's own Display text is not this module's
+        // contract to pin exactly, so only the fixed prefix/suffix wording
+        // and the source message's presence are asserted.
+        let io_display = format!(
+            "{}",
+            FontError::Io {
+                path: dir,
+                source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
+            }
+        );
+        assert!(io_display.starts_with("io error reading /fonts/wpt: "));
+        assert!(io_display.contains("denied"));
+    }
+
+    #[test]
+    fn font_error_source_returns_io_error_only_for_io_variant() {
+        use std::error::Error as _;
+        let io_err = FontError::Io {
+            path: PathBuf::from("/fonts/wpt/Ahem.ttf"),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "missing"),
+        };
+        let source = io_err.source().expect("Io variant must expose its source");
+        assert!(source.to_string().contains("missing"));
+
+        let non_io_err = FontError::EmptyDir(PathBuf::from("/fonts/wpt"));
+        assert!(non_io_err.source().is_none());
+    }
+
+    /// `FontReadReject::PathEscapePostOpen`'s Display is already pinned by
+    /// `font_read_reject_path_escape_post_open_display_contains_paths` above;
+    /// this covers the remaining seven variants.
+    #[test]
+    fn font_read_reject_display_reproduces_expected_message_bodies() {
+        assert_eq!(FontReadReject::Symlink.to_string(), "path is a symlink");
+        assert_eq!(
+            FontReadReject::NotRegularFile.to_string(),
+            "path is not a regular file"
+        );
+        assert_eq!(
+            FontReadReject::NotRegularFilePostOpen.to_string(),
+            "opened fd resolves to a non-regular file (TOCTOU-swap between pre-open metadata and open)"
+        );
+        assert_eq!(
+            FontReadReject::OversizedPreOpen { size: 8, cap: 4 }.to_string(),
+            "file size 8 bytes exceeds cap 4 bytes"
+        );
+        assert_eq!(
+            FontReadReject::OversizedDuringRead {
+                size: 101,
+                cap: 100
+            }
+            .to_string(),
+            "file grew past cap during read: 101 bytes read, cap 100 bytes (TOCTOU-grow)"
+        );
+        assert_eq!(
+            FontReadReject::PathEscape {
+                canonical: PathBuf::from("/outside/leaf.ttf"),
+                root: PathBuf::from("/fonts/root"),
+            }
+            .to_string(),
+            "canonicalizes to /outside/leaf.ttf which escapes fonts root /fonts/root"
+        );
+        let display = FontReadReject::Io(std::io::Error::other("boom")).to_string();
+        assert!(display.starts_with("I/O error: "));
+        assert!(display.contains("boom"));
+    }
+
+    // ------------------------------------------------------------------
+    // woff1_within_cap / woff2_within_cap / decode_web_font — WOFF
+    // container validation, exercised with fully synthetic bytes (no
+    // filesystem fixtures) so every arithmetic-bounds branch can be
+    // perturbed independently.
+    // ------------------------------------------------------------------
+
+    /// Build a well-formed, self-consistent WOFF1 buffer: 44-byte header +
+    /// one 20-byte table-directory entry + `table_data`, stored
+    /// uncompressed (`compLength == origLength`, wuff's convention for "no
+    /// compression applied to this table" — see `decompress_woff1`'s
+    /// `is_compressed` check). Every length field is derived from
+    /// `table_data`, so a test can start from this and perturb exactly the
+    /// field it wants to test. `table_data.len()` should stay a multiple of
+    /// 4 so the caller doesn't have to reason about sfnt padding.
+    fn build_woff1(table_data: &[u8]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"wOFF"); // signature
+        buf.extend_from_slice(&0u32.to_be_bytes()); // flavor
+        buf.extend_from_slice(&0u32.to_be_bytes()); // length (patched below)
+        buf.extend_from_slice(&1u16.to_be_bytes()); // numTables
+        buf.extend_from_slice(&0u16.to_be_bytes()); // reserved
+        buf.extend_from_slice(&0u32.to_be_bytes()); // totalSfntSize (patched below)
+        buf.extend_from_slice(&1u16.to_be_bytes()); // majorVersion
+        buf.extend_from_slice(&0u16.to_be_bytes()); // minorVersion
+        buf.extend_from_slice(&0u32.to_be_bytes()); // metaOffset
+        buf.extend_from_slice(&0u32.to_be_bytes()); // metaLength
+        buf.extend_from_slice(&0u32.to_be_bytes()); // metaOrigLength
+        buf.extend_from_slice(&0u32.to_be_bytes()); // privOffset
+        buf.extend_from_slice(&0u32.to_be_bytes()); // privLength
+        assert_eq!(buf.len(), 44, "WOFF1 header must be exactly 44 bytes");
+
+        const DIRECTORY_END: u32 = 64; // 44-byte header + one 20-byte entry
+        buf.extend_from_slice(b"TEST"); // tag
+        buf.extend_from_slice(&DIRECTORY_END.to_be_bytes()); // offset
+        buf.extend_from_slice(&(table_data.len() as u32).to_be_bytes()); // compLength
+        buf.extend_from_slice(&(table_data.len() as u32).to_be_bytes()); // origLength (== compLength: stored uncompressed)
+        buf.extend_from_slice(&0u32.to_be_bytes()); // origChecksum (unchecked by wuff's decoder)
+        assert_eq!(buf.len(), DIRECTORY_END as usize);
+
+        buf.extend_from_slice(table_data);
+        let total_len = buf.len() as u32;
+        buf[8..12].copy_from_slice(&total_len.to_be_bytes());
+
+        let padded = (table_data.len() as u32).div_ceil(4) * 4;
+        let sfnt_size = 12 + 16 + padded; // sfnt header + one 16-byte sfnt dir entry + table bytes
+        buf[16..20].copy_from_slice(&sfnt_size.to_be_bytes());
+
+        buf
+    }
+
+    /// Build a 48-byte WOFF2 header only — `woff2_within_cap` never reads
+    /// past the header, so no table directory or compressed data is needed.
+    /// `num_tables` is written but deliberately NOT inspected by
+    /// `woff2_within_cap` (only by wuff's real parser), which is what makes
+    /// `decode_web_font_rejects_woff2_that_fails_to_decompress` below useful.
+    fn build_woff2_header(length: u32, num_tables: u16, total_sfnt_size: u32) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"wOF2"); // signature
+        buf.extend_from_slice(&0u32.to_be_bytes()); // flavor
+        buf.extend_from_slice(&length.to_be_bytes()); // length
+        buf.extend_from_slice(&num_tables.to_be_bytes()); // numTables
+        buf.extend_from_slice(&0u16.to_be_bytes()); // reserved
+        buf.extend_from_slice(&total_sfnt_size.to_be_bytes()); // totalSfntSize
+        buf.extend_from_slice(&0u32.to_be_bytes()); // totalCompressedSize
+        buf.extend_from_slice(&1u16.to_be_bytes()); // majorVersion
+        buf.extend_from_slice(&0u16.to_be_bytes()); // minorVersion
+        buf.extend_from_slice(&0u32.to_be_bytes()); // metaOffset
+        buf.extend_from_slice(&0u32.to_be_bytes()); // metaLength
+        buf.extend_from_slice(&0u32.to_be_bytes()); // metaOrigLength
+        buf.extend_from_slice(&0u32.to_be_bytes()); // privOffset
+        buf.extend_from_slice(&0u32.to_be_bytes()); // privLength
+        assert_eq!(buf.len(), 48, "WOFF2 header must be exactly 48 bytes");
+        buf
+    }
+
+    #[test]
+    fn woff1_within_cap_accepts_well_formed_header() {
+        assert!(woff1_within_cap(&build_woff1(b"ABCDEFGH")));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_short_buffer() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        bytes.truncate(43); // one byte short of the 44-byte header
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_missing_signature() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        bytes[0..4].copy_from_slice(b"OTTO");
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_directory_exceeding_buffer() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        // Truncate below the declared table-directory end (64 bytes) while
+        // leaving the >=44-byte header-length check satisfied.
+        bytes.truncate(50);
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_declared_length_below_directory_end() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        bytes[8..12].copy_from_slice(&60u32.to_be_bytes()); // < the 64-byte directory end
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_declared_length_exceeding_buffer() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        bytes[8..12].copy_from_slice(&1000u32.to_be_bytes());
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_table_offset_inside_directory() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        // Claim the table's data starts at byte 40 -- inside the
+        // header/directory region rather than after it (an overlap a
+        // well-formed WOFF1 can never have).
+        bytes[48..52].copy_from_slice(&40u32.to_be_bytes());
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_table_end_exceeding_declared_length() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        bytes[52..56].copy_from_slice(&1000u32.to_be_bytes()); // compLength
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_sfnt_size_mismatch() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        bytes[16..20].copy_from_slice(&999u32.to_be_bytes()); // wrong totalSfntSize
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff1_within_cap_rejects_oversized_declared_sfnt_size() {
+        // No compressed-data section is needed (compLength stays 0) -- only
+        // the directory's declared origLength needs to push the recomputed
+        // sfnt size past FONT_SIZE_CAP.
+        let mut bytes = build_woff1(&[]);
+        let huge_orig_length: u32 = 200 * 1024 * 1024;
+        bytes[56..60].copy_from_slice(&huge_orig_length.to_be_bytes()); // origLength
+        let sfnt_size = 12u64 + 16 + huge_orig_length as u64; // already 4-byte aligned
+        assert!(sfnt_size > FONT_SIZE_CAP);
+        // totalSfntSize matches the recomputed size, so only the cap check
+        // (not the equality check) can be what rejects this buffer.
+        bytes[16..20].copy_from_slice(&(sfnt_size as u32).to_be_bytes());
+        assert!(!woff1_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff2_within_cap_accepts_well_formed_header() {
+        assert!(woff2_within_cap(&build_woff2_header(48, 1, 1000)));
+    }
+
+    #[test]
+    fn woff2_within_cap_rejects_missing_signature() {
+        let mut bytes = build_woff2_header(48, 1, 1000);
+        bytes[0..4].copy_from_slice(b"wOFF");
+        assert!(!woff2_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff2_within_cap_rejects_short_buffer() {
+        let mut bytes = build_woff2_header(48, 1, 1000);
+        bytes.truncate(47);
+        assert!(!woff2_within_cap(&bytes));
+    }
+
+    #[test]
+    fn woff2_within_cap_rejects_declared_length_below_header_size() {
+        assert!(!woff2_within_cap(&build_woff2_header(40, 1, 1000)));
+    }
+
+    #[test]
+    fn woff2_within_cap_rejects_declared_length_exceeding_buffer() {
+        assert!(!woff2_within_cap(&build_woff2_header(1000, 1, 1000)));
+    }
+
+    #[test]
+    fn woff2_within_cap_rejects_oversized_total_sfnt_size() {
+        let over_cap = FONT_SIZE_CAP as u32 + 1;
+        assert!(!woff2_within_cap(&build_woff2_header(48, 1, over_cap)));
+    }
+
+    #[test]
+    fn decode_web_font_passes_through_unrecognized_signature() {
+        // Neither a WOFF nor a WOFF2 signature -- e.g. a bare sfnt (TTF/OTF)
+        // already resolved by `local()`/direct bytes. `format(...)` hints
+        // are capability hints, not byte-format assertions (CSS Fonts 4
+        // §4.2), so this must pass through unchanged rather than reject.
+        let bytes = b"not a web font container at all".to_vec();
+        let decoded = decode_web_font(bytes.clone())
+            .expect("unrecognized signature must pass through unchanged");
+        assert_eq!(decoded, bytes);
+    }
+
+    #[test]
+    fn decode_web_font_rejects_malformed_woff1_container() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        bytes[16..20].copy_from_slice(&999u32.to_be_bytes()); // wrong totalSfntSize
+        assert!(!woff1_within_cap(&bytes), "fixture must fail the cap gate");
+        assert!(decode_web_font(bytes).is_none());
+    }
+
+    #[test]
+    fn decode_web_font_rejects_malformed_woff2_container() {
+        let bytes = build_woff2_header(1000, 1, 1000); // declared length exceeds actual buffer
+        assert!(!woff2_within_cap(&bytes), "fixture must fail the cap gate");
+        assert!(decode_web_font(bytes).is_none());
+    }
+
+    #[test]
+    fn decode_web_font_rejects_woff1_that_fails_to_decompress() {
+        let mut bytes = build_woff1(b"ABCDEFGH");
+        // woff1_within_cap only checks structural bounds, not the reserved
+        // field -- flip it nonzero so the container passes this module's
+        // cap/bounds gate but wuff's own parser (which the WOFF1 spec
+        // requires to reject a nonzero reserved field) still refuses it.
+        bytes[14..16].copy_from_slice(&1u16.to_be_bytes());
+        assert!(
+            woff1_within_cap(&bytes),
+            "reserved field is not part of the cap/bounds gate"
+        );
+        assert!(decode_web_font(bytes).is_none());
+    }
+
+    #[test]
+    fn decode_web_font_rejects_woff2_that_fails_to_decompress() {
+        // woff2_within_cap never inspects numTables; a zero count passes the
+        // cap/bounds gate but wuff's header parser requires at least one
+        // table and refuses to decode.
+        let bytes = build_woff2_header(48, 0, 1000);
+        assert!(
+            woff2_within_cap(&bytes),
+            "numTables is not part of the cap/bounds gate"
+        );
+        assert!(decode_web_font(bytes).is_none());
+    }
+
+    #[test]
+    fn decode_web_font_decodes_well_formed_woff1() {
+        let bytes = build_woff1(b"ABCDEFGH");
+        assert!(
+            woff1_within_cap(&bytes),
+            "fixture must be a valid WOFF1 container"
+        );
+        let decoded = decode_web_font(bytes).expect("well-formed uncompressed WOFF1 must decode");
+        // sfnt header (12 bytes) + one 16-byte sfnt directory entry +
+        // the 8-byte table body, exactly the totalSfntSize declared above.
+        assert_eq!(decoded.len(), 36);
+        assert_eq!(&decoded[28..36], b"ABCDEFGH");
+    }
+
+    // ------------------------------------------------------------------
+    // font_face_weight_override / font_face_style_override — descriptor to
+    // fontique-override mapping.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn font_face_weight_override_maps_named_and_numeric_descriptors() {
+        assert_eq!(
+            font_face_weight_override(FontFaceWeight::Normal),
+            parley::fontique::FontWeight::NORMAL
+        );
+        assert_eq!(
+            font_face_weight_override(FontFaceWeight::Bold),
+            parley::fontique::FontWeight::BOLD
+        );
+        assert_eq!(
+            font_face_weight_override(FontFaceWeight::Number(550.0)),
+            parley::fontique::FontWeight::new(550.0)
+        );
+        // Range keeps its lower bound -- registration records one face, and
+        // full range matching is the deferred matcher's job.
+        assert_eq!(
+            font_face_weight_override(FontFaceWeight::Range(300.0, 700.0)),
+            parley::fontique::FontWeight::new(300.0)
+        );
+    }
+
+    #[test]
+    fn font_face_style_override_maps_named_descriptors() {
+        assert_eq!(
+            font_face_style_override(FontFaceStyle::Normal),
+            parley::fontique::FontStyle::Normal
+        );
+        assert_eq!(
+            font_face_style_override(FontFaceStyle::Italic),
+            parley::fontique::FontStyle::Italic
+        );
+        // Oblique drops its angle -- the parser already stripped it (see
+        // `FontFaceStyle::Oblique`'s own doc), so the registration override
+        // always requests the engine's default oblique angle.
+        assert_eq!(
+            font_face_style_override(FontFaceStyle::Oblique),
+            parley::fontique::FontStyle::Oblique(None)
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // expand_font_face_alias / remove_unavailable_ch_family — direct calls
+    // exercising branches not reached by the apply_font_faces integration
+    // tests above (all synthetic; no FontContext/WPT fixture involved,
+    // since neither function ever consults `fonts.collection`).
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn expand_font_face_alias_is_noop_when_face_absent_from_list() {
+        let mut cv = computed_with_family("Other");
+        cv.font_family = std::sync::Arc::new(vec![
+            Atom(SmolStr::new("Other")),
+            Atom(SmolStr::new("Fallback")),
+        ]);
+        let before = cv.font_family.clone();
+        let mut computed = vec![cv];
+        super::expand_font_face_alias(&mut computed, "Face", "Target");
+        assert_eq!(computed[0].font_family, before);
+    }
+
+    #[test]
+    fn expand_font_face_alias_repositions_an_existing_later_target() {
+        let mut cv = computed_with_family("Face");
+        cv.font_family = std::sync::Arc::new(vec![
+            Atom(SmolStr::new("Face")),
+            Atom(SmolStr::new("Other")),
+            Atom(SmolStr::new("Target")),
+        ]);
+        let mut computed = vec![cv];
+        super::expand_font_face_alias(&mut computed, "Face", "Target");
+        let names: Vec<&str> = computed[0]
+            .font_family
+            .iter()
+            .map(|a| a.0.as_str())
+            .collect();
+        // Target already appeared, but after Face -- it must be
+        // deduplicated and reinserted immediately after Face rather than
+        // left duplicated or in its old spot (idempotency requires this:
+        // re-applying an already-expanded list must reach a fixed point).
+        assert_eq!(names, vec!["Face", "Target", "Other"]);
+    }
+
+    #[test]
+    fn expand_font_face_alias_is_case_insensitive_for_face_and_target_matching() {
+        let cv = computed_with_family("AliasFam");
+        let mut computed = vec![cv];
+        // Args use different casing than what's authored in the computed
+        // list; CSS family-name matching is ASCII case-insensitive.
+        super::expand_font_face_alias(&mut computed, "ALIASFAM", "realfam");
+        let names: Vec<&str> = computed[0]
+            .font_family
+            .iter()
+            .map(|a| a.0.as_str())
+            .collect();
+        assert_eq!(names, vec!["AliasFam", "realfam"]);
+    }
+
+    #[test]
+    fn expand_font_face_alias_updates_every_ch_provenance_field_independently() {
+        let mut cv = ComputedValues::initial();
+        // font_family deliberately omits "Face" so this assertion proves
+        // each field below is resolved from its own family list, not from
+        // `font_family`.
+        cv.font_family = std::sync::Arc::new(vec![Atom(SmolStr::new("Other"))]);
+
+        let key_with = |extra: &str| ChFontKey {
+            family: std::sync::Arc::new(vec![
+                Atom(SmolStr::new("Face")),
+                Atom(SmolStr::new(extra)),
+            ]),
+            size: cv.font_size,
+            weight: cv.font_weight,
+            style: cv.font_style,
+        };
+        let prov_with = |extra: &str| ChLengthProvenance {
+            factor: 1.0,
+            font: key_with(extra),
+        };
+
+        cv.text_indent_ch_font = Some(key_with("Indent"));
+        cv.width_ch = Some(prov_with("Width"));
+        cv.height_ch = Some(prov_with("Height"));
+        cv.padding_ch.top = Some(prov_with("PadTop"));
+        cv.padding_ch.right = Some(prov_with("PadRight"));
+        cv.padding_ch.bottom = Some(prov_with("PadBottom"));
+        cv.padding_ch.left = Some(prov_with("PadLeft"));
+        cv.margin_ch.top = Some(prov_with("MarTop"));
+        cv.margin_ch.right = Some(prov_with("MarRight"));
+        cv.margin_ch.bottom = Some(prov_with("MarBottom"));
+        cv.margin_ch.left = Some(prov_with("MarLeft"));
+
+        let mut computed = vec![cv];
+        super::expand_font_face_alias(&mut computed, "Face", "Target");
+
+        assert_eq!(
+            computed[0]
+                .font_family
+                .iter()
+                .map(|a| a.0.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Other"],
+            "font_family never mentioned Face and must stay untouched"
+        );
+
+        let names = |key: &ChFontKey| -> Vec<String> {
+            key.family.iter().map(|a| a.0.to_string()).collect()
+        };
+        assert_eq!(
+            names(computed[0].text_indent_ch_font.as_ref().unwrap()),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "Indent".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].width_ch.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "Width".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].height_ch.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "Height".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].padding_ch.top.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "PadTop".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].padding_ch.right.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "PadRight".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].padding_ch.bottom.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "PadBottom".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].padding_ch.left.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "PadLeft".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].margin_ch.top.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "MarTop".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].margin_ch.right.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "MarRight".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].margin_ch.bottom.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "MarBottom".to_string()
+            ]
+        );
+        assert_eq!(
+            names(&computed[0].margin_ch.left.as_ref().unwrap().font),
+            vec![
+                "Face".to_string(),
+                "Target".to_string(),
+                "MarLeft".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn remove_unavailable_ch_family_removes_case_insensitively_from_every_ch_field() {
+        let mut cv = ComputedValues::initial();
+        let key_with = |first: &str, extra: &str| ChFontKey {
+            family: std::sync::Arc::new(vec![Atom(SmolStr::new(first)), Atom(SmolStr::new(extra))]),
+            size: cv.font_size,
+            weight: cv.font_weight,
+            style: cv.font_style,
+        };
+        let prov_with = |first: &str, extra: &str| ChLengthProvenance {
+            factor: 1.0,
+            font: key_with(first, extra),
+        };
+
+        // Different casing than the "DropMe" argument below -- the removal
+        // must still match via `eq_ignore_ascii_case`.
+        cv.text_indent_ch_font = Some(key_with("DROPME", "Keep"));
+        cv.width_ch = Some(prov_with("DropMe", "Keep"));
+        cv.height_ch = Some(prov_with("dropme", "Keep"));
+        cv.padding_ch.top = Some(prov_with("DropMe", "Keep"));
+        cv.padding_ch.right = Some(prov_with("DropMe", "Keep"));
+        cv.padding_ch.bottom = Some(prov_with("DropMe", "Keep"));
+        cv.padding_ch.left = Some(prov_with("DropMe", "Keep"));
+        cv.margin_ch.top = Some(prov_with("DropMe", "Keep"));
+        cv.margin_ch.right = Some(prov_with("DropMe", "Keep"));
+        cv.margin_ch.bottom = Some(prov_with("DropMe", "Keep"));
+        cv.margin_ch.left = Some(prov_with("DropMe", "Keep"));
+
+        let mut computed = vec![cv];
+        super::remove_unavailable_ch_family(&mut computed, "dropme");
+
+        let names = |key: &ChFontKey| -> Vec<String> {
+            key.family.iter().map(|a| a.0.to_string()).collect()
+        };
+        assert_eq!(
+            names(computed[0].text_indent_ch_font.as_ref().unwrap()),
+            vec!["Keep".to_string()]
+        );
+        for provenance in [
+            computed[0].width_ch.as_ref().unwrap(),
+            computed[0].height_ch.as_ref().unwrap(),
+            computed[0].padding_ch.top.as_ref().unwrap(),
+            computed[0].padding_ch.right.as_ref().unwrap(),
+            computed[0].padding_ch.bottom.as_ref().unwrap(),
+            computed[0].padding_ch.left.as_ref().unwrap(),
+            computed[0].margin_ch.top.as_ref().unwrap(),
+            computed[0].margin_ch.right.as_ref().unwrap(),
+            computed[0].margin_ch.bottom.as_ref().unwrap(),
+            computed[0].margin_ch.left.as_ref().unwrap(),
+        ] {
+            assert_eq!(names(&provenance.font), vec!["Keep".to_string()]);
+        }
+    }
+
+    #[test]
+    fn remove_unavailable_ch_family_is_noop_when_family_absent_and_skips_unset_fields() {
+        let mut cv = ComputedValues::initial();
+        cv.text_indent_ch_font = Some(ChFontKey {
+            family: std::sync::Arc::new(vec![Atom(SmolStr::new("Unrelated"))]),
+            size: cv.font_size,
+            weight: cv.font_weight,
+            style: cv.font_style,
+        });
+        // width_ch / height_ch / padding_ch / margin_ch all stay `None` --
+        // remove_unavailable_ch_family must not panic on the unset fields.
+        let mut computed = vec![cv];
+        super::remove_unavailable_ch_family(&mut computed, "NoSuchFamily");
+        assert_eq!(
+            computed[0]
+                .text_indent_ch_font
+                .as_ref()
+                .unwrap()
+                .family
+                .iter()
+                .map(|a| a.0.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Unrelated"]
+        );
+        assert!(computed[0].width_ch.is_none());
+        assert!(computed[0].height_ch.is_none());
     }
 }
