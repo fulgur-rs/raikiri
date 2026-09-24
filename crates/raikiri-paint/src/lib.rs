@@ -1545,16 +1545,8 @@ mod tests {
         let raised_y = span_text_glyph_y(Some("vertical-align: 96px"));
         let lowered_y = span_text_glyph_y(Some("vertical-align: -12px"));
         let epsilon = 1e-4;
-        assert!(
-            (raised_y - baseline_y + 96.0).abs() < epsilon,
-            "positive 96px vertical-align delta = {}, expected -96px",
-            raised_y - baseline_y
-        );
-        assert!(
-            (lowered_y - baseline_y - 12.0).abs() < epsilon,
-            "negative 12px vertical-align delta = {}, expected +12px",
-            lowered_y - baseline_y
-        );
+        assert!((raised_y - baseline_y + 96.0).abs() < epsilon);
+        assert!((lowered_y - baseline_y - 12.0).abs() < epsilon);
     }
 
     #[test]
