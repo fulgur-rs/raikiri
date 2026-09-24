@@ -13,9 +13,10 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 /// Returns `true` only if `ip` is safe to connect to when fetching a
 /// Consumer-supplied resource URL: not "this network" (0.0.0.0/8), private,
 /// loopback, link-local, CGNAT,
-/// documentation, benchmarking, reserved, multicast, broadcast, or an
-/// IPv4-mapped / NAT64-embedded address whose embedded IPv4 address itself
-/// fails this same check.
+/// documentation, benchmarking, reserved, multicast, broadcast, in the
+/// local-use NAT64 prefix `64:ff9b:1::/48`, or an IPv4-mapped /
+/// well-known-prefix NAT64 address whose embedded IPv4 address itself fails
+/// this same check.
 ///
 /// This is the crate's SSRF safety floor: it is independent of
 /// `raikiri_traits::ResourcePolicy` and cannot be loosened by one — a
@@ -91,6 +92,7 @@ fn is_v6_globally_routable(ip: Ipv6Addr) -> bool {
         || ip.is_unique_local()
         || ip.is_unicast_link_local()
         || is_documentation_v6(ip)
+        || is_nat64_local_use(ip)
     {
         return false;
     }
@@ -115,6 +117,19 @@ fn nat64_embedded_v4(ip: Ipv6Addr) -> Option<Ipv4Addr> {
     } else {
         None
     }
+}
+
+/// 64:ff9b:1::/48 (RFC 8215, local-use IPv4/IPv6 translation prefix).
+/// Unlike the well-known prefix above, this one is reserved for translators
+/// inside a single operator's network and never names a global
+/// destination: a local NAT64 behind it can map to RFC 1918 space (for
+/// example `64:ff9b:1::a00:1` reaching 10.0.0.1). The whole /48 is
+/// therefore blocked outright rather than unwrapped and re-checked —
+/// RFC 8215 does not even fix where inside the prefix the IPv4 address is
+/// embedded, so there is no single embedded address to re-check.
+fn is_nat64_local_use(ip: Ipv6Addr) -> bool {
+    let seg = ip.segments();
+    seg[0] == 0x0064 && seg[1] == 0xff9b && seg[2] == 0x0001
 }
 
 /// 2001:db8::/32 (RFC 3849) and 3fff::/20 (RFC 9637), documentation ranges.

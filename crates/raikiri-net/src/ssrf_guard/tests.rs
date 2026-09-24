@@ -119,6 +119,23 @@ fn unwraps_nat64_embedded_ipv4_and_rechecks_the_embedded_address() {
 }
 
 #[test]
+fn blocks_the_local_use_nat64_prefix_outright_without_unwrapping() {
+    // 64:ff9b:1::/48 (RFC 8215) is for translators local to one network,
+    // which may map to private space. It is blocked as a whole: these
+    // assertions must hold regardless of what the low bits embed.
+    assert!(!is_globally_routable(v6("64:ff9b:1::a00:1"))); // would be 10.0.0.1
+    assert!(!is_globally_routable(v6("64:ff9b:1::7f00:1"))); // would be 127.0.0.1
+    // Even a public-looking embedded value is not unwrapped and allowed.
+    assert!(!is_globally_routable(v6("64:ff9b:1::808:808")));
+    assert!(!is_globally_routable(v6(
+        "64:ff9b:1:ffff:ffff:ffff:ffff:ffff"
+    )));
+    // Just outside the /48 on either side is ordinary, unaffected space.
+    assert!(is_globally_routable(v6("64:ff9b:2::808:808")));
+    assert!(is_globally_routable(v6("64:ff9b:0:1::808:808")));
+}
+
+#[test]
 fn allows_ordinary_public_v6_addresses() {
     assert!(is_globally_routable(v6("2606:4700:4700::1111")));
 }

@@ -33,9 +33,10 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 /// run it inside network-level isolation (for example a restricted network
 /// namespace with default-deny egress) for defense in depth. The floor also
 /// has residual limits: for example, IPv6 transition and legacy prefixes
-/// other than IPv4-mapped and the NAT64 well-known prefix are not explicitly
-/// enumerated, so an address embedded in one of those is not unwrapped and
-/// re-checked.
+/// other than IPv4-mapped and the NAT64 well-known prefix (unwrapped and
+/// re-checked) and the NAT64 local-use prefix (blocked outright) are not
+/// explicitly enumerated, so an address embedded in one of those is not
+/// unwrapped and re-checked.
 pub struct UreqHttpProvider {
     agent: ureq::Agent,
 }
