@@ -178,8 +178,11 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
+      # `--features raikiri-net/http-ureq`: 上の test job と同じく、default off
+      # の UreqHttpProvider (http_provider / http_resolver) を coverage 対象に
+      # 含めるため明示的に有効化する。他 crate の挙動には影響しない。
       - name: Generate LCOV report
-        run: cargo llvm-cov --workspace --locked --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --features raikiri-net/http-ureq --locked --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
