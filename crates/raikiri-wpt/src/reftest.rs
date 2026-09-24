@@ -1991,7 +1991,7 @@ fn render_raikiri_pages_inner_with_snapshot(
                     let width = f64::from(width);
                     let height = f64::from(height);
                     Some(ElementGeometry {
-                        offset_height: f64::from(height.round()),
+                        offset_height: height.round(),
                         bounding_client_rect: raikiri_js::DomRect {
                             left,
                             top,
