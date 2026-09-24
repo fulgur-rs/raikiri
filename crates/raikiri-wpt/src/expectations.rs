@@ -207,8 +207,7 @@ impl KnownIssues {
 
 /// Parsed `raikiri-baseline.txt`: the T2 gate set (spec §12.10).
 ///
-/// Regressions against this set block merge; additions/removals require
-/// 2-reviewer approval per the baseline-migration policy.
+/// Regressions against this set block merge.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct Baseline {

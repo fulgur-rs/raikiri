@@ -19,8 +19,8 @@ Use this workflow only for visual WPT reftests with `rel=match` or
   visual baseline only after every pair passes.
 - Never add a failing, skipped, unrenderable, or unverified test to
   `expectations/raikiri-baseline.txt`. Never remove an existing baseline entry
-  to make a run green. Baseline additions/removals follow the review rule in
-  the file header; do not bypass required reviewers.
+  to make a run green. Document each baseline addition with its verified test
+  IDs and exact passing command in the scoped PR.
 - Keep the user's existing changes untouched. Use a dedicated
   `.worktrees/<issue-or-slug>/` worktree; do not create scratch worktrees in
   `/tmp` or `$HOME`.

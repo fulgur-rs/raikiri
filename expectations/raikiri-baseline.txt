@@ -15,8 +15,7 @@
 #    co-listing.
 # 2. Filter runner output to tests with STATUS = PASS.
 # 3. Open a PR that adds them to this file. The PR is the initial baseline
-#    migration and requires 2-reviewer approval per §12.10.
-# Subsequent additions / removals follow the same 2-reviewer rule.
+#    migration.
 #
 # Scope note: the baseline is *scope-independent* per §2 Goals ("regression
 # detection の flat rule": any previously-passing test regressing blocks
@@ -367,7 +366,7 @@ css/css-values/urls/url-request-modifiers-invalid.sub.html
 #    co-listing.
 #    excluded because M1 baseline has no per-tuple filter (see the
 #    known-issues.txt, quarantine.txt, or deprecated.txt. Quarantine is
-#    migration and requires 2-reviewer approval per §12.10.
+#    migration.
 #    over ALL executable WPT tests — every test NOT excluded by
 #    possible only after raikiri-spike-a6s enables filter-disjoint
 # (a) baseline itself grows per-tuple filters, or (b) the CI matrix
@@ -386,7 +385,6 @@ css/css-values/urls/url-request-modifiers-invalid.sub.html
 # Scope note: the baseline is *scope-independent* per §2 Goals ("regression
 # See blitz's wpt/runner/src/report.rs `generate_expectations` for a
 # Spec §12.10 semantics: baseline and quarantine may co-list a
-# Subsequent additions / removals follow the same 2-reviewer rule.
 # The current raikiri-wpt::lint::detect_conflicting enforces this
 # This file is *runner-generated*, NOT hand-authored:
 # conflict. The initial baseline PR at M3 kickoff must EXCLUDE any
