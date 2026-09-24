@@ -897,14 +897,18 @@ pub(crate) fn realign_inline_replaced_children(doc: &mut Document, cascade: &Cas
                 line_height_used = line_height;
                 continue;
             }
-            let is_whitespace = matches!(
+            let is_collapsible_whitespace = matches!(
                 &doc.nodes[child].data,
                 NodeData::Text(text)
-                    if text.text_content.chars().all(|ch| {
-                        matches!(ch, ' ' | '\t' | '\n' | '\r' | '\u{000c}' | '\u{00a0}')
-                    })
+                    if text.text_content.chars().all(is_collapsible_ws)
             );
-            let (width, height) = if is_whitespace {
+            let is_nonbreaking_space_run = matches!(
+                &doc.nodes[child].data,
+                NodeData::Text(text)
+                    if !text.text_content.is_empty()
+                        && text.text_content.chars().all(|ch| ch == '\u{00a0}')
+            );
+            let (width, height) = if is_collapsible_whitespace || is_nonbreaking_space_run {
                 (
                     doc.nodes[child].unrounded_layout.size.width.max(
                         style_dimension_length(doc.nodes[child].style.size.width).unwrap_or(0.0),
@@ -926,14 +930,13 @@ pub(crate) fn realign_inline_replaced_children(doc: &mut Document, cascade: &Cas
                 x = 0.0;
                 y += line_height_used;
                 line_height_used = line_height;
-                if is_whitespace {
+                if is_collapsible_whitespace {
                     continue;
                 }
             }
-            if is_whitespace && x == 0.0 {
-                // Collapsible leading spaces do not create an anonymous
-                // inline box at a new line. Non-breaking runs still reach
-                // here only when they fit after preceding content.
+            if is_collapsible_whitespace && x == 0.0 {
+                // CSS-collapsible leading whitespace is removed at a new line.
+                // U+00A0 is not collapsible and keeps its measured advance.
                 continue;
             }
             doc.nodes[child].unrounded_layout.location.x = x;
@@ -3726,7 +3729,9 @@ fn preserves_inline_whitespace_item(
             doc.nodes[child].kind() == NodeKind::Element
                 && is_inline_element_box(cascade, child)
                 && cascade.computed[child].display != DisplayValue::None
-                && has_authored_non_whitespace_text(doc, child)
+                && (has_authored_non_whitespace_text(doc, child)
+                    // Replaced inline content has no text descendants.
+                    || doc.nodes[child].tag_name() == Some("img"))
         })
     };
     has_inline_element(&doc.nodes[parent].children[..pos])
