@@ -539,3 +539,48 @@ fn a_stalled_tls_handshake_fails_at_the_connect_timeout_as_a_typed_timeout() {
          global one ({FETCH_TIMEOUT:?}), took {elapsed:?}"
     );
 }
+
+#[test]
+fn an_already_aborted_signal_returns_aborted_before_any_network_activity() {
+    // A loopback URL would otherwise be rejected by the SSRF floor, so
+    // getting `Aborted` back (not `PolicyViolation`) proves the signal is
+    // checked before resolution even starts.
+    let controller = raikiri_traits::AbortController::new();
+    controller.abort();
+    let request = Request {
+        url: Url::parse("http://127.0.0.1:1/").unwrap(),
+        method: RaikiriMethod::Get,
+        content_type: None,
+        headers: Vec::new(),
+        body: Body::Empty,
+        signal: Some(controller.signal.clone()),
+        kind: ResourceKind::Image,
+    };
+    let err = UreqHttpProvider::new()
+        .fetch(request)
+        .expect_err("an aborted request must not be fetched");
+    assert!(
+        matches!(err, NetworkError::Aborted),
+        "expected Aborted, got {err:?}"
+    );
+}
+
+#[test]
+fn a_not_yet_aborted_signal_does_not_block_the_fetch() {
+    let controller = raikiri_traits::AbortController::new();
+    let request = Request {
+        url: Url::parse("http://127.0.0.1:1/").unwrap(),
+        method: RaikiriMethod::Get,
+        content_type: None,
+        headers: Vec::new(),
+        body: Body::Empty,
+        signal: Some(controller.signal.clone()),
+        kind: ResourceKind::Image,
+    };
+    // Proceeds to the SSRF floor, which rejects the loopback target.
+    let err = UreqHttpProvider::new().fetch(request).unwrap_err();
+    assert!(
+        matches!(err, NetworkError::PolicyViolation(_)),
+        "expected the fetch to proceed to the floor, got {err:?}"
+    );
+}

@@ -196,6 +196,11 @@ fn agent_config() -> ureq::config::Config {
 
 impl NetworkProvider for UreqHttpProvider {
     fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+        // Only checked up front: a signal aborted after this point does not
+        // interrupt a fetch already in progress.
+        if request.signal.as_ref().is_some_and(|s| s.is_aborted()) {
+            return Err(NetworkError::Aborted);
+        }
         if !matches!(request.url.scheme(), "http" | "https") {
             return Err(NetworkError::Other(format!(
                 "UreqHttpProvider only supports http/https URLs, got: {}",
