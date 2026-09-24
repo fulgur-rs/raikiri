@@ -257,6 +257,18 @@ if ! cargo fmt --all --check; then
 fi
 echo
 
+echo "-- §8.1(b) scripts/orphan-tests-lint.sh --"
+# Catches a tests.rs split (AGENTS.md "unit test は tests.rs に分離する") that
+# forgot its `mod tests;` declaration — rustc silently never compiles such a
+# file (no warning, no error) and coverage stays green because the file was
+# never in the coverage report to begin with. See
+# scripts/lib/orphan_tests_check.py's module docstring.
+if ! "$SCRIPT_DIR/orphan-tests-lint.sh"; then
+  echo "FAIL: scripts/orphan-tests-lint.sh found an orphan tests.rs/*_tests.rs file"
+  FAIL=1
+fi
+echo
+
 echo "-- §8.1(b) cargo clippy --workspace --all-targets -- -D warnings --"
 if ! cargo clippy --workspace --all-targets --locked -- -D warnings; then
   echo "FAIL: cargo clippy --workspace --all-targets --locked -- -D warnings"
