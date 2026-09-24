@@ -36,7 +36,10 @@ fn blocks_a_loopback_ip_literal_host() {
         .expect_err("loopback must be rejected");
     match err {
         Error::Other(inner) => {
-            assert!(inner.downcast_ref::<SsrfBlocked>().is_some());
+            let blocked = inner
+                .downcast_ref::<SsrfBlocked>()
+                .expect("Error::Other must carry SsrfBlocked");
+            assert_eq!(blocked.uri, uri, "SsrfBlocked must name the rejected URI");
         }
         other => panic!("expected Error::Other(SsrfBlocked), got {other:?}"),
     }

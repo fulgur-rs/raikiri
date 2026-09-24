@@ -19,11 +19,20 @@ use crate::ssrf_guard::is_globally_routable;
 /// apart from an ordinary DNS problem — see `super::http_provider`'s error
 /// mapping.
 #[derive(Debug)]
-pub(crate) struct SsrfBlocked;
+pub(crate) struct SsrfBlocked {
+    /// The URI whose lookup was rejected. For a redirect hop this is the
+    /// redirect target, not the originally requested URL, so diagnostics
+    /// can name the address that was actually blocked.
+    pub(crate) uri: Uri,
+}
 
 impl fmt::Display for SsrfBlocked {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "every resolved address failed the SSRF safety floor")
+        write!(
+            f,
+            "every resolved address for {} failed the SSRF safety floor",
+            self.uri
+        )
     }
 }
 
@@ -32,7 +41,7 @@ impl std::error::Error for SsrfBlocked {}
 /// Resolver that delegates real DNS/IP-literal resolution to
 /// `DefaultResolver`, then drops any candidate address that fails
 /// [`is_globally_routable`]. If no candidate survives, returns
-/// `Error::Other(Box::new(SsrfBlocked))`.
+/// `Error::Other(Box::new(SsrfBlocked { .. }))` naming the rejected URI.
 #[derive(Debug, Default)]
 pub(crate) struct SsrfSafeResolver {
     inner: DefaultResolver,
@@ -53,7 +62,7 @@ impl Resolver for SsrfSafeResolver {
             }
         }
         if safe.is_empty() {
-            return Err(Error::Other(Box::new(SsrfBlocked)));
+            return Err(Error::Other(Box::new(SsrfBlocked { uri: uri.clone() })));
         }
         Ok(safe)
     }

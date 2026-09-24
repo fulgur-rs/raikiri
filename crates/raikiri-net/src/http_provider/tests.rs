@@ -16,13 +16,37 @@ fn floor_rejection_maps_to_private_network_blocked() {
     let err = map_ureq_error(
         &test_url(),
         ResourceKind::Image,
-        ureq::Error::Other(Box::new(SsrfBlocked)),
+        ureq::Error::Other(Box::new(SsrfBlocked {
+            uri: "http://10.0.0.1/x.png".parse().unwrap(),
+        })),
     );
-    assert!(matches!(
-        err,
-        NetworkError::PolicyViolation(v)
-            if matches!(v.violation_type, ViolationType::PrivateNetworkBlocked)
-    ));
+    match err {
+        NetworkError::PolicyViolation(v) => {
+            assert!(matches!(
+                v.violation_type,
+                ViolationType::PrivateNetworkBlocked
+            ));
+            // The violation names the URI the resolver rejected, not the
+            // `url` passed in for context.
+            assert_eq!(v.url.as_str(), "http://10.0.0.1/x.png");
+        }
+        other => panic!("expected PolicyViolation(PrivateNetworkBlocked), got {other:?}"),
+    }
+}
+
+#[test]
+fn floor_rejection_falls_back_to_the_request_url_when_the_uri_is_not_absolute() {
+    let err = map_ureq_error(
+        &test_url(),
+        ResourceKind::Image,
+        ureq::Error::Other(Box::new(SsrfBlocked {
+            uri: "/relative-only".parse().unwrap(),
+        })),
+    );
+    assert!(
+        matches!(&err, NetworkError::PolicyViolation(v) if v.url == test_url()),
+        "expected a PolicyViolation reporting the request URL, got {err:?}"
+    );
 }
 
 #[test]
@@ -168,7 +192,9 @@ impl Resolver for PortBlockingResolver {
             }
         }
         if safe.is_empty() {
-            return Err(ureq::Error::Other(Box::new(SsrfBlocked)));
+            return Err(ureq::Error::Other(Box::new(SsrfBlocked {
+                uri: uri.clone(),
+            })));
         }
         Ok(safe)
     }
@@ -251,6 +277,18 @@ fn redirect_target_is_revalidated_and_blocked_even_though_the_first_hop_was_allo
         ),
         "the first hop (source) was allowed, but the redirect target \
          was not re-validated and blocked as expected: got {err:?}"
+    );
+    // The violation must name the blocked redirect target, not the allowed
+    // source URL the fetch started from.
+    let NetworkError::PolicyViolation(v) = &err else {
+        unreachable!()
+    };
+    assert_eq!(
+        v.url.port(),
+        Some(target_port),
+        "PolicyViolation.url must name the blocked redirect target \
+         (port {target_port}), not the source (port {source_port}): got {}",
+        v.url
     );
 }
 

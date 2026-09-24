@@ -101,11 +101,16 @@ impl UreqHttpProvider {
 
 fn map_ureq_error(url: &Url, kind: ResourceKind, err: ureq::Error) -> NetworkError {
     if let ureq::Error::Other(ref inner) = err
-        && inner.downcast_ref::<SsrfBlocked>().is_some()
+        && let Some(blocked) = inner.downcast_ref::<SsrfBlocked>()
     {
+        // Report the URL whose lookup was actually rejected: after a
+        // redirect that is the redirect target, not the requested `url`.
+        // Falls back to `url` only if the rejected URI is somehow not a
+        // valid absolute URL.
+        let blocked_url = Url::parse(&blocked.uri.to_string()).unwrap_or_else(|_| url.clone());
         return NetworkError::PolicyViolation(PolicyViolation {
             kind,
-            url: url.clone(),
+            url: blocked_url,
             violation_type: ViolationType::PrivateNetworkBlocked,
             details: "resolved IP is not globally routable".to_owned(),
         });
