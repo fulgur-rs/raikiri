@@ -12960,6 +12960,333 @@ mod tests {
     }
 
     #[test]
+    fn collapse_text_for_shaping_normalizes_cr_crlf_tab_and_form_feed_in_normal_mode() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        // Phase I of CSS Text 3 §4.1.1 white-space processing: CR and CRLF
+        // become a single LF, and tab/form-feed become a space, before the
+        // ordinary collapse rules run. `normal` then collapses that
+        // resulting single-LF run to one space, the same as any other
+        // interior whitespace run.
+        let collapse_in_normal_p = |raw: &str| -> CollapsedText {
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+            let text = doc.append_text(p, raw);
+            doc.mark_in_document_flags();
+            let rules = build_rule_tree(&doc);
+            let cr = cascade(&doc, &rules).expect("cascade Ok");
+            let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
+            for idx in 0..doc.nodes.len() {
+                for &c in &doc.nodes[idx].children.clone() {
+                    if c < parent_of.len() {
+                        parent_of[c] = Some(idx);
+                    }
+                }
+            }
+            collapse_text_for_shaping(
+                &doc,
+                &cr,
+                &parent_of,
+                text,
+                raw,
+                cr.computed[text].white_space,
+            )
+        };
+
+        for raw in ["a\r\nb", "a\rb", "a\tb", "a\x0Cb"] {
+            let out = collapse_in_normal_p(raw);
+            assert_eq!(out.text, "a b", "input {raw:?} should collapse to \"a b\"");
+            assert_eq!(out.migrate_count, 0, "input {raw:?}");
+        }
+    }
+
+    #[test]
+    fn collapse_text_for_shaping_extended_dedupe_skips_removed_and_hidden_siblings() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        // Nearest-to-farthest from the trailing space under test: a
+        // `display:none` element, a comment (cleared from
+        // `IS_IN_DOCUMENT` by `mark_in_document_flags`), then the text run
+        // that actually decides the outcome.
+        let _prefix = doc.append_text(p, "hello ");
+        let _hidden = doc.append_element(Some(p), "span", Style::default(), Some("display:none"));
+        let _comment = doc.append_comment(Some(p), "note");
+        let trailing = doc.append_text(p, " ");
+
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
+        for idx in 0..doc.nodes.len() {
+            for &c in &doc.nodes[idx].children.clone() {
+                if c < parent_of.len() {
+                    parent_of[c] = Some(idx);
+                }
+            }
+        }
+
+        let out = collapse_text_for_shaping(
+            &doc,
+            &cr,
+            &parent_of,
+            trailing,
+            " ",
+            cr.computed[trailing].white_space,
+        );
+        // The `display:none` span and the out-of-document comment are both
+        // skipped while walking backward; the whitespace-ending "hello "
+        // text node beyond them is what the run actually dedupes against,
+        // so the trailing space node contributes nothing further.
+        assert_eq!(out.text, "");
+        assert_eq!(out.migrate_count, 0);
+    }
+
+    #[test]
+    fn collapse_text_for_shaping_drops_a_lone_break_at_both_block_edges() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        // CSS Text 3 §4.1.2: a collapsible segment break with no inline
+        // content on either side (both `before`/`after` face a block edge,
+        // not an inline sibling) is removed outright rather than becoming
+        // a space, unlike the between-inlines case already covered by
+        // `collapse_single_node_break_becomes_space_and_lone_wide_break_drops`.
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let wb = doc.append_text(p, "\n");
+
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
+        for idx in 0..doc.nodes.len() {
+            for &c in &doc.nodes[idx].children.clone() {
+                if c < parent_of.len() {
+                    parent_of[c] = Some(idx);
+                }
+            }
+        }
+
+        let out =
+            collapse_text_for_shaping(&doc, &cr, &parent_of, wb, "\n", cr.computed[wb].white_space);
+        assert_eq!(out.text, "");
+        assert_eq!(out.migrate_count, 0);
+    }
+
+    #[test]
+    fn collapse_text_for_shaping_drops_a_break_adjacent_to_a_zero_width_space() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        // CSS Text 3 §4.1.2: a segment break next to a zero-width space is
+        // removed, mirroring the wide-character-pair removal rule but
+        // keyed on U+200B specifically rather than East Asian Width.
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let _before_text = doc.append_text(p, "a\u{200B}");
+        let wb = doc.append_text(p, "\n");
+        let _after_text = doc.append_text(p, "b");
+
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
+        for idx in 0..doc.nodes.len() {
+            for &c in &doc.nodes[idx].children.clone() {
+                if c < parent_of.len() {
+                    parent_of[c] = Some(idx);
+                }
+            }
+        }
+
+        let out =
+            collapse_text_for_shaping(&doc, &cr, &parent_of, wb, "\n", cr.computed[wb].white_space);
+        assert_eq!(out.text, "");
+        assert_eq!(out.migrate_count, 0);
+    }
+
+    #[test]
+    fn collapse_text_for_shaping_drops_a_lone_space_at_both_block_edges() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        // The final "fully collapsed" arm: a lone collapsible space is
+        // kept (and migrated forward) only when *both* sides face inline
+        // content (`before && after`, already covered by
+        // `collapse_interior_lone_space_migrates_forward` above); at a
+        // block edge on either side it is dropped instead.
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let sole = doc.append_text(p, " ");
+
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
+        for idx in 0..doc.nodes.len() {
+            for &c in &doc.nodes[idx].children.clone() {
+                if c < parent_of.len() {
+                    parent_of[c] = Some(idx);
+                }
+            }
+        }
+
+        let out = collapse_text_for_shaping(
+            &doc,
+            &cr,
+            &parent_of,
+            sole,
+            " ",
+            cr.computed[sole].white_space,
+        );
+        assert_eq!(out.text, "");
+        assert_eq!(out.migrate_count, 0);
+    }
+
+    #[test]
+    fn collapse_text_for_shaping_extended_dedupe_stops_at_a_non_whitespace_ending_sibling() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        // The dedupe walk-back stops (rather than deduping through) the
+        // first in-document, non-`display:none` sibling it reaches once
+        // that sibling's own raw text does *not* end in whitespace:
+        // nothing to dedupe against, so the space under test falls
+        // through to the ordinary before/after handling instead.
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let _prefix = doc.append_text(p, "hello");
+        let trailing = doc.append_text(p, " ");
+
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
+        for idx in 0..doc.nodes.len() {
+            for &c in &doc.nodes[idx].children.clone() {
+                if c < parent_of.len() {
+                    parent_of[c] = Some(idx);
+                }
+            }
+        }
+
+        let out = collapse_text_for_shaping(
+            &doc,
+            &cr,
+            &parent_of,
+            trailing,
+            " ",
+            cr.computed[trailing].white_space,
+        );
+        // "hello" (no trailing whitespace) does not extend the dedupe run,
+        // so this falls through to the lone-space arm: kept only when
+        // both sides face inline content. There is no sibling *after* the
+        // trailing space, so it is dropped rather than migrated.
+        assert_eq!(out.text, "");
+        assert_eq!(out.migrate_count, 0);
+    }
+
+    #[test]
+    fn collapse_text_for_shaping_pre_line_dedupe_stops_at_a_preserved_break() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        // `pre-line`-only nuance: the extended dedupe walk-back does not
+        // collapse a later whitespace-only node against an earlier
+        // sibling whose own raw text carries a preserved break -- that
+        // break is meaningful content under `pre-line`, not a run this
+        // node should silently absorb.
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("white-space:pre-line"),
+        );
+        let _prev = doc.append_text(p, "\n ");
+        let target = doc.append_text(p, " ");
+
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
+        for idx in 0..doc.nodes.len() {
+            for &c in &doc.nodes[idx].children.clone() {
+                if c < parent_of.len() {
+                    parent_of[c] = Some(idx);
+                }
+            }
+        }
+
+        let out = collapse_text_for_shaping(
+            &doc,
+            &cr,
+            &parent_of,
+            target,
+            " ",
+            cr.computed[target].white_space,
+        );
+        // The walk-back stops at the preserved-break sibling instead of
+        // deduping through it; with no significant sibling on either side
+        // (the preceding node is itself whitespace-only), the lone space
+        // is then dropped by the ordinary before/after rule.
+        assert_eq!(out.text, "");
+        assert_eq!(out.migrate_count, 0);
+    }
+
+    #[test]
+    fn collapse_text_for_shaping_converts_a_kept_leading_space_to_nbsp() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        // A leading collapsible space that survives trimming (because
+        // inline content precedes it) is rewritten to NBSP in place:
+        // parley trims an ordinary leading space from an independently
+        // shaped run, but keeps a leading NBSP, which is how this node's
+        // own shaped text preserves the gap after the previous node's
+        // content.
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let _prev = doc.append_text(p, "X");
+        let target = doc.append_text(p, " Y");
+
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut parent_of: Vec<Option<usize>> = vec![None; doc.nodes.len()];
+        for idx in 0..doc.nodes.len() {
+            for &c in &doc.nodes[idx].children.clone() {
+                if c < parent_of.len() {
+                    parent_of[c] = Some(idx);
+                }
+            }
+        }
+
+        let out = collapse_text_for_shaping(
+            &doc,
+            &cr,
+            &parent_of,
+            target,
+            " Y",
+            cr.computed[target].white_space,
+        );
+        assert_eq!(out.text, "\u{00A0}Y");
+        assert_eq!(out.migrate_count, 0);
+    }
+
+    #[test]
     fn preshape_text_populates_text_layout_for_text_nodes() {
         use parley::{FontContext, LayoutContext};
         use raikiri_style::{build_rule_tree, cascade};
@@ -13216,6 +13543,112 @@ mod tests {
     }
 
     #[test]
+    fn compute_multicol_layout_spaces_break_avoid_min_height_children_across_a_definite_height() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;column-count:2;column-gap:20px;width:200px;height:60px"),
+        );
+        // `min-block-size` + `break-inside:avoid` (no direct `<br>`) keeps
+        // this multicol container on the foundational block projection
+        // instead of the custom nested-fragmentation path (see the doc
+        // comment above `compute_multicol_layout`'s `custom_scope`).
+        let a = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;min-block-size:40px;break-inside:avoid"),
+        );
+        let b = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;min-block-size:40px;break-inside:avoid"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 300.0;
+        page.height = 200.0;
+        layout_single_page(&mut doc, &cascade, page, parley::FontContext::new())
+            .expect("layout Ok");
+
+        // Taffy's foundational block algorithm cannot express a
+        // fragmentainer break here, so each break-avoid min-height child is
+        // pushed into its own vertical slot: `child_height + 2 *
+        // |fragmentainer_height - child_height|` apart, consuming the
+        // unfragmented overflow on both sides of the mismatch instead of
+        // packing contiguously.
+        let child_height = doc.nodes[a].unrounded_layout.size.height;
+        assert!(child_height > 0.0, "child_height={child_height}");
+        let step = child_height + 2.0 * (60.0_f32 - child_height).abs();
+        assert!((doc.nodes[a].unrounded_layout.location.y - 0.0).abs() < 0.01);
+        assert!(
+            (doc.nodes[b].unrounded_layout.location.y - step).abs() < 0.01,
+            "b.y={}, expected step={step}",
+            doc.nodes[b].unrounded_layout.location.y
+        );
+    }
+
+    #[test]
+    fn compute_multicol_layout_clamps_auto_height_to_the_largest_min_constrained_child() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;column-count:2;column-gap:20px;width:200px"),
+        );
+        let a = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;min-block-size:40px;break-inside:avoid"),
+        );
+        let _b = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;min-block-size:40px;break-inside:avoid"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 300.0;
+        page.height = 400.0;
+        layout_single_page(&mut doc, &cascade, page, parley::FontContext::new())
+            .expect("layout Ok");
+
+        // An ordinary auto-height block container would size to the *sum*
+        // of its two 40px min-height children (80px). A multicol container
+        // with min-constrained children instead clamps its own auto used
+        // height to the largest child's used height: the children overflow
+        // the box rather than growing it (see the comment above this
+        // clamp in `compute_multicol_layout`).
+        let child_height = doc.nodes[a].unrounded_layout.size.height;
+        assert!(child_height > 0.0, "child_height={child_height}");
+        assert!(
+            (doc.nodes[container].unrounded_layout.size.height - child_height).abs() < 0.01,
+            "container height={}, expected clamp to child height={child_height}",
+            doc.nodes[container].unrounded_layout.size.height,
+        );
+    }
+
+    #[test]
     fn full_size_kana_char_maps_small_hiragana_and_katakana_to_full_size() {
         // CSS Text Module Level 3 `text-transform: full-size-kana` converts
         // small kana used for youon/sokuon/etc. to their full-size form.
@@ -13365,6 +13798,54 @@ mod tests {
             multicol_definite_dimension(&doc, Dimension::percent(0.5), Some(f32::INFINITY)),
             None
         );
+    }
+
+    #[test]
+    fn page_length_to_px_converts_absolute_units_independently_of_basis() {
+        // CSS Values 4 §6.2 Absolute Lengths conversion table: every
+        // absolute unit resolves to a fixed `px` multiple and must ignore
+        // the percentage basis entirely (unlike `Length::Percent`).
+        for basis in [0.0_f32, 100.0, 99999.0] {
+            assert!((page_length_to_px(Length::Px(10.0), basis) - 10.0).abs() < 1e-4);
+            assert!((page_length_to_px(Length::Pt(12.0), basis) - 16.0).abs() < 1e-3);
+            assert!((page_length_to_px(Length::In(1.0), basis) - 96.0).abs() < 1e-3);
+            assert!((page_length_to_px(Length::Pc(1.0), basis) - 16.0).abs() < 1e-3);
+            assert!((page_length_to_px(Length::Cm(1.0), basis) - 96.0 / 2.54).abs() < 1e-3);
+            assert!((page_length_to_px(Length::Mm(10.0), basis) - 96.0 / 2.54).abs() < 1e-3);
+            assert!((page_length_to_px(Length::Q(1.0), basis) - 96.0 / 101.6).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn page_length_to_px_falls_back_font_relative_units_to_the_initial_font_size() {
+        // Page-context absolutization normally resolves font-relative units
+        // before this consumer sees them (see the function's own doc
+        // comment); every font-relative variant therefore falls back to a
+        // fixed 16px (1em) initial-font-size multiple here.
+        for length in [
+            Length::Em(1.0),
+            Length::Rem(1.0),
+            Length::Ex(1.0),
+            Length::Rex(1.0),
+            Length::Ch(1.0),
+            Length::Rch(1.0),
+            Length::Ic(1.0),
+            Length::Ric(1.0),
+            Length::Lh(1.0),
+            Length::Rlh(1.0),
+        ] {
+            assert!((page_length_to_px(length, 0.0) - 16.0).abs() < 1e-4);
+        }
+        assert!((page_length_to_px(Length::Em(0.5), 0.0) - 8.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn page_length_to_px_resolves_percent_against_the_given_basis() {
+        // CSS Values 4 §5.5 Percentages: unlike the absolute/font-relative
+        // arms above, `Percent` is the one variant that actually consults
+        // `basis`.
+        assert_eq!(page_length_to_px(Length::Percent(50.0), 200.0), 100.0);
+        assert_eq!(page_length_to_px(Length::Percent(50.0), 0.0), 0.0);
     }
 
     /// Build a `<p>` with five pre-line-separated single-character lines at
@@ -13549,6 +14030,178 @@ mod tests {
         };
         let ranges = nested_text_line_ranges(layout, context);
         assert_eq!(ranges, vec![(0, 3, 0), (3, 5, 1)]);
+    }
+
+    #[test]
+    fn refresh_nested_text_fragments_records_line_ranges_and_column_offsets_on_a_text_node() {
+        let (mut doc, text) = nested_text_line_ranges_fixture();
+        let context = FragmentationContext {
+            available_width: 300.0,
+            available_height: None,
+            column_width: 100.0,
+            column_count: 3,
+            column_gap: 10.0,
+            column_index: 1,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            orphans: 1,
+            widows: 1,
+        };
+        refresh_nested_text_fragments(&mut doc, text, context);
+
+        let fragments = doc.nodes[text]
+            .multicol_fragments()
+            .expect("a shaped 5-line text node should get line-range fragments")
+            .to_vec();
+        assert_eq!(fragments.len(), 2);
+        assert_eq!((fragments[0].line_start, fragments[0].line_end), (0, 3));
+        assert_eq!((fragments[1].line_start, fragments[1].line_end), (3, 5));
+        // The first fragment starts in the context's own column (index 1),
+        // so its offset from that column's origin is zero; the second
+        // fragment sits in the next column (index 2), one
+        // column-width-plus-gap further.
+        assert!((fragments[0].x - 0.0).abs() < 0.01);
+        assert!((fragments[1].x - 110.0).abs() < 0.01);
+        // Each line uses an explicit 10px line-height (see the fixture's
+        // own doc comment), so the second fragment's line-3 origin sits
+        // exactly three lines (30px) below the first fragment's line-0
+        // origin.
+        assert!(
+            (fragments[1].y - fragments[0].y - 30.0).abs() < 0.01,
+            "fragments={fragments:?}"
+        );
+    }
+
+    #[test]
+    fn refresh_nested_text_fragments_recurses_into_element_children() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("font-size:10px;line-height:10px;white-space:pre-line"),
+        );
+        let text = doc.append_text(p, "a\nb\nc\nd\ne");
+
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, 1000.0, 1000.0);
+
+        let context = FragmentationContext {
+            available_width: 200.0,
+            available_height: None,
+            column_width: 100.0,
+            column_count: 2,
+            column_gap: 0.0,
+            column_index: 0,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            orphans: 1,
+            widows: 1,
+        };
+        // Called on the *element*, not the text node directly: the
+        // recursive descent (the non-text arm) must reach the shaped text
+        // descendant and populate its fragments exactly as a direct call
+        // on the text node would.
+        refresh_nested_text_fragments(&mut doc, p, context);
+
+        let fragments = doc.nodes[text]
+            .multicol_fragments()
+            .expect("recursing through the <p> element should still reach its text child");
+        assert_eq!(fragments.len(), 2);
+        assert_eq!((fragments[0].line_start, fragments[0].line_end), (0, 3));
+        assert_eq!((fragments[1].line_start, fragments[1].line_end), (3, 5));
+    }
+
+    #[test]
+    fn refresh_nested_text_fragments_leaves_an_unshaped_text_node_untouched() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let text = doc.append_text(p, "no preshape ran on this node");
+
+        let context = FragmentationContext {
+            available_width: 200.0,
+            available_height: None,
+            column_width: 100.0,
+            column_count: 2,
+            column_gap: 0.0,
+            column_index: 0,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            orphans: 1,
+            widows: 1,
+        };
+        // No `preshape_text` call precedes this, so `text_layout` is still
+        // `None`: the function must return without touching
+        // `multicol_fragments`.
+        refresh_nested_text_fragments(&mut doc, text, context);
+        assert!(doc.nodes[text].multicol_fragments().is_none());
+    }
+
+    #[test]
+    fn refresh_nested_text_fragments_clears_stale_fragments_for_a_zero_line_layout() {
+        use parley::{FontContext, LayoutContext};
+
+        // A hand-built, never-`break_all_lines`-run layout reports zero
+        // lines, giving a direct unit fixture for the function's own
+        // `line_count == 0` guard without depending on any particular
+        // content producing it through the real `preshape_text` pipeline
+        // (an empty string there still shapes to one empty line).
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), None::<&str>);
+        let text = doc.append_text(p, "");
+
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        let mut builder = layout_cx.ranged_builder(&mut fonts, "", 1.0, false);
+        builder.push_default(parley::StyleProperty::FontSize(16.0));
+        let empty_layout: parley::Layout<()> = builder.build("");
+        assert_eq!(
+            empty_layout.len(),
+            0,
+            "sanity: an unbroken layout has zero lines"
+        );
+
+        let NodeData::Text(text_data) = &mut doc.nodes[text].data else {
+            panic!("expected a text node");
+        };
+        text_data.text_layout = Some(empty_layout);
+        // Stale fragments left over from a previous (non-empty) layout pass.
+        text_data.multicol_fragments = Some(vec![MulticolTextFragment {
+            line_start: 0,
+            line_end: 1,
+            x: 5.0,
+            y: 5.0,
+        }]);
+
+        let context = FragmentationContext {
+            available_width: 200.0,
+            available_height: None,
+            column_width: 100.0,
+            column_count: 2,
+            column_gap: 0.0,
+            column_index: 0,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            orphans: 1,
+            widows: 1,
+        };
+        refresh_nested_text_fragments(&mut doc, text, context);
+        assert!(
+            doc.nodes[text].multicol_fragments().is_none(),
+            "a zero-line layout must clear any stale fragments rather than keep them"
+        );
     }
 
     #[test]
@@ -13837,6 +14490,123 @@ mod tests {
         assert_eq!(fragmentainer_of(d), Some(1));
         assert!((doc.nodes[c].unrounded_layout.location.y - 60.0).abs() < 0.01);
         assert!((doc.nodes[container].unrounded_layout.size.height - 90.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn relayout_nested_multicol_children_uses_the_definite_height_budget_per_child() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        // The two tests above give the multicol container an auto block
+        // size, which routes every child through the auto-measured
+        // balancing pass. A *definite* container height instead skips that
+        // pass (`auto_measurements` stays `None`) and lays each child out
+        // against its own remaining per-column height budget directly. A
+        // direct `<br>` child is what forces `compute_multicol_layout`'s
+        // custom nested path even though the height is definite (see the
+        // doc comment above its `custom_scope` computation).
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;column-count:2;column-gap:20px;width:200px;height:40px"),
+        );
+        let a = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px"),
+        );
+        let _br = doc.append_element(Some(a), "br", Style::default(), None::<&str>);
+        let b = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px"),
+        );
+        // A direct text child (not wrapped in its own block box) exercises
+        // the text-specific reset (`style.size.height = auto` + cache
+        // clear) and the per-child multicol text-fragment recording, both
+        // only reachable on this non-auto-measured child path.
+        let text = doc.append_text(container, "hello column text");
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 300.0;
+        page.height = 200.0;
+        layout_single_page(&mut doc, &cascade, page, parley::FontContext::new())
+            .expect("layout Ok");
+
+        // `a` (30px) fits the 40px column budget; `b` (30px) does not
+        // (30 + 30 > 40), so it starts a fresh column at y=0.
+        assert!((doc.nodes[a].unrounded_layout.location.y - 0.0).abs() < 0.01);
+        assert!((doc.nodes[b].unrounded_layout.location.y - 0.0).abs() < 0.01);
+        // width 200 / 2 columns with a 20px gap: (200 - 20) / 2 = 90;
+        // column 1 starts at 90 + 20 = 110.
+        assert!((doc.nodes[a].unrounded_layout.location.x - 0.0).abs() < 0.01);
+        assert!((doc.nodes[b].unrounded_layout.location.x - 110.0).abs() < 0.01);
+
+        assert!(
+            doc.nodes[text].multicol_fragments().is_some(),
+            "direct multicol text should get explicit line-range fragments"
+        );
+    }
+
+    #[test]
+    fn relayout_nested_multicol_children_column_places_a_block_sibling_of_an_empty_direct_text_child()
+     {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        // An *auto*-height multicol container (unlike the definite-height
+        // test above) routes every child through the auto-measurement pass
+        // first (`auto_measurements` is `Some` here), which has its own
+        // copy of the "reset a direct text child's style before measuring"
+        // branch. A direct text sibling with real content would make
+        // `prepare_multicol_layout`'s pre-pass pin the container's own
+        // height to a definite value (its line-count projection), which
+        // would route this container through the definite-height path
+        // instead and defeat the point of this test; an empty text node
+        // never gets a shaped layout, so that pre-pass leaves the
+        // container's auto height alone while the node still participates
+        // in `relayout_nested_multicol_children`'s child list.
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;column-count:2;column-gap:20px;width:200px"),
+        );
+        let a = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px"),
+        );
+        let _text = doc.append_text(container, "");
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 300.0;
+        page.height = 200.0;
+        layout_single_page(&mut doc, &cascade, page, parley::FontContext::new())
+            .expect("layout Ok");
+
+        // `a`'s width narrowing from the container's full 200px to one
+        // 90px column ((200 - 20) / 2) is only possible through the custom
+        // nested-fragmentation path -- the ordinary Taffy block algorithm
+        // would stretch it to the full content width instead. That path
+        // only runs by measuring every child in `children`, the empty
+        // text node included, so this indirectly exercises its branch.
+        assert!((doc.nodes[a].unrounded_layout.size.width - 90.0).abs() < 0.01);
+        assert!((doc.nodes[container].unrounded_layout.size.height - 30.0).abs() < 0.01);
     }
 
     #[test]
@@ -21706,6 +22476,45 @@ mod tests {
                 .abs()
                 < 0.001
         );
+    }
+
+    #[test]
+    fn family_candidate_has_ch_glyphs_checks_space_and_zero_glyph_coverage() {
+        // CSS Values 4 §6.1.1 `ch`: the first-available face must supply a
+        // usable space glyph *and* U+0030, whose advance becomes the `ch`
+        // metric (see the function's own doc comment).
+        let tmp = embedded_ic_font_dir();
+        let mut fonts = crate::fonts::build_wpt_font_ctx(tmp.path()).expect("register WPT fonts");
+
+        // Ahem maps every ASCII printable codepoint it supports (including
+        // space and '0') to its square glyph, so both required glyphs are
+        // present and the query stops at the first candidate.
+        assert!(family_candidate_has_ch_glyphs(
+            &mut fonts,
+            "Ahem",
+            400.0,
+            StyleFontStyle::Normal,
+        ));
+
+        // CanvasTest-nospace.ttf deliberately omits a usable space glyph
+        // (see the sibling `generic_family_has_ch_glyphs` coverage above),
+        // so the query callback keeps returning `QueryStatus::Continue` and
+        // the loop exhausts without ever finding a usable face.
+        assert!(!family_candidate_has_ch_glyphs(
+            &mut fonts,
+            "CanvasTestNoSpace",
+            400.0,
+            StyleFontStyle::Normal,
+        ));
+
+        // An unregistered family name matches no face at all: the query
+        // callback never runs and `has_ch_glyphs` keeps its initial `false`.
+        assert!(!family_candidate_has_ch_glyphs(
+            &mut fonts,
+            "NotARegisteredFamily",
+            400.0,
+            StyleFontStyle::Normal,
+        ));
     }
 
     #[test]
