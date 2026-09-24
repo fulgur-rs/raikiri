@@ -11,6 +11,7 @@ mod file_provider;
 mod image_decoder; // cov:ignore: module declaration has no executable line
 mod image_resolver;
 mod resource_loader; // cov:ignore: module declaration has no executable line
+pub mod ssrf_guard;
 
 pub use file_provider::FileNetworkProvider;
 pub use image_resolver::ImageResolver;
