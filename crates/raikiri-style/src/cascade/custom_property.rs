@@ -2364,7 +2364,7 @@ mod tests {
             assert_eq!(
                 cv.vertical_align,
                 VerticalAlign::Length(Length::Px(expected_px)),
-                "{expression}"
+                "{expression}" // cov:ignore: assertion diagnostic literal is formatted only on failure
             );
         }
     }
