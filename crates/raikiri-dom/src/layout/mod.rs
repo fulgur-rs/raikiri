@@ -13216,6 +13216,630 @@ mod tests {
     }
 
     #[test]
+    fn full_size_kana_char_maps_small_hiragana_and_katakana_to_full_size() {
+        // CSS Text Module Level 3 `text-transform: full-size-kana` converts
+        // small kana used for youon/sokuon/etc. to their full-size form.
+        assert_eq!(full_size_kana_char('ぁ'), 'あ');
+        assert_eq!(full_size_kana_char('ゕ'), 'か');
+        assert_eq!(full_size_kana_char('ゎ'), 'わ');
+        assert_eq!(full_size_kana_char('ァ'), 'ア');
+        assert_eq!(full_size_kana_char('ッ'), 'ツ');
+        assert_eq!(full_size_kana_char('ョ'), 'ヨ');
+    }
+
+    #[test]
+    fn full_size_kana_char_maps_small_katakana_phonetic_extensions() {
+        // The Katakana Phonetic Extensions block (small kana used for the
+        // Ainu orthography) maps to its base katakana the same way.
+        assert_eq!(full_size_kana_char('ㇰ'), 'ク');
+        assert_eq!(full_size_kana_char('ㇻ'), 'ラ');
+        assert_eq!(full_size_kana_char('ㇿ'), 'ロ');
+    }
+
+    #[test]
+    fn full_size_kana_char_maps_halfwidth_small_kana_to_halfwidth_full_size() {
+        // Half-width small kana (U+FF67-FF6F) map to their half-width
+        // full-size counterparts: this function only removes "smallness",
+        // it does not also change the half/full width.
+        assert_eq!(full_size_kana_char('ｧ'), 'ｱ');
+        assert_eq!(full_size_kana_char('ｯ'), 'ﾂ');
+        assert_eq!(full_size_kana_char('ｮ'), 'ﾖ');
+    }
+
+    #[test]
+    fn full_size_kana_char_maps_kana_supplement_and_extended_a_small_forms() {
+        // Small "ko" (Kana Supplement) and the small wi/we/wo/n forms (Kana
+        // Extended-A) also have full-size counterparts outside the BMP.
+        assert_eq!(full_size_kana_char('\u{1B132}'), '\u{3053}');
+        assert_eq!(full_size_kana_char('\u{1B150}'), '\u{3090}');
+        assert_eq!(full_size_kana_char('\u{1B167}'), '\u{30F3}');
+    }
+
+    #[test]
+    fn full_size_kana_char_leaves_unmapped_and_already_full_size_chars_unchanged() {
+        // Codepoints immediately outside the mapped ranges, and characters
+        // that are already full-size, fall through the identity arm.
+        assert_eq!(full_size_kana_char('あ'), 'あ');
+        assert_eq!(full_size_kana_char('ー'), 'ー');
+        assert_eq!(full_size_kana_char('A'), 'A');
+        assert_eq!(full_size_kana_char('\u{1B131}'), '\u{1B131}');
+        assert_eq!(full_size_kana_char('\u{1B133}'), '\u{1B133}');
+        assert_eq!(full_size_kana_char('\u{1B153}'), '\u{1B153}');
+        assert_eq!(full_size_kana_char('\u{1B154}'), '\u{1B154}');
+        assert_eq!(full_size_kana_char('\u{1B163}'), '\u{1B163}');
+        assert_eq!(full_size_kana_char('\u{1B168}'), '\u{1B168}');
+    }
+
+    #[test]
+    fn multicol_definite_dimension_resolves_absolute_length_regardless_of_basis() {
+        let doc = Document::new();
+        assert_eq!(
+            multicol_definite_dimension(&doc, Dimension::length(120.5), None),
+            Some(120.5)
+        );
+        assert_eq!(
+            multicol_definite_dimension(&doc, Dimension::length(120.5), Some(9999.0)),
+            Some(120.5)
+        );
+    }
+
+    #[test]
+    fn multicol_definite_dimension_resolves_percent_against_the_given_basis() {
+        let doc = Document::new();
+        assert_eq!(
+            multicol_definite_dimension(&doc, Dimension::percent(0.25), Some(200.0)),
+            Some(50.0)
+        );
+    }
+
+    #[test]
+    fn multicol_definite_dimension_resolves_percent_against_a_zero_default_basis() {
+        // `basis` defaults to 0.0 when the caller has no known containing
+        // block size yet, so a percentage resolves to zero rather than
+        // `None`.
+        let doc = Document::new();
+        assert_eq!(
+            multicol_definite_dimension(&doc, Dimension::percent(0.5), None),
+            Some(0.0)
+        );
+    }
+
+    #[test]
+    fn multicol_definite_dimension_resolves_calc_via_the_taffy_calc_resolver() {
+        let mut doc = Document::new();
+        doc.calc_values
+            .push(std::sync::Arc::new(CalcLengthPercentage {
+                percent: 50.0,
+                px: 10.0,
+            }));
+        let pointer = doc
+            .calc_values
+            .last()
+            .map(|value| (&**value) as *const _ as *const ())
+            .expect("calc value was just pushed");
+        assert_eq!(
+            multicol_definite_dimension(&doc, Dimension::calc(pointer), Some(200.0)),
+            Some(110.0)
+        );
+    }
+
+    #[test]
+    fn multicol_definite_dimension_returns_none_for_intrinsic_sizing_keywords() {
+        // Every non-definite keyword collapses to `None`: the caller falls
+        // back to Taffy's ordinary intrinsic-sizing pass instead of a used
+        // length.
+        let doc = Document::new();
+        for dimension in [
+            Dimension::auto(),
+            Dimension::min_content(),
+            Dimension::max_content(),
+            Dimension::fit_content(),
+            Dimension::fit_content_px(40.0),
+            Dimension::fit_content_percent(0.5),
+            Dimension::stretch(),
+            Dimension::content(),
+        ] {
+            assert_eq!(
+                multicol_definite_dimension(&doc, dimension, Some(200.0)),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn multicol_definite_dimension_clamps_a_negative_length_to_zero() {
+        let doc = Document::new();
+        assert_eq!(
+            multicol_definite_dimension(&doc, Dimension::length(-25.0), None),
+            Some(0.0)
+        );
+    }
+
+    #[test]
+    fn multicol_definite_dimension_returns_none_for_a_non_finite_result() {
+        // An infinite basis makes the resolved percentage non-finite; the
+        // `is_finite()` guard turns that into `None` rather than an
+        // infinite used size.
+        let doc = Document::new();
+        assert_eq!(
+            multicol_definite_dimension(&doc, Dimension::percent(0.5), Some(f32::INFINITY)),
+            None
+        );
+    }
+
+    /// Build a `<p>` with five pre-line-separated single-character lines at
+    /// an explicit 10px line-height, so each line's block extent is an exact
+    /// multiple of 10px regardless of the font actually resolved.
+    fn nested_text_line_ranges_fixture() -> (Document, usize) {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("font-size:10px;line-height:10px;white-space:pre-line"),
+        );
+        let text = doc.append_text(p, "a\nb\nc\nd\ne");
+
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, 1000.0, 1000.0);
+        (doc, text)
+    }
+
+    #[test]
+    fn nested_text_line_ranges_returns_empty_when_past_the_last_column() {
+        let (doc, text) = nested_text_line_ranges_fixture();
+        let layout = doc.nodes[text].text_layout().expect("text shaped");
+        let context = FragmentationContext {
+            available_width: 100.0,
+            available_height: None,
+            column_width: 100.0,
+            column_count: 2,
+            column_gap: 0.0,
+            column_index: 2,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            orphans: 1,
+            widows: 1,
+        };
+        assert!(nested_text_line_ranges(layout, context).is_empty());
+    }
+
+    #[test]
+    fn nested_text_line_ranges_splits_by_available_height_across_three_columns() {
+        let (doc, text) = nested_text_line_ranges_fixture();
+        let layout = doc.nodes[text].text_layout().expect("text shaped");
+        assert_eq!(
+            layout.len(),
+            5,
+            "sanity: five pre-line segments produce five lines"
+        );
+        // Each line's bottom edge advances by exactly one 10px line-height
+        // step, which is what the height-fit check below relies on. (The
+        // top edge is not asserted here: it can sit slightly outside the
+        // nominal line box when a line's ascent/descent exceeds the
+        // explicit `line-height`, which does not affect the block-max-based
+        // fit check.)
+        let first_max = layout.lines().next().unwrap().metrics().block_max_coord;
+        for (i, line) in layout.lines().enumerate() {
+            let metrics = line.metrics();
+            assert!((metrics.block_max_coord - (first_max + i as f32 * 10.0)).abs() < 0.01);
+        }
+        let context = FragmentationContext {
+            available_width: 300.0,
+            available_height: Some(25.0),
+            column_width: 100.0,
+            column_count: 3,
+            column_gap: 0.0,
+            column_index: 0,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            orphans: 1,
+            widows: 1,
+        };
+        let ranges = nested_text_line_ranges(layout, context);
+        assert_eq!(ranges, vec![(0, 2, 0), (2, 4, 1), (4, 5, 2)]);
+    }
+
+    #[test]
+    fn nested_text_line_ranges_splits_evenly_when_height_is_unconstrained() {
+        let (doc, text) = nested_text_line_ranges_fixture();
+        let layout = doc.nodes[text].text_layout().expect("text shaped");
+        let context = FragmentationContext {
+            available_width: 200.0,
+            available_height: None,
+            column_width: 100.0,
+            column_count: 2,
+            column_gap: 0.0,
+            column_index: 0,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            orphans: 1,
+            widows: 1,
+        };
+        let ranges = nested_text_line_ranges(layout, context);
+        assert_eq!(ranges, vec![(0, 3, 0), (3, 5, 1)]);
+    }
+
+    #[test]
+    fn nested_text_line_ranges_labels_fragments_with_the_starting_column_offset() {
+        let (doc, text) = nested_text_line_ranges_fixture();
+        let layout = doc.nodes[text].text_layout().expect("text shaped");
+        let context = FragmentationContext {
+            available_width: 300.0,
+            available_height: None,
+            column_width: 100.0,
+            column_count: 3,
+            column_gap: 0.0,
+            column_index: 1,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            orphans: 1,
+            widows: 1,
+        };
+        let ranges = nested_text_line_ranges(layout, context);
+        assert_eq!(ranges, vec![(0, 3, 1), (3, 5, 2)]);
+    }
+
+    #[test]
+    fn nested_text_line_ranges_moves_lines_across_the_boundary_to_satisfy_widows() {
+        // CSS Fragmentation Module Level 3 §3.3: a widows:3 minimum on the
+        // final fragment borrows lines from the preceding fragment, bounded
+        // by the preceding fragment's own orphans minimum.
+        let (doc, text) = nested_text_line_ranges_fixture();
+        let layout = doc.nodes[text].text_layout().expect("text shaped");
+        let context = FragmentationContext {
+            available_width: 200.0,
+            available_height: None,
+            column_width: 100.0,
+            column_count: 2,
+            column_gap: 0.0,
+            column_index: 0,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            orphans: 1,
+            widows: 3,
+        };
+        let ranges = nested_text_line_ranges(layout, context);
+        assert_eq!(ranges, vec![(0, 2, 0), (2, 5, 1)]);
+    }
+
+    #[test]
+    fn nested_text_line_ranges_keeps_the_split_when_orphans_forbids_the_widows_move() {
+        let (doc, text) = nested_text_line_ranges_fixture();
+        let layout = doc.nodes[text].text_layout().expect("text shaped");
+        let context = FragmentationContext {
+            available_width: 200.0,
+            available_height: None,
+            column_width: 100.0,
+            column_count: 2,
+            column_gap: 0.0,
+            column_index: 0,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            orphans: 3,
+            widows: 3,
+        };
+        let ranges = nested_text_line_ranges(layout, context);
+        assert_eq!(ranges, vec![(0, 3, 0), (3, 5, 1)]);
+    }
+
+    #[test]
+    fn nested_text_line_ranges_treats_a_zero_height_budget_like_unconstrained() {
+        let (doc, text) = nested_text_line_ranges_fixture();
+        let layout = doc.nodes[text].text_layout().expect("text shaped");
+        let context = FragmentationContext {
+            available_width: 200.0,
+            available_height: Some(0.0),
+            column_width: 100.0,
+            column_count: 2,
+            column_gap: 0.0,
+            column_index: 0,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            orphans: 1,
+            widows: 1,
+        };
+        let ranges = nested_text_line_ranges(layout, context);
+        assert_eq!(ranges, vec![(0, 3, 0), (3, 5, 1)]);
+    }
+
+    #[test]
+    fn prepare_multicol_layout_splits_direct_text_lines_across_columns() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(
+                "column-count:2;column-gap:20px;width:200px;font-size:10px;line-height:10px;white-space:pre-line",
+            ),
+        );
+        let text = doc.append_text(container, "a\nb\nc\nd");
+
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, 200.0, 200.0);
+        assert_eq!(
+            doc.nodes[text].text_layout().expect("text shaped").len(),
+            4,
+            "sanity: four pre-line segments produce four lines"
+        );
+
+        prepare_multicol_layout(&mut doc, &cr, 200.0);
+
+        // width 200 / 2 columns with a 20px gap: (200 - 20) / 2 = 90.
+        let fragments = doc.nodes[text]
+            .multicol_fragments()
+            .expect("direct text under a multicol container gets explicit line fragments")
+            .to_vec();
+        assert_eq!(fragments.len(), 2);
+        assert_eq!(fragments[0].line_start, 0);
+        assert_eq!(fragments[0].line_end, 2);
+        assert!((fragments[0].x - 0.0).abs() < 0.001);
+        assert_eq!(fragments[1].line_start, 2);
+        assert_eq!(fragments[1].line_end, 4);
+        assert!((fragments[1].x - 110.0).abs() < 0.001);
+        assert_eq!(doc.nodes[text].style.size.width, Dimension::length(90.0));
+        // 2 lines per column * 10px line-height.
+        assert_eq!(
+            doc.nodes[container].style.size.height,
+            Dimension::length(20.0)
+        );
+    }
+
+    #[test]
+    fn prepare_multicol_layout_projects_oversized_direct_br_children_as_wrapped_flex() {
+        use raikiri_style::{build_rule_tree, cascade};
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("column-count:2;column-gap:20px;width:200px;height:20px"),
+        );
+        let tall_child = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("height:30px"),
+        );
+        doc.append_element(Some(tall_child), "br", Style::default(), None::<&str>);
+        let auto_height_child = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("font-size:10px;line-height:10px"),
+        );
+        doc.append_element(
+            Some(auto_height_child),
+            "br",
+            Style::default(),
+            None::<&str>,
+        );
+
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        apply_computed_to_style(&mut doc, &cr);
+
+        prepare_multicol_layout(&mut doc, &cr, 200.0);
+
+        // A fixed-height auto-fill multicol with a direct child taller than
+        // the container, and a direct `<br>` in every child, is projected as
+        // a row-wrapping flex flow so each child owns one column's inline
+        // slot while its block overflow remains visible.
+        assert_eq!(doc.nodes[container].style.display, Display::Flex);
+        assert_eq!(
+            doc.nodes[container].style.flex_direction,
+            TaffyFlexDirection::Row
+        );
+        assert_eq!(doc.nodes[container].style.flex_wrap, TaffyFlexWrap::Wrap);
+        assert_eq!(
+            doc.nodes[container].style.gap.width,
+            LengthPercentage::length(20.0)
+        );
+        assert_eq!(
+            doc.nodes[container].style.gap.height,
+            LengthPercentage::length(0.0)
+        );
+
+        // width 200 / 2 columns with a 20px gap: (200 - 20) / 2 = 90.
+        for child in [tall_child, auto_height_child] {
+            assert_eq!(doc.nodes[child].style.flex_grow, 0.0);
+            assert_eq!(doc.nodes[child].style.flex_shrink, 0.0);
+            assert_eq!(doc.nodes[child].style.size.width, Dimension::length(90.0));
+            assert_eq!(
+                doc.nodes[child].style.min_size.width,
+                LengthPercentageAuto::length(0.0)
+            );
+            assert_eq!(doc.nodes[child].style.flex_basis, Dimension::length(90.0));
+        }
+        // An explicit height is preserved rather than overwritten by the
+        // `<br>` line-height projection...
+        assert_eq!(
+            doc.nodes[tall_child].style.size.height,
+            Dimension::length(30.0)
+        );
+        // ...while a child with no explicit height gets one line's worth of
+        // height from its own computed line-height.
+        assert_eq!(
+            doc.nodes[auto_height_child].style.size.height,
+            Dimension::length(10.0)
+        );
+    }
+
+    #[test]
+    fn relayout_nested_multicol_children_packs_block_children_into_columns() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;column-count:2;column-gap:20px;width:200px"),
+        );
+        let a = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px"),
+        );
+        let b = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px"),
+        );
+        let c = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px"),
+        );
+        let d = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 300.0;
+        page.height = 200.0;
+        layout_single_page(&mut doc, &cascade, page, parley::FontContext::new())
+            .expect("layout Ok");
+
+        // Each column balances to a 60px target (4 * 30px total / 2
+        // columns); the third child overflows the first column's budget and
+        // starts the second column.
+        assert!(
+            doc.fragment_tree
+                .break_tokens
+                .iter()
+                .any(|token| token.node_id == container && token.child_index == 2),
+            "a column break must be recorded before the third child (index 2)"
+        );
+        let fragmentainer_of = |node: usize| {
+            doc.fragment_tree
+                .fragments
+                .iter()
+                .rev()
+                .find(|fragment| fragment.node_id == node && fragment.line_start.is_none())
+                .map(|fragment| fragment.fragmentainer)
+        };
+        assert_eq!(fragmentainer_of(a), Some(0));
+        assert_eq!(fragmentainer_of(b), Some(0));
+        assert_eq!(fragmentainer_of(c), Some(1));
+        assert_eq!(fragmentainer_of(d), Some(1));
+
+        // width 200 / 2 columns with a 20px gap: (200 - 20) / 2 = 90; column
+        // 1 starts at 90 + 20 = 110.
+        assert!((doc.nodes[a].unrounded_layout.location.x - 0.0).abs() < 0.01);
+        assert!((doc.nodes[c].unrounded_layout.location.x - 110.0).abs() < 0.01);
+        assert!((doc.nodes[a].unrounded_layout.location.y - 0.0).abs() < 0.01);
+        assert!((doc.nodes[b].unrounded_layout.location.y - 30.0).abs() < 0.01);
+        assert!((doc.nodes[container].unrounded_layout.size.height - 60.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn relayout_nested_multicol_children_honors_break_before_avoid() {
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;column-count:2;column-gap:20px;width:200px"),
+        );
+        let a = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px"),
+        );
+        let b = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px"),
+        );
+        let c = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px;break-before:avoid"),
+        );
+        let d = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px"),
+        );
+
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 300.0;
+        page.height = 200.0;
+        layout_single_page(&mut doc, &cascade, page, parley::FontContext::new())
+            .expect("layout Ok");
+
+        // `break-before:avoid` on the third child forbids the break that
+        // would otherwise land there, so it stays in column 0 and the
+        // fourth child is pushed into column 1 instead.
+        assert!(
+            doc.fragment_tree
+                .break_tokens
+                .iter()
+                .any(|token| token.node_id == container && token.child_index == 3),
+            "the break must move to the fourth child (index 3)"
+        );
+        let fragmentainer_of = |node: usize| {
+            doc.fragment_tree
+                .fragments
+                .iter()
+                .rev()
+                .find(|fragment| fragment.node_id == node && fragment.line_start.is_none())
+                .map(|fragment| fragment.fragmentainer)
+        };
+        assert_eq!(fragmentainer_of(a), Some(0));
+        assert_eq!(fragmentainer_of(b), Some(0));
+        assert_eq!(fragmentainer_of(c), Some(0));
+        assert_eq!(fragmentainer_of(d), Some(1));
+        assert!((doc.nodes[c].unrounded_layout.location.y - 60.0).abs() < 0.01);
+        assert!((doc.nodes[container].unrounded_layout.size.height - 90.0).abs() < 0.01);
+    }
+
+    #[test]
     fn apply_computed_to_style_bridges_direction_to_taffy() {
         use raikiri_style::{build_rule_tree, cascade};
 
