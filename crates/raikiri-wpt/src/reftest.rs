@@ -1559,22 +1559,183 @@ fn render_raikiri_pages_inner(
     .map(|(rendered, _)| rendered)
 }
 
-pub(crate) fn layout_raikiri_wpt_document(
+/// Prepared WPT document state for JavaScript DOM bindings. The live runner owns this document and rebuilds style/layout after DOM mutations.
+pub(crate) struct LiveWptSetup {
+    pub uncascaded: raikiri_html::UncascadedDocument,
+    pub document_base_url: Option<raikiri::Url>,
+    pub page_resource_base: Option<PathBuf>,
+    pub font_face_tree: raikiri_style::RuleTree,
+    pub font_context: raikiri::FontContext,
+    pub media_context: raikiri::MediaContext,
+    pub page_query: raikiri::PageContextQuery,
+    pub page_box: raikiri::PageBox,
+}
+
+/// Parse and configure one WPT document for a live JavaScript DOM backend.
+pub(crate) fn prepare_wpt_live_document(
     html: &str,
     width: u32,
     height: u32,
+    page_base: &Path,
     wpt_root: &Path,
-) -> Result<DomSnapshot, Box<dyn std::error::Error>> {
-    render_raikiri_pages_inner_with_snapshot(
-        html,
-        width,
-        height,
-        Some(wpt_root),
-        Some(wpt_root),
+) -> Result<LiveWptSetup, String> {
+    use raikiri::{MediaContext, PageBox, PageContextQuery};
+
+    let page_base = std::fs::canonicalize(page_base).ok();
+    let wpt_root = std::fs::canonicalize(wpt_root).ok();
+    let stylesheet_network = page_base.as_ref().map(|_| raikiri_net::FileNetworkProvider);
+    let stylesheet_base = page_base
+        .as_deref()
+        .and_then(|path| raikiri::Url::from_directory_path(path).ok());
+    let opts = raikiri::ParseOptions {
+        extra_stylesheets: &[],
+        network: stylesheet_network
+            .as_ref()
+            .map(|provider| provider as &dyn raikiri_traits::NetworkProvider),
+        base_url: stylesheet_base.clone(),
+    };
+
+    let html = absolutize_wpt_resource_urls(html, wpt_root.as_deref());
+    let html = expand_viewport_units(&html, width as f32, height as f32);
+    let image_resolver = wpt_root
+        .as_ref()
+        .map(|_| raikiri_net::ImageResolver::new(raikiri_net::FileNetworkProvider));
+    if let Some(resolver) = image_resolver.as_ref() {
+        prime_image_resolver(resolver, &html);
+    }
+    let mut uncascaded =
+        raikiri_html::parse(html.as_bytes(), &opts).map_err(|error| format!("parse: {error:?}"))?;
+    let document_base_url =
+        raikiri_html::effective_document_base_url(&uncascaded, stylesheet_base.as_ref());
+
+    // WPT testharness pages run in a screen viewport, unlike print reftests.
+    // Keep the print renderer's page-margin and authored-@page setup isolated
+    // from this live JavaScript path.
+    let media_context = MediaContext::screen();
+    let font_face_tree = raikiri::build_rule_tree(&uncascaded);
+    let mut font_context = resolve_font_ctx();
+    let font_loader = WptFontLoader::discover(page_base.as_deref())
+        .or_else(|| WptFontLoader::discover(wpt_root.as_deref()));
+    if let Some(loader) = font_loader.as_ref() {
+        raikiri_dom::register_font_face_sources(
+            &mut font_context,
+            font_face_tree.font_faces(),
+            loader,
+        );
+    }
+
+    let page_query = PageContextQuery::default();
+    let mut page_box = PageBox::new();
+    page_box.width = width as f32;
+    page_box.height = height as f32;
+
+    // Keep membership flags synchronized before the first live selector walk or cascade.
+    uncascaded.dom.mark_in_document_flags();
+    Ok(LiveWptSetup {
+        uncascaded,
+        document_base_url,
+        page_resource_base: page_base,
+        font_face_tree,
+        font_context,
+        media_context,
+        page_query,
+        page_box,
+    })
+}
+
+pub(crate) fn live_wpt_stylesheet_sources_in_subtree(
+    document: &raikiri_dom::Document,
+    target: usize,
+) -> Vec<String> {
+    let Some(target_node) = document.get_node(target) else {
+        return Vec::new();
+    };
+    let target_is_style =
+        target_node.tag_name() == Some("style") && target_node.is_non_rendered_html_element();
+    let mut pending = if target_is_style {
+        vec![target]
+    } else {
+        target_node.children.iter().rev().copied().collect()
+    };
+    let mut sources = Vec::new();
+    while let Some(node_id) = pending.pop() {
+        let Some(node) = document.get_node(node_id) else {
+            continue; // cov:ignore: child indices in a valid append-only document always name arena nodes.
+        };
+        if node.tag_name() == Some("style") && node.is_non_rendered_html_element() {
+            let source = node
+                .children
+                .iter()
+                .filter_map(|&child| document.get_node(child)?.text_content())
+                .collect();
+            sources.push(source);
+        }
+        pending.extend(node.children.iter().rev().copied());
+    }
+    sources
+}
+
+pub(crate) fn update_live_wpt_stylesheet_sources(
+    setup: &mut LiveWptSetup,
+    removed_sources: Vec<String>,
+    added_sources: Vec<String>,
+    wpt_root: &Path,
+) {
+    let mut stylesheet_sources = setup.uncascaded.stylesheet_sources.clone();
+    for removed in removed_sources {
+        if let Some(index) = stylesheet_sources
+            .iter()
+            .position(|source| source == &removed)
+        {
+            stylesheet_sources.remove(index);
+        }
+    }
+    stylesheet_sources.extend(added_sources);
+    if setup.uncascaded.stylesheet_sources == stylesheet_sources {
+        return;
+    }
+    setup.uncascaded.stylesheet_sources = stylesheet_sources;
+    setup.font_face_tree = raikiri::build_rule_tree(&setup.uncascaded);
+    setup.font_context = resolve_font_ctx();
+    let font_loader = WptFontLoader::discover(setup.page_resource_base.as_deref())
+        .or_else(|| WptFontLoader::discover(Some(wpt_root)));
+    if let Some(loader) = font_loader.as_ref() {
+        raikiri_dom::register_font_face_sources(
+            &mut setup.font_context,
+            setup.font_face_tree.font_faces(),
+            loader,
+        );
+    }
+}
+
+pub(crate) fn parse_wpt_inner_html_fragment(
+    markup: &str,
+    context_tag: &str,
+    context_namespace: &str,
+    width: u32,
+    height: u32,
+    document_base_url: Option<&raikiri::Url>,
+    wpt_root: &Path,
+) -> Result<raikiri_html::UncascadedDocument, String> {
+    let wpt_root = std::fs::canonicalize(wpt_root).ok();
+    let stylesheet_network = wpt_root.as_ref().map(|_| raikiri_net::FileNetworkProvider);
+    let opts = raikiri::ParseOptions {
+        extra_stylesheets: &[],
+        network: stylesheet_network
+            .as_ref()
+            .map(|provider| provider as &dyn raikiri_traits::NetworkProvider),
+        base_url: document_base_url.cloned(),
+    };
+    let markup = absolutize_wpt_resource_urls(markup, wpt_root.as_deref());
+    let markup = expand_viewport_units(&markup, width as f32, height as f32);
+    raikiri_html::parse_fragment(
+        markup.as_bytes(),
+        &opts,
+        context_tag,
+        context_namespace,
         true,
-        false,
     )
-    .map(|(_, snapshot)| snapshot)
+    .map_err(|error| format!("parse innerHTML fragment: {error:?}"))
 }
 
 fn render_raikiri_pages_inner_with_snapshot(
@@ -3095,5 +3256,30 @@ mod tests {
         );
         assert!(loader.load("file:///outside/font.woff2").is_none());
         assert!(loader.load("../../outside.woff2").is_none());
+    }
+
+    #[test]
+    fn live_stylesheet_sources_handle_style_targets_and_nested_subtrees() {
+        let mut document = raikiri_dom::Document::new();
+        let root = document.root_index();
+        let wrapper = document.append_element(Some(root), "div", Default::default(), None::<&str>);
+        let style =
+            document.append_element(Some(wrapper), "style", Default::default(), None::<&str>);
+        document.append_text(style, ".first { color: red; }");
+        let nested =
+            document.append_element(Some(wrapper), "section", Default::default(), None::<&str>);
+        let nested_style =
+            document.append_element(Some(nested), "style", Default::default(), None::<&str>);
+        document.append_text(nested_style, ".second { color: blue; }");
+
+        assert!(live_wpt_stylesheet_sources_in_subtree(&document, usize::MAX).is_empty());
+        assert_eq!(
+            live_wpt_stylesheet_sources_in_subtree(&document, style),
+            vec![".first { color: red; }"]
+        );
+        assert_eq!(
+            live_wpt_stylesheet_sources_in_subtree(&document, wrapper),
+            vec![".first { color: red; }", ".second { color: blue; }"]
+        );
     }
 }

@@ -24,6 +24,7 @@ raikiri-style       = { workspace = true }
 raikiri-paint       = { workspace = true }
 raikiri-net         = { workspace = true }
 raikiri-js          = { workspace = true }
+cssparser           = { workspace = true }
 time                = { workspace = true }
 png                 = { workspace = true }
 

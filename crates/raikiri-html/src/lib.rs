@@ -29,7 +29,7 @@ pub use cascade::{
 };
 pub use document::HtmlDocument;
 pub use document_parse::{parse_html, parse_html_with_limits};
-pub use parse::{effective_document_base_url, parse, parse_with_sink};
+pub use parse::{effective_document_base_url, parse, parse_fragment, parse_with_sink};
 pub use render::{RenderOptions, plan, render_streaming};
 pub use resources::{
     DEFAULT_MAX_AGGREGATE_RESOURCE_BYTES, DEFAULT_MAX_RESOURCE_BYTES, RenderResources,

@@ -3,9 +3,11 @@
 use std::borrow::Cow;
 use std::io::Read;
 
-use html5ever::driver::{ParseOpts, parse_document};
+use html5ever::driver::{ParseOpts, parse_document, parse_fragment as parse_html_fragment};
+use html5ever::interface::QualName;
 use html5ever::tendril::TendrilSink;
 use html5ever::tree_builder::TreeSink;
+use markup5ever::{LocalName, Namespace};
 use raikiri_traits::{
     Body, Method, NetworkError, ParseError, RenderWarning, Request, ResourceKind, StylesheetKind,
     ViolationType, WarningKind,
@@ -60,7 +62,7 @@ pub fn parse<R: Read>(
 /// 失敗した import は元の at-rule を保持し、fetch failure は
 /// `NetworkFallback` / `PolicyWarning` を記録する。
 pub fn parse_with_sink<R, S>(
-    mut input: R,
+    input: R,
     sink: S,
     options: &ParseOptions<'_>,
 ) -> Result<UncascadedDocument, ParseError>
@@ -68,19 +70,76 @@ where
     R: Read,
     S: TreeSink<Handle = usize, Output = UncascadedDocument>,
 {
-    // 2-step: reader failures → Io、UTF-8 conversion failures → Encoding。
-    // read_to_string の InvalidData 一括分類 (reader が非-encoding 由来で
-    // InvalidData を返すケース) を防ぐ。
+    let buf = read_utf8(input)?;
+    let doc = parse_document(sink, ParseOpts::default()).one(buf.as_str());
+    finish_document(doc, options)
+}
+
+/// Parse HTML markup using the browser's fragment algorithm for an element context.
+///
+/// `context_local_name` and `context_namespace` must describe the target element.
+/// For HTML elements, use the HTML namespace URI. The result's document root
+/// contains the parsed fragment children, ready to copy into a live element or
+/// template-content fragment.
+pub fn parse_fragment<R: Read>(
+    input: R,
+    options: &ParseOptions<'_>,
+    context_local_name: &str,
+    context_namespace: &str,
+    context_element_allows_scripting: bool,
+) -> Result<UncascadedDocument, ParseError> {
+    let buf = read_utf8(input)?;
+    let context_name = QualName::new(
+        None,
+        Namespace::from(context_namespace),
+        LocalName::from(context_local_name),
+    );
+    let doc = parse_html_fragment(
+        RaikiriTreeSink::default(),
+        ParseOpts::default(),
+        context_name,
+        Vec::new(),
+        context_element_allows_scripting,
+    )
+    .one(buf.as_str());
+    let mut doc = finish_document(doc, options)?;
+    flatten_fragment_root(&mut doc.dom);
+    Ok(doc)
+}
+
+fn flatten_fragment_root(document: &mut raikiri_dom::Document) {
+    let root = document.root_index();
+    let Some(root_node) = document.get_node(root) else {
+        return; // cov:ignore: Document::root_index always names the allocated root node.
+    };
+    if root_node.children.len() != 1 {
+        return;
+    }
+    let html = root_node.children[0];
+    if document.get_node(html).and_then(|node| node.tag_name()) != Some("html")
+        || document.element_namespace_uri(html) != Some("http://www.w3.org/1999/xhtml")
+    {
+        return;
+    }
+    document.reparent_children(html, root);
+    document.detach_from_parent(html);
+}
+
+fn read_utf8(mut input: impl Read) -> Result<String, ParseError> {
+    // Separate I/O and UTF-8 failures so a reader's InvalidData is not
+    // confused with an encoding failure.
     let mut bytes = Vec::new();
     input.read_to_end(&mut bytes).map_err(ParseError::Io)?;
-    let buf = String::from_utf8(bytes).map_err(|e| ParseError::Encoding {
+    String::from_utf8(bytes).map_err(|error| ParseError::Encoding {
         label: String::from("utf-8"),
-        reason: e.to_string(),
-    })?;
+        reason: error.to_string(),
+    })
+}
 
-    let parser = parse_document(sink, ParseOpts::default());
-    let mut doc = parser.one(buf.as_str());
-
+fn finish_document(
+    mut doc: UncascadedDocument,
+    options: &ParseOptions<'_>,
+) -> Result<UncascadedDocument, ParseError> {
     // 既定 UA CSS を Document に注入。
     doc.dom.add_stylesheet(
         Cow::Borrowed(crate::ua::MINIMAL_UA_CSS),
@@ -317,5 +376,52 @@ fn resolve_url(href: &str, base: Option<&Url>) -> Option<Url> {
     match base {
         Some(base) => base.join(href).ok(),
         None => Url::parse(href).ok(),
+    }
+}
+
+#[cfg(test)]
+mod fragment_root_tests {
+    use super::*;
+
+    #[test]
+    fn fragment_root_with_zero_or_multiple_children_is_not_flattened() {
+        let mut empty = raikiri_dom::Document::new();
+        flatten_fragment_root(&mut empty);
+        assert!(
+            empty
+                .get_node(empty.root_index())
+                .unwrap()
+                .children
+                .is_empty()
+        );
+
+        let mut multiple = raikiri_dom::Document::new();
+        let root = multiple.root_index();
+        let first = multiple.append_element(Some(root), "div", Default::default(), None::<&str>);
+        let second = multiple.append_element(Some(root), "span", Default::default(), None::<&str>);
+        flatten_fragment_root(&mut multiple);
+        assert_eq!(
+            multiple.get_node(root).unwrap().children,
+            vec![first, second]
+        );
+    }
+
+    #[test]
+    fn fragment_root_with_non_html_or_foreign_html_child_is_not_flattened() {
+        let mut non_html = raikiri_dom::Document::new();
+        let root = non_html.root_index();
+        let div = non_html.append_element(Some(root), "div", Default::default(), None::<&str>);
+        flatten_fragment_root(&mut non_html);
+        assert_eq!(non_html.get_node(root).unwrap().children, vec![div]);
+
+        let mut foreign_html = raikiri_dom::Document::new();
+        let root = foreign_html.root_index();
+        let html =
+            foreign_html.append_element(Some(root), "html", Default::default(), None::<&str>);
+        foreign_html.set_element_namespace(html, Some("urn:foreign".into()));
+        let child = foreign_html.append_element(Some(html), "g", Default::default(), None::<&str>);
+        flatten_fragment_root(&mut foreign_html);
+        assert_eq!(foreign_html.get_node(root).unwrap().children, vec![html]);
+        assert_eq!(foreign_html.get_node(html).unwrap().children, vec![child]);
     }
 }
