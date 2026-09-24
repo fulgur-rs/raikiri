@@ -84,7 +84,7 @@ impl UreqHttpProvider {
         Self::with_agent(ureq::Agent::with_parts(
             agent_config(),
             ureq::unversioned::transport::DefaultConnector::default(),
-            SsrfSafeResolver::default(),
+            SsrfSafeResolver::new(),
         ))
     }
 

@@ -38,16 +38,30 @@ impl fmt::Display for SsrfBlocked {
 
 impl std::error::Error for SsrfBlocked {}
 
-/// Resolver that delegates real DNS/IP-literal resolution to
-/// `DefaultResolver`, then drops any candidate address that fails
-/// [`is_globally_routable`]. If no candidate survives, returns
+/// Resolver that delegates real DNS/IP-literal resolution to `inner`
+/// (`DefaultResolver` in production), then drops any candidate address that
+/// fails [`is_globally_routable`]. If no candidate survives, returns
 /// `Error::Other(Box::new(SsrfBlocked { .. }))` naming the rejected URI.
-#[derive(Debug, Default)]
-pub(crate) struct SsrfSafeResolver {
-    inner: DefaultResolver,
+///
+/// Generic over the inner resolver only so tests can script the addresses a
+/// lookup returns; the only constructor, [`SsrfSafeResolver::new`], always
+/// wraps `DefaultResolver`.
+#[derive(Debug)]
+pub(crate) struct SsrfSafeResolver<R: Resolver = DefaultResolver> {
+    inner: R,
 }
 
-impl Resolver for SsrfSafeResolver {
+impl SsrfSafeResolver {
+    /// The production resolver: real DNS/IP-literal resolution through
+    /// `ureq`'s `DefaultResolver`, filtered by the floor.
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: DefaultResolver::default(),
+        }
+    }
+}
+
+impl<R: Resolver> Resolver for SsrfSafeResolver<R> {
     fn resolve(
         &self,
         uri: &Uri,
