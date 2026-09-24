@@ -23,6 +23,10 @@ use crate::http_resolver::{SsrfBlocked, SsrfSafeResolver};
 /// font).
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Time limit for establishing a connection: TCP connect and, for
+/// `https://`, the TLS handshake.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Upper bound on a response body's size *after* content decoding (gzip),
 /// which is the size that actually gets materialized in memory. 32 MiB, the
 /// same value `raikiri-html` uses as its default per-resource limit
@@ -47,6 +51,17 @@ const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
 /// re-checked) and the NAT64 local-use prefix (blocked outright) are not
 /// explicitly enumerated, so an address embedded in one of those is not
 /// unwrapped and re-checked.
+///
+/// Fetch timeouts have one known gap: during an `https://` TLS handshake,
+/// `ureq` 3.4.2 hands every socket read the same *relative* timeout window
+/// (computed once when the connection starts) instead of the time left
+/// until an absolute deadline. A server that answers the handshake with a
+/// trickle of bytes, each arriving inside that window, therefore keeps a
+/// `fetch` blocked past both the connect and the global timeout, for as
+/// long as it keeps trickling. The connect timeout only shrinks the window
+/// (so a server that stalls outright fails after 10 seconds); it does not
+/// close the gap. Consumers that must bound wall-clock time strictly should
+/// run fetches under their own deadline.
 pub struct UreqHttpProvider {
     agent: ureq::Agent,
 }
@@ -59,34 +74,15 @@ impl Default for UreqHttpProvider {
 
 impl UreqHttpProvider {
     /// Builds a provider whose `Agent` always resolves through the
-    /// crate-internal `SsrfSafeResolver`, never uses a proxy, and bounds
-    /// every fetch (DNS lookup through the end of the response body,
-    /// including redirects) by a 30-second end-to-end timeout.
+    /// crate-internal `SsrfSafeResolver`, never uses a proxy, bounds each
+    /// connection attempt (TCP connect plus TLS handshake) by a 10-second
+    /// connect timeout, and bounds every fetch (DNS lookup through the end
+    /// of the response body, including redirects) by a 30-second
+    /// end-to-end timeout, subject to the TLS-handshake gap described on
+    /// [`UreqHttpProvider`].
     pub fn new() -> Self {
-        // `ureq::config::Config::default()` picks up `HTTP_PROXY` /
-        // `HTTPS_PROXY` / `NO_PROXY` (etc.) from the process environment. If
-        // a proxy were left configured, `ureq` would resolve and connect to
-        // the *proxy's* address rather than the fetch target's, so
-        // `SsrfSafeResolver` (which only ever sees what the configured
-        // resolver is asked to resolve) would never see the real target's
-        // IP at all — the SSRF floor would be silently inert for every
-        // request, with no error to signal it. Building through
-        // `Config::builder().proxy(None)` instead of `Config::default()`
-        // overrides that environment-sniffing default explicitly, so
-        // connections are always direct and `SsrfSafeResolver` is always
-        // the thing that resolves what gets connected to.
-        //
-        // `timeout_global` is end-to-end in `ureq` (DNS lookup to the last
-        // byte of the response body, across redirects). Without it a slow or
-        // trickling server named by attacker-supplied HTML could block
-        // `fetch` indefinitely; the provider, not the caller, is responsible
-        // for enforcing fetch timeouts.
-        let config = ureq::config::Config::builder()
-            .proxy(None)
-            .timeout_global(Some(FETCH_TIMEOUT))
-            .build();
         Self::with_agent(ureq::Agent::with_parts(
-            config,
+            agent_config(),
             ureq::unversioned::transport::DefaultConnector::default(),
             SsrfSafeResolver::default(),
         ))
@@ -161,6 +157,41 @@ fn read_body_capped(body: &mut ureq::Body, cap: u64) -> Result<Vec<u8>, ureq::Er
         return Err(ureq::Error::BodyExceedsLimit(cap));
     }
     Ok(bytes)
+}
+
+/// The `Config` every production `UreqHttpProvider` agent is built with
+/// (see [`UreqHttpProvider::new`]).
+fn agent_config() -> ureq::config::Config {
+    // `ureq::config::Config::default()` picks up `HTTP_PROXY` /
+    // `HTTPS_PROXY` / `NO_PROXY` (etc.) from the process environment. If
+    // a proxy were left configured, `ureq` would resolve and connect to
+    // the *proxy's* address rather than the fetch target's, so
+    // `SsrfSafeResolver` (which only ever sees what the configured
+    // resolver is asked to resolve) would never see the real target's
+    // IP at all — the SSRF floor would be silently inert for every
+    // request, with no error to signal it. Building through
+    // `Config::builder().proxy(None)` instead of `Config::default()`
+    // overrides that environment-sniffing default explicitly, so
+    // connections are always direct and `SsrfSafeResolver` is always
+    // the thing that resolves what gets connected to.
+    //
+    // `timeout_global` is end-to-end in `ureq` (DNS lookup to the last
+    // byte of the response body, across redirects). Without it a slow or
+    // trickling server named by attacker-supplied HTML could block
+    // `fetch` indefinitely; the provider, not the caller, is responsible
+    // for enforcing fetch timeouts.
+    //
+    // `timeout_connect` additionally bounds TCP connect plus the TLS
+    // handshake, so a black-hole or stalled target fails well before the
+    // global budget is spent. Neither timeout is a hard deadline for the
+    // TLS handshake itself: `ureq`'s rustls connector applies one fixed
+    // relative timeout to each handshake read, so a server trickling bytes
+    // faster than that window can outlast both (see the type-level docs).
+    ureq::config::Config::builder()
+        .proxy(None)
+        .timeout_global(Some(FETCH_TIMEOUT))
+        .timeout_connect(Some(CONNECT_TIMEOUT))
+        .build()
 }
 
 impl NetworkProvider for UreqHttpProvider {

@@ -478,3 +478,64 @@ fn a_small_gzip_body_is_still_decoded_end_to_end() {
     assert_eq!(resource.bytes.len(), 1024 * 1024);
     assert!(resource.bytes.iter().all(|&b| b == 0));
 }
+
+#[test]
+fn production_config_sets_global_and_connect_timeouts() {
+    let timeouts = UreqHttpProvider::new().agent.config().timeouts();
+    assert_eq!(timeouts.global, Some(FETCH_TIMEOUT));
+    assert_eq!(timeouts.connect, Some(CONNECT_TIMEOUT));
+    assert!(CONNECT_TIMEOUT < FETCH_TIMEOUT);
+}
+
+#[test]
+fn a_stalled_tls_handshake_fails_at_the_connect_timeout_as_a_typed_timeout() {
+    // The server accepts the TCP connection but never answers the
+    // ClientHello. With the production config this must fail once the
+    // connect timeout elapses, well before the global timeout, and surface
+    // as a typed `TimedOut` I/O error rather than an opaque string.
+    use std::time::Instant;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+    let port = listener.local_addr().unwrap().port();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    thread::spawn(move || {
+        let (_stream, _) = listener.accept().expect("accept conn");
+        // Hold the connection open, silently, until the client gives up.
+        let _ = done_rx.recv();
+    });
+
+    // Production timeouts, but an unfiltered resolver so the loopback
+    // listener is reachable at all.
+    let agent = ureq::Agent::with_parts(
+        agent_config(),
+        DefaultConnector::default(),
+        DefaultResolver::default(),
+    );
+    let provider = UreqHttpProvider::with_agent(agent);
+    let request = Request {
+        url: Url::parse(&format!("https://127.0.0.1:{port}/")).unwrap(),
+        method: RaikiriMethod::Get,
+        content_type: None,
+        headers: Vec::new(),
+        body: Body::Empty,
+        signal: None,
+        kind: ResourceKind::Image,
+    };
+
+    let start = Instant::now();
+    let err = provider
+        .fetch(request)
+        .expect_err("a silent TLS server must time out");
+    let elapsed = start.elapsed();
+    let _ = done_tx.send(());
+
+    assert!(
+        matches!(&err, NetworkError::Io(e) if e.kind() == std::io::ErrorKind::TimedOut),
+        "expected NetworkError::Io(TimedOut), got {err:?}"
+    );
+    assert!(
+        elapsed >= CONNECT_TIMEOUT && elapsed < FETCH_TIMEOUT,
+        "expected the connect timeout ({CONNECT_TIMEOUT:?}) to fire before the \
+         global one ({FETCH_TIMEOUT:?}), took {elapsed:?}"
+    );
+}
