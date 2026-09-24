@@ -53,7 +53,7 @@ fn line_break_anywhere_is_pixel_exact_at_800x600() {
 
     let mut failures = Vec::new();
     for relative in candidates {
-        let test = root.join(&relative);
+        let test = root.join(relative);
         let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
             .unwrap_or_else(|error| panic!("discover {relative}: {error}"));
         if pairs.len() != 1 {
