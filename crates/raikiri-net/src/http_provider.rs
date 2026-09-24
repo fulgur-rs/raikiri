@@ -264,8 +264,10 @@ impl NetworkProvider for UreqHttpProvider {
             .map_err(|e| NetworkError::Other(format!("invalid final URL: {e}")))?;
         let content_type = response.body().mime_type().map(str::to_owned);
         let encoding = response.body().charset().map(str::to_owned);
+        // Body errors are reported against the URL the body actually came
+        // from, which after a redirect is not `request.url`.
         let bytes = read_body_capped(response.body_mut(), MAX_RESPONSE_BYTES)
-            .map_err(|e| map_ureq_error(&request.url, kind, e))?;
+            .map_err(|e| map_ureq_error(&final_url, kind, e))?;
 
         Ok(FetchedResource {
             bytes: bytes.into(),
