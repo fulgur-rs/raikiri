@@ -104,12 +104,17 @@ echo
 if [[ "${RAIKIRI_COVERAGE_INCLUDE_IGNORED:-0}" == "1" ]]; then
   echo "-- cargo llvm-cov (normal + --ignored, accumulated) --"
   cargo llvm-cov clean --workspace
-  cargo llvm-cov --workspace --locked --no-report
-  cargo llvm-cov --workspace --locked --no-report -- --ignored
+  # `--features raikiri-net/http-ureq`: raikiri-net's `http-ureq` feature
+  # (UreqHttpProvider) is default off, so without this flag `ssrf_guard.rs` /
+  # `http_resolver.rs` / `http_provider.rs` never compile here and every
+  # executable line in them is reported as uncovered, matching the same flag
+  # added to CI's coverage job (.github/workflows/ci.yml).
+  cargo llvm-cov --workspace --features raikiri-net/http-ureq --locked --no-report
+  cargo llvm-cov --workspace --features raikiri-net/http-ureq --locked --no-report -- --ignored
   cargo llvm-cov report --lcov --output-path "$LCOV_OUT"
 else
-  echo "-- cargo llvm-cov --workspace --locked --lcov --"
-  cargo llvm-cov --workspace --locked --lcov --output-path "$LCOV_OUT"
+  echo "-- cargo llvm-cov --workspace --features raikiri-net/http-ureq --locked --lcov --"
+  cargo llvm-cov --workspace --features raikiri-net/http-ureq --locked --lcov --output-path "$LCOV_OUT"
 fi
 echo
 
