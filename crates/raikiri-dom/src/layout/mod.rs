@@ -2221,32 +2221,20 @@ fn grid_line_value_to_taffy_placement(v: &GridLineValue) -> GridPlacement {
 /// inert でなくなるため — default のままだろうと期待するのではなく
 /// 明示的に上書きする必要がある。
 ///
-/// `align_items: FlexStart` (taffy 自身の default である `Stretch` では
-/// なく) を set しているのは、上記の `flex_direction` / `flex_wrap` と
-/// 全く同じ「もう inert ではない」理由による: `bridge_alignment` も
-/// author の `align-items` 宣言をこの node に既に copy している可能性が
-/// あり、block container だった間は inert だったものが、ここで flex
-/// container になった時点で live になるため、同様に上書きする必要が
-/// ある。`FlexStart` そのもの (`Stretch` ではなく) を選ぶ理由は、参加する
-/// 各 child を最も高い sibling に合わせて stretch せず、各自の natural
-/// な (measured) height のまま保つことで、CSS 2.1 §9.4.2 の "line box is
-/// always tall enough for all of the boxes it contains"(line box は
-/// 自身が含む全 box を収められるだけの高さを常に持つ) を、より低い box
-/// を無理に伸ばさずに満たすためである。
+/// `align_items: Baseline` を set するのは、`bridge_alignment` が copy
+/// した author の `align-items` を上書きし、参加する text children の
+/// first baseline を揃えるためである。`taffy_impl.rs` は text leaf の
+/// Parley first-line baseline を report し、`inline` / `inline-block`
+/// wrapper では in-flow text baseline を box へ伝える。baseline を持たない
+/// replaced box 等は taffy の bottom-edge fallback に残る。`vertical-align`
+/// の top / bottom は child の `align_self` で引き続き別扱いする。
 ///
-/// `FlexStart` も taffy の `AlignItems::Baseline` も、ここでは本当の
-/// font-baseline alignment を行わない: 本 crate の taffy leaf layout は
-/// alignment の基準となる baseline を一切 report しない (`taffy_impl.rs`
-/// の leaf measure closure は `Size` しか返さない) ため、`Baseline` は
-/// 各 item の下端 (bottom edge) 揃えに degrade し、`FlexStart` は各
-/// item の上端 (top edge) 揃えになる — どちらも近似であって、「本物の
-/// baseline mode」と「fallback」の選択ではない。`FlexStart` を選んだのは、
-/// 参加する children が同じ used line-height / ascent metric を共有する
-/// 場合 (同じ font、同じ computed font-size、同じ line-height という
-/// 一般的な case) には正しい baseline alignment と一致し、共有しない
-/// 場合 (例えば `<sub>`/`<sup>` の child が smaller な computed
-/// font-size を使う場合、あるいは通常の text 以外の box model) にのみ
-/// そこから外れるためである。
+/// `vertical-align` の実装済み length / sub / super shift は paint 時に
+/// glyph へ適用する一方、その shift 分を line root の synthetic leading /
+/// trailing として sizing に加える。これにより raised / lowered box が
+/// line box の高さへ参加し、他の child も同じ text baseline を基準に配置
+/// される。Synthetic extent は authored padding に加算されるため、既存の
+/// padding 値と共存する。
 ///
 /// container 自身は `justify_content: None` (taffy 自身の default、CSS
 /// の `normal` 相当) へも reset する — 全く同じ「もう inert ではない」
@@ -2262,25 +2250,15 @@ fn grid_line_value_to_taffy_placement(v: &GridLineValue) -> GridPlacement {
 /// box を並べるモデル) ため、[`bridge_gap`] が copy した author 値を
 /// ここで無効化する。
 ///
-/// `align_content` も `align_items: FlexStart` (上記) と同じ理由・同じ
-/// 値 (`Some(FlexStart)`) へ reset する — [`bridge_alignment`] が copy
-/// した author の `align-content` 宣言、あるいは author が宣言しなければ
-/// `None` (taffy はこれを flexbox path では `Stretch` 相当に default
-/// する) が、ここで初めて live になる。`align-content` は cross-axis
-/// 方向で複数の flex line 間に余った space を配る property であり、この
-/// container が author の明示的な `height` (block container のままでも
-/// 常に効く、[`bridge_size`] 参照) で自身の content より高く sizing
-/// される場合、reset を怠ると default の `Stretch` がその余り space を
-/// 全 line (`<br>` forced break — 下記 doc section 参照 — が確立した、
-/// 高さ 0 の line を含む) に均等に配ってしまい、`<br>` の line を
-/// 0 より大きくして視覚的な gap を挟んでしまう。CSS 2.1 の inline
-/// formatting context に "container の余り cross space を line 間に配る"
-/// 意味論はそもそも存在しない (line box は各自の natural height を保つ、
-/// 上記 `align_items: FlexStart` の rationale と同じ) ため、`FlexStart`
-/// へ固定してその意味論ごと無効化する。
+/// `align_content` も [`bridge_alignment`] が copy した author の値を
+/// `Some(FlexStart)` へ reset する。これは複数 flex line 間で余った
+/// cross-axis space を配る flex 専用 property であり、CSS inline context
+/// には対応する意味論がない。reset を怠ると明示的な `height` がある場合に
+/// default の `Stretch` が余り space を `<br>` の zero-height line に配り、
+/// 視覚的な gap を作る。
 ///
 /// 参加する各 child はさらに `flex_grow: 0.0` / `flex_shrink: 0.0` /
-/// `flex_basis: auto` / `align_self: None` も得る ([`bridge_flex`] /
+/// `flex_basis: auto` / `align_self: None` (or `Top` / `Bottom` override) も得る ([`bridge_flex`] /
 /// [`bridge_alignment`] が自身の author CSS から copy した値を、上記と
 /// 同じ「もう inert ではない」理由で上書きする)。`flex_grow` /
 /// `flex_shrink` を `0` にする理由: line wrapping を未実装の現状、
@@ -2296,9 +2274,10 @@ fn grid_line_value_to_taffy_placement(v: &GridLineValue) -> GridPlacement {
 /// main size を直接決めてしまうため、`flex_shrink: 0` だけでは守れない
 /// (自身の content 基準の flex basis に戻すことで、box は常に自身の
 /// shaped content 以上の幅を持つ)。`align_self` を `None` (= `auto`) へ
-/// 戻す理由は、container 側の `align_items: FlexStart` へ一貫して
+/// 戻す理由は、container 側の `align_items: Baseline` へ一貫して
 /// fallback させるためである (`auto` は親の `align-items` へ fallback
-/// する契約、[`bridge_alignment`] の doc 参照)。
+/// する契約、[`bridge_alignment`] の doc 参照)。`vertical-align: top` /
+/// `bottom` はそれぞれ `FlexStart` / `FlexEnd` に明示変換する。
 ///
 /// # `<br>` forced break
 ///
@@ -3675,6 +3654,65 @@ fn inline_context_has_autospace_candidate(
     false
 }
 
+/// Vertical line-box extent contributed by a supported `vertical-align` value.
+/// Positive raised offsets extend the line's ascent; negative lowered offsets
+/// extend its descent. The paint-side shift is still applied to glyphs.
+/// spec: <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>
+fn vertical_align_linebox_extent(
+    vertical_align: VerticalAlign,
+    parent_font_size_px: f32,
+) -> (f32, f32) {
+    let shift = match vertical_align {
+        VerticalAlign::Sub => parent_font_size_px / 5.0,
+        VerticalAlign::Super => -(parent_font_size_px / 3.0),
+        VerticalAlign::Length(Length::Px(px)) => -px,
+        _ => 0.0,
+    };
+    if !shift.is_finite() {
+        return (0.0, 0.0);
+    }
+    if shift < 0.0 {
+        (-shift, 0.0)
+    } else {
+        (0.0, shift)
+    }
+}
+
+/// Add synthetic line-box leading/trailing to authored padding without losing
+/// a percentage component. Taffy's calc callback already resolves this mixed
+/// value for bridged CSS lengths.
+fn padding_with_linebox_extent(
+    doc: &mut Document,
+    value: ComputedLengthPercentage,
+    extra: f32,
+    site: &'static str,
+) -> LengthPercentage {
+    if extra <= 0.0 {
+        return computed_length_percentage_to_taffy_length_percentage(
+            value,
+            site,
+            &mut doc.layout_warnings,
+        );
+    }
+    let extra = sanitize_taffy(extra, site, &mut doc.layout_warnings);
+    match value {
+        ComputedLengthPercentage::Px(px) => {
+            LengthPercentage::length(sanitize_taffy(px + extra, site, &mut doc.layout_warnings))
+        }
+        ComputedLengthPercentage::Percent(percent) => {
+            let percent = sanitize_taffy(percent, site, &mut doc.layout_warnings);
+            let value = CalcLengthPercentage { percent, px: extra };
+            doc.calc_values.push(std::sync::Arc::new(value));
+            let pointer = doc
+                .calc_values
+                .last()
+                .map(|value| (&**value) as *const _ as *const ())
+                .expect("calc value was just pushed");
+            LengthPercentage::calc(pointer)
+        }
+    }
+}
+
 fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
     let mut parent_of = vec![None; doc.nodes.len()];
     for parent in 0..doc.nodes.len() {
@@ -3744,8 +3782,43 @@ fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
         let has_ch_indent = container_cv.text_indent_ch_factor.is_some()
             && !container_cv.text_indent_hanging
             && !container_cv.text_indent_each_line;
+        let mut linebox_leading = 0.0_f32;
+        let mut linebox_trailing = 0.0_f32;
+        for &child in &participating_children {
+            if cascade.computed[child].display == DisplayValue::None {
+                continue;
+            }
+            let (leading, trailing) = vertical_align_linebox_extent(
+                cascade.computed[child].vertical_align,
+                container_cv.font_size.px(),
+            );
+            linebox_leading = linebox_leading.max(leading);
+            linebox_trailing = linebox_trailing.max(trailing);
+        }
+        let linebox_padding_top = (linebox_leading > 0.0).then(|| {
+            padding_with_linebox_extent(
+                doc,
+                container_cv.padding.top,
+                linebox_leading,
+                "line-box-leading",
+            )
+        });
+        let linebox_padding_bottom = (linebox_trailing > 0.0).then(|| {
+            padding_with_linebox_extent(
+                doc,
+                container_cv.padding.bottom,
+                linebox_trailing,
+                "line-box-trailing",
+            )
+        });
         {
             let style = &mut doc.nodes[idx].style;
+            if let Some(padding) = linebox_padding_top {
+                style.padding.top = padding;
+            }
+            if let Some(padding) = linebox_padding_bottom {
+                style.padding.bottom = padding;
+            }
             style.display = Display::Flex;
             style.flex_direction = TaffyFlexDirection::Row;
             style.flex_wrap = if has_forced_break || has_ch_indent {
@@ -3753,7 +3826,7 @@ fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
             } else {
                 TaffyFlexWrap::NoWrap
             };
-            style.align_items = Some(TaffyAlignItems::FLEX_START);
+            style.align_items = Some(TaffyAlignItems::BASELINE);
             style.align_content = Some(TaffyAlignContent::FLEX_START);
             // `text-align: center` の line box 全体の中央寄せは flex の
             // main-axis 配置で実現する (parley 側ではなく container 側)。
@@ -3775,12 +3848,10 @@ fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
                 && has_line_box_edge_aligned_descendant(doc, c, cascade);
             let child_style = &mut doc.nodes[c].style;
             if strip_inline_padding {
-                // An inline wrapper's block-axis padding contributes to the
-                // line box, but the current taffy bridge has no inline
-                // baseline/strut model to move its descendants back against
-                // the line edge.  For the narrow top/bottom slice, remove
-                // that padding from the wrapper's block layout so its text
-                // and aligned subtree retain the line-box position.
+                // The wrapper is bridged as a block box, so its block-axis
+                // padding would move a nested top/bottom-aligned descendant
+                // away from the outer line edge. For this narrow edge-aligned
+                // slice, remove that padding from the wrapper's block layout.
                 child_style.padding.top = LengthPercentage::length(0.0);
                 child_style.padding.bottom = LengthPercentage::length(0.0);
             }
@@ -3792,6 +3863,7 @@ fn establish_minimal_line_boxes(doc: &mut Document, cascade: &CascadeResult) {
                 Dimension::auto()
             };
             child_style.align_self = match cascade.computed[c].vertical_align {
+                VerticalAlign::Top => Some(TaffyAlignSelf::FLEX_START),
                 VerticalAlign::Bottom => Some(TaffyAlignSelf::FLEX_END),
                 _ => None,
             };
@@ -14692,7 +14764,7 @@ mod tests {
         assert_eq!(doc.nodes[p].style.flex_wrap, TaffyFlexWrap::NoWrap);
         assert_eq!(
             doc.nodes[p].style.align_items,
-            Some(TaffyAlignItems::FLEX_START)
+            Some(TaffyAlignItems::BASELINE)
         );
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
@@ -15045,6 +15117,189 @@ mod tests {
             "second child must not sit at x=0 — that would mean it's \
              still being independently stacked below the first child \
              rather than placed beside it"
+        );
+    }
+
+    #[test]
+    fn vertical_align_linebox_extent_splits_ascent_and_descent() {
+        assert_eq!(
+            vertical_align_linebox_extent(VerticalAlign::Length(Length::Px(12.0)), 16.0),
+            (12.0, 0.0)
+        );
+        assert_eq!(
+            vertical_align_linebox_extent(VerticalAlign::Length(Length::Px(-4.0)), 16.0),
+            (0.0, 4.0)
+        );
+        assert_eq!(
+            vertical_align_linebox_extent(VerticalAlign::Super, 16.0),
+            (16.0 / 3.0, 0.0)
+        );
+        assert_eq!(
+            vertical_align_linebox_extent(VerticalAlign::Sub, 16.0),
+            (0.0, 16.0 / 5.0)
+        );
+        assert_eq!(
+            vertical_align_linebox_extent(VerticalAlign::Baseline, 16.0),
+            (0.0, 0.0)
+        );
+        assert_eq!(
+            vertical_align_linebox_extent(VerticalAlign::Length(Length::Px(f32::NAN)), 16.0),
+            (0.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn padding_with_linebox_extent_preserves_percent_components() {
+        let mut doc = Document::new();
+        let without_extra = padding_with_linebox_extent(
+            &mut doc,
+            ComputedLengthPercentage::Px(4.0),
+            0.0,
+            "test-linebox-padding",
+        );
+        assert_eq!(without_extra, LengthPercentage::length(4.0));
+        assert!(doc.calc_values.is_empty());
+
+        let _with_extra = padding_with_linebox_extent(
+            &mut doc,
+            ComputedLengthPercentage::Percent(25.0),
+            8.0,
+            "test-linebox-padding",
+        );
+        assert_eq!(doc.calc_values.len(), 1);
+        assert_eq!(doc.calc_values[0].percent, 25.0);
+        assert_eq!(doc.calc_values[0].px, 8.0);
+    }
+
+    #[test]
+    fn establish_minimal_line_boxes_aligns_inline_block_text_baselines() {
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+        let small = doc.append_element(
+            Some(p),
+            "span",
+            Style::default(),
+            Some("display:inline-block; font-size:10px; line-height:10px; vertical-align:8px"),
+        );
+        let small_text = doc.append_text(small, "A");
+        let large = doc.append_element(
+            Some(p),
+            "span",
+            Style::default(),
+            Some("display:inline-block; font-size:20px; line-height:20px"),
+        );
+        let large_text = doc.append_text(large, "B");
+        let lowered = doc.append_element(
+            Some(p),
+            "span",
+            Style::default(),
+            Some("display:inline-block; font-size:12px; line-height:12px; vertical-align:-4px"),
+        );
+        let _lowered_text = doc.append_text(lowered, "C");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let text_baseline = |element: usize, text: usize| {
+            doc.nodes[element].unrounded_layout.location.y
+                + doc.nodes[text].unrounded_layout.location.y
+                + doc.nodes[text]
+                    .text_layout()
+                    .expect("text shaped")
+                    .lines()
+                    .next()
+                    .expect("one line")
+                    .metrics()
+                    .baseline
+        };
+        assert_eq!(
+            doc.nodes[p].style.padding.top,
+            LengthPercentage::length(8.0)
+        );
+        assert_eq!(
+            doc.nodes[p].style.padding.bottom,
+            LengthPercentage::length(4.0)
+        );
+        let small_baseline = text_baseline(small, small_text);
+        let large_baseline = text_baseline(large, large_text);
+        // cov:ignore: panic-message literal only executed on assertion failure.
+        assert!(
+            (small_baseline - large_baseline).abs() < 1e-3,
+            "inline-block text baselines must align across siblings, got small={small_baseline} large={large_baseline}"
+        );
+    }
+
+    #[test]
+    fn inline_block_baseline_uses_last_in_flow_text_line() {
+        use parley::FontContext;
+        use raikiri_style::{build_rule_tree, cascade};
+        use raikiri_traits::PageBox;
+
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+        let multiline = doc.append_element(
+            Some(p),
+            "span",
+            Style::default(),
+            Some("display:inline-block; width:20px; font-size:10px; line-height:10px"),
+        );
+        let first_text = doc.append_text(multiline, "A");
+        doc.append_element(Some(multiline), "br", Style::default(), None::<&str>);
+        let last_text = doc.append_text(multiline, "B");
+        let hidden = doc.append_element(
+            Some(multiline),
+            "span",
+            Style::default(),
+            Some("display:none"),
+        );
+        doc.append_text(hidden, "hidden");
+        let single_line = doc.append_element(
+            Some(p),
+            "span",
+            Style::default(),
+            Some("display:inline-block; font-size:20px; line-height:20px"),
+        );
+        let sibling_text = doc.append_text(single_line, "C");
+
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+        let first_y = doc.nodes[first_text].unrounded_layout.location.y;
+        let last_y = doc.nodes[last_text].unrounded_layout.location.y;
+        assert!(last_y > first_y, "the br must put B on a later line");
+        let multiline_baseline = doc.nodes[multiline].unrounded_layout.location.y
+            + last_y
+            + doc.nodes[last_text]
+                .text_layout()
+                .expect("last text shaped")
+                .lines()
+                .next()
+                .expect("one line in B text node")
+                .metrics()
+                .baseline;
+        let sibling_baseline = doc.nodes[single_line].unrounded_layout.location.y
+            + doc.nodes[sibling_text].unrounded_layout.location.y
+            + doc.nodes[sibling_text]
+                .text_layout()
+                .expect("sibling text shaped")
+                .lines()
+                .next()
+                .expect("one sibling line")
+                .metrics()
+                .baseline;
+        assert!(
+            (multiline_baseline - sibling_baseline).abs() < 1e-3,
+            "inline-block last text baseline must align with sibling: {multiline_baseline} vs {sibling_baseline}" // cov:ignore: panic-message literal only runs if the assertion fails.
         );
     }
 
