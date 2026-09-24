@@ -185,6 +185,17 @@ if ! cargo test --workspace --locked; then
 fi
 echo
 
+# Non-default crate features that no workspace member enables are never
+# compiled by the --workspace runs above/below, so each one is exercised
+# explicitly here (and in the clippy/doc sections). Keep this list in sync
+# with .github/workflows/ci.yml.
+echo "-- §8.1(a) cargo test -p raikiri-net --features http-ureq --locked --"
+if ! cargo test -p raikiri-net --features http-ureq --locked; then
+  echo "FAIL: cargo test -p raikiri-net --features http-ureq --locked"
+  FAIL=1
+fi
+echo
+
 echo "-- §8.1(a) #[ignore] scan --"
 CENSUS_CMD="git grep -nE '#\[ignore(\]| *=)' -- '*.rs'"
 echo "$CENSUS_CMD"
@@ -276,6 +287,13 @@ if ! cargo clippy --workspace --all-targets --locked -- -D warnings; then
 fi
 echo
 
+echo "-- §8.1(b) cargo clippy -p raikiri-net --features http-ureq --all-targets -- -D warnings --"
+if ! cargo clippy -p raikiri-net --features http-ureq --all-targets --locked -- -D warnings; then
+  echo "FAIL: cargo clippy -p raikiri-net --features http-ureq --all-targets --locked -- -D warnings"
+  FAIL=1
+fi
+echo
+
 echo "-- §8.1(b) RUSTDOCFLAGS=\"-D warnings\" cargo doc --no-deps --workspace --document-private-items --"
 # --document-private-items is required here: without it, rustdoc only
 # resolves intra-doc links inside public items, so a broken link inside a
@@ -283,6 +301,13 @@ echo "-- §8.1(b) RUSTDOCFLAGS=\"-D warnings\" cargo doc --no-deps --workspace -
 # hard-erroring under -D warnings.
 if ! RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace --document-private-items --locked; then
   echo "FAIL: cargo doc --no-deps --workspace --document-private-items"
+  FAIL=1
+fi
+echo
+
+echo "-- §8.1(b) RUSTDOCFLAGS=\"-D warnings\" cargo doc --no-deps -p raikiri-net --features http-ureq --document-private-items --"
+if ! RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p raikiri-net --features http-ureq --document-private-items --locked; then
+  echo "FAIL: cargo doc --no-deps -p raikiri-net --features http-ureq --document-private-items"
   FAIL=1
 fi
 echo
