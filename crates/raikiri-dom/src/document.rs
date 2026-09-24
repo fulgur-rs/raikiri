@@ -34,6 +34,57 @@ use crate::layout::LayoutWarn;
 use crate::node::{Attr, Node, NodeData};
 use raikiri_style::property::CalcLengthPercentage;
 
+const XHTML_NAMESPACE_URI: &str = "http://www.w3.org/1999/xhtml";
+
+fn is_xml_name_start(ch: char) -> bool {
+    matches!(
+        ch,
+        ':' | 'A'..='Z'
+            | '_'
+            | 'a'..='z'
+            | '\u{C0}'..='\u{D6}'
+            | '\u{D8}'..='\u{F6}'
+            | '\u{F8}'..='\u{2FF}'
+            | '\u{370}'..='\u{37D}'
+            | '\u{37F}'..='\u{1FFF}'
+            | '\u{200C}'..='\u{200D}'
+            | '\u{2070}'..='\u{218F}'
+            | '\u{2C00}'..='\u{2FEF}'
+            | '\u{3001}'..='\u{D7FF}'
+            | '\u{F900}'..='\u{FDCF}'
+            | '\u{FDF0}'..='\u{FFFD}'
+            | '\u{10000}'..='\u{EFFFF}'
+    )
+}
+
+fn is_xml_name_char(ch: char) -> bool {
+    is_xml_name_start(ch)
+        || matches!(
+            ch,
+            '0'..='9' | '-' | '.' | '\u{B7}' | '\u{300}'..='\u{36F}' | '\u{203F}'..='\u{2040}'
+        )
+}
+
+fn is_valid_xml_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(is_xml_name_start) && chars.all(is_xml_name_char)
+}
+
+fn is_html_raw_text_element(namespace: Option<&str>, tag_name: &str) -> bool {
+    namespace.is_none_or(|namespace| namespace == XHTML_NAMESPACE_URI)
+        && matches!(
+            tag_name.to_ascii_lowercase().as_str(),
+            "script"
+                | "style"
+                | "xmp"
+                | "iframe"
+                | "noembed"
+                | "noframes"
+                | "plaintext"
+                | "noscript"
+        )
+}
+
 /// DOM Document (root + Vec-backed node arena)。
 ///
 /// `nodes` は arena indices を key とする flat storage。index 0 は Document
@@ -495,6 +546,453 @@ impl Document {
             .collect();
     }
 
+    /// Set one null-namespace attribute on an element.
+    ///
+    /// The first existing entry keeps its source-order position; duplicate
+    /// entries with the same local name are removed. A missing attribute is
+    /// appended. The `style` attribute is stored in the separate
+    /// inline-style slot used by [`Document::set_element_inline_style`], never
+    /// in `ElementData::attributes`.
+    ///
+    /// This updates attribute metadata only; like [`Document::set_element_attributes`],
+    /// it does not invalidate layout caches or mark tree membership dirty.
+    ///
+    /// Returns an error when `local` is not an XML name. HTML-namespace element
+    /// names are ASCII-lowercased; foreign-content names preserve their case.
+    ///
+    /// Panics (debug + release): `id` is not an Element.
+    pub fn set_element_attribute(
+        &mut self,
+        id: usize,
+        local: impl Into<SmolStr>,
+        value: impl Into<SmolStr>,
+    ) -> Result<(), String> {
+        let local = local.into();
+        if !is_valid_xml_name(local.as_str()) {
+            return Err(format!("invalid attribute name: {local}"));
+        }
+        let NodeData::Element(element) = &self.nodes[id].data else {
+            panic!("set_element_attribute called on non-Element");
+        };
+        let html_element = element
+            .namespace
+            .as_deref()
+            .is_none_or(|namespace| namespace == XHTML_NAMESPACE_URI);
+        let local: SmolStr = if html_element {
+            local.to_ascii_lowercase().into()
+        } else {
+            local
+        };
+        let value = value.into();
+        if local.as_str() == "style" {
+            // Keep the storage invariant even if a caller previously populated
+            // the full-list setter with a style entry by mistake.
+            let element = self.nodes[id]
+                .data
+                .as_element_mut()
+                .expect("set_element_attribute called on non-Element");
+            element.attributes.retain(|attr| attr.local != local);
+            self.set_element_inline_style(id, Some(value));
+            return Ok(());
+        }
+
+        let element = self.nodes[id]
+            .data
+            .as_element_mut()
+            .expect("set_element_attribute called on non-Element");
+        let mut found = false;
+        element.attributes.retain_mut(|attr| {
+            if attr.local == local {
+                if found {
+                    false
+                } else {
+                    found = true;
+                    attr.value = value.clone();
+                    true
+                }
+            } else {
+                true
+            }
+        });
+        if !found {
+            element.attributes.push(Attr { local, value });
+        }
+        Ok(())
+    }
+
+    /// Remove one null-namespace attribute from an element and return its
+    /// stored value, if present. All matching entries are removed. The
+    /// separate inline-style slot is used for `style` and is cleared by this
+    /// method as well.
+    ///
+    /// This updates attribute metadata only; it does not invalidate layout
+    /// caches or mark tree membership dirty.
+    ///
+    /// Returns an error when `local` is not an XML name. HTML-namespace element
+    /// names are ASCII-lowercased; foreign-content names preserve their case.
+    ///
+    /// Panics (debug + release): `id` is not an Element.
+    pub fn remove_element_attribute(
+        &mut self,
+        id: usize,
+        local: &str,
+    ) -> Result<Option<SmolStr>, String> {
+        if !is_valid_xml_name(local) {
+            return Err(format!("invalid attribute name: {local}"));
+        }
+        let NodeData::Element(element) = &self.nodes[id].data else {
+            panic!("remove_element_attribute called on non-Element");
+        };
+        let html_element = element
+            .namespace
+            .as_deref()
+            .is_none_or(|namespace| namespace == XHTML_NAMESPACE_URI);
+        let local = if html_element {
+            local.to_ascii_lowercase()
+        } else {
+            local.to_owned()
+        };
+        let element = self.nodes[id]
+            .data
+            .as_element_mut()
+            .expect("remove_element_attribute called on non-Element");
+        if local == "style" {
+            // Remove any legacy/misrouted list entries as well as the actual
+            // inline-style value, so `attr("style")` has one source of truth.
+            let legacy_value = element
+                .attributes
+                .iter()
+                .find(|attr| attr.local.as_str() == local)
+                .map(|attr| attr.value.clone());
+            element
+                .attributes
+                .retain(|attr| attr.local.as_str() != local);
+            return Ok(element.inline_style.take().or(legacy_value));
+        }
+
+        let first_value = element
+            .attributes
+            .iter()
+            .find(|attr| attr.local.as_str() == local)
+            .map(|attr| attr.value.clone());
+        element
+            .attributes
+            .retain(|attr| attr.local.as_str() != local);
+        Ok(first_value)
+    }
+
+    /// Replace `target_parent`'s children with deep copies of
+    /// `source_parent`'s children from another document.
+    ///
+    /// Existing target child nodes stay allocated in the arena, but are
+    /// detached from their parent. New elements preserve their tag name,
+    /// namespace, null-namespace attributes, inline style, and source order;
+    /// text, comments, and processing instructions are copied as nodes.
+    /// Template contents are copied into a fresh detached fragment root.
+    /// Attribute `style` remains in the separate inline-style slot.
+    ///
+    /// Tree changes go through the existing `detach_from_parent`, `append_*`,
+    /// and template-fragment mutation methods, so layout caches and flat-tree
+    /// membership are marked dirty in the usual way. The source document is
+    /// not modified.
+    pub fn replace_children_from(
+        &mut self,
+        target_parent: usize,
+        source_document: &Document,
+        source_parent: usize,
+    ) {
+        let target_parent = self.nodes[target_parent]
+            .template_contents()
+            .unwrap_or(target_parent);
+        let old_children = self.nodes[target_parent].children.clone();
+        for child in old_children {
+            self.detach_from_parent(child);
+        }
+
+        // A LIFO worklist avoids recursion on deeply nested parsed documents.
+        // Push siblings in reverse so each subtree is copied in source order.
+        let mut pending: Vec<(usize, usize)> = source_document.nodes[source_parent]
+            .children
+            .iter()
+            .rev()
+            .map(|&child| (child, target_parent))
+            .collect();
+
+        while let Some((source_id, target_parent)) = pending.pop() {
+            let source_node = &source_document.nodes[source_id];
+            let source_children = source_node.children.clone();
+
+            match &source_node.data {
+                NodeData::Element(element) => {
+                    let new_id = self.append_element(
+                        Some(target_parent),
+                        element.tag_name.clone(),
+                        source_node.style.clone(),
+                        element.inline_style.clone(),
+                    );
+                    self.set_element_namespace(new_id, element.namespace.clone());
+                    self.set_element_attributes(
+                        new_id,
+                        element
+                            .attributes
+                            .iter()
+                            .filter(|attr| attr.local.as_str() != "style")
+                            .map(|attr| (attr.local.clone(), attr.value.clone()))
+                            .collect(),
+                    );
+
+                    if let Some(source_fragment) = element.template_contents {
+                        let target_fragment = self.allocate_template_fragment_root(new_id);
+                        pending.extend(
+                            source_document.nodes[source_fragment]
+                                .children
+                                .iter()
+                                .rev()
+                                .map(|&child| (child, target_fragment)),
+                        );
+                    }
+                    pending.extend(source_children.iter().rev().map(|&child| (child, new_id)));
+                }
+                NodeData::Text(text) => {
+                    let new_id = self.append_text(target_parent, text.text_content.clone());
+                    pending.extend(source_children.iter().rev().map(|&child| (child, new_id)));
+                }
+                NodeData::Comment(text) => {
+                    let new_id = self.append_comment(Some(target_parent), text.clone());
+                    pending.extend(source_children.iter().rev().map(|&child| (child, new_id)));
+                }
+                NodeData::ProcessingInstruction { target, data } => {
+                    let new_id = self.append_processing_instruction(
+                        Some(target_parent),
+                        target.clone(),
+                        data.clone(),
+                    );
+                    pending.extend(source_children.iter().rev().map(|&child| (child, new_id)));
+                }
+                // A DocumentFragment is a container, not a child node. Match
+                // DOM insertion semantics by splicing its children in place.
+                NodeData::DocumentFragment => {
+                    pending.extend(
+                        source_children
+                            .iter()
+                            .rev()
+                            .map(|&child| (child, target_parent)),
+                    );
+                }
+                NodeData::Document => {
+                    panic!("replace_children_from cannot copy a Document node as a child");
+                }
+            }
+        }
+    }
+
+    /// Serialize a node's children as an HTML fragment using the current arena
+    /// state. This is suitable for reading live `innerHTML`; it does not use or
+    /// retain an original source string.
+    ///
+    /// Element attributes and the separate inline-style slot are escaped and
+    /// emitted from their current values. Text is escaped, comments and
+    /// processing instructions are preserved, and HTML void elements are
+    /// emitted without end tags. Template elements serialize their contents
+    /// fragment rather than ordinary children.
+    ///
+    /// Returns an error for an out-of-range parent, a non-container parent, or
+    /// malformed child/template-fragment indices in the arena.
+    pub fn serialize_inner_html(&self, parent: usize) -> Result<String, String> {
+        fn push_escaped(output: &mut String, value: &str, attribute: bool) {
+            for ch in value.chars() {
+                match ch {
+                    '&' => output.push_str("&amp;"),
+                    '<' => output.push_str("&lt;"),
+                    '>' => output.push_str("&gt;"),
+                    '"' if attribute => output.push_str("&quot;"),
+                    '\'' if attribute => output.push_str("&#39;"),
+                    _ => output.push(ch),
+                }
+            }
+        }
+
+        enum Task {
+            Node(usize, bool),
+            EndTag(SmolStr),
+        }
+
+        let parent_node = self
+            .nodes
+            .get(parent)
+            .ok_or_else(|| format!("innerHTML parent index {parent} is out of range"))?;
+        if !matches!(
+            &parent_node.data,
+            NodeData::Document | NodeData::DocumentFragment | NodeData::Element(_)
+        ) {
+            return Err(format!(
+                "innerHTML parent index {parent} is not a container node"
+            ));
+        }
+
+        let initial_children = if let NodeData::Element(element) = &parent_node.data {
+            if let Some(fragment_id) = element.template_contents {
+                let fragment = self.nodes.get(fragment_id).ok_or_else(|| {
+                    format!("template contents fragment index {fragment_id} is out of range")
+                })?;
+                if !matches!(&fragment.data, NodeData::DocumentFragment) {
+                    return Err(format!(
+                        "template contents index {fragment_id} is not a fragment"
+                    ));
+                }
+                fragment.children.clone()
+            } else {
+                parent_node.children.clone()
+            }
+        } else {
+            parent_node.children.clone()
+        };
+        let parent_raw_text = match &parent_node.data {
+            NodeData::Element(element) => {
+                is_html_raw_text_element(element.namespace.as_deref(), element.tag_name.as_str())
+            }
+            _ => false,
+        };
+        let mut output = String::new();
+        let mut pending: Vec<Task> = initial_children
+            .into_iter()
+            .rev()
+            .map(|child| Task::Node(child, parent_raw_text))
+            .collect();
+
+        while let Some(task) = pending.pop() {
+            match task {
+                Task::EndTag(tag) => {
+                    output.push_str("</");
+                    output.push_str(tag.as_str());
+                    output.push('>');
+                }
+                Task::Node(id, raw_text_parent) => {
+                    let node = self
+                        .nodes
+                        .get(id)
+                        .ok_or_else(|| format!("innerHTML child index {id} is out of range"))?;
+                    match &node.data {
+                        NodeData::Element(element) => {
+                            let tag = element.tag_name.as_str();
+                            output.push('<');
+                            output.push_str(tag);
+                            for attr in &element.attributes {
+                                // `style` is represented by inline_style and
+                                // must have only one serialized source.
+                                if attr.local.as_str() == "style" {
+                                    continue;
+                                }
+                                if !is_valid_xml_name(attr.local.as_str()) {
+                                    return Err(format!(
+                                        "invalid attribute name {:?} on innerHTML node {id}",
+                                        attr.local
+                                    ));
+                                }
+                                output.push(' ');
+                                output.push_str(attr.local.as_str());
+                                output.push_str("=\"");
+                                push_escaped(&mut output, attr.value.as_str(), true);
+                                output.push('"');
+                            }
+                            if let Some(style) = &element.inline_style {
+                                output.push_str(" style=\"");
+                                push_escaped(&mut output, style.as_str(), true);
+                                output.push('"');
+                            }
+                            output.push('>');
+
+                            let is_html_void = element.namespace.is_none()
+                                && matches!(
+                                    tag.to_ascii_lowercase().as_str(),
+                                    "area"
+                                        | "base"
+                                        | "br"
+                                        | "col"
+                                        | "embed"
+                                        | "hr"
+                                        | "img"
+                                        | "input"
+                                        | "link"
+                                        | "meta"
+                                        | "param"
+                                        | "source"
+                                        | "track"
+                                        | "wbr"
+                                );
+                            if is_html_void {
+                                continue;
+                            }
+
+                            let children = if let Some(fragment_id) = element.template_contents {
+                                let fragment = self.nodes.get(fragment_id).ok_or_else(|| {
+                                    format!(
+                                        "template contents fragment index {fragment_id} is out of range"
+                                    )
+                                })?;
+                                if !matches!(&fragment.data, NodeData::DocumentFragment) {
+                                    return Err(format!(
+                                        "template contents index {fragment_id} is not a fragment"
+                                    ));
+                                }
+                                fragment.children.clone()
+                            } else {
+                                node.children.clone()
+                            };
+                            pending.push(Task::EndTag(element.tag_name.clone()));
+                            let raw_text = is_html_raw_text_element(
+                                element.namespace.as_deref(),
+                                element.tag_name.as_str(),
+                            );
+                            pending.extend(
+                                children
+                                    .into_iter()
+                                    .rev()
+                                    .map(|child| Task::Node(child, raw_text)),
+                            );
+                        }
+                        NodeData::Text(text) => {
+                            if raw_text_parent {
+                                output.push_str(text.text_content.as_str());
+                            } else {
+                                push_escaped(&mut output, text.text_content.as_str(), false);
+                            }
+                        }
+                        NodeData::Comment(text) => {
+                            output.push_str("<!--");
+                            output.push_str(text.as_str());
+                            output.push_str("-->");
+                        }
+                        NodeData::ProcessingInstruction { target, data } => {
+                            output.push_str("<?");
+                            output.push_str(target.as_str());
+                            if !data.is_empty() {
+                                output.push(' ');
+                                output.push_str(data.as_str());
+                            }
+                            output.push_str("?>");
+                        }
+                        NodeData::DocumentFragment => {
+                            pending.extend(
+                                node.children
+                                    .iter()
+                                    .rev()
+                                    .map(|&child| Task::Node(child, raw_text_parent)),
+                            );
+                        }
+                        NodeData::Document => {
+                            return Err(format!(
+                                "innerHTML cannot serialize Document node {id} as a child"
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(output)
+    }
+
     /// `<template>` element の contents fragment root を新規 allocate し、
     /// その arena index を template element の `template_contents` slot に
     /// wire する。
@@ -745,6 +1243,33 @@ impl Document {
     /// per-node で呼ぶ hot path なので O(1) の `Vec::get` を wrap。
     pub fn get_node(&self, id: usize) -> Option<&Node> {
         self.nodes.get(id)
+    }
+
+    /// Return an element's namespace URI, treating an omitted HTML namespace as XHTML.
+    pub fn element_namespace_uri(&self, id: usize) -> Option<&str> {
+        let NodeData::Element(element) = &self.nodes.get(id)?.data else {
+            return None;
+        };
+        Some(element.namespace.as_deref().unwrap_or(XHTML_NAMESPACE_URI))
+    }
+
+    /// Read a null-namespace attribute, applying HTML's ASCII-case-insensitive
+    /// lookup rule to HTML-namespace elements only.
+    pub fn element_attribute(&self, id: usize, name: &str) -> Option<&str> {
+        let node = self.nodes.get(id)?;
+        let NodeData::Element(element) = &node.data else {
+            return None;
+        };
+        let local = if element
+            .namespace
+            .as_deref()
+            .is_none_or(|namespace| namespace == XHTML_NAMESPACE_URI)
+        {
+            name.to_ascii_lowercase()
+        } else {
+            name.to_owned()
+        };
+        node.attribute(&local)
     }
 
     /// Return the post-computed Taffy style for a node.
@@ -1497,5 +2022,547 @@ mod insert_child_before_fragment_tests {
         let elem = doc.append_element(None, "m", Style::default(), None::<&str>);
         doc.insert_child_before(parent, last, elem);
         assert_eq!(doc.nodes[parent].children, vec![elem, last]);
+    }
+}
+
+#[cfg(test)]
+mod element_attribute_mutation_tests {
+    use super::*;
+    use raikiri_traits::{Dom as _, Element as _, Node as _, NodeId};
+    use taffy::Style;
+
+    fn element_attributes(doc: &Document, id: usize) -> Vec<(String, String)> {
+        let NodeData::Element(element) = &doc.nodes[id].data else {
+            panic!("expected element node"); // cov:ignore: test helper callers construct this node as an Element.
+        };
+        element
+            .attributes
+            .iter()
+            .map(|attr| (attr.local.to_string(), attr.value.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn xml_name_validation_accepts_the_non_ascii_name_ranges() {
+        for ch in [
+            'À', 'Ø', 'ø', 'Ͱ', 'Ϳ', '\u{200c}', '⁰', 'Ⰰ', '々', '豈', 'ﷰ', '𐀀',
+        ] {
+            assert!(is_xml_name_start(ch));
+        }
+        for ch in ['0', '-', '.', '·', '\u{0300}', '\u{203f}'] {
+            assert!(is_xml_name_char(ch));
+        }
+        assert!(is_valid_xml_name("π\u{0300}:name"));
+        assert!(!is_valid_xml_name("0name"));
+    }
+
+    #[test]
+    #[should_panic(expected = "set_element_attribute called on non-Element")]
+    fn set_element_attribute_panics_for_a_non_element() {
+        let mut doc = Document::new();
+        let root = doc.root_index();
+        let _ = doc.set_element_attribute(root, "id", "not-an-element");
+    }
+
+    #[test]
+    #[should_panic(expected = "remove_element_attribute called on non-Element")]
+    fn remove_element_attribute_panics_for_a_non_element() {
+        let mut doc = Document::new();
+        let root = doc.root_index();
+        let _ = doc.remove_element_attribute(root, "id");
+    }
+
+    #[test]
+    fn remove_element_attribute_validates_names_and_preserves_foreign_case() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let svg = doc.append_element(Some(0), "svg", Style::default(), None::<&str>);
+        doc.set_element_namespace(svg, Some(SmolStr::new("http://www.w3.org/2000/svg")));
+
+        assert!(doc.remove_element_attribute(html, "bad name").is_err());
+        doc.set_element_attribute(svg, "viewBox", "0 0 10 10")
+            .unwrap();
+        assert_eq!(doc.remove_element_attribute(svg, "viewbox").unwrap(), None);
+        assert_eq!(
+            doc.remove_element_attribute(svg, "viewBox").unwrap(),
+            Some(SmolStr::new("0 0 10 10"))
+        );
+    }
+
+    #[test]
+    fn element_attribute_accessors_return_none_for_non_elements_and_match_html_case() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let text = doc.append_text(html, "text");
+        doc.set_element_attribute(html, "title", "heading").unwrap();
+        assert_eq!(doc.element_namespace_uri(html), Some(XHTML_NAMESPACE_URI));
+        assert_eq!(doc.element_namespace_uri(text), None);
+        assert_eq!(doc.element_namespace_uri(usize::MAX), None);
+        assert_eq!(doc.element_attribute(html, "TITLE"), Some("heading"));
+        assert_eq!(doc.element_attribute(text, "title"), None);
+        assert_eq!(doc.element_attribute(usize::MAX, "title"), None);
+    }
+
+    #[test]
+    fn set_and_remove_element_attribute_preserve_order_and_route_style_separately() {
+        let mut doc = Document::new();
+        let id = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        doc.set_element_attributes(
+            id,
+            vec![
+                (SmolStr::new("id"), SmolStr::new("old")),
+                (SmolStr::new("data-empty"), SmolStr::new("")),
+                (SmolStr::new("id"), SmolStr::new("duplicate")),
+            ],
+        );
+
+        doc.set_element_attribute(id, "id", "new").unwrap();
+        doc.set_element_attribute(id, "title", "heading").unwrap();
+        assert_eq!(
+            element_attributes(&doc, id),
+            vec![
+                ("id".into(), "new".into()),
+                ("data-empty".into(), "".into()),
+                ("title".into(), "heading".into()),
+            ],
+            "updating an attribute keeps its position and a new attribute appends" // cov:ignore: assert_eq! formats this diagnostic only on failure.
+        );
+
+        doc.set_element_attribute(id, "style", "color: red")
+            .unwrap();
+        assert_eq!(
+            element_attributes(&doc, id),
+            vec![
+                ("id".into(), "new".into()),
+                ("data-empty".into(), "".into()),
+                ("title".into(), "heading".into()),
+            ],
+            "style must not enter the null-namespace attribute list" // cov:ignore: assert_eq! formats this diagnostic only on failure.
+        );
+        let NodeData::Element(element) = &doc.nodes[id].data else {
+            unreachable!(); // cov:ignore: the setup above creates this node as an Element.
+        };
+        assert_eq!(element.inline_style.as_deref(), Some("color: red"));
+
+        let node = doc.node(NodeId::new(id as u64)).expect("element exists");
+        let element = node.as_element().expect("node is an element");
+        assert_eq!(element.attr("id"), Some("new"));
+        assert_eq!(element.attr("style"), Some("color: red"));
+
+        assert_eq!(
+            doc.remove_element_attribute(id, "data-empty").unwrap(),
+            Some(SmolStr::new(""))
+        );
+        assert_eq!(
+            doc.remove_element_attribute(id, "style").unwrap(),
+            Some(SmolStr::new("color: red"))
+        );
+        assert_eq!(doc.remove_element_attribute(id, "missing").unwrap(), None);
+        assert_eq!(
+            element_attributes(&doc, id),
+            vec![
+                ("id".into(), "new".into()),
+                ("title".into(), "heading".into()),
+            ]
+        );
+        let NodeData::Element(element) = &doc.nodes[id].data else {
+            unreachable!(); // cov:ignore: the setup above creates this node as an Element.
+        };
+        assert_eq!(element.inline_style, None);
+    }
+}
+
+#[cfg(test)]
+mod replace_children_from_tests {
+    use super::*;
+    use crate::node::NodeFlags;
+    use taffy::Style;
+
+    #[test]
+    fn replace_children_from_deep_copies_nodes_in_order_and_detaches_old_subtree() {
+        let mut target = Document::new();
+        let target_parent = target.append_element(Some(0), "main", Style::default(), None::<&str>);
+        let old = target.append_element(Some(target_parent), "old", Style::default(), None::<&str>);
+        let old_text = target.append_text(old, "kept in arena");
+
+        let mut source = Document::new();
+        let source_parent =
+            source.append_element(Some(0), "source", Style::default(), None::<&str>);
+        let source_comment = source.append_comment(Some(source_parent), "leading comment");
+        let source_instruction =
+            source.append_processing_instruction(Some(source_parent), "work", "ready");
+        let section = source.append_element(
+            Some(source_parent),
+            "section",
+            Style::default(),
+            Some("color: red"),
+        );
+        source.set_element_namespace(section, Some(SmolStr::new("urn:example")));
+        source.set_element_attributes(
+            section,
+            vec![
+                (SmolStr::new("id"), SmolStr::new("copied")),
+                (SmolStr::new("data-key"), SmolStr::new("value")),
+            ],
+        );
+        let text = source.append_text(section, "first");
+        let comment = source.append_comment(Some(section), "middle comment");
+        let span = source.append_element(Some(section), "span", Style::default(), None::<&str>);
+        source.set_element_attributes(span, vec![(SmolStr::new("title"), SmolStr::new("tip"))]);
+        source
+            .set_element_attribute(span, "style", "display: block")
+            .unwrap();
+        let trailing_text = source.append_text(section, "last");
+
+        // Reset the target flags to prove this operation routes mutations
+        // through the normal invalidation paths.
+        target.layout_dirty = false;
+        target.flags_dirty = false;
+        target.replace_children_from(target_parent, &source, source_parent);
+
+        assert!(target.layout_dirty);
+        assert!(target.flags_dirty);
+        assert_eq!(target.nodes[target_parent].children.len(), 3);
+        let copied_comment = target.nodes[target_parent].children[0];
+        let copied_instruction = target.nodes[target_parent].children[1];
+        let copied_section = target.nodes[target_parent].children[2];
+        assert_ne!(copied_comment, source_comment);
+        assert_ne!(copied_instruction, source_instruction);
+        assert_ne!(copied_section, section);
+        assert!(matches!(
+            target.nodes[copied_comment].data,
+            NodeData::Comment(_)
+        ));
+        assert!(matches!(
+            &target.nodes[copied_instruction].data,
+            NodeData::ProcessingInstruction { target, data }
+                if target == "work" && data == "ready"
+        ));
+        assert_eq!(
+            target.parent_of(old),
+            None,
+            "replaced nodes stay allocated but detached" // cov:ignore: assert_eq! formats this diagnostic only on failure.
+        );
+        assert_eq!(
+            target.nodes[old].children,
+            vec![old_text],
+            "the old subtree remains allocated" // cov:ignore: assert_eq! formats this diagnostic only on failure.
+        );
+        assert_eq!(target.parent_of(old_text), Some(old));
+
+        let NodeData::Element(copied_element) = &target.nodes[copied_section].data else {
+            panic!("expected copied section element"); // cov:ignore: the source fixture constructs this as an Element.
+        };
+        assert_eq!(copied_element.tag_name.as_str(), "section");
+        assert_eq!(copied_element.namespace.as_deref(), Some("urn:example"));
+        assert_eq!(copied_element.inline_style.as_deref(), Some("color: red"));
+        assert_eq!(
+            copied_element
+                .attributes
+                .iter()
+                .map(|attr| (attr.local.as_str(), attr.value.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("id", "copied"), ("data-key", "value")]
+        );
+
+        let copied_children = target.nodes[copied_section].children.clone();
+        assert_eq!(copied_children.len(), 4);
+        let copied_text = copied_children[0];
+        let copied_comment = copied_children[1];
+        let copied_span = copied_children[2];
+        let copied_trailing_text = copied_children[3];
+        assert_ne!(copied_text, text);
+        assert_ne!(copied_comment, comment);
+        assert_ne!(copied_trailing_text, trailing_text);
+        assert!(
+            matches!(&target.nodes[copied_text].data, NodeData::Text(t) if t.text_content == "first")
+        );
+        assert!(
+            matches!(&target.nodes[copied_comment].data, NodeData::Comment(t) if t == "middle comment")
+        );
+        assert!(
+            matches!(&target.nodes[copied_trailing_text].data, NodeData::Text(t) if t.text_content == "last")
+        );
+        let NodeData::Element(copied_span_data) = &target.nodes[copied_span].data else {
+            panic!("expected copied span element"); // cov:ignore: the source fixture constructs this as an Element.
+        };
+        assert_eq!(
+            copied_span_data.inline_style.as_deref(),
+            Some("display: block")
+        );
+        assert_eq!(copied_span_data.attributes.len(), 1);
+        assert_eq!(copied_span_data.attributes[0].local.as_str(), "title");
+        assert_eq!(copied_span_data.attributes[0].value.as_str(), "tip");
+
+        target.mark_in_document_flags();
+        assert!(!target.nodes[old].flags.contains(NodeFlags::IS_IN_DOCUMENT));
+        assert!(
+            !target.nodes[old_text]
+                .flags
+                .contains(NodeFlags::IS_IN_DOCUMENT)
+        );
+        assert!(
+            target.nodes[copied_section]
+                .flags
+                .contains(NodeFlags::IS_IN_DOCUMENT)
+        );
+        assert!(
+            !target.nodes[copied_comment]
+                .flags
+                .contains(NodeFlags::IS_IN_DOCUMENT)
+        );
+        // Copying does not mutate or consume source children.
+        assert_eq!(
+            source.nodes[source_parent].children,
+            vec![source_comment, source_instruction, section]
+        );
+    }
+
+    #[test]
+    fn replace_children_from_splices_document_fragment_children() {
+        let mut source = Document::new();
+        let source_parent =
+            source.append_element(Some(0), "section", Style::default(), None::<&str>);
+        let fragment = source.nodes.len();
+        source.nodes.push(Node::new_document_fragment());
+        source.nodes[source_parent].children.push(fragment);
+        source.append_text(fragment, "fragment text");
+
+        let mut target = Document::new();
+        let target_parent = target.append_element(Some(0), "main", Style::default(), None::<&str>);
+        target.replace_children_from(target_parent, &source, source_parent);
+        assert_eq!(
+            target.serialize_inner_html(target_parent).unwrap(),
+            "fragment text"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "replace_children_from cannot copy a Document node as a child")]
+    fn replace_children_from_rejects_document_nodes_in_child_lists() {
+        let mut source = Document::new();
+        let source_parent =
+            source.append_element(Some(0), "section", Style::default(), None::<&str>);
+        let source_root = source.root_index();
+        source.nodes[source_parent].children.push(source_root);
+
+        let mut target = Document::new();
+        let target_parent = target.append_element(Some(0), "main", Style::default(), None::<&str>);
+        target.replace_children_from(target_parent, &source, source_parent);
+    }
+}
+
+#[cfg(test)]
+mod serialize_inner_html_tests {
+    use super::*;
+    use taffy::Style;
+
+    #[test]
+    fn serialize_inner_html_uses_live_attributes_escapes_content_and_omits_void_end_tags() {
+        let mut doc = Document::new();
+        let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let paragraph = doc.append_element(Some(host), "p", Style::default(), None::<&str>);
+        doc.set_element_attributes(
+            paragraph,
+            vec![(SmolStr::new("data-empty"), SmolStr::new(""))],
+        );
+        doc.set_element_attribute(paragraph, "title", "old")
+            .unwrap();
+        doc.set_element_attribute(paragraph, "title", "a&b\"c'd")
+            .unwrap();
+        doc.set_element_attribute(paragraph, "style", "color: red")
+            .unwrap();
+        doc.set_element_attributes(
+            paragraph,
+            vec![
+                (SmolStr::new("data-empty"), SmolStr::new("")),
+                (SmolStr::new("title"), SmolStr::new("a&b\"c'd")),
+                (SmolStr::new("style"), SmolStr::new("legacy style entry")),
+            ],
+        );
+        let text = doc.append_text(paragraph, "A < B & C > D");
+        doc.append_comment(Some(paragraph), "note");
+        doc.append_processing_instruction(Some(paragraph), "target", "data");
+        doc.append_element(Some(paragraph), "br", Style::default(), None::<&str>);
+
+        assert_eq!(
+            doc.serialize_inner_html(host).unwrap(),
+            "<p data-empty=\"\" title=\"a&amp;b&quot;c&#39;d\" style=\"color: red\">A &lt; B &amp; C &gt; D<!--note--><?target data?><br></p>",
+            "serialize attributes, text, comments, processing instructions, and void elements in order" // cov:ignore: assert_eq! formats this diagnostic only on failure.
+        );
+        assert!(doc.serialize_inner_html(doc.nodes.len()).is_err());
+        assert!(doc.serialize_inner_html(text).is_err());
+        let serialized_document = doc.serialize_inner_html(doc.root_index()).unwrap();
+        assert!(serialized_document.starts_with("<div>"));
+        assert!(serialized_document.ends_with("</div>"));
+    }
+
+    #[test]
+    fn serializes_raw_text_and_rejects_invalid_attribute_names() {
+        let mut doc = Document::new();
+        let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let script = doc.append_element(Some(host), "script", Style::default(), None::<&str>);
+        doc.append_text(script, "if (a < b && c > d) {}");
+
+        assert_eq!(
+            doc.serialize_inner_html(script).unwrap(),
+            "if (a < b && c > d) {}"
+        );
+        assert_eq!(
+            doc.serialize_inner_html(host).unwrap(),
+            "<script>if (a < b && c > d) {}</script>"
+        );
+        assert!(
+            doc.set_element_attribute(host, "x\" onmouseover=\"bad", "1")
+                .is_err()
+        );
+        assert_eq!(
+            doc.serialize_inner_html(host).unwrap(),
+            "<script>if (a < b && c > d) {}</script>"
+        );
+        let malformed = doc.append_element(Some(host), "span", Style::default(), None::<&str>);
+        doc.set_element_attributes(
+            malformed,
+            vec![(SmolStr::new("bad name"), SmolStr::new("value"))],
+        );
+        assert!(
+            doc.serialize_inner_html(host)
+                .unwrap_err()
+                .contains("invalid attribute name")
+        );
+    }
+
+    #[test]
+    fn attribute_names_follow_html_and_foreign_content_case_rules() {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        doc.set_element_attribute(html, "DATA-Key", "one").unwrap();
+        doc.set_element_attribute(html, "data-key", "two").unwrap();
+        assert_eq!(doc.element_attribute(html, "DATA-KEY"), Some("two"));
+
+        let svg = doc.append_element(Some(0), "svg", Style::default(), None::<&str>);
+        doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
+        doc.set_element_attribute(svg, "viewBox", "0 0 10 10")
+            .unwrap();
+        doc.set_element_attribute(svg, "viewbox", "lowercase")
+            .unwrap();
+        assert_eq!(doc.element_attribute(svg, "viewBox"), Some("0 0 10 10"));
+        assert_eq!(doc.element_attribute(svg, "viewbox"), Some("lowercase"));
+        assert_eq!(doc.element_attribute(svg, "VIEWBOX"), None);
+    }
+
+    #[test]
+    fn replace_children_from_targets_template_contents() {
+        let mut target = Document::new();
+        let template = target.append_element(Some(0), "template", Style::default(), None::<&str>);
+        let template_contents = target.allocate_template_fragment_root(template);
+        target.append_text(template_contents, "old");
+
+        let mut source = Document::new();
+        let span = source.append_element(Some(0), "span", Style::default(), None::<&str>);
+        source.append_text(span, "new");
+
+        target.replace_children_from(template, &source, source.root_index());
+        assert!(target.nodes[template].children.is_empty());
+        assert_eq!(target.nodes[template_contents].children.len(), 1);
+        assert_eq!(
+            target.serialize_inner_html(template).unwrap(),
+            "<span>new</span>"
+        );
+    }
+
+    #[test]
+    fn serialize_inner_html_reads_template_contents_fragment() {
+        let mut doc = Document::new();
+        let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let template = doc.append_element(Some(host), "template", Style::default(), None::<&str>);
+        let contents = doc.allocate_template_fragment_root(template);
+        doc.append_text(contents, "<template text>");
+
+        assert_eq!(
+            doc.serialize_inner_html(template).unwrap(),
+            "&lt;template text&gt;"
+        );
+        assert_eq!(
+            doc.serialize_inner_html(host).unwrap(),
+            "<template>&lt;template text&gt;</template>"
+        );
+        assert_eq!(
+            doc.serialize_inner_html(contents).unwrap(),
+            "&lt;template text&gt;"
+        );
+    }
+
+    #[test]
+    fn serialize_inner_html_reports_malformed_template_fragment_links() {
+        let mut doc = Document::new();
+        let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let parent_template =
+            doc.append_element(Some(0), "template", Style::default(), None::<&str>);
+        let nested_template =
+            doc.append_element(Some(host), "template", Style::default(), None::<&str>);
+        let document_root = doc.root_index();
+        let wrong_kind = doc.append_text(document_root, "not a fragment");
+
+        doc.nodes[parent_template]
+            .data
+            .as_element_mut()
+            .unwrap()
+            .template_contents = Some(wrong_kind);
+        assert!(
+            doc.serialize_inner_html(parent_template)
+                .unwrap_err()
+                .contains("not a fragment")
+        );
+        doc.nodes[parent_template]
+            .data
+            .as_element_mut()
+            .unwrap()
+            .template_contents = Some(usize::MAX);
+        assert!(
+            doc.serialize_inner_html(parent_template)
+                .unwrap_err()
+                .contains("out of range")
+        );
+
+        doc.nodes[nested_template]
+            .data
+            .as_element_mut()
+            .unwrap()
+            .template_contents = Some(usize::MAX);
+        assert!(
+            doc.serialize_inner_html(host)
+                .unwrap_err()
+                .contains("out of range")
+        );
+        doc.nodes[nested_template]
+            .data
+            .as_element_mut()
+            .unwrap()
+            .template_contents = Some(wrong_kind);
+        assert!(
+            doc.serialize_inner_html(host)
+                .unwrap_err()
+                .contains("not a fragment")
+        );
+    }
+
+    #[test]
+    fn serialize_inner_html_flattens_fragment_children_and_rejects_document_children() {
+        let mut doc = Document::new();
+        let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        let fragment = doc.nodes.len();
+        doc.nodes.push(Node::new_document_fragment());
+        doc.nodes[host].children.push(fragment);
+        doc.append_text(fragment, "fragment child");
+        assert_eq!(doc.serialize_inner_html(host).unwrap(), "fragment child");
+
+        let document_root = doc.root_index();
+        doc.nodes[host].children.push(document_root);
+        assert!(
+            doc.serialize_inner_html(host)
+                .unwrap_err()
+                .contains("Document node")
+        );
     }
 }

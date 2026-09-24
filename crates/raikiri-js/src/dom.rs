@@ -97,6 +97,36 @@ pub trait DomBackend: 'static {
     /// Set an element's `innerHTML` and apply or queue the resulting DOM mutation.
     fn set_inner_html(&mut self, node: DomNodeId, value: &str) -> Result<(), String>;
 
+    /// Read an attribute value. Return `None` when the attribute is absent.
+    ///
+    /// The default reports that attribute access is unsupported, preserving
+    /// compatibility for backends that do not expose attributes.
+    fn get_attribute(&mut self, _node: DomNodeId, _name: &str) -> Result<Option<String>, String> {
+        Err("attribute reads are not supported by this DOM backend".into())
+    }
+
+    /// Check whether an attribute is present, including an empty-valued one.
+    ///
+    /// The default uses [`DomBackend::get_attribute`], so a backend only needs
+    /// to override this method when it can answer presence more directly.
+    fn has_attribute(&mut self, node: DomNodeId, name: &str) -> Result<bool, String> {
+        Ok(self.get_attribute(node, name)?.is_some())
+    }
+
+    /// Set an attribute's value.
+    ///
+    /// The default reports that attribute mutation is unsupported.
+    fn set_attribute(&mut self, _node: DomNodeId, _name: &str, _value: &str) -> Result<(), String> {
+        Err("attribute mutation is not supported by this DOM backend".into())
+    }
+
+    /// Remove an attribute.
+    ///
+    /// The default reports that attribute mutation is unsupported.
+    fn remove_attribute(&mut self, _node: DomNodeId, _name: &str) -> Result<(), String> {
+        Err("attribute mutation is not supported by this DOM backend".into())
+    }
+
     /// Read an inline style property, or return an empty string if unset.
     fn style_property(&mut self, node: DomNodeId, property: &str) -> Result<String, String>;
 
@@ -238,6 +268,18 @@ function __raikiri_element(node) {
     element.getBoundingClientRect = function () {
         return host.boundingClientRect(node);
     };
+    element.getAttribute = function (name) {
+        return host.getAttribute(node, String(name));
+    };
+    element.hasAttribute = function (name) {
+        return host.hasAttribute(node, String(name));
+    };
+    element.setAttribute = function (name, value) {
+        host.setAttribute(node, String(name), String(value));
+    };
+    element.removeAttribute = function (name) {
+        host.removeAttribute(node, String(name));
+    };
     __raikiri_elements[key] = element;
     return element;
 }
@@ -331,6 +373,26 @@ pub(crate) fn install<B: DomBackend>(context: &mut Context, backend: B) -> JsRes
     .function(
         NativeFunction::from_fn_ptr(host_set_inner_html),
         js_string!("setInnerHTML"),
+        2,
+    )
+    .function(
+        NativeFunction::from_fn_ptr(host_get_attribute),
+        js_string!("getAttribute"),
+        2,
+    )
+    .function(
+        NativeFunction::from_fn_ptr(host_has_attribute),
+        js_string!("hasAttribute"),
+        2,
+    )
+    .function(
+        NativeFunction::from_fn_ptr(host_set_attribute),
+        js_string!("setAttribute"),
+        3,
+    )
+    .function(
+        NativeFunction::from_fn_ptr(host_remove_attribute),
+        js_string!("removeAttribute"),
         2,
     )
     .function(
@@ -483,6 +545,51 @@ fn host_set_inner_html(
     Ok(JsValue::undefined())
 }
 
+fn host_get_attribute(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node = node_id(args.first(), context)?;
+    let name = string_argument(args.get(1), context)?;
+    let value = backend_call(this, |backend| backend.get_attribute(node, &name))?;
+    Ok(value.map_or_else(JsValue::null, |value| JsValue::from(js_string!(value))))
+}
+
+fn host_has_attribute(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node = node_id(args.first(), context)?;
+    let name = string_argument(args.get(1), context)?;
+    let present = backend_call(this, |backend| backend.has_attribute(node, &name))?;
+    Ok(JsValue::new(present))
+}
+
+fn host_set_attribute(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node = node_id(args.first(), context)?;
+    let name = string_argument(args.get(1), context)?;
+    let value = string_argument(args.get(2), context)?;
+    backend_call(this, |backend| backend.set_attribute(node, &name, &value))?;
+    Ok(JsValue::undefined())
+}
+
+fn host_remove_attribute(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node = node_id(args.first(), context)?;
+    let name = string_argument(args.get(1), context)?;
+    backend_call(this, |backend| backend.remove_attribute(node, &name))?;
+    Ok(JsValue::undefined())
+}
+
 fn host_style_property(
     this: &JsValue,
     args: &[JsValue],
@@ -506,4 +613,73 @@ fn host_set_style_property(
         backend.set_style_property(node, &property, &value)
     })?;
     Ok(JsValue::undefined())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct LegacyBackend;
+
+    impl DomBackend for LegacyBackend {
+        fn get_element_by_id(&mut self, _id: &str) -> Result<Option<DomNodeId>, String> {
+            Ok(None)
+        }
+
+        fn query_selector(&mut self, _selector: &str) -> Result<Option<DomNodeId>, String> {
+            Ok(None)
+        }
+
+        fn parent_node(&mut self, _node: DomNodeId) -> Result<Option<DomNodeId>, String> {
+            Ok(None)
+        }
+
+        fn offset_height(&mut self, _node: DomNodeId) -> Result<f64, String> {
+            Ok(0.0)
+        }
+
+        fn bounding_client_rect(&mut self, _node: DomNodeId) -> Result<DomRect, String> {
+            Ok(DomRect::default())
+        }
+
+        fn inner_html(&mut self, _node: DomNodeId) -> Result<String, String> {
+            Ok(String::new())
+        }
+
+        fn set_inner_html(&mut self, _node: DomNodeId, _value: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn style_property(&mut self, _node: DomNodeId, _property: &str) -> Result<String, String> {
+            Ok(String::new())
+        }
+
+        fn set_style_property(
+            &mut self,
+            _node: DomNodeId,
+            _property: &str,
+            _value: &str,
+        ) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn optional_attribute_methods_keep_legacy_backends_compatible() {
+        let mut backend = LegacyBackend;
+        assert_eq!(backend.get_element_by_id("missing").unwrap(), None);
+        assert_eq!(backend.query_selector("#missing").unwrap(), None);
+        assert_eq!(backend.parent_node(1).unwrap(), None);
+        assert_eq!(backend.offset_height(1).unwrap(), 0.0);
+        assert_eq!(backend.bounding_client_rect(1).unwrap(), DomRect::default());
+        assert_eq!(backend.inner_html(1).unwrap(), "");
+        backend.set_inner_html(1, "content").unwrap();
+        assert_eq!(backend.style_property(1, "color").unwrap(), "");
+        backend.set_style_property(1, "color", "red").unwrap();
+
+        assert!(backend.get_attribute(1, "id").is_err());
+        assert!(backend.has_attribute(1, "id").is_err());
+        assert!(backend.set_attribute(1, "id", "value").is_err());
+        assert!(backend.remove_attribute(1, "id").is_err());
+    }
 }

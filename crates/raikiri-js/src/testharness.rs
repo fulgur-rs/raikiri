@@ -197,6 +197,7 @@ mod tests {
     struct TestDom {
         by_id: BTreeMap<String, (DomNodeId, ElementGeometry)>,
         body_html: String,
+        attributes: BTreeMap<(DomNodeId, String), String>,
         styles: BTreeMap<(DomNodeId, String), String>,
         fail_geometry: bool,
     }
@@ -204,6 +205,12 @@ mod tests {
     impl TestDom {
         fn with_element(mut self, id: &str, node: DomNodeId, geometry: ElementGeometry) -> Self {
             self.by_id.insert(id.to_owned(), (node, geometry));
+            self
+        }
+
+        fn with_attribute(mut self, node: DomNodeId, name: &str, value: &str) -> Self {
+            self.attributes
+                .insert((node, name.to_owned()), value.to_owned());
             self
         }
 
@@ -280,6 +287,30 @@ mod tests {
             Ok(())
         }
 
+        fn get_attribute(&mut self, node: DomNodeId, name: &str) -> Result<Option<String>, String> {
+            Ok(self.attributes.get(&(node, name.to_owned())).cloned())
+        }
+
+        fn has_attribute(&mut self, node: DomNodeId, name: &str) -> Result<bool, String> {
+            Ok(self.attributes.contains_key(&(node, name.to_owned())))
+        }
+
+        fn set_attribute(
+            &mut self,
+            node: DomNodeId,
+            name: &str,
+            value: &str,
+        ) -> Result<(), String> {
+            self.attributes
+                .insert((node, name.to_owned()), value.to_owned());
+            Ok(())
+        }
+
+        fn remove_attribute(&mut self, node: DomNodeId, name: &str) -> Result<(), String> {
+            self.attributes.remove(&(node, name.to_owned()));
+            Ok(())
+        }
+
         fn style_property(&mut self, node: DomNodeId, property: &str) -> Result<String, String> {
             Ok(self
                 .styles
@@ -319,6 +350,46 @@ mod tests {
         );
         crate::dom::run_script(
             "var line = document.getElementById('line'); var rect = line.getBoundingClientRect(); if (document.body === null || line !== document.getElementById('line') || line.offsetHeight !== 60 || rect.left !== 12 || rect.top !== 4 || rect.right !== 62 || rect.bottom !== 64 || rect.width !== 50 || rect.height !== 60) throw new Error('DOM binding lost identity or geometry'); line.style.display = 'none'; if (line.style.display !== 'none') throw new Error('style mutation did not round-trip');",
+            backend,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn element_attribute_reads_distinguish_missing_and_empty_values() {
+        let backend = TestDom::default()
+            .with_element("line", 1, test_geometry(0.0, 0.0, 0.0, 0.0, 0.0))
+            .with_attribute(1, "data-empty", "")
+            .with_attribute(1, "title", "initial");
+        crate::dom::run_script(
+            r#"
+                var line = document.getElementById('line');
+                if (line.getAttribute('missing') !== null || line.hasAttribute('missing'))
+                    throw new Error('missing attribute was reported present');
+                if (line.getAttribute('data-empty') !== '' || !line.hasAttribute('data-empty'))
+                    throw new Error('empty attribute was reported missing');
+                if (line.getAttribute('title') !== 'initial' || !line.hasAttribute('title'))
+                    throw new Error('existing attribute read failed');
+            "#,
+            backend,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn element_attribute_mutations_round_trip_through_the_dom_backend() {
+        let backend =
+            TestDom::default().with_element("line", 1, test_geometry(0.0, 0.0, 0.0, 0.0, 0.0));
+        crate::dom::run_script(
+            r#"
+                var line = document.getElementById('line');
+                line.setAttribute('data-count', 42);
+                if (line.getAttribute('data-count') !== '42' || !line.hasAttribute('data-count'))
+                    throw new Error('setAttribute did not round-trip');
+                line.removeAttribute('data-count');
+                if (line.getAttribute('data-count') !== null || line.hasAttribute('data-count'))
+                    throw new Error('removeAttribute did not remove the attribute');
+            "#,
             backend,
         )
         .unwrap();
