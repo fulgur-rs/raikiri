@@ -50,68 +50,20 @@ cp -rf source dest          # NOT: cp -r source dest
 ## docs/superpowers/ は flow 情報 (tracked にしない)
 
 **`docs/superpowers/` 配下 (plans / retros / specs / sprints) は flow 情報であって
-stock 情報ではない** (user 明言 2026-07-26)。したがって **git で tracked にしない**。
+stock 情報ではない**。したがって **git で tracked にしない**。
 
 - **既存 doc**: tracked にしない。`.gitignore` の `docs/superpowers/` で除外済み
 - **新規 doc**: 同様に untracked のまま。**`git add -f` で追加しないこと**
 - **例外を作らない**: 「この設計文書は重要だから stock 扱い」といった個別判断はしない。
   重要な決定は doc ではなく **bd issue / bd decision** に残す (そちらが stock)
 
-### 経緯
-
-2026-07-26 時点で 47 file (plans 31 / retros 9 / specs 7) が tracked のまま残っており、
-しかも境界が日付順ですらなかった (`.git/info/exclude` に追加された後も一部が index に
-残存)。方針と実態が食い違い、実際に retro-facilitator の誤認 (n=1 一般化 miscite) を
-誘発した実績がある。
-
-2026-07-27 に user 判断 (**Option A: 全部 untrack**) で既存 47 file を
-`git rm --cached` により index から外した (bd `raikiri-spike-ggxj`)。
-specs/ の 082k 設計文書と retro 9 本が untracked になる点も user 確認済み。
-
-除外は元々 `.git/info/exclude` にあったが、**これは local 設定で共有されない**ため
-`.gitignore` へ移した。`.git/info/exclude` 側の記述は残っていても害はない。
-
-### 観測上の注意
-
-`git worktree` は **tracked file しか materialize しない**。`docs/superpowers/` は
-untracked なので、**これ以降に作成した worktree にはこのディレクトリが現れない**。
-これは git の挙動であって、特定の環境の状態には依存しない。
-
-したがって worktree 内の `ls docs/superpowers/` が空であることは、**tracking 状態の観測**
-であって **実体の所在の観測ではない**。ここから「他の場所にも無い」とも「他の場所には
-ある」とも**推論できない**。
-
-実体が存在するかは環境ごとに異なる (`git clean`、untrack 前から存在する clone や worktree、
-手動コピー、CI cache 等で変わる) ため、**この文書では所在を断定しない**。
-必要なら **確認したい場所で直接 `ls` すること**。過去の内容は履歴から読める:
-
-```bash
-P=docs/superpowers/specs/<name>.md
-git show "$(git rev-list -1 HEAD -- "$P")^:$P"   # untrack 直前の内容を読む
-```
-
-末尾の `^` が要る。`git rev-list -1 -- <path>` が返すのは **untrack commit 自身**で、
-そこには既に path が無いため、`^` を付けないと
-`fatal: path ... exists on disk, but not in <sha>` になる (2026-07-27 に実測)。
-
-**working tree に無くても履歴には残る**という点は、`docs/superpowers/specs/...` を参照する
-doc comment にも当てはまる。2026-07-27 時点で **7 file 中 8 箇所** (`crates/` 6 file +
-`docs/feasibility-report.md`) がこれらの spec を参照しているが、**参照先が working tree に
-無い環境では dangling ref になる**。これは Option A の既知の帰結で、読みたい場合は
-上の履歴参照を使う。
-
 ## `crate::…` pointer は intra-doc link で書く
 
 **doc comment (`///` / `//!`) 中の `crate::…` 参照は intra-doc link
 (``[`crate::foo::Bar`]``) で書く。plain code span (``` `crate::foo::Bar` ```) で書かない。**
 module-relative な pointer (``` `cascade::foo` ```) も同じ — audit grep を `crate::` だけで
-書くとこの形を取りこぼす。
-
-理由は実証済み: plain code span の pointer は **誤っていても永久に検出されない**。
-bd raikiri-spike-nqkj では lens が提案した ``` `crate::computed::ComputedBorder` ```
-が実際には誤った path だったが、intra-doc link へ変えて初めて
-`RUSTDOCFLAGS="-D warnings" cargo doc` が unresolved link として落とした
-(bd raikiri-spike-ulzv)。
+書くとこの形を取りこぼす。plain code span の pointer は path が誤っていても検出されない —
+rustdoc は intra-doc link 記法しか解決検証しないため。
 
 ### 規約
 
@@ -135,49 +87,19 @@ bd raikiri-spike-nqkj では lens が提案した ``` `crate::computed::Computed
    **広げた item の doc に理由を 1 行書く** (例: `crates/raikiri-style/src/cascade.rs` の
    `apply_value`)。
 
-   **hatch の閾値 (bd raikiri-spike-uy4g で確定)**: 「widening が gate で enforce
-   されるなら可、補助 command (`--document-private-items`) でしか enforce されないなら
-   本項の `mod@` 代替に倒す」。判定 command は上の「わざと壊して確かめる」手順そのまま
-   (対象 item を 1 つだけ private に戻し、gate command で red になるかを見る) —
-   追加の道具は要らない。理由は bd raikiri-spike-8yj6 の PMO decision
-   (2026-08-07): gate §8.1 の doc build には `--document-private-items` を足さないため、
-   補助 command でしか検証されない widening は **検証利得ゼロで visibility 拡大だけが
-   残る** ことが確定した。
-
-   **適用結果 (bd raikiri-spike-ulzv が昇格した 6 件、rustc 1.89.0 で実測)**:
-   - **gate-enforced (pub(crate) を維持)**: `crates/raikiri-style/src/cascade.rs` の
-     `apply_value` / `resolve_relative_weight` / `resolve_inheritance` — 対象を private
-     に戻すと gate (`RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace`) が
-     unresolved link で red になる (gate が実際にこの doc link を検証している)。
-   - **mod@ へ降格 (private に戻した)**: `crates/raikiri-style/src/page.rs` の
-     `absolutize_in_page_context` / `PageSpecificity`、`crates/raikiri-style/src/rule.rs`
-     の `DeclParser` — 対象を private に戻しても gate は green のまま
-     (補助 command でしか red にならない)。referrer 側の doc link は本項の module-link
-     + plain-code-span 形に書き換えた。**full path item link
-     (``[`crate::page::PageSpecificity`]``) のまま残すのは誤り** — gate は
-     green のままでも補助 command では unresolved になり、AGENTS.md
-     既述の baseline-diff 原則 (「`error` 行が 1 件も増えていないことを確認する」) に
-     反する。実際に書き換えた形:
-     - `page.rs` の 2 件は module/item の同名衝突が無いため `mod@` 前置は不要
-       (規約 4)。``[`crate::page`] の `PageSpecificity` ``
-       / ``[`crate::page`] の `absolutize_in_page_context` `` の形にした
-       (`crates/raikiri-style/src/cascade.rs` / `rule.rs` の referrer 4 箇所)。
-       この形は既に `crates/raikiri-style/src/rule.rs` の `page_beats` 参照
-       (``[`crate::page`] の `page_beats` ``) で使われていた既存 idiom で、
-       gate・補助 command 双方で clean に解決する。
-     - `rule.rs` の `DeclParser` は trait full path (規約 5) と組み合わさっており
-       naive な demotion では文が崩れるため、``[`mod@crate::rule`] の `DeclParser` ``
-       + trait 側 link の形に書き換えた (`crates/raikiri-style/src/property.rs`,
-       `crates/raikiri-style/src/counter_style.rs`)。`rule` 自体は `page` 同様
-       同名衝突は無いので `mod@` 前置は必須ではない可能性があるが、
-       元 item 名を code span で保持する構造をそのまま踏襲した。
-       この形も補助 command で clean に解決する。
+   **hatch の閾値**: 「widening が gate で enforce されるなら可、補助 command
+   (`--document-private-items`) でしか enforce されないなら本項の `mod@` 代替に倒す」。
+   判定 command は上の「わざと壊して確かめる」手順そのまま (対象 item を 1 つだけ
+   private に戻し、gate command で red になるかを見る) — 追加の道具は要らない。
+   gate §8.1 の doc build には `--document-private-items` を足していないため、
+   補助 command でしか検証されない widening は検証利得ゼロで visibility 拡大だけが
+   残る (足していない理由は後述「既知の限界」参照)。
 4. **同じ scope に同名の item がある module は `mod@` を付ける。** `raikiri-style` では
    `pub mod cascade` と `pub use cascade::{…, cascade}` が module と関数を同名で crate root
    に置くため ``[`mod@crate::cascade`]`` と書く。無印は ambiguous link になる。
 5. **trait impl の method は trait 側の full path で書く** —
    ``[`cssparser::DeclarationParser::parse_value`]``。trait を宣言している crate からの path
-   なら import 無しでも依存 crate のものでも解決する (rustc 1.89.0 で実測)。書けない場合に限り `Type` までを
+   なら import 無しでも依存 crate のものでも解決する。書けない場合に限り `Type` までを
    link 化し method 名を code span で添える。
 
 ### ⚠️ 「link 化した = 検証された」ではない
@@ -186,10 +108,9 @@ gate `§8.1` の `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace` �
 **rustdoc が document する doc に書かれた link だけ**である。**どの位置が検証されるかは
 source の見た目から予測できない。**
 
-これは推測ではない。bd raikiri-spike-ulzv の gate §8.2 で **4 iter にわたり分類を書いては
-実測で反証される**ことを繰り返した。反転させる変数として少なくとも **module の nest、
-`pub use` re-export の有無、`#[doc(hidden)]`、`#[test]` 属性、target 自身の可視性**の
-5 つが確認されており、**網羅は取れていない**。
+反転させる変数として少なくとも **module の nest、`pub use` re-export の有無、
+`#[doc(hidden)]`、`#[test]` 属性、target 自身の可視性**の 5 つが確認されており、
+**網羅は取れていない**。
 
 **したがって分類で判断しないこと。測ること。** 触る crate に対し gate とは別に 2 本走らせる:
 
@@ -217,9 +138,6 @@ RUSTDOCFLAGS="-D warnings --cfg test" cargo doc --no-deps --document-private-ite
   authoring 時の 1 回きりの確認であり、**壊した分は必ずその場で戻すこと** — 忘れると
   gate は green のまま壊れた pointer が merge される。
 
-gate 側の doc command を広げるかの判断と、**上記 5 変数の実測 table** は
-bd raikiri-spike-8yj6 が持つ。
-
 ### opt-out (link 化しない)
 
 どの command でも検証できない位置は code span にする。以下は今日わかっている該当で、
@@ -246,97 +164,59 @@ bd raikiri-spike-8yj6 が持つ。
   適用できない。** rustdoc は `///` / `//!` しか読まない。plain `//` comment に
   intra-doc link (bracket 記法) を書いても `RUSTDOCFLAGS="-D warnings" cargo doc`
   はその byte を 1 つも見ないので、path が誤っていても永遠に検出されない —
-  bracket は「検証済みに見えるのに実は未検証」でかえって bare code span より危険
-  (bd raikiri-spike-vyse、2026-08-08 決定)。**したがって plain `//` comment
-  内では、`crate::` 接頭辞の有無にかかわらず bracket link 構文
-  (`[...]` / `` [`...`] ``) を一切書かない。** 既存の `crate::…` pointer を
-  含め、bare code span (`` `crate::foo::Bar` ``) に統一する。crate:: を含まない
-  bracket も同様に禁止 — 危険性は crate:: の有無と無関係 (rustdoc がその位置を
-  1 byte も読まないという事実は pointer の中身に依らない)。
-  `scripts/doc-pointer-lint.sh` がこの blanket rule を hard-zero check
-  として強制する (bd raikiri-spike-luxp、次の bullet参照)。**強制の範囲は
-  `crates/*/src/**/*.rs` のみ** (issue 記載のscopeに合わせた)。`crates/*/
-  tests/` `benches/` `examples/` は checker の対象外 — 2026-08-08 時点で
-  手動 census では 0 件だが、continuously enforced ではない。
-- **既存の `#[test]` item doc に残っていた短縮 link** (``[`expand_shorthand_into`]``
-  等) は opt-out 3 の位置なので未検証だった。bd raikiri-spike-acsw が
-  raikiri-style 全体 (cascade / computed / page / property / resolve / rule /
-  specified の 7 file) で 42 occurrence を plain code span に一括変換済み
-  (2026-08-08)。**新規に書く doc では opt-out 3 に従い code span にすること
-  — この位置に新しく short-form (non-`crate::`) bracket を書いても
-  `scripts/doc-pointer-lint.sh` は検知しない** (short-form / non-`crate::`
-  pointer はこの checker のいずれの role の対象にも入らない)。
-  **`crate::` 接頭辞を伴う bracket に限っては** bd raikiri-spike-gq7x の
-  role 4 (informational — ratchet でも gate でもない、
-  `#[cfg(test)] mod …` block 内の linked `crate::…` span を可視化するだけの
-  role) が新規発生を検知して毎 run の summary に出す。ただし role 4 は
-  commit を止めない — 「検知」はできても「防止」ではないので、opt-out 3 の
-  再発**防止**という意味では本 checker は依然 scope 外のまま
-  (bd raikiri-spike-gq7x が role 4 を ratchet 化しなかった理由は
-  `scripts/lib/doc_pointer_lint.py` のモジュール docstring 参照)。
+  bracket は「検証済みに見えるのに実は未検証」でかえって bare code span より危険。
+  **したがって plain `//` comment 内では、`crate::` 接頭辞の有無にかかわらず
+  bracket link 構文 (`[...]` / `` [`...`] ``) を一切書かない。** 既存の
+  `crate::…` pointer を含め、bare code span (`` `crate::foo::Bar` ``) に統一する。
+  crate:: を含まない bracket も同様に禁止 — 危険性は crate:: の有無と無関係
+  (rustdoc がその位置を 1 byte も読まないという事実は pointer の中身に依らない)。
+  `scripts/doc-pointer-lint.sh` がこの blanket rule を hard-zero check として
+  強制する。**強制の範囲は `crates/*/src/**/*.rs` のみ**。`crates/*/tests/`
+  `benches/` `examples/` は checker の対象外 (continuously enforced ではない)。
+- **既存の `#[test]` item doc に残る短縮 link** (``[`expand_shorthand_into`]`` 等)
+  は opt-out 3 の位置なので未検証。**新規に書く doc では opt-out 3 に従い code
+  span にすること** — この位置に新しく short-form (non-`crate::`) bracket を
+  書いても `scripts/doc-pointer-lint.sh` は検知しない (short-form / non-`crate::`
+  pointer はこの checker のいずれの role の対象にも入らない)。**`crate::` 接頭辞を
+  伴う bracket に限っては** role 4 (informational — ratchet でも gate でもない、
+  `#[cfg(test)] mod …` block 内の linked `crate::…` span を可視化するだけの role)
+  が新規発生を検知して毎 run の summary に出すが、commit は止めない — 「検知」は
+  できても「防止」ではないので、opt-out 3 の再発**防止**という意味では本 checker
+  は依然 scope 外のまま (理由は `scripts/lib/doc_pointer_lint.py` のモジュール
+  docstring 参照)。
 - **本規約には enforcement 機構が今も一部無い。** 規約に従わない新規記述の一部は
-  何も止めない (実測: 規約 landing 前の 3 merge が bare pointer を 7 site
-  追加した)。bd raikiri-spike-luxp が `scripts/doc-pointer-lint.sh` を追加し、
-  以下の 2 点は自動 enforcement 下に入った:
+  何も止めない。`scripts/doc-pointer-lint.sh` が以下の 2 点を自動 enforcement 下に
+  置く:
   - plain `//` comment の bracket link (上のbulletの blanket rule) — hard-zero。
   - doc comment の bare `crate::…` pointer — pinned baseline
-    (`scripts/lib/doc_pointer_lint_baseline.txt`、本 commit 時点で **36**)
-    を超えないことを ratchet で強制。baseline は「今日値まで許容し、
-    それ以上増やさない」ための pin であり、0 への一括削減は本 checker の
-    scope 外。**そのための follow-up task に着手する場合は、着手時に
-    bd issue として起票すること** (2026-08-08 時点でまだ起票されていない —
-    本 bullet はその義務を課すもので、既存 issue を指してはいない)。
+    (`scripts/lib/doc_pointer_lint_baseline.txt`) を超えないことを ratchet で
+    強制。baseline は「今日値まで許容し、それ以上増やさない」ための pin であり、
+    0 への一括削減は本 checker の scope 外。**そのための follow-up task に
+    着手する場合は、着手時に bd issue として起票すること** (未起票)。
 
   **実行方法**: `scripts/doc-pointer-lint.sh` (追加で `-v` で全 occurrence を
   列挙、`--print-count` で ratchet 対象件数だけを出力してbaseline再生成に使う)。
   exit 0 = 両 role とも pass、1 = いずれか fail、2 = baseline file が
   読めない等の tooling error。**gate §8.1 / `scripts/gate.sh` への統合はしていない**
-  — 本 checker は standalone (統合するかどうかは別途判断、たとえば retro)。
+  — 本 checker は standalone。
 
-  **opt-out 3 (rustdoc に拾われない位置) は本 checker では静的判定できない**
-  (issue 自身が明記する既知の限界)。判定できない位置は既定で ratchet 対象に
-  **含める** (fail-closed)。個別に除外したい場合のみ、`scripts/lib/
-  patch_coverage.py` の `cov:ignore:` と同じ「暗黙の免除を作らない」思想で、
-  対象行に `// doc-pointer-lint:ignore: <reason>` marker を書く
-  (`cov:ignore:` と異なり同一行のみ有効 — block scoping は無い)。
+  **opt-out 3 (rustdoc に拾われない位置) は本 checker では静的判定できない**。
+  判定できない位置は既定で ratchet 対象に **含める** (fail-closed)。個別に
+  除外したい場合のみ、`scripts/lib/patch_coverage.py` の `cov:ignore:` と同じ
+  「暗黙の免除を作らない」思想で、対象行に `// doc-pointer-lint:ignore: <reason>`
+  marker を書く (`cov:ignore:` と異なり同一行のみ有効 — block scoping は無い)。
   `(removed)` marker (opt-out 1) と `tests::` を含む path (opt-out 2) は
   この checker が自動で除外する。
 - **toolchain 依存がある。** intra-doc link の解決は rustc version で変わる。
-  `rust-toolchain.toml` の pin (1.89.0) では出ない unresolved link が新しい toolchain では
+  `rust-toolchain.toml` の pin では出ない unresolved link が新しい toolchain では
   出る実例があるため、toolchain bump 時は本節の command を再走させること。
 - **gate §8.1 の doc build は private / pub(crate) item の doc link を検証しない。**
   `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace` (gate §8.1 が走らせる
-  既定 command) は `--document-private-items` を付けないため、public item の doc comment
-  内の link しか解決しない。`crates/raikiri-style/src/*.rs` の bracket link 114 occurrence
-  実測 (bd raikiri-spike-ulzv、commit 889fad5 時点) では、うち 47 occurrence
-  (pub(crate) 25 + private 22) が既定 gate command では未検証。
-  **PMO decision (2026-08-07、bd raikiri-spike-8yj6)**: `--document-private-items` は
-  gate に **足さない**。根拠は doc build 時間の増加と missing_docs 相当の露出面拡大
-  (raikiri-style 以外の crate は未確認) というコストが、47 occurrence の未検証リスクに
-  見合わないという判断。**既知の未修正 dangling として以下 3 件が raikiri-dom 側に残っている**
-  (本 decision では修正しない、gate red 化の前提条件にはならないが実 dangling である):
-  - `crates/raikiri-dom/src/running.rs:529` — `[MarginBoxFragment]` (no item named
-    MarginBoxFragment in scope)
-  - `crates/raikiri-dom/src/fonts.rs:616` — `` [`FontWarn::ReadRejected*`] `` (enum
-    `FontWarn` に該当 variant 無し。末尾 `*` は glob のつもりだが intra-doc link に
-    glob 記法は無い)
-  - `crates/raikiri-dom/src/layout.rs:96` — `` [`raikiri_style::BoxSizing`] `` (no item
-    named BoxSizing in module raikiri_style)
-  詳細な実測 (`--cfg test` option の E0432 blocker、5 つの反転変数、blind zone の全体像)
-  は bd raikiri-spike-8yj6 の comment 履歴を参照。
-
-  **この 3 件とは別に、raikiri-style 側でも同種のケースが見つかっていた**
-  (`crates/raikiri-style/src/counter_style.rs` の `CounterStyleSheetParser` doc —
-  `` [`crate::ruletree::StyleRuleParser`] ``。この位置が既定 gate command で
-  未検証なのは referrer 側の `CounterStyleSheetParser` 自身が private struct
-  だから (実測: link を `` [`crate::ruletreeXX`] `` に壊しても既定 command は
-  green のまま、`--document-private-items` だけが報告する — 参照先
-  `StyleRuleParser` の可視性は無関係)。持ち込みは bd raikiri-spike-r7r1、発見は
-  bd raikiri-spike-uy4g)。**上の 3 件と異なり、この 1 件は既に解消済み**
-  (bd raikiri-spike-n9ve) — 上記の「hatch の閾値」に従い、
-  `` [`crate::ruletree`] の `StyleRuleParser` `` (module link は維持、item 名のみ
-  bare code span 化) へ書き換えた。この aux-only dangling class は raikiri-dom 側
-  だけの現象ではない。
+  既定 command) は `--document-private-items` を付けないため、public item の doc
+  comment 内の link しか解決しない。**意図的に gate には追加していない** — doc
+  build 時間の増加と missing_docs 相当の露出面拡大というコストが、未検証リスクに
+  見合わないという判断。private / pub(crate) item の doc link を検証したい場合は、
+  上の「わざと壊して確かめる」節の 2 本の補助 command を個別に走らせること。
 
 ## 使い捨て worktree は `.worktrees/` 配下に作る (`/tmp` に作らない)
 
@@ -353,21 +233,16 @@ git worktree add .worktrees/<name> -b <branch>
 で一覧できる。`scripts/wpt/fetch.sh` は物理 checkout を
 `$HOME/.cache/raikiri/wpt` に置き、どの worktree から呼ばれても各
 `target/wpt` をそこへの symlink にする。`target/` が cleanup で消えても
-checkout は残り、fetch/gate が必要な symlink を再作成する。既存の `$HOME` 直下 worktree
-(`~/wt-*`) は着手済み task が close するまで grandfathered —
-稼働中の task を中断して移設せず、新規は本節に従う。
+checkout は残り、fetch/gate が必要な symlink を再作成する。
 
 本 repo の `/tmp` は小さな tmpfs で、**動作中の全 session が同時に共有する**
 (worktree-per-task 運用のため、session 数は並行 task 数に比例して増える)。
-枯渇の被害は gate の false-FAIL (bd raikiri-spike-weky) だけではない —
-**Bash tool 自体が無反応になり、診断可能な error が一切出ない**状態になりうる
-(bd raikiri-spike-weky への 2026-08-01 03:12 コメント記録、dz8t 実装 agent の副次的発見、
-sprint/coord/7 = global Sprint 38)。
+枯渇の被害は gate の false-FAIL だけではない — **Bash tool 自体が無反応になり、
+診断可能な error が一切出ない**状態になりうる。
 
-`scripts/lib/tmpdir.sh` の `TMPDIR` pin (bd raikiri-spike-weky) は
-**gate script の呼び出しに限定した、既に landing 済みのより狭い緩和策**である。
-本節はそれとは別に、gate 由来かどうかに関わらず **あらゆる scratch worktree に
-適用される repo 全体の規約**。
+`scripts/lib/tmpdir.sh` の `TMPDIR` pin は **gate script の呼び出しに限定した、
+既に landing 済みのより狭い緩和策**である。本節はそれとは別に、gate 由来かどうかに
+関わらず **あらゆる scratch worktree に適用される repo 全体の規約**。
 
 ## unit test は `tests.rs` に分離する
 
@@ -380,32 +255,17 @@ test group がある場合は `crates/raikiri-style/src/property/tests.rs` +
 `document/tests/*.rs` の形 (hub file が `mod <group>_tests;` を並べ、各 group を
 `tests/<group>_tests.rs` に置く) に倣う。
 
-### なぜ
-
-`assert_eq!(a, b, "msg")` の message 部分は assertion 失敗時のみ評価される。
-成功する test では実行されないため、coverage 計測 (line-level region) では
-必ず未カバーとして表示される。inline `mod tests` は対象ファイルと同一ファイルなので、
-この「テストコードの構造上カバーできない行」が本体コードの coverage 表示に
-混入する (Codecov 上、本体のロジック行と見分けがつかない赤として出る)。
-
-`tests.rs` / `*_tests.rs` / `*-tests.rs` というファイル名は cargo-llvm-cov の
-**default `--ignore-filename-regex`** (`tests\.rs` / `[...]_tests\.rs` /
-`[...]-tests\.rs`、`scripts/lib/patch_coverage.py` の `LLVM_COV_IGNORED_FILENAME_RE`
-参照) に一致し、無設定で coverage report から除外される。つまり分離するだけで
-CI / Codecov 側の設定変更は不要。ローカル gate の patch coverage
-(`scripts/patch-coverage.sh`) も同じパターンを structurally-unreported として
-扱っており、両者は整合している。
-
-先例: rustc 自身が tidy の `unit_tests` check でこの分離を強制している
-(`{coretests,alloctests}`/`tests.rs`/`benches.rs`/`tests/`/`benches/` 以外での
-`#[test]`/`#[bench]` 直書きを禁止)。本 repo でも `raikiri-style` が既にこの形。
-
-### 適用範囲 (段階移行、一括強制ではない)
+`assert_eq!(a, b, "msg")` の message 部分は assertion 失敗時のみ評価されるため、
+成功する test では coverage が必ず未カバーになる。inline `mod tests` は対象ファイルと
+同一ファイルなので、この行が本体コードの coverage 表示に混入する。`tests.rs` /
+`*_tests.rs` / `*-tests.rs` は cargo-llvm-cov の default `--ignore-filename-regex`
+(`scripts/lib/patch_coverage.py` の `LLVM_COV_IGNORED_FILENAME_RE` 参照) に一致し、
+無設定で coverage report から除外される。rustc 自身も tidy の `unit_tests` check で
+同種の分離を強制している。
 
 既存の inline test を全ファイル一括で移行する義務はない。触ったファイルの
-inline test は分離する、新規ファイルは最初から `tests.rs` で書く、という
-段階移行 (bd raikiri-spike-fqhs)。一括移行は並行 worktree の diff 衝突を招くため
-意図的に避けている。
+inline test は分離する、新規ファイルは最初から `tests.rs` で書く、という段階移行。
+一括移行は並行 worktree の diff 衝突を招くため意図的に避けている。
 
 ### orphan tests.rs の検出
 
