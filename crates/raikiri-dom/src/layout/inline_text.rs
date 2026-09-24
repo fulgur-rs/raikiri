@@ -1076,12 +1076,27 @@ pub(crate) fn realign_text_after_layout(
             }
         }
     }
+    for root in 0..doc.nodes.len() {
+        if doc.nodes[root].shared_inline_height().is_none() {
+            continue;
+        }
+        let layout = doc.nodes[root].unrounded_layout;
+        let content_inset_x = layout.border.left + layout.padding.left;
+        let content_inset_y = layout.border.top + layout.padding.top;
+        for &child in &doc.nodes[root].children.clone() {
+            doc.nodes[child].unrounded_layout.location.x = content_inset_x;
+            doc.nodes[child].unrounded_layout.location.y = content_inset_y;
+        }
+    }
     let mut ch_probes: HashMap<(String, u32, u32, u8), f32> = HashMap::new();
     for (idx, parent) in parent_of.iter().enumerate() {
         if doc.nodes[idx].kind() != NodeKind::Text {
             continue;
         }
         if !doc.nodes[idx].is_in_document() {
+            continue;
+        }
+        if doc.nodes[idx].shared_inline_text_layout().is_some() {
             continue;
         }
         // cov:ignore: multicol fragment detection is exercised by the ignored foundation WPT run.
@@ -4617,6 +4632,239 @@ fn parley_text_wrap_mode(value: TextWrapMode, nowrap: bool) -> ParleyTextWrapMod
     }
 }
 
+fn shared_inline_metrics_match(a: &ComputedValues, b: &ComputedValues) -> bool {
+    a.font_family == b.font_family
+        && (a.font_size.px() - b.font_size.px()).abs() <= f32::EPSILON
+        && (a.font_weight - b.font_weight).abs() <= f32::EPSILON
+        && a.font_style == b.font_style
+        && a.line_height == b.line_height
+}
+
+/// Whether this synthetic inline root can use one shared `anywhere` paragraph.
+///
+/// Keep this bridge deliberately narrow: the root must be a block with a
+/// positive resolved pixel width and no width clamps or box insets. It also
+/// requires simple in-flow inline content, horizontal LTR text, and no
+/// forced breaks, decoration, multi-column ancestry, or inline box edges.
+fn shared_inline_root_supported(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    root: usize,
+) -> bool {
+    if doc.nodes[root].kind() != NodeKind::Element
+        || !doc.nodes[root].flags.contains(NodeFlags::IS_INLINE_ROOT)
+    {
+        return false;
+    }
+    let root_cv = &cascade.computed[root];
+    let mut ancestor = Some(root);
+    while let Some(id) = ancestor {
+        let cv = &cascade.computed[id];
+        if cv.text_decoration_line != raikiri_style::property::TextDecorationLine::NONE
+            || cv.hanging_punctuation != raikiri_style::property::HangingPunctuation::None
+            || !cv.text_shadow.is_empty()
+            || cv.column_count != raikiri_style::property::ColumnCountValue::Auto
+            || !matches!(
+                cv.column_width,
+                raikiri_style::resolve::ComputedColumnWidth::Auto
+            )
+        {
+            return false;
+        }
+        ancestor = parent_of[id];
+    }
+    let has_box_insets = [
+        root_cv.padding.left,
+        root_cv.padding.right,
+        root_cv.padding.top,
+        root_cv.padding.bottom,
+    ]
+    .into_iter()
+    .any(|value| match value {
+        ComputedLengthPercentage::Px(px) | ComputedLengthPercentage::Percent(px) => {
+            px.abs() > f32::EPSILON
+        }
+    }) || [
+        root_cv.border.left.width().px(),
+        root_cv.border.right.width().px(),
+        root_cv.border.top.width().px(),
+        root_cv.border.bottom.width().px(),
+    ]
+    .into_iter()
+    .any(|width| width.abs() > f32::EPSILON);
+    if root_cv.display != DisplayValue::Block
+        || !matches!(
+            root_cv.width,
+            ComputedLengthPercentageOrAuto::Px(width) if width.is_finite() && width > 0.0
+        )
+        || !matches!(root_cv.min_width, ComputedLengthPercentageOrAuto::Auto)
+        || !matches!(root_cv.max_width, ComputedLengthPercentageOrAuto::Auto)
+        || has_box_insets
+        || root_cv.line_break != LineBreak::Anywhere
+        || root_cv.direction != Direction::Ltr
+        || root_cv.writing_mode != WritingMode::HorizontalTb
+        || !matches!(root_cv.text_align, TextAlign::Start | TextAlign::Left)
+        || !matches!(
+            root_cv.text_align_last,
+            raikiri_style::property::TextAlignLast::Auto
+                | raikiri_style::property::TextAlignLast::Start
+                | raikiri_style::property::TextAlignLast::Left
+        )
+        || !matches!(
+            root_cv.position,
+            PositionValue::Static | PositionValue::Relative
+        )
+        || root_cv.float != FloatValue::None
+        || root_cv.text_indent_ch_factor.is_some()
+        || match root_cv.text_indent {
+            ComputedLengthPercentage::Px(px) | ComputedLengthPercentage::Percent(px) => {
+                px.abs() > f32::EPSILON
+            }
+        }
+    {
+        return false;
+    }
+
+    let mut has_inline_background = false;
+    let mut background_stack = vec![root];
+    while let Some(parent) = background_stack.pop() {
+        for &child in &doc.nodes[parent].children {
+            if !doc.nodes[child].is_in_document()
+                || cascade.computed[child].display == DisplayValue::None
+            {
+                continue;
+            }
+            if doc.nodes[child].kind() == NodeKind::Element {
+                let cv = &cascade.computed[child];
+                has_inline_background |=
+                    cv.display == DisplayValue::Inline && cv.background_color.a != 0;
+                background_stack.push(child);
+            }
+        }
+    }
+
+    let mut stack = vec![root];
+    while let Some(parent) = stack.pop() {
+        for &child in &doc.nodes[parent].children {
+            if !doc.nodes[child].is_in_document() {
+                continue;
+            }
+            let cv = &cascade.computed[child];
+            if cv.display == DisplayValue::None {
+                continue;
+            }
+            if has_inline_background && !shared_inline_metrics_match(cv, root_cv) {
+                return false;
+            }
+            if cv.text_decoration_line != raikiri_style::property::TextDecorationLine::NONE
+                || cv.hanging_punctuation != raikiri_style::property::HangingPunctuation::None
+                || !cv.text_shadow.is_empty()
+            {
+                return false;
+            }
+            match doc.nodes[child].kind() {
+                NodeKind::Text => {
+                    if cv.line_break != LineBreak::Anywhere
+                        || cv.white_space != root_cv.white_space
+                        || cv.direction != Direction::Ltr
+                        || cv.writing_mode != WritingMode::HorizontalTb
+                        || cv.hyphens == Hyphens::Auto
+                        || doc.nodes[child]
+                            .text_content()
+                            .is_some_and(|text| text.contains('\n') || text.contains('\r'))
+                    {
+                        return false;
+                    }
+                }
+                NodeKind::Element => {
+                    if doc.nodes[child].tag_name() == Some("br")
+                        || !matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents)
+                        || cv.position != PositionValue::Static
+                        || cv.float != FloatValue::None
+                        || cv.direction != Direction::Ltr
+                        || cv.writing_mode != WritingMode::HorizontalTb
+                        || cv.vertical_align != VerticalAlign::Baseline
+                        || cv.hyphens == Hyphens::Auto
+                        || boundary_shaping_box_breaks(cascade, child)
+                        || [cv.margin.top, cv.margin.bottom]
+                            .into_iter()
+                            .any(|value| match value {
+                                ComputedLengthPercentageOrAuto::Px(px)
+                                | ComputedLengthPercentageOrAuto::Percent(px) => {
+                                    px.abs() > f32::EPSILON
+                                }
+                                ComputedLengthPercentageOrAuto::Calc(_) => true,
+                                ComputedLengthPercentageOrAuto::Auto => false,
+                            })
+                        || [cv.padding.top, cv.padding.bottom].into_iter().any(
+                            |value| match value {
+                                ComputedLengthPercentage::Px(px)
+                                | ComputedLengthPercentage::Percent(px) => px.abs() > f32::EPSILON,
+                            },
+                        )
+                        || [cv.border.top.width().px(), cv.border.bottom.width().px()]
+                            .into_iter()
+                            .any(|width| width.abs() > f32::EPSILON)
+                        || !cv.transform.is_empty()
+                        || !cv.filter.is_empty()
+                        || !matches!(cv.background_image, BackgroundImage::None)
+                        || doc.nodes[child].tag_name() == Some("img")
+                    {
+                        return false;
+                    }
+                    stack.push(child);
+                }
+                _ => return false,
+            }
+        }
+    }
+    true
+}
+
+fn shared_inline_fragments(
+    layout: &Layout<usize>,
+    source_nodes: &HashSet<usize>,
+) -> Vec<crate::node::InlineTextFragment> {
+    let mut fragments = Vec::new();
+    for line in layout.lines() {
+        let metrics = line.metrics();
+        let mut left = f32::INFINITY;
+        let mut right = f32::NEG_INFINITY;
+        for item in line.items() {
+            let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
+                continue;
+            };
+            if !source_nodes.contains(&glyph_run.style().brush) {
+                continue;
+            }
+            let x = glyph_run.offset();
+            let advance = glyph_run.advance();
+            let end = x + advance;
+            if x.is_finite() && end.is_finite() && end > x {
+                left = left.min(x);
+                right = right.max(end);
+            }
+        }
+        // Inline backgrounds follow the line box, not the font-metric selection
+        // bounds. Rebuild the same quantized line-box top used for its baseline.
+        let ascent = metrics.ascent.round();
+        let descent = metrics.descent.round();
+        let leading_above = ((metrics.line_height - ascent - descent) * 0.5).floor();
+        let y = metrics.baseline - ascent - leading_above;
+        let height = metrics.line_height;
+        if left.is_finite() && right > left && y.is_finite() && height.is_finite() && height > 0.0 {
+            fragments.push(crate::node::InlineTextFragment {
+                x: left,
+                y,
+                width: right - left,
+                height,
+            });
+        }
+    }
+    fragments
+}
+
 pub(crate) fn preshape_text(
     doc: &mut Document,
     cascade: &CascadeResult,
@@ -4637,6 +4885,7 @@ pub(crate) fn preshape_text(
     struct Job {
         idx: usize,
         text: String,
+        had_tabs: bool,
         family_str: String,
         font_size_raw: f32,
         font_weight_raw: f32,
@@ -4789,8 +5038,9 @@ pub(crate) fn preshape_text(
         }
         // A space migrated by an EARLIER node lands here (never this
         // node's own trailing space, which belongs after it).
-        let pending_in = migrate_pending;
+        let mut pending_in = migrate_pending;
         let mut text = collapsed.text;
+        let mut shared_only = false;
         if text.is_empty() {
             // Whitespace separators between inline children become flex-item
             // boundaries in the multicol projection, so they must not migrate
@@ -4841,35 +5091,58 @@ pub(crate) fn preshape_text(
                     Dimension::length(space_advance * inline_space_count as f32);
                 migrate_pending = 0;
                 migrate_pending_full_width = false;
+                let shared_anywhere = inline_root_for_text(doc, &parent_of, idx)
+                    .is_some_and(|root| cascade.computed[root].line_break == LineBreak::Anywhere);
+                if shared_anywhere {
+                    // A whitespace-only inline child has a Taffy width item but
+                    // no shaping job. Keep a matching brush range for the shared
+                    // paragraph so its advance and break opportunity are not lost.
+                    let separator = if raw.chars().any(|ch| ch == '\u{00a0}') {
+                        "\u{00a0}"
+                    } else {
+                        " "
+                    };
+                    text = separator.repeat(inline_space_count as usize);
+                    pending_in = 0;
+                    shared_only = true;
+                } else {
+                    continue;
+                }
+            }
+            if !shared_only {
+                // A collapsed space styled with `full-width` must remain owned by
+                // that inline run: attaching its transformed U+3000 to the
+                // preceding job avoids changing the line metrics of the following
+                // text node while retaining the source style's transform.
+                if collapsed.migrate_count > 0
+                    && pending_in == 0
+                    && text_transform_has_full_width(cv.text_transform)
+                    && has_inline_adjacent(doc, cascade, &parent_of, idx, -1)
+                    && has_inline_adjacent(doc, cascade, &parent_of, idx, 1)
+                    && let Some(previous) = jobs.last_mut()
+                {
+                    previous.text.push('\u{3000}');
+                    continue;
+                }
+                // Empty nodes neither consume nor (unless migrating themselves)
+                // clear outstanding spaces: a boundary-dropped node must not
+                // cancel earlier migrations.
+                migrate_pending = pending_in.saturating_add(collapsed.migrate_count);
+                if collapsed.migrate_count > 0 {
+                    migrate_pending_full_width = text_transform_has_full_width(cv.text_transform);
+                }
                 continue;
             }
-            // A collapsed space styled with `full-width` must remain owned by
-            // that inline run: attaching its transformed U+3000 to the
-            // preceding job avoids changing the line metrics of the following
-            // text node while retaining the source style's transform.
-            if collapsed.migrate_count > 0
-                && pending_in == 0
-                && text_transform_has_full_width(cv.text_transform)
-                && has_inline_adjacent(doc, cascade, &parent_of, idx, -1)
-                && has_inline_adjacent(doc, cascade, &parent_of, idx, 1)
-                && let Some(previous) = jobs.last_mut()
-            {
-                previous.text.push('\u{3000}');
-                continue;
-            }
-            // Empty nodes neither consume nor (unless migrating themselves)
-            // clear outstanding spaces: a boundary-dropped node must not
-            // cancel earlier migrations.
-            migrate_pending = pending_in.saturating_add(collapsed.migrate_count);
-            if collapsed.migrate_count > 0 {
-                migrate_pending_full_width = text_transform_has_full_width(cv.text_transform);
-            }
-            continue;
         }
-        let pending_full_width = migrate_pending_full_width;
-        migrate_pending = collapsed.migrate_count;
-        migrate_pending_full_width =
-            collapsed.migrate_count > 0 && text_transform_has_full_width(cv.text_transform);
+        let pending_full_width = migrate_pending_full_width && !shared_only;
+        migrate_pending = if shared_only {
+            0
+        } else {
+            collapsed.migrate_count
+        };
+        migrate_pending_full_width = !shared_only
+            && collapsed.migrate_count > 0
+            && text_transform_has_full_width(cv.text_transform);
         // Forward-migrated spaces (see `migrate_space`): prepend NBSPs iff
         // they still precede inline content from THIS node's edge — a
         // boundary element (e.g. `<br>`) in between correctly drops them —
@@ -4887,7 +5160,11 @@ pub(crate) fn preshape_text(
         // pre 系は無変換 (tab 展開は後段)。collapse 系のみ trim 位置付きで変換。
         let start = line_start_pos(doc, cascade, &parent_of, idx);
         let trim_end = trail_trim(doc, cascade, &parent_of, idx);
-        let mut text = collapse_ws(&text, cv.white_space, start, trim_end).into_owned();
+        let mut text = if shared_only {
+            text
+        } else {
+            collapse_ws(&text, cv.white_space, start, trim_end).into_owned()
+        };
         // CSS text transforms run on the post-collapse text. In particular,
         // `full-width` must see only the surviving U+0020 space; applying it
         // before whitespace collapsing would turn every source space into
@@ -5066,6 +5343,7 @@ pub(crate) fn preshape_text(
         jobs.push(Job {
             idx,
             text,
+            had_tabs: raw.contains('\t'),
             family_str,
             font_size_raw: cv.font_size.px(),
             font_weight_raw: cv.font_weight,
@@ -5236,6 +5514,200 @@ pub(crate) fn preshape_text(
         job.text = text;
         job.tab_spacing_ranges = spacing_ranges;
     }
+
+    // Text split across inline nodes needs one line-breaking context. Keep this
+    // path limited to simple roots where every text run inherits `anywhere` and
+    // shares the same whitespace mode; other roots retain the per-node path.
+    let mut jobs_by_root: std::collections::BTreeMap<usize, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for (job_index, job) in jobs.iter().enumerate() {
+        if let Some(root) = inline_root_for_text(doc, &parent_of, job.idx) {
+            jobs_by_root.entry(root).or_default().push(job_index);
+        }
+    }
+    let mut shared_text_nodes = HashSet::new();
+    let mut shared_layout_cx = LayoutContext::<usize>::new();
+    for (root, job_indices) in jobs_by_root {
+        let root_supported = shared_inline_root_supported(doc, cascade, &parent_of, root);
+        if job_indices.len() < 2 || !root_supported {
+            continue;
+        }
+        let first = &jobs[job_indices[0]];
+        let supported_group = job_indices.iter().all(|&job_index| {
+            let job = &jobs[job_index];
+            job.line_break == LineBreak::Anywhere
+                && job.white_space == first.white_space
+                && !job.nowrap
+                && !job.had_tabs
+                // Positive non-`ch` word-spacing is deferred on the per-node
+                // path; keep roots with that value on the same fallback path.
+                && (job.word_spacing_ch_factor.is_some() || job.word_spacing_raw <= 0.0)
+                && job.max_advance.is_finite()
+                && job.max_advance > 0.0
+                && (job.max_advance - first.max_advance).abs() <= f32::EPSILON
+                && job.autospace_boxes.is_empty()
+                && job.tab_spacing_ranges.is_empty()
+                && !job.simple_pre_block
+                && !job.simple_preserved_run
+                && !job.text.contains('\n')
+                && !job.text.contains('\r')
+        });
+        if !supported_group {
+            continue;
+        }
+
+        let mut text = String::new();
+        let mut ranges = Vec::with_capacity(job_indices.len());
+        for &job_index in &job_indices {
+            let job = &jobs[job_index];
+            let start = text.len();
+            text.push_str(&job.text);
+            let end = text.len();
+            if end > start {
+                ranges.push((job_index, start..end));
+            }
+        }
+        if ranges.len() < 2 {
+            continue;
+        }
+
+        let mut builder = shared_layout_cx.ranged_builder(fonts, &text, 1.0, true);
+        builder.set_line_break_override(parley_line_break_override(LineBreak::Anywhere));
+        builder.set_line_break_anywhere(true);
+        builder.set_break_spaces(matches!(first.white_space, WhiteSpace::BreakSpaces));
+        builder.set_hang_spaces(matches!(first.white_space, WhiteSpace::PreWrap));
+        for &(job_index, ref range) in &ranges {
+            let job = &jobs[job_index];
+            let mut warnings = Vec::new();
+            let font_size = sanitize_finite(
+                job.font_size_raw,
+                0.0,
+                MAX_FONT_SIZE_PX,
+                "font-size",
+                &mut warnings,
+            );
+            let font_weight = sanitize_font_weight(job.font_weight_raw, &mut warnings);
+            let line_height = sanitize_line_height(job.line_height_raw, &mut warnings);
+            let letter_spacing = sanitize_finite(
+                job.letter_spacing_raw,
+                -MAX_TAFFY_MAGNITUDE,
+                MAX_TAFFY_MAGNITUDE,
+                "letter-spacing",
+                &mut warnings,
+            );
+            let word_spacing = sanitize_finite(
+                job.word_spacing_raw,
+                -MAX_TAFFY_MAGNITUDE,
+                MAX_TAFFY_MAGNITUDE,
+                "word-spacing",
+                &mut warnings,
+            );
+            builder.push(
+                StyleProperty::FontFamily(FontFamily::from(job.family_str.as_str())),
+                range.clone(),
+            );
+            builder.push(StyleProperty::FontSize(font_size), range.clone());
+            builder.push(
+                StyleProperty::FontWeight(FontWeight::new(font_weight)),
+                range.clone(),
+            );
+            builder.push(
+                StyleProperty::FontStyle(font_style_to_parley(job.font_style)),
+                range.clone(),
+            );
+            builder.push(
+                StyleProperty::LineHeight(line_height_to_parley(line_height)),
+                range.clone(),
+            );
+            builder.push(StyleProperty::LetterSpacing(letter_spacing), range.clone());
+            if job.word_spacing_ch_factor.is_some() || job.word_spacing_raw < 0.0 {
+                builder.push(StyleProperty::WordSpacing(word_spacing), range.clone());
+            }
+            builder.push(
+                StyleProperty::WordBreak(parley_word_break(job.word_break, job.line_break)),
+                range.clone(),
+            );
+            builder.push(
+                StyleProperty::OverflowWrap(parley_overflow_wrap(
+                    job.word_break,
+                    job.line_break,
+                    job.overflow_wrap,
+                )),
+                range.clone(),
+            );
+            builder.push(
+                StyleProperty::TextWrapMode(parley_text_wrap_mode(job.text_wrap_mode, job.nowrap)),
+                range.clone(),
+            );
+            builder.push(StyleProperty::Brush(job.idx), range.clone());
+            doc.layout_warnings.extend(warnings);
+        }
+        let mut layout: Layout<usize> = builder.build(&text);
+        layout.break_all_lines(Some(first.max_advance));
+        layout.align(Alignment::Start, AlignmentOptions::default());
+        let height = layout.height();
+        if !height.is_finite() || height <= 0.0 {
+            continue;
+        }
+        let shared_layout = std::sync::Arc::new(layout);
+
+        let mut text_nodes_by_inline_element: HashMap<usize, HashSet<usize>> = HashMap::new();
+        for &(job_index, _) in &ranges {
+            let text_node = jobs[job_index].idx;
+            let mut ancestor = parent_of[text_node];
+            while let Some(id) = ancestor {
+                if id == root {
+                    break;
+                }
+                if doc.nodes[id].kind() == NodeKind::Element
+                    && cascade.computed[id].display == DisplayValue::Inline
+                {
+                    text_nodes_by_inline_element
+                        .entry(id)
+                        .or_default()
+                        .insert(text_node);
+                }
+                ancestor = parent_of[id];
+            }
+        }
+        for (element, text_nodes) in text_nodes_by_inline_element {
+            let fragments = shared_inline_fragments(&shared_layout, &text_nodes);
+            if let Some(element_data) = doc.nodes[element].data.as_element_mut() {
+                element_data.shared_inline_fragments = Some(fragments);
+            }
+        }
+
+        let mut stack = doc.nodes[root].children.clone();
+        while let Some(node_id) = stack.pop() {
+            if !doc.nodes[node_id].is_in_document() {
+                continue;
+            }
+            let order = doc.nodes[node_id].unrounded_layout.order;
+            doc.nodes[node_id].unrounded_layout = TaffyLayout::with_order(order);
+            stack.extend(doc.nodes[node_id].children.iter().copied());
+        }
+        if matches!(
+            cascade.computed[root].height,
+            ComputedLengthPercentageOrAuto::Auto
+        ) {
+            doc.nodes[root].style.size.height = Dimension::length(height);
+        }
+        doc.nodes[root].cache.clear();
+        if let Some(element_data) = doc.nodes[root].data.as_element_mut() {
+            element_data.shared_inline_height = Some(height);
+        }
+        for &(job_index, _) in &ranges {
+            let text_node = jobs[job_index].idx;
+            if let Some(text_data) = doc.nodes[text_node].data.as_text_mut() {
+                text_data.text_layout = None;
+                text_data.shared_inline_text_layout = Some(shared_layout.clone());
+                text_data.text_line_offsets = None;
+                text_data.snap_glyph_x_to_1_64 = false;
+            }
+            shared_text_nodes.insert(text_node);
+        }
+    }
+    jobs.retain(|job| !shared_text_nodes.contains(&job.idx));
 
     // Copy original FontContext once; each rayon task clones from this base.
     // LayoutContext is cheap (clone returns new empty), so per-task new() is fine.

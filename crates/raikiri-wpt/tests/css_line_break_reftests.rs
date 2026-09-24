@@ -80,6 +80,51 @@ fn line_break_anywhere_is_pixel_exact_at_800x600() {
 }
 
 #[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn line_break_anywhere_multi_node_is_pixel_exact_at_800x600() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let candidates = [
+        "css/css-text/line-break/line-break-anywhere-001.html",
+        "css/css-text/line-break/line-break-anywhere-017.html",
+        "css/css-text/line-break/line-break-anywhere-and-white-space-004.html",
+        "css/css-text/line-break/line-break-anywhere-and-white-space-007.html",
+    ];
+    assert_eq!(candidates.len(), 4);
+
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    let mut failures = Vec::new();
+    for relative in candidates {
+        let test = root.join(relative);
+        let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
+            .unwrap_or_else(|error| panic!("discover {relative}: {error}"));
+        if pairs.len() != 1 {
+            failures.push(format!(
+                "{relative}: expected 1 match pair, found {}",
+                pairs.len()
+            ));
+            continue;
+        }
+        match run_pair_with_images(&pairs[0], config) {
+            Ok(result) if matches!(&result.outcome, TestOutcome::Pass) => {}
+            Ok(result) => failures.push(format!(
+                "{relative}: outcome={:?}, mismatched_pixels={}",
+                result.outcome, result.mismatched_pixels
+            )),
+            Err(error) => failures.push(format!("{relative}: run error: {error}")),
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "line-break:anywhere multi-node WPT failures at exact 800x600:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
 fn line_break_anywhere_preserves_newlines_and_prewrap_spaces() {
     let target = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target");
     let temp_dir = tempfile::tempdir_in(target).expect("create temporary reftest directory");
@@ -106,6 +151,99 @@ fn line_break_anywhere_preserves_newlines_and_prewrap_spaces() {
     assert!(
         matches!(result.outcome, TestOutcome::Pass),
         "preserved newlines and pre-wrap trailing spaces should keep their line placement with line-break:anywhere: {:?}",
+        result.outcome
+    );
+}
+
+#[test]
+fn line_break_anywhere_multi_node_preserves_inline_color_background_and_whitespace() {
+    let target = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target");
+    let temp_dir = tempfile::tempdir_in(&target).expect("create temporary reftest directory");
+    let test = temp_dir.path().join("inline-style-test.html");
+    let reference = temp_dir.path().join("inline-style-reference.html");
+    std::fs::write(
+        &test,
+        r#"<!doctype html><meta charset="utf-8"><link rel="match" href="inline-style-reference.html"><style>html,body{margin:0}.sample{font:20px/1 monospace;width:8ch;line-break:anywhere;color:green}.accent{color:red;background:blue}</style><div class="sample">A<span class="accent">B</span> C</div>"#,
+    )
+    .expect("write reftest");
+    std::fs::write(
+        &reference,
+        r#"<!doctype html><meta charset="utf-8"><style>html,body{margin:0}.sample{font:20px/1 monospace;width:8ch;line-break:normal;color:green}.accent{color:red;background:blue}</style><div class="sample">A<span class="accent">B</span> C</div>"#,
+    )
+    .expect("write reference");
+    let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(temp_dir.path()))
+        .expect("discover synthetic reftest pair");
+    assert_eq!(pairs.len(), 1);
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+    let result = run_pair(&pairs[0], config).expect("run synthetic reftest pair");
+    assert!(
+        matches!(result.outcome, TestOutcome::Pass),
+        "shared inline layout should preserve text color, background, and whitespace: {:?}",
+        result.outcome
+    );
+}
+
+#[test]
+fn line_break_anywhere_preserves_whitespace_only_inline_child() {
+    let target = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target");
+    let temp_dir = tempfile::tempdir_in(&target).expect("create temporary reftest directory");
+    let test = temp_dir.path().join("inline-space-test.html");
+    let reference = temp_dir.path().join("inline-space-reference.html");
+    std::fs::write(
+        &test,
+        r#"<!doctype html><meta charset="utf-8"><link rel="match" href="inline-space-reference.html"><style>html,body{margin:0}.sample{font:20px/1 monospace;width:2ch;line-break:anywhere;color:green}</style><div class="sample"><span>A</span> <span>B</span></div>"#,
+    )
+    .expect("write reftest");
+    std::fs::write(
+        &reference,
+        r#"<!doctype html><meta charset="utf-8"><style>html,body{margin:0}.sample{font:20px/1 monospace;width:2ch;line-break:normal;color:green}</style><div class="sample"><span>A</span><br><span>B</span></div>"#,
+    )
+    .expect("write reference");
+    let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(temp_dir.path()))
+        .expect("discover synthetic reftest pair");
+    assert_eq!(pairs.len(), 1);
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+    let result = run_pair(&pairs[0], config).expect("run synthetic reftest pair");
+    assert!(
+        matches!(result.outcome, TestOutcome::Pass),
+        "shared inline layout should retain an empty whitespace-only text node: {:?}",
+        result.outcome
+    );
+}
+
+#[test]
+fn line_break_anywhere_fallback_keeps_whitespace_only_inline_separators() {
+    let target = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target");
+    let temp_dir = tempfile::tempdir_in(&target).expect("create temporary reftest directory");
+    let test = temp_dir.path().join("inline-fallback-space-test.html");
+    let reference = temp_dir.path().join("inline-fallback-space-reference.html");
+    std::fs::write(
+        &test,
+        r#"<!doctype html><meta charset="utf-8"><link rel="match" href="inline-fallback-space-reference.html"><style>html,body{margin:0}.sample{font:20px/1 monospace;width:100px;color:green}#tab{line-break:anywhere}#padded{line-break:anywhere;padding-left:4px}</style><div id="tab" class="sample"><span>A</span>&#9;<span>B</span></div><div id="padded" class="sample"><span>A</span> <span>B</span></div>"#,
+    )
+    .expect("write reftest");
+    std::fs::write(
+        &reference,
+        r#"<!doctype html><meta charset="utf-8"><style>html,body{margin:0}.sample{font:20px/1 monospace;width:100px;color:green}#tab{line-break:normal}#padded{line-break:normal;padding-left:4px}</style><div id="tab" class="sample"><span>A</span> <span>B</span></div><div id="padded" class="sample"><span>A</span> <span>B</span></div>"#,
+    )
+    .expect("write reference");
+    let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(temp_dir.path()))
+        .expect("discover synthetic fallback reftest pair");
+    assert_eq!(pairs.len(), 1);
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+    let result = run_pair(&pairs[0], config).expect("run synthetic fallback reftest pair");
+    assert!(
+        matches!(result.outcome, TestOutcome::Pass),
+        "fallback shared-layout roots should preserve whitespace-only inline separators: {:?}",
         result.outcome
     );
 }

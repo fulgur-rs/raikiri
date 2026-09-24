@@ -16,8 +16,13 @@ pub fn relayout_text_for_width(
     mut font_ctx: FontContext,
 ) {
     for node in document.nodes.iter_mut() {
+        if let Some(element) = node.data.as_element_mut() {
+            element.shared_inline_height = None;
+            element.shared_inline_fragments = None;
+        }
         if let Some(text) = node.data.as_text_mut() {
             text.text_layout = None;
+            text.shared_inline_text_layout = None;
             text.text_line_offsets = None;
             text.text_indent_px = None;
             text.text_indent_hanging = false;
@@ -190,8 +195,13 @@ pub fn layout_single_page(
 
     // Step 0: text_layout re-entrance clear
     for node in document.nodes.iter_mut() {
+        if let Some(element) = node.data.as_element_mut() {
+            element.shared_inline_height = None;
+            element.shared_inline_fragments = None;
+        }
         if let Some(t) = node.data.as_text_mut() {
             t.text_layout = None;
+            t.shared_inline_text_layout = None;
             t.text_line_offsets = None;
             t.multicol_fragments = None; // cov:ignore: reset is exercised by repeated ignored WPT layouts.
             t.text_indent_px = None;
@@ -431,6 +441,135 @@ pub fn resolve_page_fragment_geometry(
     )
 }
 
+fn shared_paragraph_line_metrics(
+    layout: &parley::Layout<usize>,
+    node_filter: Option<usize>,
+) -> Vec<(f32, f32)> {
+    layout
+        .lines()
+        .filter_map(|line| {
+            if node_filter.is_some_and(|node_id| {
+                !line.items().any(|item| {
+                    matches!(
+                        item,
+                        parley::PositionedLayoutItem::GlyphRun(glyph_run)
+                            if glyph_run.style().brush == node_id
+                    )
+                })
+            }) {
+                return None;
+            }
+            let metrics = line.metrics();
+            Some((metrics.block_min_coord, metrics.block_max_coord))
+        })
+        .collect()
+}
+
+fn page_text_line_metrics(
+    document: &Document,
+    node_id: usize,
+    shared_node_only: bool,
+) -> Option<Vec<(f32, f32)>> {
+    let node = &document.nodes[node_id];
+    if let Some(layout) = node.shared_inline_text_layout() {
+        Some(shared_paragraph_line_metrics(
+            layout,
+            shared_node_only.then_some(node_id),
+        ))
+    } else {
+        node.text_layout().map(|layout| {
+            layout
+                .lines()
+                .map(|line| {
+                    let metrics = line.metrics();
+                    (metrics.block_min_coord, metrics.block_max_coord)
+                })
+                .collect()
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SharedTextLineBounds {
+    inline_min: f32,
+    inline_max: f32,
+    block_min: f32,
+    block_max: f32,
+}
+
+fn shared_text_line_bounds(
+    layout: &parley::Layout<usize>,
+    node_id: usize,
+) -> Vec<SharedTextLineBounds> {
+    layout
+        .lines()
+        .filter_map(|line| {
+            let mut inline_min = f32::INFINITY;
+            let mut inline_max = f32::NEG_INFINITY;
+            let mut has_run = false;
+            for item in line.items() {
+                let parley::PositionedLayoutItem::GlyphRun(glyph_run) = item else {
+                    continue;
+                };
+                if glyph_run.style().brush != node_id {
+                    continue;
+                }
+                has_run = true;
+                let mut has_positioned_glyph = false;
+                for glyph in glyph_run.positioned_glyphs() {
+                    let start = glyph.x;
+                    let end = start + glyph.advance;
+                    if start.is_finite() && end.is_finite() {
+                        inline_min = inline_min.min(start.min(end));
+                        inline_max = inline_max.max(start.max(end));
+                        has_positioned_glyph = true;
+                    }
+                }
+                if !has_positioned_glyph {
+                    let start = glyph_run.offset();
+                    let end = start + glyph_run.advance();
+                    if start.is_finite() && end.is_finite() {
+                        inline_min = inline_min.min(start.min(end));
+                        inline_max = inline_max.max(start.max(end));
+                    }
+                }
+            }
+            if !has_run {
+                return None;
+            }
+            let metrics = line.metrics();
+            if !inline_min.is_finite() || !inline_max.is_finite() {
+                inline_min = metrics.inline_min_coord;
+                inline_max = metrics.inline_max_coord;
+            }
+            Some(SharedTextLineBounds {
+                inline_min,
+                inline_max,
+                block_min: metrics.block_min_coord,
+                block_max: metrics.block_max_coord,
+            })
+        })
+        .collect()
+}
+
+fn shared_text_bounds(lines: &[SharedTextLineBounds]) -> Option<(f32, f32, f32, f32)> {
+    let first = lines.first()?;
+    let mut inline_min = first.inline_min;
+    let mut inline_max = first.inline_max;
+    let mut block_min = first.block_min;
+    let mut block_max = first.block_max;
+    for line in &lines[1..] {
+        inline_min = inline_min.min(line.inline_min);
+        inline_max = inline_max.max(line.inline_max);
+        block_min = block_min.min(line.block_min);
+        block_max = block_max.max(line.block_max);
+    }
+    [inline_min, inline_max, block_min, block_max]
+        .into_iter()
+        .all(f32::is_finite)
+        .then_some((inline_min, inline_max, block_min, block_max))
+}
+
 /// Project an already-paginated document using one fixed geometry for all pages.
 ///
 /// This compatibility entry point remains valid for fixed-page callers. New
@@ -508,7 +647,16 @@ pub fn page_fragments_from_slices_with_page_geometry(
         width: f32,
         height: f32,
         line_metrics: Option<Vec<(f32, f32)>>,
+        shared_text_lines: Option<Vec<SharedTextLineBounds>>,
         is_repeat: bool,
+    }
+    struct PageFragmentPlacement {
+        page_slot: usize,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        line_range: Option<PageFragmentLineRange>,
     }
 
     let mut nodes = Vec::new();
@@ -545,17 +693,21 @@ pub fn page_fragments_from_slices_with_page_geometry(
             _ => false, // cov:ignore: non-rendered node kinds are filtered by the document invariant.
         };
         if include && abs_x.is_finite() && abs_y.is_finite() {
-            let line_metrics = (node.kind() == NodeKind::Text).then(|| {
-                node.text_layout()
-                    .into_iter()
-                    .flat_map(|layout| {
-                        layout.lines().map(|line| {
-                            let metrics = line.metrics();
-                            (metrics.block_min_coord, metrics.block_max_coord)
-                        })
-                    })
-                    .collect()
-            });
+            let shared_text_lines = node
+                .shared_inline_text_layout()
+                .map(|layout| shared_text_line_bounds(layout, node_id));
+            let line_metrics = if let Some(lines) = &shared_text_lines {
+                Some(
+                    lines
+                        .iter()
+                        .map(|line| (line.block_min, line.block_max))
+                        .collect(),
+                )
+            } else if node.kind() == NodeKind::Text {
+                page_text_line_metrics(document, node_id, true)
+            } else {
+                None
+            };
             nodes.push(PageFragmentSource {
                 node_id: NodeId::new(node_id as u64),
                 node_kind: node.kind(),
@@ -565,6 +717,7 @@ pub fn page_fragments_from_slices_with_page_geometry(
                 width,
                 height,
                 line_metrics,
+                shared_text_lines,
                 is_repeat,
             });
         } // cov:ignore: layout sanitization normally keeps source coordinates finite.
@@ -608,12 +761,69 @@ pub fn page_fragments_from_slices_with_page_geometry(
                 continue;
             }
             if source.is_repeat {
-                placements.push((
+                if let Some(lines) = source.shared_text_lines.as_deref() {
+                    if let Some((inline_min, inline_max, block_min, block_max)) =
+                        shared_text_bounds(lines)
+                    {
+                        placements.push(PageFragmentPlacement {
+                            page_slot,
+                            x: source.abs_x + inline_min,
+                            y: (source.abs_y + block_min).max(0.0),
+                            width: (inline_max - inline_min).max(0.0),
+                            height: (block_max - block_min).max(0.0),
+                            line_range: repeat_line_range,
+                        });
+                    }
+                } else {
+                    placements.push(PageFragmentPlacement {
+                        page_slot,
+                        x: source.abs_x,
+                        y: source.abs_y.max(0.0),
+                        width: source.width,
+                        height: source.height,
+                        line_range: repeat_line_range,
+                    });
+                }
+                continue;
+            }
+            if let Some(lines) = source.shared_text_lines.as_deref() {
+                let Some(metrics) = source.line_metrics.as_deref() else {
+                    continue;
+                };
+                let Some(line_range) =
+                    line_range_for_page(metrics, source.abs_y, page_start, page_end)
+                else {
+                    continue;
+                };
+                let start = line_range.start as usize;
+                let end = line_range.end as usize;
+                let Some(lines_on_page) = lines.get(start..end).filter(|lines| !lines.is_empty())
+                else {
+                    continue;
+                };
+                let Some((inline_min, inline_max, block_min, block_max)) =
+                    shared_text_bounds(lines_on_page)
+                else {
+                    continue;
+                };
+                let abs_top = source.abs_y + block_min;
+                let abs_bottom = source.abs_y + block_max;
+                let fragment_top = abs_top.max(page_start);
+                let fragment_bottom = abs_bottom.min(page_end);
+                if !fragment_top.is_finite()
+                    || !fragment_bottom.is_finite()
+                    || fragment_bottom <= fragment_top
+                {
+                    continue;
+                }
+                placements.push(PageFragmentPlacement {
                     page_slot,
-                    source.abs_y.max(0.0),
-                    source.height,
-                    repeat_line_range,
-                ));
+                    x: source.abs_x + inline_min,
+                    y: fragment_top - page_start,
+                    width: (inline_max - inline_min).max(0.0),
+                    height: fragment_bottom - fragment_top,
+                    line_range: Some(line_range),
+                });
                 continue;
             }
             let (intersects, fragment_y, fragment_height) = if source.height > 0.0 {
@@ -637,26 +847,31 @@ pub fn page_fragments_from_slices_with_page_geometry(
                 let line_range = source.line_metrics.as_deref().and_then(|metrics| {
                     line_range_for_page(metrics, source.abs_y, page_start, page_end)
                 });
-                placements.push((page_slot, fragment_y, fragment_height, line_range));
+                placements.push(PageFragmentPlacement {
+                    page_slot,
+                    x: source.abs_x,
+                    y: fragment_y,
+                    width: source.width,
+                    height: fragment_height,
+                    line_range,
+                });
             }
         }
         let fragment_count = placements.len() as u32;
-        for (fragment_index, (page_slot, y, fragment_height, line_range)) in
-            placements.into_iter().enumerate()
-        {
-            let Some(page) = pages.get_mut(page_slot) else {
+        for (fragment_index, placement) in placements.into_iter().enumerate() {
+            let Some(page) = pages.get_mut(placement.page_slot) else {
                 continue; // cov:ignore: placements are indexed from the same slices used to build pages.
             };
             let item = PageFragmentItem::new(
                 source.node_id,
-                PageFragmentRect::new(source.abs_x, y, source.width, fragment_height),
+                PageFragmentRect::new(placement.x, placement.y, placement.width, placement.height),
                 kind,
                 fragment_index as u32,
                 fragment_count,
                 source.is_repeat,
             )
             .with_page_index(page.page_index);
-            page.items.push(match line_range {
+            page.items.push(match placement.line_range {
                 Some(range) => item.with_line_range(range),
                 None => item,
             });
@@ -1674,18 +1889,12 @@ pub fn layout_pages_with_page_geometry(
             // existing whole-box path; their line-level fragment map is a
             // separate concern.
             if let Some(block_id) = direct_block_parent
-                && checked_orphans_widows.insert(block_id)
-                && let Some(text_layout) = document.nodes[node_id].text_layout()
+                && !checked_orphans_widows.contains(&block_id)
+                && let Some(line_metrics) = page_text_line_metrics(document, node_id, false)
             {
+                checked_orphans_widows.insert(block_id);
                 let page_start = page_origin(current_page);
                 let page_end = page_start + page_step_at(current_page);
-                let line_metrics: Vec<(f32, f32)> = text_layout
-                    .lines()
-                    .map(|line| {
-                        let metrics = line.metrics();
-                        (metrics.block_min_coord, metrics.block_max_coord)
-                    })
-                    .collect();
                 let total_lines = line_metrics.len();
                 let starts_on_page = line_metrics.first().is_some_and(|(line_top, _)| {
                     let top = effective_y + line_top;

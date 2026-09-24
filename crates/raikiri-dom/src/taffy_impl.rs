@@ -56,7 +56,11 @@ pub struct TaffyChildIter<'a> {
 
 impl TaffyChildIter<'_> {
     fn children(doc: &Document, parent: NodeId) -> &[usize] {
-        doc.nodes[usize::from(parent)].layout_children()
+        let node = &doc.nodes[usize::from(parent)];
+        if node.shared_inline_height().is_some() {
+            return &[];
+        }
+        node.layout_children()
     }
 
     fn includes(doc: &Document, parent: NodeId, child: usize) -> bool {

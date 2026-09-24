@@ -1494,6 +1494,79 @@ fn layout_page_fragments_emits_one_page_with_deterministic_items() {
 }
 
 #[test]
+fn shared_inline_layout_provides_page_metrics_for_each_text_run() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;font-family:monospace;font-size:20px;line-height:20px;width:1px;line-break:anywhere"),
+    );
+    let first_span = doc.append_element(Some(block), "span", Style::default(), None::<&str>);
+    let first_text = doc.append_text(first_span, "AB");
+    let second_span = doc.append_element(Some(block), "span", Style::default(), None::<&str>);
+    let second_text = doc.append_text(second_span, "C");
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade shared-inline fixture");
+
+    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new())
+        .expect("layout shared-inline fixture");
+
+    assert!(doc.nodes[first_text].text_layout().is_none());
+    assert!(doc.nodes[first_text].shared_inline_text_layout().is_some());
+    assert_eq!(
+        page_text_line_metrics(&doc, first_text, false)
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(
+        page_text_line_metrics(&doc, first_text, true)
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        page_text_line_metrics(&doc, second_text, true)
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let second_page_start = doc.nodes[block].unrounded_layout.location.y + 30.0;
+    let slices = [
+        PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        },
+        PageSlice {
+            page_index: 1,
+            content_origin_y: second_page_start,
+            page_name: None,
+        },
+    ];
+    let pages = page_fragments_from_slices(&doc, &cascade, PageBox::A4, &slices);
+    let second_run_fragment = pages[1]
+        .items
+        .iter()
+        .find(|item| item.node_id == raikiri_traits::NodeId::new(second_text as u64))
+        .expect("later-page fragment for the final shared text run");
+    assert_eq!(
+        second_run_fragment
+            .line_range
+            .map(|range| (range.start, range.end)),
+        Some((0, 1))
+    );
+    assert!(second_run_fragment.rect.width > 0.0);
+    assert!(second_run_fragment.rect.height > 0.0);
+}
+
+#[test]
 fn layout_page_fragments_preserves_forced_page_break() {
     use raikiri_style::{build_rule_tree, cascade};
 

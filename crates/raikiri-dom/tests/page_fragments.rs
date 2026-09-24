@@ -58,6 +58,34 @@ fn public_page_fragment_snapshot_is_node_ordered() {
 }
 
 #[test]
+fn shared_inline_paragraph_projects_line_metrics_to_text_fragments() {
+    let html = br#"<!doctype html><html><head><style>html,body{margin:0}.sample{font:20px/1 monospace;width:1ch;line-break:anywhere}</style></head><body><div class="sample"><span>A</span><span>B</span><span>C</span></div></body></html>"#;
+    let options = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let mut parsed = parse(&html[..], &options).expect("parse shared-inline fixture");
+    let rules = build_rule_tree(&parsed.dom);
+    let cascade = cascade(&parsed.dom, &rules).expect("cascade shared-inline fixture");
+    let pages = layout_page_fragments(&mut parsed.dom, &cascade, PageBox::A4, FontContext::new())
+        .expect("layout shared-inline fixture");
+    assert_eq!(pages.len(), 1);
+    let text_items: Vec<_> = pages[0]
+        .items
+        .iter()
+        .filter(|item| item.kind == PageFragmentKind::Text)
+        .collect();
+    assert_eq!(text_items.len(), 3);
+    assert!(text_items.iter().all(|item| {
+        item.line_range
+            .is_some_and(|range| range.start == 0 && range.end == 1)
+            && item.rect.width > 0.0
+            && item.rect.height > 0.0
+    }));
+}
+
+#[test]
 fn public_page_fragment_item_keeps_repeat_distinct_from_split() {
     let item = PageFragmentItem::new(
         raikiri_traits::NodeId::new(7),
