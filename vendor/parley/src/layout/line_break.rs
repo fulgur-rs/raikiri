@@ -675,6 +675,20 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                         self.state
                                             .append_cluster_to_line(hanging_next_x, line_height);
                                     }
+
+                                    // The preserved newline is the break after a hanging
+                                    // pre-wrap space run. Do not emit a second, soft break
+                                    // before it when the spaces overflow.
+                                    if self.state.cluster_idx < cluster_end
+                                        && run
+                                            .get(self.state.cluster_idx - cluster_start)
+                                            .is_some_and(|next_cluster| {
+                                                next_cluster.info().whitespace()
+                                                    == Whitespace::Newline
+                                            })
+                                    {
+                                        continue;
+                                    }
                                 }
                                 return self.start_new_line(
                                     BreakReason::Regular,

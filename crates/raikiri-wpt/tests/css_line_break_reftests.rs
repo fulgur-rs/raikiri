@@ -87,12 +87,12 @@ fn line_break_anywhere_preserves_newlines_and_prewrap_spaces() {
     let reference = temp_dir.path().join("newline-reference.html");
     std::fs::write(
         &test,
-        "<!doctype html><meta charset=\"utf-8\"><link rel=\"match\" href=\"newline-reference.html\"><style>html,body{margin:0}.sample{font:20px/1 monospace;width:400px;line-break:anywhere}#pre-wrap{white-space:pre-wrap}#pre-line{white-space:pre-line}#pre-wrap-space{white-space:pre-wrap;width:3ch}#pre-wrap-many{white-space:pre-wrap;width:2ch}</style><div id=\"pre-wrap\" class=\"sample\">A\nB</div><div id=\"pre-line\" class=\"sample\">C\nD</div><div id=\"pre-wrap-space\" class=\"sample\">XXX XX</div><div id=\"pre-wrap-many\" class=\"sample\">X   XX</div>",
+        "<!doctype html><meta charset=\"utf-8\"><link rel=\"match\" href=\"newline-reference.html\"><style>html,body{margin:0}.sample{font:20px/1 monospace;width:400px;line-break:anywhere}#pre-wrap{white-space:pre-wrap}#pre-line{white-space:pre-line}#pre-wrap-space{white-space:pre-wrap;width:3ch}#pre-wrap-many{white-space:pre-wrap;width:2ch}#pre-wrap-newline{white-space:pre-wrap;width:2ch}</style><div id=\"pre-wrap\" class=\"sample\">A\nB</div><div id=\"pre-line\" class=\"sample\">C\nD</div><div id=\"pre-wrap-space\" class=\"sample\">XXX XX</div><div id=\"pre-wrap-many\" class=\"sample\">X   XX</div><div id=\"pre-wrap-newline\" class=\"sample\">X   \nY</div>",
     )
     .expect("write reftest");
     std::fs::write(
         &reference,
-        "<!doctype html><meta charset=\"utf-8\"><style>html,body{margin:0}.sample{font:20px/1 monospace;width:400px;line-break:anywhere}#pre-wrap{white-space:pre-wrap}#pre-line{white-space:pre-line}#pre-wrap-space{white-space:pre-wrap;width:3ch}#pre-wrap-many{white-space:pre-wrap;width:2ch}</style><div id=\"pre-wrap\" class=\"sample\">A<br>B</div><div id=\"pre-line\" class=\"sample\">C<br>D</div><div id=\"pre-wrap-space\" class=\"sample\">XXX<br>XX</div><div id=\"pre-wrap-many\" class=\"sample\">X<br>XX</div>",
+        "<!doctype html><meta charset=\"utf-8\"><style>html,body{margin:0}.sample{font:20px/1 monospace;width:400px;line-break:anywhere}#pre-wrap{white-space:pre-wrap}#pre-line{white-space:pre-line}#pre-wrap-space{white-space:pre-wrap;width:3ch}#pre-wrap-many{white-space:pre-wrap;width:2ch}#pre-wrap-newline{white-space:pre-wrap;width:2ch}</style><div id=\"pre-wrap\" class=\"sample\">A<br>B</div><div id=\"pre-line\" class=\"sample\">C<br>D</div><div id=\"pre-wrap-space\" class=\"sample\">XXX<br>XX</div><div id=\"pre-wrap-many\" class=\"sample\">X<br>XX</div><div id=\"pre-wrap-newline\" class=\"sample\">X<br>Y</div>",
     )
     .expect("write reference");
     let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(temp_dir.path()))
