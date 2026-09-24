@@ -6,7 +6,7 @@ This file provides instructions and context for AI coding agents working on this
 
 `docs/superpowers/` 配下 (plans / retros / specs / sprints) は **flow 情報であって stock
 情報ではない**ため、**tracked にしない**。新規 doc も untracked のままにし、`git add -f`
-で追加しないこと。規則の正典と経緯は **AGENTS.md の「docs/superpowers/ は flow 情報
+で追加しないこと。規則の正典は **AGENTS.md の「docs/superpowers/ は flow 情報
 (tracked にしない)」節**を参照。
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
@@ -70,19 +70,7 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 `git worktree` で `cargo build` / `cargo test` / `cargo bench` を走らせる場合、
 その worktree は **repo 直下の `.worktrees/<name>/` に作る。
 `/tmp` の下にも `$HOME` 直下にも作らない**。
-規則の正典と経緯は **AGENTS.md の同名節**を参照。
-
-本 repo の `/tmp` は小さな tmpfs で、**動作中の全 session が同時に共有する**
-(worktree-per-task 運用のため、session 数は並行 task 数に比例して増える)。
-枯渇の被害は gate の false-FAIL (bd raikiri-spike-weky) だけではない —
-**Bash tool 自体が無反応になり、診断可能な error が一切出ない**状態になりうる
-(bd raikiri-spike-weky への 2026-08-01 03:12 コメント記録、dz8t 実装 agent の副次的発見、
-sprint/coord/7 = global Sprint 38)。
-
-`scripts/lib/tmpdir.sh` の `TMPDIR` pin (bd raikiri-spike-weky) は
-**gate script の呼び出しに限定した、既に landing 済みのより狭い緩和策**である。
-本節はそれとは別に、gate 由来かどうかに関わらず **あらゆる scratch worktree に
-適用される repo 全体の規約**。
+規則の正典は **AGENTS.md の同名節**を参照。
 
 ## Build & Test
 

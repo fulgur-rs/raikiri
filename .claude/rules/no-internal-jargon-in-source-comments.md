@@ -26,11 +26,6 @@
 - memory への参照は特に有害。memory は **そのセッションを実行している agent 個体の
   ローカル store** であり、リポジトリの一部ではない。別 agent・別マシン・人間の
   contributor から見ると、文字通り存在しないファイルを指すことになる。
-- 実例: `crates/raikiri-html/src/ua/minimal.css` には 2026-08-15 まで
-  `(memory raikiri-implementation-independence §UA CSS の扱い)`、
-  `(bd raikiri-spike-m1.22 ...)`、`(milestone-gap-audit item Q3, M3 defer)` 等が
-  埋め込まれていた。CSS/HTML spec の引用や実装未対応箇所の技術的説明は正当な doc だが、
-  上記の tracker/process 参照は排除対象として全て削除した。
 
 ## How to Apply
 
@@ -52,7 +47,7 @@
 
 ## Before / After
 
-`crates/raikiri-html/src/ua/minimal.css` (2026-08-15 cleanup) より抜粋:
+`crates/raikiri-html/src/ua/minimal.css` より抜粋:
 
 Before:
 
