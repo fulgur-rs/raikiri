@@ -269,6 +269,10 @@ fn text_autospace_unpinned_exact_passes() {
         "css/css-text/text-autospace/text-autospace-vertical-upright-001.html",
         "css/css-text/text-autospace/text-autospace-vs-001.html",
         "css/css-text/text-autospace/text-autospace-zh-001.html",
+        // Nested inline wrappers must remain on one synthetic line box while
+        // autospace reserves its boundary advances.
+        "css/css-text/text-autospace/text-autospace-elements-005.html",
+        "css/css-text/text-autospace/text-autospace-elements-005b.html",
     ];
     assert_resource_exact_passes(&root, &candidates);
 }
