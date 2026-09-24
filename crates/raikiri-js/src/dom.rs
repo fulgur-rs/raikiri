@@ -127,6 +127,26 @@ pub trait DomBackend: 'static {
         Err("attribute mutation is not supported by this DOM backend".into())
     }
 
+    /// Create a detached HTML element with the requested local name.
+    fn create_element(&mut self, _local_name: &str) -> Result<DomNodeId, String> {
+        Err("element creation is not supported by this DOM backend".into())
+    }
+
+    /// Append `child` to `parent`, moving it from any existing parent.
+    fn append_child(&mut self, _parent: DomNodeId, _child: DomNodeId) -> Result<(), String> {
+        Err("child insertion is not supported by this DOM backend".into())
+    }
+
+    /// Read the concatenated descendant text of an element.
+    fn text_content(&mut self, _node: DomNodeId) -> Result<String, String> {
+        Err("textContent is not supported by this DOM backend".into())
+    }
+
+    /// Replace an element's children with text content.
+    fn set_text_content(&mut self, _node: DomNodeId, _value: &str) -> Result<(), String> {
+        Err("textContent mutation is not supported by this DOM backend".into())
+    }
+
     /// Read an inline style property, or return an empty string if unset.
     fn style_property(&mut self, node: DomNodeId, property: &str) -> Result<String, String>;
 
@@ -203,10 +223,26 @@ pub fn run_script<B: DomBackend>(source: &str, backend: B) -> Result<JsValue, Sc
 const DOM_FACADE: &str = r#"
 (function (host) {
 var __raikiri_elements = Object.create(null);
+var __raikiri_node_ids = new WeakMap();
 function __raikiri_css_name(property) {
     return String(property).replace(/[A-Z]/g, function (letter) {
         return "-" + letter.toLowerCase();
     });
+}
+function __raikiri_class_list(node) {
+    return {
+        add: function () {
+            var classes = (host.getAttribute(node, "class") || "").split(/\s+/);
+            for (var i = 0; i < arguments.length; i++) {
+                var token = String(arguments[i]);
+                if (token === "" || /\s/.test(token)) {
+                    throw new TypeError("classList.add expects a non-empty token without whitespace");
+                }
+                if (classes.indexOf(token) < 0) classes.push(token);
+            }
+            host.setAttribute(node, "class", classes.filter(Boolean).join(" "));
+        }
+    };
 }
 function __raikiri_style(node) {
     var methods = {
@@ -246,6 +282,7 @@ function __raikiri_element(node) {
     }
     var element = {};
     var style = __raikiri_style(node);
+    var classList = __raikiri_class_list(node);
     Object.defineProperties(element, {
         offsetHeight: {
             enumerable: true,
@@ -256,6 +293,17 @@ function __raikiri_element(node) {
             get: function () { return host.innerHTML(node); },
             set: function (value) { host.setInnerHTML(node, String(value)); }
         },
+        textContent: {
+            enumerable: true,
+            get: function () { return host.textContent(node); },
+            set: function (value) {
+                host.setTextContent(node, value === null ? "" : String(value));
+            }
+        },
+        classList: {
+            enumerable: true,
+            get: function () { return classList; }
+        },
         parentNode: {
             enumerable: true,
             get: function () { return __raikiri_element(host.parentNode(node)); }
@@ -265,6 +313,10 @@ function __raikiri_element(node) {
             get: function () { return style; }
         }
     });
+    element.appendChild = function (child) {
+        host.appendChild(node, __raikiri_node_ids.get(child));
+        return child;
+    };
     element.getBoundingClientRect = function () {
         return host.boundingClientRect(node);
     };
@@ -280,6 +332,7 @@ function __raikiri_element(node) {
     element.removeAttribute = function (name) {
         host.removeAttribute(node, String(name));
     };
+    __raikiri_node_ids.set(element, node);
     __raikiri_elements[key] = element;
     return element;
 }
@@ -289,11 +342,18 @@ var document = {
     },
     querySelector: function (selector) {
         return __raikiri_element(host.querySelector(String(selector)));
+    },
+    createElement: function (localName) {
+        return __raikiri_element(host.createElement(String(localName)));
     }
 };
 Object.defineProperty(document, "body", {
     enumerable: true,
     get: function () { return document.querySelector("body"); }
+});
+Object.defineProperty(document, "head", {
+    enumerable: true,
+    get: function () { return document.querySelector("head"); }
 });
 globalThis.document = document;
 })(globalThis.__raikiri_host);
@@ -373,6 +433,26 @@ pub(crate) fn install<B: DomBackend>(context: &mut Context, backend: B) -> JsRes
     .function(
         NativeFunction::from_fn_ptr(host_set_inner_html),
         js_string!("setInnerHTML"),
+        2,
+    )
+    .function(
+        NativeFunction::from_fn_ptr(host_create_element),
+        js_string!("createElement"),
+        1,
+    )
+    .function(
+        NativeFunction::from_fn_ptr(host_append_child),
+        js_string!("appendChild"),
+        2,
+    )
+    .function(
+        NativeFunction::from_fn_ptr(host_text_content),
+        js_string!("textContent"),
+        1,
+    )
+    .function(
+        NativeFunction::from_fn_ptr(host_set_text_content),
+        js_string!("setTextContent"),
         2,
     )
     .function(
@@ -545,6 +625,40 @@ fn host_set_inner_html(
     Ok(JsValue::undefined())
 }
 
+fn host_create_element(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let local_name = string_argument(args.first(), context)?;
+    let node = backend_call(this, |backend| backend.create_element(&local_name))?;
+    Ok(optional_node_id(Some(node)))
+}
+
+fn host_append_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let parent = node_id(args.first(), context)?;
+    let child = node_id(args.get(1), context)?;
+    backend_call(this, |backend| backend.append_child(parent, child))?;
+    Ok(JsValue::undefined())
+}
+
+fn host_text_content(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let node = node_id(args.first(), context)?;
+    let text = backend_call(this, |backend| backend.text_content(node))?;
+    Ok(JsValue::from(js_string!(text)))
+}
+
+fn host_set_text_content(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node = node_id(args.first(), context)?;
+    let text = string_argument(args.get(1), context)?;
+    backend_call(this, |backend| backend.set_text_content(node, &text))?;
+    Ok(JsValue::undefined())
+}
+
 fn host_get_attribute(
     this: &JsValue,
     args: &[JsValue],
@@ -616,70 +730,4 @@ fn host_set_style_property(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    struct LegacyBackend;
-
-    impl DomBackend for LegacyBackend {
-        fn get_element_by_id(&mut self, _id: &str) -> Result<Option<DomNodeId>, String> {
-            Ok(None)
-        }
-
-        fn query_selector(&mut self, _selector: &str) -> Result<Option<DomNodeId>, String> {
-            Ok(None)
-        }
-
-        fn parent_node(&mut self, _node: DomNodeId) -> Result<Option<DomNodeId>, String> {
-            Ok(None)
-        }
-
-        fn offset_height(&mut self, _node: DomNodeId) -> Result<f64, String> {
-            Ok(0.0)
-        }
-
-        fn bounding_client_rect(&mut self, _node: DomNodeId) -> Result<DomRect, String> {
-            Ok(DomRect::default())
-        }
-
-        fn inner_html(&mut self, _node: DomNodeId) -> Result<String, String> {
-            Ok(String::new())
-        }
-
-        fn set_inner_html(&mut self, _node: DomNodeId, _value: &str) -> Result<(), String> {
-            Ok(())
-        }
-
-        fn style_property(&mut self, _node: DomNodeId, _property: &str) -> Result<String, String> {
-            Ok(String::new())
-        }
-
-        fn set_style_property(
-            &mut self,
-            _node: DomNodeId,
-            _property: &str,
-            _value: &str,
-        ) -> Result<(), String> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn optional_attribute_methods_keep_legacy_backends_compatible() {
-        let mut backend = LegacyBackend;
-        assert_eq!(backend.get_element_by_id("missing").unwrap(), None);
-        assert_eq!(backend.query_selector("#missing").unwrap(), None);
-        assert_eq!(backend.parent_node(1).unwrap(), None);
-        assert_eq!(backend.offset_height(1).unwrap(), 0.0);
-        assert_eq!(backend.bounding_client_rect(1).unwrap(), DomRect::default());
-        assert_eq!(backend.inner_html(1).unwrap(), "");
-        backend.set_inner_html(1, "content").unwrap();
-        assert_eq!(backend.style_property(1, "color").unwrap(), "");
-        backend.set_style_property(1, "color", "red").unwrap();
-
-        assert!(backend.get_attribute(1, "id").is_err());
-        assert!(backend.has_attribute(1, "id").is_err());
-        assert!(backend.set_attribute(1, "id", "value").is_err());
-        assert!(backend.remove_attribute(1, "id").is_err());
-    }
-}
+mod tests;
