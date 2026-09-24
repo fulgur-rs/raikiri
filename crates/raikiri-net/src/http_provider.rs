@@ -156,6 +156,13 @@ impl NetworkProvider for UreqHttpProvider {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    use ureq::unversioned::resolver::{DefaultResolver, ResolvedSocketAddrs, Resolver};
+    use ureq::unversioned::transport::{DefaultConnector, NextTimeout};
+
     use super::*;
 
     fn test_url() -> Url {
@@ -278,13 +285,6 @@ mod tests {
         assert!(matches!(err, NetworkError::Other(_)));
     }
 
-    use std::io::{BufRead, BufReader, Write};
-    use std::net::TcpListener;
-    use std::thread;
-
-    use ureq::unversioned::resolver::{DefaultResolver, ResolvedSocketAddrs, Resolver};
-    use ureq::unversioned::transport::{DefaultConnector, NextTimeout};
-
     /// Builds a `Config` the same way `UreqHttpProvider::new()` does:
     /// explicitly disabling proxy pickup. Every `Agent` built in this test
     /// module goes through this helper rather than `Config::default()`, so
@@ -334,7 +334,7 @@ mod tests {
 
     /// Reads and discards a raw HTTP/1.1 request line + headers from
     /// `stream`, then writes `response` back and returns. Good enough for a
-    /// one-shot test server — this test does not need a real HTTP parser.
+    /// one-shot test server — these tests do not need a real HTTP parser.
     fn serve_one_response(mut stream: std::net::TcpStream, response: &str) {
         let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
         let mut line = String::new();
@@ -432,16 +432,12 @@ mod tests {
             serve_one_response(stream, &response);
         });
 
-        // No port is actually blocked here — this resolver is unfiltered in
-        // effect, it just happens to reuse `PortBlockingResolver`'s plumbing
-        // with a `blocked_port` that can never match a real ephemeral port.
+        // Unfiltered resolver here — this test is about the success path,
+        // not the SSRF floor, so there is nothing to block.
         let agent = ureq::Agent::with_parts(
             no_proxy_config(),
             DefaultConnector::default(),
-            PortBlockingResolver {
-                inner: DefaultResolver::default(),
-                blocked_port: 0,
-            },
+            DefaultResolver::default(),
         );
         let provider = UreqHttpProvider::with_agent(agent);
 
