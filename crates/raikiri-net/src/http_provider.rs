@@ -1,9 +1,11 @@
 //! Real HTTP(S) `NetworkProvider`, backed by `ureq` and hardened against
-//! SSRF: every address `ureq` would connect to is resolved through
-//! [`crate::http_resolver::SsrfSafeResolver`], which filters candidates
-//! through [`crate::ssrf_guard`] before a connection is ever attempted, and
+//! SSRF: every address `ureq` would connect to is resolved through this
+//! crate's internal `SsrfSafeResolver`, which filters candidates through
+//! [`crate::ssrf_guard`] before a connection is ever attempted, and
 //! [`UreqHttpProvider::new`] disables proxy pickup so a proxy environment
 //! variable cannot silently reroute connections around that filtering.
+
+use std::time::Duration;
 
 use raikiri_traits::{
     Body, FetchedResource, Method as RaikiriMethod, NetworkError, NetworkProvider, PolicyViolation,
@@ -14,9 +16,26 @@ use url::Url;
 
 use crate::http_resolver::{SsrfBlocked, SsrfSafeResolver};
 
-/// Real HTTP(S) `NetworkProvider`. Always routes through [`SsrfSafeResolver`]
-/// — there is no constructor that accepts a different resolver, so the SSRF
-/// floor cannot be bypassed by a Consumer of this type.
+/// End-to-end time limit for a single `NetworkProvider::fetch` call on
+/// `UreqHttpProvider`, from DNS lookup to the end of the response body
+/// (redirects included). Sized for one sub-resource (image, stylesheet,
+/// font).
+const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Real HTTP(S) `NetworkProvider`. Always resolves through this crate's
+/// internal `SsrfSafeResolver`, which rejects any address that
+/// [`crate::ssrf_guard::is_globally_routable`] does not accept — there is no
+/// constructor that accepts a different resolver, so the SSRF floor cannot
+/// be bypassed by a Consumer of this type.
+///
+/// This is an application-level IP-address safety floor only, not
+/// network-level egress isolation. A deploying Consumer is still expected to
+/// run it inside network-level isolation (for example a restricted network
+/// namespace with default-deny egress) for defense in depth. The floor also
+/// has residual limits: for example, IPv6 transition and legacy prefixes
+/// other than IPv4-mapped and the NAT64 well-known prefix are not explicitly
+/// enumerated, so an address embedded in one of those is not unwrapped and
+/// re-checked.
 pub struct UreqHttpProvider {
     agent: ureq::Agent,
 }
@@ -28,8 +47,10 @@ impl Default for UreqHttpProvider {
 }
 
 impl UreqHttpProvider {
-    /// Builds a provider whose `Agent` always resolves through
-    /// [`SsrfSafeResolver`].
+    /// Builds a provider whose `Agent` always resolves through the
+    /// crate-internal `SsrfSafeResolver`, never uses a proxy, and bounds
+    /// every fetch (DNS lookup through the end of the response body,
+    /// including redirects) by a 30-second end-to-end timeout.
     pub fn new() -> Self {
         // `ureq::config::Config::default()` picks up `HTTP_PROXY` /
         // `HTTPS_PROXY` / `NO_PROXY` (etc.) from the process environment. If
@@ -43,7 +64,16 @@ impl UreqHttpProvider {
         // overrides that environment-sniffing default explicitly, so
         // connections are always direct and `SsrfSafeResolver` is always
         // the thing that resolves what gets connected to.
-        let config = ureq::config::Config::builder().proxy(None).build();
+        //
+        // `timeout_global` is end-to-end in `ureq` (DNS lookup to the last
+        // byte of the response body, across redirects). Without it a slow or
+        // trickling server named by attacker-supplied HTML could block
+        // `fetch` indefinitely; the provider, not the caller, is responsible
+        // for enforcing fetch timeouts.
+        let config = ureq::config::Config::builder()
+            .proxy(None)
+            .timeout_global(Some(FETCH_TIMEOUT))
+            .build();
         Self::with_agent(ureq::Agent::with_parts(
             config,
             ureq::unversioned::transport::DefaultConnector::default(),
