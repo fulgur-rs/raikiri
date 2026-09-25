@@ -35,6 +35,7 @@ mod color_tests;
 mod common_tests;
 mod content_tests;
 mod hyphenate_limit_chars_tests;
+mod keyword_tests;
 mod layout_tests;
 mod misc_tests;
 mod serialize_tests;

@@ -2931,7 +2931,7 @@ fn font_style_rejects_non_ident() {
 }
 
 #[test]
-fn font_kerning_parses_and_maps_its_property_key() {
+fn font_kerning_parses_serializes_and_maps_its_property_key() {
     for (input, expected) in [
         ("auto", FontKerning::Auto),
         ("normal", FontKerning::Normal),
@@ -2939,6 +2939,7 @@ fn font_kerning_parses_and_maps_its_property_key() {
     ] {
         let value = PropertyValue::FontKerning(expected);
         assert_eq!(parse(input, "font-kerning"), Some(value.clone()));
+        assert_eq!(serialize_value(&value), Some(input.to_owned()));
         assert_eq!(value.key(), PropertyKey::FontKerning);
     }
 }

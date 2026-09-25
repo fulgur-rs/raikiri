@@ -114,27 +114,11 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         // can produce the same `CssColor`).
         PropertyValue::BorderColor(_) => None,
 
-        PropertyValue::TextDecorationStyle(value) => Some(
-            match value {
-                TextDecorationStyle::Solid => "solid",
-                TextDecorationStyle::Double => "double",
-                TextDecorationStyle::Dotted => "dotted",
-                TextDecorationStyle::Dashed => "dashed",
-                TextDecorationStyle::Wavy => "wavy",
-            }
-            .to_owned(),
-        ),
+        PropertyValue::TextDecorationStyle(value) => Some(value.as_css_str().to_owned()),
 
         PropertyValue::TextDecorationLine(value) => serialize_text_decoration_line(*value),
 
-        PropertyValue::TextDecorationSkipInk(value) => Some(
-            match value {
-                TextDecorationSkipInk::Auto => "auto",
-                TextDecorationSkipInk::None => "none",
-                TextDecorationSkipInk::All => "all",
-            }
-            .to_owned(),
-        ),
+        PropertyValue::TextDecorationSkipInk(value) => Some(value.as_css_str().to_owned()),
 
         PropertyValue::TextDecorationSkipSpaces(value) => Some(
             match value {
@@ -260,56 +244,15 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
             }
         }),
 
-        PropertyValue::WordSpaceTransform(value) => Some(
-            match value {
-                WordSpaceTransform::None => "none",
-                WordSpaceTransform::Space => "space",
-                WordSpaceTransform::IdeographicSpace => "ideographic-space",
-                WordSpaceTransform::SpaceAutoPhrase => "space auto-phrase",
-                WordSpaceTransform::IdeographicSpaceAutoPhrase => "ideographic-space auto-phrase",
-            }
-            .to_owned(),
-        ),
+        PropertyValue::WordSpaceTransform(value) => Some(value.as_css_str().to_owned()),
 
-        PropertyValue::TextSpacingTrim(value) => Some(
-            match value {
-                TextSpacingTrim::Auto => "auto",
-                TextSpacingTrim::Normal => "normal",
-                TextSpacingTrim::SpaceAll => "space-all",
-                TextSpacingTrim::TrimBoth => "trim-both",
-                TextSpacingTrim::TrimAll => "trim-all",
-                TextSpacingTrim::TrimStart => "trim-start",
-                TextSpacingTrim::SpaceFirst => "space-first",
-            }
-            .to_owned(),
-        ),
+        PropertyValue::TextSpacingTrim(value) => Some(value.as_css_str().to_owned()),
 
-        PropertyValue::FontKerning(value) => Some(
-            match value {
-                FontKerning::Auto => "auto",
-                FontKerning::Normal => "normal",
-                FontKerning::None => "none",
-            }
-            .to_owned(),
-        ),
+        PropertyValue::FontKerning(value) => Some(value.as_css_str().to_owned()),
 
-        PropertyValue::FontOpticalSizing(value) => Some(
-            match value {
-                FontOpticalSizing::Auto => "auto",
-                FontOpticalSizing::None => "none",
-            }
-            .to_owned(),
-        ),
+        PropertyValue::FontOpticalSizing(value) => Some(value.as_css_str().to_owned()),
 
-        PropertyValue::FontVariantEmoji(value) => Some(
-            match value {
-                FontVariantEmoji::Normal => "normal",
-                FontVariantEmoji::Text => "text",
-                FontVariantEmoji::Emoji => "emoji",
-                FontVariantEmoji::Unicode => "unicode",
-            }
-            .to_owned(),
-        ),
+        PropertyValue::FontVariantEmoji(value) => Some(value.as_css_str().to_owned()),
 
         PropertyValue::FontLanguageOverride(value) => Some(match value {
             FontLanguageOverride::Normal => "normal".to_owned(),
@@ -318,21 +261,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
             }
         }),
 
-        PropertyValue::FontVariantLigatures(value) => Some(
-            match value {
-                FontVariantLigatures::Normal => "normal",
-                FontVariantLigatures::None => "none",
-                FontVariantLigatures::CommonLigatures => "common-ligatures",
-                FontVariantLigatures::NoCommonLigatures => "no-common-ligatures",
-                FontVariantLigatures::DiscretionaryLigatures => "discretionary-ligatures",
-                FontVariantLigatures::NoDiscretionaryLigatures => "no-discretionary-ligatures",
-                FontVariantLigatures::HistoricalLigatures => "historical-ligatures",
-                FontVariantLigatures::NoHistoricalLigatures => "no-historical-ligatures",
-                FontVariantLigatures::Contextual => "contextual",
-                FontVariantLigatures::NoContextual => "no-contextual",
-            }
-            .to_owned(),
-        ),
+        PropertyValue::FontVariantLigatures(value) => Some(value.as_css_str().to_owned()),
 
         PropertyValue::FontSynthesis(value) => {
             let mut keywords = Vec::with_capacity(4);
@@ -357,14 +286,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
             })
         }
 
-        PropertyValue::FontVariantPosition(value) => Some(
-            match value {
-                FontVariantPosition::Normal => "normal",
-                FontVariantPosition::Sub => "sub",
-                FontVariantPosition::Super => "super",
-            }
-            .to_owned(),
-        ),
+        PropertyValue::FontVariantPosition(value) => Some(value.as_css_str().to_owned()),
 
         PropertyValue::FontPalette(value) => Some(match value {
             FontPaletteValue::Normal => "normal".to_owned(),
