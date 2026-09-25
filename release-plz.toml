@@ -1,0 +1,46 @@
+[workspace]
+git_only = true
+publish = false
+git_release_enable = false
+git_tag_enable = true
+release_always = false
+pr_branch_prefix = "release-plz-"
+release = false
+changelog_update = false
+max_analyze_commits = 3000
+
+[[package]]
+name = "raikiri-traits"
+release = true
+
+[[package]]
+name = "raikiri-style"
+release = true
+
+[[package]]
+name = "raikiri-net"
+release = true
+
+[[package]]
+name = "raikiri-dom"
+release = true
+
+[[package]]
+name = "raikiri-html"
+release = true
+
+[[package]]
+name = "raikiri-paint"
+release = true
+
+[[package]]
+name = "raikiri"
+release = true
+
+[[package]]
+name = "raikiri-blitz-compat"
+release = true
+
+[[package]]
+name = "raikiri-js"
+release = true
