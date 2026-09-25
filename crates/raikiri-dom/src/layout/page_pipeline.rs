@@ -157,12 +157,6 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
 /// 新規 `_with_fonts`) との trade-off の末、raikiri-dom 内 caller が全て
 /// in-repo (12 箇所 = production 1 + test 11) であり、内部 DI の explicit
 /// 化と signature 統一の方が長期保守で優れると判断した。
-///
-/// # Note on error size
-/// `LayoutError::Resolver(ResolverError)` transitively contains
-/// `NetworkError` which embeds a `PolicyViolation` payload (~144 bytes),
-/// exceeding clippy::result_large_err's 128 byte threshold.
-#[allow(clippy::result_large_err)]
 pub fn layout_single_page(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -375,7 +369,6 @@ pub struct PageSlice {
 /// without corresponding pagination support. The projection is deterministic
 /// and keeps source-node identity stable, so a consumer can select
 /// continuation lines without re-running pagination.
-#[allow(clippy::result_large_err)]
 pub fn layout_page_fragments(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -892,7 +885,6 @@ pub(crate) fn selected_page_name(cascade: &CascadeResult, node_id: usize) -> Opt
 /// This is intentionally separate from [`layout_single_page`]: existing
 /// callers retain the single-page contract while paged callers get a real
 /// per-page result and the same post-layout DOM as the scene builder.
-#[allow(clippy::result_large_err)]
 pub fn layout_pages(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -906,7 +898,6 @@ pub fn layout_pages(
 /// サイズを解決する。解決結果は同じ `Document` に保存されるため、ページ
 /// 分割後の通常のレイアウト処理と paint 時の pixel source が同じ画像を
 /// 参照できる。
-#[allow(clippy::result_large_err)]
 pub fn layout_pages_with_resolver(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -919,7 +910,6 @@ pub fn layout_pages_with_resolver(
 
 /// [`layout_pages_with_resolver`] with relative image URLs resolved against a
 /// document base URL.
-#[allow(clippy::result_large_err)]
 pub fn layout_pages_with_resolver_and_base_url(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -941,7 +931,6 @@ pub fn layout_pages_with_resolver_and_base_url(
 
 /// [`layout_pages_with_page_geometry`] と同一だが、先に `resolver` で
 /// `<img>` の intrinsic サイズを解決する。
-#[allow(clippy::result_large_err)]
 pub fn layout_pages_with_page_geometry_and_resolver(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -964,7 +953,7 @@ pub fn layout_pages_with_page_geometry_and_resolver(
 }
 
 /// [`layout_pages_with_page_geometry_and_resolver`] with document-relative image URLs.
-#[allow(clippy::result_large_err, clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn layout_pages_with_page_geometry_and_resolver_and_base_url(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -998,7 +987,6 @@ pub fn layout_pages_with_page_geometry_and_resolver_and_base_url(
 /// An empty schedule preserves the historical fixed fragmentainer height.  The
 /// paged WPT adapter supplies a schedule when `@page` changes the page size or
 /// margins after the first page; the normal API remains fixed-size by default.
-#[allow(clippy::result_large_err)]
 pub fn layout_pages_with_page_steps(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -1016,7 +1004,6 @@ pub fn layout_pages_with_page_steps(
 /// later page with a different containing-block width does not retain the
 /// first page's used percentage width.  An empty width schedule keeps the
 /// existing fixed-page behavior.
-#[allow(clippy::result_large_err)]
 pub fn layout_pages_with_page_geometry(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -2146,12 +2133,6 @@ pub fn layout_pages_with_page_geometry(
 /// 同じ sync が走るが、そちらは本 pre-pass より**後**なので間に合わない。
 /// `mark_in_document_flags` は `flags_dirty == false` のとき O(1) no-op
 /// なので、二重呼び出しの実コストは無い。
-///
-/// # Note on error size
-/// `LayoutError::Resolver(ResolverError)` transitively contains
-/// `NetworkError` which embeds a `PolicyViolation` payload (~144 bytes),
-/// exceeding clippy::result_large_err's 128 byte threshold.
-#[allow(clippy::result_large_err)]
 pub fn layout_single_page_with_resolver(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -2165,7 +2146,6 @@ pub fn layout_single_page_with_resolver(
 }
 
 /// [`layout_single_page_with_resolver`] with document-relative image URLs.
-#[allow(clippy::result_large_err)]
 pub fn layout_single_page_with_resolver_and_base_url(
     document: &mut Document,
     cascade: &CascadeResult,

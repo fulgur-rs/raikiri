@@ -55,7 +55,6 @@ struct FallbackRecordingResolver<'a> {
 }
 
 impl ReplacedResolver for FallbackRecordingResolver<'_> {
-    #[allow(clippy::result_large_err)]
     fn resolve(&self, request: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
         let url = request.url().clone();
         let mut resolved = if let Some(policy) = self.policy {
@@ -522,7 +521,6 @@ fn geometry_differs(left: PageFragmentPageGeometry, right: PageFragmentPageGeome
 /// 返す。本実装は pagination 完了後。
 ///
 /// spec §L1075 の signature 準拠。
-#[allow(clippy::result_large_err)]
 pub fn plan(
     _doc: &HtmlDocument,
     _defaults: PageDefaults,
@@ -695,7 +693,6 @@ impl<'r, 'a> RenderOptions<'r, 'a> {
 /// as [`RenderError::Sink`]; a page may already have been accepted and
 /// `finish_render` is skipped. Successful renders call
 /// [`RenderSink::finish_render`] exactly once.
-#[allow(clippy::result_large_err)]
 pub fn render_streaming(
     doc: &HtmlDocument,
     defaults: PageDefaults,
@@ -767,7 +764,7 @@ fn map_initial_page_context_error(error: InitialPageContextError) -> RenderError
     }
 }
 
-#[allow(clippy::result_large_err, clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn render_streaming_inner(
     doc: &HtmlDocument,
     defaults: PageDefaults,

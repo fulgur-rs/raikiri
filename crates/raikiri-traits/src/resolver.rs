@@ -18,12 +18,6 @@ use crate::net::NetworkError;
 ///   `RenderSummary.warnings` に自動記録する。
 pub trait ReplacedResolver {
     /// 1 replaced element の resolve。
-    ///
-    /// `ResolverError::Network(NetworkError)` は `NetworkError` 自体が
-    /// `PolicyViolation` payload を直接保有するため約 144 bytes となり、
-    /// clippy::result_large_err の閾値 (128 bytes) を超える。
-    /// Box wrapper 化の適用可否は実装段階で再判断する。
-    #[allow(clippy::result_large_err)]
     fn resolve(&self, req: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError>;
 }
 

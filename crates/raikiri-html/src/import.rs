@@ -171,7 +171,7 @@ impl ImportExpander<'_> {
                     ),
                     _ => (
                         WarningKind::PolicyWarning {
-                            violation: sanitize_policy_violation(violation.clone()),
+                            violation: sanitize_policy_violation((*violation).clone()),
                         },
                         "fetch violated network policy",
                     ),
@@ -1283,12 +1283,12 @@ mod tests {
 
         impl NetworkProvider for PolicyProvider {
             fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
-                Err(NetworkError::PolicyViolation(PolicyViolation {
+                Err(NetworkError::PolicyViolation(Box::new(PolicyViolation {
                     kind: ResourceKind::StylesheetImport,
                     url: request.url,
                     violation_type: ViolationType::HostNotAllowed,
                     details: "blocked https://user:secret@example.test/token".to_owned(),
-                }))
+                })))
             }
         }
 

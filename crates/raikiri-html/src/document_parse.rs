@@ -65,7 +65,6 @@ use crate::cascade::build_rule_tree;
 /// let doc = parse_html(&b"<p>Hi</p>"[..], &opts).expect("parse");
 /// assert!(!doc.cascade().computed.is_empty());
 /// ```
-#[allow(clippy::result_large_err)]
 pub fn parse_html<R: Read>(
     input: R,
     options: &ParseOptions<'_>,
@@ -109,7 +108,6 @@ pub fn parse_html<R: Read>(
 ///   input byte 数が `limits.max_input_bytes.unwrap()` を超えた。`limit` =
 ///   設定 cap、`actual` は cap を超えたことのみ確定 (真の input size は cap
 ///   超過 detection の都合で不明、"cap を超えたことは確実" と読む)
-#[allow(clippy::result_large_err)]
 pub fn parse_html_with_limits<R: Read>(
     mut input: R,
     options: &ParseOptions<'_>,

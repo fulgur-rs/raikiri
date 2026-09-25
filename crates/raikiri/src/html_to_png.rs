@@ -36,7 +36,6 @@ use crate::parse_html;
 /// - `RenderError::Parse(_)` — `parse_html` からの伝播 (IO / UTF-8 / html5ever)
 /// - `RenderError::Layout(_)` — `layout_single_page` からの伝播 (`<body>` 欠落 /
 ///   parley shape / taffy internal)
-#[allow(clippy::result_large_err)]
 pub(crate) fn html_to_png_impl<R: std::io::Read>(
     input: R,
     font_ctx: FontContext,
@@ -78,7 +77,6 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
 ///
 /// spec §L1118 の signature literal は `(html: &str)` だが、既存 `parse_html<R: Read>`
 /// と signature を統一するため `impl Read` を採用 (design 決定)。
-#[allow(clippy::result_large_err)]
 pub fn html_to_png<R: std::io::Read>(input: R) -> Result<Vec<u8>, RenderError> {
     html_to_png_impl(input, FontContext::new())
 }
@@ -95,7 +93,6 @@ pub fn html_to_png<R: std::io::Read>(input: R) -> Result<Vec<u8>, RenderError> {
 ///
 /// # Errors
 /// [`html_to_png`] と同じ (`RenderError::Parse` / `RenderError::Layout`)。
-#[allow(clippy::result_large_err)]
 pub fn html_to_png_with_fonts<R: std::io::Read>(
     input: R,
     font_ctx: FontContext,
@@ -117,7 +114,6 @@ pub fn html_to_png_with_fonts<R: std::io::Read>(
 /// (握りつぶして 0×0 にはしない)。placeholder への degrade を望む Consumer
 /// は `Ok(ResolvedIntrinsic { disposition: Fallback { .. } })` を返す —
 /// `raikiri_dom::layout_single_page_with_resolver` の doc 参照。
-#[allow(clippy::result_large_err)]
 pub fn html_to_png_with_resolver<R, I>(
     input: impl std::io::Read,
     resolver: &R,

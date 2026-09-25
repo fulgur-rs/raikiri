@@ -716,7 +716,6 @@ impl<'a> InitialPageProbeResources<'a> {
 /// and base URL so intrinsic sizes match the final layout. The operation is
 /// bounded so self-referential page-size changes fail explicitly. Documents
 /// without both features return their input state without a probe.
-#[allow(clippy::result_large_err)]
 pub fn resolve_initial_page_context(
     document: &Document,
     page_name: Option<String>,

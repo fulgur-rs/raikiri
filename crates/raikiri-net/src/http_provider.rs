@@ -123,28 +123,30 @@ fn map_ureq_error(url: &Url, kind: ResourceKind, err: ureq::Error) -> NetworkErr
         // Falls back to `url` only if the rejected URI is somehow not a
         // valid absolute URL.
         let blocked_url = Url::parse(&blocked.uri.to_string()).unwrap_or_else(|_| url.clone());
-        return NetworkError::PolicyViolation(PolicyViolation {
+        return NetworkError::PolicyViolation(Box::new(PolicyViolation {
             kind,
             url: blocked_url,
             violation_type: ViolationType::PrivateNetworkBlocked,
             details: "resolved IP is not globally routable".to_owned(),
-        });
+        }));
     }
     match err {
         ureq::Error::StatusCode(code) => NetworkError::Http(code),
         ureq::Error::Io(io_err) => NetworkError::Io(io_err),
-        ureq::Error::BodyExceedsLimit(limit) => NetworkError::PolicyViolation(PolicyViolation {
-            kind,
-            url: url.clone(),
-            // A limit trips mid-stream, before the full size is known, so
-            // `actual` is only a lower bound: the body was at least `limit`
-            // bytes long.
-            violation_type: ViolationType::FetchTooLarge {
-                limit,
-                actual: limit,
-            },
-            details: format!("response body exceeds the {limit}-byte limit"),
-        }),
+        ureq::Error::BodyExceedsLimit(limit) => {
+            NetworkError::PolicyViolation(Box::new(PolicyViolation {
+                kind,
+                url: url.clone(),
+                // A limit trips mid-stream, before the full size is known, so
+                // `actual` is only a lower bound: the body was at least `limit`
+                // bytes long.
+                violation_type: ViolationType::FetchTooLarge {
+                    limit,
+                    actual: limit,
+                },
+                details: format!("response body exceeds the {limit}-byte limit"),
+            }))
+        }
         timeout @ ureq::Error::Timeout(_) => {
             NetworkError::Io(io::Error::new(io::ErrorKind::TimedOut, timeout))
         }

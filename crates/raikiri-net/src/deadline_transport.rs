@@ -172,7 +172,6 @@ fn anchor(now: StdInstant, duration: UreqDuration) -> Option<StdInstant> {
 
 /// The real remaining time until `deadline`, or `Err` if it has already
 /// passed. `reason` is only used to label that error.
-#[allow(clippy::result_large_err)]
 fn remaining_or_timeout(
     deadline: StdInstant,
     reason: Timeout,
@@ -229,7 +228,6 @@ impl DeadlineTcpTransport {
     /// The real remaining time until this call's effective deadline,
     /// anchoring a new deadline first if `timeout` marks the start of a
     /// new logical operation. See the module doc.
-    #[allow(clippy::result_large_err)]
     fn remaining(&mut self, timeout: NextTimeout) -> Result<Option<StdDuration>, Error> {
         if self.last_seen != Some(timeout) {
             self.last_seen = Some(timeout);
