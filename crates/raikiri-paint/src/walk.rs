@@ -1311,7 +1311,7 @@ fn marker_content_text<T: AsRef<str>>(
     Some(text)
 }
 
-#[allow(dead_code)] // Kept as a small unit-test wrapper around the snapshot-aware helper.
+#[cfg(test)]
 fn marker_render_info<'a>(
     document: &'a Document,
     cascade: &'a CascadeResult,
@@ -1568,7 +1568,7 @@ fn paint_generated_pseudo(
     advance
 }
 
-#[allow(dead_code)] // Kept as a small unit-test wrapper around the snapshot-aware helper.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)] // cov:ignore: attribute has no executable mapping
 fn paint_list_marker(
     scene: &mut impl PaintScene,

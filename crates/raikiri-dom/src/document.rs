@@ -158,7 +158,7 @@ pub struct Document {
     /// callers (the only production path); worth knowing if a future
     /// consumer drives taffy directly and expects these diagnostics.
     ///
-    /// [`LAYOUT_WARN_CAP`]: crate::layout::LAYOUT_WARN_CAP
+    /// [`LAYOUT_WARN_CAP`]: crate::layout::sanitize::LAYOUT_WARN_CAP
     pub(crate) layout_warnings: Vec<LayoutWarn>,
     /// Stable storage for Taffy calc resolver payloads used by the current
     /// layout pass. The heap allocations keep pointees stable while styles hold raw handles.

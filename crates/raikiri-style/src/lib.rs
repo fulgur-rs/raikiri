@@ -216,7 +216,7 @@ pub enum PseudoClass {
     /// one comma-separated language range **as written in the selector**
     /// (already unescaped by `cssparser`'s ident/string tokenizing, but
     /// otherwise unvalidated / uncanonicalized — see
-    /// [`crate::cascade::language_range_matches`] doc for the scope
+    /// [`crate::cascade::lang::language_range_matches`] doc for the scope
     /// simplifications this implies).
     Lang(Vec<String>),
     /// `:dir(ltr)` / `:dir(rtl)` — CSS Selectors L4 §7.1
@@ -424,7 +424,7 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
     /// `:lang(range, ...)` / `:dir(ltr|rtl)` — CSS Selectors L4 §7.2 / §7.1
     /// (see [`PseudoClass::Lang`] / [`PseudoClass::Dir`] doc for spec
     /// anchors). Grammar (bikeshed source, quoted verbatim on
-    /// [`Direction`]'s doc / [`crate::cascade::language_range_matches`]'s
+    /// [`Direction`]'s doc / [`crate::cascade::lang::language_range_matches`]'s
     /// doc): `:lang()` "accepts a comma-separated list of one or more
     /// language ranges \[...\] a valid CSS `<ident>` or `<string>`"; `:dir()`'s
     /// "argument \[...\] must be a single identifier, otherwise the selector

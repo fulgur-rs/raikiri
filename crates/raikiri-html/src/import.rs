@@ -80,7 +80,7 @@ struct ImportExpander<'a> {
 /// network response. It is seeded into the recursion chain so a response that
 /// redirects back to an ancestor is treated as a cycle. Inline stylesheets do
 /// not have a root URL and pass `None`.
-#[allow(dead_code)] // retained as a one-root helper for focused parser tests
+#[cfg(test)]
 pub(crate) fn expand_stylesheet_imports(
     source: &str,
     base_url: Option<&Url>,

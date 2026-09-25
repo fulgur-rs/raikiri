@@ -134,7 +134,7 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
 /// - Node.text_layout を全 `None` にクリア (re-entrance safety)
 /// - `apply_computed_to_style` で computed → taffy::Style bridge (現時点では no-op)
 /// - `preshape_text` で全 Text node を parley shape、Node.text_layout に格納
-/// - `apply_page_box_to_body` で body.style.size = length(PageBox)
+/// - `apply_page_content_box_to_body` で body.style.size = page content box
 /// - `compute_root_layout` で taffy 計算、Node.unrounded_layout に書き込む
 ///
 /// # Errors
