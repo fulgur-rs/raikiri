@@ -2382,6 +2382,7 @@ dependencies = [
  "boa_engine",
  "boa_gc",
  "cssparser",
+ "raikiri-dom",
  "raikiri-style",
 ]
 

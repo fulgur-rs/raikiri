@@ -14,6 +14,7 @@ use boa_engine::object::builtins::JsArray;
 use boa_engine::{Context, JsResult, JsValue, NativeFunction, Source, js_string};
 
 pub mod dom;
+pub mod runtime;
 pub mod testharness;
 use cssparser::{ParseError, Parser, ParserInput};
 pub use dom::{DomBackend, DomNodeId, DomRect, JsRuntime, ScriptError, run_script};
