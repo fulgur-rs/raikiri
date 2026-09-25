@@ -5184,6 +5184,120 @@ fn hyphenate_character_value_maps_to_its_property_key() {
     );
 }
 
+#[test]
+fn font_variation_settings_parses_and_serializes_the_pinned_values() {
+    let cases = [
+        ("normal", FontVariationSettings::Normal, "normal"),
+        (
+            "\"wght\" 0e999",
+            FontVariationSettings::Settings(vec![FontVariationSetting {
+                tag: SmolStr::new("wght"),
+                value: 0.0,
+            }]),
+            "\"wght\" 0",
+        ),
+        (
+            "\"wght\" 700",
+            FontVariationSettings::Settings(vec![FontVariationSetting {
+                tag: SmolStr::new("wght"),
+                value: 700.0,
+            }]),
+            "\"wght\" 700",
+        ),
+        (
+            "\"AB@D\" 0.5",
+            FontVariationSettings::Settings(vec![FontVariationSetting {
+                tag: SmolStr::new("AB@D"),
+                value: 0.5,
+            }]),
+            "\"AB@D\" 0.5",
+        ),
+        (
+            "\"wght\" 700, \"wght\" 500",
+            FontVariationSettings::Settings(vec![FontVariationSetting {
+                tag: SmolStr::new("wght"),
+                value: 500.0,
+            }]),
+            "\"wght\" 500",
+        ),
+        (
+            "\"wght\" 700, \"XHGT\" 0.7",
+            FontVariationSettings::Settings(vec![
+                FontVariationSetting {
+                    tag: SmolStr::new("XHGT"),
+                    value: 0.7,
+                },
+                FontVariationSetting {
+                    tag: SmolStr::new("wght"),
+                    value: 700.0,
+                },
+            ]),
+            "\"XHGT\" 0.7, \"wght\" 700",
+        ),
+        (
+            "\"wght\" 100, \"wdth\" 200",
+            FontVariationSettings::Settings(vec![
+                FontVariationSetting {
+                    tag: SmolStr::new("wdth"),
+                    value: 200.0,
+                },
+                FontVariationSetting {
+                    tag: SmolStr::new("wght"),
+                    value: 100.0,
+                },
+            ]),
+            "\"wdth\" 200, \"wght\" 100",
+        ),
+        (
+            "\"wght\" 100, \"wdth\" 200, \"wght\" 300, \"wdth\" 400",
+            FontVariationSettings::Settings(vec![
+                FontVariationSetting {
+                    tag: SmolStr::new("wdth"),
+                    value: 400.0,
+                },
+                FontVariationSetting {
+                    tag: SmolStr::new("wght"),
+                    value: 300.0,
+                },
+            ]),
+            "\"wdth\" 400, \"wght\" 300",
+        ),
+    ];
+
+    for (input, expected, serialized) in cases {
+        let value = parse_entire(input, "font-variation-settings")
+            .unwrap_or_else(|| panic!("expected valid font-variation-settings `{input}`"));
+        assert_eq!(
+            value,
+            PropertyValue::FontVariationSettings(expected),
+            "{input}"
+        );
+        assert_eq!(value.key(), PropertyKey::FontVariationSettings);
+        assert_eq!(
+            serialize_value(&value),
+            Some(serialized.to_owned()),
+            "{input}"
+        );
+    }
+
+    for invalid in [
+        "",
+        "foo",
+        "\"wgh\" 1",
+        "\"wghtx\" 1",
+        "\"wght\"",
+        "\"wght\" 1,",
+        "normal, \"wght\" 1",
+        "\"wght\" 1 \"wdth\" 2",
+    ] {
+        assert_eq!(
+            parse_entire(invalid, "font-variation-settings"),
+            None,
+            "{invalid}"
+        );
+    }
+}
+
 #[test] // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
 // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
 fn word_space_transform_preserves_the_five_computed_values() {

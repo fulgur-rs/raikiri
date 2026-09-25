@@ -2260,6 +2260,40 @@ fn font_variant_east_asian_inherits_and_child_value_overrides() {
 }
 
 #[test]
+fn font_variation_settings_inherits_and_child_value_overrides() {
+    use crate::property::{FontVariationSetting, FontVariationSettings};
+
+    let parent_value = FontVariationSettings::Settings(vec![FontVariationSetting {
+        tag: "wght".into(),
+        value: 640.0,
+    }]);
+    let child_value = FontVariationSettings::Settings(vec![FontVariationSetting {
+        tag: "wdth".into(),
+        value: 120.0,
+    }]);
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("font-variation-settings: \"wght\" 640"));
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child =
+        doc.push_element(parent, "em", Some("font-variation-settings: \"wdth\" 120"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].font_variation_settings,
+        parent_value
+    );
+    assert_eq!(
+        result.computed[inherited].font_variation_settings,
+        parent_value
+    );
+    assert_eq!(
+        result.computed[override_child].font_variation_settings,
+        child_value
+    );
+}
+
+#[test]
 fn font_synthesis_inherits_and_child_value_overrides() {
     use crate::property::{FontSynthesisStyle, FontSynthesisValue};
     let mut doc = TestDoc::new();

@@ -1437,6 +1437,31 @@ impl FontVariantEastAsian {
     }
 }
 
+/// `font-variation-settings` value preserved for computed-style exposure.
+/// CSS Fonts 4 §8.2 <https://www.w3.org/TR/css-fonts-4/#font-variation-settings-def>.
+///
+/// Axis settings are canonicalized by keeping the last value for each
+/// case-sensitive tag and sorting the result by tag. This is CSSOM data only;
+/// no variation axis, font selection, shaping, or rendering behavior is applied.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub enum FontVariationSettings {
+    /// `normal` — initial value.
+    Normal,
+    /// Non-empty, deduplicated settings sorted by tag.
+    Settings(Vec<FontVariationSetting>),
+}
+
+/// One `<opentype-tag> <number>` pair in `font-variation-settings`.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub struct FontVariationSetting {
+    /// Case-sensitive, four-printable-ASCII-character axis tag.
+    pub tag: SmolStr,
+    /// The computed numeric coordinate.
+    pub value: f32,
+}
+
 /// `font-synthesis` shorthand value preserved for computed-style exposure.
 /// CSS Fonts 4 §2.8.5 <https://drafts.csswg.org/css-fonts/#font-synthesis>.
 ///
@@ -8979,6 +9004,8 @@ pub enum PropertyValue {
     FontVariantNumeric(FontVariantNumeric),
     /// `font-variant-east-asian` value; data only, with no glyph substitution.
     FontVariantEastAsian(FontVariantEastAsian),
+    /// `font-variation-settings` value; data only, with no font-axis application.
+    FontVariationSettings(FontVariationSettings),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -9513,6 +9540,8 @@ pub enum PropertyKey {
     FontVariantNumeric,
     // CSS Fonts 3 font-variant-east-asian; appended to preserve existing key slots.
     FontVariantEastAsian,
+    // CSS Fonts 4 font-variation-settings; appended to preserve existing key slots.
+    FontVariationSettings,
 }
 
 impl PropertyValue {
@@ -9741,6 +9770,7 @@ impl PropertyValue {
             PropertyValue::FontPalette(_) => PropertyKey::FontPalette,
             PropertyValue::FontVariantNumeric(_) => PropertyKey::FontVariantNumeric,
             PropertyValue::FontVariantEastAsian(_) => PropertyKey::FontVariantEastAsian,
+            PropertyValue::FontVariationSettings(_) => PropertyKey::FontVariationSettings,
         }
     }
 }
@@ -10809,6 +10839,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "font-palette" => PropertyKey::FontPalette,
         "font-variant-numeric" => PropertyKey::FontVariantNumeric,
         "font-variant-east-asian" => PropertyKey::FontVariantEastAsian,
+        "font-variation-settings" => PropertyKey::FontVariationSettings,
         "text-transform" => PropertyKey::TextTransform,
         "visibility" => PropertyKey::Visibility,
         "z-index" => PropertyKey::ZIndex,

@@ -14,8 +14,33 @@ fn from_name_is_ascii_case_insensitive_and_maps_legacy_aliases() {
         ComputedProperty::from_name("word-wrap"),
         Some(ComputedProperty::OverflowWrap)
     );
+    assert_eq!(
+        ComputedProperty::from_name("FONT-VARIATION-SETTINGS"),
+        Some(ComputedProperty::FontVariationSettings)
+    );
     assert_eq!(ComputedProperty::from_name("color"), None);
     assert_eq!(ComputedProperty::from_name(""), None);
+}
+
+#[test]
+fn font_variation_settings_serializes_the_computed_value() {
+    let mut computed = ComputedValues::initial();
+    computed.font_variation_settings = crate::property::FontVariationSettings::Settings(vec![
+        crate::property::FontVariationSetting {
+            tag: "wdth".into(),
+            value: 90.0,
+        },
+        crate::property::FontVariationSetting {
+            tag: "wght".into(),
+            value: 700.0,
+        },
+    ]);
+    let mut ch_advance = |_: &ChFontKey| -> f32 { panic!("no ch lengths") };
+
+    assert_eq!(
+        ComputedProperty::FontVariationSettings.serialize(&computed, &mut ch_advance),
+        Some("\"wdth\" 90, \"wght\" 700".to_owned())
+    );
 }
 
 #[test]

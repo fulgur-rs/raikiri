@@ -1,6 +1,7 @@
 //! Font and text property parsers, including `text-decoration`, `text-shadow`
 //! and the `font` shorthand.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cssparser::{ParseError, Parser, ParserInput, Token};
@@ -775,6 +776,47 @@ pub(super) fn parse_font_variant_east_asian(
     }
 
     seen_any.then_some(value)
+}
+
+/// Parse CSS Fonts 4 `font-variation-settings` for computed-value CSSOM exposure.
+///
+/// Duplicate tags keep their last value. A `BTreeMap` produces the spec's
+/// ascending tag order without quadratic duplicate searches.
+pub(super) fn parse_font_variation_settings(
+    input: &mut Parser<'_, '_>,
+) -> Option<FontVariationSettings> {
+    if let Ok(ident) = input.try_parse(|input| input.expect_ident_cloned()) {
+        return ident
+            .eq_ignore_ascii_case("normal")
+            .then_some(FontVariationSettings::Normal);
+    }
+
+    let mut settings = BTreeMap::new();
+    loop {
+        let tag = {
+            let tag = input.expect_string().ok()?;
+            if tag.len() != 4 || !tag.bytes().all(|byte| (0x20..=0x7e).contains(&byte)) {
+                return None;
+            }
+            SmolStr::new(tag.as_ref())
+        };
+        let value = expect_number_stable(input).ok()?;
+        settings.insert(tag, value);
+
+        if input.try_parse(|input| input.expect_comma()).is_err() {
+            break;
+        }
+    }
+
+    if settings.is_empty() {
+        return None;
+    }
+    Some(FontVariationSettings::Settings(
+        settings
+            .into_iter()
+            .map(|(tag, value)| FontVariationSetting { tag, value })
+            .collect(),
+    ))
 }
 
 pub(super) fn parse_font_style(input: &mut Parser<'_, '_>) -> Option<FontStyle> {
