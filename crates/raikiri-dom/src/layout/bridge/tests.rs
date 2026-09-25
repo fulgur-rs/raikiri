@@ -289,7 +289,7 @@ fn establish_minimal_line_boxes_upgrades_qualifying_container_to_flex_row() {
     assert_eq!(doc.nodes[p].style.flex_wrap, TaffyFlexWrap::NoWrap);
     assert_eq!(
         doc.nodes[p].style.align_items,
-        Some(TaffyAlignItems::BASELINE)
+        Some(TaffyAlignItems::FLEX_START)
     );
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.

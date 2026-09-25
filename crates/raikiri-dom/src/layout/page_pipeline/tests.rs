@@ -291,6 +291,331 @@ fn establish_minimal_line_boxes_aligns_inline_block_text_baselines() {
     );
 }
 
+fn assert_inline_image_bottom_matches_text_baseline(text_content: &str, white_space: &str) {
+    use parley::FontContext;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let p_style =
+        format!("display:block;font-size:20px;line-height:20px;white-space:{white_space}");
+    let p = doc.append_element(Some(body), "p", Style::default(), Some(&p_style));
+    // Comments are ignored by the inline bridge and exercise its non-box path.
+    doc.append_comment(Some(p), "baseline helper should ignore comments");
+    let text = doc.append_text(p, text_content);
+    let image = doc.append_element(
+        Some(p),
+        "img",
+        Style::default(),
+        Some("display:inline;width:8px;height:8px"),
+    );
+
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+    assert_eq!(doc.nodes[p].style.display, Display::Flex);
+    assert_eq!(
+        doc.nodes[p].style.align_items,
+        Some(TaffyAlignItems::BASELINE)
+    );
+    let text_baseline = doc.nodes[text].unrounded_layout.location.y
+        + doc.nodes[text]
+            .text_layout()
+            .expect("text shaped")
+            .lines()
+            .next()
+            .expect("one line")
+            .metrics()
+            .baseline;
+    let image_bottom = doc.nodes[image].unrounded_layout.location.y
+        + doc.nodes[image].unrounded_layout.size.height;
+    assert!(
+        (image_bottom - text_baseline).abs() < 1e-3,
+        "inline image bottom must meet the text baseline, got image_bottom={image_bottom} text_baseline={text_baseline}"
+    );
+    if white_space == "pre" {
+        let text_right = doc.nodes[text].unrounded_layout.location.x
+            + doc.nodes[text].unrounded_layout.size.width;
+        assert!(
+            doc.nodes[image].unrounded_layout.location.x >= text_right - 1e-3,
+            "preserved leading space must advance the image, got image_x={} text_right={text_right}",
+            doc.nodes[image].unrounded_layout.location.x
+        );
+    }
+}
+
+#[test]
+fn establish_minimal_line_boxes_aligns_inline_image_bottom_to_visible_text_baseline() {
+    assert_inline_image_bottom_matches_text_baseline("A", "normal");
+}
+
+#[test]
+fn establish_minimal_line_boxes_aligns_replaced_bottoms_after_nbsp_text() {
+    use parley::FontContext;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let p = doc.append_element(
+        Some(body),
+        "p",
+        Style::default(),
+        Some("display:block;font-size:20px;line-height:20px;white-space:normal"),
+    );
+    // A normal-mode NBSP is preserved as an advance-only item; it must not let
+    // the legacy top-alignment pass undo the replaced-box baseline fallback.
+    doc.append_text(p, "\u{00A0}");
+    let tall_image = doc.append_element(
+        Some(p),
+        "img",
+        Style::default(),
+        Some("display:inline;width:8px;height:8px"),
+    );
+    let short_image = doc.append_element(
+        Some(p),
+        "img",
+        Style::default(),
+        Some("display:inline;width:8px;height:4px"),
+    );
+
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+    assert_eq!(
+        doc.nodes[p].style.align_items,
+        Some(TaffyAlignItems::BASELINE)
+    );
+    let tall_bottom = doc.nodes[tall_image].unrounded_layout.location.y
+        + doc.nodes[tall_image].unrounded_layout.size.height;
+    let short_bottom = doc.nodes[short_image].unrounded_layout.location.y
+        + doc.nodes[short_image].unrounded_layout.size.height;
+    assert!(
+        (tall_bottom - short_bottom).abs() < 1e-3,
+        "baseline fallback must align replaced bottoms after NBSP, got tall={tall_bottom} short={short_bottom}"
+    );
+}
+
+#[test]
+fn establish_minimal_line_boxes_aligns_replaced_bottoms_across_collapsible_space() {
+    use parley::FontContext;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let p = doc.append_element(
+        Some(body),
+        "p",
+        Style::default(),
+        Some("display:block;font-size:20px;line-height:20px;white-space:normal"),
+    );
+    let tall_image = doc.append_element(
+        Some(p),
+        "img",
+        Style::default(),
+        Some("display:inline;width:8px;height:8px"),
+    );
+    doc.append_text(p, " ");
+    let short_image = doc.append_element(
+        Some(p),
+        "img",
+        Style::default(),
+        Some("display:inline;width:8px;height:4px"),
+    );
+
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+    assert_eq!(
+        doc.nodes[p].style.align_items,
+        Some(TaffyAlignItems::BASELINE)
+    );
+    let tall_bottom = doc.nodes[tall_image].unrounded_layout.location.y
+        + doc.nodes[tall_image].unrounded_layout.size.height;
+    let short_bottom = doc.nodes[short_image].unrounded_layout.location.y
+        + doc.nodes[short_image].unrounded_layout.size.height;
+    assert!(
+        (tall_bottom - short_bottom).abs() < 1e-3,
+        "normal-space inline images must retain Taffy's shared baseline, got tall={tall_bottom} short={short_bottom}"
+    );
+}
+
+#[test]
+fn establish_minimal_line_boxes_recomputes_baselines_after_manual_wrap() {
+    use parley::FontContext;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let p = doc.append_element(
+        Some(body),
+        "p",
+        Style::default(),
+        Some("display:block;width:16px;font-size:20px;line-height:20px"),
+    );
+    let first_image = doc.append_element(
+        Some(p),
+        "img",
+        Style::default(),
+        Some("display:inline;width:8px;height:8px"),
+    );
+    let second_image = doc.append_element(
+        Some(p),
+        "img",
+        Style::default(),
+        Some("display:inline;width:8px;height:4px"),
+    );
+    let third_image = doc.append_element(
+        Some(p),
+        "img",
+        Style::default(),
+        Some("display:inline;width:8px;height:6px"),
+    );
+    let fourth_image = doc.append_element(
+        Some(p),
+        "img",
+        Style::default(),
+        Some("display:inline;width:8px;height:3px"),
+    );
+
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+    assert_eq!(
+        doc.nodes[p].style.align_items,
+        Some(TaffyAlignItems::BASELINE)
+    );
+    let bottom = |image: usize| {
+        doc.nodes[image].unrounded_layout.location.y + doc.nodes[image].unrounded_layout.size.height
+    };
+    let first_row_baseline = bottom(first_image);
+    let second_row_baseline = bottom(second_image);
+    let third_row_baseline = bottom(third_image);
+    let fourth_row_baseline = bottom(fourth_image);
+    assert!(
+        (first_row_baseline - second_row_baseline).abs() < 1e-3,
+        "the first manually wrapped row must share its image baseline"
+    );
+    assert!(
+        (third_row_baseline - fourth_row_baseline).abs() < 1e-3,
+        "the second manually wrapped row must recompute its own image baseline"
+    );
+    assert!(
+        (doc.nodes[third_image].unrounded_layout.location.y
+            - doc.nodes[first_image].unrounded_layout.location.y
+            - 20.0)
+            .abs()
+            < 1e-3,
+        "the second row must start one line-height after the first, without stale Taffy offset"
+    );
+}
+
+#[test]
+fn establish_minimal_line_boxes_preserves_inline_image_baseline_with_preformatted_space() {
+    assert_inline_image_bottom_matches_text_baseline(" ", "pre");
+}
+
+#[test]
+fn establish_minimal_line_boxes_aligns_inline_image_with_wrapped_text_baseline() {
+    use parley::FontContext;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let p = doc.append_element(
+        Some(body),
+        "p",
+        Style::default(),
+        Some("display:block;font-size:20px;line-height:20px"),
+    );
+    let wrapper = doc.append_element(Some(p), "span", Style::default(), Some("display:inline"));
+    let text = doc.append_text(wrapper, "A");
+    let image = doc.append_element(
+        Some(p),
+        "img",
+        Style::default(),
+        Some("display:inline;width:8px;height:8px"),
+    );
+
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+    assert_eq!(
+        doc.nodes[p].style.align_items,
+        Some(TaffyAlignItems::BASELINE)
+    );
+    let text_baseline = doc.nodes[wrapper].unrounded_layout.location.y
+        + doc.nodes[text].unrounded_layout.location.y
+        + doc.nodes[text]
+            .text_layout()
+            .expect("text shaped")
+            .lines()
+            .next()
+            .expect("one line")
+            .metrics()
+            .baseline;
+    let image_bottom = doc.nodes[image].unrounded_layout.location.y
+        + doc.nodes[image].unrounded_layout.size.height;
+    assert!(
+        (image_bottom - text_baseline).abs() < 1e-3,
+        "inline image bottom must meet the wrapped text baseline, got image_bottom={image_bottom} text_baseline={text_baseline}"
+    );
+}
+
+#[test]
+fn establish_minimal_line_boxes_keep_ordinary_inline_text_top_aligned() {
+    use parley::FontContext;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let p = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+    doc.append_text(p, "A");
+    let wrapper = doc.append_element(Some(p), "span", Style::default(), Some("display:inline"));
+    let raised = doc.append_element(
+        Some(wrapper),
+        "span",
+        Style::default(),
+        Some("display:inline; vertical-align:super"),
+    );
+    doc.append_text(raised, "B");
+    doc.append_text(p, "C");
+
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+
+    assert_eq!(doc.nodes[p].style.display, Display::Flex);
+    assert_eq!(
+        doc.nodes[p].style.align_items,
+        Some(TaffyAlignItems::FLEX_START)
+    );
+    assert_eq!(
+        doc.nodes[p].style.padding.top,
+        LengthPercentage::length(16.0 / 3.0)
+    );
+    assert_eq!(
+        doc.nodes[p].style.padding.bottom,
+        LengthPercentage::length(0.0)
+    );
+}
+
 #[test]
 fn inline_block_baseline_uses_last_in_flow_text_line() {
     use parley::FontContext;
