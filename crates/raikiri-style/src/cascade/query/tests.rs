@@ -1,5 +1,5 @@
 use crate::test_dom::TestDoc;
-use crate::{SelectorQuery, StyleNodeId};
+use crate::{SelectorQuery, StyleDom, StyleNodeId};
 
 fn doc() -> (TestDoc, StyleNodeId, StyleNodeId) {
     // <div class="a"><p id="x"></p></div>, `div` being the document element
@@ -63,4 +63,14 @@ fn non_element_id_never_matches() {
     let query = SelectorQuery::parse("*").unwrap();
     // Node 0 is the Document node itself, not an element.
     assert!(!query.matches(&dom, StyleNodeId::new(0), &[]));
+}
+
+#[test]
+fn unknown_id_never_matches() {
+    let (dom, _div, _p) = doc();
+    let query = SelectorQuery::parse("*").unwrap();
+    // One past the arena's last valid index — `dom.node()` returns `None`
+    // for it, distinct from `non_element_id_never_matches`'s in-range but
+    // non-element id.
+    assert!(!query.matches(&dom, StyleNodeId::new(dom.node_count() as u64), &[]));
 }
