@@ -447,16 +447,39 @@ impl ComputedProperty {
                 };
                 return Some(color.to_css_string());
             }
-            ComputedProperty::LetterSpacing => match computed.letter_spacing_computed {
+            ComputedProperty::LetterSpacing => match measured_spacing(
+                computed.letter_spacing_computed,
+                computed.letter_spacing_ch_factor,
+                computed,
+                ch_advance,
+            ) {
                 // `normal` computes to zero, so a zero length reads back as `normal`.
                 crate::ComputedLetterSpacing::Px(0.0) => "normal",
                 letter_spacing => return Some(letter_spacing.to_css_string()),
             },
             ComputedProperty::WordSpacing => {
-                return Some(computed.word_spacing_computed.to_css_string());
+                let word_spacing = measured_spacing(
+                    computed.word_spacing_computed,
+                    computed.word_spacing_ch_factor,
+                    computed,
+                    ch_advance,
+                );
+                return Some(word_spacing.to_css_string());
             }
             ComputedProperty::TextIndent => {
-                let mut value = computed.text_indent.to_css_string();
+                let text_indent = match (computed.text_indent_ch_factor, computed.text_indent) {
+                    (Some(factor), ComputedTextIndent::Px(_)) => {
+                        // An inherited `ch` indent keeps measuring against the
+                        // font that declared it.
+                        let font = computed
+                            .text_indent_ch_font
+                            .clone()
+                            .unwrap_or_else(|| own_ch_font(computed));
+                        ComputedTextIndent::Px(factor * ch_advance(&font))
+                    }
+                    (_, text_indent) => text_indent,
+                };
+                let mut value = text_indent.to_css_string();
                 if computed.text_indent_hanging {
                     value.push_str(" hanging");
                 }
@@ -496,6 +519,33 @@ impl ComputedProperty {
 // Computed-value serialization for types that exist only after cascade. Rules
 // that belong to one property rather than to the value type (such as
 // `letter-spacing: 0px` serializing as `normal`) stay with the caller.
+
+/// The element's own font as a `ch` measuring key.
+fn own_ch_font(computed: &ComputedValues) -> ChFontKey {
+    ChFontKey {
+        family: computed.font_family.clone(),
+        size: computed.font_size,
+        weight: computed.font_weight,
+        style: computed.font_style,
+    }
+}
+
+/// Replaces the style layer's `ch` fallback in a `letter-spacing` or
+/// `word-spacing` length with the element's measured `0` advance, the same
+/// font text layout shapes with. Percentages and `calc()` carry no `ch` factor.
+fn measured_spacing(
+    value: ComputedLetterSpacing,
+    ch_factor: Option<f32>,
+    computed: &ComputedValues,
+    ch_advance: &mut dyn FnMut(&ChFontKey) -> f32,
+) -> ComputedLetterSpacing {
+    match (ch_factor, value) {
+        (Some(factor), ComputedLetterSpacing::Px(_)) => {
+            ComputedLetterSpacing::Px(factor * ch_advance(&own_ch_font(computed)))
+        }
+        _ => value,
+    }
+}
 
 /// Serializes a computed mixed `calc()`. Cascade folds a zero term into the
 /// plain length or percentage form before a value reaches here; values built

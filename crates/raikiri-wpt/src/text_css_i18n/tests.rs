@@ -1741,3 +1741,29 @@ fn computed_text_decoration_inset_measures_ch_with_the_document_fonts() {
         .unwrap_or_else(|| panic!("expected one px length, got {value:?}"));
     assert!(px > 0.0, "{value}");
 }
+
+#[test]
+fn computed_ch_lengths_match_the_measured_zero_advance() {
+    let root = tempfile::tempdir().unwrap();
+    let mut backend = live_backend(
+        r#"<!doctype html><html><body><div id="box" style="font-family: monospace; font-size: 20px; text-decoration-inset: 2ch; letter-spacing: 2ch; word-spacing: 2ch; text-indent: 2ch">x</div></body></html>"#,
+        root.path(),
+    );
+    let node = backend.get_element_by_id("box").unwrap().unwrap();
+    let measured = backend
+        .computed_style_property(node, "text-decoration-inset")
+        .unwrap()
+        .expect("inset has a computed value");
+    // The style layer's 0.5em fallback would read 20px here.
+    assert_ne!(measured, "20px");
+    for property in ["letter-spacing", "word-spacing", "text-indent"] {
+        assert_eq!(
+            backend
+                .computed_style_property(node, property)
+                .unwrap()
+                .as_deref(),
+            Some(measured.as_str()),
+            "{property}"
+        );
+    }
+}
