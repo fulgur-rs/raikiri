@@ -80,7 +80,6 @@ pub(crate) fn throw_dom_exception(context: &mut Context, name: &str, message: &s
 }
 
 /// Record a host failure for the harness, then surface it as an `Error`.
-#[allow(dead_code, reason = "used by bindings that call into the host")]
 pub(crate) fn host_failure(context: &mut Context, error: HostError) -> JsError {
     record_failure(context, &error.0);
     JsNativeError::error().with_message(error.0).into()

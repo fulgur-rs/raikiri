@@ -5,9 +5,11 @@ use boa_engine::{Context, JsNativeError, JsResult, JsString, JsValue, NativeFunc
 use raikiri_dom::NodeKind;
 use raikiri_style::{SelectorQuery, StyleNodeId};
 
+use super::host::HostError;
 use super::interfaces::{Members, closure_function, wrap, wrap_optional};
 use super::webidl::{
-    arg_node, dom_string, this_document, this_element, this_node, throw_dom_exception, with_state,
+    arg_node, dom_string, host_failure, this_document, this_element, this_node,
+    throw_dom_exception, with_state,
 };
 
 /// Record that the DOM changed so the next layout-dependent read flushes.
@@ -366,6 +368,58 @@ fn class_list(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
     Ok(object.into())
 }
 
+/// `Element.innerHTML` getter (DOM parsing and serialization §3.2): a live
+/// serialization of the element's children, computed fresh on every read
+/// from the current arena state rather than a retained source string. An
+/// error is only a corrupted document arena (an out-of-range or malformed
+/// template-fragment index) that a brand-checked `Element` index should
+/// never expose in practice, so it is treated as a host failure, the same
+/// as the setter's fragment-parse failure below.
+fn inner_html(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_element(this, context)?;
+    let result = with_state(context, |s| s.host.document().serialize_inner_html(index))?;
+    match result {
+        Ok(html) => Ok(js_str(&html)),
+        Err(message) => Err(host_failure(context, HostError(message))), // cov:ignore: serialize_inner_html only errors for an out-of-range or malformed index, which a brand-checked Element index never is
+    }
+}
+
+/// `Element.innerHTML` setter (DOM parsing and serialization §3.2): parses
+/// `value` as an HTML fragment through the host (context element's tag name
+/// and namespace, per the fragment parsing algorithm), then replaces the
+/// element's children with the parsed result. Targeting a `<template>`
+/// replaces its template contents instead of its direct children
+/// (`Document::replace_children_from`).
+fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_element(this, context)?;
+    let markup = dom_string(args, 0, context)?;
+    let parsed = with_state(context, |s| {
+        let doc = s.host.document();
+        let tag = doc
+            .get_node(index)
+            .and_then(|n| n.tag_name())
+            .unwrap_or_default()
+            .to_owned();
+        let ns = doc
+            .element_namespace_uri(index)
+            .unwrap_or("http://www.w3.org/1999/xhtml")
+            .to_owned();
+        s.host.parse_fragment(&tag, &ns, &markup)
+    })?;
+    let fragment = match parsed {
+        Ok(fragment) => fragment,
+        Err(error) => return Err(host_failure(context, error)),
+    };
+    with_state(context, |s| {
+        let root = fragment.root_index();
+        s.host
+            .document_mut()
+            .replace_children_from(index, &fragment, root);
+    })?;
+    mark_dirty(context)?;
+    Ok(JsValue::undefined())
+}
+
 // ---- Document ------------------------------------------------------------
 
 fn first_element_child(
@@ -526,7 +580,7 @@ pub(crate) const ELEMENT_MEMBERS: Members = Members {
         ("id", id),
         ("classList", class_list),
     ],
-    accessors: &[],
+    accessors: &[("innerHTML", inner_html, set_inner_html)],
     methods: &[
         ("getAttribute", 1, get_attribute),
         ("hasAttribute", 1, has_attribute),

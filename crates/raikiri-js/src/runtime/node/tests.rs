@@ -387,6 +387,62 @@ fn clear_dirty(rt: &mut DomRuntime) {
 }
 
 #[test]
+fn inner_html_serializes_and_replaces_children_through_the_host_parser() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var p = document.createElement('p'); document.body.appendChild(p); p.textContent = 'a<b';",
+    )
+    .unwrap();
+    ok(&mut rt, "p.innerHTML === 'a&lt;b'");
+    // `StubHost::parse_fragment` turns markup into a single text child.
+    rt.evaluate("p.innerHTML = 'xyz';").unwrap();
+    ok(&mut rt, "p.textContent === 'xyz'");
+}
+
+#[test]
+fn inner_html_host_failure_is_reported_as_host_error() {
+    use super::super::host::{BoxGeometry, DocumentHost, HostError};
+
+    /// A host whose fragment parser always fails, to exercise the
+    /// `innerHTML` setter's host-failure path.
+    struct FailingParse(StubHost);
+    impl DocumentHost for FailingParse {
+        fn document(&self) -> &raikiri_dom::Document {
+            self.0.document()
+        }
+        fn document_mut(&mut self) -> &mut raikiri_dom::Document {
+            self.0.document_mut()
+        }
+        fn flush(&mut self) -> Result<(), HostError> {
+            self.0.flush()
+        }
+        fn box_geometry(&mut self, node: usize) -> Result<Option<BoxGeometry>, HostError> {
+            self.0.box_geometry(node)
+        }
+        fn computed_value(
+            &mut self,
+            node: usize,
+            property: &str,
+        ) -> Result<Option<String>, HostError> {
+            self.0.computed_value(node, property)
+        }
+        fn parse_fragment(
+            &mut self,
+            _context_tag: &str,
+            _context_ns: &str,
+            _markup: &str,
+        ) -> Result<raikiri_dom::Document, HostError> {
+            Err(HostError("parser unavailable".into()))
+        }
+    }
+
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(FailingParse(host)).unwrap();
+    let err = rt.evaluate("document.body.innerHTML = '<p></p>';");
+    assert_eq!(err, Err(RuntimeError::Host("parser unavailable".into())));
+}
+
+#[test]
 fn mutations_set_dirty_and_reads_and_no_op_writes_do_not() {
     let mut rt = rt();
     rt.evaluate(
