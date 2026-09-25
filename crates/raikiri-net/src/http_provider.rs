@@ -13,6 +13,7 @@ use raikiri_traits::{
     Request, ResourceKind, ViolationType,
 };
 use ureq::ResponseExt as _;
+use ureq::unversioned::transport::Connector as _;
 use url::Url;
 
 use crate::http_resolver::{SsrfBlocked, SsrfSafeResolver};
@@ -55,25 +56,18 @@ const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
 /// explicitly enumerated, so an address embedded in one of those is not
 /// unwrapped and re-checked.
 ///
-/// Fetch timeouts have one known gap, and it is broader than just the TLS
-/// handshake: it covers every `https://` read, the handshake *and* every
-/// encrypted read of the response header/body that follows it. `ureq`
-/// 3.4.2's own timeout accounting is correctly based on an absolute
-/// deadline, and is recomputed (correctly shrinking) each time a new
-/// logical operation starts — but its rustls transport adapter takes a
-/// snapshot of that value once per operation (once before the handshake,
-/// once per logical response read) and reuses it unchanged for every raw
-/// socket read `rustls`'s own internal retry loop performs to service that
-/// one operation. A server that keeps a slow trickle of bytes arriving
-/// inside that frozen window — on any part of the exchange, not only
-/// during the handshake — can make that one operation run far longer than
-/// the configured deadline, because the window is never re-derived from
-/// elapsed wall-clock time until the next logical operation begins. The
-/// connect timeout only bounds a server that stalls outright, sending
-/// nothing at all (that case fails after 10 seconds); it does not bound
-/// this slow-trickle case at any phase. Consumers that must bound
-/// wall-clock time strictly should run fetches under their own deadline
-/// (for example on a dedicated thread, joined with a timeout).
+/// `ureq` 3.4.2's own timeout accounting is correctly based on an absolute
+/// deadline, recomputed (correctly shrinking) each time a new logical
+/// operation starts — but its rustls transport adapter takes a snapshot of
+/// that value once per operation (once before the TLS handshake, once per
+/// logical response read) and reuses it unchanged for every raw socket read
+/// `rustls`'s own internal retry loop performs to service that one
+/// operation, so a server trickling bytes that each arrive inside that
+/// frozen window could otherwise hold one operation open far past the
+/// configured deadline. This crate's `deadline_transport` module replaces
+/// `ureq`'s own TCP transport with one that re-derives the real remaining
+/// time from elapsed wall-clock time on every raw read/write instead of
+/// trusting that snapshot, closing this gap without patching `ureq` itself.
 pub struct UreqHttpProvider {
     agent: ureq::Agent,
 }
@@ -90,12 +84,15 @@ impl UreqHttpProvider {
     /// connection attempt (TCP connect plus TLS handshake) by a 10-second
     /// connect timeout, and bounds every fetch (DNS lookup through the end
     /// of the response body, including redirects) by a 30-second
-    /// end-to-end timeout, subject to the TLS-read gap described on
-    /// [`UreqHttpProvider`].
+    /// end-to-end timeout that holds even against a server trickling bytes
+    /// (see [`UreqHttpProvider`]'s doc).
     pub fn new() -> Self {
+        let connector = ()
+            .chain(crate::deadline_transport::DeadlineTcpConnector::default())
+            .chain(ureq::unversioned::transport::RustlsConnector::default());
         Self::with_agent(ureq::Agent::with_parts(
             agent_config(),
-            ureq::unversioned::transport::DefaultConnector::default(),
+            connector,
             SsrfSafeResolver::new(),
         ))
     }
@@ -200,13 +197,13 @@ fn agent_config() -> ureq::config::Config {
     //
     // `timeout_connect` additionally bounds TCP connect plus the TLS
     // handshake, so a black-hole or stalled target fails well before the
-    // global budget is spent. Neither timeout is a hard deadline once bytes
-    // are flowing: `ureq`'s rustls transport applies one fixed relative
-    // timeout to each individual socket read, for the handshake *and* for
-    // every encrypted read of the response that follows it, so a server
-    // that keeps a slow trickle of bytes arriving inside that window can
-    // outlast both timeouts on any part of the exchange (see the
-    // type-level docs).
+    // global budget is spent. Both timeouts hold even once bytes are
+    // flowing: `Agent::with_parts` below is built with `deadline_transport`'s
+    // connector (not `ureq`'s own `DefaultConnector`/`TcpConnector`), which
+    // re-derives the real remaining time on every raw socket read/write
+    // instead of trusting a single value to stay fresh across however many
+    // raw reads one logical `ureq` operation performs — see that module's
+    // doc for why `ureq`'s own accounting needs this.
     ureq::config::Config::builder()
         .proxy(None)
         .timeout_global(Some(FETCH_TIMEOUT))

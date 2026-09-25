@@ -10,6 +10,8 @@
 //! `NetworkProvider`, hardened with that floor at connect time and on every
 //! redirect hop.
 
+#[cfg(feature = "http-ureq")] // cov:ignore: attribute line has no executable code
+mod deadline_transport;
 mod file_provider;
 #[cfg(feature = "http-ureq")] // cov:ignore: attribute line has no executable code
 mod http_provider;

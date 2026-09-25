@@ -579,6 +579,94 @@ fn a_stalled_tls_handshake_fails_at_the_connect_timeout_as_a_typed_timeout() {
 }
 
 #[test]
+fn a_trickling_tls_handshake_still_times_out_at_the_connect_timeout() {
+    // This is the exact bug `deadline_transport` exists to fix: a server
+    // that never stalls outright, but keeps sending a byte or two just
+    // often enough that no single raw read ever times out on its own,
+    // used to be able to hold the handshake open far past the configured
+    // deadline (`ureq`'s rustls integration reused one frozen timeout
+    // value across every raw read the handshake needed). This drives the
+    // real `UreqHttpProvider::new()` — the production constructor, wired
+    // to `deadline_transport`'s connector, not a hand-built agent — against
+    // such a server and asserts it still times out close to the connect
+    // timeout rather than being drawn out by the trickle.
+    use std::time::Instant;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+    let port = listener.local_addr().unwrap().port();
+    thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        // A syntactically valid TLS record header (content type 0x16 =
+        // Handshake, record version 0x0303) claiming a 16,000-byte
+        // payload, so rustls accepts it and waits for that much data
+        // rather than rejecting the connection outright as malformed. The
+        // handshake will never actually complete either way (this record
+        // never contains a real ClientHello response) — the point is only
+        // that each individual trickled byte keeps a *raw read* satisfied
+        // well within whatever window that one read was given, for far
+        // longer than the connect timeout, without the connection ever
+        // going fully silent (which the sibling stalled-handshake test
+        // above already covers).
+        if stream.write_all(&[0x16, 0x03, 0x03, 0x3E, 0x80]).is_err() {
+            return;
+        }
+        for _ in 0..200 {
+            if stream.write_all(&[0u8]).is_err() {
+                return;
+            }
+            thread::sleep(std::time::Duration::from_millis(50));
+        }
+    });
+
+    // Same connector chain `UreqHttpProvider::new()` builds in production
+    // (proving the *actual* production wiring, not a hand-rolled
+    // stand-in), but with an unfiltered resolver so this loopback target
+    // — which the real SSRF floor would otherwise reject outright — is
+    // reachable at all. The floor itself is covered by other tests.
+    //
+    // Verified this test isn't vacuous by temporarily swapping this
+    // connector back to plain `DefaultConnector::default()`: the trickle
+    // then outlasted the true 10s connect-timeout budget entirely, only
+    // ending (as `ConnectionReset`, not `TimedOut`) once this test's own
+    // scripted server ran out of bytes to send — proof the *old* transport
+    // does not enforce the deadline against a byte trickle, and that this
+    // test would catch a regression back to it.
+    let connector = ()
+        .chain(crate::deadline_transport::DeadlineTcpConnector::default())
+        .chain(ureq::unversioned::transport::RustlsConnector::default());
+    let agent = ureq::Agent::with_parts(agent_config(), connector, DefaultResolver::default());
+    let provider = UreqHttpProvider::with_agent(agent);
+    let request = Request {
+        url: Url::parse(&format!("https://127.0.0.1:{port}/")).unwrap(),
+        method: RaikiriMethod::Get,
+        content_type: None,
+        headers: Vec::new(),
+        body: Body::Empty,
+        signal: None,
+        kind: ResourceKind::Image,
+    };
+
+    let start = Instant::now();
+    let err = provider
+        .fetch(request)
+        .expect_err("a trickling TLS server must still time out");
+    let elapsed = start.elapsed();
+
+    assert!(
+        matches!(&err, NetworkError::Io(e) if e.kind() == std::io::ErrorKind::TimedOut),
+        "expected NetworkError::Io(TimedOut), got {err:?}"
+    );
+    assert!(
+        elapsed < FETCH_TIMEOUT,
+        "a trickling handshake must not be able to outlast the connect timeout \
+         (let alone the global one, {FETCH_TIMEOUT:?}) just by keeping individual \
+         reads satisfied; took {elapsed:?}"
+    );
+}
+
+#[test]
 fn an_already_aborted_signal_returns_aborted_before_any_network_activity() {
     // A loopback URL would otherwise be rejected by the SSRF floor, so
     // getting `Aborted` back (not `PolicyViolation`) proves the signal is
