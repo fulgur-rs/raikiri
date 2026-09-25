@@ -6,6 +6,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use cssparser::ToCss as _;
 use raikiri_js::TestOutcome;
 use raikiri_js::dom::{DomBackend, DomNodeId, DomRect, ElementGeometry};
 use raikiri_js::testharness::run_testharness_script;
@@ -876,14 +877,10 @@ impl DomBackend for LiveDocumentBackend {
                 {
                     components.push(computed.text_decoration_style.as_css_str().to_owned());
                 }
-                match computed.text_decoration_thickness {
-                    raikiri_style::ComputedTextDecorationThickness::Auto => {}
-                    raikiri_style::ComputedTextDecorationThickness::FromFont => {
-                        components.push("from-font".to_owned());
-                    }
-                    raikiri_style::ComputedTextDecorationThickness::Length(length) => {
-                        components.push(format!("{}px", length.px()));
-                    }
+                if computed.text_decoration_thickness
+                    != raikiri_style::ComputedTextDecorationThickness::Auto
+                {
+                    components.push(computed.text_decoration_thickness.to_css_string());
                 }
                 let color = match computed.text_decoration_color {
                     raikiri_style::property::TextDecorationColor::CurrentColor => None,
@@ -1007,35 +1004,7 @@ impl DomBackend for LiveDocumentBackend {
                 )));
             }
             ComputedProperty::TextUnderlineOffset => {
-                let value = match computed.text_underline_offset {
-                    raikiri_style::ComputedTextUnderlineOffset::Auto => {
-                        raikiri_style::property::TextUnderlineOffset::Auto
-                    }
-                    raikiri_style::ComputedTextUnderlineOffset::Length(length) => {
-                        raikiri_style::property::TextUnderlineOffset::Length(
-                            raikiri_style::property::Length::Px(length.px()),
-                        )
-                    }
-                    raikiri_style::ComputedTextUnderlineOffset::Percent(percent) => {
-                        raikiri_style::property::TextUnderlineOffset::Length(
-                            raikiri_style::property::Length::Percent(percent),
-                        )
-                    }
-                    raikiri_style::ComputedTextUnderlineOffset::Calc(calc) => {
-                        raikiri_style::property::TextUnderlineOffset::Calc(
-                            raikiri_style::property::LengthPercentageCalc {
-                                percent: calc.percent,
-                                px: calc.px,
-                                em: 0.0,
-                            },
-                        )
-                    }
-                };
-                let Some(value) = serialize_value(&PropertyValue::TextUnderlineOffset(value))
-                else {
-                    return Ok(None);
-                };
-                return Ok(Some(value));
+                return Ok(Some(computed.text_underline_offset.to_css_string()));
             }
             ComputedProperty::TextDecorationColor => {
                 let color = match computed.text_decoration_color {
@@ -1051,52 +1020,16 @@ impl DomBackend for LiveDocumentBackend {
                 };
                 return Ok(Some(value));
             }
-            ComputedProperty::LetterSpacing => {
-                let value = match computed.letter_spacing_computed {
-                    raikiri_style::ComputedLetterSpacing::Px(0.0) => "normal".to_owned(),
-                    raikiri_style::ComputedLetterSpacing::Px(px) => format!("{px}px"),
-                    raikiri_style::ComputedLetterSpacing::Percent(percent) => format!("{percent}%"),
-                    raikiri_style::ComputedLetterSpacing::Calc(calc) => {
-                        let operator = if calc.px.is_sign_negative() {
-                            " - "
-                        } else {
-                            " + "
-                        };
-                        format!("calc({}%{}{}px)", calc.percent, operator, calc.px.abs())
-                    }
-                };
-                return Ok(Some(value));
-            }
+            ComputedProperty::LetterSpacing => match computed.letter_spacing_computed {
+                // `normal` computes to zero, so a zero length reads back as `normal`.
+                raikiri_style::ComputedLetterSpacing::Px(0.0) => "normal",
+                letter_spacing => return Ok(Some(letter_spacing.to_css_string())),
+            },
             ComputedProperty::WordSpacing => {
-                let value = match computed.word_spacing_computed {
-                    raikiri_style::ComputedWordSpacing::Px(px) => format!("{px}px"),
-                    raikiri_style::ComputedWordSpacing::Percent(percent) => format!("{percent}%"),
-                    raikiri_style::ComputedWordSpacing::Calc(calc) => {
-                        let operator = if calc.px.is_sign_negative() {
-                            " - "
-                        } else {
-                            " + "
-                        };
-                        format!("calc({}%{}{}px)", calc.percent, operator, calc.px.abs())
-                    }
-                };
-                return Ok(Some(value));
+                return Ok(Some(computed.word_spacing_computed.to_css_string()));
             }
             ComputedProperty::TextIndent => {
-                let mut value = match computed.text_indent {
-                    raikiri_style::ComputedTextIndent::Px(px) => format!("{px}px"),
-                    raikiri_style::ComputedTextIndent::Percent(percent) => {
-                        format!("{percent}%")
-                    }
-                    raikiri_style::ComputedTextIndent::Calc(calc) => {
-                        let operator = if calc.px.is_sign_negative() {
-                            " - "
-                        } else {
-                            " + "
-                        };
-                        format!("calc({}%{}{}px)", calc.percent, operator, calc.px.abs())
-                    }
-                };
+                let mut value = computed.text_indent.to_css_string();
                 if computed.text_indent_hanging {
                     value.push_str(" hanging");
                 }
@@ -1105,13 +1038,7 @@ impl DomBackend for LiveDocumentBackend {
                 }
                 return Ok(Some(value));
             }
-            ComputedProperty::TabSize => {
-                let value = match computed.tab_size {
-                    raikiri_style::ComputedTabSize::Number(number) => format!("{number}"),
-                    raikiri_style::ComputedTabSize::Length(length) => format!("{}px", length.0),
-                };
-                return Ok(Some(value));
-            }
+            ComputedProperty::TabSize => return Ok(Some(computed.tab_size.to_css_string())),
             ComputedProperty::WhiteSpace => computed.white_space.as_css_str(),
             ComputedProperty::WhiteSpaceCollapse => computed.white_space_collapse.as_css_str(),
             ComputedProperty::LineBreak => computed.line_break.as_css_str(),
