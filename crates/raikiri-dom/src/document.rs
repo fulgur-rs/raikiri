@@ -1305,25 +1305,19 @@ impl Document {
         let root = self.root_index();
         let mut stack: Vec<(usize, bool)> = vec![(root, false)];
         while let Some((id, in_template)) = stack.pop() {
-            let (children_snapshot, is_template_here) = {
-                let node = &mut self.nodes[id];
-                let is_unrendered_by_kind = matches!(
-                    node.data,
-                    NodeData::Comment(_) | NodeData::ProcessingInstruction { .. }
-                );
-                node.set_in_document(!in_template && !is_unrendered_by_kind);
-                let is_template = match &node.data {
-                    NodeData::Element(e) => {
-                        e.tag_name.as_str() == "template" && e.namespace.is_none()
-                    }
-                    _ => false,
-                };
-                (node.children.clone(), is_template)
+            let node = &mut self.nodes[id];
+            let is_unrendered_by_kind = matches!(
+                node.data,
+                NodeData::Comment(_) | NodeData::ProcessingInstruction { .. }
+            );
+            node.set_in_document(!in_template && !is_unrendered_by_kind);
+            let is_template_here = match &node.data {
+                NodeData::Element(e) => e.tag_name.as_str() == "template" && e.namespace.is_none(),
+                _ => false,
             };
             let child_in_template = in_template || is_template_here;
-            for c in children_snapshot.into_iter().rev() {
-                stack.push((c, child_in_template));
-            }
+            // Borrow the child IDs directly to avoid a temporary Vec per parent.
+            stack.extend(node.children.iter().rev().map(|&c| (c, child_in_template)));
         }
         // Step 3: taffy が観測する effective child tree が変わり得るため、
         // layout cache を dirty mark する。
