@@ -645,7 +645,8 @@ fn collect_col_widths(doc: &Document, table_idx: usize) -> Vec<ColSizing> {
     fn col_span(doc: &Document, node_id: usize) -> usize {
         if let crate::node::NodeData::Element(data) = &doc.nodes[node_id].data {
             for a in &data.attributes {
-                if a.local.as_str() == "span"
+                if a.namespace.is_none()
+                    && a.local.as_str() == "span"
                     && let Ok(v) = a.value.parse::<usize>()
                 {
                     return v.clamp(1, 1000);
@@ -886,7 +887,8 @@ fn collect_cells_in_row(
 fn get_colspan(doc: &Document, node_id: usize) -> u16 {
     if let crate::node::NodeData::Element(data) = &doc.nodes[node_id].data {
         for a in &data.attributes {
-            if a.local.as_str() == "colspan"
+            if a.namespace.is_none()
+                && a.local.as_str() == "colspan"
                 && let Ok(v) = a.value.parse::<u16>()
             {
                 return v.max(1);
@@ -901,7 +903,8 @@ fn get_colspan(doc: &Document, node_id: usize) -> u16 {
 fn get_rowspan(doc: &Document, node_id: usize) -> u16 {
     if let crate::node::NodeData::Element(data) = &doc.nodes[node_id].data {
         for a in &data.attributes {
-            if a.local.as_str() == "rowspan"
+            if a.namespace.is_none()
+                && a.local.as_str() == "rowspan"
                 && let Ok(v) = a.value.parse::<u16>()
             {
                 // HTML §4.9.9: rowspan=0 spans to the end of the table

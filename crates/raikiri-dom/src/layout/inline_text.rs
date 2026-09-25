@@ -1205,6 +1205,9 @@ pub(crate) fn realign_text_after_layout(
         if doc.nodes[idx].kind() != NodeKind::Text {
             continue;
         }
+        if doc.nodes[idx].is_inline_svg_content() {
+            continue;
+        }
         if !doc.nodes[idx].is_in_document() {
             continue;
         }
@@ -4614,10 +4617,11 @@ fn effective_language_for_text(
     let mut current = parent_of[text_idx];
     while let Some(idx) = current {
         if let crate::node::NodeData::Element(element) = &doc.nodes[idx].data
-            && let Some(attr) = element
-                .attributes
-                .iter()
-                .find(|attr| attr.local.eq_ignore_ascii_case("lang") || attr.local == "xml:lang")
+            && let Some(attr) = element.attributes.iter().find(|attr| {
+                (attr.namespace.is_none() && attr.local.eq_ignore_ascii_case("lang"))
+                    || (attr.namespace.as_deref() == Some("http://www.w3.org/XML/1998/namespace")
+                        && attr.local == "lang")
+            })
         {
             return attr.value.trim().to_ascii_lowercase();
         }

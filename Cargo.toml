@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/raikiri-traits",
+    "crates/raikiri-svg",
     "crates/raikiri-style",
     "crates/raikiri-net",
     "crates/raikiri-dom",
@@ -24,6 +25,7 @@ repository = "https://github.com/fulgur-rs/raikiri"
 [workspace.dependencies]
 # ── In-repo (populated per crate as they land in Tasks 2–6) ────────────
 raikiri-traits       = { version = "0.2.0", path = "./crates/raikiri-traits" }
+raikiri-svg          = { version = "0.1.0", path = "./crates/raikiri-svg" }
 raikiri-style        = { version = "0.1.0", path = "./crates/raikiri-style" }
 raikiri-net          = { version = "0.1.0", path = "./crates/raikiri-net" }
 raikiri-dom          = { version = "0.1.0", path = "./crates/raikiri-dom" }
@@ -96,6 +98,13 @@ ureq = "=3.4.2"
 image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 data-url = "0.3"
 png = "0.18"
+
+# ── Static SVG parse + raster (Pure Rust, WASM-forward) ────────────────
+# Keep SVG text/font, SVGZ, system-font, and nested raster-image support off.
+# The renderer installs its own no-I/O image href resolvers.
+resvg = { version = "=0.48.1", default-features = false }
+usvg = { version = "=0.48.1", default-features = false }
+roxmltree = "0.21.1"
 
 # Pure-Rust WOFF/WOFF2 decompression for @font-face resources.
 wuff = "0.2.9"

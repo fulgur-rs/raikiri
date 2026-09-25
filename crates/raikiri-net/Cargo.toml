@@ -10,6 +10,7 @@ license.workspace = true
 data-url       = { workspace = true }
 image          = { workspace = true }
 raikiri-traits = { workspace = true }
+raikiri-svg     = { workspace = true }
 url            = { workspace = true }
 ureq           = { workspace = true, optional = true }
 

@@ -123,7 +123,7 @@ impl<'a> ElementRef<'a> {
             crate::node::NodeData::Element(e) => e
                 .attributes
                 .iter()
-                .find(|a| a.local == local)
+                .find(|a| a.namespace.is_none() && a.local == local)
                 .map(|a| a.value.as_str()),
             _ => None,
         }

@@ -41,11 +41,14 @@ use raikiri_style::property::{
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderRadius, ComputedCssPosition,
     ComputedCssPositionOffset, ComputedLength, ComputedLengthPercentage,
-    ComputedLengthPercentageOrAuto, ComputedTransformFunction, CounterStyleRegistry,
-    PageMarginBoxCascadeResult, PageMarginBoxSlot, ResolveContext, resolve_border,
-    resolve_custom_counter,
+    ComputedLengthPercentageOrAuto, ComputedTransformFunction, ComputedValues,
+    CounterStyleRegistry, PageMarginBoxCascadeResult, PageMarginBoxSlot, ResolveContext,
+    resolve_background_size, resolve_border, resolve_css_position, resolve_custom_counter,
 };
-use raikiri_traits::{ImagePixelSource, NodeKind, PageBox};
+use raikiri_traits::{
+    ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, NodeId, NodeKind, PageBox,
+    RenderWarning, WarningKind,
+};
 use std::f64::consts::{FRAC_PI_2, PI};
 use taffy::CompactLength;
 
@@ -63,9 +66,11 @@ pub(crate) fn paint_canvas_background(
     document: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,
+    pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
 ) {
-    let page_color = page_background_color(cascade);
-    let canvas_color = canvas_background_color(document, cascade);
+    let page_color = page_background_color(cascade, pixel_source);
+    let canvas_color = canvas_background_color(document, cascade, pixel_source);
     let margins = raikiri_dom::page_margins(cascade, page_box);
     let white = peniko::Color::from_rgba8(255, 255, 255, 255);
 
@@ -85,31 +90,36 @@ pub(crate) fn paint_canvas_background(
         // A canvas color may be translucent; selecting it with `or` would
         // discard the opaque page color instead of compositing over it.
         fill_rect(scene, page_color.unwrap_or(white), page_rect);
+        paint_page_background_image(scene, document, cascade, page_rect, pixel_source, warnings);
         if let Some(color) = canvas_color {
             fill_rect(scene, color, page_rect);
         }
+        paint_canvas_background_image(scene, document, cascade, page_rect, pixel_source, warnings);
         return;
     }
 
     // The paper is always covered, even when the page background is
     // transparent; the UA canvas default is white in that case.
-    fill_rect(
-        scene,
-        page_color.unwrap_or(white),
-        kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64),
+    let page_rect = kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64);
+    fill_rect(scene, page_color.unwrap_or(white), page_rect);
+    paint_page_background_image(scene, document, cascade, page_rect, pixel_source, warnings);
+    let canvas_rect = kurbo::Rect::new(
+        margins.left as f64,
+        margins.top as f64,
+        (page_box.width - margins.right) as f64,
+        (page_box.height - margins.bottom) as f64,
     );
     if let Some(color) = canvas_color {
-        fill_rect(
-            scene,
-            color,
-            kurbo::Rect::new(
-                margins.left as f64,
-                margins.top as f64,
-                (page_box.width - margins.right) as f64,
-                (page_box.height - margins.bottom) as f64,
-            ),
-        );
+        fill_rect(scene, color, canvas_rect);
     }
+    paint_canvas_background_image(
+        scene,
+        document,
+        cascade,
+        canvas_rect,
+        pixel_source,
+        warnings,
+    );
 }
 
 /// Paint the root element border at the page edge when the document uses it
@@ -353,7 +363,10 @@ pub(crate) fn paint_page_outline(
     );
 }
 
-fn page_background_color(cascade: &CascadeResult) -> Option<Color> {
+fn page_background_color(
+    cascade: &CascadeResult,
+    pixel_source: Option<&dyn ImagePixelSource>,
+) -> Option<Color> {
     let declarations = cascade.page.declarations();
     let mut has_background_declaration = false;
     let mut background_color = CssColor::TRANSPARENT;
@@ -379,28 +392,154 @@ fn page_background_color(cascade: &CascadeResult) -> Option<Color> {
     if !has_background_declaration {
         return None;
     }
-    effective_background_color(background_color, &background_image, current_color)
-        .map(|color| Color::from_rgba8(color.r, color.g, color.b, color.a))
+    background_color_with_image_source(
+        background_color,
+        &background_image,
+        current_color,
+        pixel_source,
+    )
+    .map(|color| Color::from_rgba8(color.r, color.g, color.b, color.a))
 }
 
-fn canvas_background_color(document: &Document, cascade: &CascadeResult) -> Option<Color> {
-    if let Some(html_id) = find_html(document) {
-        let cv = &cascade.computed[html_id];
-        if let Some(c) =
-            effective_background_color(cv.background_color, &cv.background_image, cv.color)
-        {
-            return Some(Color::from_rgba8(c.r, c.g, c.b, c.a));
-        }
+fn canvas_background_owner(document: &Document, cascade: &CascadeResult) -> Option<usize> {
+    let html_id = find_html(document)?;
+    let html = cascade.computed.get(html_id)?;
+    let html_is_transparent =
+        matches!(&html.background_image, BackgroundImage::None) && html.background_color.a == 0;
+    if !html_is_transparent {
+        return Some(html_id);
     }
-    if let Some(body_id) = find_body(document) {
-        let cv = &cascade.computed[body_id];
-        if let Some(c) =
-            effective_background_color(cv.background_color, &cv.background_image, cv.color)
-        {
-            return Some(Color::from_rgba8(c.r, c.g, c.b, c.a));
+
+    let body_id = find_body(document)?;
+    let body = cascade.computed.get(body_id)?;
+    let body_has_background =
+        !matches!(&body.background_image, BackgroundImage::None) || body.background_color.a != 0;
+    body_has_background.then_some(body_id)
+}
+
+fn canvas_background_color(
+    document: &Document,
+    cascade: &CascadeResult,
+    pixel_source: Option<&dyn ImagePixelSource>,
+) -> Option<Color> {
+    let computed = cascade
+        .computed
+        .get(canvas_background_owner(document, cascade)?)?;
+    background_color_with_image_source(
+        computed.background_color,
+        &computed.background_image,
+        computed.color,
+        pixel_source,
+    )
+    .map(|color| Color::from_rgba8(color.r, color.g, color.b, color.a))
+}
+
+fn paint_page_background_image(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    area: Rect,
+    pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
+) {
+    let (Some(pixel_source), Some(PropertyValue::BackgroundImage(BackgroundImage::Url(raw_url)))) = (
+        pixel_source,
+        page_property(cascade, PropertyKey::BackgroundImage),
+    ) else {
+        return;
+    };
+    let Some(url) = background_image_url(raw_url) else {
+        return;
+    };
+    let initial = ComputedValues::initial();
+    let root_font_size = find_html(document)
+        .and_then(|node_id| cascade.computed.get(node_id))
+        .map(|computed| computed.font_size)
+        .unwrap_or(initial.font_size);
+    let page_font_size = match page_property(cascade, PropertyKey::FontSize) {
+        Some(PropertyValue::FontSize(Length::Px(px))) => ComputedLength(*px),
+        _ => root_font_size,
+    };
+    let resolve_context = ResolveContext::new(root_font_size);
+    let background_size = match page_property(cascade, PropertyKey::BackgroundSize) {
+        Some(PropertyValue::BackgroundSize(size)) => {
+            resolve_background_size(*size, page_font_size, None, &resolve_context)
         }
+        _ => initial.background_size,
+    };
+    let background_position = match page_property(cascade, PropertyKey::BackgroundPosition) {
+        Some(PropertyValue::BackgroundPosition(position)) => {
+            resolve_css_position(*position, page_font_size, None, &resolve_context)
+        }
+        _ => initial.background_position,
+    };
+    let background_repeat = match page_property(cascade, PropertyKey::BackgroundRepeat) {
+        Some(PropertyValue::BackgroundRepeat(repeat)) => *repeat,
+        _ => initial.background_repeat,
+    };
+    paint_background_from_source(
+        scene,
+        &url,
+        area,
+        &background_size,
+        &background_position,
+        &background_repeat,
+        pixel_source,
+        warnings,
+    );
+}
+
+fn paint_canvas_background_image(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    area: Rect,
+    pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
+) {
+    let (Some(pixel_source), Some(node_id)) =
+        (pixel_source, canvas_background_owner(document, cascade))
+    else {
+        return;
+    };
+    let Some(computed) = cascade.computed.get(node_id) else {
+        return;
+    };
+    let BackgroundImage::Url(raw_url) = &computed.background_image else {
+        return;
+    };
+    let Some(url) = background_image_url(raw_url) else {
+        return;
+    };
+    paint_background_from_source(
+        scene,
+        &url,
+        area,
+        &computed.background_size,
+        &computed.background_position,
+        &computed.background_repeat,
+        pixel_source,
+        warnings,
+    );
+}
+
+fn background_image_url(raw_url: &str) -> Option<url::Url> {
+    let mut url = url::Url::parse(raw_url).ok()?;
+    url.set_fragment(None);
+    Some(url)
+}
+
+fn background_color_with_image_source(
+    background_color: CssColor,
+    background_image: &BackgroundImage,
+    current_color: CssColor,
+    pixel_source: Option<&dyn ImagePixelSource>,
+) -> Option<CssColor> {
+    if pixel_source.is_some() && matches!(background_image, BackgroundImage::Url(_)) {
+        (background_color.a != 0).then_some(background_color)
+    } else {
+        effective_background_color(background_color, background_image, current_color)
     }
-    None
 }
 
 fn find_html(doc: &Document) -> Option<usize> {
@@ -425,10 +564,11 @@ struct MarginBoxPaintSpec {
     slot: PageMarginBoxSlot,
     content: String,
     background: Option<Color>,
-    /// Compact WPT fallback for the bundled opaque lime image used by the
-    /// page-margin background tests. Full resource-backed image painting is
-    /// still handled by the document/image pipeline.
+    background_image_url: Option<String>,
     background_image_lime: bool,
+    background_size: ComputedBackgroundSize,
+    background_position: ComputedCssPosition,
+    background_repeat: raikiri_style::property::BackgroundRepeat,
     content_image_lime: bool,
     border_top: Option<(f32, Color)>,
     border_right: Option<(f32, Color)>,
@@ -1970,11 +2110,34 @@ fn margin_box_spec(
         Some(PropertyValue::BackgroundColor(value)) if value.a != 0 => Some(css_color(*value)),
         _ => None,
     };
-    let background_image_lime = matches!(
-        margin_box_property(rule, PropertyKey::BackgroundImage),
-        Some(PropertyValue::BackgroundImage(BackgroundImage::Url(url)))
-            if url.ends_with("/green.png") || url == "green.png"
-    );
+    let background_image_url = match margin_box_property(rule, PropertyKey::BackgroundImage) {
+        Some(PropertyValue::BackgroundImage(BackgroundImage::Url(url))) => Some(url.clone()),
+        _ => None,
+    };
+    let background_image_lime = background_image_url
+        .as_deref()
+        .is_some_and(|url| url.ends_with("/green.png") || url == "green.png");
+    let initial = ComputedValues::initial();
+    let root_font_size = root_computed(document, cascade)
+        .map(|computed| computed.font_size)
+        .unwrap_or(initial.font_size);
+    let resolve_context = ResolveContext::new(root_font_size);
+    let background_size = match margin_box_property(rule, PropertyKey::BackgroundSize) {
+        Some(PropertyValue::BackgroundSize(size)) => {
+            resolve_background_size(*size, ComputedLength(font_size), None, &resolve_context)
+        }
+        _ => initial.background_size,
+    };
+    let background_position = match margin_box_property(rule, PropertyKey::BackgroundPosition) {
+        Some(PropertyValue::BackgroundPosition(position)) => {
+            resolve_css_position(*position, ComputedLength(font_size), None, &resolve_context)
+        }
+        _ => initial.background_position,
+    };
+    let background_repeat = match margin_box_property(rule, PropertyKey::BackgroundRepeat) {
+        Some(PropertyValue::BackgroundRepeat(repeat)) => *repeat,
+        _ => initial.background_repeat,
+    };
     let [border_top, border_right, border_bottom, border_left] =
         margin_box_borders(document, cascade, rule, font_size);
     let margin_auto = margin_box_auto_margins(rule);
@@ -2030,7 +2193,11 @@ fn margin_box_spec(
         slot: rule.slot,
         content,
         background,
+        background_image_url,
         background_image_lime,
+        background_size,
+        background_position,
+        background_repeat,
         content_image_lime,
         border_top,
         border_right,
@@ -2050,6 +2217,7 @@ fn margin_box_spec(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_margin_box(
     scene: &mut impl PaintScene,
     spec: &MarginBoxPaintSpec,
@@ -2057,12 +2225,30 @@ fn paint_margin_box(
     y: f32,
     width: f32,
     height: f32,
+    pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
 ) {
     if width <= 0.0 || height <= 0.0 {
         return;
     }
     let rect = Rect::new(x as f64, y as f64, (x + width) as f64, (y + height) as f64);
-    if spec.background_image_lime {
+    if let Some(color) = spec.background {
+        scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
+    }
+    if let (Some(raw_url), Some(source)) = (spec.background_image_url.as_deref(), pixel_source) {
+        if let Some(url) = background_image_url(raw_url) {
+            paint_background_from_source(
+                scene,
+                &url,
+                rect,
+                &spec.background_size,
+                &spec.background_position,
+                &spec.background_repeat,
+                source,
+                warnings,
+            );
+        }
+    } else if spec.background_image_lime {
         scene.fill(
             Fill::NonZero,
             Affine::IDENTITY,
@@ -2070,9 +2256,6 @@ fn paint_margin_box(
             None,
             &rect,
         );
-    }
-    if let Some(color) = spec.background {
-        scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
     }
     for (side, border) in [
         (0_u8, spec.border_top),
@@ -2304,6 +2487,7 @@ fn margin_box_outer_height(spec: &MarginBoxPaintSpec, available: f32) -> f32 {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_horizontal_margin_boxes(
     scene: &mut impl PaintScene,
     specs: &[MarginBoxPaintSpec],
@@ -2311,6 +2495,8 @@ fn paint_horizontal_margin_boxes(
     page_width: f32,
     page_height: f32,
     margins: raikiri_dom::PageMargins,
+    pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
 ) {
     let (row_y, row_height) = if top {
         (0.0, margins.top)
@@ -2446,11 +2632,21 @@ fn paint_horizontal_margin_boxes(
         } else {
             row_y + spec.margin[0]
         };
-        paint_margin_box(scene, spec, paint_x, y, width, height);
+        paint_margin_box(
+            scene,
+            spec,
+            paint_x,
+            y,
+            width,
+            height,
+            pixel_source,
+            warnings,
+        );
         x += outer_width;
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_vertical_margin_boxes(
     scene: &mut impl PaintScene,
     specs: &[MarginBoxPaintSpec],
@@ -2458,6 +2654,8 @@ fn paint_vertical_margin_boxes(
     page_width: f32,
     page_height: f32,
     margins: raikiri_dom::PageMargins,
+    pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
 ) {
     let (column_x, column_width) = if left {
         (0.0, margins.left)
@@ -2590,7 +2788,16 @@ fn paint_vertical_margin_boxes(
         } else {
             column_x + margin_left
         };
-        paint_margin_box(scene, spec, paint_x, paint_y, width, height);
+        paint_margin_box(
+            scene,
+            spec,
+            paint_x,
+            paint_y,
+            width,
+            height,
+            pixel_source,
+            warnings,
+        );
         y += outer_height;
     }
 }
@@ -2609,6 +2816,8 @@ pub(crate) fn paint_page_margin_boxes(
     page_count: u32,
     page_is_left: bool,
     paired_page_increment: Option<i32>,
+    pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
 ) {
     let margins = raikiri_dom::page_margins(cascade, page_box);
     if margins.is_zero() || cascade.page.margin_boxes().is_empty() {
@@ -2690,6 +2899,8 @@ pub(crate) fn paint_page_margin_boxes(
         page_box.width,
         page_box.height,
         margins,
+        pixel_source,
+        warnings,
     );
     paint_horizontal_margin_boxes(
         scene,
@@ -2698,6 +2909,8 @@ pub(crate) fn paint_page_margin_boxes(
         page_box.width,
         page_box.height,
         margins,
+        pixel_source,
+        warnings,
     );
     paint_vertical_margin_boxes(
         scene,
@@ -2706,6 +2919,8 @@ pub(crate) fn paint_page_margin_boxes(
         page_box.width,
         page_box.height,
         margins,
+        pixel_source,
+        warnings,
     );
     paint_vertical_margin_boxes(
         scene,
@@ -2714,6 +2929,8 @@ pub(crate) fn paint_page_margin_boxes(
         page_box.width,
         page_box.height,
         margins,
+        pixel_source,
+        warnings,
     );
 
     for spec in &specs {
@@ -2765,7 +2982,7 @@ pub(crate) fn paint_page_margin_boxes(
                 _ => y,
             }
         };
-        paint_margin_box(scene, spec, x, y, width, height);
+        paint_margin_box(scene, spec, x, y, width, height, pixel_source, warnings);
     }
 }
 
@@ -2805,6 +3022,7 @@ pub(crate) fn paint_document(
     active_page_name: Option<Option<&str>>,
     fixed_page_width: f32,
 ) {
+    let mut warnings = Vec::new();
     paint_document_impl(
         scene,
         document,
@@ -2814,13 +3032,12 @@ pub(crate) fn paint_document(
         active_page_name,
         fixed_page_width,
         None,
+        &mut warnings,
     );
 }
 
-/// [`paint_document`] と同一だが、`<img>` element を `pixel_source` から
-/// 取得した decode 済み pixel で実際に描画する。
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn paint_document_with_images(
+pub(crate) fn paint_document_with_images_and_warnings(
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
@@ -2829,6 +3046,7 @@ pub(crate) fn paint_document_with_images(
     active_page_name: Option<Option<&str>>,
     fixed_page_width: f32,
     pixel_source: &dyn ImagePixelSource,
+    warnings: &mut Vec<RenderWarning>,
 ) {
     paint_document_impl(
         scene,
@@ -2839,6 +3057,7 @@ pub(crate) fn paint_document_with_images(
         active_page_name,
         fixed_page_width,
         Some(pixel_source),
+        warnings,
     );
 }
 
@@ -2852,6 +3071,7 @@ fn paint_document_impl(
     active_page_name: Option<Option<&str>>,
     fixed_page_width: f32,
     pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
 ) {
     let Some(body_id) = find_body(document) else {
         return;
@@ -3473,7 +3693,7 @@ fn paint_document_impl(
                 // until the deferred `PaintAfter` and overflow clip frames
                 // have finished so overlapping descendants are composited as
                 // one group instead of being alpha-blended individually.
-                let has_opacity_layer = cv.opacity < 1.0;
+                let has_opacity_layer = cv.opacity < 1.0 && !node.is_inline_svg_root();
                 if has_opacity_layer {
                     let opacity_clip = Rect::new(
                         0.0,
@@ -3546,6 +3766,7 @@ fn paint_document_impl(
                             &cv.background_position,
                             &cv.background_repeat,
                             pixel_source,
+                            warnings,
                         );
                         if clip_background.is_some() {
                             scene.pop_layer();
@@ -3612,25 +3833,34 @@ fn paint_document_impl(
                         cv.outline_offset,
                         cv.color,
                     );
-                    // Draw the decoded pixels of an `<img>` element, when a
-                    // resolver is supplied and it already has decoded pixels
-                    // for this element's `src` (CSS Images 3 §4.3, `object-fit:
-                    // fill` only — see `paint_image`'s doc). Absent a resolver
-                    // (the plain `paint_document` entry point), `pixel_source`
-                    // is always `None` and the chain short-circuits before
-                    // `img_src_url` runs at all, keeping that path's per-element
-                    // work (not just its output) identical to before this was
-                    // added. When no real decoded pixels are available, fall
-                    // back to the pre-existing filename-color heuristic so an
-                    // `<img>` still renders an approximation in the no-resolver
-                    // (e.g. plain WPT range) path.
-                    if let Some(pixel_source) = pixel_source
+                    // Resolve the source's natural dimensions first. SVG
+                    // sources use the resulting concrete object dimensions
+                    // for a bounded, size-specific raster request.
+                    let painted_image = if node.is_inline_svg_root() {
+                        paint_inline_svg(
+                            scene,
+                            document,
+                            node_id,
+                            layout.size.width,
+                            layout.size.height,
+                            paint_x,
+                            paint_y,
+                            &cv.border,
+                            &paint_padding,
+                            [cv.color.r, cv.color.g, cv.color.b, cv.color.a],
+                            cv.opacity,
+                            cv.visibility != Visibility::Hidden,
+                            warnings,
+                        )
+                    } else if let Some(source) = pixel_source
                         && let Some(src_url) = img_src_url(document, node_id)
-                        && let Some(decoded) = pixel_source.get_decoded(&src_url)
+                        && let Some(intrinsic) = source.intrinsic_size(&src_url)
                     {
                         paint_image(
                             scene,
-                            &decoded,
+                            source,
+                            &src_url,
+                            intrinsic,
                             layout.size.width,
                             layout.size.height,
                             paint_x,
@@ -3639,8 +3869,16 @@ fn paint_document_impl(
                             &paint_padding,
                             cv.object_fit,
                             &cv.object_position,
-                        );
-                    } else if node.tag_name() == Some("img")
+                            cv.visibility != Visibility::Hidden,
+                            node_id,
+                            warnings,
+                        )
+                    } else {
+                        false
+                    };
+                    if !painted_image
+                        && pixel_source.is_none()
+                        && node.tag_name() == Some("img")
                         && let Some(src) = node.attribute("src")
                         && let Some(color) = infer_url_color(src)
                     {
@@ -3676,6 +3914,7 @@ fn paint_document_impl(
                             &cv.background_position,
                             &cv.background_repeat,
                             pixel_source,
+                            warnings,
                         );
                         if clip_background.is_some() {
                             scene.pop_layer();
@@ -3801,7 +4040,11 @@ fn paint_document_impl(
                 // This is intentionally local to the current parent; full
                 // nested stacking-context isolation remains outside this
                 // minimal painter.
-                let mut children = node.children.clone();
+                let mut children = if node.is_inline_svg_root() {
+                    Vec::new()
+                } else {
+                    node.children.clone()
+                };
                 sort_paint_children(&mut children, cv.display, cascade);
 
                 // The current Taffy bridge treats inline children as zero-sized
@@ -4122,12 +4365,14 @@ fn used_padding_for_paint(
     }
 }
 
-/// Draws decoded replaced-element pixels using CSS Images 3 `object-fit` and
-/// `object-position`, clipped to the element content box.
+/// Draws a replaced element after asking the source for pixels at the concrete
+/// CSS object size selected by `object-fit`.
 #[allow(clippy::too_many_arguments)]
 fn paint_image(
     scene: &mut impl PaintScene,
-    decoded: &raikiri_traits::DecodedImage,
+    source: &dyn ImagePixelSource,
+    url: &url::Url,
+    natural: ImageIntrinsicSize,
     border_box_width: f32,
     border_box_height: f32,
     abs_x: f32,
@@ -4136,7 +4381,10 @@ fn paint_image(
     padding: &taffy::Rect<f32>,
     object_fit: ObjectFit,
     object_position: &ComputedCssPosition,
-) {
+    visible: bool,
+    node_id: usize,
+    warnings: &mut Vec<RenderWarning>,
+) -> bool {
     let bl = border.left.width().px();
     let bt = border.top.width().px();
     let br = border.right.width().px();
@@ -4152,32 +4400,59 @@ fn paint_image(
     let content_y = (abs_y + bt + pt) as f64;
     let content_w = (border_box_width - bl - br - pl - pr).max(0.0) as f64;
     let content_h = (border_box_height - bt - bb - pt - pb).max(0.0) as f64;
-    let intrinsic_w = decoded.width as f64;
-    let intrinsic_h = decoded.height as f64;
-    if content_w <= 0.0 || content_h <= 0.0 || intrinsic_w <= 0.0 || intrinsic_h <= 0.0 {
-        return;
+    if !visible || content_w <= 0.0 || content_h <= 0.0 {
+        return true;
     }
 
-    let contain_scale = (content_w / intrinsic_w).min(content_h / intrinsic_h);
-    let cover_scale = (content_w / intrinsic_w).max(content_h / intrinsic_h);
-    let scale = match object_fit {
-        ObjectFit::Fill => 1.0,
-        ObjectFit::Contain => contain_scale,
-        ObjectFit::Cover => cover_scale,
-        ObjectFit::None => 1.0,
-        ObjectFit::ScaleDown => contain_scale.min(1.0),
-        _ => 1.0, // cov:ignore: defensive fallback for future ObjectFit variants
+    let (natural_w, natural_h) = natural_object_size(natural);
+    let (image_w, image_h) = match object_fit {
+        ObjectFit::Fill => (content_w, content_h),
+        ObjectFit::Contain => {
+            let scale = (content_w / natural_w).min(content_h / natural_h);
+            (natural_w * scale, natural_h * scale)
+        }
+        ObjectFit::Cover => {
+            let scale = (content_w / natural_w).max(content_h / natural_h);
+            (natural_w * scale, natural_h * scale)
+        }
+        ObjectFit::None => (natural_w, natural_h),
+        ObjectFit::ScaleDown => {
+            let scale = (content_w / natural_w).min(content_h / natural_h).min(1.0);
+            (natural_w * scale, natural_h * scale)
+        }
+        _ => (content_w, content_h), // cov:ignore: defensive fallback for future ObjectFit variants
     };
-    let image_w = if matches!(object_fit, ObjectFit::Fill) {
-        content_w
-    } else {
-        intrinsic_w * scale
+    if !image_w.is_finite() || !image_h.is_finite() || image_w <= 0.0 || image_h <= 0.0 {
+        return true;
+    }
+    let raster_size = ImageRasterSize {
+        width: image_w as f32,
+        height: image_h as f32,
     };
-    let image_h = if matches!(object_fit, ObjectFit::Fill) {
-        content_h
-    } else {
-        intrinsic_h * scale
+    let Some(decoded) = source.get_decoded_at_size(url, raster_size, None) else {
+        warnings.push(RenderWarning {
+            kind: WarningKind::ResourceFallback {
+                kind: raikiri_traits::ResourceKind::Image,
+                url: None,
+            },
+            node_id: Some(NodeId::new(node_id as u64)),
+            details: "image pixels were unavailable at the requested object size".to_owned(),
+        });
+        return true;
     };
+    let raster_w = decoded.width as f64;
+    let raster_h = decoded.height as f64;
+    if raster_w <= 0.0 || raster_h <= 0.0 {
+        warnings.push(RenderWarning {
+            kind: WarningKind::ResourceFallback {
+                kind: raikiri_traits::ResourceKind::Image,
+                url: None,
+            },
+            node_id: Some(NodeId::new(node_id as u64)),
+            details: "image pixels had an empty raster size".to_owned(),
+        });
+        return true;
+    }
     let image_x = content_x + position_offset(object_position.horizontal, content_w - image_w);
     let image_y = content_y + position_offset(object_position.vertical, content_h - image_h);
 
@@ -4199,12 +4474,232 @@ fn paint_image(
     scene.fill(
         peniko::Fill::NonZero,
         Affine::translate((image_x, image_y))
-            * Affine::scale_non_uniform(image_w / intrinsic_w, image_h / intrinsic_h),
+            * Affine::scale_non_uniform(image_w / raster_w, image_h / raster_h),
         brush.as_ref(),
         None,
-        &Rect::new(0.0, 0.0, intrinsic_w, intrinsic_h),
+        &Rect::new(0.0, 0.0, raster_w, raster_h),
     );
     scene.pop_layer();
+    true
+}
+
+fn natural_object_size(natural: ImageIntrinsicSize) -> (f64, f64) {
+    const DEFAULT_WIDTH: f64 = 300.0;
+    const DEFAULT_HEIGHT: f64 = 150.0;
+    let valid = |value: Option<f32>| {
+        value
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .map(f64::from)
+    };
+    let width = valid(natural.width);
+    let height = valid(natural.height);
+    let ratio = natural
+        .aspect_ratio
+        .filter(|ratio| ratio.is_finite() && *ratio > 0.0)
+        .map(f64::from)
+        .or_else(|| width.zip(height).map(|(w, h)| w / h));
+    match (width, height, ratio) {
+        (Some(width), Some(height), _) => (width, height),
+        (Some(width), None, Some(ratio)) => (width, width / ratio),
+        (None, Some(height), Some(ratio)) => (height * ratio, height),
+        (None, None, Some(ratio)) => {
+            let width = DEFAULT_WIDTH.min(DEFAULT_HEIGHT * ratio);
+            (width, width / ratio)
+        }
+        (Some(width), None, _) => (width, DEFAULT_HEIGHT),
+        (None, Some(height), _) => (DEFAULT_WIDTH, height),
+        _ => (DEFAULT_WIDTH, DEFAULT_HEIGHT),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_inline_svg(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    node_id: usize,
+    border_box_width: f32,
+    border_box_height: f32,
+    abs_x: f32,
+    abs_y: f32,
+    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
+    padding: &taffy::Rect<f32>,
+    inherited_color: [u8; 4],
+    opacity: f32,
+    visible: bool,
+    warnings: &mut Vec<RenderWarning>,
+) -> bool {
+    let bl = border.left.width().px();
+    let bt = border.top.width().px();
+    let br = border.right.width().px();
+    let bb = border.bottom.width().px();
+    let content_x = (abs_x + bl + padding.left) as f64;
+    let content_y = (abs_y + bt + padding.top) as f64;
+    let content_w = (border_box_width - bl - br - padding.left - padding.right).max(0.0);
+    let content_h = (border_box_height - bt - bb - padding.top - padding.bottom).max(0.0);
+    if !visible || opacity <= 0.0 || content_w <= 0.0 || content_h <= 0.0 {
+        return true;
+    }
+
+    let node_has_root_opacity = document.get_node(node_id).is_some_and(|node| {
+        inline_svg_root_has_opacity(node.attribute("opacity"), node.attribute("style"))
+    });
+    let svg = document
+        .serialize_svg_subtree(node_id)
+        .ok()
+        .flatten()
+        .and_then(|source| raikiri_svg::SvgDocument::parse(source.as_bytes()).ok())
+        .and_then(|svg| {
+            svg.rasterize(
+                raikiri_svg::SvgViewport {
+                    width: content_w,
+                    height: content_h,
+                },
+                raikiri_svg::SvgRootStyle {
+                    inherited_color,
+                    // Inline root opacity is already present in the serialized
+                    // SVG and is applied by usvg. The host opacity is needed
+                    // for stylesheet-computed opacity that is not serialized.
+                    opacity: if node_has_root_opacity { 1.0 } else { opacity },
+                    visible,
+                },
+                None,
+            )
+            .ok()
+        });
+    let Some(decoded) = svg else {
+        warnings.push(RenderWarning {
+            kind: WarningKind::ResourceFallback {
+                kind: raikiri_traits::ResourceKind::Image,
+                url: None,
+            },
+            node_id: Some(NodeId::new(node_id as u64)),
+            details: "inline SVG could not be parsed or rasterized".to_owned(),
+        });
+        return true;
+    };
+
+    let raster_w = decoded.width as f64;
+    let raster_h = decoded.height as f64;
+    if raster_w <= 0.0 || raster_h <= 0.0 {
+        warnings.push(RenderWarning {
+            kind: WarningKind::ResourceFallback {
+                kind: raikiri_traits::ResourceKind::Image,
+                url: None,
+            },
+            node_id: Some(NodeId::new(node_id as u64)),
+            details: "inline SVG produced an empty raster size".to_owned(),
+        });
+        return true;
+    }
+    let image_data = peniko::ImageData {
+        data: peniko::Blob::from(decoded.rgba),
+        format: peniko::ImageFormat::Rgba8,
+        alpha_type: peniko::ImageAlphaType::Alpha,
+        width: decoded.width,
+        height: decoded.height,
+    };
+    let brush = peniko::ImageBrush::new(image_data);
+    let clip = Rect::new(
+        content_x,
+        content_y,
+        content_x + f64::from(content_w),
+        content_y + f64::from(content_h),
+    );
+    scene.push_clip_layer(Affine::IDENTITY, &clip);
+    scene.fill(
+        peniko::Fill::NonZero,
+        Affine::translate((content_x, content_y))
+            * Affine::scale_non_uniform(
+                f64::from(content_w) / raster_w,
+                f64::from(content_h) / raster_h,
+            ),
+        brush.as_ref(),
+        None,
+        &Rect::new(0.0, 0.0, raster_w, raster_h),
+    );
+    scene.pop_layer();
+    true
+}
+
+fn inline_svg_root_has_opacity(presentation_attr: Option<&str>, style: Option<&str>) -> bool {
+    presentation_attr.is_some_and(css_value_is_concrete_opacity)
+        || style.is_some_and(inline_style_has_concrete_opacity)
+}
+
+fn css_value_is_concrete_opacity(value: &str) -> bool {
+    inline_style_has_concrete_opacity(&format!("opacity:{value}"))
+}
+
+fn inline_style_has_concrete_opacity(style: &str) -> bool {
+    use cssparser::{
+        AtRuleParser, DeclarationParser, ParseError, Parser, ParserInput, ParserState,
+        QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser,
+    };
+
+    struct OpacityDeclarationParser;
+
+    impl<'i> DeclarationParser<'i> for OpacityDeclarationParser {
+        type Declaration = bool;
+        type Error = ();
+
+        fn parse_value<'t>(
+            &mut self,
+            name: cssparser::CowRcStr<'i>,
+            input: &mut Parser<'i, 't>,
+            _declaration_start: &ParserState,
+        ) -> Result<bool, ParseError<'i, Self::Error>> {
+            if !name.eq_ignore_ascii_case("opacity") {
+                while input.next_including_whitespace_and_comments().is_ok() {}
+                return Ok(false);
+            }
+
+            let is_concrete_opacity = input
+                .parse_until_before(cssparser::Delimiter::Bang, |value| {
+                    Ok::<_, ParseError<'i, Self::Error>>(raikiri_style::property::parse_value(
+                        "opacity", value,
+                    ))
+                })
+                .ok()
+                .flatten()
+                .is_some_and(|value| matches!(value, PropertyValue::Opacity(_)));
+            input.try_parse(cssparser::parse_important).ok();
+            input.expect_exhausted().map_err(
+                |error: cssparser::BasicParseError<'i>| -> ParseError<'i, Self::Error> {
+                    error.into()
+                },
+            )?;
+            Ok(is_concrete_opacity)
+        }
+    }
+
+    impl<'i> AtRuleParser<'i> for OpacityDeclarationParser {
+        type Prelude = ();
+        type AtRule = bool;
+        type Error = ();
+    }
+
+    impl<'i> QualifiedRuleParser<'i> for OpacityDeclarationParser {
+        type Prelude = ();
+        type QualifiedRule = bool;
+        type Error = ();
+    }
+
+    impl<'i> RuleBodyItemParser<'i, bool, ()> for OpacityDeclarationParser {
+        fn parse_qualified(&self) -> bool {
+            false
+        }
+
+        fn parse_declarations(&self) -> bool {
+            true
+        }
+    }
+
+    let mut input = ParserInput::new(style);
+    let mut parser = Parser::new(&mut input);
+    let mut declaration_parser = OpacityDeclarationParser;
+    RuleBodyParser::new(&mut parser, &mut declaration_parser)
+        .filter_map(Result::ok)
+        .any(|is_opacity| is_opacity)
 }
 
 /// `vertical-align` が inline-level box の位置へ寄与する pixel offset。
@@ -4358,18 +4853,17 @@ fn paint_element_background(
     background_position: &ComputedCssPosition,
     background_repeat: &raikiri_style::property::BackgroundRepeat,
     pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
 ) {
     if width <= 0.0 || height <= 0.0 {
         return;
     }
-    let decoded_image = match (bg_image, pixel_source) {
-        (BackgroundImage::Url(raw_url), Some(source)) => url::Url::parse(raw_url)
-            .ok()
-            .and_then(|url| source.get_decoded(&url)),
+    let background_url = match bg_image {
+        BackgroundImage::Url(raw_url) => url::Url::parse(raw_url).ok(),
         _ => None,
     };
-    let effective = effective_background_color(bg, bg_image, current_color);
-    if effective.is_none() && decoded_image.is_none() {
+    let effective = background_color_with_image_source(bg, bg_image, current_color, pixel_source);
+    if effective.is_none() && background_url.is_none() {
         return;
     }
     let effective = effective.unwrap_or(CssColor {
@@ -4378,7 +4872,7 @@ fn paint_element_background(
         b: 0,
         a: 0,
     });
-    if effective.a == 0 && decoded_image.is_none() {
+    if effective.a == 0 && background_url.is_none() {
         return;
     }
     // background-clip: text — clip to text glyphs (CSS Backgrounds 4 §2.6).
@@ -4528,17 +5022,16 @@ fn paint_element_background(
         radius_inset,
         radius_reference,
     );
-    if let Some(decoded) = decoded_image.as_deref() {
-        paint_background_image(
+    if let (Some(url), Some(source)) = (background_url.as_ref(), pixel_source) {
+        paint_background_from_source(
             scene,
-            decoded,
-            x0,
-            y0,
-            x1,
-            y1,
+            url,
+            Rect::new(x0, y0, x1, y1),
             background_size,
             background_position,
             background_repeat,
+            source,
+            warnings,
         );
     }
 }
@@ -4551,6 +5044,108 @@ fn background_length(value: ComputedLengthPercentageOrAuto, basis: f64) -> Optio
         ComputedLengthPercentageOrAuto::Calc(calc) => {
             Some(basis * calc.percent as f64 / 100.0 + calc.px as f64)
         }
+    }
+}
+
+fn background_image_dimensions(
+    size: &ComputedBackgroundSize,
+    area_w: f64,
+    area_h: f64,
+    intrinsic: ImageIntrinsicSize,
+) -> Option<(f64, f64)> {
+    const DEFAULT_WIDTH: f64 = 300.0;
+    const DEFAULT_HEIGHT: f64 = 150.0;
+
+    let (intrinsic_w, intrinsic_h) = match (
+        intrinsic.width.map(f64::from),
+        intrinsic.height.map(f64::from),
+        intrinsic.aspect_ratio.map(f64::from),
+    ) {
+        (Some(width), Some(height), _) if width > 0.0 && height > 0.0 => (width, height),
+        (Some(width), None, Some(ratio)) if width > 0.0 && ratio > 0.0 => (width, width / ratio),
+        (None, Some(height), Some(ratio)) if height > 0.0 && ratio > 0.0 => {
+            (height * ratio, height)
+        }
+        (None, None, Some(ratio)) if ratio > 0.0 => {
+            let width = DEFAULT_WIDTH.min(DEFAULT_HEIGHT * ratio);
+            (width, width / ratio)
+        }
+        (Some(width), None, _) if width > 0.0 => (width, DEFAULT_HEIGHT),
+        (None, Some(height), _) if height > 0.0 => (DEFAULT_WIDTH, height),
+        _ => (DEFAULT_WIDTH, DEFAULT_HEIGHT),
+    };
+    let (image_w, image_h) = match size {
+        ComputedBackgroundSize::Cover => {
+            let scale = (area_w / intrinsic_w).max(area_h / intrinsic_h);
+            (intrinsic_w * scale, intrinsic_h * scale)
+        }
+        ComputedBackgroundSize::Contain => {
+            let scale = (area_w / intrinsic_w).min(area_h / intrinsic_h);
+            (intrinsic_w * scale, intrinsic_h * scale)
+        }
+        ComputedBackgroundSize::Explicit { width, height } => {
+            let width = background_length(*width, area_w);
+            let height = background_length(*height, area_h);
+            match (width, height) {
+                (Some(width), Some(height)) => (width.max(0.0), height.max(0.0)),
+                (Some(width), None) => (width.max(0.0), width.max(0.0) * intrinsic_h / intrinsic_w),
+                (None, Some(height)) => {
+                    (height.max(0.0) * intrinsic_w / intrinsic_h, height.max(0.0))
+                }
+                (None, None) => (intrinsic_w, intrinsic_h),
+            }
+        }
+        _ => (intrinsic_w, intrinsic_h), // cov:ignore: defensive fallback for future background-size variants
+    };
+    (image_w.is_finite() && image_h.is_finite() && image_w > 0.0 && image_h > 0.0)
+        .then_some((image_w, image_h))
+}
+
+fn redacted_image_url(url: &url::Url) -> url::Url {
+    let mut redacted = url.clone();
+    let _ = redacted.set_username("");
+    let _ = redacted.set_password(None);
+    redacted.set_query(None);
+    redacted.set_fragment(None);
+    redacted
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_background_from_source(
+    scene: &mut impl PaintScene,
+    url: &url::Url,
+    area: Rect,
+    size: &ComputedBackgroundSize,
+    position: &ComputedCssPosition,
+    repeat: &raikiri_style::property::BackgroundRepeat,
+    pixel_source: &dyn ImagePixelSource,
+    warnings: &mut Vec<RenderWarning>,
+) {
+    let Some(intrinsic) = pixel_source.intrinsic_size(url) else {
+        return;
+    };
+    let Some((image_w, image_h)) =
+        background_image_dimensions(size, area.width(), area.height(), intrinsic)
+    else {
+        return;
+    };
+    let raster_size = ImageRasterSize {
+        width: image_w as f32,
+        height: image_h as f32,
+    };
+    if let Some(decoded) = pixel_source.get_decoded_at_size(url, raster_size, None) {
+        paint_background_image(
+            scene, &decoded, area.x0, area.y0, area.x1, area.y1, image_w, image_h, position, repeat,
+        );
+    } else {
+        warnings.push(RenderWarning {
+            kind: WarningKind::ResourceFallback {
+                kind: raikiri_traits::ResourceKind::Image,
+                url: Some(redacted_image_url(url)),
+            },
+            node_id: None,
+            details: "CSS background image could not be rasterized; the image was skipped".into(),
+        });
     }
 }
 
@@ -4585,7 +5180,8 @@ fn paint_background_image(
     y0: f64,
     x1: f64,
     y1: f64,
-    size: &ComputedBackgroundSize,
+    image_w: f64,
+    image_h: f64,
     position: &ComputedCssPosition,
     repeat: &raikiri_style::property::BackgroundRepeat,
 ) {
@@ -4594,31 +5190,6 @@ fn paint_background_image(
     }
     let area_w = x1 - x0;
     let area_h = y1 - y0;
-    let intrinsic_w = decoded.width as f64;
-    let intrinsic_h = decoded.height as f64;
-    let (image_w, image_h) = match size {
-        ComputedBackgroundSize::Cover => {
-            let scale = (area_w / intrinsic_w).max(area_h / intrinsic_h);
-            (intrinsic_w * scale, intrinsic_h * scale)
-        }
-        ComputedBackgroundSize::Contain => {
-            let scale = (area_w / intrinsic_w).min(area_h / intrinsic_h);
-            (intrinsic_w * scale, intrinsic_h * scale)
-        }
-        ComputedBackgroundSize::Explicit { width, height } => {
-            let width = background_length(*width, area_w);
-            let height = background_length(*height, area_h);
-            match (width, height) {
-                (Some(width), Some(height)) => (width.max(0.0), height.max(0.0)),
-                (Some(width), None) => (width.max(0.0), width.max(0.0) * intrinsic_h / intrinsic_w),
-                (None, Some(height)) => {
-                    (height.max(0.0) * intrinsic_w / intrinsic_h, height.max(0.0))
-                }
-                (None, None) => (intrinsic_w, intrinsic_h),
-            }
-        }
-        _ => (intrinsic_w, intrinsic_h), // cov:ignore: defensive fallback for future background-size variants
-    };
     if image_w <= 0.0 || image_h <= 0.0 {
         return;
     }
@@ -4637,10 +5208,13 @@ fn paint_background_image(
     scene.fill(
         Fill::NonZero,
         Affine::translate((image_x, image_y))
-            * Affine::scale_non_uniform(image_w / intrinsic_w, image_h / intrinsic_h),
+            * Affine::scale_non_uniform(
+                image_w / decoded.width as f64,
+                image_h / decoded.height as f64,
+            ),
         brush.as_ref(),
         None,
-        &Rect::new(0.0, 0.0, intrinsic_w, intrinsic_h),
+        &Rect::new(0.0, 0.0, decoded.width as f64, decoded.height as f64),
     );
     scene.pop_layer();
     let _ = repeat;
@@ -5564,1248 +6138,4 @@ fn find_body(doc: &Document) -> Option<usize> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use anyrender::Scene;
-    use anyrender::recording::RenderCommand;
-    use raikiri_dom::Document;
-    use raikiri_style::{build_rule_tree, cascade};
-    use taffy::Style;
-
-    #[test]
-    fn vertical_align_length_uses_css_raise_lower_sign_in_y_down_space() {
-        assert_eq!(
-            vertical_align_shift_px(
-                VerticalAlign::Length(Length::Px(96.0)),
-                DisplayValue::Inline,
-                16.0,
-            ),
-            -96.0
-        );
-        assert_eq!(
-            vertical_align_shift_px(
-                VerticalAlign::Length(Length::Px(-12.0)),
-                DisplayValue::InlineBlock,
-                16.0,
-            ),
-            12.0
-        );
-        assert_eq!(
-            vertical_align_shift_px(
-                VerticalAlign::Length(Length::Px(96.0)),
-                DisplayValue::Block,
-                16.0,
-            ),
-            0.0
-        );
-    }
-
-    fn list_fixture(
-        first_style: &str,
-        second_style: &str,
-        marker_stylesheet: Option<&str>,
-    ) -> (Document, CascadeResult, usize, usize) {
-        let mut document = Document::new();
-        if let Some(stylesheet) = marker_stylesheet {
-            let style = document.append_element(
-                Some(document.root_index()),
-                "style",
-                Style::default(),
-                None::<&str>,
-            );
-            document.append_text(style, stylesheet);
-        }
-        let first = document.append_element(
-            Some(document.root_index()),
-            "li",
-            Style::default(),
-            Some(first_style),
-        );
-        let second = document.append_element(
-            Some(document.root_index()),
-            "li",
-            Style::default(),
-            Some(second_style),
-        );
-        let rules = build_rule_tree(&document);
-        let cascade = cascade(&document, &rules).expect("cascade Ok");
-        (document, cascade, first, second)
-    }
-
-    #[test]
-    fn inherited_margin_box_font_uses_root_computed_family() {
-        let mut document = Document::new();
-        let style = document.append_element(
-            Some(document.root_index()),
-            "style",
-            Style::default(),
-            None::<&str>,
-        );
-        document.append_text(style, "@page { @top-left { content: 'x'; } }");
-        let rules = build_rule_tree(&document);
-        let cascade = cascade(&document, &rules).expect("cascade Ok");
-        let rule = cascade
-            .page
-            .margin_boxes()
-            .first()
-            .expect("the @page fixture has a margin box");
-
-        assert_eq!(
-            inherited_margin_box_font(&document, &cascade, rule),
-            (16.0, "serif".to_owned())
-        );
-    }
-
-    #[test]
-    fn flex_static_boxes_use_the_positioned_paint_bucket() {
-        let mut document = Document::new();
-        let flex = document.append_element(
-            Some(document.root_index()),
-            "div",
-            Style::default(),
-            Some("display:flex"),
-        );
-        let rules = build_rule_tree(&document);
-        let cascade = cascade(&document, &rules).expect("cascade Ok");
-        assert_eq!(paint_order_key(&cascade, flex), (2, 0));
-    }
-
-    #[test]
-    fn flex_grid_paint_order_uses_order_with_stable_source_order_ties() {
-        fn parent_with_ordered_children(
-            document: &mut Document,
-            display: &str,
-        ) -> (usize, [usize; 3]) {
-            let parent = document.append_element(
-                Some(document.root_index()),
-                "div",
-                Style::default(),
-                Some(display),
-            );
-            let a = document.append_element(Some(parent), "div", Style::default(), Some("order:2"));
-            let b =
-                document.append_element(Some(parent), "div", Style::default(), Some("order:-1"));
-            let c = document.append_element(Some(parent), "div", Style::default(), Some("order:2"));
-            (parent, [a, b, c])
-        }
-
-        let mut document = Document::new();
-        let (flex, flex_items) = parent_with_ordered_children(&mut document, "display:flex");
-        let absolute_first = document.append_element(
-            Some(flex),
-            "div",
-            Style::default(),
-            Some("order:10;position:absolute"),
-        );
-        let absolute_second = document.append_element(
-            Some(flex),
-            "div",
-            Style::default(),
-            Some("order:5;position:absolute"),
-        );
-        let (grid, grid_items) = parent_with_ordered_children(&mut document, "display:grid");
-        let (block, block_items) = parent_with_ordered_children(&mut document, "display:block");
-
-        // Flex/grid items with different inner display values still share one
-        // order-modified paint sequence.
-        let mixed_parent = document.append_element(
-            Some(document.root_index()),
-            "div",
-            Style::default(),
-            Some("display:grid"),
-        );
-        let nested_flex_item = document.append_element(
-            Some(mixed_parent),
-            "div",
-            Style::default(),
-            Some("display:flex;order:-1"),
-        );
-        let block_item = document.append_element(
-            Some(mixed_parent),
-            "div",
-            Style::default(),
-            Some("display:block;order:1"),
-        );
-
-        let z_index_parent = document.append_element(
-            Some(document.root_index()),
-            "div",
-            Style::default(),
-            Some("display:flex"),
-        );
-        let z_one_late = document.append_element(
-            Some(z_index_parent),
-            "div",
-            Style::default(),
-            Some("z-index:1;order:1"),
-        );
-        let z_two_early = document.append_element(
-            Some(z_index_parent),
-            "div",
-            Style::default(),
-            Some("z-index:2;order:-1"),
-        );
-        let z_one_early = document.append_element(
-            Some(z_index_parent),
-            "div",
-            Style::default(),
-            Some("z-index:1;order:0"),
-        );
-        let positioned_z_two = document.append_element(
-            Some(z_index_parent),
-            "div",
-            Style::default(),
-            Some("position:relative;z-index:2;order:-2"),
-        );
-
-        // Out-of-flow flex children are treated as order 0 for painting. Their
-        // authored order is ignored, with DOM order breaking the 0-value tie.
-        let positioned_parent = document.append_element(
-            Some(document.root_index()),
-            "div",
-            Style::default(),
-            Some("display:flex"),
-        );
-        let absolute_slot = document.append_element(
-            Some(positioned_parent),
-            "div",
-            Style::default(),
-            Some("position:absolute;order:100"),
-        );
-        let relative_late = document.append_element(
-            Some(positioned_parent),
-            "div",
-            Style::default(),
-            Some("position:relative;order:1"),
-        );
-        let relative_early = document.append_element(
-            Some(positioned_parent),
-            "div",
-            Style::default(),
-            Some("position:relative;order:-1"),
-        );
-
-        let rules = build_rule_tree(&document);
-        let cascade = cascade(&document, &rules).expect("cascade Ok");
-
-        let mut flex_children = document.get_node(flex).unwrap().children.clone();
-        sort_paint_children(&mut flex_children, cascade.computed[flex].display, &cascade);
-        assert_eq!(
-            flex_children,
-            [
-                flex_items[1],
-                flex_items[0],
-                flex_items[2],
-                absolute_first,
-                absolute_second,
-            ]
-        );
-        assert_eq!(
-            document.get_node(flex).unwrap().children.as_slice(),
-            &[
-                flex_items[0],
-                flex_items[1],
-                flex_items[2],
-                absolute_first,
-                absolute_second,
-            ]
-        );
-
-        let mut grid_children = document.get_node(grid).unwrap().children.clone();
-        sort_paint_children(&mut grid_children, cascade.computed[grid].display, &cascade);
-        assert_eq!(grid_children, [grid_items[1], grid_items[0], grid_items[2]]);
-        assert_eq!(
-            document.get_node(grid).unwrap().children.as_slice(),
-            &grid_items
-        );
-
-        let mut mixed_children = document.get_node(mixed_parent).unwrap().children.clone();
-        sort_paint_children(
-            &mut mixed_children,
-            cascade.computed[mixed_parent].display,
-            &cascade,
-        );
-        assert_eq!(mixed_children, [nested_flex_item, block_item]);
-
-        let mut z_index_children = document.get_node(z_index_parent).unwrap().children.clone();
-        sort_paint_children(
-            &mut z_index_children,
-            cascade.computed[z_index_parent].display,
-            &cascade,
-        );
-        assert_eq!(
-            z_index_children,
-            [z_one_early, z_one_late, positioned_z_two, z_two_early]
-        );
-
-        let mut positioned_children = document
-            .get_node(positioned_parent)
-            .unwrap()
-            .children
-            .clone();
-        sort_paint_children(
-            &mut positioned_children,
-            cascade.computed[positioned_parent].display,
-            &cascade,
-        );
-        assert_eq!(
-            positioned_children,
-            [relative_early, absolute_slot, relative_late]
-        );
-
-        let mut block_children = document.get_node(block).unwrap().children.clone();
-        sort_paint_children(
-            &mut block_children,
-            cascade.computed[block].display,
-            &cascade,
-        );
-        assert_eq!(block_children, block_items);
-    }
-
-    #[test]
-    fn list_marker_text_formats_ordinals_and_styles() {
-        let (mut document, cascade, first, second) =
-            list_fixture("display: list-item", "display: list-item", None);
-        assert_eq!(
-            list_marker_text(&document, &cascade, first, &ListStyleType::Disc),
-            Some("• ".to_string())
-        );
-        assert_eq!(
-            list_marker_text(
-                &document,
-                &cascade,
-                second,
-                &ListStyleType::Named("decimal".into())
-            ),
-            Some("2. ".to_string())
-        );
-        assert_eq!(
-            list_marker_text(
-                &document,
-                &cascade,
-                second,
-                &ListStyleType::Named("decimal-leading-zero".into())
-            ),
-            Some("02. ".to_string())
-        );
-        assert_eq!(
-            list_marker_text(
-                &document,
-                &cascade,
-                second,
-                &ListStyleType::Named("lower-alpha".into())
-            ),
-            Some("b. ".to_string())
-        );
-        assert_eq!(
-            list_marker_text(
-                &document,
-                &cascade,
-                second,
-                &ListStyleType::Named("upper-alpha".into())
-            ),
-            Some("B. ".to_string())
-        );
-        assert_eq!(
-            list_marker_text(
-                &document,
-                &cascade,
-                second,
-                &ListStyleType::Named("lower-roman".into())
-            ),
-            Some("ii. ".to_string())
-        );
-        assert_eq!(
-            list_marker_text(
-                &document,
-                &cascade,
-                second,
-                &ListStyleType::Named("upper-roman".into())
-            ),
-            Some("II. ".to_string())
-        );
-        assert_eq!(
-            list_marker_text(
-                &document,
-                &cascade,
-                second,
-                &ListStyleType::Named("circle".into())
-            ),
-            Some("◦ ".to_string())
-        );
-        assert_eq!(
-            list_marker_text(
-                &document,
-                &cascade,
-                second,
-                &ListStyleType::Named("square".into())
-            ),
-            Some("▪ ".to_string())
-        );
-        assert_eq!(
-            list_marker_text(
-                &document,
-                &cascade,
-                second,
-                &ListStyleType::Named("custom-counter".into())
-            ),
-            Some("2. ".to_string())
-        );
-        assert_eq!(
-            list_marker_text(
-                &document,
-                &cascade,
-                second,
-                &ListStyleType::String("§".into())
-            ),
-            Some("§".to_string())
-        );
-        assert_eq!(
-            list_marker_text(&document, &cascade, second, &ListStyleType::None),
-            None
-        );
-        // Defensive ordinal paths: the root has no parent, while a text child
-        // has a parent but is not itself a list item.
-        assert_eq!(
-            list_item_ordinal(&document, &cascade, document.root_index()),
-            1
-        );
-        let text = document.append_text(document.root_index(), "text");
-        assert_eq!(list_item_ordinal(&document, &cascade, text), 1);
-        assert_eq!(alpha_marker(0), "");
-    }
-
-    #[test]
-    fn custom_counter_styles_reach_default_and_explicit_markers() {
-        let (document, cascade, first, second) = list_fixture(
-            "display: list-item; list-style-type: thumbs",
-            "display: list-item; list-style-type: thumbs",
-            Some(
-                r#"@counter-style thumbs {
-                    system: cyclic;
-                    symbols: "A" "B";
-                    prefix: "[";
-                    suffix: "] ";
-                }"#,
-            ),
-        );
-        assert_eq!(cascade.counter_styles.len(), 1);
-        assert_eq!(
-            list_marker_text(
-                &document,
-                &cascade,
-                first,
-                &ListStyleType::Named("thumbs".into()),
-            ),
-            Some("[A] ".to_string())
-        );
-        assert_eq!(
-            list_marker_text(
-                &document,
-                &cascade,
-                second,
-                &ListStyleType::Named("thumbs".into()),
-            ),
-            Some("[B] ".to_string())
-        );
-
-        let explicit = vec![ContentComponent::Counter {
-            name: "list-item".into(),
-            style: CounterStyle::Named("thumbs".into()),
-        }];
-        let marker = marker_content_text(
-            &explicit,
-            &[] as &[(&str, &str)],
-            false,
-            1,
-            &CounterSnapshot::default(),
-            &cascade.counter_styles,
-        );
-        assert_eq!(marker, Some("A".to_string()));
-
-        let (document, cascade, first, _) = list_fixture(
-            "display: list-item; list-style-type: disc",
-            "display: list-item",
-            Some(
-                r#"@counter-style thumbs {
-                    system: cyclic;
-                    symbols: "A" "B";
-                }
-                li::marker { content: counter(list-item, thumbs); }"#,
-            ),
-        );
-        let (_, explicit_content) =
-            marker_render_info(&document, &cascade, first).expect("custom marker content");
-        assert_eq!(explicit_content, "A");
-    }
-
-    #[test]
-    fn marker_render_info_resolves_named_counters_from_element_scopes() {
-        let mut document = Document::new();
-        let style = document.append_element(
-            Some(document.root_index()),
-            "style",
-            Style::default(),
-            None::<&str>,
-        );
-        document.append_text(
-            style,
-            "section { counter-reset: step 4 list-item 4 } section::before { content: counter(step) } section::after { content: counters(step, \".\") } li { display: list-item; counter-increment: step list-item; list-style: none } li::marker { counter-reset: local 1; counter-increment: local 2 fresh 3; counter-set: local 9 setfresh 4; content: counter(step) \"/\" counter(list-item) \"/\" counter(local) \"/\" counter(fresh) \"/\" counter(setfresh) }",
-        );
-        let section = document.append_element(
-            Some(document.root_index()),
-            "section",
-            Style::default(),
-            None::<&str>,
-        );
-        let first = document.append_element(Some(section), "li", Style::default(), None::<&str>);
-        let second = document.append_element(Some(section), "li", Style::default(), None::<&str>);
-        document.mark_in_document_flags();
-        let rules = build_rule_tree(&document);
-        let cascade = cascade(&document, &rules).expect("cascade Ok");
-        let (_, first_content) =
-            marker_render_info(&document, &cascade, first).expect("first marker");
-        let (_, second_content) =
-            marker_render_info(&document, &cascade, second).expect("second marker");
-        assert_eq!(first_content, "5/5/9/3/4");
-        assert_eq!(second_content, "6/6/9/3/4");
-        let snapshots = raikiri_dom::counter_snapshots(&document, &cascade);
-        let (_, before_content) = generated_pseudo_content_with_snapshots(
-            &document,
-            &cascade,
-            section,
-            raikiri_style::PseudoElem::Before,
-            &snapshots,
-        )
-        .expect("generated before content");
-        assert_eq!(before_content, "4");
-        let (_, after_content) = generated_pseudo_content_with_snapshots(
-            &document,
-            &cascade,
-            section,
-            raikiri_style::PseudoElem::After,
-            &snapshots,
-        )
-        .expect("generated after content");
-        assert_eq!(after_content, "4");
-    }
-
-    #[test]
-    fn marker_content_text_resolves_literals_counters_and_quotes() {
-        let registry = CounterStyleRegistry::new();
-        let components = vec![
-            ContentComponent::Quote(QuoteKeyword::OpenQuote),
-            ContentComponent::Literal("(".into()),
-            ContentComponent::Counter {
-                name: "list-item".into(),
-                style: CounterStyle::Decimal,
-            },
-            ContentComponent::Counters {
-                name: "list-item".into(),
-                separator: ".".to_string(),
-                style: CounterStyle::Named("upper-roman".into()),
-            },
-            // Named counters are resolved from the supplied scope snapshot.
-            ContentComponent::Counters {
-                name: "chapter".into(),
-                separator: ".".to_string(),
-                style: CounterStyle::Decimal,
-            },
-            ContentComponent::Quote(QuoteKeyword::CloseQuote),
-        ];
-        let mut counters = CounterSnapshot::default();
-        counters.insert(raikiri_traits::Symbol::new("chapter"), vec![1, 3]);
-        assert_eq!(
-            marker_content_text(&components, &[("<", ">")], false, 2, &counters, &registry,),
-            Some("<(2II1.3>".to_string())
-        );
-        let mut list_item_counters = CounterSnapshot::default();
-        list_item_counters.insert(raikiri_traits::Symbol::new("list-item"), vec![1, 2]);
-        assert_eq!(
-            marker_content_text(
-                &components,
-                &[] as &[(&str, &str)],
-                false,
-                2,
-                &list_item_counters,
-                &registry,
-            ),
-            Some("(2I.II".to_string())
-        );
-        assert_eq!(
-            marker_content_text(
-                &[],
-                &[] as &[(&str, &str)],
-                true,
-                1,
-                &CounterSnapshot::default(),
-                &registry,
-            ),
-            None
-        );
-        assert_eq!(
-            marker_content_text(
-                &[
-                    ContentComponent::Quote(QuoteKeyword::OpenQuote),
-                    ContentComponent::Quote(QuoteKeyword::OpenQuote),
-                    ContentComponent::Quote(QuoteKeyword::CloseQuote),
-                    ContentComponent::Quote(QuoteKeyword::CloseQuote),
-                    ContentComponent::Quote(QuoteKeyword::NoOpenQuote),
-                    ContentComponent::Quote(QuoteKeyword::NoCloseQuote),
-                ],
-                &[] as &[(&str, &str)],
-                true,
-                1,
-                &CounterSnapshot::default(),
-                &registry,
-            ),
-            Some("“‘’”".to_string())
-        );
-    }
-
-    #[test]
-    fn generated_content_resolves_dom_attributes_and_fallbacks() {
-        let mut document = Document::new();
-        let element = document.append_element(
-            Some(document.root_index()),
-            "div",
-            Style::default(),
-            None::<&str>,
-        );
-        document.set_element_attributes(element, vec![("data-value".into(), "Actual".into())]);
-        let components = vec![
-            ContentComponent::AttrFallback {
-                name: "missing".into(),
-                fallback: Some("Fallback".into()),
-            },
-            ContentComponent::Literal(" ".into()),
-            ContentComponent::Attr {
-                name: "data-value".into(),
-            },
-            ContentComponent::Literal(" ".into()),
-            ContentComponent::AttrFallback {
-                name: "missing-invalid".into(),
-                fallback: None,
-            },
-        ];
-        let registry = CounterStyleRegistry::new();
-        let rendered = content_components_to_text_with_quotes(
-            &document,
-            element,
-            &components,
-            &[] as &[(&str, &str)],
-            false,
-            &CounterSnapshot::default(),
-            &registry,
-        );
-        assert_eq!(rendered.as_deref(), Some("Fallback Actual "));
-    }
-
-    #[test]
-    fn marker_render_info_uses_author_content_and_falls_back_to_list_style() {
-        let (document, cascade, first, second) = list_fixture(
-            "display: list-item; list-style-type: decimal",
-            "display: list-item; list-style-type: none",
-            Some(r##"li::marker { content: "#"; color: blue }"##),
-        );
-        let (_, content) = marker_render_info(&document, &cascade, first).expect("marker info");
-        assert_eq!(content, "#");
-        let (_, content) = marker_render_info(&document, &cascade, second)
-            .expect("marker rule supplies content even when list-style is none");
-        assert_eq!(content, "#");
-
-        let (document, cascade, first, second) = list_fixture(
-            "display: list-item; list-style-type: decimal",
-            "display: list-item; list-style-type: none",
-            None,
-        );
-        let (_, content) = marker_render_info(&document, &cascade, first).expect("fallback marker");
-        assert_eq!(content, "1. ");
-        assert!(marker_render_info(&document, &cascade, second).is_none());
-
-        let (document, cascade, first, _) = list_fixture(
-            "display: list-item; list-style-type: decimal; counter-reset: list-item 9",
-            "display: list-item",
-            None,
-        );
-        let (_, content) = marker_render_info(&document, &cascade, first)
-            .expect("explicit list-item counter fallback marker");
-        assert_eq!(content, "9. ");
-
-        let (document, cascade, first, _) = list_fixture(
-            "display: list-item; list-style-type: disc",
-            "display: list-item",
-            Some("li::marker { display: none }"),
-        );
-        assert!(marker_render_info(&document, &cascade, first).is_none());
-    }
-
-    #[test]
-    fn generated_pseudo_metrics_preserve_before_after_order() {
-        let (document, cascade, first, _) = list_fixture(
-            "display: list-item",
-            "display: list-item",
-            Some(r##"li::before { content: "A " } li::after { content: "B" }"##),
-        );
-        let snapshots = raikiri_dom::counter_snapshots(&document, &cascade);
-        assert!(
-            generated_pseudo_text_height(
-                &document,
-                &cascade,
-                first,
-                raikiri_style::PseudoElem::Before,
-                &snapshots
-            ) > 0.0
-        );
-        assert!(
-            generated_pseudo_text_height(
-                &document,
-                &cascade,
-                first,
-                raikiri_style::PseudoElem::After,
-                &snapshots
-            ) > 0.0
-        );
-
-        let mut scene = Scene::new();
-        let before_advance = paint_generated_pseudo(
-            &mut scene,
-            &document,
-            &cascade,
-            first,
-            raikiri_style::PseudoElem::Before,
-            0.0,
-            0.0,
-            200.0,
-            30.0,
-            &snapshots,
-        );
-        let after_start = scene.commands.len();
-        assert!(before_advance > 0.0);
-        let _ = paint_generated_pseudo(
-            &mut scene,
-            &document,
-            &cascade,
-            first,
-            raikiri_style::PseudoElem::After,
-            before_advance,
-            0.0,
-            200.0 - before_advance,
-            30.0,
-            &snapshots,
-        );
-        assert!(scene.commands.len() > after_start);
-
-        let (document, cascade, first, _) = list_fixture(
-            "display: list-item",
-            "display: list-item",
-            Some(r##"li::before { display: none; content: "hidden" }"##),
-        );
-        let snapshots = raikiri_dom::counter_snapshots(&document, &cascade);
-        assert_eq!(
-            generated_pseudo_text_height(
-                &document,
-                &cascade,
-                first,
-                raikiri_style::PseudoElem::Before,
-                &snapshots
-            ),
-            0.0
-        );
-        let mut hidden_scene = Scene::new();
-        assert_eq!(
-            paint_generated_pseudo(
-                &mut hidden_scene,
-                &document,
-                &cascade,
-                first,
-                raikiri_style::PseudoElem::Before,
-                0.0,
-                0.0,
-                200.0,
-                30.0,
-                &snapshots,
-            ),
-            0.0
-        );
-    }
-
-    #[test]
-    fn paint_document_skips_hidden_table_decoration() {
-        let mut document = Document::new();
-        let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
-        let table = document.append_element(
-            Some(body),
-            "table",
-            Style::default(),
-            Some(
-                "display: table; width: 100px; height: 100px; box-sizing: border-box; border: 20px solid red; border-collapse: collapse; visibility: hidden",
-            ),
-        );
-        let row = document.append_element(
-            Some(table),
-            "tr",
-            Style::default(),
-            Some("display: table-row"),
-        );
-        document.append_element(
-            Some(row),
-            "td",
-            Style::default(),
-            Some("display: table-cell"),
-        );
-        let rules = build_rule_tree(&document);
-        let cascade = cascade(&document, &rules).expect("cascade Ok");
-        raikiri_dom::layout_single_page(
-            &mut document,
-            &cascade,
-            PageBox::A4,
-            parley::FontContext::new(),
-        )
-        .expect("layout Ok");
-
-        let mut scene = Scene::new();
-        crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
-        let draws = scene
-            .commands
-            .iter()
-            .filter(|command| matches!(command, RenderCommand::Fill(_) | RenderCommand::Stroke(_)))
-            .count();
-        // The only draw is the page canvas; the hidden table's border is absent.
-        assert_eq!(draws, 1);
-    }
-
-    #[test]
-    fn paint_document_orders_literal_pseudos_around_direct_text() {
-        let mut document = Document::new();
-        let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
-        let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
-        document.append_text(
-            style,
-            r##"div::before { content: "BEFORE " } div::after { content: " AFTER" }"##,
-        );
-        let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
-        let div = document.append_element(Some(body), "div", Style::default(), None::<&str>);
-        document.append_text(div, "BODY");
-        let rules = build_rule_tree(&document);
-        let cascade = cascade(&document, &rules).expect("cascade Ok");
-        raikiri_dom::layout_single_page(
-            &mut document,
-            &cascade,
-            PageBox::A4,
-            parley::FontContext::new(),
-        )
-        .expect("layout Ok");
-
-        let mut scene = Scene::new();
-        crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
-        let glyph_x: Vec<_> = scene
-            .commands
-            .iter()
-            .filter_map(|command| match command {
-                RenderCommand::GlyphRun(glyph_run) => Some(glyph_run.transform.as_coeffs()[4]),
-                _ => None,
-            })
-            .collect();
-        assert!(
-            glyph_x.len() >= 3,
-            // cov:ignore: assert! diagnostic is only evaluated on failure
-            "expected before, text, and after glyph runs"
-        );
-        let last_three = &glyph_x[glyph_x.len() - 3..];
-        assert!(
-            last_three[0] < last_three[1] && last_three[1] < last_three[2],
-            // cov:ignore: assert! diagnostic is only evaluated on failure
-            "literal pseudo/text runs must advance in source order: {last_three:?}"
-        );
-    }
-
-    #[test]
-    fn paint_document_offsets_generated_counter_inline_siblings() {
-        let mut document = Document::new();
-        let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
-        let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
-        document.append_text(
-            style,
-            r##"div { counter-reset: c } div span { counter-increment: c } div span::before { content: counter(c) } div span::after { display: none; content: "hidden" }"##,
-        );
-        let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
-        let test = document.append_element(Some(body), "div", Style::default(), None::<&str>);
-        document.append_text(test, "\n");
-        document.append_element(Some(test), "span", Style::default(), None::<&str>);
-        document.append_text(test, "\n");
-        document.append_element(Some(test), "span", Style::default(), None::<&str>);
-
-        let rules = build_rule_tree(&document);
-        let cascade = cascade(&document, &rules).expect("cascade Ok");
-        raikiri_dom::layout_single_page(
-            &mut document,
-            &cascade,
-            PageBox::A4,
-            parley::FontContext::new(),
-        )
-        .expect("layout Ok");
-
-        let mut scene = Scene::new();
-        crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
-        assert!(
-            scene
-                .commands
-                .iter()
-                .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
-        );
-    }
-
-    #[test]
-    fn paint_document_expands_auto_height_for_empty_pseudo_box() {
-        let mut document = Document::new();
-        let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
-        let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
-        let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
-        document.append_text(
-            style,
-            r##"div { border: 2px solid black } div::before { content: "A" }"##,
-        );
-        let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
-        document.append_element(Some(body), "div", Style::default(), None::<&str>);
-        let rules = build_rule_tree(&document);
-        let cascade = cascade(&document, &rules).expect("cascade Ok");
-        raikiri_dom::layout_single_page(
-            &mut document,
-            &cascade,
-            PageBox::A4,
-            parley::FontContext::new(),
-        )
-        .expect("layout Ok");
-
-        let mut scene = Scene::new();
-        crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4);
-        assert!(
-            scene
-                .commands
-                .iter()
-                .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
-        );
-    }
-
-    #[test]
-    fn paint_generated_pseudo_emits_counter_content() {
-        let (document, cascade, first, _) = list_fixture(
-            "display: list-item; counter-reset: marker 3",
-            "display: list-item",
-            Some(r##"li::before { content: counter(marker) }"##),
-        );
-        let snapshots = raikiri_dom::counter_snapshots(&document, &cascade);
-        let mut scene = Scene::new();
-        paint_generated_pseudo(
-            &mut scene,
-            &document,
-            &cascade,
-            first,
-            raikiri_style::PseudoElem::Before,
-            0.0,
-            0.0,
-            200.0,
-            30.0,
-            &snapshots,
-        );
-        assert!(
-            scene
-                .commands
-                .iter()
-                .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
-        );
-    }
-
-    #[test]
-    fn paint_list_marker_emits_text_and_honors_display_none() {
-        let (document, cascade, first, second) = list_fixture(
-            "display: list-item; list-style-type: disc; list-style-position: outside",
-            "display: list-item; list-style-type: none",
-            None,
-        );
-        let mut scene = Scene::new();
-        paint_list_marker(
-            &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
-        );
-        assert!(
-            scene
-                .commands
-                .iter()
-                .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
-        );
-        let before = scene.commands.len();
-        paint_list_marker(
-            &mut scene, &document, &cascade, second, 0.0, 0.0, 200.0, 30.0, 0.0,
-        );
-        assert_eq!(scene.commands.len(), before);
-
-        // Inside markers use the DOM bridge's reserved gutter.
-        let (document, cascade, first, _) = list_fixture(
-            "display: list-item; list-style-position: inside",
-            "display: list-item",
-            None,
-        );
-        paint_list_marker(
-            &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
-        );
-
-        // Empty generated content and a zero-sized marker both fail closed
-        // before a glyph command is emitted.
-        let (document, cascade, first, _) = list_fixture(
-            "display: list-item",
-            "display: list-item",
-            Some(r##"li::marker { content: none }"##),
-        );
-        let (_, content) = marker_render_info(&document, &cascade, first).expect("none marker");
-        assert_eq!(content, "");
-        let before = scene.commands.len();
-        paint_list_marker(
-            &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
-        );
-        assert_eq!(scene.commands.len(), before);
-        let (document, cascade, first, _) = list_fixture(
-            "display: list-item; font-size: 0",
-            "display: list-item",
-            None,
-        );
-        paint_list_marker(
-            &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
-        );
-        paint_list_marker(
-            &mut scene, &document, &cascade, first, 0.0, 0.0, 0.0, 30.0, 0.0,
-        );
-        let (document, cascade, first, _) = list_fixture(
-            "display: list-item",
-            "display: list-item",
-            Some(r##"li::marker { content: "\u{200b}" }"##),
-        );
-        paint_list_marker(
-            &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
-        );
-    }
-
-    #[test]
-    fn border_radius_normalization_scales_adjacent_edges() {
-        let normalized =
-            normalize_border_radii(100.0, 100.0, RoundedRectRadii::new(80.0, 80.0, 80.0, 80.0));
-        assert_eq!(normalized.top_left, 50.0);
-        assert_eq!(normalized.top_right, 50.0);
-        assert_eq!(normalized.bottom_right, 50.0);
-        assert_eq!(normalized.bottom_left, 50.0);
-        assert_eq!(
-            used_border_radius(ComputedLengthPercentage::Percent(25.0), 200.0),
-            50.0
-        );
-    }
-
-    #[test]
-    fn border_radius_paint_keeps_lengths_but_defers_percentages() {
-        let radius = ComputedBorderRadius::corners(
-            ComputedLengthPercentage::Px(12.0),
-            ComputedLengthPercentage::Percent(25.0),
-            ComputedLengthPercentage::Px(4.0),
-            ComputedLengthPercentage::Percent(50.0),
-        );
-        let used = paintable_border_radius(&radius, true);
-        assert_eq!(used.top_left, ComputedLengthPercentage::Px(12.0));
-        assert_eq!(used.top_right, ComputedLengthPercentage::Px(0.0));
-        assert_eq!(used.bottom_right, ComputedLengthPercentage::Px(4.0));
-        assert_eq!(used.bottom_left, ComputedLengthPercentage::Px(0.0));
-    }
-
-    #[test]
-    fn background_image_geometry_covers_supported_size_and_position_forms() {
-        let decoded = raikiri_traits::DecodedImage {
-            width: 2,
-            height: 1,
-            rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
-        };
-        // Construct the non-exhaustive computed position values through the
-        // real parser/cascade boundary rather than bypassing their visibility
-        // contract with struct literals.
-        let mut document = Document::new();
-        let start_px_id = document.append_element(
-            Some(document.root_index()),
-            "div",
-            Style::default(),
-            Some("background-position: 3px 4px"),
-        );
-        let start_percent_id = document.append_element(
-            Some(document.root_index()),
-            "div",
-            Style::default(),
-            Some("background-position: 25% 50%"),
-        );
-        let end_px_id = document.append_element(
-            Some(document.root_index()),
-            "div",
-            Style::default(),
-            Some("background-position: right 3px bottom 4px"),
-        );
-        let end_percent_id = document.append_element(
-            Some(document.root_index()),
-            "div",
-            Style::default(),
-            Some("background-position: bottom 50% right 25%"),
-        );
-        let rules = build_rule_tree(&document);
-        let cascade = cascade(&document, &rules).expect("cascade Ok");
-        let repeat = cascade.computed[start_px_id].background_repeat;
-        let start_px = cascade.computed[start_px_id].background_position;
-        let start_percent = cascade.computed[start_percent_id].background_position;
-        let end_px = cascade.computed[end_px_id].background_position;
-        let end_percent = cascade.computed[end_percent_id].background_position;
-        let mut scene = Scene::new();
-        paint_background_image(
-            &mut scene,
-            &decoded,
-            0.0,
-            0.0,
-            100.0,
-            50.0,
-            &ComputedBackgroundSize::Cover,
-            &start_px,
-            &repeat,
-        );
-        paint_background_image(
-            &mut scene,
-            &decoded,
-            0.0,
-            0.0,
-            100.0,
-            50.0,
-            &ComputedBackgroundSize::Contain,
-            &start_percent,
-            &repeat,
-        );
-        paint_background_image(
-            &mut scene,
-            &decoded,
-            0.0,
-            0.0,
-            100.0,
-            50.0,
-            &ComputedBackgroundSize::Explicit {
-                width: ComputedLengthPercentageOrAuto::Px(20.0),
-                height: ComputedLengthPercentageOrAuto::Px(10.0),
-            },
-            &end_px,
-            &repeat,
-        );
-        paint_background_image(
-            &mut scene,
-            &decoded,
-            0.0,
-            0.0,
-            100.0,
-            50.0,
-            &ComputedBackgroundSize::Explicit {
-                width: ComputedLengthPercentageOrAuto::Percent(50.0),
-                height: ComputedLengthPercentageOrAuto::Percent(25.0),
-            },
-            &end_percent,
-            &repeat,
-        );
-        paint_background_image(
-            &mut scene,
-            &decoded,
-            0.0,
-            0.0,
-            100.0,
-            50.0,
-            &ComputedBackgroundSize::Explicit {
-                width: ComputedLengthPercentageOrAuto::Calc(
-                    raikiri_style::property::CalcLengthPercentage {
-                        percent: 10.0,
-                        px: 2.0,
-                    },
-                ),
-                height: ComputedLengthPercentageOrAuto::Auto,
-            },
-            &start_px,
-            &repeat,
-        );
-        paint_background_image(
-            &mut scene,
-            &decoded,
-            0.0,
-            0.0,
-            100.0,
-            50.0,
-            &ComputedBackgroundSize::Explicit {
-                width: ComputedLengthPercentageOrAuto::Auto,
-                height: ComputedLengthPercentageOrAuto::Calc(
-                    raikiri_style::property::CalcLengthPercentage {
-                        percent: 20.0,
-                        px: 1.0,
-                    },
-                ),
-            },
-            &start_px,
-            &repeat,
-        );
-        paint_background_image(
-            &mut scene,
-            &decoded,
-            0.0,
-            0.0,
-            100.0,
-            50.0,
-            &ComputedBackgroundSize::Explicit {
-                width: ComputedLengthPercentageOrAuto::Auto,
-                height: ComputedLengthPercentageOrAuto::Auto,
-            },
-            &start_px,
-            &repeat,
-        );
-        assert!(!scene.commands.is_empty());
-
-        let before = scene.commands.len();
-        paint_background_image(
-            &mut scene,
-            &decoded,
-            0.0,
-            0.0,
-            0.0,
-            50.0,
-            &ComputedBackgroundSize::Cover,
-            &start_px,
-            &repeat,
-        );
-        let zero = raikiri_traits::DecodedImage {
-            width: 0,
-            height: 1,
-            rgba: Vec::new(),
-        };
-        paint_background_image(
-            &mut scene,
-            &zero,
-            0.0,
-            0.0,
-            100.0,
-            50.0,
-            &ComputedBackgroundSize::Cover,
-            &start_px,
-            &repeat,
-        );
-        paint_background_image(
-            &mut scene,
-            &decoded,
-            0.0,
-            0.0,
-            100.0,
-            50.0,
-            &ComputedBackgroundSize::Explicit {
-                width: ComputedLengthPercentageOrAuto::Px(-1.0),
-                height: ComputedLengthPercentageOrAuto::Px(10.0),
-            },
-            &start_px,
-            &repeat,
-        );
-        assert_eq!(scene.commands.len(), before);
-    }
-}
+mod tests;

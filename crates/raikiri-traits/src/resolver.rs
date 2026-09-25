@@ -29,12 +29,24 @@ pub struct IntrinsicBox {
     pub width: f32,
     /// Intrinsic height (px).
     pub height: f32,
+    /// Natural width divided by natural height, when known.
+    pub aspect_ratio: Option<f32>,
 }
 
 impl IntrinsicBox {
     /// Constructs an intrinsic box from a decoded image's pixel dimensions.
     pub fn new(width: f32, height: f32) -> Self {
-        Self { width, height }
+        Self {
+            width,
+            height,
+            aspect_ratio: None,
+        }
+    }
+
+    /// Sets the intrinsic ratio while preserving the concrete fallback size.
+    pub fn with_aspect_ratio(mut self, aspect_ratio: f32) -> Self {
+        self.aspect_ratio = Some(aspect_ratio);
+        self
     }
 }
 
@@ -107,29 +119,4 @@ impl std::fmt::Display for ResolverError {
 impl std::error::Error for ResolverError {}
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn resolver_request_carries_url() {
-        let url = Url::parse("file:///tmp/x.png").unwrap();
-        let req = ResolverRequest::new(&url);
-        assert_eq!(req.url(), &url);
-    }
-
-    #[test]
-    fn intrinsic_box_carries_dimensions() {
-        let b = IntrinsicBox::new(64.0, 32.0);
-        assert_eq!((b.width, b.height), (64.0, 32.0));
-    }
-
-    #[test]
-    fn resolver_error_network_and_decode_display() {
-        let net_err = NetworkError::Other("boom".into());
-        let e = ResolverError::Network(net_err);
-        assert!(format!("{e}").contains("boom"));
-
-        let e = ResolverError::Decode("bad PNG".into());
-        assert_eq!(format!("{e}"), "image decode failed: bad PNG");
-    }
-}
+mod tests;

@@ -105,6 +105,10 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
             .get(idx)
             .and_then(|mode| *mode);
         bridge_size(doc, idx, cv);
+        doc.nodes[idx].style.aspect_ratio = doc.nodes[idx]
+            .image_intrinsic_box()
+            .and_then(|intrinsic| intrinsic.aspect_ratio)
+            .filter(|ratio| ratio.is_finite() && *ratio > 0.0);
         if let Some((intrinsic_width, intrinsic_height)) =
             bridge_known_image_intrinsic_size(doc, idx, cv)
         {

@@ -1,0 +1,17 @@
+[package]
+name = "raikiri-svg"
+version = "0.1.0"
+description = "Static SVG parsing and size-bounded rasterization for Raikiri"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+raikiri-traits = { workspace = true }
+resvg = { workspace = true }
+roxmltree = { workspace = true }
+usvg = { workspace = true }
+
+[lints]
+workspace = true

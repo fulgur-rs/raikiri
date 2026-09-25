@@ -174,6 +174,7 @@ pub fn layout_single_page(
     // されない)。layout はここで sync することで少なくとも layout/paint 段に
     // stale bit を持ち込まないことを保証する。
     document.mark_in_document_flags();
+    crate::image_resolve::resolve_inline_svg_intrinsic_sizes(document);
     if document.layout_cascade_generation != Some(cascade.generation()) {
         // Computed Grid/Flex style can change without a DOM tree mutation. Do
         // not let Taffy's per-node cache or resolved Grid rows survive that

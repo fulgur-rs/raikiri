@@ -24,6 +24,7 @@
 
 use smol_str::SmolStr;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::sync::Arc;
 use taffy::Style;
 
@@ -68,6 +69,26 @@ fn is_xml_name_char(ch: char) -> bool {
 fn is_valid_xml_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars.next().is_some_and(is_xml_name_start) && chars.all(is_xml_name_char)
+}
+
+fn qualified_name(prefix: Option<&str>, local: &str) -> String {
+    prefix.map_or_else(|| local.to_owned(), |prefix| format!("{prefix}:{local}"))
+}
+
+fn push_xml_escaped(output: &mut String, value: &str, attribute: bool) {
+    for character in value.chars() {
+        match character {
+            '&' => output.push_str("&amp;"),
+            '<' => output.push_str("&lt;"),
+            '>' => output.push_str("&gt;"),
+            '"' if attribute => output.push_str("&quot;"),
+            '\'' if attribute => output.push_str("&apos;"),
+            '\n' if attribute => output.push_str("&#xA;"),
+            '\r' if attribute => output.push_str("&#xD;"),
+            '\t' if attribute => output.push_str("&#x9;"),
+            character => output.push(character),
+        }
+    }
 }
 
 fn is_html_raw_text_element(namespace: Option<&str>, tag_name: &str) -> bool {
@@ -547,28 +568,34 @@ impl Document {
     /// `NodeData::as_element_mut().expect(...)` に移行、release でも panic する
     /// ようになったのは意図的な strictness 向上)。
     pub fn set_element_namespace(&mut self, id: usize, ns: Option<SmolStr>) {
-        // namespace の変更は
-        // `<template>` 判定 (`namespace.is_none()` は HTML default optimized path) を
-        // 変え得るため、tag_name が "template" の場合は flags_dirty を set する。
-        // これがないと HTML template → SVG template への変更 (あるいは逆) の後
-        // `mark_in_document_flags()` が early return path で no-op となり、
-        // 子孫の in_document bit が stale のまま残る。
-        //
-        // template 以外の element では namespace 変更は本 bit に無関係なので
-        // flag は set しない (invalidate_layout_cache も呼ばない: pure metadata
-        // 変更で layout 結果を変えない、既存の attribute-setter 契約と一貫)。
-        let ns_changed_for_template = {
+        self.set_element_namespace_info(id, ns, None);
+    }
+
+    /// Set an element namespace URI and its source prefix.
+    pub fn set_element_namespace_info(
+        &mut self,
+        id: usize,
+        ns: Option<SmolStr>,
+        prefix: Option<SmolStr>,
+    ) {
+        let (namespace_changed, affects_tree_flags, affects_layout) = {
             let e = self.nodes[id]
                 .data
                 .as_element_mut()
                 .expect("set_element_namespace called on non-Element");
-            let is_template_tag = e.tag_name.as_str() == "template";
             let changed = e.namespace != ns;
+            let affects_tree_flags =
+                changed && (e.tag_name.as_str() == "template" || e.tag_name.as_str() == "svg");
+            let affects_layout = changed && e.tag_name.as_str() == "svg";
             e.namespace = ns;
-            is_template_tag && changed
+            e.prefix = prefix;
+            (changed, affects_tree_flags, affects_layout)
         };
-        if ns_changed_for_template {
+        if namespace_changed && affects_tree_flags {
             self.flags_dirty = true;
+        }
+        if affects_layout {
+            self.invalidate_layout_cache();
         }
     }
 
@@ -590,8 +617,48 @@ impl Document {
             .expect("set_element_attributes called on non-Element");
         e.attributes = attrs
             .into_iter()
-            .map(|(local, value)| Attr { local, value })
+            .map(|(local, value)| Attr {
+                namespace: None,
+                prefix: None,
+                local,
+                value,
+            })
             .collect();
+    }
+
+    /// Set one namespace-qualified attribute on an element.
+    pub fn set_element_namespaced_attribute(
+        &mut self,
+        id: usize,
+        namespace: impl Into<SmolStr>,
+        prefix: Option<SmolStr>,
+        local: impl Into<SmolStr>,
+        value: impl Into<SmolStr>,
+    ) -> Result<(), String> {
+        let namespace = namespace.into();
+        let local = local.into();
+        if namespace.is_empty() || !is_valid_xml_name(local.as_str()) {
+            return Err("invalid namespace-qualified attribute name".to_owned());
+        }
+        let value = value.into();
+        let element = self.nodes[id]
+            .data
+            .as_element_mut()
+            .expect("set_element_namespaced_attribute called on non-Element");
+        if let Some(existing) = element.attributes.iter_mut().find(|attribute| {
+            attribute.namespace.as_deref() == Some(namespace.as_str()) && attribute.local == local
+        }) {
+            existing.prefix = prefix;
+            existing.value = value;
+        } else {
+            element.attributes.push(Attr {
+                namespace: Some(namespace),
+                prefix,
+                local,
+                value,
+            });
+        }
+        Ok(())
     }
 
     /// Set one null-namespace attribute on an element.
@@ -639,7 +706,9 @@ impl Document {
                 .data
                 .as_element_mut()
                 .expect("set_element_attribute called on non-Element");
-            element.attributes.retain(|attr| attr.local != local);
+            element
+                .attributes
+                .retain(|attr| attr.namespace.is_some() || attr.local != local);
             self.set_element_inline_style(id, Some(value));
             return Ok(());
         }
@@ -650,7 +719,7 @@ impl Document {
             .expect("set_element_attribute called on non-Element");
         let mut found = false;
         element.attributes.retain_mut(|attr| {
-            if attr.local == local {
+            if attr.namespace.is_none() && attr.local == local {
                 if found {
                     false
                 } else {
@@ -663,7 +732,12 @@ impl Document {
             }
         });
         if !found {
-            element.attributes.push(Attr { local, value });
+            element.attributes.push(Attr {
+                namespace: None,
+                prefix: None,
+                local,
+                value,
+            });
         }
         Ok(())
     }
@@ -710,22 +784,22 @@ impl Document {
             let legacy_value = element
                 .attributes
                 .iter()
-                .find(|attr| attr.local.as_str() == local)
+                .find(|attr| attr.namespace.is_none() && attr.local.as_str() == local)
                 .map(|attr| attr.value.clone());
             element
                 .attributes
-                .retain(|attr| attr.local.as_str() != local);
+                .retain(|attr| attr.namespace.is_some() || attr.local.as_str() != local);
             return Ok(element.inline_style.take().or(legacy_value));
         }
 
         let first_value = element
             .attributes
             .iter()
-            .find(|attr| attr.local.as_str() == local)
+            .find(|attr| attr.namespace.is_none() && attr.local.as_str() == local)
             .map(|attr| attr.value.clone());
         element
             .attributes
-            .retain(|attr| attr.local.as_str() != local);
+            .retain(|attr| attr.namespace.is_some() || attr.local.as_str() != local);
         Ok(first_value)
     }
 
@@ -825,16 +899,36 @@ impl Document {
                         source_node.style.clone(),
                         element.inline_style.clone(),
                     );
-                    self.set_element_namespace(new_id, element.namespace.clone());
+                    self.set_element_namespace_info(
+                        new_id,
+                        element.namespace.clone(),
+                        element.prefix.clone(),
+                    );
                     self.set_element_attributes(
                         new_id,
                         element
                             .attributes
                             .iter()
-                            .filter(|attr| attr.local.as_str() != "style")
+                            .filter(|attr| {
+                                attr.namespace.is_none() && attr.local.as_str() != "style"
+                            })
                             .map(|attr| (attr.local.clone(), attr.value.clone()))
                             .collect(),
                     );
+                    for attr in element
+                        .attributes
+                        .iter()
+                        .filter(|attr| attr.namespace.is_some())
+                    {
+                        self.set_element_namespaced_attribute(
+                            new_id,
+                            attr.namespace.clone().unwrap_or_default(),
+                            attr.prefix.clone(),
+                            attr.local.clone(),
+                            attr.value.clone(),
+                        )
+                        .expect("source namespace-qualified attribute was valid");
+                    }
 
                     if let Some(source_fragment) = element.template_contents {
                         let target_fragment = self.allocate_template_fragment_root(new_id);
@@ -1280,6 +1374,7 @@ impl Document {
     ///   ことでどこかの primitive で flag 更新を忘れた場合の regression を回避
     ///   できる。
     pub fn mark_in_document_flags(&mut self) {
+        const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
         // dirty check で cheap early return。
         // parse.finish() 直後 (dirty) → 明示的 recompute。以降 mutation 無しで
         // 複数回呼ばれても再計算しない。
@@ -1292,6 +1387,8 @@ impl Document {
         // 明示的に clear することで detached / unreachable node が false に落ちる。
         for node in &mut self.nodes {
             node.set_in_document(false);
+            node.set_inline_svg_content(false);
+            node.set_inline_svg_root(false);
         }
         // Step 2: Document root から reachable な node を DFS で set。
         //
@@ -1305,21 +1402,37 @@ impl Document {
         // DocumentFragment は detached なので DFS が届かず、step 1 の clear
         // 状態のまま残る (追加処理不要)。
         let root = self.root_index();
-        let mut stack: Vec<(usize, bool)> = vec![(root, false)];
-        while let Some((id, in_template)) = stack.pop() {
+        let mut stack: Vec<(usize, bool, bool)> = vec![(root, false, false)];
+        while let Some((id, in_template, in_svg_subtree)) = stack.pop() {
             let node = &mut self.nodes[id];
             let is_unrendered_by_kind = matches!(
                 node.data,
                 NodeData::Comment(_) | NodeData::ProcessingInstruction { .. }
             );
             node.set_in_document(!in_template && !is_unrendered_by_kind);
+            let is_svg_element = matches!(
+                &node.data,
+                NodeData::Element(element)
+                    if element.tag_name.as_str() == "svg"
+                        && element.namespace.as_deref() == Some(SVG_NAMESPACE)
+            );
+            let svg_subtree_here = in_svg_subtree || is_svg_element;
+            node.set_inline_svg_content(svg_subtree_here);
+            node.set_inline_svg_root(is_svg_element && !in_svg_subtree);
             let is_template_here = match &node.data {
-                NodeData::Element(e) => e.tag_name.as_str() == "template" && e.namespace.is_none(),
+                NodeData::Element(element) => {
+                    element.tag_name.as_str() == "template" && element.namespace.is_none()
+                }
                 _ => false,
             };
             let child_in_template = in_template || is_template_here;
             // Borrow the child IDs directly to avoid a temporary Vec per parent.
-            stack.extend(node.children.iter().rev().map(|&c| (c, child_in_template)));
+            stack.extend(
+                node.children
+                    .iter()
+                    .rev()
+                    .map(|&child| (child, child_in_template, svg_subtree_here)),
+            );
         }
         // Step 3: taffy が観測する effective child tree が変わり得るため、
         // layout cache を dirty mark する。
@@ -1359,6 +1472,157 @@ impl Document {
             name.to_owned()
         };
         node.attribute(&local)
+    }
+
+    /// Serialize an inline SVG element and its subtree as a standalone XML
+    /// source, retaining element/attribute namespace URIs and prefixes.
+    pub fn serialize_svg_subtree(&self, id: usize) -> Result<Option<String>, String> {
+        const SVG_NS: &str = "http://www.w3.org/2000/svg";
+        const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
+        const XMLNS_NS: &str = "http://www.w3.org/2000/xmlns/";
+
+        enum Task {
+            Node(usize),
+            End(String),
+        }
+
+        let Some(root) = self.nodes.get(id) else {
+            return Ok(None);
+        };
+        let NodeData::Element(root_element) = &root.data else {
+            return Ok(None);
+        };
+        if root_element.tag_name.as_str() != "svg"
+            || root_element.namespace.as_deref() != Some(SVG_NS)
+        {
+            return Ok(None);
+        }
+
+        let mut output = String::new();
+        let mut pending = vec![Task::Node(id)];
+        while let Some(task) = pending.pop() {
+            match task {
+                Task::End(name) => {
+                    output.push_str("</");
+                    output.push_str(&name);
+                    output.push('>');
+                }
+                Task::Node(node_id) => {
+                    let Some(node) = self.nodes.get(node_id) else {
+                        return Err(format!("SVG subtree node {node_id} is out of range"));
+                    };
+                    match &node.data {
+                        NodeData::Element(element) => {
+                            let name = qualified_name(
+                                element.prefix.as_deref(),
+                                element.tag_name.as_str(),
+                            );
+                            if !is_valid_xml_name(element.tag_name.as_str())
+                                || element
+                                    .prefix
+                                    .as_deref()
+                                    .is_some_and(|prefix| !is_valid_xml_name(prefix))
+                            {
+                                return Err(format!("invalid SVG element name on node {node_id}"));
+                            }
+                            output.push('<');
+                            output.push_str(&name);
+                            let mut namespace_bindings = HashMap::new();
+                            if let Some(namespace) = element.namespace.as_deref() {
+                                let prefix = element.prefix.as_deref().unwrap_or("");
+                                namespace_bindings.insert(prefix.to_owned(), namespace.to_owned());
+                                let declaration = element.prefix.as_deref().map_or_else(
+                                    || "xmlns".to_owned(),
+                                    |prefix| format!("xmlns:{prefix}"),
+                                );
+                                output.push(' ');
+                                output.push_str(&declaration);
+                                output.push_str("=\"");
+                                push_xml_escaped(&mut output, namespace, true);
+                                output.push('"');
+                            } else {
+                                output.push_str(" xmlns=\"\"");
+                            }
+
+                            let mut generated_prefix = 0usize;
+                            for attribute in &element.attributes {
+                                if attribute.namespace.as_deref() == Some(XMLNS_NS)
+                                    || (attribute.namespace.is_none()
+                                        && attribute.local.as_str() == "style")
+                                {
+                                    continue;
+                                }
+                                if !is_valid_xml_name(attribute.local.as_str()) {
+                                    return Err(format!(
+                                        "invalid SVG attribute name {:?} on node {node_id}",
+                                        attribute.local
+                                    ));
+                                }
+                                let attribute_name = match attribute.namespace.as_deref() {
+                                    None => attribute.local.to_string(),
+                                    Some(XML_NS) => format!("xml:{}", attribute.local),
+                                    Some(namespace) => {
+                                        let source_prefix = attribute.prefix.as_deref();
+                                        let prefix = match source_prefix {
+                                            Some(prefix)
+                                                if namespace_bindings
+                                                    .get(prefix)
+                                                    .is_none_or(|bound| bound == namespace) =>
+                                            {
+                                                prefix.to_owned()
+                                            }
+                                            _ => loop {
+                                                generated_prefix += 1;
+                                                let candidate =
+                                                    format!("_raikiri_ns{generated_prefix}");
+                                                if !namespace_bindings.contains_key(&candidate) {
+                                                    break candidate;
+                                                }
+                                            },
+                                        };
+                                        if !is_valid_xml_name(&prefix) {
+                                            return Err(format!(
+                                                "invalid SVG attribute prefix {prefix:?} on node {node_id}"
+                                            ));
+                                        }
+                                        if !namespace_bindings.contains_key(&prefix) {
+                                            namespace_bindings
+                                                .insert(prefix.clone(), namespace.to_owned());
+                                            let declaration = format!("xmlns:{prefix}");
+                                            output.push(' ');
+                                            output.push_str(&declaration);
+                                            output.push_str("=\"");
+                                            push_xml_escaped(&mut output, namespace, true);
+                                            output.push('"');
+                                        }
+                                        format!("{prefix}:{}", attribute.local)
+                                    }
+                                };
+                                output.push(' ');
+                                output.push_str(&attribute_name);
+                                output.push_str("=\"");
+                                push_xml_escaped(&mut output, attribute.value.as_str(), true);
+                                output.push('"');
+                            }
+                            if let Some(style) = &element.inline_style {
+                                output.push_str(" style=\"");
+                                push_xml_escaped(&mut output, style.as_str(), true);
+                                output.push('"');
+                            }
+                            output.push('>');
+                            pending.push(Task::End(name));
+                            pending.extend(node.children.iter().rev().copied().map(Task::Node));
+                        }
+                        NodeData::Text(text) => {
+                            push_xml_escaped(&mut output, text.text_content.as_str(), false);
+                        }
+                        NodeData::Document | NodeData::Comment(_) => {}
+                        NodeData::ProcessingInstruction { .. } | NodeData::DocumentFragment => {}
+                    }
+                }
+            }
+        }
+        Ok(Some(output))
     }
 
     /// Return the post-computed Taffy style for a node.
