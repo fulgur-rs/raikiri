@@ -1546,3 +1546,16 @@ css/css-page/monolithic-overflow-002-print.html
 css/css-page/monolithic-overflow-003-print.html
 css/css-page/monolithic-overflow-004-print.html
 css/css-page/monolithic-overflow-006-print.html
+# --- css-break widows-orphans paged-text PASS-now (exact, 800x600, 2026-09-25) ---
+# WPT rev 97ea26e26a2aac3eec7e770650b25e7049ed4a4e
+css/css-break/tall-line-in-short-fragmentainer-000.html
+css/css-break/widows-orphans-008.html
+css/css-break/widows-orphans-009.html
+css/css-break/widows-orphans-010.html
+css/css-break/widows-orphans-011.html
+css/css-break/widows-orphans-012.html
+css/css-break/widows-orphans-013.html
+css/css-break/widows-orphans-014.html
+css/css-break/widows-orphans-015.html
+css/css-break/widows-orphans-016.html
+css/css-break/widows-orphans-018.html
