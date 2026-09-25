@@ -248,9 +248,10 @@ impl NetworkProvider for UreqHttpProvider {
                             "UreqHttpProvider does not yet support Body::Form".into(),
                         ));
                     }
-                    // `raikiri_traits::Body` is `#[non_exhaustive]`, so this
-                    // arm exists purely to keep the match exhaustive against
-                    // future variants added upstream.
+                    // cov:ignore: `raikiri_traits::Body` is
+                    // `#[non_exhaustive]`; this crate cannot construct a
+                    // fourth variant to exercise this arm from a test, only
+                    // `Bytes`/`Form`/`Empty` exist today.
                     _ => {
                         return Err(NetworkError::Other(
                             "UreqHttpProvider does not support this Body variant".into(),

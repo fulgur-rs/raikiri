@@ -653,21 +653,44 @@ fn io_error_maps_to_network_error_io() {
     );
 }
 
+/// Captures a raw HTTP/1.1 request read from a test server: the request
+/// line, every header line verbatim (so a test can search for whichever
+/// one it cares about), and the body (read according to `Content-Length`).
+struct CapturedRequest {
+    request_line: String,
+    header_lines: Vec<String>,
+    body: Vec<u8>,
+}
+
+impl CapturedRequest {
+    /// Whether any captured header line has `name` (case-insensitively)
+    /// and a value equal to `value` once both sides are trimmed. Splits on
+    /// the first `:` rather than comparing whole lines verbatim, so this
+    /// doesn't depend on exactly how much whitespace `ureq` puts on the
+    /// wire around the colon.
+    fn has_header(&self, name: &str, value: &str) -> bool {
+        self.header_lines.iter().any(|line| {
+            let Some((line_name, line_value)) = line.split_once(':') else {
+                return false;
+            };
+            line_name.trim().eq_ignore_ascii_case(name) && line_value.trim() == value
+        })
+    }
+}
+
 /// Reads a raw HTTP/1.1 request from `stream` far enough to capture the
-/// request line, the `Content-Type` header (if any), and the body (read
-/// according to `Content-Length`), then writes a fixed `200 OK` back.
-/// Good enough for a one-shot test server asserting what a POST actually
-/// sent — these tests do not need a real HTTP parser.
-fn serve_one_response_capturing_post(
-    stream: std::net::TcpStream,
-) -> (String, Option<String>, Vec<u8>) {
+/// request line, every header line, and the body (read according to
+/// `Content-Length`), then writes a fixed `200 OK` back. Good enough for a
+/// one-shot test server asserting what a fetch actually sent — these tests
+/// do not need a real HTTP parser.
+fn serve_one_response_capturing_request(stream: std::net::TcpStream) -> CapturedRequest {
     let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
     let mut request_line = String::new();
     reader
         .read_line(&mut request_line)
         .expect("read request line");
 
-    let mut content_type = None;
+    let mut header_lines = Vec::new();
     let mut content_length = 0usize;
     loop {
         let mut header_line = String::new();
@@ -677,12 +700,13 @@ fn serve_one_response_capturing_post(
         if header_line == "\r\n" || header_line.is_empty() {
             break;
         }
-        let lower = header_line.to_ascii_lowercase();
-        if let Some(value) = lower.strip_prefix("content-type:") {
-            content_type = Some(value.trim().to_owned());
-        } else if let Some(value) = lower.strip_prefix("content-length:") {
+        if let Some(value) = header_line
+            .to_ascii_lowercase()
+            .strip_prefix("content-length:")
+        {
             content_length = value.trim().parse().expect("valid content-length");
         }
+        header_lines.push(header_line);
     }
 
     let mut body = vec![0u8; content_length];
@@ -695,7 +719,11 @@ fn serve_one_response_capturing_post(
         .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
         .expect("write response");
 
-    (request_line, content_type, body)
+    CapturedRequest {
+        request_line,
+        header_lines,
+        body,
+    }
 }
 
 #[test]
@@ -705,7 +733,8 @@ fn post_sends_body_and_headers_and_reads_back_the_response() {
     let (tx, rx) = std::sync::mpsc::channel();
     thread::spawn(move || {
         let (stream, _) = listener.accept().expect("accept conn");
-        tx.send(serve_one_response_capturing_post(stream)).unwrap();
+        tx.send(serve_one_response_capturing_request(stream))
+            .unwrap();
     });
 
     let agent = ureq::Agent::with_parts(
@@ -727,16 +756,98 @@ fn post_sends_body_and_headers_and_reads_back_the_response() {
     let resource = provider.fetch(request).expect("POST fetch must succeed");
     assert_eq!(resource.bytes.as_ref(), b"ok");
 
-    let (request_line, content_type, body) = rx.recv().expect("server captured the request");
+    let captured = rx.recv().expect("server captured the request");
     assert!(
-        request_line.starts_with("POST "),
-        "expected a POST request line, got {request_line:?}"
+        captured.request_line.starts_with("POST "),
+        "expected a POST request line, got {:?}",
+        captured.request_line
     );
-    assert_eq!(
-        content_type.as_deref(),
-        Some("application/x-www-form-urlencoded")
+    assert!(
+        captured.has_header("content-type", "application/x-www-form-urlencoded"),
+        "expected a Content-Type header, got {:?}",
+        captured.header_lines
     );
-    assert_eq!(body, b"a=1&b=2");
+    assert!(
+        captured.has_header("x-test", "yes"),
+        "expected the custom request header to be sent, got {:?}",
+        captured.header_lines
+    );
+    assert_eq!(captured.body, b"a=1&b=2");
+}
+
+#[test]
+fn post_with_an_empty_body_sends_no_body_bytes() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+    let port = listener.local_addr().unwrap().port();
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept conn");
+        tx.send(serve_one_response_capturing_request(stream))
+            .unwrap();
+    });
+
+    let agent = ureq::Agent::with_parts(
+        no_proxy_config(),
+        DefaultConnector::default(),
+        DefaultResolver::default(),
+    );
+    let provider = UreqHttpProvider::with_agent(agent);
+
+    let request = Request {
+        url: Url::parse(&format!("http://127.0.0.1:{port}/ping")).unwrap(),
+        method: RaikiriMethod::Post,
+        content_type: None,
+        headers: Vec::new(),
+        body: Body::Empty,
+        signal: None,
+        kind: ResourceKind::Other,
+    };
+    provider.fetch(request).expect("POST fetch must succeed");
+
+    let captured = rx.recv().expect("server captured the request");
+    assert!(captured.request_line.starts_with("POST "));
+    assert!(
+        captured.body.is_empty(),
+        "Body::Empty must send no body bytes, got {:?}",
+        captured.body
+    );
+}
+
+#[test]
+fn get_sends_the_requests_custom_headers() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+    let port = listener.local_addr().unwrap().port();
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept conn");
+        tx.send(serve_one_response_capturing_request(stream))
+            .unwrap();
+    });
+
+    let agent = ureq::Agent::with_parts(
+        no_proxy_config(),
+        DefaultConnector::default(),
+        DefaultResolver::default(),
+    );
+    let provider = UreqHttpProvider::with_agent(agent);
+
+    let request = Request {
+        url: Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(),
+        method: RaikiriMethod::Get,
+        content_type: None,
+        headers: vec![("X-Test".to_owned(), "yes".to_owned())],
+        body: Body::Empty,
+        signal: None,
+        kind: ResourceKind::Image,
+    };
+    provider.fetch(request).expect("GET fetch must succeed");
+
+    let captured = rx.recv().expect("server captured the request");
+    assert!(
+        captured.has_header("x-test", "yes"),
+        "expected the custom request header to be sent, got {:?}",
+        captured.header_lines
+    );
 }
 
 #[test]
