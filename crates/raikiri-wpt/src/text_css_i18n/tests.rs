@@ -1786,3 +1786,17 @@ fn inherited_ch_spacing_keeps_the_declaring_elements_length() {
         );
     }
 }
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn font_variation_settings_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-fonts/parsing/font-variation-settings-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 8);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}

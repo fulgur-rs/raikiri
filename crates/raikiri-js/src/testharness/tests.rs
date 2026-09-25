@@ -214,6 +214,26 @@ fn runs_assertions_against_the_dom_backend() {
 }
 
 #[test]
+fn assert_in_array_checks_membership_and_reports_non_members() {
+    let passed = run_testharness_script(
+        "test(function() { assert_in_array('b', ['a', 'b', 'c']); }, 'member');",
+        TestDom::default(),
+    )
+    .unwrap();
+    assert_eq!(passed.len(), 1);
+    assert!(passed[0].passed, "{:?}", passed[0]);
+
+    let failed = run_testharness_script(
+        "test(function() { assert_in_array('z', ['a', 'b', 'c']); }, 'non-member');",
+        TestDom::default(),
+    )
+    .unwrap();
+    assert_eq!(failed.len(), 1);
+    assert!(!failed[0].passed);
+    assert!(failed[0].message.contains("assert_in_array"));
+}
+
+#[test]
 fn empty_script_is_reported_as_no_tests() {
     let result = run_testharness_script("", TestDom::default());
     assert!(matches!(result, Err(TestHarnessError::NoTests)));
