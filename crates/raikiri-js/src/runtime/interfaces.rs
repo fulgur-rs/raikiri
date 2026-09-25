@@ -292,7 +292,6 @@ pub(crate) fn wrap(context: &mut Context, index: usize) -> JsResult<JsObject> {
 }
 
 /// [`wrap`] for nullable node results.
-#[allow(dead_code, reason = "used by members returning `Node?`")]
 pub(crate) fn wrap_optional(context: &mut Context, index: Option<usize>) -> JsResult<JsValue> {
     match index {
         Some(index) => Ok(wrap(context, index)?.into()),

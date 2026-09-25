@@ -214,21 +214,22 @@ fn has_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     Ok(JsValue::from(attribute(context, index, &name)?.is_some()))
 }
 
-/// Write (`Some`) or remove (`None`) an element attribute and mark the host
-/// dirty. Shared by `setAttribute`/`removeAttribute` and every `classList`
-/// mutator, which all serialize through the `class` attribute.
+/// Set an element attribute and mark the host dirty. Shared by
+/// `setAttribute` and every `classList` mutator, which all serialize
+/// through the `class` attribute. `Element.setAttribute` (DOM §4.9) throws
+/// `InvalidCharacterError` for a syntactically invalid name; `class` is
+/// always a valid name, so `classList`'s own callers never observe the
+/// error branch.
 pub(crate) fn write_attribute(
     context: &mut Context,
     index: usize,
     name: &str,
-    value: Option<&str>,
+    value: &str,
 ) -> JsResult<()> {
     let result = with_state(context, |s| {
-        let doc = s.host.document_mut();
-        match value {
-            Some(value) => doc.set_element_attribute(index, name, value),
-            None => doc.remove_element_attribute(index, name).map(|_| ()),
-        }
+        s.host
+            .document_mut()
+            .set_element_attribute(index, name, value)
     })?;
     if let Err(message) = result {
         return Err(throw_dom_exception(
@@ -244,14 +245,24 @@ fn set_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     let index = this_element(this, context)?;
     let name = dom_string(args, 0, context)?;
     let value = dom_string(args, 1, context)?;
-    write_attribute(context, index, &name, Some(&value))?;
+    write_attribute(context, index, &name, &value)?;
     Ok(JsValue::undefined())
 }
 
+/// `Element.removeAttribute` (DOM §4.9): unlike `setAttribute`, the
+/// algorithm never validates `name` — it just looks up an attribute by
+/// that name and removes it if found, so a syntactically invalid name (one
+/// raikiri-dom's `remove_element_attribute` rejects before touching
+/// anything) is simply never found, and this is a silent no-op.
 fn remove_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     let name = dom_string(args, 0, context)?;
-    write_attribute(context, index, &name, None)?;
+    let removed = with_state(context, |s| {
+        s.host.document_mut().remove_element_attribute(index, &name)
+    })?;
+    if matches!(removed, Ok(Some(_))) {
+        mark_dirty(context)?;
+    }
     Ok(JsValue::undefined())
 }
 
@@ -305,7 +316,7 @@ fn class_list(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
                 tokens.push(token);
             }
         }
-        write_attribute(ctx, index, "class", Some(&tokens.join(" ")))?;
+        write_attribute(ctx, index, "class", &tokens.join(" "))?;
         Ok(JsValue::undefined())
     });
     let remove = NativeFunction::from_copy_closure(move |_, args, ctx| {
@@ -315,7 +326,7 @@ fn class_list(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
             validate_token(ctx, &token)?;
             tokens.retain(|t| t != &token);
         }
-        write_attribute(ctx, index, "class", Some(&tokens.join(" ")))?;
+        write_attribute(ctx, index, "class", &tokens.join(" "))?;
         Ok(JsValue::undefined())
     });
     let contains = NativeFunction::from_copy_closure(move |_, args, ctx| {
@@ -339,7 +350,7 @@ fn class_list(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
         } else {
             return Ok(JsValue::from(want));
         }
-        write_attribute(ctx, index, "class", Some(&tokens.join(" ")))?;
+        write_attribute(ctx, index, "class", &tokens.join(" "))?;
         Ok(JsValue::from(want))
     });
     for (name, f, length) in [
@@ -402,36 +413,42 @@ fn body(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValu
 /// `Some`. This is the same ancestor shape
 /// [`raikiri_style::SelectorQuery::matches`] expects, and what `:root`
 /// (`ancestors.is_empty()`) relies on.
+///
+/// Iterative, with an explicit `(node, ancestor depth)` stack rather than
+/// the native call stack: a script can build an arbitrarily deep chain
+/// (there is no other bound on tree depth before it reaches raikiri-dom),
+/// and a stack overflow there would abort the process rather than raise a
+/// catchable error. `ancestors` is truncated to each entry's recorded depth
+/// before that entry runs, the same "truncate on pop" shape
+/// `raikiri_style::cascade::selector_match`'s own explicit-stack walks use
+/// for the same reason.
 fn find_in_tree<T>(
     doc: &raikiri_dom::Document,
     root: usize,
     mut visit: impl FnMut(usize, &[StyleNodeId]) -> Option<T>,
 ) -> Option<T> {
-    fn walk<T>(
-        doc: &raikiri_dom::Document,
-        node: usize,
-        ancestors: &mut Vec<StyleNodeId>,
-        visit: &mut dyn FnMut(usize, &[StyleNodeId]) -> Option<T>,
-    ) -> Option<T> {
-        let n = doc.get_node(node)?;
-        let is_element = n.kind() == NodeKind::Element;
-        if is_element && let Some(found) = visit(node, ancestors) {
-            return Some(found);
-        }
-        if is_element {
-            ancestors.push(StyleNodeId(node as u64));
-        }
-        for &child in &n.children {
-            if let Some(found) = walk(doc, child, ancestors, visit) {
+    let mut ancestors: Vec<StyleNodeId> = Vec::new();
+    let mut stack: Vec<(usize, usize)> = vec![(root, 0)];
+    while let Some((node, depth)) = stack.pop() {
+        ancestors.truncate(depth);
+        // `stack` only ever holds `root` or an entry from a resolved node's
+        // own `children`, both always resolvable in the same arena.
+        let Some(n) = doc.get_node(node) else {
+            continue; // cov:ignore: every stack entry comes from `root` or a node's own children, always valid in the same arena
+        };
+        let child_depth = if n.kind() == NodeKind::Element {
+            if let Some(found) = visit(node, &ancestors) {
                 return Some(found);
             }
-        }
-        if is_element {
-            ancestors.pop();
-        }
-        None
+            ancestors.push(StyleNodeId(node as u64));
+            depth + 1
+        } else {
+            depth
+        };
+        // Push in reverse so the LIFO stack pops children back in document order.
+        stack.extend(n.children.iter().rev().map(|&c| (c, child_depth)));
     }
-    walk(doc, root, &mut Vec::new(), &mut visit)
+    None
 }
 
 fn get_element_by_id(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {

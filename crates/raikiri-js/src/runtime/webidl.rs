@@ -8,7 +8,6 @@ use super::interfaces::{DomExceptionData, NodeHandle, protos};
 use super::{State, shared};
 
 /// `DOMString` conversion of argument `i` (missing -> "undefined", per ToString).
-#[allow(dead_code, reason = "used by string-taking DOM members")]
 pub(crate) fn dom_string(args: &[JsValue], i: usize, context: &mut Context) -> JsResult<String> {
     Ok(args
         .get(i)
@@ -43,7 +42,6 @@ pub(crate) fn this_node(this: &JsValue, _context: &mut Context) -> JsResult<usiz
 }
 
 /// Brand check for `Element` members.
-#[allow(dead_code, reason = "used by Element members")]
 pub(crate) fn this_element(this: &JsValue, context: &mut Context) -> JsResult<usize> {
     let index = this_node(this, context)?;
     match kind_of(context, index)? {
@@ -53,7 +51,6 @@ pub(crate) fn this_element(this: &JsValue, context: &mut Context) -> JsResult<us
 }
 
 /// Brand check for `Document` members.
-#[allow(dead_code, reason = "used by Document members")]
 pub(crate) fn this_document(this: &JsValue, context: &mut Context) -> JsResult<usize> {
     let index = this_node(this, context)?;
     match kind_of(context, index)? {
@@ -63,7 +60,6 @@ pub(crate) fn this_document(this: &JsValue, context: &mut Context) -> JsResult<u
 }
 
 /// A `Node` argument (WebIDL interface-type conversion).
-#[allow(dead_code, reason = "used by node-taking DOM members")]
 pub(crate) fn arg_node(args: &[JsValue], i: usize, _context: &mut Context) -> JsResult<usize> {
     args.get(i)
         .and_then(brand)
@@ -71,7 +67,6 @@ pub(crate) fn arg_node(args: &[JsValue], i: usize, _context: &mut Context) -> Js
 }
 
 /// Create a `DOMException` with the given name and return it as a JS error.
-#[allow(dead_code, reason = "used by DOM members that throw DOMException")]
 pub(crate) fn throw_dom_exception(context: &mut Context, name: &str, message: &str) -> JsError {
     let proto = protos(context).dom_exception.clone();
     let object = boa_engine::JsObject::from_proto_and_data(

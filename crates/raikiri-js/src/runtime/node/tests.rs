@@ -200,6 +200,17 @@ fn query_selector_uses_full_selectors_in_tree_order() {
 }
 
 #[test]
+fn query_selector_returns_the_first_match_in_document_order() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var first = document.createElement('p'); document.body.appendChild(first);
+         var second = document.createElement('p'); document.body.appendChild(second);",
+    )
+    .unwrap();
+    ok(&mut rt, "document.querySelector('p') === first");
+}
+
+#[test]
 fn query_selector_root_matches_document_element() {
     let mut rt = rt();
     ok(
@@ -208,25 +219,32 @@ fn query_selector_root_matches_document_element() {
     );
 }
 
-/// A node created while detached defaults its `IS_IN_DOCUMENT` bit to
-/// `true` (raikiri-dom's optimistic default); a node placed inside a
-/// `<template>` needs a fresh `mark_in_document_flags` walk to have that bit
-/// correctly cleared, because `<template>` content is inert (excluded from
-/// the flat tree) but nothing else in the mutation path recomputes the
-/// bit eagerly. A sibling combinator's candidate lookup consults the bit
-/// directly (unlike child/descendant combinators, which walk this binding's
-/// own always-accurate ancestor list), so it is the only kind of selector
-/// where stale bits are observable here.
+/// Models what a real embedder does: its layout pass refreshes
+/// `IS_IN_DOCUMENT` on entry (independently of any `querySelector` call),
+/// and script then mutates the tree afterward. Here that refresh is done
+/// directly against the document while `i` is still detached, so its bit
+/// is correctly cleared; script then attaches `i` as `b`'s previous
+/// sibling, and nothing else recomputes the bit on its own. A sibling
+/// combinator's candidate lookup consults the bit directly (unlike
+/// child/descendant combinators, which walk this binding's own
+/// always-accurate ancestor list), so without a fresh refresh right before
+/// `querySelector`'s own walk, `i`'s bit would still say "not in document"
+/// and `i + b` would wrongly fail to match `b`, a plain later sibling.
 #[test]
 fn query_selector_uses_fresh_in_document_flags() {
     let mut rt = rt();
+    rt.evaluate("var i = document.createElement('i');").unwrap();
+    with_state(rt.context_mut(), |s| {
+        s.host.document_mut().mark_in_document_flags();
+    })
+    .unwrap();
     rt.evaluate(
-        "var tmpl = document.createElement('template'); document.body.appendChild(tmpl);
-         var i = document.createElement('i'); tmpl.appendChild(i);
-         var b = document.createElement('b'); tmpl.appendChild(b);",
+        "document.body.appendChild(i);
+         var b = document.createElement('b');
+         document.body.appendChild(b);",
     )
     .unwrap();
-    ok(&mut rt, "document.querySelector('i + b') === null");
+    ok(&mut rt, "document.querySelector('i + b') === b");
 }
 
 #[test]
@@ -276,10 +294,11 @@ fn attribute_names_are_validated_as_dom_exceptions() {
         &mut rt,
         "try { d.setAttribute('1bad', 'x'); false } catch (e) { e instanceof DOMException && e.name === 'InvalidCharacterError' }",
     );
-    ok(
-        &mut rt,
-        "try { d.removeAttribute('1bad'); false } catch (e) { e.name === 'InvalidCharacterError' }",
-    );
+    // DOM §4.9: `removeAttribute` never validates its argument -- it looks
+    // an attribute up by name and removes it if found, so a syntactically
+    // invalid name is simply never found. Unlike `setAttribute`, this is a
+    // silent no-op, not a `DOMException`.
+    ok(&mut rt, "d.removeAttribute('1bad') === undefined");
 }
 
 #[test]
@@ -331,4 +350,85 @@ fn mutations_mark_the_host_dirty_once_per_read() {
     rt.evaluate("document.body.setAttribute('class', 'q');")
         .unwrap();
     assert_eq!(flushes.get(), 0, "mutations alone never flush");
+}
+
+/// `find_in_tree`'s walk must not use the native call stack: a script can
+/// build an arbitrarily deep chain, and there is no other bound on it
+/// before it reaches raikiri-dom. Built directly against `Document` with
+/// `create_detached_element` + `attach_child` (both O(1)) rather than
+/// through JS `appendChild`, whose cycle check does an O(N) `parent_of`
+/// scan per call and would make building this chain quadratic.
+#[test]
+fn find_in_tree_walks_a_very_deep_chain_without_overflowing_the_stack() {
+    let (mut rt, body) = rt_with_body();
+    let deep = with_state(rt.context_mut(), |s| {
+        let doc = s.host.document_mut();
+        let mut parent = body;
+        for _ in 0..100_000 {
+            let child = doc.create_detached_element("div").unwrap();
+            doc.attach_child(parent, child);
+            parent = child;
+        }
+        doc.set_element_attribute(parent, "id", "deep").unwrap();
+        parent
+    })
+    .unwrap();
+    expose(&mut rt, "deep", deep);
+    ok(&mut rt, "document.getElementById('deep') === deep");
+    ok(&mut rt, "document.querySelector('#deep') === deep");
+}
+
+fn is_dirty(rt: &mut DomRuntime) -> bool {
+    with_state(rt.context_mut(), |s| s.dirty).unwrap()
+}
+
+fn clear_dirty(rt: &mut DomRuntime) {
+    with_state(rt.context_mut(), |s| s.dirty = false).unwrap();
+}
+
+#[test]
+fn mutations_set_dirty_and_reads_and_no_op_writes_do_not() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var d = document.createElement('div'); document.body.appendChild(d);
+         d.setAttribute('id', 't');",
+    )
+    .unwrap();
+
+    clear_dirty(&mut rt);
+    rt.evaluate("d.setAttribute('class', 'q');").unwrap();
+    assert!(is_dirty(&mut rt), "setAttribute should mark dirty");
+
+    clear_dirty(&mut rt);
+    rt.evaluate("document.body.appendChild(document.createElement('span'));")
+        .unwrap();
+    assert!(is_dirty(&mut rt), "appendChild should mark dirty");
+
+    clear_dirty(&mut rt);
+    rt.evaluate("d.textContent = 'x';").unwrap();
+    assert!(is_dirty(&mut rt), "textContent= should mark dirty");
+
+    clear_dirty(&mut rt);
+    rt.evaluate("d.classList.add('y');").unwrap();
+    assert!(is_dirty(&mut rt), "classList.add should mark dirty");
+
+    clear_dirty(&mut rt);
+    rt.evaluate("d.getAttribute('id'); document.querySelector('div');")
+        .unwrap();
+    assert!(!is_dirty(&mut rt), "reads should not mark dirty");
+
+    clear_dirty(&mut rt);
+    rt.evaluate("d.removeAttribute('1bad');").unwrap();
+    assert!(
+        !is_dirty(&mut rt),
+        "an invalid removeAttribute name is a no-op, not a mutation"
+    );
+
+    clear_dirty(&mut rt);
+    // `d`'s class is `y` (set above); `force` already matches, so this is a no-write no-op.
+    rt.evaluate("d.classList.toggle('y', true);").unwrap();
+    assert!(
+        !is_dirty(&mut rt),
+        "a toggle matching the current state should not write"
+    );
 }
