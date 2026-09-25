@@ -1240,3 +1240,157 @@ fn text_spacing_computed_wpt_case_uses_the_pinned_computed_helper() {
     assert_eq!(result.total(), 16);
     assert!(result.all_passed(), "{:?}", result.outcomes);
 }
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn font_kerning_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-fonts/parsing/font-kerning-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 3);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn font_variant_caps_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-fonts/parsing/font-variant-caps-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 7);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn font_optical_sizing_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-fonts/parsing/font-optical-sizing-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 2);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn font_variant_emoji_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-fonts/parsing/font-variant-emoji-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 4);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn font_language_override_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-fonts/parsing/font-language-override-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 5);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn font_variant_ligatures_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-fonts/parsing/font-variant-ligatures-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 10);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn font_synthesis_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-fonts/parsing/font-synthesis-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 21);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn font_variant_position_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-fonts/parsing/font-variant-position-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 3);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn font_palette_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-fonts/parsing/font-palette-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 4);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn font_variant_numeric_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-fonts/parsing/font-variant-numeric-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 11);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn font_variant_east_asian_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-fonts/parsing/font-variant-east-asian-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 12);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}

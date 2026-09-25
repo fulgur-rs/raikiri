@@ -284,6 +284,158 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
             .to_owned(),
         ),
 
+        PropertyValue::FontKerning(value) => Some(
+            match value {
+                FontKerning::Auto => "auto",
+                FontKerning::Normal => "normal",
+                FontKerning::None => "none",
+            }
+            .to_owned(),
+        ),
+
+        PropertyValue::FontOpticalSizing(value) => Some(
+            match value {
+                FontOpticalSizing::Auto => "auto",
+                FontOpticalSizing::None => "none",
+            }
+            .to_owned(),
+        ),
+
+        PropertyValue::FontVariantEmoji(value) => Some(
+            match value {
+                FontVariantEmoji::Normal => "normal",
+                FontVariantEmoji::Text => "text",
+                FontVariantEmoji::Emoji => "emoji",
+                FontVariantEmoji::Unicode => "unicode",
+            }
+            .to_owned(),
+        ),
+
+        PropertyValue::FontLanguageOverride(value) => Some(match value {
+            FontLanguageOverride::Normal => "normal".to_owned(),
+            FontLanguageOverride::String(value) => {
+                Token::QuotedString(CowRcStr::from(value.as_str())).to_css_string()
+            }
+        }),
+
+        PropertyValue::FontVariantLigatures(value) => Some(
+            match value {
+                FontVariantLigatures::Normal => "normal",
+                FontVariantLigatures::None => "none",
+                FontVariantLigatures::CommonLigatures => "common-ligatures",
+                FontVariantLigatures::NoCommonLigatures => "no-common-ligatures",
+                FontVariantLigatures::DiscretionaryLigatures => "discretionary-ligatures",
+                FontVariantLigatures::NoDiscretionaryLigatures => "no-discretionary-ligatures",
+                FontVariantLigatures::HistoricalLigatures => "historical-ligatures",
+                FontVariantLigatures::NoHistoricalLigatures => "no-historical-ligatures",
+                FontVariantLigatures::Contextual => "contextual",
+                FontVariantLigatures::NoContextual => "no-contextual",
+            }
+            .to_owned(),
+        ),
+
+        PropertyValue::FontSynthesis(value) => {
+            let mut keywords = Vec::with_capacity(4);
+            if value.weight {
+                keywords.push("weight");
+            }
+            match value.style {
+                FontSynthesisStyle::None => {}
+                FontSynthesisStyle::Auto => keywords.push("style"),
+                FontSynthesisStyle::ObliqueOnly => keywords.push("oblique-only"),
+            }
+            if value.small_caps {
+                keywords.push("small-caps");
+            }
+            if value.position {
+                keywords.push("position");
+            }
+            Some(if keywords.is_empty() {
+                "none".to_owned()
+            } else {
+                keywords.join(" ")
+            })
+        }
+
+        PropertyValue::FontVariantPosition(value) => Some(
+            match value {
+                FontVariantPosition::Normal => "normal",
+                FontVariantPosition::Sub => "sub",
+                FontVariantPosition::Super => "super",
+            }
+            .to_owned(),
+        ),
+
+        PropertyValue::FontPalette(value) => Some(match value {
+            FontPaletteValue::Normal => "normal".to_owned(),
+            FontPaletteValue::Light => "light".to_owned(),
+            FontPaletteValue::Dark => "dark".to_owned(),
+            FontPaletteValue::Palette(identifier) => {
+                Token::Ident(CowRcStr::from(identifier.as_str())).to_css_string()
+            }
+        }),
+
+        PropertyValue::FontVariantNumeric(value) => {
+            if value.is_normal() {
+                Some("normal".to_owned())
+            } else {
+                let mut keywords = Vec::with_capacity(8);
+                if value.lining_nums {
+                    keywords.push("lining-nums");
+                }
+                if value.oldstyle_nums {
+                    keywords.push("oldstyle-nums");
+                }
+                if value.proportional_nums {
+                    keywords.push("proportional-nums");
+                }
+                if value.tabular_nums {
+                    keywords.push("tabular-nums");
+                }
+                if value.diagonal_fractions {
+                    keywords.push("diagonal-fractions");
+                }
+                if value.stacked_fractions {
+                    keywords.push("stacked-fractions");
+                }
+                if value.ordinal {
+                    keywords.push("ordinal");
+                }
+                if value.slashed_zero {
+                    keywords.push("slashed-zero");
+                }
+                Some(keywords.join(" "))
+            }
+        }
+
+        PropertyValue::FontVariantEastAsian(value) => {
+            if value.is_normal() {
+                Some("normal".to_owned())
+            } else {
+                let mut keywords = Vec::with_capacity(3);
+                match value.variant {
+                    Some(FontVariantEastAsianVariant::Jis78) => keywords.push("jis78"),
+                    Some(FontVariantEastAsianVariant::Jis83) => keywords.push("jis83"),
+                    Some(FontVariantEastAsianVariant::Jis90) => keywords.push("jis90"),
+                    Some(FontVariantEastAsianVariant::Jis04) => keywords.push("jis04"),
+                    Some(FontVariantEastAsianVariant::Simplified) => keywords.push("simplified"),
+                    Some(FontVariantEastAsianVariant::Traditional) => keywords.push("traditional"),
+                    None => {}
+                }
+                match value.width {
+                    Some(FontVariantEastAsianWidth::FullWidth) => keywords.push("full-width"),
+                    Some(FontVariantEastAsianWidth::ProportionalWidth) => {
+                        keywords.push("proportional-width")
+                    }
+                    None => {}
+                }
+                if value.ruby {
+                    keywords.push("ruby");
+                }
+                Some(keywords.join(" "))
+            }
+        }
+
         _ => None,
     }
 }

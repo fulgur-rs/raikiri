@@ -915,6 +915,16 @@ pub(crate) fn resolve_against_inherited(
         // argument is not — `FontStyle` doc) and does not depend on the
         // inheritance parent — nothing for phase 2 to resolve.
         | PropertyValue::FontStyle(_)
+        | PropertyValue::FontKerning(_)
+        | PropertyValue::FontOpticalSizing(_)
+        | PropertyValue::FontVariantEmoji(_)
+        | PropertyValue::FontLanguageOverride(_)
+        | PropertyValue::FontVariantLigatures(_)
+        | PropertyValue::FontSynthesis(_)
+        | PropertyValue::FontVariantPosition(_)
+        | PropertyValue::FontPalette(_)
+        | PropertyValue::FontVariantNumeric(_)
+        | PropertyValue::FontVariantEastAsian(_)
         // `text-transform` carries no length (`TextTransform` doc) and
         // does not depend on the inheritance parent — nothing for phase 2
         // to resolve.
@@ -1395,6 +1405,16 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         }
         PropertyValue::VerticalAlign(va) => target.vertical_align = va,
         PropertyValue::FontStyle(fs) => target.font_style = fs,
+        PropertyValue::FontKerning(value) => target.font_kerning = value,
+        PropertyValue::FontOpticalSizing(value) => target.font_optical_sizing = value,
+        PropertyValue::FontVariantEmoji(value) => target.font_variant_emoji = value,
+        PropertyValue::FontLanguageOverride(value) => target.font_language_override = value,
+        PropertyValue::FontVariantLigatures(value) => target.font_variant_ligatures = value,
+        PropertyValue::FontSynthesis(value) => target.font_synthesis = value,
+        PropertyValue::FontVariantPosition(value) => target.font_variant_position = value,
+        PropertyValue::FontPalette(value) => target.font_palette = value,
+        PropertyValue::FontVariantNumeric(value) => target.font_variant_numeric = value,
+        PropertyValue::FontVariantEastAsian(value) => target.font_variant_east_asian = value,
         PropertyValue::TextTransform(tt) => target.text_transform = tt,
         PropertyValue::TextCombineUpright(value) => target.text_combine_upright = value,
         PropertyValue::TextOrientation(value) => target.text_orientation = value,

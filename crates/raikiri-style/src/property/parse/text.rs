@@ -596,6 +596,234 @@ pub(super) fn parse_text_spacing_trim(input: &mut Parser<'_, '_>) -> Option<Text
     }
 }
 
+pub(super) fn parse_font_kerning(input: &mut Parser<'_, '_>) -> Option<FontKerning> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "auto" => Some(FontKerning::Auto),
+        "normal" => Some(FontKerning::Normal),
+        "none" => Some(FontKerning::None),
+        _ => None,
+    }
+}
+
+pub(super) fn parse_font_optical_sizing(input: &mut Parser<'_, '_>) -> Option<FontOpticalSizing> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "auto" => Some(FontOpticalSizing::Auto),
+        "none" => Some(FontOpticalSizing::None),
+        _ => None,
+    }
+}
+
+pub(super) fn parse_font_variant_emoji(input: &mut Parser<'_, '_>) -> Option<FontVariantEmoji> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "normal" => Some(FontVariantEmoji::Normal),
+        "text" => Some(FontVariantEmoji::Text),
+        "emoji" => Some(FontVariantEmoji::Emoji),
+        "unicode" => Some(FontVariantEmoji::Unicode),
+        _ => None,
+    }
+}
+
+pub(super) fn parse_font_language_override(
+    input: &mut Parser<'_, '_>,
+) -> Option<FontLanguageOverride> {
+    if let Ok(ident) = input.try_parse(|input| input.expect_ident_cloned()) {
+        return ident
+            .eq_ignore_ascii_case("normal")
+            .then_some(FontLanguageOverride::Normal);
+    }
+
+    let value = input.expect_string().ok()?;
+    let value = value.as_ref().trim_end_matches(' ');
+    Some(FontLanguageOverride::String(SmolStr::new(value)))
+}
+
+pub(super) fn parse_font_synthesis(input: &mut Parser<'_, '_>) -> Option<FontSynthesisValue> {
+    let mut value = FontSynthesisValue::none();
+    let mut seen_any = false;
+
+    while !input.is_exhausted() {
+        let ident = input.expect_ident().ok()?.clone();
+        if ident.eq_ignore_ascii_case("none") {
+            if seen_any || !input.is_exhausted() {
+                return None;
+            }
+            return Some(value);
+        }
+
+        seen_any = true;
+        if ident.eq_ignore_ascii_case("weight") {
+            if value.weight {
+                return None;
+            }
+            value.weight = true;
+        } else if ident.eq_ignore_ascii_case("style") {
+            if value.style != FontSynthesisStyle::None {
+                return None;
+            }
+            value.style = FontSynthesisStyle::Auto;
+        } else if ident.eq_ignore_ascii_case("oblique-only") {
+            if value.style != FontSynthesisStyle::None {
+                return None;
+            }
+            value.style = FontSynthesisStyle::ObliqueOnly;
+        } else if ident.eq_ignore_ascii_case("small-caps") {
+            if value.small_caps {
+                return None;
+            }
+            value.small_caps = true;
+        } else if ident.eq_ignore_ascii_case("position") {
+            if value.position {
+                return None;
+            }
+            value.position = true;
+        } else {
+            return None;
+        }
+    }
+
+    seen_any.then_some(value)
+}
+
+pub(super) fn parse_font_variant_ligatures(
+    input: &mut Parser<'_, '_>,
+) -> Option<FontVariantLigatures> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "normal" => Some(FontVariantLigatures::Normal),
+        "none" => Some(FontVariantLigatures::None),
+        "common-ligatures" => Some(FontVariantLigatures::CommonLigatures),
+        "no-common-ligatures" => Some(FontVariantLigatures::NoCommonLigatures),
+        "discretionary-ligatures" => Some(FontVariantLigatures::DiscretionaryLigatures),
+        "no-discretionary-ligatures" => Some(FontVariantLigatures::NoDiscretionaryLigatures),
+        "historical-ligatures" => Some(FontVariantLigatures::HistoricalLigatures),
+        "no-historical-ligatures" => Some(FontVariantLigatures::NoHistoricalLigatures),
+        "contextual" => Some(FontVariantLigatures::Contextual),
+        "no-contextual" => Some(FontVariantLigatures::NoContextual),
+        _ => None,
+    }
+}
+
+pub(super) fn parse_font_variant_position(
+    input: &mut Parser<'_, '_>,
+) -> Option<FontVariantPosition> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "normal" => Some(FontVariantPosition::Normal),
+        "sub" => Some(FontVariantPosition::Sub),
+        "super" => Some(FontVariantPosition::Super),
+        _ => None,
+    }
+}
+
+pub(super) fn parse_font_palette(input: &mut Parser<'_, '_>) -> Option<FontPaletteValue> {
+    let ident = input.expect_ident().ok()?.clone();
+    if ident.eq_ignore_ascii_case("normal") {
+        Some(FontPaletteValue::Normal)
+    } else if ident.eq_ignore_ascii_case("light") {
+        Some(FontPaletteValue::Light)
+    } else if ident.eq_ignore_ascii_case("dark") {
+        Some(FontPaletteValue::Dark)
+    } else if ident.starts_with("--") && ident.len() > 2 {
+        Some(FontPaletteValue::Palette(SmolStr::new(ident.as_ref())))
+    } else {
+        None
+    }
+}
+
+pub(super) fn parse_font_variant_numeric(input: &mut Parser<'_, '_>) -> Option<FontVariantNumeric> {
+    let mut value = FontVariantNumeric::initial();
+    let mut seen_any = false;
+
+    while !input.is_exhausted() {
+        let ident = input.expect_ident().ok()?.clone();
+        if ident.eq_ignore_ascii_case("normal") {
+            if seen_any || !input.is_exhausted() {
+                return None;
+            }
+            return Some(value);
+        }
+
+        seen_any = true;
+        match ident.to_ascii_lowercase().as_str() {
+            "lining-nums" if !value.lining_nums && !value.oldstyle_nums => {
+                value.lining_nums = true;
+            }
+            "oldstyle-nums" if !value.lining_nums && !value.oldstyle_nums => {
+                value.oldstyle_nums = true;
+            }
+            "proportional-nums" if !value.proportional_nums && !value.tabular_nums => {
+                value.proportional_nums = true;
+            }
+            "tabular-nums" if !value.proportional_nums && !value.tabular_nums => {
+                value.tabular_nums = true;
+            }
+            "diagonal-fractions" if !value.diagonal_fractions && !value.stacked_fractions => {
+                value.diagonal_fractions = true;
+            }
+            "stacked-fractions" if !value.diagonal_fractions && !value.stacked_fractions => {
+                value.stacked_fractions = true;
+            }
+            "ordinal" if !value.ordinal => value.ordinal = true,
+            "slashed-zero" if !value.slashed_zero => value.slashed_zero = true,
+            _ => return None,
+        }
+    }
+
+    seen_any.then_some(value)
+}
+
+pub(super) fn parse_font_variant_east_asian(
+    input: &mut Parser<'_, '_>,
+) -> Option<FontVariantEastAsian> {
+    let mut value = FontVariantEastAsian::initial();
+    let mut seen_any = false;
+
+    while !input.is_exhausted() {
+        let ident = input.expect_ident().ok()?.clone();
+        if ident.eq_ignore_ascii_case("normal") {
+            if seen_any || !input.is_exhausted() {
+                return None;
+            }
+            return Some(value);
+        }
+
+        seen_any = true;
+        match ident.to_ascii_lowercase().as_str() {
+            "jis78" if value.variant.is_none() => {
+                value.variant = Some(FontVariantEastAsianVariant::Jis78);
+            }
+            "jis83" if value.variant.is_none() => {
+                value.variant = Some(FontVariantEastAsianVariant::Jis83);
+            }
+            "jis90" if value.variant.is_none() => {
+                value.variant = Some(FontVariantEastAsianVariant::Jis90);
+            }
+            "jis04" if value.variant.is_none() => {
+                value.variant = Some(FontVariantEastAsianVariant::Jis04);
+            }
+            "simplified" if value.variant.is_none() => {
+                value.variant = Some(FontVariantEastAsianVariant::Simplified);
+            }
+            "traditional" if value.variant.is_none() => {
+                value.variant = Some(FontVariantEastAsianVariant::Traditional);
+            }
+            "full-width" if value.width.is_none() => {
+                value.width = Some(FontVariantEastAsianWidth::FullWidth);
+            }
+            "proportional-width" if value.width.is_none() => {
+                value.width = Some(FontVariantEastAsianWidth::ProportionalWidth);
+            }
+            "ruby" if !value.ruby => value.ruby = true,
+            _ => return None,
+        }
+    }
+
+    seen_any.then_some(value)
+}
+
 pub(super) fn parse_font_style(input: &mut Parser<'_, '_>) -> Option<FontStyle> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {

@@ -25,25 +25,28 @@ use crate::property::{
     BackgroundRepeatKeyword, BackgroundShorthand, BorderRadius, BoxShadowItem, BoxSizing,
     BreakBetween, BreakInside, CalcLengthPercentage, ClearValue, ClipPath, ContentAlignmentValue,
     ContentComponent, CssColor, CustomProperty, Direction, DisplayValue, FilterFunction,
-    FlexDirectionValue, FlexWrapValue, FloatValue, FontShorthand, FontShorthandSize, FontStyle,
-    FontVariantCaps, FontWeightValue, GeometryBox, GridAreaShorthand, GridAutoFlowValue,
-    GridInflexibleBreadth, GridLineShorthand, GridLineValue, GridRepeatCount, GridShorthand,
-    GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks,
-    GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize,
-    HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, HyphenateLimitCharsValue, Hyphens,
-    Isolation, Length, LengthOrAuto, LengthOrNormal, LengthPercentageCalc, LetterSpacingValue,
-    LineBreak, LineHeight, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit,
-    Outline, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue,
-    PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PositionValue,
-    RelativeFontSize, RubyPosition, SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextAlignAll,
-    TextAlignLast, TextAutospace, TextDecorationColor, TextDecorationInset, TextDecorationLine,
-    TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle,
-    TextDecorationThickness, TextEmphasisFill, TextEmphasisHEdge, TextEmphasisPosition,
-    TextEmphasisShape, TextEmphasisShorthand, TextEmphasisStyle, TextEmphasisVEdge,
-    TextIndentLength, TextJustify, TextShadowColor, TextSpacingShorthand, TextSpacingTrim,
-    TextTransform, TextUnderlineOffset, TextUnderlinePosition, TextWrapMode, TextWrapStyle,
-    TransformFunction, VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse,
-    WordBreak, WordSpaceTransform, WordSpacingValue, WritingMode, ZIndexValue,
+    FlexDirectionValue, FlexWrapValue, FloatValue, FontKerning, FontLanguageOverride,
+    FontOpticalSizing, FontPaletteValue, FontShorthand, FontShorthandSize, FontStyle,
+    FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
+    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontWeightValue, GeometryBox,
+    GridAreaShorthand, GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand, GridLineValue,
+    GridRepeatCount, GridShorthand, GridTemplateAreaEntry, GridTemplateAreas,
+    GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+    GridTrackListComponent, GridTrackRepeat, GridTrackSize, HangingPunctuation, HyphenateCharacter,
+    HyphenateLimitChars, HyphenateLimitCharsValue, Hyphens, Isolation, Length, LengthOrAuto,
+    LengthOrNormal, LengthPercentageCalc, LetterSpacingValue, LineBreak, LineHeight,
+    ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineStyle,
+    OverflowValue, OverflowWrap, OverflowXY, PageValue, PlaceContentShorthand, PlaceItemsShorthand,
+    PlaceSelfShorthand, PositionValue, RelativeFontSize, RubyPosition, SelfAlignmentValue,
+    StartEnd, TabSize, TextAlign, TextAlignAll, TextAlignLast, TextAutospace, TextDecorationColor,
+    TextDecorationInset, TextDecorationLine, TextDecorationShorthand, TextDecorationSkipInk,
+    TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisFill,
+    TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisShape, TextEmphasisShorthand,
+    TextEmphasisStyle, TextEmphasisVEdge, TextIndentLength, TextJustify, TextShadowColor,
+    TextSpacingShorthand, TextSpacingTrim, TextTransform, TextUnderlineOffset,
+    TextUnderlinePosition, TextWrapMode, TextWrapStyle, TransformFunction, VerticalAlign,
+    Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak, WordSpaceTransform,
+    WordSpacingValue, WritingMode, ZIndexValue,
 };
 use crate::resolve::{ComputedLength, ComputedLineHeight};
 use crate::ruletree::build_rule_tree;
@@ -2901,7 +2904,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 132;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 142;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -3621,6 +3624,22 @@ property_key_samples! {
             a: 255,
         }),
     }),
+    FontKerning => PropertyValue::FontKerning(FontKerning::Auto),
+    FontOpticalSizing => PropertyValue::FontOpticalSizing(FontOpticalSizing::Auto),
+    FontVariantEmoji => PropertyValue::FontVariantEmoji(FontVariantEmoji::Normal),
+    FontLanguageOverride => PropertyValue::FontLanguageOverride(FontLanguageOverride::Normal),
+    FontVariantLigatures => {
+        PropertyValue::FontVariantLigatures(FontVariantLigatures::Normal)
+    },
+    FontSynthesis => PropertyValue::FontSynthesis(FontSynthesisValue::initial()),
+    FontVariantPosition => PropertyValue::FontVariantPosition(FontVariantPosition::Normal),
+    FontPalette => PropertyValue::FontPalette(FontPaletteValue::Normal),
+    FontVariantNumeric => {
+        PropertyValue::FontVariantNumeric(FontVariantNumeric::initial())
+    },
+    FontVariantEastAsian => {
+        PropertyValue::FontVariantEastAsian(FontVariantEastAsian::initial())
+    }
 }
 
 /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -3943,6 +3962,16 @@ property_value_variant_registry! {
     TextEmphasisStyle,
     TextEmphasisColor,
     TextEmphasis,
+    FontKerning,
+    FontOpticalSizing,
+    FontVariantEmoji,
+    FontLanguageOverride,
+    FontVariantLigatures,
+    FontSynthesis,
+    FontVariantPosition,
+    FontPalette,
+    FontVariantNumeric,
+    FontVariantEastAsian,
 }
 
 /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -4441,6 +4470,16 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // (`normal`/`italic`/`oblique` implemented, `oblique`'s
             // `<angle>` argument is not).
             | PropertyValue::FontStyle(_)
+            | PropertyValue::FontKerning(_)
+            | PropertyValue::FontOpticalSizing(_)
+            | PropertyValue::FontVariantEmoji(_)
+            | PropertyValue::FontLanguageOverride(_)
+            | PropertyValue::FontVariantLigatures(_)
+            | PropertyValue::FontSynthesis(_)
+            | PropertyValue::FontVariantPosition(_)
+            | PropertyValue::FontPalette(_)
+            | PropertyValue::FontVariantNumeric(_)
+            | PropertyValue::FontVariantEastAsian(_)
             // `FontVariantCaps` carries no length either.
             | PropertyValue::FontVariantCaps(_)
             // `TextTransform` carries no length either.

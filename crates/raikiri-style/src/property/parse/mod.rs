@@ -566,6 +566,42 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // `normal`, inherited, computed value = specified keyword
         // (angle-bearing branch unreachable at this scope).
         "font-style" => parse_font_style(input).map(PropertyValue::FontStyle),
+        // CSS Fonts 3 `font-kerning`: preserve its inherited keyword value;
+        // shaping behavior is intentionally outside this property-data slice.
+        "font-kerning" => parse_font_kerning(input).map(PropertyValue::FontKerning),
+        // CSS Fonts 4 `font-optical-sizing`: preserve its inherited keyword;
+        // optical-size selection and shaping remain outside this data path.
+        "font-optical-sizing" => {
+            parse_font_optical_sizing(input).map(PropertyValue::FontOpticalSizing)
+        }
+        // CSS Fonts 4 `font-variant-emoji`: preserve its inherited keyword;
+        // presentation behavior is intentionally outside this data path.
+        "font-variant-emoji" => {
+            parse_font_variant_emoji(input).map(PropertyValue::FontVariantEmoji)
+        }
+        // CSS Fonts 4 `font-language-override`: preserve the computed string
+        // and canonicalize its trailing spaces; no font selection is performed.
+        "font-language-override" => {
+            parse_font_language_override(input).map(PropertyValue::FontLanguageOverride)
+        }
+        // CSS Fonts 4 `font-variant-ligatures`: preserve the individual
+        // computed keywords from the pinned case; shaping remains out of scope.
+        "font-variant-ligatures" => {
+            parse_font_variant_ligatures(input).map(PropertyValue::FontVariantLigatures)
+        }
+        // Preserve the tested font-synthesis keyword set as CSSOM data only.
+        "font-synthesis" => parse_font_synthesis(input).map(PropertyValue::FontSynthesis),
+        // Preserve the CSS Fonts 3 computed keyword without enabling glyph shaping.
+        "font-variant-position" => {
+            parse_font_variant_position(input).map(PropertyValue::FontVariantPosition)
+        }
+        "font-palette" => parse_font_palette(input).map(PropertyValue::FontPalette),
+        "font-variant-numeric" => {
+            parse_font_variant_numeric(input).map(PropertyValue::FontVariantNumeric)
+        }
+        "font-variant-east-asian" => {
+            parse_font_variant_east_asian(input).map(PropertyValue::FontVariantEastAsian)
+        }
         // CSS Text 4 `text-spacing-trim`: preserve the specified keyword as
         // its computed value; layout behavior is intentionally out of scope.
         "text-spacing-trim" => parse_text_spacing_trim(input).map(PropertyValue::TextSpacingTrim),

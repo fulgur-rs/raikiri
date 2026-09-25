@@ -2012,6 +2012,287 @@ fn font_style_child_own_value_wins_over_inherited() {
 }
 
 #[test]
+fn font_kerning_inherits_and_child_value_overrides() {
+    use crate::property::FontKerning;
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("font-kerning: normal"));
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(parent, "em", Some("font-kerning: none"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(result.computed[parent].font_kerning, FontKerning::Normal);
+    assert_eq!(result.computed[inherited].font_kerning, FontKerning::Normal);
+    assert_eq!(
+        result.computed[override_child].font_kerning,
+        FontKerning::None
+    );
+}
+
+#[test]
+fn font_optical_sizing_inherits_and_child_value_overrides() {
+    use crate::property::FontOpticalSizing;
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("font-optical-sizing: none"));
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(parent, "em", Some("font-optical-sizing: auto"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].font_optical_sizing,
+        FontOpticalSizing::None
+    );
+    assert_eq!(
+        result.computed[inherited].font_optical_sizing,
+        FontOpticalSizing::None
+    );
+    assert_eq!(
+        result.computed[override_child].font_optical_sizing,
+        FontOpticalSizing::Auto
+    );
+}
+
+#[test]
+fn font_variant_emoji_inherits_and_child_value_overrides() {
+    use crate::property::FontVariantEmoji;
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("font-variant-emoji: emoji"));
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(parent, "em", Some("font-variant-emoji: unicode"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].font_variant_emoji,
+        FontVariantEmoji::Emoji
+    );
+    assert_eq!(
+        result.computed[inherited].font_variant_emoji,
+        FontVariantEmoji::Emoji
+    );
+    assert_eq!(
+        result.computed[override_child].font_variant_emoji,
+        FontVariantEmoji::Unicode
+    );
+}
+
+#[test]
+fn font_language_override_inherits_and_child_value_overrides() {
+    use crate::property::FontLanguageOverride;
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("font-language-override: \"KSW\""));
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(parent, "em", Some("font-language-override: \"ENG \""));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    let ksw = FontLanguageOverride::String("KSW".into());
+    let eng = FontLanguageOverride::String("ENG".into());
+    assert_eq!(result.computed[parent].font_language_override, ksw);
+    assert_eq!(result.computed[inherited].font_language_override, ksw);
+    assert_eq!(result.computed[override_child].font_language_override, eng);
+}
+
+#[test]
+fn font_variant_ligatures_inherits_and_child_value_overrides() {
+    use crate::property::FontVariantLigatures;
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "p",
+        Some("font-variant-ligatures: no-historical-ligatures"),
+    );
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(parent, "em", Some("font-variant-ligatures: contextual"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].font_variant_ligatures,
+        FontVariantLigatures::NoHistoricalLigatures
+    );
+    assert_eq!(
+        result.computed[inherited].font_variant_ligatures,
+        FontVariantLigatures::NoHistoricalLigatures
+    );
+    assert_eq!(
+        result.computed[override_child].font_variant_ligatures,
+        FontVariantLigatures::Contextual
+    );
+}
+
+#[test]
+fn font_variant_position_inherits_and_child_value_overrides() {
+    use crate::property::FontVariantPosition;
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("font-variant-position: sub"));
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(parent, "em", Some("font-variant-position: super"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].font_variant_position,
+        FontVariantPosition::Sub
+    );
+    assert_eq!(
+        result.computed[inherited].font_variant_position,
+        FontVariantPosition::Sub
+    );
+    assert_eq!(
+        result.computed[override_child].font_variant_position,
+        FontVariantPosition::Super
+    );
+}
+
+#[test]
+fn font_palette_inherits_and_child_value_overrides() {
+    use crate::property::FontPaletteValue;
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("font-palette: light"));
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(parent, "em", Some("font-palette: --pitchfork"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].font_palette,
+        FontPaletteValue::Light
+    );
+    assert_eq!(
+        result.computed[inherited].font_palette,
+        FontPaletteValue::Light
+    );
+    assert_eq!(
+        result.computed[override_child].font_palette,
+        FontPaletteValue::Palette("--pitchfork".into())
+    );
+}
+
+#[test]
+fn font_variant_numeric_inherits_and_child_value_overrides() {
+    use crate::property::FontVariantNumeric;
+
+    let parent_value = FontVariantNumeric {
+        oldstyle_nums: true,
+        tabular_nums: true,
+        stacked_fractions: true,
+        ordinal: true,
+        slashed_zero: true,
+        ..FontVariantNumeric::initial()
+    };
+    let child_value = FontVariantNumeric {
+        lining_nums: true,
+        proportional_nums: true,
+        diagonal_fractions: true,
+        ..FontVariantNumeric::initial()
+    };
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "p",
+        Some("font-variant-numeric: oldstyle-nums tabular-nums stacked-fractions ordinal slashed-zero"),
+    );
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(
+        parent,
+        "em",
+        Some("font-variant-numeric: lining-nums proportional-nums diagonal-fractions"),
+    );
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(result.computed[parent].font_variant_numeric, parent_value);
+    assert_eq!(
+        result.computed[inherited].font_variant_numeric,
+        parent_value
+    );
+    assert_eq!(
+        result.computed[override_child].font_variant_numeric,
+        child_value
+    );
+}
+
+#[test]
+fn font_variant_east_asian_inherits_and_child_value_overrides() {
+    use crate::property::{
+        FontVariantEastAsian, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
+    };
+
+    let parent_value = FontVariantEastAsian {
+        variant: Some(FontVariantEastAsianVariant::Jis78),
+        width: Some(FontVariantEastAsianWidth::ProportionalWidth),
+        ruby: false,
+    };
+    let child_value = FontVariantEastAsian {
+        variant: Some(FontVariantEastAsianVariant::Simplified),
+        width: Some(FontVariantEastAsianWidth::FullWidth),
+        ruby: true,
+    };
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "p",
+        Some("font-variant-east-asian: jis78 proportional-width"),
+    );
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(
+        parent,
+        "em",
+        Some("font-variant-east-asian: simplified full-width ruby"),
+    );
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].font_variant_east_asian,
+        parent_value
+    );
+    assert_eq!(
+        result.computed[inherited].font_variant_east_asian,
+        parent_value
+    );
+    assert_eq!(
+        result.computed[override_child].font_variant_east_asian,
+        child_value
+    );
+}
+
+#[test]
+fn font_synthesis_inherits_and_child_value_overrides() {
+    use crate::property::{FontSynthesisStyle, FontSynthesisValue};
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "p",
+        Some("font-synthesis: oblique-only small-caps position"),
+    );
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(parent, "em", Some("font-synthesis: weight style"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    let parent_value = FontSynthesisValue {
+        weight: false,
+        style: FontSynthesisStyle::ObliqueOnly,
+        small_caps: true,
+        position: true,
+    };
+    assert_eq!(result.computed[parent].font_synthesis, parent_value);
+    assert_eq!(result.computed[inherited].font_synthesis, parent_value);
+    assert_eq!(
+        result.computed[override_child].font_synthesis,
+        FontSynthesisValue {
+            weight: true,
+            style: FontSynthesisStyle::Auto,
+            small_caps: false,
+            position: false,
+        }
+    );
+}
+
+#[test]
 fn font_style_scope_cut_left_is_dropped_and_prior_wins_via_stylesheet() {
     // `left` / `right` are spec-valid `font-style` keywords (CSS Fonts 4
     // §2.4) but this crate's scope excludes them (`FontStyle` doc).

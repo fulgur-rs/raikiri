@@ -18,19 +18,21 @@ use crate::property::{
     BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderStyle, BoxSizing,
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue, EmptyCellsValue,
-    FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps,
-    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, HangingPunctuation,
-    HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, LineBreak, ListStylePosition,
-    ListStyleType, MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue,
-    OverflowWrap, OverflowXY, PositionValue, RubyPosition, SelfAlignmentValue, Sides,
-    TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
-    TextDecorationColor, TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces,
-    TextDecorationStyle, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisStyle,
-    TextEmphasisVEdge, TextJustify, TextOrientation, TextSpacingTrim, TextTransform,
-    TextUnderlinePosition, TextWrapMode, TextWrapStyle, UnicodeBidi, VerticalAlign, Visibility,
-    VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak, WordSpaceTransform, WritingMode,
-    ZIndexValue, empty_content_list, empty_counter_entries, empty_filter_list,
-    empty_quotes_entries, empty_string_set_entries, initial_font_family,
+    FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontKerning,
+    FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
+    FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
+    FontVariantNumeric, FontVariantPosition, GridAutoFlowValue, GridLineValue,
+    GridTemplateAreasValue, HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, Hyphens,
+    Isolation, LineBreak, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit,
+    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
+    RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextAlignLast,
+    TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationLine,
+    TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle, TextEmphasisHEdge,
+    TextEmphasisPosition, TextEmphasisStyle, TextEmphasisVEdge, TextJustify, TextOrientation,
+    TextSpacingTrim, TextTransform, TextUnderlinePosition, TextWrapMode, TextWrapStyle,
+    UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
+    WordSpaceTransform, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
+    empty_filter_list, empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
@@ -257,7 +259,7 @@ pub struct ChLengthProvenance {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / orphans / widows / list_style_type / list_style_position、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / orphans / widows / list_style_type / list_style_position、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing /
 /// overflow / text_decoration / unicode_bidi / vertical_align / z_index / float / clear)。
@@ -954,6 +956,36 @@ pub struct ComputedValues {
     /// property's full `normal | italic | left | right | oblique <angle
     /// [-90deg,90deg]>?` grammar — see [`FontStyle`] doc.
     pub font_style: FontStyle,
+    /// `font-kerning` — inherited, initial `auto`; preserved for CSSOM only.
+    /// No glyph-shaping or painting behavior is changed.
+    pub font_kerning: FontKerning,
+    /// `font-optical-sizing` — inherited, initial `auto`; preserved for CSSOM only.
+    /// No optical-size selection or glyph-shaping behavior is changed.
+    pub font_optical_sizing: FontOpticalSizing,
+    /// `font-variant-emoji` — inherited, initial `normal`; preserved for CSSOM only.
+    /// No emoji presentation or glyph-selection behavior is changed.
+    pub font_variant_emoji: FontVariantEmoji,
+    /// `font-language-override` — inherited, initial `normal`; preserved for CSSOM only.
+    /// No language-system selection or glyph-shaping behavior is changed.
+    pub font_language_override: FontLanguageOverride,
+    /// `font-variant-ligatures` — inherited, initial `normal`; retained for CSSOM only.
+    /// This field does not change ligature shaping or painting.
+    pub font_variant_ligatures: FontVariantLigatures,
+    /// `font-synthesis` — inherited, initial `weight style small-caps position`.
+    /// Preserved as CSSOM data only; no synthetic fonts or shaping changes are applied.
+    pub font_synthesis: FontSynthesisValue,
+    /// `font-variant-position` — inherited, initial `normal`, computed as specified.
+    /// Kept as CSSOM data only; sub/sup glyph shaping and synthesis are unchanged.
+    pub font_variant_position: FontVariantPosition,
+    /// `font-palette` — inherited, initial `normal`, computed as specified.
+    /// Preserved as CSSOM data only; no palette selection or glyph rendering is performed.
+    pub font_palette: FontPaletteValue,
+    /// `font-variant-numeric` — inherited, initial `normal`, computed as specified.
+    /// Stored as CSSOM data only; OpenType shaping is unchanged.
+    pub font_variant_numeric: FontVariantNumeric,
+    /// `font-variant-east-asian` — inherited, initial `normal`, computed as specified.
+    /// Stored as CSSOM data only; glyph substitution is unchanged.
+    pub font_variant_east_asian: FontVariantEastAsian,
     /// `font-variant-caps`. **inherited**, initial:
     /// [`FontVariantCaps::Normal`] (CSS Fonts Module Level 3 §6.6
     /// "Capitalization: the font-variant-caps property"
@@ -1845,6 +1877,16 @@ impl ComputedValues {
             vertical_align: VerticalAlign::Baseline,
             // CSS Fonts 4 §2.4: font-style initial は `normal`。
             font_style: FontStyle::Normal,
+            font_kerning: FontKerning::Auto,
+            font_optical_sizing: FontOpticalSizing::Auto,
+            font_variant_emoji: FontVariantEmoji::Normal,
+            font_language_override: FontLanguageOverride::Normal,
+            font_variant_ligatures: FontVariantLigatures::Normal,
+            font_synthesis: FontSynthesisValue::initial(),
+            font_variant_position: FontVariantPosition::Normal,
+            font_palette: FontPaletteValue::Normal,
+            font_variant_numeric: FontVariantNumeric::initial(),
+            font_variant_east_asian: FontVariantEastAsian::initial(),
             // CSS Fonts Module Level 3 §6.6: font-variant-caps initial は
             // `normal`。
             font_variant_caps: FontVariantCaps::Normal,
@@ -2050,7 +2092,7 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells、
     /// non-inherited: background-color / display / counter-* / content /
     /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout)。
     ///

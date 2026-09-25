@@ -1,6 +1,7 @@
 use super::*;
 use crate::property::{
-    GeometryBox, HyphenateLimitChars, HyphenateLimitCharsValue, Length, TextShadowColor,
+    FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth, GeometryBox,
+    HyphenateLimitChars, HyphenateLimitCharsValue, Length, TextShadowColor,
 };
 use crate::resolve::{
     ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
@@ -103,6 +104,16 @@ fn initial_values_match_spec() {
     assert_eq!(cv.direction, Direction::Ltr);
     // CSS Fonts 4 §2.4: font-style initial は `normal`。
     assert_eq!(cv.font_style, FontStyle::Normal);
+    assert_eq!(cv.font_kerning, FontKerning::Auto);
+    assert_eq!(cv.font_optical_sizing, FontOpticalSizing::Auto);
+    assert_eq!(cv.font_variant_emoji, FontVariantEmoji::Normal);
+    assert_eq!(cv.font_language_override, FontLanguageOverride::Normal);
+    assert_eq!(cv.font_variant_ligatures, FontVariantLigatures::Normal);
+    assert_eq!(cv.font_synthesis, FontSynthesisValue::initial());
+    assert_eq!(cv.font_variant_position, FontVariantPosition::Normal);
+    assert_eq!(cv.font_palette, FontPaletteValue::Normal);
+    assert_eq!(cv.font_variant_numeric, FontVariantNumeric::initial());
+    assert_eq!(cv.font_variant_east_asian, FontVariantEastAsian::initial());
     // CSS Fonts Module Level 3 §6.6: font-variant-caps initial は
     // `normal`。
     assert_eq!(cv.font_variant_caps, FontVariantCaps::Normal);
@@ -366,6 +377,32 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Fonts 4 §2.4: `Italic` — initial (`Normal`) と異なる値
         // (non_initial_parent の趣旨どおり全 field を非 initial に)。
         font_style: FontStyle::Italic,
+        font_kerning: FontKerning::None,
+        font_optical_sizing: FontOpticalSizing::None,
+        font_variant_emoji: FontVariantEmoji::Emoji,
+        font_language_override: FontLanguageOverride::String(SmolStr::new("KSW")),
+        font_variant_ligatures: FontVariantLigatures::NoHistoricalLigatures,
+        font_synthesis: FontSynthesisValue {
+            weight: false,
+            style: FontSynthesisStyle::ObliqueOnly,
+            small_caps: true,
+            position: false,
+        },
+        font_variant_position: FontVariantPosition::Super,
+        font_palette: FontPaletteValue::Palette(SmolStr::new("--parent")),
+        font_variant_numeric: FontVariantNumeric {
+            oldstyle_nums: true,
+            tabular_nums: true,
+            stacked_fractions: true,
+            ordinal: true,
+            slashed_zero: true,
+            ..FontVariantNumeric::initial()
+        },
+        font_variant_east_asian: FontVariantEastAsian {
+            variant: Some(FontVariantEastAsianVariant::Jis78),
+            width: Some(FontVariantEastAsianWidth::ProportionalWidth),
+            ruby: true,
+        },
         // CSS Fonts Module Level 3 §6.6: `SmallCaps` — initial
         // (`Normal`) と異なる値 (non_initial_parent の趣旨どおり全
         // field を非 initial に)。
@@ -639,7 +676,19 @@ fn inherit_from_copies_inherited_and_resets_non_inherited() {
     assert_eq!(child.cssom_writing_mode, parent.cssom_writing_mode);
     // CSS Fonts 4 §2.4: font-style は inherited。
     assert_eq!(child.font_style, parent.font_style);
-    // CSS Fonts Module Level 3 §6.6: font-variant-caps は inherited。
+    // CSS Fonts 4 §9.3: font-variant-emoji is inherited.
+    assert_eq!(child.font_variant_emoji, parent.font_variant_emoji);
+    // CSS Fonts 4 §6.13: font-language-override is inherited.
+    assert_eq!(child.font_language_override, parent.font_language_override);
+    // CSS Fonts 4 §6.4: font-variant-ligatures is inherited.
+    assert_eq!(child.font_variant_ligatures, parent.font_variant_ligatures);
+    // CSS Fonts 4 §2.8.5: font-synthesis is inherited as specified keywords.
+    assert_eq!(child.font_synthesis, parent.font_synthesis);
+    // CSS Fonts 3 §6.5: font-variant-position is inherited as specified.
+    assert_eq!(child.font_variant_position, parent.font_variant_position);
+    // CSS Fonts 4 §9.1: font-palette is inherited as specified.
+    assert_eq!(child.font_palette, parent.font_palette);
+    // CSS Fonts Module Level 3 §6.6: font-variant-caps は inherited.
     assert_eq!(child.font_variant_caps, parent.font_variant_caps);
     // CSS Text Module Level 3 §2.1: text-transform は inherited。
     assert_eq!(child.text_transform, parent.text_transform);

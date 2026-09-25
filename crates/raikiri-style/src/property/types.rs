@@ -1131,6 +1131,306 @@ pub enum RelativeFontSize {
     Smaller,
 }
 
+/// `font-kerning` property values from CSS Fonts Module Level 3.
+/// <https://www.w3.org/TR/css-fonts-3/#font-kerning-prop>
+///
+/// The property is inherited, has initial value `auto`, and its computed value
+/// is the specified keyword. This stores CSSOM data only; it does not change
+/// glyph shaping or painting.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontKerning {
+    /// `auto` — initial value.
+    Auto,
+    /// `normal`.
+    Normal,
+    /// `none`.
+    None,
+}
+
+/// `font-optical-sizing` property keywords from CSS Fonts Module Level 4.
+/// <https://www.w3.org/TR/css-fonts-4/#font-optical-sizing-def>
+///
+/// The property is inherited, has initial value `auto`, and its computed value
+/// is the specified keyword. This stores CSSOM data only; optical-size
+/// selection and glyph shaping remain out of scope.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontOpticalSizing {
+    /// `auto` — initial value.
+    Auto,
+    /// `none`.
+    None,
+}
+
+/// `font-variant-emoji` keywords from CSS Fonts Module Level 4.
+/// <https://www.w3.org/TR/css-fonts-4/#font-variant-emoji-prop>
+///
+/// The property is inherited, has initial value `normal`, and its computed
+/// value is the specified keyword. This stores CSSOM data only; emoji
+/// presentation and glyph selection remain out of scope.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontVariantEmoji {
+    /// `normal` — initial value.
+    Normal,
+    /// `text`.
+    Text,
+    /// `emoji`.
+    Emoji,
+    /// `unicode`.
+    Unicode,
+}
+
+/// `font-language-override` keyword or string from CSS Fonts Module Level 4.
+/// <https://www.w3.org/TR/css-fonts-4/#font-language-override-prop>
+///
+/// The property is inherited, has initial value `normal`, and is stored only
+/// for computed-value/CSSOM exposure. It does not select a language system or
+/// alter glyph shaping.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FontLanguageOverride {
+    /// `normal` — initial value.
+    Normal,
+    /// A quoted language-system string. Trailing spaces are removed during parsing.
+    String(SmolStr),
+}
+
+/// Individual `font-variant-ligatures` keywords from CSS Fonts Module Level 4.
+/// <https://www.w3.org/TR/css-fonts-4/#font-variant-ligatures-prop>
+///
+/// This narrow representation covers the individual values in the pinned
+/// computed-value test. The property's combined component grammar can be
+/// added when a selected case requires it. Values are stored for CSSOM only;
+/// ligature shaping and painting are unchanged.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontVariantLigatures {
+    /// `normal` — initial value.
+    Normal,
+    /// `none`.
+    None,
+    /// `common-ligatures`.
+    CommonLigatures,
+    /// `no-common-ligatures`.
+    NoCommonLigatures,
+    /// `discretionary-ligatures`.
+    DiscretionaryLigatures,
+    /// `no-discretionary-ligatures`.
+    NoDiscretionaryLigatures,
+    /// `historical-ligatures`.
+    HistoricalLigatures,
+    /// `no-historical-ligatures`.
+    NoHistoricalLigatures,
+    /// `contextual`.
+    Contextual,
+    /// `no-contextual`.
+    NoContextual,
+}
+
+/// Individual `font-variant-position` computed keywords from CSS Fonts Module Level 3 §6.5.
+/// <https://www.w3.org/TR/css-fonts-3/#font-variant-position-prop>
+///
+/// This data-only representation preserves the specified keyword for CSSOM.
+/// It does not enable subscript/superscript glyph shaping or synthesis.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontVariantPosition {
+    /// `normal` — initial value.
+    Normal,
+    /// `sub`.
+    Sub,
+    /// `super`.
+    Super,
+}
+
+/// The `font-palette` values exercised by the pinned computed-value case.
+/// CSS Fonts 4 §9.1 <https://drafts.csswg.org/css-fonts/#font-palette-prop>.
+///
+/// Palette selection is retained as CSSOM data only; this type does not select
+/// font palettes or change glyph rendering. `palette-mix()` is outside this
+/// case's supported subset.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FontPaletteValue {
+    /// `normal` — initial value.
+    Normal,
+    /// `light`.
+    Light,
+    /// `dark`.
+    Dark,
+    /// A named dashed palette identifier, such as `--pitchfork`.
+    Palette(SmolStr),
+}
+
+/// `font-variant-numeric` keyword set retained for computed-style exposure.
+/// CSS Fonts Module Level 3 §6.7
+/// <https://www.w3.org/TR/css-fonts-3/#font-variant-numeric-prop>.
+///
+/// Values are preserved as CSSOM data only; this type does not enable OpenType
+/// features or change shaping/rendering.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FontVariantNumeric {
+    /// `lining-nums`.
+    pub lining_nums: bool,
+    /// `oldstyle-nums`.
+    pub oldstyle_nums: bool,
+    /// `proportional-nums`.
+    pub proportional_nums: bool,
+    /// `tabular-nums`.
+    pub tabular_nums: bool,
+    /// `diagonal-fractions`.
+    pub diagonal_fractions: bool,
+    /// `stacked-fractions`.
+    pub stacked_fractions: bool,
+    /// `ordinal`.
+    pub ordinal: bool,
+    /// `slashed-zero`.
+    pub slashed_zero: bool,
+}
+
+impl FontVariantNumeric {
+    /// Initial value: no numeric features enabled (`normal`).
+    pub const fn initial() -> Self {
+        Self {
+            lining_nums: false,
+            oldstyle_nums: false,
+            proportional_nums: false,
+            tabular_nums: false,
+            diagonal_fractions: false,
+            stacked_fractions: false,
+            ordinal: false,
+            slashed_zero: false,
+        }
+    }
+
+    /// Whether this value serializes as `normal`.
+    pub const fn is_normal(self) -> bool {
+        !self.lining_nums
+            && !self.oldstyle_nums
+            && !self.proportional_nums
+            && !self.tabular_nums
+            && !self.diagonal_fractions
+            && !self.stacked_fractions
+            && !self.ordinal
+            && !self.slashed_zero
+    }
+}
+
+/// East Asian text variant used by `font-variant-east-asian`.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontVariantEastAsianVariant {
+    /// `jis78`.
+    Jis78,
+    /// `jis83`.
+    Jis83,
+    /// `jis90`.
+    Jis90,
+    /// `jis04`.
+    Jis04,
+    /// `simplified`.
+    Simplified,
+    /// `traditional`.
+    Traditional,
+}
+
+/// East Asian width value used by `font-variant-east-asian`.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontVariantEastAsianWidth {
+    /// `full-width`.
+    FullWidth,
+    /// `proportional-width`.
+    ProportionalWidth,
+}
+
+/// `font-variant-east-asian` value retained for computed-style exposure.
+/// CSS Fonts Module Level 3 §6.8
+/// <https://www.w3.org/TR/css-fonts-3/#font-variant-east-asian-prop>.
+///
+/// This is CSSOM data only; it does not perform glyph substitution or sizing.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FontVariantEastAsian {
+    /// One East Asian character-form variant, if specified.
+    pub variant: Option<FontVariantEastAsianVariant>,
+    /// One East Asian width form, if specified.
+    pub width: Option<FontVariantEastAsianWidth>,
+    /// Whether the `ruby` value is specified.
+    pub ruby: bool,
+}
+
+impl FontVariantEastAsian {
+    /// Initial value (`normal`).
+    pub const fn initial() -> Self {
+        Self {
+            variant: None,
+            width: None,
+            ruby: false,
+        }
+    }
+
+    /// Whether this value serializes as `normal`.
+    pub const fn is_normal(self) -> bool {
+        self.variant.is_none() && self.width.is_none() && !self.ruby
+    }
+}
+
+/// `font-synthesis` shorthand value preserved for computed-style exposure.
+/// CSS Fonts 4 §2.8.5 <https://drafts.csswg.org/css-fonts/#font-synthesis>.
+///
+/// The WPT-driven representation stores the tested synthesis keywords only.
+/// It does not request font synthesis or alter font selection or shaping.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FontSynthesisValue {
+    /// Synthesize bold when enabled.
+    pub weight: bool,
+    /// Synthesize italic/oblique when enabled, or permit oblique-only fallback.
+    pub style: FontSynthesisStyle,
+    /// Synthesize small caps when enabled.
+    pub small_caps: bool,
+    /// Synthesize super/subscript position when enabled.
+    pub position: bool,
+}
+
+/// Style component retained by [`FontSynthesisValue`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontSynthesisStyle {
+    /// Synthesis of italic/oblique is disabled.
+    None,
+    /// The `style` keyword.
+    Auto,
+    /// The pinned case's `oblique-only` keyword.
+    ObliqueOnly,
+}
+
+impl FontSynthesisValue {
+    /// CSS Fonts 4 initial value: `weight style small-caps position`.
+    pub const fn initial() -> Self {
+        Self {
+            weight: true,
+            style: FontSynthesisStyle::Auto,
+            small_caps: true,
+            position: true,
+        }
+    }
+
+    /// The `none` value, with every synthesis component disabled.
+    pub const fn none() -> Self {
+        Self {
+            weight: false,
+            style: FontSynthesisStyle::None,
+            small_caps: false,
+            position: false,
+        }
+    }
+}
+
 /// `font-style` property の value。
 ///
 /// CSS Fonts Module Level 4 §2.4 "Font style: the font-style property"
@@ -8408,6 +8708,33 @@ pub enum PropertyValue {
     /// `text-emphasis` shorthand, expanded into style and color longhands.
     /// Appended to preserve existing variant tags.
     TextEmphasis(TextEmphasisShorthand),
+    /// `font-kerning: auto | normal | none` — inherited, initial `auto`.
+    /// The computed value is the specified keyword; this value is data-only
+    /// and does not enable shaping or painting behavior.
+    FontKerning(FontKerning),
+    /// `font-optical-sizing: auto | none` — inherited, initial `auto`.
+    /// The computed value is the specified keyword; no font selection or
+    /// shaping behavior is enabled by this data-only value.
+    FontOpticalSizing(FontOpticalSizing),
+    /// `font-variant-emoji: normal | text | emoji | unicode` — inherited, initial `normal`.
+    /// This data-only value does not alter emoji presentation or glyph selection.
+    FontVariantEmoji(FontVariantEmoji),
+    /// `font-language-override: normal | <string>` — inherited, initial `normal`.
+    /// This data-only value does not select a language system or alter shaping.
+    FontLanguageOverride(FontLanguageOverride),
+    /// An individual `font-variant-ligatures` keyword, inherited with initial `normal`.
+    /// This data-only value does not change ligature shaping or painting.
+    FontVariantLigatures(FontVariantLigatures),
+    /// `font-synthesis` tested keyword set; data-only, with no synthesis behavior.
+    FontSynthesis(FontSynthesisValue),
+    /// `font-variant-position` keyword; data-only, with no glyph shaping or synthesis.
+    FontVariantPosition(FontVariantPosition),
+    /// `font-palette` keyword or dashed identifier; CSSOM data only.
+    FontPalette(FontPaletteValue),
+    /// `font-variant-numeric` keyword set; data only, with no shaping behavior.
+    FontVariantNumeric(FontVariantNumeric),
+    /// `font-variant-east-asian` value; data only, with no glyph substitution.
+    FontVariantEastAsian(FontVariantEastAsian),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -8922,6 +9249,26 @@ pub enum PropertyKey {
     TextEmphasisColor,
     // CSS Text Decoration 3 text-emphasis shorthand; appended to preserve key slots.
     TextEmphasis,
+    // CSS Fonts 3 font-kerning; appended to preserve existing key slots.
+    FontKerning,
+    // CSS Fonts 4 font-optical-sizing; appended to preserve existing key slots.
+    FontOpticalSizing,
+    // CSS Fonts 4 font-variant-emoji; appended to preserve existing key slots.
+    FontVariantEmoji,
+    // CSS Fonts 4 font-language-override; appended to preserve existing key slots.
+    FontLanguageOverride,
+    // CSS Fonts 4 font-variant-ligatures; appended to preserve existing key slots.
+    FontVariantLigatures,
+    // CSS Fonts 4 font-synthesis; appended to preserve existing key slots.
+    FontSynthesis,
+    // CSS Fonts 3 font-variant-position; appended to preserve existing key slots.
+    FontVariantPosition,
+    // CSS Fonts 4 font-palette; appended to preserve existing key slots.
+    FontPalette,
+    // CSS Fonts 3 font-variant-numeric; appended to preserve existing key slots.
+    FontVariantNumeric,
+    // CSS Fonts 3 font-variant-east-asian; appended to preserve existing key slots.
+    FontVariantEastAsian,
 }
 
 impl PropertyValue {
@@ -9140,6 +9487,16 @@ impl PropertyValue {
             PropertyValue::TextEmphasisStyle(_) => PropertyKey::TextEmphasisStyle,
             PropertyValue::TextEmphasisColor(_) => PropertyKey::TextEmphasisColor,
             PropertyValue::TextEmphasis(_) => PropertyKey::TextEmphasis,
+            PropertyValue::FontKerning(_) => PropertyKey::FontKerning,
+            PropertyValue::FontOpticalSizing(_) => PropertyKey::FontOpticalSizing,
+            PropertyValue::FontVariantEmoji(_) => PropertyKey::FontVariantEmoji,
+            PropertyValue::FontLanguageOverride(_) => PropertyKey::FontLanguageOverride,
+            PropertyValue::FontVariantLigatures(_) => PropertyKey::FontVariantLigatures,
+            PropertyValue::FontSynthesis(_) => PropertyKey::FontSynthesis,
+            PropertyValue::FontVariantPosition(_) => PropertyKey::FontVariantPosition,
+            PropertyValue::FontPalette(_) => PropertyKey::FontPalette,
+            PropertyValue::FontVariantNumeric(_) => PropertyKey::FontVariantNumeric,
+            PropertyValue::FontVariantEastAsian(_) => PropertyKey::FontVariantEastAsian,
         }
     }
 }
@@ -10198,6 +10555,16 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "text-decoration" => PropertyKey::TextDecoration,
         "vertical-align" => PropertyKey::VerticalAlign,
         "font-style" => PropertyKey::FontStyle,
+        "font-kerning" => PropertyKey::FontKerning,
+        "font-optical-sizing" => PropertyKey::FontOpticalSizing,
+        "font-variant-emoji" => PropertyKey::FontVariantEmoji,
+        "font-language-override" => PropertyKey::FontLanguageOverride,
+        "font-variant-ligatures" => PropertyKey::FontVariantLigatures,
+        "font-synthesis" => PropertyKey::FontSynthesis,
+        "font-variant-position" => PropertyKey::FontVariantPosition,
+        "font-palette" => PropertyKey::FontPalette,
+        "font-variant-numeric" => PropertyKey::FontVariantNumeric,
+        "font-variant-east-asian" => PropertyKey::FontVariantEastAsian,
         "text-transform" => PropertyKey::TextTransform,
         "visibility" => PropertyKey::Visibility,
         "z-index" => PropertyKey::ZIndex,

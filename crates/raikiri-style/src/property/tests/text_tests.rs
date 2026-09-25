@@ -2931,6 +2931,576 @@ fn font_style_rejects_non_ident() {
 }
 
 #[test]
+fn font_kerning_parses_and_maps_its_property_key() {
+    for (input, expected) in [
+        ("auto", FontKerning::Auto),
+        ("normal", FontKerning::Normal),
+        ("none", FontKerning::None),
+    ] {
+        let value = PropertyValue::FontKerning(expected);
+        assert_eq!(parse(input, "font-kerning"), Some(value.clone()));
+        assert_eq!(value.key(), PropertyKey::FontKerning);
+    }
+}
+
+#[test]
+fn font_kerning_is_case_insensitive_and_rejects_unknown_keywords() {
+    assert_eq!(
+        parse("NORMAL", "font-kerning"),
+        Some(PropertyValue::FontKerning(FontKerning::Normal))
+    );
+    for input in ["bogus", "italic", "inherit", "1"] {
+        assert_eq!(parse(input, "font-kerning"), None);
+    }
+}
+
+#[test]
+fn font_optical_sizing_parses_serializes_and_maps_its_property_key() {
+    for (input, expected) in [
+        ("auto", FontOpticalSizing::Auto),
+        ("none", FontOpticalSizing::None),
+    ] {
+        let value = PropertyValue::FontOpticalSizing(expected);
+        assert_eq!(parse(input, "font-optical-sizing"), Some(value.clone()));
+        assert_eq!(serialize_value(&value), Some(input.to_owned()));
+        assert_eq!(value.key(), PropertyKey::FontOpticalSizing);
+    }
+}
+
+#[test]
+fn font_optical_sizing_is_case_insensitive_and_rejects_unknown_values() {
+    assert_eq!(
+        parse("AUTO", "font-optical-sizing"),
+        Some(PropertyValue::FontOpticalSizing(FontOpticalSizing::Auto))
+    );
+    for input in ["normal", "on", "inherit", "1"] {
+        assert_eq!(parse(input, "font-optical-sizing"), None);
+    }
+}
+
+#[test]
+fn font_variant_emoji_parses_serializes_and_maps_its_property_key() {
+    for (input, expected) in [
+        ("normal", FontVariantEmoji::Normal),
+        ("text", FontVariantEmoji::Text),
+        ("emoji", FontVariantEmoji::Emoji),
+        ("unicode", FontVariantEmoji::Unicode),
+    ] {
+        let value = PropertyValue::FontVariantEmoji(expected);
+        assert_eq!(parse(input, "font-variant-emoji"), Some(value.clone()));
+        assert_eq!(serialize_value(&value), Some(input.to_owned()));
+        assert_eq!(value.key(), PropertyKey::FontVariantEmoji);
+    }
+}
+
+#[test]
+fn font_variant_emoji_is_case_insensitive_and_rejects_unknown_values() {
+    assert_eq!(
+        parse("UNICODE", "font-variant-emoji"),
+        Some(PropertyValue::FontVariantEmoji(FontVariantEmoji::Unicode))
+    );
+    for input in ["none", "bogus", "inherit", "1"] {
+        assert_eq!(parse(input, "font-variant-emoji"), None);
+    }
+    assert_eq!(parse_entire("text emoji", "font-variant-emoji"), None);
+}
+
+#[test]
+fn font_language_override_parses_serializes_and_maps_its_property_key() {
+    for (input, expected, serialized) in [
+        ("normal", FontLanguageOverride::Normal, "normal"),
+        (
+            "\"KSW\"",
+            FontLanguageOverride::String("KSW".into()),
+            "\"KSW\"",
+        ),
+        (
+            "\"ENG \"",
+            FontLanguageOverride::String("ENG".into()),
+            "\"ENG\"",
+        ),
+        (
+            "\"en  \"",
+            FontLanguageOverride::String("en".into()),
+            "\"en\"",
+        ),
+        (
+            "\" en \"",
+            FontLanguageOverride::String(" en".into()),
+            "\" en\"",
+        ),
+    ] {
+        let value = PropertyValue::FontLanguageOverride(expected);
+        assert_eq!(
+            parse_entire(input, "font-language-override"),
+            Some(value.clone())
+        );
+        assert_eq!(serialize_value(&value), Some(serialized.to_owned()));
+        assert_eq!(value.key(), PropertyKey::FontLanguageOverride);
+    }
+}
+
+#[test]
+fn font_language_override_accepts_case_insensitive_normal_and_rejects_invalid_values() {
+    assert_eq!(
+        parse("NORMAL", "font-language-override"),
+        Some(PropertyValue::FontLanguageOverride(
+            FontLanguageOverride::Normal
+        ))
+    );
+    for input in ["none", "foo", "inherit", "1"] {
+        assert_eq!(parse(input, "font-language-override"), None);
+    }
+    assert_eq!(
+        parse_entire("\"KSW\" \"ENG\"", "font-language-override"),
+        None
+    );
+}
+
+#[test]
+fn font_variant_ligatures_parses_and_serializes_the_ten_individual_keywords() {
+    for (input, expected, serialized) in [
+        ("normal", FontVariantLigatures::Normal, "normal"),
+        ("none", FontVariantLigatures::None, "none"),
+        (
+            "common-ligatures",
+            FontVariantLigatures::CommonLigatures,
+            "common-ligatures",
+        ),
+        (
+            "no-common-ligatures",
+            FontVariantLigatures::NoCommonLigatures,
+            "no-common-ligatures",
+        ),
+        (
+            "discretionary-ligatures",
+            FontVariantLigatures::DiscretionaryLigatures,
+            "discretionary-ligatures",
+        ),
+        (
+            "no-discretionary-ligatures",
+            FontVariantLigatures::NoDiscretionaryLigatures,
+            "no-discretionary-ligatures",
+        ),
+        (
+            "historical-ligatures",
+            FontVariantLigatures::HistoricalLigatures,
+            "historical-ligatures",
+        ),
+        (
+            "no-historical-ligatures",
+            FontVariantLigatures::NoHistoricalLigatures,
+            "no-historical-ligatures",
+        ),
+        ("contextual", FontVariantLigatures::Contextual, "contextual"),
+        (
+            "no-contextual",
+            FontVariantLigatures::NoContextual,
+            "no-contextual",
+        ),
+    ] {
+        let value = PropertyValue::FontVariantLigatures(expected);
+        assert_eq!(
+            parse_entire(input, "font-variant-ligatures"),
+            Some(value.clone())
+        );
+        assert_eq!(serialize_value(&value), Some(serialized.to_owned()));
+        assert_eq!(value.key(), PropertyKey::FontVariantLigatures);
+    }
+}
+
+#[test]
+fn font_variant_ligatures_accepts_case_insensitive_keywords_and_rejects_unknown_values() {
+    assert_eq!(
+        parse("NO-COMMON-LIGATURES", "font-variant-ligatures"),
+        Some(PropertyValue::FontVariantLigatures(
+            FontVariantLigatures::NoCommonLigatures
+        ))
+    );
+    for input in ["bogus", "inherit", "1"] {
+        assert_eq!(parse(input, "font-variant-ligatures"), None, "{input}");
+    }
+    assert_eq!(parse_entire("normal none", "font-variant-ligatures"), None);
+}
+
+#[test]
+fn font_variant_position_parses_and_serializes_the_three_computed_keywords() {
+    for (input, expected) in [
+        ("normal", FontVariantPosition::Normal),
+        ("sub", FontVariantPosition::Sub),
+        ("super", FontVariantPosition::Super),
+    ] {
+        let value = parse(input, "font-variant-position");
+        assert_eq!(value, Some(PropertyValue::FontVariantPosition(expected)));
+        assert_eq!(serialize_value(&value.unwrap()), Some(input.to_owned()));
+    }
+    for input in ["none", "bogus", "inherit", "1"] {
+        assert_eq!(parse(input, "font-variant-position"), None, "{input}");
+    }
+    assert_eq!(parse_entire("normal sub", "font-variant-position"), None);
+}
+
+#[test]
+fn font_palette_parses_and_serializes_pinned_keywords_and_dashed_identifier() {
+    for (input, expected) in [
+        ("normal", FontPaletteValue::Normal),
+        ("light", FontPaletteValue::Light),
+        ("dark", FontPaletteValue::Dark),
+        (
+            "--pitchfork",
+            FontPaletteValue::Palette("--pitchfork".into()),
+        ),
+    ] {
+        let value = parse(input, "font-palette").expect("parse font-palette value");
+        assert_eq!(value, PropertyValue::FontPalette(expected));
+        assert_eq!(value.key(), PropertyKey::FontPalette);
+        assert_eq!(serialize_value(&value), Some(input.to_owned()));
+    }
+    for input in ["none", "--", "foo", "palette-mix(dark, --pitchfork)"] {
+        assert_eq!(parse(input, "font-palette"), None, "{input}");
+    }
+    assert_eq!(parse_entire("normal light", "font-palette"), None);
+}
+
+#[test]
+fn font_variant_numeric_parses_and_serializes_the_pinned_value_set() {
+    let cases = [
+        ("normal", FontVariantNumeric::initial()),
+        (
+            "lining-nums",
+            FontVariantNumeric {
+                lining_nums: true,
+                ..FontVariantNumeric::initial()
+            },
+        ),
+        (
+            "oldstyle-nums",
+            FontVariantNumeric {
+                oldstyle_nums: true,
+                ..FontVariantNumeric::initial()
+            },
+        ),
+        (
+            "proportional-nums",
+            FontVariantNumeric {
+                proportional_nums: true,
+                ..FontVariantNumeric::initial()
+            },
+        ),
+        (
+            "tabular-nums",
+            FontVariantNumeric {
+                tabular_nums: true,
+                ..FontVariantNumeric::initial()
+            },
+        ),
+        (
+            "diagonal-fractions",
+            FontVariantNumeric {
+                diagonal_fractions: true,
+                ..FontVariantNumeric::initial()
+            },
+        ),
+        (
+            "stacked-fractions",
+            FontVariantNumeric {
+                stacked_fractions: true,
+                ..FontVariantNumeric::initial()
+            },
+        ),
+        (
+            "ordinal",
+            FontVariantNumeric {
+                ordinal: true,
+                ..FontVariantNumeric::initial()
+            },
+        ),
+        (
+            "slashed-zero",
+            FontVariantNumeric {
+                slashed_zero: true,
+                ..FontVariantNumeric::initial()
+            },
+        ),
+        (
+            "oldstyle-nums tabular-nums diagonal-fractions",
+            FontVariantNumeric {
+                oldstyle_nums: true,
+                tabular_nums: true,
+                diagonal_fractions: true,
+                ..FontVariantNumeric::initial()
+            },
+        ),
+        (
+            "lining-nums proportional-nums stacked-fractions ordinal slashed-zero",
+            FontVariantNumeric {
+                lining_nums: true,
+                proportional_nums: true,
+                stacked_fractions: true,
+                ordinal: true,
+                slashed_zero: true,
+                ..FontVariantNumeric::initial()
+            },
+        ),
+    ];
+
+    for (input, expected) in cases {
+        let value = parse(input, "font-variant-numeric").expect("parse font-variant-numeric");
+        assert_eq!(value, PropertyValue::FontVariantNumeric(expected));
+        assert_eq!(value.key(), PropertyKey::FontVariantNumeric);
+        assert_eq!(serialize_value(&value), Some(input.to_owned()));
+    }
+
+    for input in [
+        "lining-nums oldstyle-nums",
+        "proportional-nums tabular-nums",
+        "diagonal-fractions stacked-fractions",
+        "lining-nums lining-nums",
+        "normal ordinal",
+        "ordinal normal",
+        "none",
+    ] {
+        assert_eq!(parse_entire(input, "font-variant-numeric"), None, "{input}");
+    }
+}
+
+#[test]
+fn font_variant_east_asian_parses_and_serializes_the_pinned_value_set() {
+    let cases = [
+        ("normal", FontVariantEastAsian::initial()),
+        (
+            "jis78",
+            FontVariantEastAsian {
+                variant: Some(FontVariantEastAsianVariant::Jis78),
+                ..FontVariantEastAsian::initial()
+            },
+        ),
+        (
+            "jis83",
+            FontVariantEastAsian {
+                variant: Some(FontVariantEastAsianVariant::Jis83),
+                ..FontVariantEastAsian::initial()
+            },
+        ),
+        (
+            "jis90",
+            FontVariantEastAsian {
+                variant: Some(FontVariantEastAsianVariant::Jis90),
+                ..FontVariantEastAsian::initial()
+            },
+        ),
+        (
+            "jis04",
+            FontVariantEastAsian {
+                variant: Some(FontVariantEastAsianVariant::Jis04),
+                ..FontVariantEastAsian::initial()
+            },
+        ),
+        (
+            "simplified",
+            FontVariantEastAsian {
+                variant: Some(FontVariantEastAsianVariant::Simplified),
+                ..FontVariantEastAsian::initial()
+            },
+        ),
+        (
+            "traditional",
+            FontVariantEastAsian {
+                variant: Some(FontVariantEastAsianVariant::Traditional),
+                ..FontVariantEastAsian::initial()
+            },
+        ),
+        (
+            "full-width",
+            FontVariantEastAsian {
+                width: Some(FontVariantEastAsianWidth::FullWidth),
+                ..FontVariantEastAsian::initial()
+            },
+        ),
+        (
+            "proportional-width",
+            FontVariantEastAsian {
+                width: Some(FontVariantEastAsianWidth::ProportionalWidth),
+                ..FontVariantEastAsian::initial()
+            },
+        ),
+        (
+            "ruby",
+            FontVariantEastAsian {
+                ruby: true,
+                ..FontVariantEastAsian::initial()
+            },
+        ),
+        (
+            "jis78 proportional-width",
+            FontVariantEastAsian {
+                variant: Some(FontVariantEastAsianVariant::Jis78),
+                width: Some(FontVariantEastAsianWidth::ProportionalWidth),
+                ruby: false,
+            },
+        ),
+        (
+            "simplified full-width ruby",
+            FontVariantEastAsian {
+                variant: Some(FontVariantEastAsianVariant::Simplified),
+                width: Some(FontVariantEastAsianWidth::FullWidth),
+                ruby: true,
+            },
+        ),
+    ];
+
+    for (input, expected) in cases {
+        let value = parse(input, "font-variant-east-asian").expect("parse font-variant-east-asian");
+        assert_eq!(value, PropertyValue::FontVariantEastAsian(expected));
+        assert_eq!(value.key(), PropertyKey::FontVariantEastAsian);
+        assert_eq!(serialize_value(&value), Some(input.to_owned()));
+    }
+
+    for input in [
+        "jis78 jis83",
+        "jis78 simplified",
+        "full-width proportional-width",
+        "jis78 jis78",
+        "ruby ruby",
+        "normal ruby",
+        "ruby normal",
+        "none",
+    ] {
+        assert_eq!(
+            parse_entire(input, "font-variant-east-asian"),
+            None,
+            "{input}"
+        );
+    }
+}
+
+#[test]
+fn font_synthesis_parses_serializes_and_maps_the_pinned_values() {
+    let value = |weight, style, small_caps, position| FontSynthesisValue {
+        weight,
+        style,
+        small_caps,
+        position,
+    };
+    let cases = [
+        ("none", FontSynthesisValue::none()),
+        (
+            "weight",
+            value(true, FontSynthesisStyle::None, false, false),
+        ),
+        (
+            "style",
+            value(false, FontSynthesisStyle::Auto, false, false),
+        ),
+        (
+            "oblique-only",
+            value(false, FontSynthesisStyle::ObliqueOnly, false, false),
+        ),
+        (
+            "small-caps",
+            value(false, FontSynthesisStyle::None, true, false),
+        ),
+        (
+            "position",
+            value(false, FontSynthesisStyle::None, false, true),
+        ),
+        (
+            "small-caps position",
+            value(false, FontSynthesisStyle::None, true, true),
+        ),
+        (
+            "style small-caps",
+            value(false, FontSynthesisStyle::Auto, true, false),
+        ),
+        (
+            "style position",
+            value(false, FontSynthesisStyle::Auto, false, true),
+        ),
+        (
+            "style small-caps position",
+            value(false, FontSynthesisStyle::Auto, true, true),
+        ),
+        (
+            "oblique-only small-caps",
+            value(false, FontSynthesisStyle::ObliqueOnly, true, false),
+        ),
+        (
+            "oblique-only position",
+            value(false, FontSynthesisStyle::ObliqueOnly, false, true),
+        ),
+        (
+            "oblique-only small-caps position",
+            value(false, FontSynthesisStyle::ObliqueOnly, true, true),
+        ),
+        (
+            "weight small-caps",
+            value(true, FontSynthesisStyle::None, true, false),
+        ),
+        (
+            "weight style",
+            value(true, FontSynthesisStyle::Auto, false, false),
+        ),
+        (
+            "weight oblique-only",
+            value(true, FontSynthesisStyle::ObliqueOnly, false, false),
+        ),
+        (
+            "weight position",
+            value(true, FontSynthesisStyle::None, false, true),
+        ),
+        (
+            "weight style small-caps",
+            value(true, FontSynthesisStyle::Auto, true, false),
+        ),
+        (
+            "weight style small-caps position",
+            FontSynthesisValue::initial(),
+        ),
+        (
+            "weight oblique-only small-caps",
+            value(true, FontSynthesisStyle::ObliqueOnly, true, false),
+        ),
+        (
+            "weight oblique-only small-caps position",
+            value(true, FontSynthesisStyle::ObliqueOnly, true, true),
+        ),
+    ];
+
+    for (input, expected) in cases {
+        let parsed = parse_entire(input, "font-synthesis")
+            .unwrap_or_else(|| panic!("expected valid font-synthesis `{input}`"));
+        let value = PropertyValue::FontSynthesis(expected);
+        assert_eq!(parsed, value, "{input}");
+        assert_eq!(serialize_value(&parsed), Some(input.to_owned()), "{input}");
+        assert_eq!(parsed.key(), PropertyKey::FontSynthesis, "{input}");
+    }
+}
+
+#[test]
+fn font_synthesis_is_case_insensitive_and_rejects_invalid_or_duplicate_components() {
+    assert_eq!(
+        parse_entire("WEIGHT ObLiQuE-OnLy", "font-synthesis"),
+        Some(PropertyValue::FontSynthesis(FontSynthesisValue {
+            weight: true,
+            style: FontSynthesisStyle::ObliqueOnly,
+            small_caps: false,
+            position: false,
+        }))
+    );
+    for input in [
+        "",
+        "bogus",
+        "none weight",
+        "weight weight",
+        "style oblique-only",
+        "small-caps small-caps",
+        "position none",
+    ] {
+        assert_eq!(parse_entire(input, "font-synthesis"), None, "{input}");
+    }
+}
+
+#[test]
 fn font_style_key_maps_to_font_style_property_key() {
     let v = PropertyValue::FontStyle(FontStyle::Normal);
     assert_eq!(v.key(), PropertyKey::FontStyle);

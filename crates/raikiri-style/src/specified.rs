@@ -34,24 +34,27 @@ use crate::property::{
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ColumnWidthValue, ContentAlignmentValue, ContentComponent, CssColor, CssPosition,
     CssPositionOffset, Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue,
-    FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps, GridAutoFlowValue,
-    GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, HangingPunctuation,
-    HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, Length, LengthOrAuto,
-    LengthOrNormal, LetterSpacingValue, LineBreak, LineHeight, ListStylePosition, ListStyleType,
-    MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle, OverflowValue,
-    OverflowWrap, OverflowXY, PageValue, PositionValue, RubyPosition, SelfAlignmentValue, Sides,
-    TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
-    TextDecorationColor, TextDecorationInset, TextDecorationLine, TextDecorationSkipInk,
-    TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge,
-    TextEmphasisPosition, TextEmphasisShape, TextEmphasisStyle, TextEmphasisVEdge,
-    TextIndentLength, TextJustify, TextOrientation, TextShadowItem, TextSpacingTrim, TextTransform,
-    TextUnderlineOffset, TextUnderlinePosition, TextWrapMode, TextWrapStyle, TransformFunction,
-    UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
-    WordSpaceTransform, WordSpacingValue, WritingMode, ZIndexValue, empty_box_shadow_list,
-    empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
-    empty_string_set_entries, empty_text_shadow_list, empty_transform_list, initial_font_family,
-    initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
-    resolve_text_align_internal_center, resolve_text_align_match_parent, resolve_writing_mode,
+    FlexDirectionValue, FlexWrapValue, FloatValue, FontKerning, FontLanguageOverride,
+    FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue, FontVariantCaps,
+    FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures, FontVariantNumeric,
+    FontVariantPosition, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
+    GridTemplateTracks, GridTrackSize, HangingPunctuation, HyphenateCharacter, HyphenateLimitChars,
+    Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal, LetterSpacingValue, LineBreak,
+    LineHeight, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline,
+    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue, PositionValue,
+    RubyPosition, SelfAlignmentValue, Sides, TabSize, TableLayoutValue, TextAlign, TextAlignLast,
+    TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationInset,
+    TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle,
+    TextDecorationThickness, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisShape,
+    TextEmphasisStyle, TextEmphasisVEdge, TextIndentLength, TextJustify, TextOrientation,
+    TextShadowItem, TextSpacingTrim, TextTransform, TextUnderlineOffset, TextUnderlinePosition,
+    TextWrapMode, TextWrapStyle, TransformFunction, UnicodeBidi, VerticalAlign, Visibility,
+    VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak, WordSpaceTransform, WordSpacingValue,
+    WritingMode, ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
+    empty_filter_list, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
+    empty_transform_list, initial_font_family, initial_grid_auto_track_list,
+    resolve_display_for_float, resolve_overflow, resolve_text_align_internal_center,
+    resolve_text_align_match_parent, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ComputedTextIndent, ResolveContext,
@@ -85,7 +88,7 @@ use crate::resolve::{
 /// | 層 | field |
 /// |---|---|
 /// | **specified 層のまま** (絶対化が phase 2 / phase 3 待ち) | `font_size` / `line_height` / `padding` / `margin` / `border` / `border_radius` / `box_shadow` / `outline` / `width` / `height` / `text_indent` / `text_decoration_inset` / `text_decoration_thickness` / `letter_spacing` / `word_spacing` / `tab_size` / `text_shadow` / `background_size` / `background_position` / `object_position` / `border_spacing` |
-/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `list_style_type` / `list_style_position` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `text_underline_position` / `text_emphasis_position` / `text_emphasis_style` / `text_emphasis_color` / `font_style` / `font_variant_caps` / `text_transform` / `text_combine_upright` / `text_orientation` / `unicode_bidi` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `white_space_collapse` / `hyphens` / `hyphenate_character` / `hyphenate_limit_chars` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* / `object_fit` / `table_layout` / `border_collapse` / `caption_side` / `empty_cells` |
+/// | **既に computed-equivalent** (絶対化する length を含まない) | `color` / `background_color` / `font_family` / `font_weight` / `display` / `list_style_type` / `list_style_position` / `counter_*` / `content` / `string_set` / `running_templates` / `text_align` / `direction` / `box_sizing` / `overflow` / `text_decoration_line` / `text_decoration_style` / `text_decoration_color` / `text_underline_position` / `text_emphasis_position` / `text_emphasis_style` / `text_emphasis_color` / `font_style` / `font_kerning` / `font_optical_sizing` / `font_variant_emoji` / `font_language_override` / `font_variant_ligatures` / `font_synthesis` / `font_variant_position` / `font_palette` / `font_variant_numeric` / `font_variant_east_asian` / `font_variant_caps` / `text_transform` / `text_combine_upright` / `text_orientation` / `unicode_bidi` / `visibility` / `z_index` / `word_break` / `overflow_wrap` / `break_before` / `break_after` / `break_inside` / `float` / `clear` / `white_space` / `white_space_collapse` / `hyphens` / `hyphenate_character` / `hyphenate_limit_chars` / `quotes` / `orphans` / `widows` / `background_repeat` / `background_attachment` / `background_clip` / `background_origin` / `background_image`\* / `object_fit` / `table_layout` / `border_collapse` / `caption_side` / `empty_cells` |
 /// | **variant によって層が分かれる** (型は specified/computed で同じだが、一部 variant だけ絶対化を要る) | `vertical_align` — [`Self::vertical_align`] doc 参照 |
 ///
 /// \* `background_image` は `None`/`Url(String)` の 2 variant では文字通り
@@ -342,6 +345,26 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::font_style`] の staging。層は computed-equivalent
     /// (`FontStyle` は length を運ばない — この crate の scope では)。
     pub font_style: FontStyle,
+    /// [`ComputedValues::font_kerning`] staging; inherited keyword, computed-equivalent.
+    pub font_kerning: FontKerning,
+    /// [`ComputedValues::font_optical_sizing`] staging; inherited keyword, computed-equivalent.
+    pub font_optical_sizing: FontOpticalSizing,
+    /// [`ComputedValues::font_variant_emoji`] staging; inherited keyword, computed-equivalent.
+    pub font_variant_emoji: FontVariantEmoji,
+    /// [`ComputedValues::font_language_override`] staging; inherited keyword/string, computed-equivalent.
+    pub font_language_override: FontLanguageOverride,
+    /// [`ComputedValues::font_variant_ligatures`] staging; inherited keyword, computed-equivalent.
+    pub font_variant_ligatures: FontVariantLigatures,
+    /// [`ComputedValues::font_synthesis`] staging; inherited computed keyword set.
+    pub font_synthesis: FontSynthesisValue,
+    /// [`ComputedValues::font_variant_position`] staging; inherited computed keyword.
+    pub font_variant_position: FontVariantPosition,
+    /// [`ComputedValues::font_palette`] staging; inherited computed keyword or identifier.
+    pub font_palette: FontPaletteValue,
+    /// [`ComputedValues::font_variant_numeric`] staging; inherited computed keyword set.
+    pub font_variant_numeric: FontVariantNumeric,
+    /// [`ComputedValues::font_variant_east_asian`] staging; inherited computed value.
+    pub font_variant_east_asian: FontVariantEastAsian,
     /// [`ComputedValues::font_variant_caps`] の staging。層は
     /// computed-equivalent (`FontVariantCaps` は length を運ばない)。
     pub font_variant_caps: FontVariantCaps,
@@ -759,6 +782,20 @@ impl SpecifiedValues {
             vertical_align: VerticalAlign::Baseline,
             // CSS Fonts 4 §2.4: font-style initial は `normal`。
             font_style: FontStyle::Normal,
+            font_kerning: FontKerning::Auto,
+            // CSS Fonts 4 §8.1: font-optical-sizing initial is `auto`.
+            font_optical_sizing: FontOpticalSizing::Auto,
+            // CSS Fonts 4 §9.3: font-variant-emoji initial is `normal`.
+            font_variant_emoji: FontVariantEmoji::Normal,
+            // CSS Fonts 4 §6.13: font-language-override initial is `normal`.
+            font_language_override: FontLanguageOverride::Normal,
+            // CSS Fonts 4 §6.4: font-variant-ligatures initial is `normal`.
+            font_variant_ligatures: FontVariantLigatures::Normal,
+            font_synthesis: FontSynthesisValue::initial(),
+            font_variant_position: FontVariantPosition::Normal,
+            font_palette: FontPaletteValue::Normal,
+            font_variant_numeric: FontVariantNumeric::initial(),
+            font_variant_east_asian: FontVariantEastAsian::initial(),
             // CSS Fonts Module Level 3 §6.6: font-variant-caps initial は
             // `normal`。
             font_variant_caps: FontVariantCaps::Normal,
@@ -1045,6 +1082,20 @@ impl SpecifiedValues {
             text_indent_each_line: parent.text_indent_each_line,
             // CSS Fonts 4 §2.4: font-style は inherited。
             font_style: parent.font_style,
+            font_kerning: parent.font_kerning,
+            // CSS Fonts 4 §8.1: font-optical-sizing is inherited.
+            font_optical_sizing: parent.font_optical_sizing,
+            // CSS Fonts 4 §9.3: font-variant-emoji is inherited.
+            font_variant_emoji: parent.font_variant_emoji,
+            // CSS Fonts 4 §6.13: font-language-override is inherited.
+            font_language_override: parent.font_language_override.clone(),
+            // CSS Fonts 4 §6.4: font-variant-ligatures is inherited.
+            font_variant_ligatures: parent.font_variant_ligatures,
+            font_synthesis: parent.font_synthesis,
+            font_variant_position: parent.font_variant_position,
+            font_palette: parent.font_palette.clone(),
+            font_variant_numeric: parent.font_variant_numeric,
+            font_variant_east_asian: parent.font_variant_east_asian,
             // CSS Fonts Module Level 3 §6.6: font-variant-caps は inherited。
             font_variant_caps: parent.font_variant_caps,
             // CSS Text Module Level 3 §2.1: text-transform は inherited。
@@ -1849,6 +1900,20 @@ impl SpecifiedValues {
             // この crate の scope では angle-bearing branch が unreachable
             // なため相対解決なし) — 自 node の winner 適用結果をそのまま素通し。
             font_style: self.font_style,
+            font_kerning: self.font_kerning,
+            // Computed value is the specified keyword; no relative resolution.
+            font_optical_sizing: self.font_optical_sizing,
+            // Computed value is the specified keyword; no rendering behavior.
+            font_variant_emoji: self.font_variant_emoji,
+            // Computed value is the specified string or keyword; no font selection.
+            font_language_override: self.font_language_override.clone(),
+            // Computed value is the specified keyword; no shaping behavior.
+            font_variant_ligatures: self.font_variant_ligatures,
+            font_synthesis: self.font_synthesis,
+            font_variant_position: self.font_variant_position,
+            font_palette: self.font_palette.clone(),
+            font_variant_numeric: self.font_variant_numeric,
+            font_variant_east_asian: self.font_variant_east_asian,
             // computed value = specified keyword (`FontVariantCaps` doc 参照、
             // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
             // そのまま素通し。

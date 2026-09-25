@@ -1,8 +1,10 @@
 use super::*;
 use crate::computed::INITIAL_FONT_SIZE_PX;
-use crate::property::GeometryBox;
 use crate::property::HyphenateLimitCharsValue;
 use crate::property::TextShadowColor;
+use crate::property::{
+    FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth, GeometryBox,
+};
 use crate::resolve::{
     ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedFlexBasis,
     ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
@@ -317,6 +319,32 @@ fn parent_fixture() -> ComputedValues {
         }),
         vertical_align: VerticalAlign::Sub,
         font_style: FontStyle::Italic,
+        font_kerning: FontKerning::Normal,
+        font_optical_sizing: FontOpticalSizing::None,
+        font_variant_emoji: FontVariantEmoji::Text,
+        font_language_override: FontLanguageOverride::String(SmolStr::new("ENG")),
+        font_variant_ligatures: FontVariantLigatures::NoHistoricalLigatures,
+        font_synthesis: FontSynthesisValue {
+            weight: false,
+            style: FontSynthesisStyle::ObliqueOnly,
+            small_caps: true,
+            position: false,
+        },
+        font_variant_position: FontVariantPosition::Super,
+        font_palette: FontPaletteValue::Palette(SmolStr::new("--parent")),
+        font_variant_numeric: FontVariantNumeric {
+            oldstyle_nums: true,
+            tabular_nums: true,
+            stacked_fractions: true,
+            ordinal: true,
+            slashed_zero: true,
+            ..FontVariantNumeric::initial()
+        },
+        font_variant_east_asian: FontVariantEastAsian {
+            variant: Some(FontVariantEastAsianVariant::Jis78),
+            width: Some(FontVariantEastAsianWidth::ProportionalWidth),
+            ruby: true,
+        },
         font_variant_caps: FontVariantCaps::SmallCaps,
         text_transform: TextTransform::Uppercase,
         text_combine_upright: TextCombineUpright::All,
@@ -574,7 +602,38 @@ fn inherit_from_copies_inherited_fields() {
     assert_eq!(child.writing_mode, WritingMode::VerticalRl);
     // CSS Fonts 4 §2.4: font-style は inherited。
     assert_eq!(child.font_style, FontStyle::Italic);
-    // CSS Fonts Module Level 3 §6.6: font-variant-caps は inherited。
+    // CSS Fonts 3 `font-kerning` is inherited.
+    assert_eq!(child.font_kerning, FontKerning::Normal);
+    // CSS Fonts 4 §8.1: `font-optical-sizing` is inherited.
+    assert_eq!(child.font_optical_sizing, FontOpticalSizing::None);
+    // CSS Fonts 4 §9.3: font-variant-emoji is inherited.
+    assert_eq!(child.font_variant_emoji, FontVariantEmoji::Text);
+    // CSS Fonts 4 §6.13: font-language-override is inherited.
+    assert_eq!(
+        child.font_language_override,
+        FontLanguageOverride::String(SmolStr::new("ENG"))
+    );
+    assert_eq!(
+        child.font_variant_ligatures,
+        FontVariantLigatures::NoHistoricalLigatures
+    );
+    assert_eq!(
+        child.font_synthesis,
+        FontSynthesisValue {
+            weight: false,
+            style: FontSynthesisStyle::ObliqueOnly,
+            small_caps: true,
+            position: false,
+        }
+    );
+    // CSS Fonts 3 §6.5: font-variant-position is inherited as specified.
+    assert_eq!(child.font_variant_position, FontVariantPosition::Super);
+    // CSS Fonts 4 §9.1: font-palette is inherited as specified.
+    assert_eq!(
+        child.font_palette,
+        FontPaletteValue::Palette(SmolStr::new("--parent"))
+    );
+    // CSS Fonts Module Level 3 §6.6: font-variant-caps は inherited.
     assert_eq!(child.font_variant_caps, FontVariantCaps::SmallCaps);
     // CSS Text Module Level 3 §2.1: text-transform は inherited。
     assert_eq!(child.text_transform, TextTransform::Uppercase);
