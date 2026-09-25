@@ -1394,3 +1394,321 @@ fn font_variant_east_asian_computed_wpt_case_uses_the_pinned_computed_helper() {
     assert_eq!(result.total(), 12);
     assert!(result.all_passed(), "{:?}", result.outcomes);
 }
+
+/// Reads `property` from one styled element per case and reports every mismatch at once.
+fn assert_computed_cases(cases: &[(&str, &str, &str)]) {
+    let root = tempfile::tempdir().unwrap();
+    let body: String = cases
+        .iter()
+        .enumerate()
+        .map(|(index, (property, value, _))| {
+            format!(r#"<div id="c{index}" style="{property}: {value}">x</div>"#)
+        })
+        .collect();
+    let html = format!("<!doctype html><html><body>{body}</body></html>");
+    let mut backend = live_backend(&html, root.path());
+    let mismatches: Vec<String> = cases
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (property, value, expected))| {
+            let node = backend
+                .get_element_by_id(&format!("c{index}"))
+                .unwrap()
+                .expect("case element exists");
+            let actual = backend.computed_style_property(node, property).unwrap();
+            (actual.as_deref() != Some(*expected))
+                .then(|| format!("{property}: {value} => {actual:?}, expected {expected:?}"))
+        })
+        .collect();
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn computed_style_property_ignores_unsupported_names_without_flushing() {
+    let root = tempfile::tempdir().unwrap();
+    let mut backend = live_backend(
+        r#"<!doctype html><html><body><div id="box"></div></body></html>"#,
+        root.path(),
+    );
+    let node = backend.get_element_by_id("box").unwrap().unwrap();
+    assert_eq!(
+        backend.computed_style_property(node, "color").unwrap(),
+        None
+    );
+    assert_eq!(backend.layout_flush_count, 0);
+    assert_eq!(
+        backend.computed_style_property(node, "WORD-WRAP").unwrap(),
+        Some("normal".to_owned())
+    );
+    assert_eq!(backend.layout_flush_count, 1);
+}
+
+#[test]
+fn computed_style_property_serializes_keyword_properties() {
+    let mut cases = Vec::new();
+    for (property, values) in [
+        ("direction", &["ltr", "rtl"][..]),
+        (
+            "font-variant-caps",
+            &[
+                "normal",
+                "small-caps",
+                "all-small-caps",
+                "petite-caps",
+                "all-petite-caps",
+                "unicase",
+                "titling-caps",
+            ],
+        ),
+        ("text-combine-upright", &["none", "all"]),
+        ("text-orientation", &["mixed", "upright", "sideways"]),
+        (
+            "writing-mode",
+            &[
+                "horizontal-tb",
+                "vertical-rl",
+                "vertical-lr",
+                "sideways-rl",
+                "sideways-lr",
+            ],
+        ),
+        (
+            "unicode-bidi",
+            &[
+                "normal",
+                "embed",
+                "isolate",
+                "bidi-override",
+                "isolate-override",
+                "plaintext",
+            ],
+        ),
+        (
+            "text-spacing-trim",
+            &[
+                "auto",
+                "normal",
+                "space-all",
+                "trim-both",
+                "trim-all",
+                "trim-start",
+                "space-first",
+            ],
+        ),
+        (
+            "word-space-transform",
+            &[
+                "none",
+                "space",
+                "ideographic-space",
+                "space auto-phrase",
+                "ideographic-space auto-phrase",
+            ],
+        ),
+        (
+            "white-space",
+            &[
+                "normal",
+                "pre",
+                "nowrap",
+                "pre-wrap",
+                "pre-line",
+                "break-spaces",
+            ],
+        ),
+        (
+            "white-space-collapse",
+            &[
+                "collapse",
+                "discard",
+                "preserve",
+                "preserve-breaks",
+                "preserve-spaces",
+                "break-spaces",
+            ],
+        ),
+        (
+            "line-break",
+            &["auto", "loose", "normal", "strict", "anywhere"],
+        ),
+        ("hyphens", &["none", "manual", "auto"]),
+        ("overflow-wrap", &["normal", "break-word", "anywhere"]),
+        ("word-wrap", &["normal", "break-word", "anywhere"]),
+        (
+            "word-break",
+            &[
+                "normal",
+                "keep-all",
+                "break-all",
+                "break-word",
+                "auto-phrase",
+            ],
+        ),
+        (
+            "text-align",
+            &["start", "end", "left", "right", "center", "justify"],
+        ),
+        (
+            "text-align-last",
+            &["auto", "start", "end", "left", "right", "center", "justify"],
+        ),
+        ("text-wrap-mode", &["wrap", "nowrap"]),
+        ("text-wrap-style", &["auto", "balance", "pretty", "stable"]),
+        (
+            "text-justify",
+            &["auto", "none", "inter-word", "inter-character"],
+        ),
+        (
+            "text-transform",
+            &[
+                "none",
+                "math-auto",
+                "capitalize",
+                "uppercase",
+                "lowercase",
+                "full-width",
+                "full-size-kana",
+                "capitalize full-width",
+                "uppercase full-width",
+                "lowercase full-width",
+                "capitalize full-size-kana",
+                "uppercase full-size-kana",
+                "lowercase full-size-kana",
+                "full-width full-size-kana",
+                "capitalize full-width full-size-kana",
+                "uppercase full-width full-size-kana",
+                "lowercase full-width full-size-kana",
+            ],
+        ),
+    ] {
+        cases.extend(values.iter().map(|value| (property, *value, *value)));
+    }
+    assert_computed_cases(&cases);
+}
+
+#[test]
+fn computed_style_property_serializes_structured_properties() {
+    assert_computed_cases(&[
+        ("font-kerning", "auto", "auto"),
+        ("font-kerning", "normal", "normal"),
+        ("font-kerning", "none", "none"),
+        ("font-optical-sizing", "none", "none"),
+        ("font-variant-emoji", "emoji", "emoji"),
+        ("font-language-override", r#"'TRK'"#, r#""TRK""#),
+        ("font-variant-ligatures", "no-contextual", "no-contextual"),
+        ("font-synthesis", "weight style", "weight style"),
+        ("font-variant-position", "super", "super"),
+        ("font-palette", "--custom", "--custom"),
+        (
+            "font-variant-numeric",
+            "tabular-nums slashed-zero",
+            "tabular-nums slashed-zero",
+        ),
+        (
+            "font-variant-east-asian",
+            "jis04 full-width ruby",
+            "jis04 full-width ruby",
+        ),
+        ("text-justify", "distribute", "inter-character"),
+        ("text-align", "match-parent", "left"),
+        ("text-wrap", "wrap", "wrap"),
+        ("text-wrap", "balance", "balance"),
+        ("text-wrap", "nowrap", "nowrap"),
+        ("text-wrap", "nowrap pretty", "nowrap pretty"),
+        ("hyphenate-limit-chars", "auto", "auto"),
+        ("hyphenate-limit-chars", "5 2", "5 2"),
+        ("hyphenate-limit-chars", "5 2 3", "5 2 3"),
+        ("hyphenate-character", "auto", "auto"),
+        ("hyphenate-character", r#"'-'"#, r#""-""#),
+        ("text-spacing", "normal", "normal"),
+        ("text-spacing", "none", "none"),
+        ("text-spacing", "auto", "auto"),
+        ("text-spacing", "trim-both", "trim-both"),
+        (
+            "text-spacing",
+            "trim-both no-autospace",
+            "trim-both no-autospace",
+        ),
+        (
+            "text-autospace",
+            "ideograph-alpha insert",
+            "ideograph-alpha insert",
+        ),
+        (
+            "text-autospace",
+            "ideograph-numeric punctuation replace",
+            "ideograph-numeric punctuation replace",
+        ),
+        ("text-decoration-skip-ink", "none", "none"),
+        ("text-decoration-skip-spaces", "none", "none"),
+        ("text-decoration", "none", "none"),
+        ("text-decoration", "underline currentcolor", "underline"),
+        (
+            "text-decoration",
+            "underline dotted from-font rgba(0, 0, 255, 0.5)",
+            "underline dotted from-font rgba(0, 0, 255, 0.5019607843137255)",
+        ),
+        (
+            "text-decoration",
+            "overline 2px red",
+            "overline 2px rgb(255, 0, 0)",
+        ),
+        ("text-decoration-style", "wavy", "wavy"),
+        ("text-decoration-line", "line-through", "line-through"),
+        ("text-decoration-inset", "auto", "auto"),
+        ("text-decoration-inset", "3px", "3px"),
+        ("text-decoration-inset", "1px 2px", "1px 2px"),
+        ("text-emphasis-position", "under left", "under left"),
+        ("text-shadow", "none", "none"),
+        (
+            "text-shadow",
+            "1px 2px 3px red, 4px 5px rgba(0, 0, 0, 0.5)",
+            "rgb(255, 0, 0) 1px 2px 3px, rgba(0, 0, 0, 0.5019607843137255) 4px 5px 0px",
+        ),
+        ("text-shadow", "1px 1px", "rgb(0, 0, 0) 1px 1px 0px"),
+        ("text-emphasis-style", "filled sesame", "sesame"),
+        (
+            "text-emphasis",
+            "open circle red",
+            "open circle rgb(255, 0, 0)",
+        ),
+        (
+            "text-emphasis",
+            "dot rgba(0, 0, 0, 0.5)",
+            "dot rgba(0, 0, 0, 0.5019607843137255)",
+        ),
+        ("text-underline-position", "under", "under"),
+        ("text-underline-offset", "auto", "auto"),
+        ("text-underline-offset", "3px", "3px"),
+        ("text-underline-offset", "10%", "10%"),
+        (
+            "text-underline-offset",
+            "calc(10% + 2px)",
+            "calc(10% + 2px)",
+        ),
+        ("text-decoration-color", "currentcolor", "rgb(0, 0, 0)"),
+        (
+            "text-decoration-color",
+            "rgba(255, 0, 0, 0.5)",
+            "rgba(255, 0, 0, 0.5019607843137255)",
+        ),
+        ("letter-spacing", "normal", "normal"),
+        ("letter-spacing", "2px", "2px"),
+        ("letter-spacing", "10%", "10%"),
+        ("letter-spacing", "calc(10% + 2px)", "calc(10% + 2px)"),
+        ("letter-spacing", "calc(10% - 2px)", "calc(10% - 2px)"),
+        ("word-spacing", "2px", "2px"),
+        ("word-spacing", "10%", "10%"),
+        ("word-spacing", "calc(10% + 2px)", "calc(10% + 2px)"),
+        ("text-indent", "5px", "5px"),
+        ("text-indent", "calc(10% + 2px)", "calc(10% + 2px)"),
+        ("text-indent", "10%", "10%"),
+        (
+            "text-indent",
+            "calc(10% - 2px) hanging each-line",
+            "calc(10% - 2px) hanging each-line",
+        ),
+        ("tab-size", "4", "4"),
+        ("tab-size", "12px", "12px"),
+    ]);
+}

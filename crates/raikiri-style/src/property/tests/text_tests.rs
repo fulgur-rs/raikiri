@@ -3493,7 +3493,9 @@ fn font_synthesis_is_case_insensitive_and_rejects_invalid_or_duplicate_component
         "none weight",
         "weight weight",
         "style oblique-only",
+        "style style",
         "small-caps small-caps",
+        "position position",
         "position none",
     ] {
         assert_eq!(parse_entire(input, "font-synthesis"), None, "{input}");
