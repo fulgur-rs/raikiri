@@ -317,15 +317,14 @@ impl ResourceNetworkProvider<'_> {
         violation_type: ViolationType,
         details: impl Into<String>,
     ) -> NetworkError {
-        NetworkError::PolicyViolation(PolicyViolation {
+        NetworkError::PolicyViolation(Box::new(PolicyViolation {
             kind: request.kind,
             url: url.clone(),
             violation_type,
             details: details.into(),
-        })
+        }))
     }
 
-    #[allow(clippy::result_large_err)]
     fn check_url_policy(&self, request: &Request, url: &Url) -> Result<(), NetworkError> {
         let Some(policy) = self.policy else {
             return Ok(());
@@ -591,7 +590,7 @@ impl FontFaceLoader for NetworkFontFaceLoader<'_> {
                         }
                     }
                     _ => WarningKind::PolicyWarning {
-                        violation: sanitize_policy_violation(violation.clone()),
+                        violation: sanitize_policy_violation((*violation).clone()),
                     },
                 };
                 push_resource_warning(
@@ -624,7 +623,6 @@ impl FontFaceLoader for NetworkFontFaceLoader<'_> {
 
 /// Parse HTML using the same renderer-neutral resource configuration later
 /// accepted by [`crate::RenderOptions::resources`].
-#[allow(clippy::result_large_err)]
 pub fn parse_html_with_resources<R: Read>(
     input: R,
     resources: &RenderResources<'_>,

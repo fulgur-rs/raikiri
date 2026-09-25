@@ -38,7 +38,10 @@ pub enum RenderError {
     /// Consumer の network が Err を返した。
     Network(NetworkError),
     /// Resource policy 違反。
-    Policy(PolicyViolation),
+    ///
+    /// `NetworkError::PolicyViolation` と同じ理由 (`PolicyViolation` が大きい)
+    /// で Box で保持する。
+    Policy(Box<PolicyViolation>),
     /// `RenderLimits` の各種 limit 超過 (fail-fast、round 4 review #1 対応で
     /// 旧 `PageLimitExceeded` を `kind: Pages` で吸収)。
     LimitExceeded {
@@ -134,7 +137,7 @@ impl std::error::Error for RenderError {
             Self::Layout(e) => Some(e),
             Self::Resolver(e) => Some(e),
             Self::Network(e) => Some(e),
-            Self::Policy(v) => Some(v),
+            Self::Policy(v) => Some(&**v),
             Self::Sink(e) | Self::Io(e) => Some(e),
             Self::LimitExceeded { .. }
             | Self::Configuration(_)

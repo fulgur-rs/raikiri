@@ -47,7 +47,6 @@ impl RaikiriPageStream {
     /// `viewport` が `Some` かつ `window_size != (0,0)` の場合は viewport から
     /// `PageBox` を導出する ( `window_size / scale` )。`None` またはゼロサイズの
     /// 場合は `PageBox::A4` を使用する。
-    #[allow(clippy::result_large_err)]
     pub fn from_html(html: &str, viewport: Option<Viewport>) -> Result<Self, RenderError> {
         let page_box = viewport
             .as_ref()
@@ -125,7 +124,6 @@ fn map_initial_page_context_error(error: raikiri_dom::InitialPageContextError) -
     }
 }
 
-#[allow(clippy::result_large_err)]
 fn layout_page_render_data(html: &str, page_box: PageBox) -> Result<PageRenderData, RenderError> {
     let opts = ParseOptions {
         extra_stylesheets: &[],
@@ -219,7 +217,6 @@ fn layout_page_render_data(html: &str, page_box: PageBox) -> Result<PageRenderDa
 /// # Errors
 /// - `RenderError::Parse` — HTML parse 失敗
 /// - `RenderError::Layout` — layout 失敗 ( body 欠落 / taffy error / parley shape error )
-#[allow(clippy::result_large_err)]
 pub fn html_to_page_scenes(html: &str, page_box: PageBox) -> Result<Vec<PageScene>, RenderError> {
     Ok(layout_page_render_data(html, page_box)?
         .pages
@@ -233,7 +230,6 @@ pub fn html_to_page_scenes(html: &str, page_box: PageBox) -> Result<Vec<PageScen
 /// The existing [`html_to_png_via_page_stream`] remains a compatibility helper
 /// that returns only the first page. New consumers should use this function
 /// when the document may contain forced page breaks.
-#[allow(clippy::result_large_err)]
 pub fn html_to_png_pages_via_page_stream(
     html: &str,
     page_box: PageBox,
@@ -266,7 +262,6 @@ pub fn html_to_png_pages_via_page_stream(
 /// assert_eq!(pages.len(), 1);
 /// assert!(pages[0].body_id.is_some());
 /// ```
-#[allow(clippy::result_large_err)]
 pub fn parse_and_layout_with_raikiri(
     html: &str,
     viewport: Option<Viewport>,
@@ -282,7 +277,6 @@ pub fn parse_and_layout_with_raikiri(
 /// `raikiri_paint::paint_single_page` を verbatim call する ) が、PNG 出力
 /// は byte-identical に保証される ( `raikiri` crate の `PageScene::rasterize`
 /// doc 参照 )。
-#[allow(clippy::result_large_err)]
 pub fn html_to_png_via_page_stream(html: &str, page_box: PageBox) -> Result<Vec<u8>, RenderError> {
     let opts = ParseOptions {
         extra_stylesheets: &[],

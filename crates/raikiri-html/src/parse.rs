@@ -308,7 +308,7 @@ fn fetch_external_stylesheets(
                                 }
                             }
                             _ => WarningKind::PolicyWarning {
-                                violation: sanitize_policy_violation(violation.clone()),
+                                violation: sanitize_policy_violation((*violation).clone()),
                             },
                         };
                         doc.warnings.push(RenderWarning {

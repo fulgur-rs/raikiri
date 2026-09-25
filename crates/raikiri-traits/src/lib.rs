@@ -360,8 +360,6 @@ mod tests {
 
     #[test]
     fn question_mark_propagates_io_through_parse_to_render() {
-        // RenderError is ≥144B (Network / Policy variants); see net.rs:33 rationale.
-        #[allow(clippy::result_large_err)]
         fn producer() -> Result<(), RenderError> {
             let io_err = std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "eof");
             let pe: ParseError = io_err.into();
@@ -547,7 +545,7 @@ mod tests {
             },
             details: String::from("expected font/woff2"),
         };
-        let re = RenderError::Policy(v);
+        let re = RenderError::Policy(Box::new(v));
         // Top-level Display: label only, matches sibling arms convention.
         assert_eq!(re.to_string(), "Resource policy violation");
         // source() surfaces PolicyViolation whose Display carries kind / url /
@@ -582,7 +580,7 @@ mod tests {
             violation_type: ViolationType::HostNotAllowed,
             details: String::from("host not in allowlist"),
         };
-        let ne = NetworkError::PolicyViolation(v);
+        let ne = NetworkError::PolicyViolation(Box::new(v));
         let src = ne.source();
         assert!(
             src.is_some(),
@@ -626,7 +624,7 @@ mod tests {
             violation_type: ViolationType::HostNotAllowed,
             details: String::from("host not in allowlist"),
         };
-        let ne = NetworkError::PolicyViolation(v);
+        let ne = NetworkError::PolicyViolation(Box::new(v));
         let s = ne.to_string();
         assert!(
             s.contains("Network fetch violated policy"),
@@ -691,7 +689,7 @@ mod tests {
             },
             details: String::from("expected text/css"),
         };
-        let re = RenderError::Policy(v);
+        let re = RenderError::Policy(Box::new(v));
         let src = re.source();
         assert!(
             src.is_some(),
@@ -709,7 +707,7 @@ mod tests {
             violation_type: ViolationType::SchemeNotAllowed,
             details: String::from("http not allowed in strict mode"),
         };
-        let re = RenderError::Network(NetworkError::PolicyViolation(v));
+        let re = RenderError::Network(NetworkError::PolicyViolation(Box::new(v)));
         // depth 1: RenderError → NetworkError
         let inner = re
             .source()

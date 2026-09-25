@@ -52,7 +52,6 @@ use crate::node::NodeData;
 /// a `Fallback` disposition exactly like `Ok` — it still uses the returned
 /// `intrinsic` — and never substitutes a fallback of its own by swallowing
 /// an `Err`.
-#[allow(clippy::result_large_err)]
 pub(crate) fn resolve_images(
     document: &mut Document,
     resolver: &dyn ReplacedResolver,
@@ -62,7 +61,6 @@ pub(crate) fn resolve_images(
 
 /// Resolve replaced-element URLs against the document base when they are not
 /// already absolute.
-#[allow(clippy::result_large_err)]
 pub(crate) fn resolve_images_with_base(
     document: &mut Document,
     resolver: &dyn ReplacedResolver,

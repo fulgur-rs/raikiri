@@ -1022,13 +1022,13 @@ mod tests {
         #[test]
         fn parse_records_policy_warning_on_policy_violation() {
             let provider = AlwaysErrorProvider(|| {
-                NetworkError::PolicyViolation(PolicyViolation {
+                NetworkError::PolicyViolation(Box::new(PolicyViolation {
                     kind: ResourceKind::ExternalStylesheet,
                     url: url::Url::parse("https://user:secret@blocked.test/a.css")
                         .expect("valid url"),
                     violation_type: ViolationType::HostNotAllowed,
                     details: "blocked https://user:secret@blocked.test/token".to_string(),
-                })
+                }))
             });
             let opts = ParseOptions {
                 extra_stylesheets: &[],

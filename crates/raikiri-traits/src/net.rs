@@ -36,13 +36,6 @@ pub trait NetworkProvider: Send + Sync {
     /// reaches it, not after the fact. A provider with no real redirect
     /// concept (serves from memory, reads a local file, ...) always
     /// returns `FetchOutcome::Body`.
-    ///
-    /// `NetworkError` は spec §4 で `PolicyViolation(PolicyViolation)` variant を
-    /// 直接持つため約 144 bytes となり、clippy::result_large_err の閾値 (128 bytes)
-    /// を超える。API shape は §4 authoritative のため現時点では lint を suppress し、
-    /// Box wrapper 化 (`PolicyViolation(Box<PolicyViolation>)`) の適用可否は
-    /// sandboxed-net-provider-impl 実装段階で NetworkError 実利用と併せて再判断する。
-    #[allow(clippy::result_large_err)]
     fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError>;
 
     /// Fetches `request` to completion, automatically following up to
@@ -52,7 +45,6 @@ pub trait NetworkProvider: Send + Sync {
     /// allow-list, redirect hop count, ...) drives `fetch_one_hop` itself
     /// instead of using this method, since by the time this method returns
     /// every hop has already been requested.
-    #[allow(clippy::result_large_err)]
     fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
         let mut current = request;
         for _ in 0..=MAX_AUTO_REDIRECT_HOPS {
@@ -216,7 +208,11 @@ pub enum NetworkError {
     /// AbortSignal によって中断された。
     Aborted,
     /// ResourcePolicy 違反 (SandboxedNetProvider が発火)。
-    PolicyViolation(PolicyViolation),
+    ///
+    /// `PolicyViolation` は `Url` を含み 100 bytes を超えるため Box で保持する。
+    /// inline で持つと `NetworkError` と、それを包む `ResolverError` /
+    /// `LayoutError` / `RenderError` を返す全ての `Result` の Err 側が肥大化する。
+    PolicyViolation(Box<PolicyViolation>),
     /// I/O error。
     Io(std::io::Error),
     /// HTTP status code error (4xx / 5xx)。
@@ -240,7 +236,7 @@ impl std::fmt::Display for NetworkError {
 impl std::error::Error for NetworkError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::PolicyViolation(v) => Some(v),
+            Self::PolicyViolation(v) => Some(&**v),
             Self::Io(e) => Some(e),
             Self::Aborted | Self::Http(_) | Self::Other(_) => None,
         }

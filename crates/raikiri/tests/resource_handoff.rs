@@ -14,7 +14,6 @@ use raikiri::{
 };
 
 /// Parse with `resources`, then render with the same resource handoff.
-#[allow(clippy::result_large_err)]
 fn parse_and_render<R: std::io::Read>(
     input: R,
     defaults: PageDefaults,
@@ -49,7 +48,6 @@ impl RenderSink for PageCollector {
 }
 
 /// [`parse_and_render`] into a collector that retains every emitted page.
-#[allow(clippy::result_large_err)]
 fn parse_and_collect_pages<R: std::io::Read>(
     input: R,
     defaults: PageDefaults,

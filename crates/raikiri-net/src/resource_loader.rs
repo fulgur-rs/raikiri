@@ -37,7 +37,6 @@ impl<N: NetworkProvider> ResourceLoader<N> {
     }
 
     /// Fetches, decodes, and caches one image resource.
-    #[allow(clippy::result_large_err)]
     pub(crate) fn load(&self, url: &Url) -> Result<Arc<DecodedImage>, ResolverError> {
         if let Some(cached) = self.cache.lock().unwrap().get(url) {
             return Ok(cached.clone());
@@ -67,7 +66,6 @@ impl<N: NetworkProvider> ResourceLoader<N> {
         self.cache.lock().unwrap().get(url).cloned()
     }
 
-    #[allow(clippy::result_large_err)]
     fn fetch(&self, url: &Url) -> Result<FetchedResource, ResolverError> {
         self.network
             .fetch(Request {
@@ -84,7 +82,6 @@ impl<N: NetworkProvider> ResourceLoader<N> {
 }
 
 /// Decodes the body of a `data:` URL in the resource layer.
-#[allow(clippy::result_large_err)]
 fn decode_data_url(url: &str) -> Result<Vec<u8>, ResolverError> {
     let data_url = data_url::DataUrl::process(url)
         .map_err(|error| ResolverError::Decode(format!("invalid data URL: {error}")))?;
