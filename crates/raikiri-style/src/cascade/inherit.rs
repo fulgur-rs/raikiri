@@ -31,16 +31,17 @@ use super::custom_property::{resolve_custom_properties, resolve_deferred_value};
 
 type InheritanceStackEntry = (
     StyleNodeId,
-    ComputedValues,
+    Option<StyleNodeId>,
     Option<ResolveContext>,
     Arc<CustomPropertyEnvironment>,
 );
 
 /// Top-down inheritance walk。子 node は親の computed value を必要とするため
-/// (再帰の call stack で暗黙に運んでいた context)、iterative 化には各 stack
-/// entry に `(StyleNodeId, 親の computed value, rem context)` を明示的に持たせる —
-/// Approach A。clone は各 entry ごとに発生するが現時点の
-/// scope では許容 (hot path 化した場合は将来 `Arc<ComputedValues>` で削減を検討)。
+/// 各 stack entry は親の node ID を保持し、訪問時に出力済みの親の値を参照する。
+/// 親の結果は子を stack に積む前に保存され、tree の走査中は上書きされない。
+/// ID で参照するため、出力 Vec が拡張されても参照先を再取得できる。
+/// 最初の entry の親 ID は `None` とし、引数 `parent_computed` を使う。
+/// これにより子ごとの [`ComputedValues`] の複製を避ける。
 ///
 /// # `rem` context の threading (設計文書 §6.3)
 ///
@@ -83,8 +84,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
     page_values: &mut [crate::property::PageValue],
     pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
 ) {
-    let mut stack: Vec<InheritanceStackEntry> =
-        vec![(id, parent_computed.clone(), None, empty_custom_properties())];
+    let mut stack: Vec<InheritanceStackEntry> = vec![(id, None, None, empty_custom_properties())];
     // `apply_winners` の scratch buffer。walk loop の**外**で確保して全 node で
     // 使い回す — per-node の `HashMap` 2 個が
     // n=1000 node で 3,667 allocs / 3.0 MB = cascade 全 heap traffic の 56.7%
@@ -92,7 +92,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
     // 育ち、以降は 0 alloc。fill と drain は `apply_winners` に閉じており、
     // walk loop 側は「使い回す入れ物を貸す」以上の責務を持たない。
     let mut winners: Vec<Option<RankedDecl>> = Vec::new();
-    while let Some((id, parent_computed, root_ctx, parent_custom_properties)) = stack.pop() {
+    while let Some((id, parent_id, root_ctx, parent_custom_properties)) = stack.pop() {
         // is_in_document()==false
         // の node は subtree ごと早期 continue する。
         //
@@ -112,6 +112,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
             continue;
         };
         let is_element = node.kind() == StyleNodeKind::Element;
+        let parent_computed = parent_id.map_or(parent_computed, |parent| &out[parent.0 as usize]);
 
         let local_custom_properties = cascaded
             .custom_candidates(id)
@@ -125,7 +126,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // phase 1: 親からの inheritance walk 開始値 (inherited のみ親の computed
         // からコピー、非継承は initial) に自 node の cascaded winner を適用する。
         // 適用対象は staging 表現なので winner の適用順に依存しない。
-        let mut specified = SpecifiedValues::inherit_from(&parent_computed);
+        let mut specified = SpecifiedValues::inherit_from(parent_computed);
         let mut node_non_ua_margin = Sides::all(false);
         if authored_writing_modes.len() <= id.0 as usize {
             authored_writing_modes.resize(id.0 as usize + 1, None);
@@ -135,7 +136,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
                 candidates,
                 &mut winners,
                 &mut specified,
-                &parent_computed,
+                parent_computed,
                 &custom_properties,
                 Some(&mut page_values[id.0 as usize]),
                 Some(&mut node_non_ua_margin),
@@ -147,7 +148,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // 基準が phase 2 / phase 3 で異なるため専用 entry point を通す
         // (`SpecifiedValues::finalize_as_root` の doc に spec verbatim)。
         let mut computed = match &root_ctx {
-            Some(ctx) => specified.finalize(&parent_computed, ctx),
+            Some(ctx) => specified.finalize(parent_computed, ctx),
             None => {
                 // `finalize_as_root` は phase 2 の基準を initial value に固定する
                 // (§6.1.1 の "if the element has no parent")。それが正しいのは
@@ -277,13 +278,13 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         if out.len() <= idx {
             out.resize(idx + 1, ComputedValues::initial());
         }
-        out[idx] = computed.clone();
+        out[idx] = computed;
         if non_ua_margin_sides.len() <= idx {
             non_ua_margin_sides.resize(idx + 1, Sides::all(false));
         }
         non_ua_margin_sides[idx] = node_non_ua_margin;
 
-        // 子を stack に push (own computed value を parent_computed として渡す)。
+        // 子を stack に push (出力済みの親の computed value を ID で参照する)。
         // stack は LIFO なので document order で push するため reverse。
         // `child_ids` イテレータを直接 `stack` へ `extend` し、今回追加した
         // 末尾スライスだけを in-place `reverse()` する — 都度捨てる中間
@@ -291,8 +292,8 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // (`ResolveContext` の derive) なので closure 内で複数回使い回せる。
         //
         // なぜ document order を保つか: resolve_inheritance 自体の正しさも
-        // 訪問順には依存しない — 各 node の computed 値は push 時点で既に
-        // 確定している parent_computed / child_ctx だけから決まり、`winners`
+        // 兄弟の訪問順には依存しない — 各 node の computed 値は push 時点で既に
+        // 保存されている親の computed value / child_ctx だけから決まり、`winners`
         // scratch buffer は各 node の処理前後で完全に drain されるの
         // で兄弟の処理順に左右されない。ここで document order を維持して
         // いるのは refactor 前との**挙動の完全一致**のためであり、加えて
@@ -300,14 +301,10 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         // 明記する「document order で先行する `<p>` → 後続 `<span>` の向き」
         // という leak 検出方向を、この traversal 順が引き続き満たすため。
         let start = stack.len();
-        stack.extend(dom.child_ids(id).map(|child_id| {
-            (
-                child_id,
-                computed.clone(),
-                child_ctx,
-                custom_properties.clone(),
-            )
-        }));
+        stack.extend(
+            dom.child_ids(id)
+                .map(|child_id| (child_id, Some(id), child_ctx, custom_properties.clone())),
+        );
         stack[start..].reverse();
     }
 }
