@@ -373,10 +373,12 @@ impl ComputedProperty {
                             .map_or(end.px(), |provenance| {
                                 provenance.factor * ch_advance(&provenance.font)
                             });
+                        let start = crate::resolve::ComputedLength(start_px).to_css_string();
                         if start_px == end_px {
-                            format!("{start_px}px")
+                            start
                         } else {
-                            format!("{start_px}px {end_px}px")
+                            let end = crate::resolve::ComputedLength(end_px).to_css_string();
+                            format!("{start} {end}")
                         }
                     }
                 };

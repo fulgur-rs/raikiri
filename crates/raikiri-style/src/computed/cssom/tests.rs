@@ -55,3 +55,25 @@ fn text_decoration_inset_measures_ch_lengths_through_the_callback() {
     );
     assert_eq!(calls, 1);
 }
+
+#[test]
+fn text_decoration_inset_uses_shared_css_number_formatting() {
+    let mut computed = ComputedValues::initial();
+    let mut ch_advance = |_: &ChFontKey| -> f32 { panic!("no ch lengths") };
+    computed.text_decoration_inset = crate::resolve::ComputedTextDecorationInset::Lengths {
+        start: crate::resolve::ComputedLength(1.2345678),
+        end: crate::resolve::ComputedLength(-0.0),
+    };
+    assert_eq!(
+        ComputedProperty::TextDecorationInset.serialize(&computed, &mut ch_advance),
+        Some("1.23457px 0px".to_owned())
+    );
+    computed.text_decoration_inset = crate::resolve::ComputedTextDecorationInset::Lengths {
+        start: crate::resolve::ComputedLength(2.5),
+        end: crate::resolve::ComputedLength(2.5),
+    };
+    assert_eq!(
+        ComputedProperty::TextDecorationInset.serialize(&computed, &mut ch_advance),
+        Some("2.5px".to_owned())
+    );
+}
