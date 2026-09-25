@@ -14,9 +14,13 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 /// Consumer-supplied resource URL: not "this network" (0.0.0.0/8), private,
 /// loopback, link-local, CGNAT,
 /// documentation, benchmarking, reserved, multicast, broadcast, in the
-/// local-use NAT64 prefix `64:ff9b:1::/48`, or an IPv4-mapped /
+/// local-use NAT64 prefix `64:ff9b:1::/48`, an IPv4-mapped /
 /// well-known-prefix NAT64 address whose embedded IPv4 address itself fails
-/// this same check.
+/// this same check, or — for IPv6 — outside IANA's global unicast
+/// allocation (`2000::/3`) at all (which by itself excludes every
+/// IPv4-compatible/-translated and deprecated site-local form, named or
+/// not), or within the deprecated 6to4 (`2002::/16`) or Teredo
+/// (`2001::/32`) transition prefixes.
 ///
 /// This is the crate's SSRF safety floor: it is independent of
 /// `raikiri_traits::ResourcePolicy` and cannot be loosened by one — a
@@ -93,6 +97,8 @@ fn is_v6_globally_routable(ip: Ipv6Addr) -> bool {
         || ip.is_unicast_link_local()
         || is_documentation_v6(ip)
         || is_nat64_local_use(ip)
+        || is_6to4(ip)
+        || is_teredo(ip)
     {
         return false;
     }
@@ -102,7 +108,38 @@ fn is_v6_globally_routable(ip: Ipv6Addr) -> bool {
     if let Some(embedded) = nat64_embedded_v4(ip) {
         return is_v4_globally_routable(embedded);
     }
-    true
+    is_global_unicast(ip)
+}
+
+/// `2000::/3`, IANA's IPv6 Global Unicast allocation — the *only* range
+/// this floor accepts an otherwise-unhandled address from. Requiring this
+/// affirmatively, rather than only excluding each known non-global form by
+/// name, closes every IPv4-compatible/-translated and deprecated
+/// site-local form in one check: `::7f00:1` (deprecated IPv4-compatible,
+/// RFC 4291), `::ffff:0:7f00:1` (IPv4-translated, RFC 2765), `100::1`
+/// (discard-only, RFC 6666), and `fec0::1` (deprecated site-local, RFC
+/// 3879) all fall outside `2000::/3` and are rejected here without each
+/// needing its own named check — including any such form nobody has
+/// enumerated yet.
+fn is_global_unicast(ip: Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xE000) == 0x2000
+}
+
+/// `2002::/16` (RFC 3056, 6to4). Deprecated and disabled by default in
+/// every major OS for years; blocked outright rather than unwrapping its
+/// embedded IPv4 address, since nothing should legitimately name a 6to4
+/// address as a resource URL host.
+fn is_6to4(ip: Ipv6Addr) -> bool {
+    ip.segments()[0] == 0x2002
+}
+
+/// `2001::/32` (RFC 4380, Teredo). Same rationale as 6to4: a legacy NAT
+/// traversal mechanism with no legitimate reason to appear as a
+/// resource-fetch destination, blocked outright rather than unwrapping its
+/// XOR-obfuscated embedded IPv4 address.
+fn is_teredo(ip: Ipv6Addr) -> bool {
+    let seg = ip.segments();
+    seg[0] == 0x2001 && seg[1] == 0x0000
 }
 
 /// 64:ff9b::/96 (RFC 6052 NAT64 well-known prefix). The low 32 bits carry

@@ -130,14 +130,53 @@ fn blocks_the_local_use_nat64_prefix_outright_without_unwrapping() {
     assert!(!is_globally_routable(v6(
         "64:ff9b:1:ffff:ffff:ffff:ffff:ffff"
     )));
-    // Just outside the /48 on either side is ordinary, unaffected space.
-    assert!(is_globally_routable(v6("64:ff9b:2::808:808")));
-    assert!(is_globally_routable(v6("64:ff9b:0:1::808:808")));
+    // `is_nat64_local_use` itself must not over-match its /48 boundary,
+    // checked directly rather than through `is_globally_routable`: the
+    // whole `64:ff9b::/32` prefix sits outside IANA's `2000::/3` global
+    // unicast allocation regardless (see `is_global_unicast`), so
+    // `is_globally_routable` alone can't tell "blocked by this check" apart
+    // from "blocked because it isn't real global-unicast space at all" for
+    // an address just past either edge of the /48.
+    assert!(!is_nat64_local_use("64:ff9b:2::808:808".parse().unwrap()));
+    assert!(!is_nat64_local_use("64:ff9b:0:1::808:808".parse().unwrap()));
 }
 
 #[test]
 fn allows_ordinary_public_v6_addresses() {
     assert!(is_globally_routable(v6("2606:4700:4700::1111")));
+}
+
+#[test]
+fn blocks_ipv6_forms_outside_the_global_unicast_allocation() {
+    // `2000::/3` is IANA's entire Global Unicast allocation; every one of
+    // these forms falls outside it despite not matching any other named
+    // exclusion above, so the floor must reject all of them without a
+    // check written specifically for each one.
+    assert!(!is_globally_routable(v6("fec0::1"))); // deprecated site-local (RFC 3879)
+    assert!(!is_globally_routable(v6("::7f00:1"))); // deprecated IPv4-compatible (RFC 4291), would be 127.0.0.1
+    assert!(!is_globally_routable(v6("::ffff:0:7f00:1"))); // IPv4-translated (RFC 2765), would be 127.0.0.1
+    assert!(!is_globally_routable(v6("100::1"))); // discard-only (RFC 6666)
+    // Just outside fec0::/10 on the low side is ordinary unique-local space
+    // (already blocked by `is_unique_local`, not this gate) — this checks
+    // the gate itself doesn't over-block into neighboring, already-handled
+    // ranges in a way that would mask a regression there.
+    assert!(!is_globally_routable(v6("fc00::1")));
+}
+
+#[test]
+fn blocks_6to4_and_teredo_transition_prefixes() {
+    // 2002::/16 (6to4) and 2001::/32 (Teredo) are both inside 2000::/3, so
+    // the global-unicast gate alone does not exclude them; both are legacy
+    // IPv6 transition mechanisms embedding an IPv4 address, blocked
+    // outright rather than unwrapped.
+    assert!(!is_globally_routable(v6("2002:7f00:1::"))); // 6to4 embedding 127.0.0.1
+    assert!(!is_globally_routable(v6("2002:808:808::"))); // 6to4 embedding a public 8.8.8.8 is still blocked
+    assert!(!is_globally_routable(v6(
+        "2001:0:4136:e378:8000:63bf:3fff:fdd2"
+    ))); // Teredo
+    // Just outside each prefix is ordinary global-unicast space, unaffected.
+    assert!(is_globally_routable(v6("2003::1"))); // outside 2002::/16
+    assert!(is_globally_routable(v6("2001:1::1"))); // outside 2001:0000::/32
 }
 
 /// Pins the `url` crate's WHATWG host parsing of non-canonical IPv4 host
