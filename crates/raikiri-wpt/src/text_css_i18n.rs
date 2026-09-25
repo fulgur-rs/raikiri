@@ -6,7 +6,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use cssparser::{CowRcStr, ToCss as _, Token};
 use raikiri_js::TestOutcome;
 use raikiri_js::dom::{DomBackend, DomNodeId, DomRect, ElementGeometry};
 use raikiri_js::testharness::run_testharness_script;
@@ -598,61 +597,62 @@ impl DomBackend for LiveDocumentBackend {
         node: DomNodeId,
         property: &str,
     ) -> Result<Option<String>, String> {
-        if !property.eq_ignore_ascii_case("white-space")
-            && !property.eq_ignore_ascii_case("white-space-collapse")
-            && !property.eq_ignore_ascii_case("line-break")
-            && !property.eq_ignore_ascii_case("hyphenate-character")
-            && !property.eq_ignore_ascii_case("hyphenate-limit-chars")
-            && !property.eq_ignore_ascii_case("hyphens")
-            && !property.eq_ignore_ascii_case("font-kerning")
-            && !property.eq_ignore_ascii_case("font-variant-caps")
-            && !property.eq_ignore_ascii_case("font-optical-sizing")
-            && !property.eq_ignore_ascii_case("font-variant-emoji")
-            && !property.eq_ignore_ascii_case("font-language-override")
-            && !property.eq_ignore_ascii_case("font-variant-ligatures")
-            && !property.eq_ignore_ascii_case("font-synthesis")
-            && !property.eq_ignore_ascii_case("font-variant-position")
-            && !property.eq_ignore_ascii_case("font-palette")
-            && !property.eq_ignore_ascii_case("font-variant-numeric")
-            && !property.eq_ignore_ascii_case("font-variant-east-asian")
-            && !property.eq_ignore_ascii_case("overflow-wrap")
-            && !property.eq_ignore_ascii_case("word-wrap")
-            && !property.eq_ignore_ascii_case("word-break")
-            && !property.eq_ignore_ascii_case("text-transform")
-            && !property.eq_ignore_ascii_case("text-combine-upright")
-            && !property.eq_ignore_ascii_case("text-orientation")
-            && !property.eq_ignore_ascii_case("direction")
-            && !property.eq_ignore_ascii_case("unicode-bidi")
-            && !property.eq_ignore_ascii_case("writing-mode")
-            && !property.eq_ignore_ascii_case("text-autospace")
-            && !property.eq_ignore_ascii_case("word-space-transform")
-            && !property.eq_ignore_ascii_case("text-decoration-skip-ink")
-            && !property.eq_ignore_ascii_case("text-decoration-skip-spaces")
-            && !property.eq_ignore_ascii_case("text-decoration")
-            && !property.eq_ignore_ascii_case("text-decoration-style")
-            && !property.eq_ignore_ascii_case("text-decoration-line")
-            && !property.eq_ignore_ascii_case("text-shadow")
-            && !property.eq_ignore_ascii_case("text-decoration-inset")
-            && !property.eq_ignore_ascii_case("text-decoration-color")
-            && !property.eq_ignore_ascii_case("text-underline-position")
-            && !property.eq_ignore_ascii_case("text-underline-offset")
-            && !property.eq_ignore_ascii_case("text-emphasis-position")
-            && !property.eq_ignore_ascii_case("text-emphasis-style")
-            && !property.eq_ignore_ascii_case("text-emphasis")
-            && !property.eq_ignore_ascii_case("text-spacing-trim")
-            && !property.eq_ignore_ascii_case("text-spacing")
-            && !property.eq_ignore_ascii_case("text-wrap")
-            && !property.eq_ignore_ascii_case("text-wrap-mode")
-            && !property.eq_ignore_ascii_case("text-wrap-style")
-            && !property.eq_ignore_ascii_case("text-align")
-            && !property.eq_ignore_ascii_case("text-align-last")
-            && !property.eq_ignore_ascii_case("text-justify")
-            && !property.eq_ignore_ascii_case("text-indent")
-            && !property.eq_ignore_ascii_case("tab-size")
-            && !property.eq_ignore_ascii_case("letter-spacing")
-            && !property.eq_ignore_ascii_case("word-spacing")
-        {
-            return Ok(None);
+        // Unsupported properties bail out before the layout flush below.
+        cssparser::match_ignore_ascii_case! { property,
+            "white-space"
+            | "white-space-collapse"
+            | "line-break"
+            | "hyphenate-character"
+            | "hyphenate-limit-chars"
+            | "hyphens"
+            | "font-kerning"
+            | "font-variant-caps"
+            | "font-optical-sizing"
+            | "font-variant-emoji"
+            | "font-language-override"
+            | "font-variant-ligatures"
+            | "font-synthesis"
+            | "font-variant-position"
+            | "font-palette"
+            | "font-variant-numeric"
+            | "font-variant-east-asian"
+            | "overflow-wrap"
+            | "word-wrap"
+            | "word-break"
+            | "text-transform"
+            | "text-combine-upright"
+            | "text-orientation"
+            | "direction"
+            | "unicode-bidi"
+            | "writing-mode"
+            | "text-autospace"
+            | "word-space-transform"
+            | "text-decoration-skip-ink"
+            | "text-decoration-skip-spaces"
+            | "text-decoration"
+            | "text-decoration-style"
+            | "text-decoration-line"
+            | "text-shadow"
+            | "text-decoration-inset"
+            | "text-decoration-color"
+            | "text-underline-position"
+            | "text-underline-offset"
+            | "text-emphasis-position"
+            | "text-emphasis-style"
+            | "text-emphasis"
+            | "text-spacing-trim"
+            | "text-spacing"
+            | "text-wrap"
+            | "text-wrap-mode"
+            | "text-wrap-style"
+            | "text-align"
+            | "text-align-last"
+            | "text-justify"
+            | "text-indent"
+            | "tab-size"
+            | "letter-spacing"
+            | "word-spacing" => {},
+            _ => return Ok(None),
         }
         let index = self.element_index(node)?;
         self.flush_layout()?;
@@ -670,13 +670,9 @@ impl DomBackend for LiveDocumentBackend {
             return Ok(Some(value.to_owned()));
         }
         if property.eq_ignore_ascii_case("font-kerning") {
-            let value = match computed.font_kerning {
-                raikiri_style::property::FontKerning::Auto => "auto",
-                raikiri_style::property::FontKerning::Normal => "normal",
-                raikiri_style::property::FontKerning::None => "none",
-                _ => return Ok(None),
-            };
-            return Ok(Some(value.to_owned()));
+            let property_value =
+                raikiri_style::property::PropertyValue::FontKerning(computed.font_kerning);
+            return Ok(raikiri_style::property::serialize_value(&property_value));
         }
         if property.eq_ignore_ascii_case("font-variant-caps") {
             let value = match computed.font_variant_caps {
@@ -692,60 +688,28 @@ impl DomBackend for LiveDocumentBackend {
             return Ok(Some(value.to_owned()));
         }
         if property.eq_ignore_ascii_case("font-optical-sizing") {
-            let value = match computed.font_optical_sizing {
-                raikiri_style::property::FontOpticalSizing::Auto => "auto",
-                raikiri_style::property::FontOpticalSizing::None => "none",
-                _ => return Ok(None),
-            };
-            return Ok(Some(value.to_owned()));
+            let property_value = raikiri_style::property::PropertyValue::FontOpticalSizing(
+                computed.font_optical_sizing,
+            );
+            return Ok(raikiri_style::property::serialize_value(&property_value));
         }
         if property.eq_ignore_ascii_case("font-variant-emoji") {
-            let value = match computed.font_variant_emoji {
-                raikiri_style::property::FontVariantEmoji::Normal => "normal",
-                raikiri_style::property::FontVariantEmoji::Text => "text",
-                raikiri_style::property::FontVariantEmoji::Emoji => "emoji",
-                raikiri_style::property::FontVariantEmoji::Unicode => "unicode",
-                _ => return Ok(None),
-            };
-            return Ok(Some(value.to_owned()));
+            let property_value = raikiri_style::property::PropertyValue::FontVariantEmoji(
+                computed.font_variant_emoji,
+            );
+            return Ok(raikiri_style::property::serialize_value(&property_value));
         }
         if property.eq_ignore_ascii_case("font-language-override") {
-            let value = match &computed.font_language_override {
-                raikiri_style::property::FontLanguageOverride::Normal => "normal".to_owned(),
-                raikiri_style::property::FontLanguageOverride::String(value) => {
-                    Token::QuotedString(CowRcStr::from(value.as_str())).to_css_string()
-                }
-                _ => return Ok(None),
-            };
-            return Ok(Some(value));
+            let property_value = raikiri_style::property::PropertyValue::FontLanguageOverride(
+                computed.font_language_override.clone(),
+            );
+            return Ok(raikiri_style::property::serialize_value(&property_value));
         }
         if property.eq_ignore_ascii_case("font-variant-ligatures") {
-            let value = match computed.font_variant_ligatures {
-                raikiri_style::property::FontVariantLigatures::Normal => "normal",
-                raikiri_style::property::FontVariantLigatures::None => "none",
-                raikiri_style::property::FontVariantLigatures::CommonLigatures => {
-                    "common-ligatures"
-                }
-                raikiri_style::property::FontVariantLigatures::NoCommonLigatures => {
-                    "no-common-ligatures"
-                }
-                raikiri_style::property::FontVariantLigatures::DiscretionaryLigatures => {
-                    "discretionary-ligatures"
-                }
-                raikiri_style::property::FontVariantLigatures::NoDiscretionaryLigatures => {
-                    "no-discretionary-ligatures"
-                }
-                raikiri_style::property::FontVariantLigatures::HistoricalLigatures => {
-                    "historical-ligatures"
-                }
-                raikiri_style::property::FontVariantLigatures::NoHistoricalLigatures => {
-                    "no-historical-ligatures"
-                }
-                raikiri_style::property::FontVariantLigatures::Contextual => "contextual",
-                raikiri_style::property::FontVariantLigatures::NoContextual => "no-contextual",
-                _ => return Ok(None),
-            };
-            return Ok(Some(value.to_owned()));
+            let property_value = raikiri_style::property::PropertyValue::FontVariantLigatures(
+                computed.font_variant_ligatures,
+            );
+            return Ok(raikiri_style::property::serialize_value(&property_value));
         }
         if property.eq_ignore_ascii_case("font-synthesis") {
             let property_value =

@@ -1305,18 +1305,6 @@ impl FontVariantNumeric {
             slashed_zero: false,
         }
     }
-
-    /// Whether this value serializes as `normal`.
-    pub const fn is_normal(self) -> bool {
-        !self.lining_nums
-            && !self.oldstyle_nums
-            && !self.proportional_nums
-            && !self.tabular_nums
-            && !self.diagonal_fractions
-            && !self.stacked_fractions
-            && !self.ordinal
-            && !self.slashed_zero
-    }
 }
 
 /// East Asian text variant used by `font-variant-east-asian`.
@@ -1371,11 +1359,6 @@ impl FontVariantEastAsian {
             width: None,
             ruby: false,
         }
-    }
-
-    /// Whether this value serializes as `normal`.
-    pub const fn is_normal(self) -> bool {
-        self.variant.is_none() && self.width.is_none() && !self.ruby
     }
 }
 

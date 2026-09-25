@@ -376,64 +376,64 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         }),
 
         PropertyValue::FontVariantNumeric(value) => {
-            if value.is_normal() {
-                Some("normal".to_owned())
-            } else {
-                let mut keywords = Vec::with_capacity(8);
-                if value.lining_nums {
-                    keywords.push("lining-nums");
-                }
-                if value.oldstyle_nums {
-                    keywords.push("oldstyle-nums");
-                }
-                if value.proportional_nums {
-                    keywords.push("proportional-nums");
-                }
-                if value.tabular_nums {
-                    keywords.push("tabular-nums");
-                }
-                if value.diagonal_fractions {
-                    keywords.push("diagonal-fractions");
-                }
-                if value.stacked_fractions {
-                    keywords.push("stacked-fractions");
-                }
-                if value.ordinal {
-                    keywords.push("ordinal");
-                }
-                if value.slashed_zero {
-                    keywords.push("slashed-zero");
-                }
-                Some(keywords.join(" "))
+            let mut keywords = Vec::with_capacity(8);
+            if value.lining_nums {
+                keywords.push("lining-nums");
             }
+            if value.oldstyle_nums {
+                keywords.push("oldstyle-nums");
+            }
+            if value.proportional_nums {
+                keywords.push("proportional-nums");
+            }
+            if value.tabular_nums {
+                keywords.push("tabular-nums");
+            }
+            if value.diagonal_fractions {
+                keywords.push("diagonal-fractions");
+            }
+            if value.stacked_fractions {
+                keywords.push("stacked-fractions");
+            }
+            if value.ordinal {
+                keywords.push("ordinal");
+            }
+            if value.slashed_zero {
+                keywords.push("slashed-zero");
+            }
+            Some(if keywords.is_empty() {
+                "normal".to_owned()
+            } else {
+                keywords.join(" ")
+            })
         }
 
         PropertyValue::FontVariantEastAsian(value) => {
-            if value.is_normal() {
-                Some("normal".to_owned())
-            } else {
-                let mut keywords = Vec::with_capacity(3);
-                match value.variant {
-                    Some(FontVariantEastAsianVariant::Jis78) => keywords.push("jis78"),
-                    Some(FontVariantEastAsianVariant::Jis83) => keywords.push("jis83"),
-                    Some(FontVariantEastAsianVariant::Jis90) => keywords.push("jis90"),
-                    Some(FontVariantEastAsianVariant::Jis04) => keywords.push("jis04"),
-                    Some(FontVariantEastAsianVariant::Simplified) => keywords.push("simplified"),
-                    Some(FontVariantEastAsianVariant::Traditional) => keywords.push("traditional"),
-                    None => {}
-                }
-                match value.width {
-                    Some(FontVariantEastAsianWidth::FullWidth) => keywords.push("full-width"),
-                    Some(FontVariantEastAsianWidth::ProportionalWidth) => {
-                        keywords.push("proportional-width")
-                    }
-                    None => {}
-                }
-                if value.ruby {
-                    keywords.push("ruby");
-                }
-                Some(keywords.join(" "))
+            let mut keywords = Vec::with_capacity(3);
+            match value.variant {
+                Some(FontVariantEastAsianVariant::Jis78) => keywords.push("jis78"),
+                Some(FontVariantEastAsianVariant::Jis83) => keywords.push("jis83"),
+                Some(FontVariantEastAsianVariant::Jis90) => keywords.push("jis90"),
+                Some(FontVariantEastAsianVariant::Jis04) => keywords.push("jis04"),
+                Some(FontVariantEastAsianVariant::Simplified) => keywords.push("simplified"),
+                Some(FontVariantEastAsianVariant::Traditional) => keywords.push("traditional"),
+                None => {}
             }
+            match value.width {
+                Some(FontVariantEastAsianWidth::FullWidth) => keywords.push("full-width"),
+                Some(FontVariantEastAsianWidth::ProportionalWidth) => {
+                    keywords.push("proportional-width")
+                }
+                None => {}
+            }
+            if value.ruby {
+                keywords.push("ruby");
+            }
+            Some(if keywords.is_empty() {
+                "normal".to_owned()
+            } else {
+                keywords.join(" ")
+            })
         }
 
         _ => None,
