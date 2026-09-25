@@ -1321,7 +1321,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Inline collapsed whitespace between inline boxes (+1).
         // + CSS Flexbox order-painting exact 800x600 pair (+1).
         // + CSS Page basic-pagination exact 800x600 slice (+5).
-        assert_eq!(set.baseline.entries.len(), 1308);
+        // + CSS Page monolithic-overflow exact 800x600 slice (+5).
+        assert_eq!(set.baseline.entries.len(), 1313);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
