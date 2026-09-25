@@ -112,36 +112,78 @@ pub(crate) fn empty_quotes_entries() -> Arc<Vec<(SmolStr, SmolStr)>> {
     EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
 }
 
+/// Whether a [`FontFamilyName`] is a generic CSS family keyword or a named family.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FontFamilyKind {
+    /// A named family, including quoted strings and unquoted identifier sequences.
+    Named,
+    /// An unquoted single-identifier generic family keyword.
+    Generic,
+}
+
+/// One family in a CSS `font-family` list.
+///
+/// The `kind` is significant: a quoted family name such as `"serif"` is not
+/// the generic `serif` family, even though both have the same [`Atom`] text.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct FontFamilyName(
+    /// The family text without CSS quotes.
+    pub Atom,
+    /// Whether this was parsed as a generic family keyword or a named family.
+    pub FontFamilyKind,
+);
+
+impl FontFamilyName {
+    /// Construct a named family.
+    pub fn named(name: impl Into<Atom>) -> Self {
+        Self(name.into(), FontFamilyKind::Named)
+    }
+
+    /// Construct a generic family keyword.
+    pub fn generic(name: impl Into<Atom>) -> Self {
+        Self(name.into(), FontFamilyKind::Generic)
+    }
+
+    /// The family text without CSS quotes.
+    pub fn as_str(&self) -> &str {
+        self.0.0.as_str()
+    }
+}
+
+impl std::fmt::Display for FontFamilyName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// `font-family` の initial value を表す shared Arc — [`empty_content_list`]
 /// 等と同じ `OnceLock` 保持の shared-slot pattern (同種の DoS 対策 fix の踏襲)。
 ///
 /// CSS Fonts 4 §2.1 "Font Family: the font-family property"
 /// (<https://www.w3.org/TR/css-fonts-4/#font-family-prop>) の spec 上の
 /// initial は "depends on user agent" — spec は具体的な family name を規定
-/// しない (`font-size` の initial `medium` の実 px が UA 依存であるのと同型、
-/// [`crate::computed::INITIAL_FONT_SIZE_PX`] の doc 参照)。本実装は browser
-/// default の `[Atom::from("serif")]` を採る。
+/// しない。本実装は browser default の generic `serif` family を採る。
 ///
 /// `font-family` は **inherited** property であり、非 inherited な counter-* /
 /// content / string-set と違って initial 値は空 list ではなく本実装が選んだ
-/// `[Atom::from("serif")]` である。したがって本 helper は [`empty_content_list`]
-/// のような「空 `Vec` を共有する」ものではなく、「initial 値そのものを共有する」
-/// もの — root node の `SpecifiedValues::initial()` / `ComputedValues::initial()`
-/// がこの単一 heap slot を bump-share する。
+/// `[FontFamilyName::generic("serif")]` である。したがって本 helper は
+/// [`empty_content_list`] のような「空 `Vec` を共有する」ものではなく、
+/// 「initial 値そのものを共有する」もの — root node の
+/// `SpecifiedValues::initial()` / `ComputedValues::initial()` がこの単一 heap
+/// slot を bump-share する。
 ///
 /// per-node cost の形は他 5 field (counter_reset 等) とは異なる —
 /// あちらは「non-inherited property が毎 node で initial にリセットされる」
 /// コストだったが、`font-family` は inherited なので「inheritance walk が
-/// 毎 node で親の値を運ぶ」コスト
-/// ([`crate::specified::SpecifiedValues::inherit_from`] の
+/// 毎 node で親の値を運ぶ」コスト ([`crate::specified::SpecifiedValues::inherit_from`] の
 /// `parent.font_family.clone()`) が主。値が initial の `serif` であろうと author
 /// 指定の任意 list であろうと、`Arc` 化により `.clone()` は既存 Arc の bump に
 /// なる — 本 helper は「initial 値を作る 1 箇所」を shared にするための slot
 /// であって、inherit chain 上の非 initial 値までこの slot に強制する訳ではない。
-pub(crate) fn initial_font_family() -> Arc<Vec<Atom>> {
-    static INITIAL: OnceLock<Arc<Vec<Atom>>> = OnceLock::new();
+pub(crate) fn initial_font_family() -> Arc<Vec<FontFamilyName>> {
+    static INITIAL: OnceLock<Arc<Vec<FontFamilyName>>> = OnceLock::new();
     INITIAL
-        .get_or_init(|| Arc::new(vec![Atom::from("serif")]))
+        .get_or_init(|| Arc::new(vec![FontFamilyName::generic("serif")]))
         .clone()
 }
 
@@ -7559,8 +7601,8 @@ pub enum FilterFunction {
 /// 同種の Arc-wrap パターンの踏襲 (目的は perf 改善であり、security 対策では
 /// ない) は同 pattern を最後の non-Arc `Vec` payload に適用する:
 ///
-/// - [`FontFamily`](PropertyValue::FontFamily): `FontFamily(Vec<Atom>)` →
-///   `FontFamily(Arc<Vec<Atom>>)`
+/// - [`FontFamily`](PropertyValue::FontFamily): `FontFamily(Vec<FontFamilyName>)` →
+///   `FontFamily(Arc<Vec<FontFamilyName>>)`
 ///
 /// Pattern-match で payload を **読む** consumer は `Arc<Vec<T>>` の
 /// `Deref<Target = Vec<T>>` → `Deref<Target = [T]>` chain により、`match` arm
@@ -7598,8 +7640,8 @@ pub enum PropertyValue {
     BackgroundColor(CssColor),
     /// `font-family: <family-name>#` — inherited。CSS Fonts 4 §2.1
     /// <https://www.w3.org/TR/css-fonts-4/#font-family-prop> の spec 上の
-    /// initial は "depends on user agent"。本実装は `[Atom::from("serif")]`
-    /// を採る ([`crate::property::initial_font_family`] doc 参照)。
+    /// initial は "depends on user agent"。本実装は
+    /// `[FontFamilyName::generic("serif")]` を採る ([`crate::property::initial_font_family`] doc 参照)。
     ///
     /// [`Arc<Vec<..>>`] wrap (同種の DoS 対策 fix の pattern 踏襲):
     /// cascade winner move (`apply_value`) と inheritance walk clone
@@ -7613,7 +7655,7 @@ pub enum PropertyValue {
     /// により downstream の `.iter()` / `.len()` / `.is_empty()` は既存 pattern
     /// そのままで通る (dom/paint consumer 波及 0、`crates/raikiri-dom/src/layout.rs`
     /// の `cv.font_family.iter()` 含む)。
-    FontFamily(Arc<Vec<Atom>>),
+    FontFamily(Arc<Vec<FontFamilyName>>),
     /// `font-size: <absolute-size> | <length-percentage [0,∞]>` — inherited、
     /// initial: 16px (= `medium`)。CSS Fonts 4 §2.5
     /// <https://www.w3.org/TR/css-fonts-4/#font-size-prop>。
@@ -8895,18 +8937,18 @@ pub enum PropertyValue {
     /// 相対解決なし)。
     /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
     EmptyCells(EmptyCellsValue),
-    /// `font` shorthand — **inherited**。6 成分 (style/variant-caps/weight/
+    /// `font` shorthand — **inherited**。6 grammar 成分 (style/variant-caps/weight/
     /// size/line-height/family) を保持する ([`FontShorthand`] doc 参照)。
     /// CSS Fonts 4 §2.1
     /// <https://www.w3.org/TR/css-fonts-4/#font-prop> の
     /// `[ <'font-style'> || <font-variant-css2> || <'font-weight'> ]? <'font-size'> [ / <'line-height'> ]? <'font-family'>#`
     /// subset (system-font keyword・`font-stretch` 非 `normal`・CSS2 外の
     /// `font-variant` は scope 外、[`FontShorthand`] doc の Scope carving 節
-    /// 参照)。[`crate::rule::expand_shorthand_into`] が
-    /// [`Self::FontStyle`] / [`Self::FontVariantCaps`] /
-    /// [`Self::FontWeight`] / [`Self::FontSize`]・[`Self::FontSizeRelative`] /
-    /// [`Self::LineHeight`] / [`Self::FontFamily`] / [`Self::FontVariationSettings`]
-    /// (`normal` reset) の 7 longhand に展開する。
+    /// 参照)。[`crate::rule::expand_shorthand_into`] は grammar longhand 6 件と
+    /// modeled reset-only subproperty 9 件 (`font-kerning` /
+    /// `font-language-override` / `font-optical-sizing` / `font-variant-east-asian` /
+    /// `font-variant-emoji` / `font-variant-ligatures` / `font-variant-numeric` /
+    /// `font-variant-position` / `font-variation-settings`) に展開する。
     /// 末尾に追加 (shorthand は cascade 段に到達しない
     /// ([`crate::rule::expand_shorthand_into`] doc) ので discriminant 順は
     /// 意味を持たない — 既存 variant を shift させない配置を優先する、

@@ -820,8 +820,8 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // (initial `show`, inherited). matching 規則は直上の
         // `table-layout` arm と同じ。
         "empty-cells" => parse_empty_cells(input).map(PropertyValue::EmptyCells),
-        // CSS Fonts 4 §2.1 font shorthand — 7 longhand (6 grammar components plus
-        // the font-variation-settings initial-value reset) are expanded by
+        // CSS Fonts 4 §2.1 font shorthand — 15 longhands (6 grammar components plus
+        // 9 modeled reset-only subproperties) are expanded by
         // `crate::rule::expand_shorthand_into` (see its doc).
         "font" => parse_font_shorthand(input).map(PropertyValue::Font),
         // CSS Text Module Level 3 §4.2

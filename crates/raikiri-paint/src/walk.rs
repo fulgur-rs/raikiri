@@ -560,11 +560,11 @@ fn inherited_margin_box_font(
     {
         Some(PropertyValue::FontFamily(families)) => families
             .first()
-            .map(|family| family.0.as_str().to_string())
+            .map(|family| family.as_str().to_string())
             .unwrap_or_else(|| "serif".to_string()),
         _ => root
             .and_then(|computed| computed.font_family.first())
-            .map(|family| family.0.as_str().to_string())
+            .map(|family| family.as_str().to_string())
             .unwrap_or_else(|| "serif".to_string()),
     };
     (font_size.max(0.1), family)
@@ -1406,7 +1406,7 @@ fn generated_pseudo_text_advance(
     let family = computed
         .font_family
         .first()
-        .map(|family| family.0.as_str().to_string())
+        .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
     text::measure_margin_text_advance(&content, computed.font_size.px(), &family)
 }
@@ -1520,7 +1520,7 @@ fn generated_pseudo_text_height(
     let family = computed
         .font_family
         .first()
-        .map(|family| family.0.as_str().to_string())
+        .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
     text::measure_margin_text_height(&content, computed.font_size.px(), &family)
 }
@@ -1549,7 +1549,7 @@ fn paint_generated_pseudo(
     let family = computed
         .font_family
         .first()
-        .map(|family| family.0.as_str().to_string())
+        .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
     let advance = text::measure_margin_text_advance(&content, computed.font_size.px(), &family);
     text::draw_margin_text(
@@ -1659,7 +1659,7 @@ fn paint_list_marker_with_snapshots(
     let family = computed
         .font_family
         .first()
-        .map(|family| family.0.as_str().to_string())
+        .map(|family| family.as_str().to_string())
         .unwrap_or_else(|| "serif".to_string());
     let marker_width = text::measure_margin_text(&content, computed.font_size.px(), &family);
     if marker_width <= 0.0 {
@@ -3848,7 +3848,7 @@ fn paint_document_impl(
                     let family = cv
                         .font_family
                         .first()
-                        .map(|family| family.0.as_str().to_string())
+                        .map(|family| family.as_str().to_string())
                         .unwrap_or_else(|| "serif".to_string());
                     let collapsed_space =
                         text::measure_margin_text_advance(" ", cv.font_size.px(), &family);
@@ -5630,6 +5630,30 @@ mod tests {
         let rules = build_rule_tree(&document);
         let cascade = cascade(&document, &rules).expect("cascade Ok");
         (document, cascade, first, second)
+    }
+
+    #[test]
+    fn inherited_margin_box_font_uses_root_computed_family() {
+        let mut document = Document::new();
+        let style = document.append_element(
+            Some(document.root_index()),
+            "style",
+            Style::default(),
+            None::<&str>,
+        );
+        document.append_text(style, "@page { @top-left { content: 'x'; } }");
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+        let rule = cascade
+            .page
+            .margin_boxes()
+            .first()
+            .expect("the @page fixture has a margin box");
+
+        assert_eq!(
+            inherited_margin_box_font(&document, &cascade, rule),
+            (16.0, "serif".to_owned())
+        );
     }
 
     #[test]

@@ -356,8 +356,8 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
     // 型)、Url (ParseOptions.base_url の型)。sub-crate を direct dep せずに ParseOptions を
     // 完全構築、ComputedValues field を型付き binding できることを compile-time で verify。
     use raikiri::{
-        Atom, ComputedLength, CssColor, Document, Length, NetworkProvider, ParseOptions,
-        PropertyValue, Url, build_cascaded, parse,
+        ComputedLength, CssColor, Document, FontFamilyKind, FontFamilyName, Length,
+        NetworkProvider, ParseOptions, PropertyValue, Url, build_cascaded, parse,
     };
 
     // NetworkProvider trait を dyn 経由で名指し可能なことを compile-time で確認。
@@ -385,17 +385,15 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
     // specified 層の `Length` は `PropertyValue` の payload 型として引き続き
     // Consumer から名指しできる必要がある (umbrella re-export list の rationale)。
     let _specified_font_size: PropertyValue = PropertyValue::FontSize(Length::Px(12.0));
-    // 実 field 型は
-    // `Arc<Vec<Atom>>` — 下記 binding は `Arc<Vec<T>>: Deref<Target = Vec<T>>`
-    // による deref coercion 経由で通る (Content/StringSet 等 sibling field と
-    // 同じ「read-side consumer は無改修で継続動作」設計、
-    // `PropertyValue::FontFamily` doc 参照)。
-    let font_family: &Vec<Atom> = &computed.font_family;
-    // 実 assertion — initial font-family は Atom("serif") (raikiri-style::ComputedValues::initial)。
+    // ComputedValues retains both each family's text and whether it is a
+    // generic keyword or a named family.
+    let font_family: &Vec<FontFamilyName> = &computed.font_family;
+    // The initial font-family is the generic `serif` family.
     assert!(
         !font_family.is_empty(),
-        "font_family should have at least initial serif atom"
+        "font_family should have at least initial serif family"
     );
+    assert_eq!(font_family[0].1, FontFamilyKind::Generic);
 }
 
 #[test]

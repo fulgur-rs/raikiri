@@ -246,13 +246,14 @@ pub use raikiri_dom::Document;
 // その形で出てくる経路は現状無い)。`Border::new()` が閉じるのはそれとは別の
 // gap — 「型は名指しできるが値を一切構築できない」という construction-path
 // gap であり、shorthand 展開の挙動そのものは変えていない。
+// cov:ignore: public re-export declarations have no executable body
 pub use raikiri_style::{
     AtRuleBody, AtRuleRecord, Atom, CascadeResult, ComputedBorder, ComputedLength,
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLineHeight, ComputedValues,
-    CssColor, CssRule, CssRuleKind, DisplayValue, Length, LengthOrAuto, MediaContext, MediaType,
-    Origin, PageBleed, PageCascadeResult, PageContextQuery, PageInheritance,
-    PageMarginBoxCascadeResult, PageMarginBoxSlot, PageMarks, PageOrientation, PageSize,
-    PageSizeKeyword, PropertyValue, QualifiedRuleRecord, RuleNode, RuleTree, Sides,
+    CssColor, CssRule, CssRuleKind, DisplayValue, FontFamilyKind, FontFamilyName, Length,
+    LengthOrAuto, MediaContext, MediaType, Origin, PageBleed, PageCascadeResult, PageContextQuery,
+    PageInheritance, PageMarginBoxCascadeResult, PageMarginBoxSlot, PageMarks, PageOrientation,
+    PageSize, PageSizeKeyword, PropertyValue, QualifiedRuleRecord, RuleNode, RuleTree, Sides,
     cascade_with_media_context, cascade_with_media_context_for_page,
 };
 // `Border` / `BorderColor` / `BorderStyle` / `LineHeight` は raikiri-style

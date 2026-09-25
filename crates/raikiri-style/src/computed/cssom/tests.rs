@@ -18,8 +18,131 @@ fn from_name_is_ascii_case_insensitive_and_maps_legacy_aliases() {
         ComputedProperty::from_name("FONT-VARIATION-SETTINGS"),
         Some(ComputedProperty::FontVariationSettings)
     );
+    assert_eq!(
+        ComputedProperty::from_name("FONT"),
+        Some(ComputedProperty::Font)
+    );
     assert_eq!(ComputedProperty::from_name("color"), None);
     assert_eq!(ComputedProperty::from_name(""), None);
+}
+
+#[test]
+fn font_shorthand_serializes_computed_grammar_values() {
+    let mut computed = ComputedValues::initial();
+    let mut ch_advance =
+        |_: &ChFontKey| -> f32 { panic!("font shorthand does not use ch lengths") };
+    let property = ComputedProperty::from_name("font").expect("font is a computed shorthand");
+
+    assert_eq!(
+        property.serialize(&computed, &mut ch_advance),
+        Some("16px serif".to_owned())
+    );
+
+    computed.font_style = crate::property::FontStyle::Italic;
+    computed.font_variant_caps = crate::property::FontVariantCaps::SmallCaps;
+    computed.font_weight = 700.0;
+    computed.font_size = crate::resolve::ComputedLength(18.0);
+    computed.line_height = crate::resolve::ComputedLineHeight::Number(1.5);
+    computed.font_family = std::sync::Arc::new(vec![
+        crate::property::FontFamilyName::named("Open Sans"),
+        crate::property::FontFamilyName::generic("serif"),
+    ]);
+    assert_eq!(
+        property.serialize(&computed, &mut ch_advance),
+        Some(r#"italic small-caps 700 18px/1.5 "Open Sans", serif"#.to_owned())
+    );
+
+    computed.font_variant_caps = crate::property::FontVariantCaps::Normal;
+    computed.font_palette = crate::property::FontPaletteValue::Light;
+    assert_eq!(
+        property.serialize(&computed, &mut ch_advance),
+        Some(r#"italic 700 18px/1.5 "Open Sans", serif"#.to_owned())
+    );
+
+    computed.font_family =
+        std::sync::Arc::new(vec![crate::property::FontFamilyName::named("serif")]);
+    assert_eq!(
+        property.serialize(&computed, &mut ch_advance),
+        Some(r#"italic 700 18px/1.5 "serif""#.to_owned())
+    );
+
+    computed.font_style = crate::property::FontStyle::Oblique;
+    computed.line_height =
+        crate::resolve::ComputedLineHeight::Length(crate::resolve::ComputedLength(20.0));
+    computed.font_family =
+        std::sync::Arc::new(vec![crate::property::FontFamilyName::generic("serif")]);
+    assert_eq!(
+        property.serialize(&computed, &mut ch_advance),
+        Some("oblique 700 18px/20px serif".to_owned())
+    );
+
+    computed.font_family = std::sync::Arc::new(Vec::new());
+    assert_eq!(property.serialize(&computed, &mut ch_advance), None);
+}
+
+#[test]
+fn font_shorthand_serialization_rejects_unrepresentable_or_noninitial_subproperties() {
+    let property = ComputedProperty::from_name("font").expect("font is a computed shorthand");
+    let mut ch_advance =
+        |_: &ChFontKey| -> f32 { panic!("font shorthand does not use ch lengths") };
+
+    macro_rules! assert_unserializable_with {
+        ($field:ident, $value:expr) => {{
+            let mut computed = ComputedValues::initial();
+            computed.$field = $value;
+            assert!(
+                property.serialize(&computed, &mut ch_advance).is_none(),
+                "{} should prevent font shorthand serialization",
+                stringify!($field)
+            );
+        }};
+    }
+
+    assert_unserializable_with!(font_kerning, crate::property::FontKerning::Normal);
+    assert_unserializable_with!(
+        font_optical_sizing,
+        crate::property::FontOpticalSizing::None
+    );
+    assert_unserializable_with!(font_variant_emoji, crate::property::FontVariantEmoji::Text);
+    assert_unserializable_with!(
+        font_language_override,
+        crate::property::FontLanguageOverride::String("SRB".into())
+    );
+    assert_unserializable_with!(
+        font_variant_ligatures,
+        crate::property::FontVariantLigatures::None
+    );
+    assert_unserializable_with!(
+        font_variant_position,
+        crate::property::FontVariantPosition::Sub
+    );
+    assert_unserializable_with!(
+        font_variant_numeric,
+        crate::property::FontVariantNumeric {
+            ordinal: true,
+            ..crate::property::FontVariantNumeric::initial()
+        }
+    );
+    assert_unserializable_with!(
+        font_variant_east_asian,
+        crate::property::FontVariantEastAsian {
+            width: Some(crate::property::FontVariantEastAsianWidth::FullWidth),
+            ..crate::property::FontVariantEastAsian::initial()
+        }
+    );
+    assert_unserializable_with!(
+        font_variant_caps,
+        crate::property::FontVariantCaps::AllSmallCaps
+    );
+    assert_unserializable_with!(
+        font_variation_settings,
+        crate::property::FontVariationSettings::Settings(vec![
+            crate::property::FontVariationSetting {
+                tag: "wght".into(),
+                value: 700.0,
+            }
+        ])
+    );
 }
 
 #[test]

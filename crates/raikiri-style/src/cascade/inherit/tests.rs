@@ -7010,10 +7010,10 @@ fn background_shorthand_comma_separated_multi_layer_declaration_dropped_through_
 }
 
 #[test]
-fn font_shorthand_expands_to_7_longhands_through_real_cascade() {
+fn font_shorthand_expands_supported_longhands_through_real_cascade() {
     // `background_shorthand_expands_to_8_longhands_through_real_cascade`
     // の sibling — literal な `font:` declaration が parse → cascade
-    // pipeline を通り、`font-variation-settings` を含む 7 longhand に
+    // pipeline を通り、6 grammar longhand と 9 reset-only subproperty に
     // 展開されることの pin。
     use crate::property::{FontStyle, FontVariantCaps, FontVariationSettings};
     let cv = cascade_doc(
@@ -7077,6 +7077,59 @@ fn font_shorthand_resets_inherited_variation_settings_and_respects_source_order(
 }
 
 #[test]
+fn font_shorthand_resets_supported_subproperties_and_later_longhands_win_literal() {
+    use crate::property::{
+        FontKerning, FontLanguageOverride, FontOpticalSizing, FontVariantEastAsian,
+        FontVariantEastAsianWidth, FontVariantEmoji, FontVariantLigatures, FontVariantNumeric,
+        FontVariantPosition,
+    };
+
+    const NON_INITIAL: &str = concat!(
+        "font-kerning: normal; font-language-override: \"SRB\"; ",
+        "font-optical-sizing: none; font-variant-east-asian: full-width; ",
+        "font-variant-emoji: text; font-variant-ligatures: none; ",
+        "font-variant-numeric: ordinal; font-variant-position: sub",
+    );
+
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some(NON_INITIAL));
+    let reset_child = doc.push_element(parent, "span", Some("font: 16px serif"));
+    let later_declarations = format!("font: 16px serif; {NON_INITIAL}");
+    let later_child = doc.push_element(parent, "em", Some(&later_declarations));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    let reset = &result.computed[reset_child];
+    let later = &result.computed[later_child];
+
+    assert_eq!(reset.font_kerning, FontKerning::Auto);
+    assert_eq!(reset.font_language_override, FontLanguageOverride::Normal);
+    assert_eq!(reset.font_optical_sizing, FontOpticalSizing::Auto);
+    assert_eq!(
+        reset.font_variant_east_asian,
+        FontVariantEastAsian::initial()
+    );
+    assert_eq!(reset.font_variant_emoji, FontVariantEmoji::Normal);
+    assert_eq!(reset.font_variant_ligatures, FontVariantLigatures::Normal);
+    assert_eq!(reset.font_variant_numeric, FontVariantNumeric::initial());
+    assert_eq!(reset.font_variant_position, FontVariantPosition::Normal);
+
+    assert_eq!(later.font_kerning, FontKerning::Normal);
+    assert_eq!(
+        later.font_language_override,
+        FontLanguageOverride::String("SRB".into())
+    );
+    assert_eq!(later.font_optical_sizing, FontOpticalSizing::None);
+    assert_eq!(
+        later.font_variant_east_asian.width,
+        Some(FontVariantEastAsianWidth::FullWidth)
+    );
+    assert_eq!(later.font_variant_emoji, FontVariantEmoji::Text);
+    assert_eq!(later.font_variant_ligatures, FontVariantLigatures::None);
+    assert!(later.font_variant_numeric.ordinal);
+    assert_eq!(later.font_variant_position, FontVariantPosition::Sub);
+}
+
+#[test]
 fn font_shorthand_and_font_style_longhand_interleave_by_source_order() {
     // `background_shorthand_and_background_color_longhand_interleave_by_source_order`
     // の sibling — shorthand と longhand の競合は source order で決まる。
@@ -7107,7 +7160,6 @@ fn apply_value_direct_font_shorthand_fall_through() {
     // cascade 経路では unreachable (`expand_shorthand_into` が展開済み)
     // の canary。relative 成分 (`bolder` / `larger`) は longhand arm と
     // 同じく parent seed (ここでは initial: 400 / 16px) 基準で解決される。
-    use crate::Atom;
     use crate::property::{
         FontShorthand, FontShorthandSize, FontStyle, FontVariantCaps, FontWeightValue, LineHeight,
         RelativeFontSize,
@@ -7121,7 +7173,7 @@ fn apply_value_direct_font_shorthand_fall_through() {
             weight: FontWeightValue::Bolder,
             size: FontShorthandSize::Relative(RelativeFontSize::Larger),
             line_height: LineHeight::Number(1.5),
-            family: Arc::new(vec![Atom::from("serif")]),
+            family: Arc::new(vec![crate::property::FontFamilyName::generic("serif")]),
         }),
         &mut cv,
     );
@@ -7141,7 +7193,7 @@ fn apply_value_direct_font_shorthand_fall_through() {
             weight: FontWeightValue::Absolute(400.0),
             size: FontShorthandSize::Absolute(Length::Px(12.0)),
             line_height: LineHeight::Normal,
-            family: Arc::new(vec![Atom::from("serif")]),
+            family: Arc::new(vec![crate::property::FontFamilyName::generic("serif")]),
         }),
         &mut cv,
     );
@@ -7475,7 +7527,7 @@ fn text_decoration_inset_retains_each_ch_endpoint_font_provenance() {
                 .font
                 .family
                 .iter()
-                .any(|family| family.0.as_str() == "Ahem")
+                .any(|family| family.as_str() == "Ahem")
         );
     }
 }
