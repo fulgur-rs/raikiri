@@ -349,11 +349,11 @@ impl<'a> RenderResources<'a> {
 
     /// The combined configured image source and CSS background cache for painting.
     ///
-    /// A configured network provider makes this available even when no
-    /// replaced-element pixel source was supplied.
+    /// This source is always available because it also exposes the shared
+    /// CSS background cache, including data URLs preloaded without a network
+    /// provider.
     pub fn image_pixel_source_ref(&self) -> Option<&dyn ImagePixelSource> {
-        (self.image_pixel_source.is_some() || self.network.is_some())
-            .then_some(self as &dyn ImagePixelSource)
+        Some(self as &dyn ImagePixelSource)
     }
 
     pub(crate) fn extra_stylesheets(&self) -> Vec<&str> {

@@ -148,9 +148,6 @@ impl SvgDocument {
             .and_then(parse_view_box_ratio)
             .is_some();
         let tree = parse_tree(source)?;
-        if !tree.filters().is_empty() {
-            return Err(SvgError::UnsupportedFilterEffects);
-        }
         let tree_size = tree.size();
         if !tree_size.width().is_finite()
             || !tree_size.height().is_finite()
@@ -200,7 +197,7 @@ impl SvgDocument {
                 with_root_viewport_size(&self.source, width, height)?
             };
             let source = if root_style.neutralize_root_opacity {
-                with_root_opacity_neutralized(&source)?
+                with_root_opacity_neutralized(&source, root_style.opacity)?
             } else {
                 source
             };
@@ -229,8 +226,12 @@ fn parse_tree(source: &str) -> Result<usvg::Tree, SvgError> {
         },
         ..usvg::Options::default()
     };
-    usvg::Tree::from_str(source, &options)
-        .map_err(|error| SvgError::InvalidDocument(error.to_string()))
+    let tree = usvg::Tree::from_str(source, &options)
+        .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
+    if !tree.filters().is_empty() {
+        return Err(SvgError::UnsupportedFilterEffects);
+    }
+    Ok(tree)
 }
 
 fn contains_doctype_declaration(source: &str) -> bool {
@@ -591,7 +592,10 @@ fn with_root_viewport_size(source: &str, width: u32, height: u32) -> Result<Stri
     Ok(result)
 }
 
-fn with_root_opacity_neutralized(source: &str) -> Result<String, SvgError> {
+fn with_root_opacity_neutralized(
+    source: &str,
+    inherited_root_opacity: f32,
+) -> Result<String, SvgError> {
     let xml = roxmltree::Document::parse(source)
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
     let root = xml.root_element();
@@ -615,12 +619,35 @@ fn with_root_opacity_neutralized(source: &str) -> Result<String, SvgError> {
         inserted_root_attributes.push_str(&replacement);
     }
 
-    // usvg keeps the first `!important` declaration it encounters, even when
-    // a later root inline declaration should win. Move every stylesheet
-    // opacity declaration behind a unique descendant-only attribute instead:
-    // the host opacity can then own the root while the same rules still apply
-    // to matching SVG descendants. The selector specificity shift is uniform
-    // for opacity rules, so their relative cascade order stays the same.
+    let inherited_opacity = inherited_root_opacity.to_string();
+    for child in root.children().filter(|child| child.is_element()) {
+        if let Some(attribute) = child
+            .attributes()
+            .find(|attribute| attribute.name() == "opacity")
+            && attribute.value().trim().eq_ignore_ascii_case("inherit")
+        {
+            edits.push((
+                attribute.range(),
+                format!("opacity=\"{inherited_opacity}\""),
+            ));
+        }
+        if let Some(attribute) = child
+            .attributes()
+            .find(|attribute| attribute.name() == "style")
+            && let Some(style) =
+                replace_inline_inherited_opacity(attribute.value(), &inherited_opacity)
+        {
+            edits.push((
+                attribute.range(),
+                format!("style=\"{}\"", escape_xml_attribute(&style)),
+            ));
+        }
+    }
+
+    // usvg keeps the first important declaration it encounters, even when a
+    // later root inline declaration should win. Exclude the root from every
+    // stylesheet opacity selector to a private attribute on descendants so
+    // the host opacity can own the root, while preserving original selectors.
     let scope_attribute = unique_scope_attribute(source);
     let mut has_scoped_stylesheet_opacity = false;
     for node in root
@@ -633,51 +660,22 @@ fn with_root_opacity_neutralized(source: &str) -> Result<String, SvgError> {
         {
             continue;
         }
-        let Some(stylesheet_text) = node.text() else {
+        let stylesheet_text = node
+            .children()
+            .filter(|child| child.is_text())
+            .filter_map(|child| child.text())
+            .collect::<String>();
+        if stylesheet_text.is_empty() {
+            continue;
+        }
+        let Some(rewritten) = scope_stylesheet_opacity(&stylesheet_text, &scope_attribute) else {
             continue;
         };
-        let mut stylesheet = simplecss::StyleSheet::parse(stylesheet_text);
-        let mut descendant_opacity_rules = Vec::new();
-        for rule in &mut stylesheet.rules {
-            let opacity_declarations = rule
-                .declarations
-                .iter()
-                .copied()
-                .filter(|declaration| declaration.name == "opacity")
-                .collect::<Vec<_>>();
-            if opacity_declarations.is_empty() {
-                continue;
-            }
-
-            rule.declarations
-                .retain(|declaration| declaration.name != "opacity");
-            let selector = format!("{}[{scope_attribute}]", rule.selector);
-            let mut scoped_rule = format!("{selector} {{");
-            for declaration in opacity_declarations {
-                scoped_rule.push_str(declaration.name);
-                scoped_rule.push(':');
-                scoped_rule.push_str(declaration.value);
-                if declaration.important {
-                    scoped_rule.push_str(" !important");
-                }
-                scoped_rule.push(';');
-            }
-            scoped_rule.push('}');
-            descendant_opacity_rules.push(scoped_rule);
-        }
-
-        if descendant_opacity_rules.is_empty() {
-            continue;
-        }
         has_scoped_stylesheet_opacity = true;
-        let mut rewritten = stylesheet.to_string();
-        for rule in descendant_opacity_rules {
-            rewritten.push('\n');
-            rewritten.push_str(&rule);
-        }
-        if let Some(text_node) = node.children().find(|child| child.is_text()) {
-            edits.push((text_node.range(), escape_xml_text(&rewritten)));
-        }
+        let content_range = xml_element_content_range(source, node).ok_or_else(|| {
+            SvgError::InvalidDocument("unterminated SVG style element".to_owned())
+        })?;
+        edits.push((content_range, escape_xml_text(&rewritten)));
     }
 
     if has_scoped_stylesheet_opacity {
@@ -716,6 +714,374 @@ fn with_root_opacity_neutralized(source: &str) -> Result<String, SvgError> {
         result.replace_range(range, &replacement);
     }
     Ok(result)
+}
+
+fn replace_inline_inherited_opacity(style: &str, opacity: &str) -> Option<String> {
+    struct ResolvedDeclaration {
+        raw: String,
+        inherited_root_opacity: bool,
+    }
+
+    struct ResolveInheritedOpacity<'a> {
+        opacity: &'a str,
+    }
+
+    impl<'i> cssparser::DeclarationParser<'i> for ResolveInheritedOpacity<'_> {
+        type Declaration = Option<ResolvedDeclaration>;
+        type Error = ();
+
+        fn parse_value<'t>(
+            &mut self,
+            name: cssparser::CowRcStr<'i>,
+            input: &mut cssparser::Parser<'i, 't>,
+            declaration_start: &cssparser::ParserState,
+        ) -> Result<Self::Declaration, cssparser::ParseError<'i, Self::Error>> {
+            let inherited = if name.eq_ignore_ascii_case("opacity") {
+                input
+                    .try_parse(|value| {
+                        let keyword = value.expect_ident_cloned()?;
+                        if !keyword.eq_ignore_ascii_case("inherit") {
+                            return Err(value.new_error(
+                                cssparser::BasicParseErrorKind::UnexpectedToken(
+                                    cssparser::Token::Ident(keyword),
+                                ),
+                            ));
+                        }
+                        let important = value.try_parse(cssparser::parse_important).is_ok();
+                        value.expect_exhausted()?;
+                        Ok::<_, cssparser::ParseError<'i, ()>>(important)
+                    })
+                    .ok()
+            } else {
+                None
+            };
+            while input.next_including_whitespace_and_comments().is_ok() {}
+            let declaration = input
+                .slice(declaration_start.position()..input.position())
+                .trim()
+                .to_owned();
+            if let Some(important) = inherited {
+                Ok(Some(ResolvedDeclaration {
+                    raw: format!(
+                        "opacity:{}{}",
+                        self.opacity,
+                        if important { " !important" } else { "" }
+                    ),
+                    inherited_root_opacity: true,
+                }))
+            } else {
+                Ok((!declaration.is_empty()).then_some(ResolvedDeclaration {
+                    raw: declaration,
+                    inherited_root_opacity: false,
+                }))
+            }
+        }
+    }
+
+    impl<'i> cssparser::AtRuleParser<'i> for ResolveInheritedOpacity<'_> {
+        type Prelude = ();
+        type AtRule = Option<ResolvedDeclaration>;
+        type Error = ();
+    }
+
+    impl<'i> cssparser::QualifiedRuleParser<'i> for ResolveInheritedOpacity<'_> {
+        type Prelude = ();
+        type QualifiedRule = Option<ResolvedDeclaration>;
+        type Error = ();
+    }
+
+    impl<'i> cssparser::RuleBodyItemParser<'i, Option<ResolvedDeclaration>, ()>
+        for ResolveInheritedOpacity<'_>
+    {
+        fn parse_qualified(&self) -> bool {
+            false
+        }
+
+        fn parse_declarations(&self) -> bool {
+            true
+        }
+    }
+
+    let mut input = cssparser::ParserInput::new(style);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let mut declaration_parser = ResolveInheritedOpacity { opacity };
+    let declarations = cssparser::RuleBodyParser::new(&mut parser, &mut declaration_parser)
+        .filter_map(Result::ok)
+        .flatten()
+        .collect::<Vec<_>>();
+    declarations
+        .iter()
+        .any(|declaration| declaration.inherited_root_opacity)
+        .then(|| {
+            declarations
+                .into_iter()
+                .map(|declaration| declaration.raw)
+                .collect::<Vec<_>>()
+                .join(";")
+        })
+}
+
+struct ParsedCssDeclaration {
+    name: String,
+    raw: String,
+    range: Range<usize>,
+}
+
+struct ScopedOpacityStylesheetParser<'a> {
+    source: &'a str,
+    scope_attribute: &'a str,
+    removals: Vec<Range<usize>>,
+    scoped_rules: Vec<String>,
+}
+
+struct CssDeclarationSourceParser<'a> {
+    source: &'a str,
+}
+
+impl<'i> cssparser::DeclarationParser<'i> for CssDeclarationSourceParser<'_> {
+    type Declaration = ParsedCssDeclaration;
+    type Error = ();
+
+    fn parse_value<'t>(
+        &mut self,
+        name: cssparser::CowRcStr<'i>,
+        input: &mut cssparser::Parser<'i, 't>,
+        declaration_start: &cssparser::ParserState,
+    ) -> Result<Self::Declaration, cssparser::ParseError<'i, Self::Error>> {
+        while input.next_including_whitespace_and_comments().is_ok() {}
+        let raw = input.slice(declaration_start.position()..input.position());
+        let start = source_slice_offset(self.source, raw);
+        Ok(ParsedCssDeclaration {
+            name: name.to_string(),
+            raw: raw.to_owned(),
+            range: start..start + raw.len(),
+        })
+    }
+}
+
+impl<'i> cssparser::AtRuleParser<'i> for CssDeclarationSourceParser<'_> {
+    type Prelude = ();
+    type AtRule = ParsedCssDeclaration;
+    type Error = ();
+}
+
+impl<'i> cssparser::QualifiedRuleParser<'i> for CssDeclarationSourceParser<'_> {
+    type Prelude = ();
+    type QualifiedRule = ParsedCssDeclaration;
+    type Error = ();
+}
+
+impl<'i> cssparser::RuleBodyItemParser<'i, ParsedCssDeclaration, ()>
+    for CssDeclarationSourceParser<'_>
+{
+    fn parse_qualified(&self) -> bool {
+        false
+    }
+
+    fn parse_declarations(&self) -> bool {
+        true
+    }
+}
+
+impl<'i> cssparser::AtRuleParser<'i> for ScopedOpacityStylesheetParser<'_> {
+    type Prelude = ();
+    type AtRule = ();
+    type Error = ();
+
+    fn parse_prelude<'t>(
+        &mut self,
+        _name: cssparser::CowRcStr<'i>,
+        input: &mut cssparser::Parser<'i, 't>,
+    ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
+        while input.next().is_ok() {}
+        Ok(())
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        _prelude: Self::Prelude,
+        _start: &cssparser::ParserState,
+        input: &mut cssparser::Parser<'i, 't>,
+    ) -> Result<Self::AtRule, cssparser::ParseError<'i, Self::Error>> {
+        while input.next().is_ok() {}
+        Ok(())
+    }
+}
+
+impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedOpacityStylesheetParser<'_> {
+    type Prelude = String;
+    type QualifiedRule = ();
+    type Error = ();
+
+    fn parse_prelude<'t>(
+        &mut self,
+        input: &mut cssparser::Parser<'i, 't>,
+    ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
+        let start = input.position();
+        while input.next().is_ok() {}
+        Ok(input.slice(start..input.position()).trim().to_owned())
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        selector_list: Self::Prelude,
+        _start: &cssparser::ParserState,
+        input: &mut cssparser::Parser<'i, 't>,
+    ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, Self::Error>> {
+        let mut declaration_parser = CssDeclarationSourceParser {
+            source: self.source,
+        };
+        let declarations = cssparser::RuleBodyParser::new(input, &mut declaration_parser)
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        let opacity_declarations = declarations
+            .iter()
+            .filter(|declaration| declaration.name.eq_ignore_ascii_case("opacity"))
+            .collect::<Vec<_>>();
+        if opacity_declarations.is_empty() {
+            return Ok(());
+        }
+
+        self.removals
+            .extend(opacity_declarations.iter().map(|declaration| {
+                let mut range = declaration.range.clone();
+                while self
+                    .source
+                    .as_bytes()
+                    .get(range.end)
+                    .is_some_and(u8::is_ascii_whitespace)
+                {
+                    range.end += 1;
+                }
+                if self.source.as_bytes().get(range.end) == Some(&b';') {
+                    range.end += 1;
+                }
+                range
+            }));
+        for selector in split_css_selector_list(&selector_list) {
+            let selector = selector.trim();
+            if selector.is_empty() {
+                continue;
+            }
+            let mut scoped_rule = format!("{selector}[{}] {{", self.scope_attribute);
+            for declaration in &opacity_declarations {
+                scoped_rule.push(' ');
+                scoped_rule.push_str(&declaration.raw);
+                scoped_rule.push(';');
+            }
+            scoped_rule.push_str(" }");
+            self.scoped_rules.push(scoped_rule);
+        }
+        Ok(())
+    }
+}
+
+fn scope_stylesheet_opacity(source: &str, scope_attribute: &str) -> Option<String> {
+    let mut parser_state = ScopedOpacityStylesheetParser {
+        source,
+        scope_attribute,
+        removals: Vec::new(),
+        scoped_rules: Vec::new(),
+    };
+    let mut input = cssparser::ParserInput::new(source);
+    let mut parser = cssparser::Parser::new(&mut input);
+    for _ in cssparser::StyleSheetParser::new(&mut parser, &mut parser_state).filter_map(Result::ok)
+    {
+    }
+    if parser_state.scoped_rules.is_empty() {
+        return None;
+    }
+
+    parser_state
+        .removals
+        .sort_by_key(|range| std::cmp::Reverse(range.start));
+    let mut rewritten = source.to_owned();
+    for range in parser_state.removals {
+        rewritten.replace_range(range, "");
+    }
+    for scoped_rule in parser_state.scoped_rules {
+        rewritten.push('\n');
+        rewritten.push_str(&scoped_rule);
+    }
+    Some(rewritten)
+}
+
+fn source_slice_offset(source: &str, slice: &str) -> usize {
+    let source_start = source.as_ptr() as usize;
+    let slice_start = slice.as_ptr() as usize;
+    let offset = slice_start
+        .checked_sub(source_start)
+        .expect("CSS parser slices come from their source buffer");
+    debug_assert!(source.is_char_boundary(offset));
+    offset
+}
+
+fn split_css_selector_list(selectors: &str) -> Vec<&str> {
+    let bytes = selectors.as_bytes();
+    let mut result = Vec::new();
+    let mut start = 0;
+    let mut index = 0;
+    let mut bracket_depth = 0_u32;
+    let mut parenthesis_depth = 0_u32;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut in_comment = false;
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if in_comment {
+            if byte == b'*' && bytes.get(index + 1) == Some(&b'/') {
+                in_comment = false;
+                index += 2;
+                continue;
+            }
+            index += 1;
+            continue;
+        }
+        if let Some(quote_byte) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == quote_byte {
+                quote = None;
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            in_comment = true;
+            index += 2;
+            continue;
+        }
+        if byte == b'\\' {
+            index += 2;
+            continue;
+        }
+        match byte {
+            b'\'' | b'"' => quote = Some(byte),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'(' => parenthesis_depth += 1,
+            b')' => parenthesis_depth = parenthesis_depth.saturating_sub(1),
+            b',' if bracket_depth == 0 && parenthesis_depth == 0 => {
+                result.push(&selectors[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    result.push(&selectors[start..]);
+    result
+}
+
+fn xml_element_content_range(source: &str, node: roxmltree::Node<'_, '_>) -> Option<Range<usize>> {
+    let element_range = node.range();
+    let start_tag_end = root_start_tag_end(source, element_range.start)?;
+    let content_start = start_tag_end.checked_add(1)?;
+    let closing_tag_start = source[..element_range.end].rfind("</")?;
+    (content_start <= closing_tag_start).then_some(content_start..closing_tag_start)
 }
 
 fn unique_scope_attribute(source: &str) -> String {

@@ -226,8 +226,86 @@ fn root_opacity_can_be_neutralized_for_outer_group_compositing() {
 
 #[test]
 fn root_opacity_neutralization_preserves_descendant_stylesheet_opacity() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><style>svg, rect { opacity:0.25!important;font-family:&quot;A&amp;B&quot; }</style><rect width="1" height="1" fill="#ff0000"/></svg>"##;
+    let svg = SvgDocument::parse(source).expect("valid SVG");
+    let image = svg
+        .rasterize(
+            SvgViewport {
+                width: 1.0,
+                height: 1.0,
+            },
+            SvgRootStyle {
+                neutralize_root_opacity: true,
+                ..SvgRootStyle::default()
+            },
+            None,
+        )
+        .expect("rasterization succeeds");
+
+    assert_eq!(&image.rgba, &[255, 0, 0, 64]);
+}
+
+#[test]
+fn root_opacity_neutralization_preserves_inherited_opacity_on_children() {
+    let sources: [&[u8]; 3] = [
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" opacity="0.5"><rect width="1" height="1" opacity="inherit" fill="#ff0000"/></svg>"##,
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" opacity="0.5"><rect width="1" height="1" style="opacity:inherit" fill="#ff0000"/></svg>"##,
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" opacity="0.5"><rect width="1" height="1" style="opacity:inherit!important" fill="#ff0000"/></svg>"##,
+    ];
+
+    for source in sources {
+        let svg = SvgDocument::parse(source).expect("valid SVG");
+        let image = svg
+            .rasterize(
+                SvgViewport {
+                    width: 1.0,
+                    height: 1.0,
+                },
+                SvgRootStyle {
+                    opacity: 0.5,
+                    neutralize_root_opacity: true,
+                    ..SvgRootStyle::default()
+                },
+                None,
+            )
+            .expect("rasterization succeeds");
+
+        assert_eq!(
+            &image.rgba,
+            &[255, 0, 0, 64],
+            "failed to preserve inherited child opacity in {}",
+            String::from_utf8_lossy(source)
+        );
+    }
+}
+
+#[test]
+fn root_opacity_neutralization_preserves_quoted_attribute_selectors() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><style>[data-name="a'b"] { opacity:.25; fill:red }</style><rect data-name="a'b" width="1" height="1"/></svg>"##;
+    let svg = SvgDocument::parse(source).expect("valid SVG");
+    let image = svg
+        .rasterize(
+            SvgViewport {
+                width: 1.0,
+                height: 1.0,
+            },
+            SvgRootStyle {
+                neutralize_root_opacity: true,
+                ..SvgRootStyle::default()
+            },
+            None,
+        )
+        .expect("rasterization succeeds");
+
+    assert_eq!(&image.rgba, &[255, 0, 0, 64]);
+}
+
+#[test]
+fn root_opacity_neutralization_rewrites_cdata_stylesheet_content() {
     let svg = SvgDocument::parse(
-        br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><style>svg, rect { opacity:0.25!important;font-family:&quot;A&amp;B&quot; }</style><rect width="1" height="1" fill="#ff0000"/></svg>"##,
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><style>
+<![CDATA[svg { opacity:.25!important }]]>
+</style><rect width="1" height="1" fill="#ff0000"/></svg>"##,
     )
     .expect("valid SVG");
     let image = svg
@@ -244,7 +322,7 @@ fn root_opacity_neutralization_preserves_descendant_stylesheet_opacity() {
         )
         .expect("rasterization succeeds");
 
-    assert_eq!(&image.rgba, &[255, 0, 0, 64]);
+    assert_eq!(&image.rgba, &[255, 0, 0, 255]);
 }
 
 #[test]
@@ -277,6 +355,7 @@ fn rejects_filter_effects_before_rasterization() {
         br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" style="filter: drop-shadow(0 0 1px red)"/></svg>"##,
         br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><style>rect { filter: url(#f) }</style><rect width="1" height="1"/></svg>"##,
         br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><defs><filter id="f"><feFlood flood-color="red"/></filter></defs><x:style xmlns:x="urn:foreign">rect { filter: url(#f) }</x:style><rect width="1" height="1"/></svg>"##,
+        br##"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1" height="1"><defs><filter id="f"><feFlood flood-color="red"/></filter></defs><rect width="1" height="1" xlink:filter="url(#f)"/></svg>"##,
     ];
 
     for source in sources {
@@ -307,6 +386,16 @@ fn allows_unused_filter_definitions() {
         svg.is_ok(),
         "an unreferenced filter definition has no effect"
     );
+}
+
+#[test]
+fn parse_tree_rejects_active_filter_effects_for_every_parse_path() {
+    let source = r##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><defs><filter id="f"><feFlood flood-color="red"/></filter></defs><rect width="1" height="1" filter="url(#f)"/></svg>"##;
+
+    assert!(matches!(
+        super::parse_tree(source),
+        Err(SvgError::UnsupportedFilterEffects)
+    ));
 }
 
 #[test]

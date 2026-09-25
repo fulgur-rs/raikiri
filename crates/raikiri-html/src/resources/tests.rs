@@ -81,3 +81,40 @@ fn preloads_an_absolute_svg_background_once_and_rasterizes_on_demand() {
             .is_empty()
     );
 }
+
+#[test]
+fn data_svg_background_is_available_from_the_combined_source_without_network() {
+    let resources = RenderResources::new();
+    let source = resources
+        .image_pixel_source_ref()
+        .expect("the combined source exposes its internal cache before preload");
+    let data_url = "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='1'%20height='1'%3E%3Crect%20width='1'%20height='1'%20fill='red'/%3E%3C/svg%3E";
+    let html = format!(
+        "<!doctype html><style>div{{background-image:url(\"{data_url}\")}}</style><body><div></div></body>"
+    );
+    let options = crate::types::ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = crate::parse(html.as_bytes(), &options).expect("HTML parses");
+    let cascade = crate::build_cascaded(&uncascaded);
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let mut seen = std::collections::HashSet::new();
+    let mut attempts = 0;
+
+    resources.preload_background_images(&cascade, &warnings, &mut seen, &mut attempts);
+    let url = Url::parse(data_url).expect("data URL parses");
+    let image = source
+        .get_decoded_at_size(
+            &url,
+            ImageRasterSize {
+                width: 1.0,
+                height: 1.0,
+            },
+            None,
+        )
+        .expect("the combined source reads the preloaded data URL");
+
+    assert_eq!(&image.rgba, &[255, 0, 0, 255]);
+}

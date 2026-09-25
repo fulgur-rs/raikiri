@@ -12,7 +12,6 @@ cssparser = { workspace = true }
 raikiri-traits = { workspace = true }
 resvg = { workspace = true }
 roxmltree = { workspace = true }
-simplecss = { workspace = true }
 usvg = { workspace = true }
 
 [lints]
