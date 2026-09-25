@@ -756,18 +756,8 @@ impl DomBackend for LiveDocumentBackend {
             ComputedProperty::WritingMode => computed.cssom_writing_mode.as_css_str(),
             ComputedProperty::UnicodeBidi => computed.unicode_bidi.as_css_str(),
             ComputedProperty::TextWrap => {
-                let mode = match computed.text_wrap {
-                    raikiri_style::property::TextWrapMode::Wrap => "wrap",
-                    raikiri_style::property::TextWrapMode::Nowrap => "nowrap",
-                    _ => return Ok(None),
-                };
-                let style = match computed.text_wrap_style {
-                    raikiri_style::property::TextWrapStyle::Auto => "auto",
-                    raikiri_style::property::TextWrapStyle::Balance => "balance",
-                    raikiri_style::property::TextWrapStyle::Pretty => "pretty",
-                    raikiri_style::property::TextWrapStyle::Stable => "stable",
-                    _ => return Ok(None),
-                };
+                let mode = computed.text_wrap.as_css_str();
+                let style = computed.text_wrap_style.as_css_str();
                 let value = if mode == "wrap" {
                     if style == "auto" {
                         "wrap".to_owned()

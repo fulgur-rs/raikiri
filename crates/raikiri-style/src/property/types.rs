@@ -29,7 +29,8 @@ macro_rules! css_keywords {
             #[cfg(test)]
             pub(crate) const ALL: &'static [Self] = &[$(Self::$variant),+];
 
-            /// The CSS keyword text this value serializes as.
+            /// This variant's own keyword spelling. Computed-value remaps, such as
+            /// a legacy keyword computing to another one, are the caller's job.
             pub const fn as_css_str(self) -> &'static str {
                 match self {
                     $(Self::$variant => $css,)+
