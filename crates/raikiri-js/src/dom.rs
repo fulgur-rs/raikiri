@@ -15,6 +15,7 @@ use boa_engine::{
     Context, Finalize, JsData, JsError, JsNativeError, JsResult, JsValue, NativeFunction, Source,
     Trace, js_string,
 };
+use cssparser::{Parser, ParserInput};
 
 /// Opaque identifier for a node owned by a [`DomBackend`].
 pub type DomNodeId = u64;
@@ -150,6 +151,15 @@ pub trait DomBackend: 'static {
     /// Read an inline style property, or return an empty string if unset.
     fn style_property(&mut self, node: DomNodeId, property: &str) -> Result<String, String>;
 
+    /// Read a computed value for a CSS property, or `None` when it is not exposed.
+    fn computed_style_property(
+        &mut self,
+        _node: DomNodeId,
+        _property: &str,
+    ) -> Result<Option<String>, String> {
+        Err("computed style reads are not supported by this DOM backend".into())
+    }
+
     /// Set an inline style property.
     fn set_style_property(
         &mut self,
@@ -274,6 +284,26 @@ function __raikiri_style(node) {
         }
     });
 }
+function __raikiri_computed_style(node) {
+    return new Proxy({}, {
+        get: function (target, property, receiver) {
+            if (property === "getPropertyValue") {
+                return function (name) {
+                    return host.computedStyleProperty(node, String(name)) || "";
+                };
+            }
+            if (typeof property !== "string" || property in target) {
+                return Reflect.get(target, property, receiver);
+            }
+            return host.computedStyleProperty(node, __raikiri_css_name(property)) || "";
+        },
+        has: function (target, property) {
+            if (typeof property !== "string") return property in target;
+            return property in target ||
+                host.computedStyleProperty(node, __raikiri_css_name(property)) !== null;
+        }
+    });
+}
 function __raikiri_element(node) {
     if (node === null || node === undefined) return null;
     var key = String(node);
@@ -356,6 +386,16 @@ Object.defineProperty(document, "head", {
     get: function () { return document.querySelector("head"); }
 });
 globalThis.document = document;
+globalThis.getComputedStyle = function (element) {
+    var node = __raikiri_node_ids.get(element);
+    if (node === undefined) throw new TypeError("getComputedStyle expects a known element");
+    return __raikiri_computed_style(node);
+};
+globalThis.CSS = {
+    supports: function (property, value) {
+        return host.cssSupports(String(property), String(value));
+    }
+};
 })(globalThis.__raikiri_host);
 delete globalThis.__raikiri_host;
 "#;
@@ -484,6 +524,16 @@ pub(crate) fn install<B: DomBackend>(context: &mut Context, backend: B) -> JsRes
         NativeFunction::from_fn_ptr(host_set_style_property),
         js_string!("setStyleProperty"),
         3,
+    )
+    .function(
+        NativeFunction::from_fn_ptr(host_computed_style_property),
+        js_string!("computedStyleProperty"),
+        2,
+    )
+    .function(
+        NativeFunction::from_fn_ptr(host_css_supports),
+        js_string!("cssSupports"),
+        2,
     );
     let host_object = host.build();
     context
@@ -702,6 +752,48 @@ fn host_remove_attribute(
     let name = string_argument(args.get(1), context)?;
     backend_call(this, |backend| backend.remove_attribute(node, &name))?;
     Ok(JsValue::undefined())
+}
+
+fn host_computed_style_property(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let node = node_id(args.first(), context)?;
+    let property = string_argument(args.get(1), context)?;
+    let value = backend_call(this, |backend| {
+        backend.computed_style_property(node, &property)
+    })?;
+    Ok(value.map_or_else(JsValue::null, |value| JsValue::from(js_string!(value))))
+}
+
+fn host_css_supports(
+    _this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let property = string_argument(args.first(), context)?;
+    let value = string_argument(args.get(1), context)?;
+    let mut input = ParserInput::new(&value);
+    let mut parser = Parser::new(&mut input);
+    let parsed_value_supported =
+        parser
+            .parse_entirely(
+                |input| -> Result<
+                    raikiri_style::property::PropertyValue,
+                    cssparser::ParseError<'_, ()>,
+                > {
+                    raikiri_style::property::parse_value(&property, input)
+                        .ok_or_else(|| input.new_custom_error(()))
+                },
+            )
+            .is_ok();
+    let css_wide_keyword = ["inherit", "initial", "unset", "revert", "revert-layer"]
+        .iter()
+        .any(|keyword| value.trim().eq_ignore_ascii_case(keyword));
+    let supported = parsed_value_supported
+        || (css_wide_keyword && raikiri_style::property::is_supported_property_name(&property));
+    Ok(JsValue::new(supported))
 }
 
 fn host_style_property(

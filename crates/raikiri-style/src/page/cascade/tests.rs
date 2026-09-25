@@ -25,21 +25,28 @@ use crate::property::{
     BackgroundRepeatKeyword, BackgroundShorthand, BorderRadius, BoxShadowItem, BoxSizing,
     BreakBetween, BreakInside, CalcLengthPercentage, ClearValue, ClipPath, ContentAlignmentValue,
     ContentComponent, CssColor, CustomProperty, Direction, DisplayValue, FilterFunction,
-    FlexDirectionValue, FlexWrapValue, FloatValue, FontShorthand, FontShorthandSize, FontStyle,
-    FontVariantCaps, FontWeightValue, GeometryBox, GridAreaShorthand, GridAutoFlowValue,
-    GridInflexibleBreadth, GridLineShorthand, GridLineValue, GridRepeatCount, GridShorthand,
-    GridTemplateAreaEntry, GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks,
-    GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat, GridTrackSize,
-    HangingPunctuation, Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal, LineBreak,
-    LineHeight, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline,
-    OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue, PlaceContentShorthand,
-    PlaceItemsShorthand, PlaceSelfShorthand, PositionValue, RelativeFontSize, RubyPosition,
-    SelfAlignmentValue, StartEnd, TabSize, TextAlign, TextAlignAll, TextAlignLast, TextAutospace,
-    TextDecorationColor, TextDecorationInset, TextDecorationLine, TextDecorationShorthand,
-    TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness,
-    TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisVEdge, TextJustify, TextShadowColor,
-    TextTransform, TextUnderlinePosition, TransformFunction, VerticalAlign, Visibility, VisualBox,
-    WhiteSpace, WordBreak, WritingMode, ZIndexValue,
+    FlexDirectionValue, FlexWrapValue, FloatValue, FontKerning, FontLanguageOverride,
+    FontOpticalSizing, FontPaletteValue, FontShorthand, FontShorthandSize, FontStyle,
+    FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
+    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontWeightValue, GeometryBox,
+    GridAreaShorthand, GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand, GridLineValue,
+    GridRepeatCount, GridShorthand, GridTemplateAreaEntry, GridTemplateAreas,
+    GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+    GridTrackListComponent, GridTrackRepeat, GridTrackSize, HangingPunctuation, HyphenateCharacter,
+    HyphenateLimitChars, HyphenateLimitCharsValue, Hyphens, Isolation, Length, LengthOrAuto,
+    LengthOrNormal, LengthPercentageCalc, LetterSpacingValue, LineBreak, LineHeight,
+    ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineStyle,
+    OverflowValue, OverflowWrap, OverflowXY, PageValue, PlaceContentShorthand, PlaceItemsShorthand,
+    PlaceSelfShorthand, PositionValue, RelativeFontSize, RubyPosition, SelfAlignmentValue,
+    StartEnd, TabSize, TextAlign, TextAlignAll, TextAlignLast, TextAutospace, TextDecorationColor,
+    TextDecorationInset, TextDecorationLine, TextDecorationShorthand, TextDecorationSkipInk,
+    TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisFill,
+    TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisShape, TextEmphasisShorthand,
+    TextEmphasisStyle, TextEmphasisVEdge, TextIndentLength, TextJustify, TextShadowColor,
+    TextSpacingShorthand, TextSpacingTrim, TextTransform, TextUnderlineOffset,
+    TextUnderlinePosition, TextWrapMode, TextWrapStyle, TransformFunction, VerticalAlign,
+    Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak, WordSpaceTransform,
+    WordSpacingValue, WritingMode, ZIndexValue,
 };
 use crate::resolve::{ComputedLength, ComputedLineHeight};
 use crate::ruletree::build_rule_tree;
@@ -1038,6 +1045,22 @@ fn cascade_page_resolution_runs_on_the_cascade_winner_only() {
         Some(&PropertyValue::FontWeight(FontWeightValue::Absolute(900.0))),
         "later `bolder` wins and resolves off root 700 → 900, not off the \
              losing declaration's 100 → 400"
+    );
+}
+
+#[test]
+fn cascade_page_text_spacing_trim_passes_through_to_the_computed_value() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("@page { text-spacing-trim: trim-all }", Origin::Author);
+    let root = ComputedValues::initial();
+    let result = cascade_page(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::FromRoot(&root),
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::TextSpacingTrim),
+        Some(&PropertyValue::TextSpacingTrim(TextSpacingTrim::TrimAll))
     );
 }
 
@@ -2175,7 +2198,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
     assert_eq!(
         absolutize_in_page_context(
             ResolvedAgainstInherited::for_test(PropertyValue::TextUnderlineOffset(
-                LengthOrAuto::Length(Length::Percent(25.0)),
+                TextUnderlineOffset::Length(Length::Percent(25.0)),
             )),
             fs,
             None,
@@ -2184,7 +2207,29 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             OutlineStyle::None,
             OverflowXY::both(OverflowValue::Visible),
         ),
-        PropertyValue::TextUnderlineOffset(LengthOrAuto::Length(Length::Percent(25.0))),
+        PropertyValue::TextUnderlineOffset(TextUnderlineOffset::Length(Length::Percent(25.0))),
+    );
+    assert_eq!(
+        absolutize_in_page_context(
+            ResolvedAgainstInherited::for_test(PropertyValue::TextUnderlineOffset(
+                TextUnderlineOffset::Calc(LengthPercentageCalc {
+                    percent: -50.0,
+                    px: 0.0,
+                    em: 2.0,
+                }),
+            )),
+            fs,
+            None,
+            &ctx,
+            styles,
+            OutlineStyle::None,
+            OverflowXY::both(OverflowValue::Visible),
+        ),
+        PropertyValue::TextUnderlineOffset(TextUnderlineOffset::Calc(LengthPercentageCalc {
+            percent: -50.0,
+            px: 40.0,
+            em: 0.0,
+        },)),
     );
     // `flex-basis` intrinsic keywords round-trip as keywords through
     // the `fb` helper (same shape as `Content`, which the corpus pins
@@ -2619,15 +2664,15 @@ fn absolutize_in_page_context_covers_text_shadow_arm() {
     );
 
     let specified = TextShadowItem {
-        offset_x: Length::Em(1.0),
-        offset_y: Length::Em(2.0),
-        blur_radius: Length::Em(0.5),
+        offset_x: crate::property::TextShadowLength::Length(Length::Em(1.0)),
+        offset_y: crate::property::TextShadowLength::Length(Length::Em(2.0)),
+        blur_radius: crate::property::TextShadowLength::Length(Length::Em(0.5)),
         color: TextShadowColor::CurrentColor,
     };
     let expected = TextShadowItem {
-        offset_x: Length::Px(20.0),
-        offset_y: Length::Px(40.0),
-        blur_radius: Length::Px(10.0),
+        offset_x: crate::property::TextShadowLength::Length(Length::Px(20.0)),
+        offset_y: crate::property::TextShadowLength::Length(Length::Px(40.0)),
+        blur_radius: crate::property::TextShadowLength::Length(Length::Px(10.0)),
         color: TextShadowColor::CurrentColor,
     };
     // cov:ignore: panic-message literal only executed on assertion
@@ -2646,6 +2691,36 @@ fn absolutize_in_page_context_covers_text_shadow_arm() {
         ),
         PropertyValue::TextShadow(Arc::new(vec![expected])),
         "text-shadow: 1em 2em 0.5em currentcolor",
+    );
+
+    let calc = crate::property::TextShadowLength::Calc { px: 10.0, em: -0.5 };
+    let calc_shadow = TextShadowItem {
+        offset_x: calc,
+        offset_y: calc,
+        blur_radius: calc,
+        color: TextShadowColor::CurrentColor,
+    };
+    let calc_fs = ComputedLength(40.0);
+    let calc_expected = TextShadowItem {
+        offset_x: crate::property::TextShadowLength::Length(Length::Px(-10.0)),
+        offset_y: crate::property::TextShadowLength::Length(Length::Px(-10.0)),
+        blur_radius: crate::property::TextShadowLength::Length(Length::Px(0.0)),
+        color: TextShadowColor::CurrentColor,
+    };
+    assert_eq!(
+        absolutize_in_page_context(
+            ResolvedAgainstInherited::for_test(PropertyValue::TextShadow(Arc::new(vec![
+                calc_shadow
+            ]))),
+            calc_fs,
+            None,
+            &ctx,
+            styles,
+            OutlineStyle::None,
+            OverflowXY::both(OverflowValue::Visible),
+        ),
+        PropertyValue::TextShadow(Arc::new(vec![calc_expected])),
+        "text-shadow: calculated negative blur clamps to zero",
     );
 }
 
@@ -2829,7 +2904,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 121;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 142;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -2916,7 +2991,7 @@ property_key_samples! {
     HangingPunctuation => PropertyValue::HangingPunctuation(HangingPunctuation::First),
     TextAutospace => PropertyValue::TextAutospace(TextAutospace::Normal),
     TextIndent => PropertyValue::TextIndent(TextIndentValue {
-        length: Length::Em(2.0),
+        length: TextIndentLength::Length(Length::Em(2.0)),
         hanging: false,
         each_line: false,
     }),
@@ -2971,7 +3046,7 @@ property_key_samples! {
     MinHeight => PropertyValue::MinHeight(LengthOrAuto::Length(Length::Em(8.0))),
     MinBlockSize => PropertyValue::MinBlockSize(LengthOrAuto::Length(Length::Em(9.0))),
     TextUnderlineOffset => {
-        PropertyValue::TextUnderlineOffset(LengthOrAuto::Length(Length::Em(9.0)))
+        PropertyValue::TextUnderlineOffset(TextUnderlineOffset::Length(Length::Em(9.0)))
     },
     BoxSizing => PropertyValue::BoxSizing(BoxSizing::BorderBox),
     // No specified/computed distinction for `direction` (computed
@@ -3091,10 +3166,10 @@ property_key_samples! {
     OverflowWrap => PropertyValue::OverflowWrap(OverflowWrap::Anywhere),
     // `Em`/`Rem` (not `Px`) — same "worst case" reasoning as `Border`/
     // `Width`/`Height`/`MarginTop` above: a font-relative unit exercises
-    // phase-3 absolutization (`resolve_length_or_normal`) instead of
+    // phase-3 absolutization (`resolve_letter_spacing`) instead of
     // trivially round-tripping an already-absolute length.
-    LetterSpacing => PropertyValue::LetterSpacing(LengthOrNormal::Length(Length::Em(0.1))),
-    WordSpacing => PropertyValue::WordSpacing(LengthOrNormal::Length(Length::Rem(0.2))),
+    LetterSpacing => PropertyValue::LetterSpacing(LetterSpacingValue::Length(Length::Em(0.1))),
+    WordSpacing => PropertyValue::WordSpacing(WordSpacingValue::Length(Length::Rem(0.2))),
     // No specified/computed distinction for `break-before`/
     // `break-after` (computed value = specified keyword, `BreakBetween`
     // doc) — any value is "worst case" (`Direction` sibling comment
@@ -3206,9 +3281,9 @@ property_key_samples! {
     // `CurrentColor` so this sample also exercises the pass-through
     // (non-length) `color` field with a non-default payload.
     TextShadow => PropertyValue::TextShadow(Arc::new(vec![TextShadowItem {
-        offset_x: Length::Em(0.5),
-        offset_y: Length::Em(0.5),
-        blur_radius: Length::Em(0.25),
+        offset_x: crate::property::TextShadowLength::Length(Length::Em(0.5)),
+        offset_y: crate::property::TextShadowLength::Length(Length::Em(0.5)),
+        blur_radius: crate::property::TextShadowLength::Length(Length::Em(0.25)),
         color: TextShadowColor::Resolved(GREEN),
     }])),
     // `Em`/`Rem` (not `Px`) — same "worst case" reasoning as
@@ -3508,32 +3583,76 @@ property_key_samples! {
         width: ColumnWidthValue::Length(Length::Em(2.0)),
         count: ColumnCountValue::Count(3),
     }),
+    WhiteSpaceCollapse => {
+        PropertyValue::WhiteSpaceCollapse(WhiteSpaceCollapse::PreserveSpaces)
+    },
+    TextWrapStyle => PropertyValue::TextWrapStyle(TextWrapStyle::Auto),
+    // CSS Text 4 `hyphenate-character` carries no relative length.
+    HyphenateCharacter => PropertyValue::HyphenateCharacter(HyphenateCharacter::String("-".into())),
+    HyphenateLimitChars => {
+        PropertyValue::HyphenateLimitChars(HyphenateLimitChars::INITIAL)
+    },
+    TextSpacingTrim => PropertyValue::TextSpacingTrim(TextSpacingTrim::SpaceAll),
+    TextSpacing => PropertyValue::TextSpacingShorthand(TextSpacingShorthand {
+        trim: TextSpacingTrim::TrimStart,
+        autospace: TextAutospace::NoAutospace,
+    }),
+    WordSpaceTransform => {
+        PropertyValue::WordSpaceTransform(WordSpaceTransform::IdeographicSpaceAutoPhrase)
+    },
+    TextEmphasisStyle => PropertyValue::TextEmphasisStyle(TextEmphasisStyle::Shape {
+        fill: TextEmphasisFill::Open,
+        shape: TextEmphasisShape::Sesame,
+    }),
+    TextEmphasisColor => PropertyValue::TextEmphasisColor(TextDecorationColor::Resolved(
+        CssColor {
+            r: 19,
+            g: 23,
+            b: 29,
+            a: 255,
+        },
+    )),
+    TextEmphasis => PropertyValue::TextEmphasis(TextEmphasisShorthand {
+        style: TextEmphasisStyle::Shape {
+            fill: TextEmphasisFill::Filled,
+            shape: TextEmphasisShape::Dot,
+        },
+        color: TextDecorationColor::Resolved(CssColor {
+            r: 31,
+            g: 37,
+            b: 41,
+            a: 255,
+        }),
+    }),
+    FontKerning => PropertyValue::FontKerning(FontKerning::Auto),
+    FontOpticalSizing => PropertyValue::FontOpticalSizing(FontOpticalSizing::Auto),
+    FontVariantEmoji => PropertyValue::FontVariantEmoji(FontVariantEmoji::Normal),
+    FontLanguageOverride => PropertyValue::FontLanguageOverride(FontLanguageOverride::Normal),
+    FontVariantLigatures => {
+        PropertyValue::FontVariantLigatures(FontVariantLigatures::Normal)
+    },
+    FontSynthesis => PropertyValue::FontSynthesis(FontSynthesisValue::initial()),
+    FontVariantPosition => PropertyValue::FontVariantPosition(FontVariantPosition::Normal),
+    FontPalette => PropertyValue::FontPalette(FontPaletteValue::Normal),
+    FontVariantNumeric => {
+        PropertyValue::FontVariantNumeric(FontVariantNumeric::initial())
+    },
+    FontVariantEastAsian => {
+        PropertyValue::FontVariantEastAsian(FontVariantEastAsian::initial())
+    }
 }
 
 /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
-/// **乗らない** `PropertyValue` variant — 他の variant と `PropertyKey`
-/// を意図的に共有するもの。今日時点でこれに該当するのは
-/// [`PropertyValue::FontSizeRelative`] (`PropertyKey::FontSize` を
-/// `PropertyValue::FontSize` と共有 — cascade winner selection のための
-/// 設計、同 variant の doc 参照) だけ。
+/// **乗らない** `PropertyValue` variant — 複数 variant が同じ key を共有するもの
+/// (例: [`PropertyValue::FontSizeRelative`] / [`PropertyValue::FontSize`]、
+/// [`PropertyValue::TextWrapShorthand`] / [`PropertyValue::TextWrap`)、
+/// または internal inheritance/deferred marker。
 ///
-/// `page_corpus` へは**この関数の戻り値をそのまま追加**する — 「+1」の
-/// ような長さの算術に畳まない。2 つ目の key 共有 variant が現れたら
-/// ここに `vec!` の要素をもう 1 つ足すだけで済み、この comment を
-/// 読み解いて hard-coded value を計算し直す必要が無い。
-///
-/// 沿革: 当初は空 (共有 pattern 自体が無かった)、
-/// `FontSizeRelative` が追加されて以来 1 要素のまま変わっていない。
-///
-/// 2 つ目の key 共有 variant を足す義務は、以前は comment 頼みだった
-/// (compile error による forcing が無かった)。
-/// 今は `property_value_variant_registry!` (下) が `PropertyValue` 自身に
-/// 対して網羅的な match を生成しており、新 variant を足すとまずそちらが
-/// compile error になる。その状態で本関数への追加を忘れても
-/// `page_corpus_covers_every_registered_property_value_variant` (test、
-/// 下) が red になるので、ここへの追加漏れは最終的に検出される。
+/// `page_corpus` へはこの関数の戻り値をそのまま追加する。新しい non-1:1
+/// variant を加えたらここにも sample を足す。`property_value_variant_registry!`
+/// と `page_corpus_covers_every_registered_property_value_variant` が追加漏れを検出する。
 fn key_sharing_extras() -> Vec<PropertyValue> {
-    use crate::property::{DeferredValue, RelativeFontSize};
+    use crate::property::{DeferredValue, RelativeFontSize, TextWrapMode, TextWrapShorthand};
     vec![
         PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
         PropertyValue::CounterResetInherit,
@@ -3547,6 +3666,10 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
             property: "width".into(),
             value: "calc(1px + 1px)".into(),
             key: PropertyKey::Width,
+        }),
+        PropertyValue::TextWrapShorthand(TextWrapShorthand {
+            mode: TextWrapMode::Nowrap,
+            style: TextWrapStyle::Balance,
         }),
     ]
 }
@@ -3731,7 +3854,10 @@ property_value_variant_registry! {
     Float,
     Clear,
     WhiteSpace,
+    WhiteSpaceCollapse,
     TextWrap,
+    TextWrapShorthand,
+    TextWrapStyle,
     FlexDirection,
     FlexWrap,
     FlexGrow,
@@ -3828,6 +3954,24 @@ property_value_variant_registry! {
     ColumnCount,
     ColumnWidth,
     Columns,
+    HyphenateCharacter,
+    HyphenateLimitChars,
+    TextSpacingTrim,
+    TextSpacingShorthand,
+    WordSpaceTransform,
+    TextEmphasisStyle,
+    TextEmphasisColor,
+    TextEmphasis,
+    FontKerning,
+    FontOpticalSizing,
+    FontVariantEmoji,
+    FontLanguageOverride,
+    FontVariantLigatures,
+    FontSynthesis,
+    FontVariantPosition,
+    FontPalette,
+    FontVariantNumeric,
+    FontVariantEastAsian,
 }
 
 /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -3954,6 +4098,16 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             LengthOrAuto::Length(l) => length(l),
         }
     }
+    fn text_underline_offset(value: TextUnderlineOffset) -> Option<&'static str> {
+        match value {
+            TextUnderlineOffset::Auto => None,
+            TextUnderlineOffset::Length(length_value) => length(length_value),
+            TextUnderlineOffset::Calc(calc) if calc.em != 0.0 => {
+                Some("TextUnderlineOffset::Calc(em)")
+            }
+            TextUnderlineOffset::Calc(_) => None,
+        }
+    }
     /// `flex-basis: content | <'width'>` — `auto`/`content` keyword は
     /// 常に無 residue (computed 層でも keyword のまま、`ComputedFlexBasis`
     /// doc 参照)、`<length-percentage>` は [`length`] に delegate。
@@ -3985,13 +4139,18 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             VerticalAlign::Calc(_) => Some("CalcLengthPercentage"),
         }
     }
-    /// `letter-spacing` / `word-spacing` の `normal | <length>`. `normal`
-    /// computes to zero (CSS Text 3 §7.2/§7.1) so it is never residue,
-    /// same shape as `LengthOrAuto::Auto` above.
+    /// `LengthOrNormal` values used by word-spacing and gap properties.
     fn length_or_normal(l: LengthOrNormal) -> Option<&'static str> {
         match l {
             LengthOrNormal::Normal => None,
             LengthOrNormal::Length(l) => length(l),
+        }
+    }
+    fn letter_spacing(l: LetterSpacingValue) -> Option<&'static str> {
+        match l {
+            LetterSpacingValue::Normal => None,
+            LetterSpacingValue::Length(l) => length(l),
+            LetterSpacingValue::Calc(_) => Some("LetterSpacingValue::Calc"),
         }
     }
     /// `tab-size: <number [0,∞]> | <length [0,∞]>`. `<number>` is
@@ -4107,6 +4266,11 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             PropertyValue::TextAlign(ta) => text_align(*ta),
             PropertyValue::HangingPunctuation(_) => None,
             PropertyValue::TextAutospace(_) => None,
+            PropertyValue::WordSpaceTransform(_) => None,
+            PropertyValue::TextEmphasisStyle(_)
+            | PropertyValue::TextEmphasisColor(_)
+            | PropertyValue::TextEmphasis(_) => None,
+            PropertyValue::TextSpacingTrim(_) | PropertyValue::TextSpacingShorthand(_) => None,
             PropertyValue::LineBreak(_) => None,
             PropertyValue::TextJustify(_) => None,
             PropertyValue::TextAlignAll(_) => None,
@@ -4116,6 +4280,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::UnicodeBidi(_)
             // `page` carries no length either (`auto` / named page).
             | PropertyValue::Page(_)
+            // `hyphenate-limit-chars` is an inherited integer/`auto` triple.
+            | PropertyValue::HyphenateLimitChars(_)
             // `column-count` carries no specified-layer length. Width-bearing
             // forms are resolved by `absolutize_in_page_context`, so raw
             // relative units remain visible to this detector only before
@@ -4180,7 +4346,10 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                 TextDecorationThickness::Auto | TextDecorationThickness::FromFont => None,
                 TextDecorationThickness::Length(l) => length(l),
             },
-            PropertyValue::TextIndent(v) => length(v.length),
+            PropertyValue::TextIndent(v) => match v.length {
+                TextIndentLength::Length(value) => length(value),
+                TextIndentLength::Calc(_) => Some("TextIndentLength::Calc"),
+            },
             PropertyValue::PaddingTop(l)
             | PropertyValue::PaddingRight(l)
             | PropertyValue::PaddingBottom(l)
@@ -4205,8 +4374,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::MaxHeight(l)
             | PropertyValue::MinWidth(l)
             | PropertyValue::MinHeight(l)
-            | PropertyValue::MinBlockSize(l)
-            | PropertyValue::TextUnderlineOffset(l) => length_or_auto(*l),
+            | PropertyValue::MinBlockSize(l) => length_or_auto(*l),
+            PropertyValue::TextUnderlineOffset(value) => text_underline_offset(*value),
             PropertyValue::Padding(s) => sides(*s, length),
             PropertyValue::Margin(s) => sides(*s, length_or_auto),
             PropertyValue::PaddingInline(p) | PropertyValue::PaddingBlock(p) => {
@@ -4220,9 +4389,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             PropertyValue::BorderStyle(_)
             | PropertyValue::BorderColor(_) => None,
             PropertyValue::BorderWidth(s) => sides(*s, length),
-            PropertyValue::LetterSpacing(l) | PropertyValue::WordSpacing(l) => {
-                length_or_normal(*l)
-            }
+            PropertyValue::LetterSpacing(l) => letter_spacing(*l),
+            PropertyValue::WordSpacing(l) => letter_spacing(*l),
             PropertyValue::TabSize(ts) => tab_size(*ts),
             PropertyValue::VerticalAlign(va) => vertical_align(*va),
             PropertyValue::FlexBasis(fb) => flex_basis(*fb),
@@ -4302,6 +4470,16 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // (`normal`/`italic`/`oblique` implemented, `oblique`'s
             // `<angle>` argument is not).
             | PropertyValue::FontStyle(_)
+            | PropertyValue::FontKerning(_)
+            | PropertyValue::FontOpticalSizing(_)
+            | PropertyValue::FontVariantEmoji(_)
+            | PropertyValue::FontLanguageOverride(_)
+            | PropertyValue::FontVariantLigatures(_)
+            | PropertyValue::FontSynthesis(_)
+            | PropertyValue::FontVariantPosition(_)
+            | PropertyValue::FontPalette(_)
+            | PropertyValue::FontVariantNumeric(_)
+            | PropertyValue::FontVariantEastAsian(_)
             // `FontVariantCaps` carries no length either.
             | PropertyValue::FontVariantCaps(_)
             // `TextTransform` carries no length either.
@@ -4330,10 +4508,15 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::Clear(_)
             // `WhiteSpace` (CSS Text 3 §3) carries no length either.
             | PropertyValue::WhiteSpace(_)
+            | PropertyValue::WhiteSpaceCollapse(_)
             // `TextWrapMode` (CSS Text 4 §5 subset) carries no length either.
             | PropertyValue::TextWrap(_)
+            | PropertyValue::TextWrapShorthand(_)
+            | PropertyValue::TextWrapStyle(_)
             // `Hyphens` (CSS Text 3 §5.3) carries no length either.
             | PropertyValue::Hyphens(_)
+            // `hyphenate-character` carries only a keyword or decoded string.
+            | PropertyValue::HyphenateCharacter(_)
             // `FlexDirectionValue`/`FlexWrapValue` carry no length either.
             | PropertyValue::FlexDirection(_)
             | PropertyValue::FlexWrap(_)
@@ -4459,11 +4642,19 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // `blur-radius`) can carry specified-layer residue (same `length`
             // check `Padding`/`Margin` use above); `<color>` carries no
             // length (`TextShadowColor` doc).
-            PropertyValue::TextShadow(shadows) => shadows.iter().find_map(|s| {
-                length(s.offset_x)
-                    .or_else(|| length(s.offset_y))
-                    .or_else(|| length(s.blur_radius))
-            }),
+            PropertyValue::TextShadow(shadows) => {
+                let shadow_length = |value| match value {
+                    crate::property::TextShadowLength::Length(length_value) => length(length_value),
+                    crate::property::TextShadowLength::Calc { .. } => {
+                        Some("TextShadowLength::Calc")
+                    }
+                };
+                shadows.iter().find_map(|s| {
+                    shadow_length(s.offset_x)
+                        .or_else(|| shadow_length(s.offset_y))
+                        .or_else(|| shadow_length(s.blur_radius))
+                })
+            }
             // `border-radius` stores four independent `<length>` corners;
             // every non-px unit is specified-layer residue until phase 3.
             PropertyValue::BorderRadiusInherit => None,
@@ -4765,21 +4956,22 @@ fn grid_track_residue_detector_covers_minmax_fit_content_and_top_level_none() {
 /// `letter-spacing: normal` / `word-spacing: normal` は残滓ではない
 /// (CSS Text 3 §7.2/§7.1: "Computes to zero.") — `page_corpus` の
 /// `LetterSpacing`/`WordSpacing` worst-case サンプルは常に `Length`
-/// variant (`sample_for` 参照) なので `length_or_normal`'s `Normal` arm
-/// は corpus 経由では exercise されない。ここで直接叩く。
+/// variant (`sample_for` 参照) なので `letter_spacing` /
+/// `length_or_normal` helper の `Normal` arm は corpus 経由では exercise
+/// されない。ここで直接叩く。
 #[test]
 fn letter_spacing_and_word_spacing_normal_is_not_specified_layer_residue() {
     assert_eq!(
-        specified_layer_residue(&PropertyValue::LetterSpacing(LengthOrNormal::Normal)),
+        specified_layer_residue(&PropertyValue::LetterSpacing(LetterSpacingValue::Normal)),
         None,
     );
     assert_eq!(
-        specified_layer_residue(&PropertyValue::WordSpacing(LengthOrNormal::Normal)),
+        specified_layer_residue(&PropertyValue::WordSpacing(WordSpacingValue::Normal)),
         None,
     );
     // 対照 — `Em` は残滓 (絶対化前)。
     assert_eq!(
-        specified_layer_residue(&PropertyValue::LetterSpacing(LengthOrNormal::Length(
+        specified_layer_residue(&PropertyValue::LetterSpacing(LetterSpacingValue::Length(
             Length::Em(1.0)
         ))),
         Some("Length::Em"),
@@ -5799,5 +5991,27 @@ fn absolutize_in_page_context_resolves_single_axis_translate() {
             TransformFunction::TranslateX(Length::Px(20.0)),
             TransformFunction::TranslateY(Length::Percent(50.0)),
         ])),
+    );
+}
+
+#[test]
+fn hyphenate_limit_chars_passes_through_page_value_resolution() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@page { hyphenate-limit-chars: auto 2 auto; }",
+        Origin::Author,
+    );
+    let result = cascade_page(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::HyphenateLimitChars),
+        Some(&PropertyValue::HyphenateLimitChars(HyphenateLimitChars {
+            total: HyphenateLimitCharsValue::Auto,
+            before: HyphenateLimitCharsValue::Integer(2),
+            after: HyphenateLimitCharsValue::Auto,
+        }))
     );
 }

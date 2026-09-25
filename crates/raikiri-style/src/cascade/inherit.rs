@@ -7,9 +7,9 @@ use crate::computed::{
 };
 use crate::property::{
     BorderRadius, FontWeightValue, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
-    Length, LengthOrAuto, LengthOrNormal, PositionValue, PropertyValue, RelativeFontSize, Sides,
-    WritingMode, initial_grid_auto_track_list, resolve_text_align_internal_center,
-    resolve_text_align_match_parent,
+    Length, LengthOrAuto, LetterSpacingValue, PositionValue, PropertyValue, RelativeFontSize,
+    Sides, TextIndentLength, WordSpacingValue, WritingMode, initial_grid_auto_track_list,
+    resolve_text_align_internal_center, resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ResolveContext,
@@ -798,6 +798,8 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Position(_)
         | PropertyValue::HangingPunctuation(_)
         | PropertyValue::TextAutospace(_)
+        | PropertyValue::WordSpaceTransform(_)
+        | PropertyValue::TextSpacingTrim(_)
         | PropertyValue::Direction(_)
         | PropertyValue::TextIndent(_)
         | PropertyValue::PaddingTop(_)
@@ -860,27 +862,28 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::OverflowY(_)
         | PropertyValue::Overflow(_)
         // `writing-mode` joins this arm for the same reason `overflow-x`/
-        // `overflow-y`/`overflow` do — its `HorizontalTb` collapse
-        // (`resolve_writing_mode`, CSS Writing Modes 4 §3.2) depends only on
-        // its own specified value, never on the inheritance parent, so there
-        // is nothing for this function (phase 2) to resolve. It is applied
-        // in phase 3 instead (`crate::page::absolutize_in_page_context`,
-        // mirroring the element path's `SpecifiedValues::absolutize_with`).
-        // See `WritingMode` doc's Non-goal section.
+        // `overflow-y`/`overflow` do — the renderer-facing `HorizontalTb`
+        // fallback (`resolve_writing_mode`, CSS Writing Modes 4 §3.2) depends
+        // only on its own specified value, never on the inheritance parent.
+        // The raw CSSOM computed keyword is retained separately in the element
+        // computed values; this page/layout path still applies the fallback in
+        // phase 3 (`crate::page::absolutize_in_page_context`).
         | PropertyValue::WritingMode(_)
         | PropertyValue::RubyPosition(_)
         // `text-decoration-line`/`-style`/`-color` (and the `text-decoration`
         // shorthand, structurally unreachable here per
-        // `crate::rule::expand_shorthand_into`) carry no length and do not
-        // depend on the inheritance parent (computed value = specified
-        // keyword(s)/color, `TextDecorationLine`/`TextDecorationStyle`/
-        // `TextDecorationColor` docs) — nothing for phase 2 to resolve.
+        // `crate::rule::expand_shorthand_into`) carry no length. The inherited
+        // `text-decoration-skip-ink`/`-skip-spaces` keywords also need no
+        // phase-2 resolution because none of these values has a relative part.
         | PropertyValue::TextDecorationLine(_)
         | PropertyValue::TextDecorationStyle(_)
         | PropertyValue::TextDecorationColor(_)
         | PropertyValue::TextDecorationSkipInk(_)
         | PropertyValue::TextDecorationSkipSpaces(_)
         | PropertyValue::TextEmphasisPosition(_)
+        | PropertyValue::TextEmphasisStyle(_)
+        | PropertyValue::TextEmphasisColor(_)
+        | PropertyValue::TextEmphasis(_)
         | PropertyValue::TextUnderlinePosition(_)
         | PropertyValue::TextDecoration(_)
         // `text-decoration-thickness` / `text-decoration-inset` carry a
@@ -912,6 +915,16 @@ pub(crate) fn resolve_against_inherited(
         // argument is not — `FontStyle` doc) and does not depend on the
         // inheritance parent — nothing for phase 2 to resolve.
         | PropertyValue::FontStyle(_)
+        | PropertyValue::FontKerning(_)
+        | PropertyValue::FontOpticalSizing(_)
+        | PropertyValue::FontVariantEmoji(_)
+        | PropertyValue::FontLanguageOverride(_)
+        | PropertyValue::FontVariantLigatures(_)
+        | PropertyValue::FontSynthesis(_)
+        | PropertyValue::FontVariantPosition(_)
+        | PropertyValue::FontPalette(_)
+        | PropertyValue::FontVariantNumeric(_)
+        | PropertyValue::FontVariantEastAsian(_)
         // `text-transform` carries no length (`TextTransform` doc) and
         // does not depend on the inheritance parent — nothing for phase 2
         // to resolve.
@@ -968,9 +981,15 @@ pub(crate) fn resolve_against_inherited(
         // doc) and does not depend on the inheritance parent — nothing for
         // phase 2 to resolve.
         | PropertyValue::WhiteSpace(_)
-        // `text-wrap` (CSS Text 4 §5 subset) carries no length and does not
-        // depend on the inheritance parent — nothing for phase 2 to resolve.
+        // `white-space-collapse` is a keyword-only value; nothing for phase 2
+        // to resolve.
+        | PropertyValue::WhiteSpaceCollapse(_)
+        // `text-wrap` and `text-wrap-style` carry keyword values only; nothing
+        // for phase 2 to resolve.
         | PropertyValue::TextWrap(_)
+        | PropertyValue::TextWrapStyle(_)
+        | PropertyValue::TextWrapShorthand(_)
+        | PropertyValue::TextSpacingShorthand(_)
         // `flex-*` / alignment / `row-gap`/`column-gap` (and their
         // shorthands) — same "nothing for phase 2 to resolve" shape as
         // `Padding`/`Margin`/`Width`/`Height` above for the length-bearing
@@ -1000,6 +1019,12 @@ pub(crate) fn resolve_against_inherited(
         // does not depend on the inheritance parent — nothing for phase 2
         // to resolve.
         | PropertyValue::Hyphens(_)
+        // `hyphenate-character` carries only `auto` or a decoded string; it
+        // has no relative length for phase 2 to resolve.
+        | PropertyValue::HyphenateCharacter(_)
+        // `hyphenate-limit-chars` is a three-component integer/`auto` value;
+        // no relative length or inheritance-parent resolution is needed.
+        | PropertyValue::HyphenateLimitChars(_)
         // `font-variant-caps` (CSS Fonts Module Level 3 §6.6) carries no
         // length (`FontVariantCaps` doc) and does not depend on the
         // inheritance parent — nothing for phase 2 to resolve, same shape
@@ -1289,12 +1314,18 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::HangingPunctuation(v) => target.hanging_punctuation = v,
         // CSS Text 4: inherited keyword/flag set, simple by-value assignment.
         PropertyValue::TextAutospace(v) => target.text_autospace = v,
+        PropertyValue::WordSpaceTransform(v) => target.word_space_transform = v,
+        PropertyValue::TextSpacingTrim(v) => target.text_spacing_trim = v,
+        PropertyValue::TextSpacingShorthand(v) => {
+            target.text_spacing_trim = v.trim;
+            target.text_autospace = v.autospace;
+        }
         PropertyValue::TextJustify(v) => target.text_justify = v,
         PropertyValue::TextAlignLast(v) => target.text_align_last = v,
         PropertyValue::TextIndent(v) => {
             target.text_indent = v.length;
             target.text_indent_ch_factor = match v.length {
-                Length::Ch(factor) if factor.is_finite() => Some(factor),
+                TextIndentLength::Length(Length::Ch(factor)) if factor.is_finite() => Some(factor),
                 _ => None,
             };
             target.text_indent_ch_font = None;
@@ -1357,14 +1388,37 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::TextDecorationLine(v) => target.text_decoration_line = v,
         PropertyValue::TextDecorationStyle(v) => target.text_decoration_style = v,
         PropertyValue::TextDecorationColor(v) => target.text_decoration_color = v,
+        PropertyValue::TextDecorationThickness(v) => target.text_decoration_thickness = v,
+        PropertyValue::TextDecorationSkipInk(v) => target.text_decoration_skip_ink = v,
+        PropertyValue::TextDecorationSkipSpaces(v) => target.text_decoration_skip_spaces = v,
         PropertyValue::TextDecorationInset(v) => target.text_decoration_inset = v,
         PropertyValue::TextUnderlineOffset(v) => target.text_underline_offset = v,
+        PropertyValue::TextUnderlinePosition(v) => target.text_underline_position = v,
+        PropertyValue::TextEmphasisPosition(v) => target.text_emphasis_position = v,
+        PropertyValue::TextEmphasisStyle(v) => target.text_emphasis_style = v,
+        PropertyValue::TextEmphasisColor(v) => target.text_emphasis_color = v,
+        PropertyValue::TextEmphasis(shorthand) => {
+            crate::rule::expand_text_emphasis(&shorthand, |value| apply_value(value, target))
+        }
         PropertyValue::TextDecoration(shorthand) => {
             expand_text_decoration(shorthand, |v| apply_value(v, target))
         }
         PropertyValue::VerticalAlign(va) => target.vertical_align = va,
         PropertyValue::FontStyle(fs) => target.font_style = fs,
+        PropertyValue::FontKerning(value) => target.font_kerning = value,
+        PropertyValue::FontOpticalSizing(value) => target.font_optical_sizing = value,
+        PropertyValue::FontVariantEmoji(value) => target.font_variant_emoji = value,
+        PropertyValue::FontLanguageOverride(value) => target.font_language_override = value,
+        PropertyValue::FontVariantLigatures(value) => target.font_variant_ligatures = value,
+        PropertyValue::FontSynthesis(value) => target.font_synthesis = value,
+        PropertyValue::FontVariantPosition(value) => target.font_variant_position = value,
+        PropertyValue::FontPalette(value) => target.font_palette = value,
+        PropertyValue::FontVariantNumeric(value) => target.font_variant_numeric = value,
+        PropertyValue::FontVariantEastAsian(value) => target.font_variant_east_asian = value,
         PropertyValue::TextTransform(tt) => target.text_transform = tt,
+        PropertyValue::TextCombineUpright(value) => target.text_combine_upright = value,
+        PropertyValue::TextOrientation(value) => target.text_orientation = value,
+        PropertyValue::UnicodeBidi(value) => target.unicode_bidi = value,
         PropertyValue::Visibility(v) => target.visibility = v,
         PropertyValue::ZIndex(z) => target.z_index = z,
         PropertyValue::WordBreak(wb) => target.word_break = wb,
@@ -1373,14 +1427,16 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::LetterSpacing(ls) => {
             target.letter_spacing = ls;
             target.letter_spacing_ch_factor = match ls {
-                LengthOrNormal::Length(Length::Ch(factor)) if factor.is_finite() => Some(factor),
+                LetterSpacingValue::Length(Length::Ch(factor)) if factor.is_finite() => {
+                    Some(factor)
+                }
                 _ => None,
             };
         }
         PropertyValue::WordSpacing(ws) => {
             target.word_spacing = ws;
             target.word_spacing_ch_factor = match ws {
-                LengthOrNormal::Length(Length::Ch(factor)) if factor.is_finite() => Some(factor),
+                WordSpacingValue::Length(Length::Ch(factor)) if factor.is_finite() => Some(factor),
                 _ => None,
             };
         }
@@ -1391,8 +1447,16 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::Float(f) => target.float = f,
         PropertyValue::Clear(c) => target.clear = c,
         PropertyValue::WhiteSpace(ws) => target.white_space = ws,
+        PropertyValue::WhiteSpaceCollapse(value) => target.white_space_collapse = value,
         PropertyValue::TextWrap(v) => target.text_wrap = v,
+        PropertyValue::TextWrapStyle(v) => target.text_wrap_style = v,
+        PropertyValue::TextWrapShorthand(v) => {
+            target.text_wrap = v.mode;
+            target.text_wrap_style = v.style;
+        }
         PropertyValue::Hyphens(h) => target.hyphens = h,
+        PropertyValue::HyphenateCharacter(value) => target.hyphenate_character = value,
+        PropertyValue::HyphenateLimitChars(value) => target.hyphenate_limit_chars = value,
         PropertyValue::FlexDirection(fd) => target.flex_direction = fd,
         PropertyValue::FlexWrap(fw) => target.flex_wrap = fw,
         PropertyValue::FlexGrow(g) => target.flex_grow = g,
@@ -1497,15 +1561,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::CaptionSide(v) => target.caption_side = v,
         PropertyValue::EmptyCells(v) => target.empty_cells = v,
         // Parsed but not yet staged for elements.
-        PropertyValue::TextAlignAll(_)
-        | PropertyValue::TextCombineUpright(_)
-        | PropertyValue::TextOrientation(_)
-        | PropertyValue::UnicodeBidi(_)
-        | PropertyValue::TextDecorationSkipInk(_)
-        | PropertyValue::TextDecorationSkipSpaces(_)
-        | PropertyValue::TextDecorationThickness(_)
-        | PropertyValue::TextEmphasisPosition(_)
-        | PropertyValue::TextUnderlinePosition(_) => {}
+        PropertyValue::TextAlignAll(_) => {}
         PropertyValue::Page(value) => target.page = value,
         PropertyValue::ColumnCount(value) => target.column_count = value,
         PropertyValue::ColumnWidth(value) => target.column_width = value,

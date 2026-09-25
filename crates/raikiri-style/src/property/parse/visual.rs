@@ -1352,15 +1352,14 @@ fn parse_sepia_args<'i>(input: &mut Parser<'i, '_>) -> Result<FilterFunction, Pa
 /// §6.1: "Values are interpreted as for box-shadow but with the optional
 /// 3rd `<length>` value being the standard deviation instead of blur
 /// radius" — grammar-identical to `text-shadow`'s own `<shadow>` syntax
-/// (no spread, no inset), so [`parse_text_shadow_item`] is reused verbatim
-/// ([`FilterFunction::DropShadow`] doc参照). [`parse_text_shadow_lengths`]'s
-/// offset-x/offset-y already go through [`parse_shadow_length_reject_nan`]'s
-/// `!is_nan()` guard (see that function's doc), so this reuse inherits the
-/// guard automatically.
+/// (no spread, no inset), so [`parse_drop_shadow_item`] reuses the item grammar
+/// while keeping the filter path's existing plain-length behavior
+/// ([`FilterFunction::DropShadow`] doc参照). Its offset-x/offset-y still go
+/// through [`parse_shadow_length_reject_nan`]'s `!is_nan()` guard.
 pub(crate) fn parse_drop_shadow_args<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<FilterFunction, ParseError<'i, ()>> {
-    let item = parse_text_shadow_item(input).ok_or_else(|| input.new_custom_error(()))?;
+    let item = parse_drop_shadow_item(input).ok_or_else(|| input.new_custom_error(()))?;
     Ok(FilterFunction::DropShadow(item))
 }
 

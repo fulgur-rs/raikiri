@@ -282,3 +282,16 @@ fn callbacks_that_requeue_themselves_hit_the_event_loop_limit() {
     );
     assert!(matches!(result, Err(TestHarnessError::EventLoopLimit)));
 }
+
+#[test]
+fn font_load_callbacks_run_through_the_testharness_event_loop() {
+    let result = run_testharness_script(
+        r#"document.fonts.load("20px Ahem").then(function(fonts) {
+            test(function() { assert_equals(fonts.length, 0); }, "font load callback");
+        });"#,
+        TestDom::default(),
+    )
+    .unwrap();
+    assert_eq!(result.len(), 1);
+    assert!(result[0].passed, "{:?}", result[0]);
+}

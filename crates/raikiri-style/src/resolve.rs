@@ -179,12 +179,14 @@ use smol_str::SmolStr;
 use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{
     Angle, AngularColorStop, BackgroundImage, BackgroundSize, Border, BorderColor, BorderRadius,
-    BorderSpacingValue, BorderStyle, BoxShadowItem, ConicGradient, CssPosition, CssPositionOffset,
-    FlexBasisValue, Gradient, GradientColorStop, GridInflexibleBreadth, GridRepeatCount,
-    GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
-    GridTrackSize, Length, LengthOrAuto, LengthOrNormal, LineHeight, LinearGradient, Outline,
-    OutlineColor, OutlineStyle, RadialGradient, RadialSize, TabSize, TextDecorationInset,
-    TextShadowColor, TextShadowItem, TransformFunction, VerticalAlign,
+    BorderSpacingValue, BorderStyle, BoxShadowItem, CalcLengthPercentage, ConicGradient,
+    CssPosition, CssPositionOffset, FlexBasisValue, Gradient, GradientColorStop,
+    GridInflexibleBreadth, GridRepeatCount, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+    GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
+    LengthPercentageCalc, LetterSpacingValue, LineHeight, LinearGradient, Outline, OutlineColor,
+    OutlineStyle, RadialGradient, RadialSize, TabSize, TextDecorationInset,
+    TextDecorationThickness, TextIndentLength, TextShadowColor, TextShadowItem, TextShadowLength,
+    TextUnderlineOffset, TransformFunction, VerticalAlign, WordSpacingValue,
 };
 
 // ---------------------------------------------------------------------------
@@ -265,14 +267,25 @@ pub enum ComputedTextDecorationInset {
     },
 }
 
+/// Computed `text-decoration-thickness`: a keyword or an absolute CSS length.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ComputedTextDecorationThickness {
+    /// `auto`, the initial value.
+    Auto,
+    /// `from-font`, retaining font-derived decoration thickness behavior.
+    FromFont,
+    /// An absolute computed length in CSS pixels.
+    Length(ComputedLength),
+}
+
 /// Computed `text-underline-offset`: `auto`, a fixed CSS-pixel offset, or a
 /// percentage of the font size.
 ///
 /// The property is inherited. A length becomes an absolute value at the
 /// declaring element and is lifted back to `px` when a child inherits it. A
-/// percentage stays relative (CSS Text Decoration 4 §2.8: it "will inherit as
-/// a relative value, and will therefore scale with changes in the font as it
-/// inherits"), so consumers resolve it against the decorating element's own
+/// Percentage terms stay relative (CSS Text Decoration 4 §2.8 says the value
+/// inherits as a relative value and therefore scales when the font changes).
+/// Consumers resolve percentages against the decorating element's own
 /// computed font size.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ComputedTextUnderlineOffset {
@@ -282,6 +295,8 @@ pub enum ComputedTextUnderlineOffset {
     Length(ComputedLength),
     /// Percentage of 1em of the element the value is used on.
     Percent(f32),
+    /// Mixed percentage and absolute-length `calc()` after `em` resolution.
+    Calc(crate::property::CalcLengthPercentage),
 }
 
 /// Computed absolute length plus authored `ch` provenance.
@@ -345,6 +360,39 @@ pub enum ComputedLengthPercentage {
     /// Percentage — authored 数値をそのまま保持 (`50%` → `Percent(50.0)`)。
     Percent(f32),
 }
+
+/// Computed `text-indent` value. Unlike other length-percentage properties,
+/// this property needs a mixed calc form to preserve percentage and px terms
+/// through computed-value serialization.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ComputedTextIndent {
+    /// Absolute length in CSS px.
+    Px(f32),
+    /// Unresolved percentage coefficient (`20%` is `20.0`).
+    Percent(f32),
+    /// Mixed percentage and absolute-length `calc()`.
+    Calc(crate::property::CalcLengthPercentage),
+}
+
+/// Computed `letter-spacing` value with percentages retained for later use.
+///
+/// The renderer-facing [`crate::computed::ComputedValues::letter_spacing`] remains
+/// an absolute fallback; this value preserves the CSS computed form for style
+/// serialization and inheritance.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ComputedLetterSpacing {
+    /// Computed absolute length in CSS px.
+    Px(f32),
+    /// Unresolved percentage coefficient (`110%` is `110.0`).
+    Percent(f32),
+    /// Mixed computed percentage and absolute-length terms.
+    Calc(CalcLengthPercentage),
+}
+
+/// CSS Text 4 `word-spacing` computed values use the same shape as
+/// [`ComputedLetterSpacing`]: percentages remain deferred and mixed calcs keep
+/// their percentage and absolute-length terms.
+pub type ComputedWordSpacing = ComputedLetterSpacing;
 
 /// Computed `<length-percentage>` plus authored `ch` provenance.
 ///
@@ -988,16 +1036,35 @@ pub(crate) fn empty_computed_text_shadow_list() -> Arc<Vec<ComputedTextShadow>> 
 /// ([`resolve_length_or_normal`] が `letter-spacing`/`word-spacing` の
 /// `<length>` 成分を同じ理由で [`resolve_length`] に委譲するのと同型)。
 /// `color` は length を運ばないため素通し。
+pub(crate) fn resolve_text_shadow_length(
+    specified: TextShadowLength,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedLength {
+    match specified {
+        TextShadowLength::Length(length) => resolve_length(length, font_size, own_line_height, ctx),
+        TextShadowLength::Calc { px, em } => ComputedLength(px + em * font_size.px()),
+    }
+}
+
 pub fn resolve_text_shadow_item(
     specified: TextShadowItem,
     font_size: ComputedLength,
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedTextShadow {
+    let blur_radius =
+        resolve_text_shadow_length(specified.blur_radius, font_size, own_line_height, ctx);
+    let blur_radius = if matches!(specified.blur_radius, TextShadowLength::Calc { .. }) {
+        ComputedLength(blur_radius.px().max(0.0))
+    } else {
+        blur_radius
+    };
     ComputedTextShadow {
-        offset_x: resolve_length(specified.offset_x, font_size, own_line_height, ctx),
-        offset_y: resolve_length(specified.offset_y, font_size, own_line_height, ctx),
-        blur_radius: resolve_length(specified.blur_radius, font_size, own_line_height, ctx),
+        offset_x: resolve_text_shadow_length(specified.offset_x, font_size, own_line_height, ctx),
+        offset_y: resolve_text_shadow_length(specified.offset_y, font_size, own_line_height, ctx),
+        blur_radius,
         color: specified.color,
     }
 }
@@ -1010,9 +1077,9 @@ pub fn resolve_text_shadow_item(
 /// 二重適用にならない。`color` は length を運ばないため素通し。
 pub fn lift_text_shadow_item(computed: ComputedTextShadow) -> TextShadowItem {
     TextShadowItem {
-        offset_x: Length::Px(computed.offset_x.0),
-        offset_y: Length::Px(computed.offset_y.0),
-        blur_radius: Length::Px(computed.blur_radius.0),
+        offset_x: TextShadowLength::Length(Length::Px(computed.offset_x.0)),
+        offset_y: TextShadowLength::Length(Length::Px(computed.offset_y.0)),
+        blur_radius: TextShadowLength::Length(Length::Px(computed.blur_radius.0)),
         color: computed.color,
     }
 }
@@ -1701,46 +1768,22 @@ pub fn resolve_font_size(
 /// `font_size` は**自要素の** computed font-size (phase 2 で確定した値)。
 /// `font-size` 自身の絶対化には [`resolve_font_size`] を使うこと (基準が親)。
 ///
-/// # `Length::Percent` は grammar-unreachable
+/// # Percentage handling
 ///
-/// 本関数の in-crate consumer は 3 つある — `border-*-width`
-/// ([`resolve_border`])、`line-height` の `<length>` 成分
-/// ([`resolve_line_height`])、`letter-spacing` / `word-spacing`
-/// ([`resolve_length_or_normal`])。いずれも `Length::Percent` を渡さない:
+/// The output type [`ComputedLength`] cannot represent percentages, so this
+/// helper's `Length::Percent` arm is a zero fallback. A caller that supports
+/// percentages must intercept them before calling this helper.
 ///
-/// - `border-*-width`: CSS Backgrounds 3 §3.3 "Line Thickness: the
-///   border-width properties"
-///   (<https://www.w3.org/TR/css-backgrounds-3/#border-width>) の grammar は
-///   `<line-width> = <length [0,∞]> | thin | medium | thick` で `<percentage>`
-///   を含まないため、percentage を含む declaration は parse 段で invalid として
-///   drop される (`parse_border_width_side`)。
-/// - `line-height`: [`resolve_line_height`] が `Length::Percent` を**本関数へ
-///   delegate する前に intercept** して自要素の font-size で絶対化する
-///   (CSS Inline 3 §5.1 "Percentages: computed relative to 1em")。
-/// - `letter-spacing` / `word-spacing`: `border-*-width` と同じ shape — CSS
-///   Text 3 §7.2 / §7.1 (`letter-spacing`
-///   <https://www.w3.org/TR/css-text-3/#letter-spacing-property> /
-///   `word-spacing` <https://www.w3.org/TR/css-text-3/#word-spacing-property>)
-///   の grammar `normal | <length>` も `<percentage>` を含まない
-///   ("Percentages: N/A" / "n/a")、percentage を含む declaration は parse 段で
-///   invalid として drop される (`parse_letter_or_word_spacing`、
-///   `allow_percentage=false`)。
+/// - `line-height`: [`resolve_line_height`] intercepts percentages and resolves
+///   them against the element's font size.
+/// - `letter-spacing`: [`resolve_letter_spacing`] retains the percentage in its
+///   dedicated computed type and calls this helper only for absolute lengths.
+/// - Properties using [`ComputedLengthPercentage`] must use
+///   [`resolve_length_percentage`] instead.
 ///
-/// **後者は invariant であり、grammar による保証ではない** —
-/// [`resolve_line_height`] の match を「全 variant を本関数に delegate する」形に
-/// 簡約すると `line-height: 150%` が下記 0px arm を踏んで黙って潰れる。簡約して
-/// はならない。
-///
-/// 到達した場合は computed 層で意味を持たない値なので `0px` に落とす —
-/// spec initial 相当の保守的な値であり、fail-quiet を許すためではなく
-/// 「grammar 上ありえない入力に対する全域性」のための arm である。
-///
-/// これは設計文書 §4.6 が削除するとした下流 (`raikiri-dom`
-/// `layout.rs`) の catch-all とは別物である (あちらは実際に削除済) —
-/// あちらは **computed 層**の型を
-/// match して `Em` / `Rem` という **spec-valid な入力**を黙って 0px に潰す
-/// (= fail-quiet)。本 arm は **specified 層の [`Length`]** に対するもので、
-/// 潰れる入力が grammar 上存在しない。
+/// `resolve_length_or_normal` is an older absolute-length helper; it does not
+/// preserve percentages and must not be used for a percentage-aware computed
+/// value.
 ///
 /// # `Length::Lh` / `Length::Rlh`
 ///
@@ -1843,21 +1886,12 @@ pub fn resolve_column_width(
     }
 }
 
-/// `normal | <length>` を取る property (`letter-spacing` / `word-spacing`) の
-/// specified value を絶対化する (**phase 3** — 自 node 基準)。
+/// Resolve an absolute `word-spacing` length or its `normal` keyword.
 ///
-/// `Normal` は常に [`ComputedLength::ZERO`] — CSS Text 3 §7.1
-/// (<https://www.w3.org/TR/css-text-3/#word-spacing-property>) / §7.2
-/// (<https://www.w3.org/TR/css-text-3/#letter-spacing-property>) がいずれも
-/// "No additional spacing is applied. Computes to zero." と明記する。
-/// `Length` 側は [`resolve_length`] へそのまま delegate する
-/// ([`LengthOrNormal`] は percentage を持たないため、`resolve_length_percentage`
-/// ではなく percentage 非対応の [`resolve_length`] が正しい delegate 先)。
-///
-/// [`ComputedLineHeight::Normal`] とは異なり、computed 層で keyword を保持
-/// **しない** — 両 property とも spec の "Computed value" が "an absolute
-/// length" であり、"normal" 自体は computed value の選択肢に含まれない
-/// (`line-height` の "Computed value: … normal" とはこの点で異なる)。
+/// `Normal` becomes [`ComputedLength::ZERO`], as CSS Text 3 §7.1 requires.
+/// A `Length` is passed to [`resolve_length`] and the result cannot retain a
+/// percentage. `letter-spacing` uses [`resolve_letter_spacing`] instead so its
+/// computed percentage and mixed-calc forms remain available.
 pub fn resolve_length_or_normal(
     specified: LengthOrNormal,
     font_size: ComputedLength,
@@ -1890,6 +1924,93 @@ pub fn resolve_length_or_normal_with_ch(
         value: resolve_length_or_normal(specified, font_size, own_line_height, ctx),
         ch_factor,
     }
+}
+
+/// Resolve the computed CSS value for `letter-spacing`.
+///
+/// Simple percentages and mixed calc percentages remain deferred. Relative
+/// lengths, including `em` terms in a mixed calc, resolve against the
+/// element's computed font size.
+pub fn resolve_letter_spacing(
+    specified: LetterSpacingValue,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedLetterSpacing {
+    match specified {
+        LetterSpacingValue::Normal => ComputedLetterSpacing::Px(0.0),
+        LetterSpacingValue::Length(Length::Percent(percent)) => {
+            ComputedLetterSpacing::Percent(percent)
+        }
+        LetterSpacingValue::Length(length) => {
+            ComputedLetterSpacing::Px(resolve_length(length, font_size, own_line_height, ctx).px())
+        }
+        LetterSpacingValue::Calc(calc) => {
+            let px = calc.px + calc.em * font_size.px();
+            if calc.percent == 0.0 {
+                ComputedLetterSpacing::Px(px)
+            } else if px == 0.0 {
+                ComputedLetterSpacing::Percent(calc.percent)
+            } else {
+                ComputedLetterSpacing::Calc(CalcLengthPercentage {
+                    percent: calc.percent,
+                    px,
+                })
+            }
+        }
+    }
+}
+
+/// Resolve `word-spacing` with the CSS Text 4 computed-value rules shared with
+/// `letter-spacing`.
+pub fn resolve_word_spacing(
+    specified: WordSpacingValue,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedWordSpacing {
+    resolve_letter_spacing(specified, font_size, own_line_height, ctx)
+}
+
+/// Resolve the renderer-facing fallback while retaining authored `ch`.
+///
+/// Percentage and calc values keep the legacy zero fallback until text layout
+/// consumes their computed representation.
+pub fn resolve_letter_spacing_with_ch(
+    specified: LetterSpacingValue,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedLengthWithCh {
+    match specified {
+        LetterSpacingValue::Normal => resolve_length_or_normal_with_ch(
+            LengthOrNormal::Normal,
+            font_size,
+            own_line_height,
+            ctx,
+        ),
+        LetterSpacingValue::Length(length) => resolve_length_or_normal_with_ch(
+            LengthOrNormal::Length(length),
+            font_size,
+            own_line_height,
+            ctx,
+        ),
+        LetterSpacingValue::Calc(_) => ComputedLengthWithCh {
+            value: ComputedLength::ZERO,
+            ch_factor: None,
+        },
+    }
+}
+
+/// Resolve the existing absolute renderer/layout fallback for `word-spacing`,
+/// retaining authored `ch` provenance just like the letter-spacing path.
+pub fn resolve_word_spacing_with_ch(
+    specified: WordSpacingValue,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedLengthWithCh {
+    resolve_letter_spacing_with_ch(specified, font_size, own_line_height, ctx)
 }
 
 /// `tab-size` の specified value を絶対化する (**phase 3** — 自 node 基準)。
@@ -2051,28 +2172,52 @@ pub fn resolve_text_decoration_inset(
     }
 }
 
+/// Resolve `text-decoration-thickness` at computed-value time.
+///
+/// Keyword values are retained. Lengths become absolute CSS pixels using the
+/// declaring element's font-size and line-height basis.
+pub fn resolve_text_decoration_thickness(
+    specified: TextDecorationThickness,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedTextDecorationThickness {
+    match specified {
+        TextDecorationThickness::Auto => ComputedTextDecorationThickness::Auto,
+        TextDecorationThickness::FromFont => ComputedTextDecorationThickness::FromFont,
+        TextDecorationThickness::Length(length) => ComputedTextDecorationThickness::Length(
+            resolve_length(length, font_size, own_line_height, ctx),
+        ),
+    }
+}
+
 /// Resolve an inherited `text-underline-offset` length-percentage against
 /// the declaring element's font metrics. Percentages are kept relative (CSS
 /// Text Decoration 4 §2.8) so they rescale with each inheriting element's font
 /// size; deferred mixed `calc()` values still use the conservative `auto`
 /// fallback.
 pub fn resolve_text_underline_offset(
-    specified: LengthOrAuto,
+    specified: TextUnderlineOffset,
     font_size: ComputedLength,
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedTextUnderlineOffset {
     match specified {
-        LengthOrAuto::Auto | LengthOrAuto::Calc(_) => ComputedTextUnderlineOffset::Auto,
-        LengthOrAuto::Length(Length::Percent(percent)) => {
+        TextUnderlineOffset::Auto => ComputedTextUnderlineOffset::Auto,
+        TextUnderlineOffset::Length(Length::Percent(percent)) => {
             ComputedTextUnderlineOffset::Percent(percent)
         }
-        LengthOrAuto::Length(length) => ComputedTextUnderlineOffset::Length(resolve_length(
+        TextUnderlineOffset::Length(length) => ComputedTextUnderlineOffset::Length(resolve_length(
             length,
             font_size,
             own_line_height,
             ctx,
         )),
+        TextUnderlineOffset::Calc(calc) => match resolve_text_indent_calc(calc, font_size) {
+            ComputedTextIndent::Px(px) => ComputedTextUnderlineOffset::Length(ComputedLength(px)),
+            ComputedTextIndent::Percent(percent) => ComputedTextUnderlineOffset::Percent(percent),
+            ComputedTextIndent::Calc(calc) => ComputedTextUnderlineOffset::Calc(calc),
+        },
     }
 }
 
@@ -2131,6 +2276,27 @@ pub fn resolve_length_percentage(
                 .map(ComputedLength::px)
                 .unwrap_or(0.0),
         ),
+    }
+}
+
+/// Resolve the deferred `em` coefficient in a `text-indent` calc against the
+/// element's computed font size. Percentages remain unresolved for used-value
+/// processing. A pure result is collapsed to `Px` or `Percent`; only a mixed
+/// result needs the `Calc` computed representation.
+pub fn resolve_text_indent_calc(
+    specified: LengthPercentageCalc,
+    font_size: ComputedLength,
+) -> ComputedTextIndent {
+    let px = specified.px + specified.em * font_size.0;
+    if specified.percent == 0.0 {
+        ComputedTextIndent::Px(px)
+    } else if px == 0.0 {
+        ComputedTextIndent::Percent(specified.percent)
+    } else {
+        ComputedTextIndent::Calc(crate::property::CalcLengthPercentage {
+            percent: specified.percent,
+            px,
+        })
     }
 }
 
@@ -2995,55 +3161,30 @@ pub fn lift_line_height(computed: ComputedLineHeight) -> LineHeight {
     }
 }
 
-/// 親の computed `<length-percentage>` を specified 表現に **lift** する
-/// (inheritance seed 用) — [`lift_font_size`] / [`lift_line_height`] と
-/// 同じ役目を [`ComputedLengthPercentage`] に対して果たす。
+/// Lift a computed length-percentage back to its specified `Length` form.
 ///
-/// [`lift_font_size`] と同じ lossless 性が両 variant で成立する:
-///
-/// - `Px(v)` → `Length::Px(v)`。`Px` は絶対化の不動点
-///   ([`resolve_length_percentage`] の `Px` arm は identity) なので、lift
-///   した値を phase 3 に通しても二重適用にならない。
-/// - `Percent(p)` → `Length::Percent(p)`。[`resolve_length_percentage`] の
-///   `Percent` arm も identity ("the computed value of a percentage is the
-///   specified percentage", CSS Values 4 §5.5.1
-///   <https://www.w3.org/TR/css-values-4/#combine-percentages>) — 子は親の
-///   `%` をそのまま継承し、containing block 基準の再解決はしない (used
-///   value 層 = 下流 layout の責務、[`ComputedLengthPercentage`] doc 参照)。
-///
-/// 現在の唯一の consumer は `text-indent` (CSS Text 3 §8.1、**inherited**
-/// `<length-percentage>` property) — [`crate::specified::SpecifiedValues::inherit_from`]
-/// がこの関数で親の `ComputedValues::text_indent` を子の staging へ seed する。
-///
-/// ```
-/// use raikiri_style::{
-///     ComputedLength, ComputedLengthPercentage, ResolveContext, lift_length_percentage,
-///     resolve_length_percentage,
-/// };
-///
-/// let ctx = ResolveContext::initial();
-/// let inherited = ComputedLengthPercentage::Px(40.0);
-///
-/// // lift → 絶対化 の round trip は恒等 (Px が不動点)。
-/// let lifted = lift_length_percentage(inherited);
-/// assert_eq!(
-///     resolve_length_percentage(lifted, ComputedLength(10.0), None, &ctx),
-///     inherited
-/// );
-///
-/// // `Percent` も同じく恒等 — containing block 基準は used value 層まで
-/// // 再解決しない。
-/// let inherited_pct = ComputedLengthPercentage::Percent(10.0);
-/// let lifted_pct = lift_length_percentage(inherited_pct);
-/// assert_eq!(
-///     resolve_length_percentage(lifted_pct, ComputedLength(10.0), None, &ctx),
-///     inherited_pct
-/// );
-/// ```
+/// Percentages remain unresolved, so this is a fixed-point operation for both
+/// variants of [`ComputedLengthPercentage`].
 pub fn lift_length_percentage(computed: ComputedLengthPercentage) -> Length {
     match computed {
         ComputedLengthPercentage::Px(v) => Length::Px(v),
         ComputedLengthPercentage::Percent(p) => Length::Percent(p),
+    }
+}
+
+/// Lift a computed `text-indent` value into its inherited staging form.
+///
+/// The parent's `em` term has already been resolved, so a mixed calc is copied
+/// with `em: 0` and must not be re-resolved against the child's font size.
+pub fn lift_text_indent(computed: ComputedTextIndent) -> TextIndentLength {
+    match computed {
+        ComputedTextIndent::Px(v) => TextIndentLength::Length(Length::Px(v)),
+        ComputedTextIndent::Percent(p) => TextIndentLength::Length(Length::Percent(p)),
+        ComputedTextIndent::Calc(value) => TextIndentLength::Calc(LengthPercentageCalc {
+            percent: value.percent,
+            px: value.px,
+            em: 0.0,
+        }),
     }
 }
 
@@ -3079,6 +3220,30 @@ pub fn lift_length_percentage(computed: ComputedLengthPercentage) -> Length {
 /// ```
 pub fn lift_length_or_normal(computed: ComputedLength) -> LengthOrNormal {
     LengthOrNormal::Length(Length::Px(computed.0))
+}
+
+/// Lift a parent's computed `letter-spacing` value for inheritance.
+///
+/// Any `em` term has already resolved against the parent, so a lifted mixed
+/// calc uses only absolute px and percentage components.
+pub fn lift_letter_spacing(computed: ComputedLetterSpacing) -> LetterSpacingValue {
+    match computed {
+        ComputedLetterSpacing::Px(px) => LetterSpacingValue::Length(Length::Px(px)),
+        ComputedLetterSpacing::Percent(percent) => {
+            LetterSpacingValue::Length(Length::Percent(percent))
+        }
+        ComputedLetterSpacing::Calc(calc) => LetterSpacingValue::Calc(LengthPercentageCalc {
+            percent: calc.percent,
+            px: calc.px,
+            em: 0.0,
+        }),
+    }
+}
+
+/// Lift an inherited computed `word-spacing` value back into the specified
+/// staging shape without dropping percentages or mixed calc terms.
+pub fn lift_word_spacing(computed: ComputedWordSpacing) -> WordSpacingValue {
+    lift_letter_spacing(computed)
 }
 
 /// 親の [`ComputedTabSize`] を specified 表現 ([`TabSize`]) に **lift** する

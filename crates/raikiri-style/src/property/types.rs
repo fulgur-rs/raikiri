@@ -565,6 +565,62 @@ pub struct CalcLengthPercentage {
     pub px: f32,
 }
 
+/// `<length-percentage>` used by `text-indent`, including deferred mixed-unit math.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TextIndentLength {
+    /// A plain authored length-percentage.
+    Length(Length),
+    /// A mixed `calc()` whose `em` component waits for the element's computed font size.
+    Calc(LengthPercentageCalc),
+}
+
+/// Linear `<length-percentage>` terms retained until the computed font size is known.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LengthPercentageCalc {
+    /// Percentage coefficient (`100%` is `100.0`).
+    pub percent: f32,
+    /// Absolute-length offset in CSS px.
+    pub px: f32,
+    /// `em` coefficient resolved against the element's computed font size.
+    pub em: f32,
+}
+/// Specified `text-underline-offset` value.
+///
+/// A mixed calculation keeps percentage, absolute-pixel, and `em` terms until
+/// the declaring element's computed font size is available. Computed values
+/// resolve `em` but keep percentage terms relative for inheritance.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TextUnderlineOffset {
+    /// `auto` lets the user agent choose the underline offset.
+    Auto,
+    /// A plain authored length or percentage.
+    Length(Length),
+    /// An additive `calc()` retained until computed font-size resolution.
+    Calc(LengthPercentageCalc),
+}
+
+/// Specified `letter-spacing` value.
+///
+/// Percentages stay deferred until line layout, and a mixed calc keeps its
+/// percentage and length terms for computed-style serialization.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LetterSpacingValue {
+    /// `normal` computes to zero.
+    Normal,
+    /// A simple length or percentage.
+    Length(Length),
+    /// A mixed length-percentage calc with any `em` term still deferred.
+    Calc(LengthPercentageCalc),
+}
+
+/// Specified `word-spacing` value. CSS Text 4 uses the same
+/// `normal | <length-percentage>` value shape as [`LetterSpacingValue`].
+/// Sharing the representation preserves the same mixed calc terms until the
+/// element's computed font size is known.
+pub type WordSpacingValue = LetterSpacingValue;
+
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LengthOrAuto {
@@ -611,41 +667,20 @@ pub struct ColumnsShorthand {
     pub count: ColumnCountValue,
 }
 
-/// `normal | <length>` を取る property の specified value —
-/// [`letter-spacing`](PropertyValue::LetterSpacing) と
-/// [`word-spacing`](PropertyValue::WordSpacing) で共有する
-/// ([`LengthOrAuto`] が margin / width / height を横断して共有されるのと同じ
-/// reuse pattern、同 type の doc 参照)。
+/// Generic `normal` or length value used by gap properties.
+/// Each property's parser controls which `Length` units its grammar accepts.
+/// Text spacing properties use [`LetterSpacingValue`] so mixed calc terms can
+/// remain available to computed-style serialization.
 ///
-/// 両 property とも spec 上 percentage を持たない (`Percentages: N/A`) ため、
-/// `Length` 側の unit set はそのまま percentage を含む — percentage token は
-/// **parse 段で reject** する ([`parse_letter_or_word_spacing`] が
-/// `parse_length_value(input, false)` を使う)。
-///
-/// # Primary sources
-///
-/// - CSS Text 3 §7.1 "Word Spacing: the word-spacing property"
-///   (<https://www.w3.org/TR/css-text-3/#word-spacing-property>): "Value:
-///   `normal | <length>`"、"Percentages: N/A"。
-/// - CSS Text 3 §7.2 "Tracking: the letter-spacing property"
-///   (<https://www.w3.org/TR/css-text-3/#letter-spacing-property>): 同じ
-///   `normal | <length>` grammar、同じく percentage 非対応。
-///
-/// `#[non_exhaustive]` は [`LengthOrAuto`] と同じ判断 — future variant を
-/// non-breaking で追加できるようにする。
+/// `#[non_exhaustive]` allows future variants without breaking downstream
+/// exhaustive matches.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LengthOrNormal {
-    /// authored length (`2px` / `-0.05em` / etc.) — 両 property とも spec が
-    /// "Values may be negative, but there may be implementation-dependent
-    /// limits." と明記するため、parse 段では sign を制限しない
-    /// ([`margin-*`](LengthOrAuto) と同じ扱い、`padding` / `border-width` の
-    /// non-negative constraint とは異なる)。
+    /// Authored length or percentage. The property's parser enforces its
+    /// grammar and value range.
     Length(Length),
-    /// `normal` keyword。CSS Text 3 §7.1 / §7.2 いずれも "No additional
-    /// spacing is applied. Computes to zero." と定める — 絶対化
-    /// ([`crate::resolve::resolve_length_or_normal`]) は常に
-    /// [`crate::resolve::ComputedLength::ZERO`] に潰す。
+    /// `normal` keyword. Its semantics are property-specific.
     Normal,
 }
 
@@ -1096,6 +1131,289 @@ pub enum RelativeFontSize {
     Smaller,
 }
 
+/// `font-kerning` property values from CSS Fonts Module Level 3.
+/// <https://www.w3.org/TR/css-fonts-3/#font-kerning-prop>
+///
+/// The property is inherited, has initial value `auto`, and its computed value
+/// is the specified keyword. This stores CSSOM data only; it does not change
+/// glyph shaping or painting.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontKerning {
+    /// `auto` — initial value.
+    Auto,
+    /// `normal`.
+    Normal,
+    /// `none`.
+    None,
+}
+
+/// `font-optical-sizing` property keywords from CSS Fonts Module Level 4.
+/// <https://www.w3.org/TR/css-fonts-4/#font-optical-sizing-def>
+///
+/// The property is inherited, has initial value `auto`, and its computed value
+/// is the specified keyword. This stores CSSOM data only; optical-size
+/// selection and glyph shaping remain out of scope.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontOpticalSizing {
+    /// `auto` — initial value.
+    Auto,
+    /// `none`.
+    None,
+}
+
+/// `font-variant-emoji` keywords from CSS Fonts Module Level 4.
+/// <https://www.w3.org/TR/css-fonts-4/#font-variant-emoji-prop>
+///
+/// The property is inherited, has initial value `normal`, and its computed
+/// value is the specified keyword. This stores CSSOM data only; emoji
+/// presentation and glyph selection remain out of scope.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontVariantEmoji {
+    /// `normal` — initial value.
+    Normal,
+    /// `text`.
+    Text,
+    /// `emoji`.
+    Emoji,
+    /// `unicode`.
+    Unicode,
+}
+
+/// `font-language-override` keyword or string from CSS Fonts Module Level 4.
+/// <https://www.w3.org/TR/css-fonts-4/#font-language-override-prop>
+///
+/// The property is inherited, has initial value `normal`, and is stored only
+/// for computed-value/CSSOM exposure. It does not select a language system or
+/// alter glyph shaping.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FontLanguageOverride {
+    /// `normal` — initial value.
+    Normal,
+    /// A quoted language-system string. Trailing spaces are removed during parsing.
+    String(SmolStr),
+}
+
+/// Individual `font-variant-ligatures` keywords from CSS Fonts Module Level 4.
+/// <https://www.w3.org/TR/css-fonts-4/#font-variant-ligatures-prop>
+///
+/// This narrow representation covers the individual values in the pinned
+/// computed-value test. The property's combined component grammar can be
+/// added when a selected case requires it. Values are stored for CSSOM only;
+/// ligature shaping and painting are unchanged.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontVariantLigatures {
+    /// `normal` — initial value.
+    Normal,
+    /// `none`.
+    None,
+    /// `common-ligatures`.
+    CommonLigatures,
+    /// `no-common-ligatures`.
+    NoCommonLigatures,
+    /// `discretionary-ligatures`.
+    DiscretionaryLigatures,
+    /// `no-discretionary-ligatures`.
+    NoDiscretionaryLigatures,
+    /// `historical-ligatures`.
+    HistoricalLigatures,
+    /// `no-historical-ligatures`.
+    NoHistoricalLigatures,
+    /// `contextual`.
+    Contextual,
+    /// `no-contextual`.
+    NoContextual,
+}
+
+/// Individual `font-variant-position` computed keywords from CSS Fonts Module Level 3 §6.5.
+/// <https://www.w3.org/TR/css-fonts-3/#font-variant-position-prop>
+///
+/// This data-only representation preserves the specified keyword for CSSOM.
+/// It does not enable subscript/superscript glyph shaping or synthesis.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontVariantPosition {
+    /// `normal` — initial value.
+    Normal,
+    /// `sub`.
+    Sub,
+    /// `super`.
+    Super,
+}
+
+/// The `font-palette` values exercised by the pinned computed-value case.
+/// CSS Fonts 4 §9.1 <https://drafts.csswg.org/css-fonts/#font-palette-prop>.
+///
+/// Palette selection is retained as CSSOM data only; this type does not select
+/// font palettes or change glyph rendering. `palette-mix()` is outside this
+/// case's supported subset.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FontPaletteValue {
+    /// `normal` — initial value.
+    Normal,
+    /// `light`.
+    Light,
+    /// `dark`.
+    Dark,
+    /// A named dashed palette identifier, such as `--pitchfork`.
+    Palette(SmolStr),
+}
+
+/// `font-variant-numeric` keyword set retained for computed-style exposure.
+/// CSS Fonts Module Level 3 §6.7
+/// <https://www.w3.org/TR/css-fonts-3/#font-variant-numeric-prop>.
+///
+/// Values are preserved as CSSOM data only; this type does not enable OpenType
+/// features or change shaping/rendering.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FontVariantNumeric {
+    /// `lining-nums`.
+    pub lining_nums: bool,
+    /// `oldstyle-nums`.
+    pub oldstyle_nums: bool,
+    /// `proportional-nums`.
+    pub proportional_nums: bool,
+    /// `tabular-nums`.
+    pub tabular_nums: bool,
+    /// `diagonal-fractions`.
+    pub diagonal_fractions: bool,
+    /// `stacked-fractions`.
+    pub stacked_fractions: bool,
+    /// `ordinal`.
+    pub ordinal: bool,
+    /// `slashed-zero`.
+    pub slashed_zero: bool,
+}
+
+impl FontVariantNumeric {
+    /// Initial value: no numeric features enabled (`normal`).
+    pub const fn initial() -> Self {
+        Self {
+            lining_nums: false,
+            oldstyle_nums: false,
+            proportional_nums: false,
+            tabular_nums: false,
+            diagonal_fractions: false,
+            stacked_fractions: false,
+            ordinal: false,
+            slashed_zero: false,
+        }
+    }
+}
+
+/// East Asian text variant used by `font-variant-east-asian`.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontVariantEastAsianVariant {
+    /// `jis78`.
+    Jis78,
+    /// `jis83`.
+    Jis83,
+    /// `jis90`.
+    Jis90,
+    /// `jis04`.
+    Jis04,
+    /// `simplified`.
+    Simplified,
+    /// `traditional`.
+    Traditional,
+}
+
+/// East Asian width value used by `font-variant-east-asian`.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontVariantEastAsianWidth {
+    /// `full-width`.
+    FullWidth,
+    /// `proportional-width`.
+    ProportionalWidth,
+}
+
+/// `font-variant-east-asian` value retained for computed-style exposure.
+/// CSS Fonts Module Level 3 §6.8
+/// <https://www.w3.org/TR/css-fonts-3/#font-variant-east-asian-prop>.
+///
+/// This is CSSOM data only; it does not perform glyph substitution or sizing.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FontVariantEastAsian {
+    /// One East Asian character-form variant, if specified.
+    pub variant: Option<FontVariantEastAsianVariant>,
+    /// One East Asian width form, if specified.
+    pub width: Option<FontVariantEastAsianWidth>,
+    /// Whether the `ruby` value is specified.
+    pub ruby: bool,
+}
+
+impl FontVariantEastAsian {
+    /// Initial value (`normal`).
+    pub const fn initial() -> Self {
+        Self {
+            variant: None,
+            width: None,
+            ruby: false,
+        }
+    }
+}
+
+/// `font-synthesis` shorthand value preserved for computed-style exposure.
+/// CSS Fonts 4 §2.8.5 <https://drafts.csswg.org/css-fonts/#font-synthesis>.
+///
+/// The WPT-driven representation stores the tested synthesis keywords only.
+/// It does not request font synthesis or alter font selection or shaping.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FontSynthesisValue {
+    /// Synthesize bold when enabled.
+    pub weight: bool,
+    /// Synthesize italic/oblique when enabled, or permit oblique-only fallback.
+    pub style: FontSynthesisStyle,
+    /// Synthesize small caps when enabled.
+    pub small_caps: bool,
+    /// Synthesize super/subscript position when enabled.
+    pub position: bool,
+}
+
+/// Style component retained by [`FontSynthesisValue`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontSynthesisStyle {
+    /// Synthesis of italic/oblique is disabled.
+    None,
+    /// The `style` keyword.
+    Auto,
+    /// The pinned case's `oblique-only` keyword.
+    ObliqueOnly,
+}
+
+impl FontSynthesisValue {
+    /// CSS Fonts 4 initial value: `weight style small-caps position`.
+    pub const fn initial() -> Self {
+        Self {
+            weight: true,
+            style: FontSynthesisStyle::Auto,
+            small_caps: true,
+            position: true,
+        }
+    }
+
+    /// The `none` value, with every synthesis component disabled.
+    pub const fn none() -> Self {
+        Self {
+            weight: false,
+            style: FontSynthesisStyle::None,
+            small_caps: false,
+            position: false,
+        }
+    }
+}
+
 /// `font-style` property の value。
 ///
 /// CSS Fonts Module Level 4 §2.4 "Font style: the font-style property"
@@ -1261,20 +1579,23 @@ pub enum FontVariantCaps {
 
 /// `text-transform` property の value。
 ///
-/// CSS Text Module Level 3 §2.1 "Case Transforms: the text-transform
-/// property" <https://www.w3.org/TR/css-text-3/#text-transform-property>。
+/// CSS Text Module Level 4 property definition:
+/// <https://www.w3.org/TR/css-text-4/#propdef-text-transform>。
 ///
 /// propdef (spec verbatim): Value: `none | [capitalize | uppercase |
-/// lowercase] || full-width || full-size-kana`、Initial: `none`、Applies to:
-/// text、Inherited: **yes**、Computed value: "specified keyword"。
+/// lowercase] || full-width || full-size-kana | math-auto`、Initial: `none`、
+/// Applies to: text、Inherited: **yes**、Computed value: "specified keyword"。
 ///
 /// # Scope
 ///
-/// The parser and layout pipeline preserve the optional width transforms and
-/// the case transform as one computed keyword value. `full-width` maps ASCII
-/// characters to their full-width forms; `full-size-kana` uses the CSS small
-/// kana mapping table. Language-specific tailoring is applied by the layout
-/// consumer where the document language is available.
+/// Existing case and width keywords are preserved as computed values.
+/// `full-width` maps ASCII characters to their full-width forms;
+/// `full-size-kana` uses the CSS small kana mapping table, with
+/// language-specific tailoring left to the layout consumer.
+///
+/// `math-auto` is likewise preserved as a standalone computed keyword only;
+/// MathML Core's downstream behavior and any glyph or text transformation are
+/// outside this crate's scope.
 ///
 /// `Default` is intentionally not derived; initialization sites explicitly
 /// choose [`TextTransform::None`] as the initial value.
@@ -1283,6 +1604,8 @@ pub enum FontVariantCaps {
 pub enum TextTransform {
     /// `none` — spec initial value。
     None,
+    /// `math-auto` — a computed keyword; downstream math-text behavior is deferred.
+    MathAuto,
     /// `capitalize` — first typographic letter of each word is titlecased.
     Capitalize,
     /// `uppercase` — all letters are uppercased.
@@ -3114,16 +3437,15 @@ pub enum Direction {
 ///   `vertical-rl` / `vertical-lr` / `sideways-rl` / `sideways-lr` は spec
 ///   grammar どおり **構文としては受理する** (`None` を返さない、CSS 2.1 の
 ///   「受理するが視覚効果は未実装」established pattern — sibling
-///   [`WordBreak`] doc の deprecated `break-word` scope-limited と同じ精神)。ただし
-///   raikiri は縦書きレンダリングパイプラインを持たないため、この 4 keyword の
-///   **computed value はすべて [`HorizontalTb`](Self::HorizontalTb) と同じ表現に
-///   正規化する** — [`resolve_writing_mode`] が実装する。これは spec の
-///   "Computed value: specified value" (= computed 値は specified keyword を
-///   そのまま保持する) からの意図的な divergence であり、spec 解釈の誤りでは
-///   ない — 縦書き非対応という scope cut を正直に表現したもの。
-///   将来 vertical writing-mode レンダリングを実装する際は、この collapse と
-///   [`resolve_writing_mode`] を削除し、spec どおり "specified value" を保持
-///   する computed value へ戻すこと — 将来の縦書き対応時に棚卸しする。
+///   [`WordBreak`] doc の deprecated `break-word` scope-limited と同じ精神)。
+///   CSS の computed keyword は [`crate::computed::ComputedValues::cssom_writing_mode`]
+///   に specified value のまま保持する。一方、vertical renderer は未実装なので
+///   renderer-facing [`crate::computed::ComputedValues::writing_mode`] は
+///   [`resolve_writing_mode`] により [`HorizontalTb`](Self::HorizontalTb) へ
+///   正規化される。この fallback は CSSOM computed value の spec divergence
+///   ではなく、computed keyword と未対応 layout behavior を分離する。
+///   将来 vertical writing-mode rendering を実装する際は renderer-facing fallback
+///   を棚卸しすること。CSSOM computed keyword の保持は引き続き spec どおりにする。
 ///
 /// [`DisplayValue`] / [`TextAlign`] / [`Direction`] と同じ convention で
 /// `Default` を derive しない — 初期化側
@@ -3134,9 +3456,10 @@ pub enum Direction {
 pub enum WritingMode {
     /// `horizontal-tb` — spec initial value。
     HorizontalTb,
-    /// `vertical-rl` — 構文としては受理するが、computed value は
-    /// [`HorizontalTb`](Self::HorizontalTb) に正規化される
-    /// ([`WritingMode`] doc の Non-goal 節参照)。
+    /// `vertical-rl` — accepted CSS computed keyword. The renderer-facing
+    /// [`crate::computed::ComputedValues::writing_mode`] fallback normalizes to
+    /// [`HorizontalTb`](Self::HorizontalTb); CSSOM preserves this variant in
+    /// [`crate::computed::ComputedValues::cssom_writing_mode`].
     VerticalRl,
     /// `vertical-lr` — [`VerticalRl`](Self::VerticalRl) と同じ Non-goal 扱い。
     VerticalLr,
@@ -3312,30 +3635,22 @@ pub enum RubyPosition {
     InterCharacter,
 }
 
-/// [`WritingMode`]'s specified→computed collapse ([`WritingMode`] doc の
-/// Non-goal 節参照)。
+/// `WritingMode`'s renderer-facing fallback normalization ([`WritingMode`] doc's
+/// Non-goal section). This is not the CSS computed keyword: element
+/// [`crate::computed::ComputedValues::cssom_writing_mode`] preserves the
+/// specified value for CSSOM.
 ///
-/// raikiri は縦書きレンダリングパイプラインを実装しないため、5 keyword の
-/// うち [`WritingMode::HorizontalTb`] 以外の 4 つ (`vertical-rl` /
-/// `vertical-lr` / `sideways-rl` / `sideways-lr`) は **常に**
-/// [`WritingMode::HorizontalTb`] と同じ computed value に正規化する。
-/// [`resolve_text_align_match_parent`] / [`resolve_overflow`] とは異なり
-/// **他 field (親の computed 値・同 node の他 property) に一切依存しない** —
-/// 引数の keyword に関わらず戻り値は固定 (`self` すら実質不要だが、他の
-/// `resolve_*` 関数と同じ signature shape を保つため受け取る)。
+/// Since vertical writing-mode rendering is not implemented, the four
+/// non-horizontal keywords are mapped to [`WritingMode::HorizontalTb`] for
+/// renderer-facing [`crate::computed::ComputedValues::writing_mode`] and page
+/// layout. The normalization depends only on this property's keyword; it does
+/// not inspect the parent or other properties.
 ///
-/// # Future work — vertical writing-mode 実装時の棚卸し
+/// # Future work — vertical writing-mode implementation
 ///
-/// 本関数は CSS Writing Modes 4 "Computed value: specified value" からの
-/// 意図的な divergence である。将来 vertical writing を実装する際は、本関数
-/// 自体を削除し、`specified.rs` の
-/// `finalize_collapses_all_non_horizontal_writing_modes` /
-/// `inherit_from_then_finalize_still_collapses_writing_mode`、`page.rs` の
-/// `absolutize_in_page_context_collapses_writing_mode_to_horizontal_tb` /
-/// `KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE` / `WritingMode(VerticalRl)` corpus
-/// sample、`cascade.rs` の `writing_mode_wired_through_cascade_from_inline_style`、
-/// `computed.rs` の `non_initial_parent` fixture + `HorizontalTb` assertion と
-/// lockstep で revert/rewrite すること。
+/// When a vertical renderer is added, reevaluate this renderer-facing fallback
+/// and the existing layout tests. Keep the separate CSSOM computed keyword in
+/// sync with the spec's "Computed value: specified value" rule.
 ///
 /// # 呼び出し元
 ///
@@ -3740,8 +4055,8 @@ pub struct TextDecorationShorthand {
 /// CSS Text Decoration 4
 /// (<https://www.w3.org/TR/css-text-decor-4/#propdef-text-decoration-skip-ink>)。
 /// Value: `auto | none | all`、Initial: `auto`、Inherited: **yes**、
-/// Computed value: specified keyword。
-/// parsing-only ([`PropertyValue::TextDecorationSkipInk`] doc 参照)。
+/// Computed value: specified keyword. This style slice preserves the value but
+/// does not implement skip-ink decoration geometry or painting.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextDecorationSkipInk {
@@ -3761,7 +4076,7 @@ pub enum TextDecorationSkipInk {
 /// Inherited: **yes**、Computed value: specified keyword(s)。
 /// `all` は `start end` と区別する (initial が `start end` であって
 /// `all` ではないため) — 5 variant enum で表現する。
-/// parsing-only ([`PropertyValue::TextDecorationSkipSpaces`] doc 参照)。
+/// The element style preserves the keyword set; decoration painting is out of scope.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextDecorationSkipSpaces {
@@ -3787,8 +4102,10 @@ pub enum TextDecorationSkipSpaces {
 /// or absolute length。
 /// ED grammar は `<line-width>` (`thin`/`medium`/`thick`) も含むが、本実装は
 /// scope 外として drop する (WPT vector に現れない — scope carving)。
-/// `<percentage>` は受理して保持する (同)。
-/// parsing-only ([`PropertyValue::TextDecorationThickness`] doc 参照)。
+/// `<percentage>` は parser が受理するが、この computed-value slice では扱わない。
+/// `Length` は [`crate::specified::SpecifiedValues`] に staging され、element 経路で
+/// [`crate::resolve::resolve_text_decoration_thickness`] が絶対化する。
+/// `ch` などの font-metric measurement はこの property では追加しない。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TextDecorationThickness {
@@ -3856,7 +4173,8 @@ pub enum TextEmphasisHEdge {
 /// Value: `[ over | under ] && [ right | left ]?` (+ `auto`)、
 /// Initial: `over right`、Inherited: **yes**。vertical 必須・horizontal
 /// 任意・順序自由 (`right under` valid、`left over right` invalid)。
-/// parsing-only ([`PropertyValue::TextEmphasisPosition`] doc 参照)。
+/// element cascade stages this inherited keyword value as computed-equivalent;
+/// emphasis placement and painting remain out of scope.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextEmphasisPosition {
@@ -3871,6 +4189,74 @@ pub enum TextEmphasisPosition {
     },
 }
 
+/// Fill component of `text-emphasis-style`.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextEmphasisFill {
+    /// The filled mark (the initial fill).
+    Filled,
+    /// The open mark.
+    Open,
+}
+
+/// Shape component of `text-emphasis-style`.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextEmphasisShape {
+    /// `dot`.
+    Dot,
+    /// `circle` (the initial shape).
+    Circle,
+    /// `double-circle`.
+    DoubleCircle,
+    /// `triangle`.
+    Triangle,
+    /// `sesame`.
+    Sesame,
+}
+
+/// Parsed and computed `text-emphasis-style` value.
+///
+/// The value is inherited and has initial value `none`. Shape/fill components
+/// are retained so computed style can serialize the canonical keyword form;
+/// emphasis painting is out of scope. [`Self::DefaultShape`] is a transient
+/// specified-value marker and is resolved before it reaches computed style.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TextEmphasisStyle {
+    /// `none`.
+    None,
+    /// A mark with its fill and shape. The initial fill and shape are
+    /// [`TextEmphasisFill::Filled`] and [`TextEmphasisShape::Circle`].
+    Shape {
+        /// Filled or open mark.
+        fill: TextEmphasisFill,
+        /// Mark shape.
+        shape: TextEmphasisShape,
+    },
+    /// A fill-only specified value whose shape depends on writing mode.
+    ///
+    /// This is resolved to [`Self::Shape`] before computed style is stored.
+    DefaultShape {
+        /// Filled or open mark.
+        fill: TextEmphasisFill,
+    },
+    /// A custom string mark.
+    String(SmolStr),
+}
+
+/// `text-emphasis` shorthand components before cascade expansion.
+///
+/// Omitted components use initial values: `none` for style and `currentColor`
+/// for color. The rule layer expands this carrier to the two longhands.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TextEmphasisShorthand {
+    /// `text-emphasis-style` component.
+    pub style: TextEmphasisStyle,
+    /// `text-emphasis-color` component.
+    pub color: TextDecorationColor,
+}
+
 /// `text-underline-position: auto | [ from-font | under ] || [ left | right ]` の value.
 ///
 /// CSS Text Decoration 4 ED §2.7 (<https://drafts.csswg.org/css-text-decor-4/#text-underline-position-property>)。
@@ -3880,7 +4266,8 @@ pub enum TextEmphasisPosition {
 /// `right` も排他 (`left right` invalid)、`auto` は単独
 /// (`auto under` invalid) — [`TextDecorationLine`] と同じ bool-flag +
 /// parser-enforcement 表現。
-/// parsing-only ([`PropertyValue::TextUnderlinePosition`] doc 参照)。
+/// element cascade preserves this inherited keyword set as the computed value;
+/// underline placement remains out of scope.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TextUnderlinePosition {
     /// `from-font` (`under` と排他)。
@@ -4786,12 +5173,11 @@ pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue
 /// しない — 初期化側 ([`crate::specified::SpecifiedValues::initial`] /
 /// [`crate::computed::ComputedValues::initial`]) が [`WhiteSpace::Normal`]
 /// を直接指定する。
-/// `text-wrap-mode` value (CSS Text 4 §5.1), carried as the `text-wrap`
+/// `text-wrap-mode` value (CSS Text 4 §5.1), also used by the `text-wrap`
 /// shorthand's wrapping component.
 ///
-/// Only the single-keyword `wrap | nowrap` subset is parsed; the full
-/// `text-wrap` shorthand (wrap-style `auto | balance | pretty | stable`)
-/// is deferred. Inherited, initial `wrap`, computed value = specified
+/// The `text-wrap` shorthand is expanded into separate mode and style values
+/// before cascade. Inherited, initial `wrap`, computed value = specified
 /// keyword. `nowrap` suppresses soft wrapping in raikiri-dom preshape and
 /// realign.
 #[non_exhaustive]
@@ -4801,6 +5187,31 @@ pub enum TextWrapMode {
     Wrap,
     /// `nowrap`.
     Nowrap,
+}
+
+/// CSS Text 4 §5.4 `text-wrap-style` computed keyword (initial `auto`, inherited).
+/// <https://drafts.csswg.org/css-text-4/#text-wrap-style>
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextWrapStyle {
+    /// `auto` — spec initial value.
+    Auto,
+    /// `balance`.
+    Balance,
+    /// `pretty`.
+    Pretty,
+    /// `stable`.
+    Stable,
+}
+
+/// The normalized components of the CSS Text 4 `text-wrap` shorthand.
+/// Omitted components are stored with their initial values before cascade.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextWrapShorthand {
+    /// `text-wrap-mode` component.
+    pub mode: TextWrapMode,
+    /// `text-wrap-style` component.
+    pub style: TextWrapStyle,
 }
 
 /// `white-space` property value (CSS Text 3 §4).
@@ -4823,6 +5234,33 @@ pub enum WhiteSpace {
     /// `pre-line`。
     PreLine,
     /// `break-spaces`。
+    BreakSpaces,
+}
+
+/// `white-space-collapse` property value.
+///
+/// CSS Text Module Level 4 property definition:
+/// <https://www.w3.org/TR/css-text-4/#propdef-white-space-collapse>.
+/// The six values are `collapse | discard | preserve | preserve-breaks |
+/// preserve-spaces | break-spaces`; initial value is `collapse`, the property
+/// is inherited, and its computed value is the specified keyword.
+///
+/// This type carries the value through style computation only. It does not
+/// perform whitespace transformation or line layout.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WhiteSpaceCollapse {
+    /// `collapse` — spec initial value.
+    Collapse,
+    /// `discard`.
+    Discard,
+    /// `preserve`.
+    Preserve,
+    /// `preserve-breaks`.
+    PreserveBreaks,
+    /// `preserve-spaces`.
+    PreserveSpaces,
+    /// `break-spaces`.
     BreakSpaces,
 }
 
@@ -4900,6 +5338,64 @@ pub enum Hyphens {
     Auto,
 }
 
+/// The specified/computed value of CSS Text 4 `hyphenate-character`.
+///
+/// Grammar: `auto | <string>`. The property is inherited and initially `auto`.
+/// A string is stored as decoded Unicode text; choosing or inserting the string
+/// at a hyphenation opportunity remains a text-layout consumer responsibility.
+/// <https://drafts.csswg.org/css-text-4/#propdef-hyphenate-character>
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HyphenateCharacter {
+    /// The UA-selected character for hyphenation opportunities.
+    Auto,
+    /// An explicit CSS string, decoded by the CSS parser.
+    String(SmolStr),
+}
+
+/// One component of CSS Text 4 `hyphenate-limit-chars`.
+///
+/// A direct `<integer>` token is stored as a non-negative integer. A math
+/// expression that computes to a number is rounded to the nearest integer
+/// when an integer is required; exact half values round toward positive
+/// infinity, per CSS Values 4. This value model does not implement
+/// hyphenation or text breaking.
+/// <https://drafts.csswg.org/css-text-4/#propdef-hyphenate-limit-chars>
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HyphenateLimitCharsValue {
+    /// UA-selected limit.
+    Auto,
+    /// A computed, non-negative integer.
+    Integer(u32),
+}
+
+/// The expanded computed value of CSS Text 4 `hyphenate-limit-chars`.
+///
+/// The property is inherited and initially `auto`. It computes to three
+/// components: an omitted second component becomes `auto`, and an omitted
+/// third component copies the second component. The style layer only carries
+/// these values; line breaking and hyphenation remain consumer behavior.
+/// <https://drafts.csswg.org/css-text-4/#propdef-hyphenate-limit-chars>
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HyphenateLimitChars {
+    /// Maximum hyphenated word length.
+    pub total: HyphenateLimitCharsValue,
+    /// Minimum characters before a hyphenation point.
+    pub before: HyphenateLimitCharsValue,
+    /// Minimum characters after a hyphenation point.
+    pub after: HyphenateLimitCharsValue,
+}
+
+impl HyphenateLimitChars {
+    /// CSS initial value: all three computed components are `auto`.
+    pub const INITIAL: Self = Self {
+        total: HyphenateLimitCharsValue::Auto,
+        before: HyphenateLimitCharsValue::Auto,
+        after: HyphenateLimitCharsValue::Auto,
+    };
+}
+
 /// `tab-size` property の value。
 ///
 /// CSS Text Module Level 3 §4.2 "Tab Character Size: the tab-size property"
@@ -4974,6 +5470,25 @@ pub enum TextJustify {
     Distribute,
 }
 
+/// CSS Text 4 `word-space-transform` computed value.
+///
+/// This preserves the specified keyword combination. It does not transform
+/// spaces in text layout or rendering.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum WordSpaceTransform {
+    /// `none` — the initial value.
+    None,
+    /// `space`.
+    Space,
+    /// `ideographic-space`.
+    IdeographicSpace,
+    /// `space auto-phrase`.
+    SpaceAutoPhrase,
+    /// `ideographic-space auto-phrase`.
+    IdeographicSpaceAutoPhrase,
+}
+
 /// `text-autospace` property value (CSS Text Module Level 4).
 ///
 /// The keyword forms are kept distinct because `auto` and `normal` are
@@ -5010,6 +5525,43 @@ pub enum TextAutospaceMode {
     Insert,
     /// Replace an existing separator at matching boundaries.
     Replace,
+}
+
+/// `text-spacing-trim` property values from CSS Text 4.
+/// <https://drafts.csswg.org/css-text-4/#text-spacing-trim-property>
+///
+/// The specified keyword is retained as the computed value. This is data-only:
+/// it does not enable text-spacing or punctuation-trimming behavior in layout.
+/// The property is inherited and its initial value is `normal`.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TextSpacingTrim {
+    /// `auto`.
+    Auto,
+    /// `normal` — initial value.
+    Normal,
+    /// `space-all`.
+    SpaceAll,
+    /// `trim-both`.
+    TrimBoth,
+    /// `trim-all`.
+    TrimAll,
+    /// `trim-start`.
+    TrimStart,
+    /// `space-first`.
+    SpaceFirst,
+}
+
+/// The normalized longhand values of the CSS Text 4 `text-spacing` shorthand.
+///
+/// The shorthand expands to [`TextSpacingTrim`] and [`TextAutospace`]. Omitted
+/// components use their longhand initial value before cascade.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextSpacingShorthand {
+    /// `text-spacing-trim` component.
+    pub trim: TextSpacingTrim,
+    /// `text-autospace` component.
+    pub autospace: TextAutospace,
 }
 
 /// `text-align-all` property の value (CSS Text 3 §6.1 longhand).
@@ -5256,26 +5808,46 @@ pub enum TextShadowColor {
 ///
 /// blur-radius (3 番目の length) は non-negative — CSS Backgrounds 3 §6.1
 /// "Drop Shadows: the box-shadow property" の `<shadow>` syntax (box-shadow /
-/// text-shadow 共通) が blur-radius / spread
-/// distance に "Negative values are invalid" を課す。offset-x / offset-y
-/// (1・2 番目の length) にこの制約は無い (負値可、box-shadow の offset と
-/// 同型)。parse 側の実装は [`parse_text_shadow_lengths`] 参照。
+/// text-shadow 共通) が blur-radius / spread distance に "Negative values
+/// are invalid" を課す。offset-x / offset-y (1・2 番目の length) にこの制約は
+/// 無い (負値可、box-shadow の offset と同型)。plain negative length は parse 時に
+/// reject し、calc の negative computed result は `0px` に clamp する。
+/// text-shadow parser path は [`crate::property::parse`] を参照。
 ///
 /// # `#[non_exhaustive]`
 ///
 /// future field (例: box-shadow 導入時に共有する `spread`/`inset` 相当の
 /// 拡張余地) の non-breaking 追加のため — sibling [`Border`] と同 pattern。
+/// A `<length>` used by `text-shadow`, with a mixed `calc()` kept until
+/// computed font-size resolution. The parser rejects percentages and retains
+/// only absolute-pixel and `em` terms.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TextShadowLength {
+    /// A plain authored length.
+    Length(Length),
+    /// A `calc()` with an absolute-pixel component and an `em` coefficient.
+    Calc {
+        /// Absolute-pixel component.
+        px: f32,
+        /// `em` component resolved against the element's computed font size.
+        em: f32,
+    },
+}
+
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextShadowItem {
     /// `offset-x` — `<length>` (percentage 不可、CSS Text Decoration Module
     /// Level 3 §4 "Percentages: N/A")。負値可。
-    pub offset_x: Length,
+    pub offset_x: TextShadowLength,
     /// `offset-y` — [`Self::offset_x`] と同じ grammar。
-    pub offset_y: Length,
-    /// `blur-radius` — `<length [0,∞]>`。省略時 `Length::Px(0.0)` (上記
-    /// doc 参照)。
-    pub blur_radius: Length,
+    pub offset_y: TextShadowLength,
+    /// `blur-radius` — `<length [0,∞]>`。省略時
+    /// [`TextShadowLength::Length`] with `Length::Px(0.0)` (上記
+    /// doc 参照)。A negative calculated result resolves to `0px`; a literal
+    /// negative length remains invalid.
+    pub blur_radius: TextShadowLength,
     /// `<color>` 成分 — 省略時は [`TextShadowColor::CurrentColor`] (上記
     /// doc 参照)。
     pub color: TextShadowColor,
@@ -6693,7 +7265,7 @@ pub enum FilterFunction {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextIndentValue {
     /// `<length-percentage>` 成分。
-    pub length: Length,
+    pub length: TextIndentLength,
     /// `hanging` keyword の有無。
     pub hanging: bool,
     /// `each-line` keyword の有無。
@@ -7016,14 +7588,14 @@ pub enum PropertyValue {
     ///
     /// - **block axis** ([`PaddingBlock`](Self::PaddingBlock) 経由の
     ///   `padding-block-start`/`-end` → `padding-top`/`padding-bottom`):
-    ///   raikiri は縦書きレンダリングパイプラインを実装しないため computed
-    ///   writing-mode は常に [`WritingMode::HorizontalTb`] に潰れる
+    ///   raikiri は縦書きレンダリングパイプラインを実装しないため renderer-facing
+    ///   writing-mode fallback は常に [`WritingMode::HorizontalTb`] となる
     ///   ([`resolve_writing_mode`] doc の Non-goal 節)。`horizontal-tb` の下
     ///   では block axis は常に vertical (block-start = top) であり、
     ///   `direction` は block axis の写像に一切関与しない (spec 上も
     ///   `horizontal-tb` + 任意の `direction` で block-start は常に top)。
     ///   したがってこちらは **近似ではなく厳密** — raikiri の scope
-    ///   (computed writing-mode が常に `horizontal-tb`) の下では spec と
+    ///   (renderer-facing writing-mode が常に `horizontal-tb`) の下では spec と
     ///   完全に一致する。
     /// - **inline axis** (本 variant 自身 / `padding-inline-start`/`-end` →
     ///   `padding-left`/`padding-right`): 上記に加えて **`direction: ltr`
@@ -7406,11 +7978,11 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     FontStyle(FontStyle),
-    /// `text-transform: none | capitalize | uppercase | lowercase` —
-    /// **inherited**、initial: [`TextTransform::None`] (CSS Text Module
-    /// Level 3 §2.1 [`TextTransform`] doc 参照)。computed value = specified
-    /// keyword ([`TextTransform`] doc の Scope carving 節参照、`full-width`
-    /// / `full-size-kana` は未実装)。
+    /// `text-transform: none | [capitalize | uppercase | lowercase] ||
+    /// full-width || full-size-kana | math-auto` — **inherited**, initial:
+    /// [`TextTransform::None`] (CSS Text 4 [`TextTransform`] doc reference).
+    /// Computed value = specified keyword. `math-auto` is a keyword only;
+    /// downstream math-text behavior is outside this crate's scope.
     /// (末尾に追加 — 既存 variant の discriminant を
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
@@ -7448,33 +8020,25 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     OverflowWrap(OverflowWrap),
-    /// `letter-spacing: normal | <length>` — **inherited**、initial:
-    /// [`LengthOrNormal::Normal`] (CSS Text 3 §7.2 "Tracking: the
-    /// letter-spacing property"
-    /// <https://www.w3.org/TR/css-text-3/#letter-spacing-property>).
-    /// computed value: an absolute length (`normal` computes to zero —
-    /// [`LengthOrNormal`] doc 参照。[`LineHeight::Normal`] とは異なり、
-    /// `letter-spacing: normal` は font metrics に依存せず常に `0` へ絶対化
-    /// できるため、computed 層で keyword を保持する必要が無い)。
-    ///
-    /// **Non-goal**: §7.2 の "For legacy reasons, a computed letter-spacing
-    /// of zero yields a resolved value (`getComputedStyle()` return value)
-    /// of `normal`." は CSSOM の resolved-value serialization 規則であり、
-    /// この crate に CSSOM surface が無いため対象外。
+    /// `letter-spacing: normal | <length-percentage>` — **inherited**、
+    /// initial: [`LetterSpacingValue::Normal`]. The computed representation
+    /// retains percentages and mixed calc terms; `normal` resolves to zero.
+    /// The WPT CSSOM adapter serializes a zero computed value as `normal`.
     /// (末尾に追加 — 既存 variant の discriminant を
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
-    LetterSpacing(LengthOrNormal),
-    /// `word-spacing: normal | <length>` — **inherited**、initial:
-    /// [`LengthOrNormal::Normal`] (CSS Text 3 §7.1 "Word Spacing: the
-    /// word-spacing property"
-    /// <https://www.w3.org/TR/css-text-3/#word-spacing-property>).
-    /// computed value: an absolute length ([`Self::LetterSpacing`] doc の
-    /// "computes to zero" 節と同じ扱い)。
+    LetterSpacing(LetterSpacingValue),
+    /// `word-spacing: normal | <length-percentage>` — **inherited**、initial:
+    /// [`WordSpacingValue::Normal`] (CSS Text 4 §8.1 "Word Spacing: the
+    /// word-spacing property" <https://drafts.csswg.org/css-text-4/#propdef-word-spacing>).
+    /// Computed value: an absolute length and/or percentage; the CSSOM form is
+    /// retained in [`crate::computed::ComputedValues::word_spacing_computed`] while the
+    /// existing [`crate::computed::ComputedValues::word_spacing`] remains the
+    /// renderer/layout fallback.
     /// (末尾に追加 — 既存 variant の discriminant を
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
-    WordSpacing(LengthOrNormal),
+    WordSpacing(WordSpacingValue),
     /// `break-before: auto | avoid | avoid-page | page` (legacy shorthand
     /// `page-break-before`, [`BreakBetween`] doc の「legacy shorthand」節
     /// 参照) — **non-inherited**、initial: [`BreakBetween::Auto`] (CSS
@@ -7529,8 +8093,23 @@ pub enum PropertyValue {
     /// shift させないための配置、[`PropertyKey`] doc の「宣言順は load-bearing」
     /// 節参照。1:1 disjoint な新 field なので配置は自由 — 同節末尾の判断規則)
     WhiteSpace(WhiteSpace),
-    /// `text-wrap: wrap | nowrap` (subset — see [`TextWrapMode`] doc).
+    /// `white-space-collapse: collapse | discard | preserve | preserve-breaks |
+    /// preserve-spaces | break-spaces` — inherited, initial:
+    /// [`WhiteSpaceCollapse::Collapse`], computed value = specified keyword
+    /// (CSS Text 4 property definition:
+    /// <https://www.w3.org/TR/css-text-4/#propdef-white-space-collapse>).
+    /// This carries the cascade value only; text processing is outside this
+    /// crate's scope.
+    WhiteSpaceCollapse(WhiteSpaceCollapse),
+    /// CSS Text 4 `text-wrap-mode: wrap | nowrap` longhand value. The `text-wrap`
+    /// shorthand expands to this value and [`PropertyValue::TextWrapStyle`].
     TextWrap(TextWrapMode),
+    /// CSS Text 4 `text-wrap` shorthand, expanded into its two longhands before
+    /// cascade.
+    TextWrapShorthand(TextWrapShorthand),
+    /// CSS Text 4 `text-wrap-style` computed keyword; no wrapping behavior is
+    /// attached to this value in the current style slice.
+    TextWrapStyle(TextWrapStyle),
     /// `flex-direction: row | row-reverse | column | column-reverse` —
     /// non-inherited、initial: [`FlexDirectionValue::Row`]
     /// ([`FlexDirectionValue`] doc 参照)。
@@ -8023,21 +8602,22 @@ pub enum PropertyValue {
     Font(FontShorthand),
     /// `text-decoration-skip-ink` — **inherited**、initial:
     /// [`TextDecorationSkipInk::Auto`] ([`TextDecorationSkipInk`] doc 参照)。
-    /// parsing-only: cascade は winner を staging field に載せず drop する
-    /// (E/F/G fa04ac3 の `TextCombineUpright` 等と同 pattern —
-    /// [`crate::cascade::apply_value`] の同名 no-op arm 参照)。
+    /// The element cascade preserves this keyword in the staging and computed
+    /// values. No skip-ink decoration geometry or painting is implemented.
     /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
     TextDecorationSkipInk(TextDecorationSkipInk),
     /// `text-decoration-skip-spaces` — **inherited**、initial は `start end`
-    /// ([`TextDecorationSkipSpaces::StartEnd`])。parsing-only (同上)。
+    /// ([`TextDecorationSkipSpaces::StartEnd`]). The element cascade carries
+    /// this inherited keyword set into computed style; decoration painting is
+    /// out of scope.
     /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
     TextDecorationSkipSpaces(TextDecorationSkipSpaces),
     /// `text-decoration-thickness` — **non-inherited**、initial:
     /// [`TextDecorationThickness::Auto`] ([`TextDecorationThickness`] doc
-    /// 参照)。parsing-only (同上 — `<length-percentage>` を運ぶが phase 3
-    /// の絶対化対象にはしない。`@page` 経路の
-    /// [`crate::page`] の `absolutize_in_page_context` の同名 arm だけが
-    /// length 成分を absolutize する)。
+    /// 参照)。element 経路は [`crate::specified::SpecifiedValues`] へ staging
+    /// し、[`crate::resolve::resolve_text_decoration_thickness`] で length を
+    /// computed CSS px へ絶対化する。`@page` 経路は
+    /// [`crate::page`] の `absolutize_in_page_context` で個別に絶対化する。
     /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
     TextDecorationThickness(TextDecorationThickness),
     /// `text-decoration-inset` — **non-inherited**、initial: `0`
@@ -8047,11 +8627,14 @@ pub enum PropertyValue {
     /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
     TextDecorationInset(TextDecorationInset),
     /// `text-emphasis-position` — **inherited**、initial: `over right`
-    /// (ED)。parsing-only (同上)。
+    /// (ED)。element cascade stages this computed-equivalent keyword value in
+    /// [`crate::specified::SpecifiedValues`]; emphasis placement is out of scope.
     /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
     TextEmphasisPosition(TextEmphasisPosition),
     /// `text-underline-position` — **inherited**、initial:
-    /// [`TextUnderlinePosition::AUTO`]。parsing-only (同上)。
+    /// [`TextUnderlinePosition::AUTO`]。element cascade stages this
+    /// computed-equivalent keyword set in [`crate::specified::SpecifiedValues`].
+    /// Underline placement is out of scope.
     /// (末尾に追加 — 配置理由は [`Self::TableLayout`] と同じ)
     TextUnderlinePosition(TextUnderlinePosition),
     /// `page: auto | <custom-ident>` — **non-inherited**、initial:
@@ -8074,9 +8657,67 @@ pub enum PropertyValue {
     /// `text-underline-offset` — inherited, initial: `auto` (CSS Text
     /// Decoration 4 §2.8). Lengths are absolutized at the declaring element;
     /// percentages stay relative so they scale with the font as they inherit.
-    TextUnderlineOffset(LengthOrAuto),
+    TextUnderlineOffset(TextUnderlineOffset),
     /// `text-autospace` — inherited, initial: `normal` (CSS Text 4).
     TextAutospace(TextAutospace),
+    /// `hyphenate-character` — inherited, initial: `auto` (CSS Text 4).
+    /// The style value retains the specified keyword or decoded string; it
+    /// does not perform hyphenation.
+    /// Appended to preserve existing variant discriminants.
+    HyphenateCharacter(HyphenateCharacter),
+    /// `hyphenate-limit-chars` — inherited, initial `auto` (CSS Text 4).
+    /// The parser expands one-to-three authored components to the three
+    /// computed components. Math expressions are rounded to an integer;
+    /// direct fractional number tokens are invalid. No hyphenation behavior
+    /// is implemented here.
+    HyphenateLimitChars(HyphenateLimitChars),
+    /// `text-spacing-trim` — inherited, initial `normal` (CSS Text 4).
+    /// The computed value is the specified keyword; this value is data-only
+    /// and does not enable layout or rendering behavior.
+    TextSpacingTrim(TextSpacingTrim),
+    /// CSS Text 4 `text-spacing` shorthand; expanded into its two longhands.
+    TextSpacingShorthand(TextSpacingShorthand),
+    /// CSS Text 4 `word-space-transform` — inherited, initial `none`.
+    /// The value is preserved without adding text transformation behavior.
+    /// Appended to preserve existing variant discriminants.
+    WordSpaceTransform(WordSpaceTransform),
+    /// `text-emphasis-style` — inherited, initial `none` (CSS Text Decoration 4).
+    /// Shape/fill and string values are preserved as computed data; emphasis
+    /// painting is out of scope. Appended to preserve existing variant tags.
+    TextEmphasisStyle(TextEmphasisStyle),
+    /// `text-emphasis-color` — inherited, initial `currentColor`.
+    /// Appended to preserve existing variant tags.
+    TextEmphasisColor(TextDecorationColor),
+    /// `text-emphasis` shorthand, expanded into style and color longhands.
+    /// Appended to preserve existing variant tags.
+    TextEmphasis(TextEmphasisShorthand),
+    /// `font-kerning: auto | normal | none` — inherited, initial `auto`.
+    /// The computed value is the specified keyword; this value is data-only
+    /// and does not enable shaping or painting behavior.
+    FontKerning(FontKerning),
+    /// `font-optical-sizing: auto | none` — inherited, initial `auto`.
+    /// The computed value is the specified keyword; no font selection or
+    /// shaping behavior is enabled by this data-only value.
+    FontOpticalSizing(FontOpticalSizing),
+    /// `font-variant-emoji: normal | text | emoji | unicode` — inherited, initial `normal`.
+    /// This data-only value does not alter emoji presentation or glyph selection.
+    FontVariantEmoji(FontVariantEmoji),
+    /// `font-language-override: normal | <string>` — inherited, initial `normal`.
+    /// This data-only value does not select a language system or alter shaping.
+    FontLanguageOverride(FontLanguageOverride),
+    /// An individual `font-variant-ligatures` keyword, inherited with initial `normal`.
+    /// This data-only value does not change ligature shaping or painting.
+    FontVariantLigatures(FontVariantLigatures),
+    /// `font-synthesis` tested keyword set; data-only, with no synthesis behavior.
+    FontSynthesis(FontSynthesisValue),
+    /// `font-variant-position` keyword; data-only, with no glyph shaping or synthesis.
+    FontVariantPosition(FontVariantPosition),
+    /// `font-palette` keyword or dashed identifier; CSSOM data only.
+    FontPalette(FontPaletteValue),
+    /// `font-variant-numeric` keyword set; data only, with no shaping behavior.
+    FontVariantNumeric(FontVariantNumeric),
+    /// `font-variant-east-asian` value; data only, with no glyph substitution.
+    FontVariantEastAsian(FontVariantEastAsian),
 }
 
 /// Property key (cascade で "同一 property を勝ち取る" ための discriminant)。
@@ -8260,8 +8901,8 @@ pub enum PropertyKey {
     // no per-variant docs per crate convention). 末尾配置の理由は
     // PropertyValue::FontStyle の doc 参照。
     FontStyle,
-    // text-transform (CSS Text Module Level 3 §2.1、semantics on the
-    // matching PropertyValue::TextTransform variant; sibling PropertyKey
+    // text-transform (CSS Text 4、semantics on the matching
+    // PropertyValue::TextTransform variant; sibling PropertyKey
     // variants carry no per-variant docs per crate convention). 末尾配置の
     // 理由は PropertyValue::TextTransform の doc 参照。
     TextTransform,
@@ -8313,7 +8954,7 @@ pub enum PropertyKey {
     // no per-variant docs per crate convention). 末尾配置の理由は
     // PropertyValue::WhiteSpace の doc 参照。
     WhiteSpace,
-    // text-wrap (CSS Text 4 §5、semantics on PropertyValue::TextWrap).
+    // text-wrap/text-wrap-mode key; the shorthand expands to both longhands.
     TextWrap,
     // flex-* container/item longhands + `flex` shorthand (CSS Flexible Box
     // Layout Module Level 1 §5.1/§5.2/§7.2.1/§7.2.2/§7.2.3/§7.1, semantics
@@ -8536,7 +9177,7 @@ pub enum PropertyKey {
     // PropertyValue::TextDecorationSkipInk variant; sibling PropertyKey
     // variants carry no per-variant docs per crate convention). 末尾配置の
     // 理由は background-repeat 等と同節参照 (1:1 disjoint な新 field…
-    // parsing-only のため field 自体は無いが discriminant 順は同様に自由)。
+    // element computed state is stored in `ComputedValues::text_decoration_skip_ink`.
     TextDecorationSkipInk,
     // text-decoration-skip-spaces (ED §2.10.3、同上)。
     TextDecorationSkipSpaces,
@@ -8571,6 +9212,46 @@ pub enum PropertyKey {
     HangingPunctuation,
     // CSS Text 4 text-autospace; appended to preserve existing key slots.
     TextAutospace,
+    // CSS Text 4 white-space-collapse; appended to preserve existing key slots.
+    WhiteSpaceCollapse,
+    // CSS Text 4 text-wrap-style; appended to preserve existing key slots.
+    TextWrapStyle,
+    // CSS Text 4 hyphenate-character; appended to preserve existing key slots.
+    HyphenateCharacter,
+    // CSS Text 4 hyphenate-limit-chars; appended to preserve existing key slots.
+    HyphenateLimitChars,
+    // CSS Text 4 text-spacing-trim; appended to preserve existing key slots.
+    TextSpacingTrim,
+    // CSS Text 4 text-spacing shorthand; appended to preserve existing key slots.
+    TextSpacing,
+    // CSS Text 4 word-space-transform; appended to preserve existing key slots.
+    WordSpaceTransform,
+    // CSS Text Decoration 4 text-emphasis-style; appended to preserve key slots.
+    TextEmphasisStyle,
+    // CSS Text Decoration 4 text-emphasis-color; appended to preserve key slots.
+    TextEmphasisColor,
+    // CSS Text Decoration 3 text-emphasis shorthand; appended to preserve key slots.
+    TextEmphasis,
+    // CSS Fonts 3 font-kerning; appended to preserve existing key slots.
+    FontKerning,
+    // CSS Fonts 4 font-optical-sizing; appended to preserve existing key slots.
+    FontOpticalSizing,
+    // CSS Fonts 4 font-variant-emoji; appended to preserve existing key slots.
+    FontVariantEmoji,
+    // CSS Fonts 4 font-language-override; appended to preserve existing key slots.
+    FontLanguageOverride,
+    // CSS Fonts 4 font-variant-ligatures; appended to preserve existing key slots.
+    FontVariantLigatures,
+    // CSS Fonts 4 font-synthesis; appended to preserve existing key slots.
+    FontSynthesis,
+    // CSS Fonts 3 font-variant-position; appended to preserve existing key slots.
+    FontVariantPosition,
+    // CSS Fonts 4 font-palette; appended to preserve existing key slots.
+    FontPalette,
+    // CSS Fonts 3 font-variant-numeric; appended to preserve existing key slots.
+    FontVariantNumeric,
+    // CSS Fonts 3 font-variant-east-asian; appended to preserve existing key slots.
+    FontVariantEastAsian,
 }
 
 impl PropertyValue {
@@ -8683,7 +9364,10 @@ impl PropertyValue {
             PropertyValue::Float(_) => PropertyKey::Float,
             PropertyValue::Clear(_) => PropertyKey::Clear,
             PropertyValue::WhiteSpace(_) => PropertyKey::WhiteSpace,
+            PropertyValue::WhiteSpaceCollapse(_) => PropertyKey::WhiteSpaceCollapse,
             PropertyValue::TextWrap(_) => PropertyKey::TextWrap,
+            PropertyValue::TextWrapShorthand(_) => PropertyKey::TextWrap,
+            PropertyValue::TextWrapStyle(_) => PropertyKey::TextWrapStyle,
             PropertyValue::FlexDirection(_) => PropertyKey::FlexDirection,
             PropertyValue::FlexWrap(_) => PropertyKey::FlexWrap,
             PropertyValue::FlexGrow(_) => PropertyKey::FlexGrow,
@@ -8778,6 +9462,24 @@ impl PropertyValue {
             PropertyValue::ColumnCount(_) => PropertyKey::ColumnCount,
             PropertyValue::ColumnWidth(_) => PropertyKey::ColumnWidth,
             PropertyValue::Columns(_) => PropertyKey::Columns,
+            PropertyValue::HyphenateCharacter(_) => PropertyKey::HyphenateCharacter,
+            PropertyValue::HyphenateLimitChars(_) => PropertyKey::HyphenateLimitChars,
+            PropertyValue::TextSpacingTrim(_) => PropertyKey::TextSpacingTrim,
+            PropertyValue::TextSpacingShorthand(_) => PropertyKey::TextSpacing,
+            PropertyValue::WordSpaceTransform(_) => PropertyKey::WordSpaceTransform,
+            PropertyValue::TextEmphasisStyle(_) => PropertyKey::TextEmphasisStyle,
+            PropertyValue::TextEmphasisColor(_) => PropertyKey::TextEmphasisColor,
+            PropertyValue::TextEmphasis(_) => PropertyKey::TextEmphasis,
+            PropertyValue::FontKerning(_) => PropertyKey::FontKerning,
+            PropertyValue::FontOpticalSizing(_) => PropertyKey::FontOpticalSizing,
+            PropertyValue::FontVariantEmoji(_) => PropertyKey::FontVariantEmoji,
+            PropertyValue::FontLanguageOverride(_) => PropertyKey::FontLanguageOverride,
+            PropertyValue::FontVariantLigatures(_) => PropertyKey::FontVariantLigatures,
+            PropertyValue::FontSynthesis(_) => PropertyKey::FontSynthesis,
+            PropertyValue::FontVariantPosition(_) => PropertyKey::FontVariantPosition,
+            PropertyValue::FontPalette(_) => PropertyKey::FontPalette,
+            PropertyValue::FontVariantNumeric(_) => PropertyKey::FontVariantNumeric,
+            PropertyValue::FontVariantEastAsian(_) => PropertyKey::FontVariantEastAsian,
         }
     }
 }
@@ -9768,6 +10470,9 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "text-align" => PropertyKey::TextAlign,
         "hanging-punctuation" => PropertyKey::HangingPunctuation,
         "text-autospace" => PropertyKey::TextAutospace,
+        "text-spacing-trim" => PropertyKey::TextSpacingTrim,
+        "text-spacing" => PropertyKey::TextSpacing,
+        "word-space-transform" => PropertyKey::WordSpaceTransform,
         "text-indent" => PropertyKey::TextIndent,
         "padding-top" => PropertyKey::PaddingTop,
         "padding-right" => PropertyKey::PaddingRight,
@@ -9833,6 +10538,16 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "text-decoration" => PropertyKey::TextDecoration,
         "vertical-align" => PropertyKey::VerticalAlign,
         "font-style" => PropertyKey::FontStyle,
+        "font-kerning" => PropertyKey::FontKerning,
+        "font-optical-sizing" => PropertyKey::FontOpticalSizing,
+        "font-variant-emoji" => PropertyKey::FontVariantEmoji,
+        "font-language-override" => PropertyKey::FontLanguageOverride,
+        "font-variant-ligatures" => PropertyKey::FontVariantLigatures,
+        "font-synthesis" => PropertyKey::FontSynthesis,
+        "font-variant-position" => PropertyKey::FontVariantPosition,
+        "font-palette" => PropertyKey::FontPalette,
+        "font-variant-numeric" => PropertyKey::FontVariantNumeric,
+        "font-variant-east-asian" => PropertyKey::FontVariantEastAsian,
         "text-transform" => PropertyKey::TextTransform,
         "visibility" => PropertyKey::Visibility,
         "z-index" => PropertyKey::ZIndex,
@@ -9846,7 +10561,9 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "float" => PropertyKey::Float,
         "clear" => PropertyKey::Clear,
         "white-space" => PropertyKey::WhiteSpace,
-        "text-wrap" => PropertyKey::TextWrap,
+        "white-space-collapse" => PropertyKey::WhiteSpaceCollapse,
+        "text-wrap" | "text-wrap-mode" => PropertyKey::TextWrap,
+        "text-wrap-style" => PropertyKey::TextWrapStyle,
         "flex-direction" => PropertyKey::FlexDirection,
         "flex-wrap" => PropertyKey::FlexWrap,
         "flex-grow" => PropertyKey::FlexGrow,
@@ -9867,6 +10584,8 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "columns" => PropertyKey::Columns,
         "place-content" => PropertyKey::PlaceContent,
         "hyphens" => PropertyKey::Hyphens,
+        "hyphenate-character" => PropertyKey::HyphenateCharacter,
+        "hyphenate-limit-chars" => PropertyKey::HyphenateLimitChars,
         "tab-size" => PropertyKey::TabSize,
         "line-break" => PropertyKey::LineBreak,
         "text-justify" => PropertyKey::TextJustify,
@@ -9887,6 +10606,9 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "text-decoration-inset" => PropertyKey::TextDecorationInset,
         "text-emphasis-position" => PropertyKey::TextEmphasisPosition,
         "text-underline-position" => PropertyKey::TextUnderlinePosition,
+        "text-emphasis-style" => PropertyKey::TextEmphasisStyle,
+        "text-emphasis-color" => PropertyKey::TextEmphasisColor,
+        "text-emphasis" => PropertyKey::TextEmphasis,
         "page" => PropertyKey::Page,
         "font-variant-caps" => PropertyKey::FontVariantCaps,
         "quotes" => PropertyKey::Quotes,

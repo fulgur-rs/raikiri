@@ -8,15 +8,20 @@ use crate::property::DisplayValue;
 use crate::property::{
     Border, BorderColor, BorderStyle, CalcLengthPercentage, ContentComponent, GridAreaShorthand,
     GridAutoFlowValue, GridLineValue, GridShorthand, GridTemplateAreasValue, GridTemplateTracks,
-    Length, LengthOrAuto, ListStylePosition, ListStyleType, Outline, OutlineColor, OutlineStyle,
-    OverflowValue, OverflowXY, PageValue, PositionValue, PropertyKey, PropertyValue, Sides,
-    TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
-    TextDecorationThickness, TextShadowColor, empty_counter_entries, initial_grid_auto_track_list,
+    HyphenateLimitChars, HyphenateLimitCharsValue, Length, LengthOrAuto, ListStylePosition,
+    ListStyleType, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowXY, PageValue,
+    PositionValue, PropertyKey, PropertyValue, Sides, TextCombineUpright, TextDecorationColor,
+    TextDecorationLine, TextDecorationShorthand, TextDecorationStyle, TextDecorationThickness,
+    TextEmphasisFill, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisShape,
+    TextEmphasisStyle, TextEmphasisVEdge, TextOrientation, TextShadowColor, TextUnderlinePosition,
+    UnicodeBidi, WritingMode, empty_counter_entries, initial_grid_auto_track_list,
 };
 use crate::resolve::{
     ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedLength,
-    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLineHeight, ComputedTabSize,
-    ComputedTextDecorationInset, ComputedTextShadow,
+    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLetterSpacing,
+    ComputedLineHeight, ComputedTabSize, ComputedTextDecorationInset,
+    ComputedTextDecorationThickness, ComputedTextIndent, ComputedTextShadow,
+    ComputedTextUnderlineOffset,
 };
 use crate::ruletree::{RuleTree, build_rule_tree};
 use crate::test_dom::TestDoc;
@@ -1469,6 +1474,34 @@ fn text_justify_inherits_from_parent_element() {
 }
 
 #[test]
+fn text_spacing_trim_uses_normal_initial_and_inherits_the_keyword() {
+    use crate::property::TextSpacingTrim;
+
+    let initial = cascade_doc("", "p", None);
+    assert_eq!(initial.text_spacing_trim, TextSpacingTrim::Normal);
+
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("text-spacing-trim: trim-all"));
+    let inherited = doc.push_element(parent, "span", None);
+    let overridden = doc.push_element(inherited, "em", Some("text-spacing-trim: space-first"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].text_spacing_trim,
+        TextSpacingTrim::TrimAll
+    );
+    assert_eq!(
+        result.computed[inherited].text_spacing_trim,
+        TextSpacingTrim::TrimAll
+    );
+    assert_eq!(
+        result.computed[overridden].text_spacing_trim,
+        TextSpacingTrim::SpaceFirst
+    );
+}
+
+#[test]
 fn text_autospace_wired_through_cascade_and_inheritance() {
     use crate::property::TextAutospace;
     let mut doc = TestDoc::new();
@@ -1478,6 +1511,168 @@ fn text_autospace_wired_through_cascade_and_inheritance() {
     let r = cascade(&doc, &tree).expect("cascade Ok");
     assert_eq!(r.computed[p].text_autospace, TextAutospace::NoAutospace);
     assert_eq!(r.computed[span].text_autospace, TextAutospace::NoAutospace);
+}
+
+#[test]
+fn word_space_transform_wired_through_cascade_and_inheritance() {
+    use crate::property::WordSpaceTransform;
+
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "p",
+        Some("word-space-transform: ideographic-space auto-phrase"),
+    );
+    let inherited = doc.push_element(parent, "span", None);
+    let overridden = doc.push_element(parent, "span", Some("word-space-transform: space"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].word_space_transform,
+        WordSpaceTransform::IdeographicSpaceAutoPhrase,
+    );
+    assert_eq!(
+        result.computed[inherited].word_space_transform,
+        WordSpaceTransform::IdeographicSpaceAutoPhrase,
+    );
+    assert_eq!(
+        result.computed[overridden].word_space_transform,
+        WordSpaceTransform::Space,
+    );
+}
+
+#[test]
+fn text_decoration_skip_ink_wired_through_cascade_and_inheritance() {
+    use crate::property::TextDecorationSkipInk;
+
+    let initial = cascade_doc("", "p", None);
+    assert_eq!(
+        initial.text_decoration_skip_ink,
+        TextDecorationSkipInk::Auto
+    );
+
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("text-decoration-skip-ink: all"));
+    let inherited = doc.push_element(parent, "span", None);
+    let overridden = doc.push_element(parent, "span", Some("text-decoration-skip-ink: none"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].text_decoration_skip_ink,
+        TextDecorationSkipInk::All,
+    );
+    assert_eq!(
+        result.computed[inherited].text_decoration_skip_ink,
+        TextDecorationSkipInk::All,
+    );
+    assert_eq!(
+        result.computed[overridden].text_decoration_skip_ink,
+        TextDecorationSkipInk::None,
+    );
+}
+
+#[test]
+fn text_decoration_skip_spaces_wired_through_cascade_and_inheritance() {
+    use crate::property::TextDecorationSkipSpaces;
+
+    let initial = cascade_doc("", "p", None);
+    assert_eq!(
+        initial.text_decoration_skip_spaces,
+        TextDecorationSkipSpaces::StartEnd
+    );
+
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("text-decoration-skip-spaces: start end"));
+    let inherited = doc.push_element(parent, "span", None);
+    let overridden = doc.push_element(parent, "span", Some("text-decoration-skip-spaces: all"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].text_decoration_skip_spaces,
+        TextDecorationSkipSpaces::StartEnd,
+    );
+    assert_eq!(
+        result.computed[inherited].text_decoration_skip_spaces,
+        TextDecorationSkipSpaces::StartEnd,
+    );
+    assert_eq!(
+        result.computed[overridden].text_decoration_skip_spaces,
+        TextDecorationSkipSpaces::All,
+    );
+}
+
+#[test]
+fn text_spacing_shorthand_expands_inherits_and_resets_omitted_components() {
+    use crate::property::{TextAutospace, TextSpacingTrim};
+
+    let initial = cascade_doc("", "p", None);
+    assert_eq!(initial.text_spacing_trim, TextSpacingTrim::Normal);
+    assert_eq!(initial.text_autospace, TextAutospace::Normal);
+
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("text-spacing: trim-start no-autospace"));
+    let inherited = doc.push_element(parent, "span", None);
+    let reset = doc.push_element(inherited, "em", Some("text-spacing: initial"));
+    let trim_only = doc.push_element(inherited, "b", Some("text-spacing: trim-start"));
+    let autospace_only = doc.push_element(inherited, "i", Some("text-spacing: no-autospace"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    for node in [parent, inherited] {
+        assert_eq!(
+            result.computed[node].text_spacing_trim,
+            TextSpacingTrim::TrimStart
+        );
+        assert_eq!(
+            result.computed[node].text_autospace,
+            TextAutospace::NoAutospace
+        );
+    }
+    assert_eq!(
+        result.computed[reset].text_spacing_trim,
+        TextSpacingTrim::Normal
+    );
+    assert_eq!(result.computed[reset].text_autospace, TextAutospace::Normal);
+    assert_eq!(
+        result.computed[trim_only].text_spacing_trim,
+        TextSpacingTrim::TrimStart
+    );
+    assert_eq!(
+        result.computed[trim_only].text_autospace,
+        TextAutospace::Normal
+    );
+    assert_eq!(
+        result.computed[autospace_only].text_spacing_trim,
+        TextSpacingTrim::Normal
+    );
+    assert_eq!(
+        result.computed[autospace_only].text_autospace,
+        TextAutospace::NoAutospace
+    );
+}
+
+#[test]
+fn text_spacing_shorthand_and_longhands_compete_in_source_order() {
+    use crate::property::{TextAutospace, TextSpacingTrim};
+
+    let shorthand_first = cascade_doc(
+        "",
+        "p",
+        Some("text-spacing: trim-start no-autospace; text-spacing-trim: space-all"),
+    );
+    assert_eq!(shorthand_first.text_spacing_trim, TextSpacingTrim::SpaceAll);
+    assert_eq!(shorthand_first.text_autospace, TextAutospace::NoAutospace);
+
+    let shorthand_last = cascade_doc(
+        "",
+        "p",
+        Some("text-spacing-trim: space-all; text-spacing: trim-start no-autospace"),
+    );
+    assert_eq!(shorthand_last.text_spacing_trim, TextSpacingTrim::TrimStart);
+    assert_eq!(shorthand_last.text_autospace, TextAutospace::NoAutospace);
 }
 
 #[test]
@@ -1520,6 +1715,43 @@ fn text_wrap_wrap_is_default_and_inherited() {
     let r = cascade(&doc, &tree).expect("cascade Ok");
     assert_eq!(r.computed[p].text_wrap, TextWrapMode::Nowrap);
     assert_eq!(r.computed[span].text_wrap, TextWrapMode::Nowrap);
+}
+
+#[test]
+fn text_wrap_style_keyword_is_wired_and_inherited() {
+    use crate::property::TextWrapStyle;
+
+    let cv = cascade_doc("", "p", Some("text-wrap-style: balance"));
+    assert_eq!(cv.text_wrap_style, TextWrapStyle::Balance);
+
+    let mut doc = TestDoc::new();
+    let p = doc.push_element(0, "p", Some("text-wrap-style: stable"));
+    let span = doc.push_element(p, "span", None);
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[p].text_wrap_style, TextWrapStyle::Stable);
+    assert_eq!(r.computed[span].text_wrap_style, TextWrapStyle::Stable);
+}
+
+#[test]
+fn text_wrap_shorthand_sets_and_resets_both_longhands() {
+    use crate::property::{TextWrapMode, TextWrapStyle};
+
+    let cv = cascade_doc("", "p", Some("text-wrap: nowrap balance"));
+    assert_eq!(cv.text_wrap, TextWrapMode::Nowrap);
+    assert_eq!(cv.text_wrap_style, TextWrapStyle::Balance);
+
+    let cv = cascade_doc("", "p", Some("text-wrap-style: stable; text-wrap: wrap"));
+    assert_eq!(cv.text_wrap, TextWrapMode::Wrap);
+    assert_eq!(cv.text_wrap_style, TextWrapStyle::Auto);
+
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("text-wrap: nowrap balance; text-wrap-style: stable"),
+    );
+    assert_eq!(cv.text_wrap, TextWrapMode::Nowrap);
+    assert_eq!(cv.text_wrap_style, TextWrapStyle::Stable);
 }
 
 #[test]
@@ -1593,12 +1825,12 @@ fn text_align_inheritance_contrasts_with_display_non_inheritance() {
 #[test]
 fn text_indent_wired_through_cascade_from_inline_style() {
     // <p style="text-indent: 20px"> → ComputedValues.text_indent に
-    // ComputedLengthPercentage::Px(20.0) が届く。parser →
+    // ComputedTextIndent::Px(20.0) が届く。parser →
     // PropertyValue::TextIndent → apply_value → ComputedValues の
     // end-to-end 疎通 smoke (`text_align_wired_through_cascade_from_inline_style`
     // と同 pattern)。
     let cv = cascade_doc("", "p", Some("text-indent: 20px"));
-    assert_eq!(cv.text_indent, ComputedLengthPercentage::Px(20.0));
+    assert_eq!(cv.text_indent, ComputedTextIndent::Px(20.0));
 }
 
 #[test]
@@ -1617,7 +1849,7 @@ fn text_indent_percentage_stays_unresolved_in_computed_layer() {
     // computed 層では `Percent` のまま残る (`padding` / `width` と同じ
     // 扱い、`ComputedValues::padding` doc 参照)。
     let cv = cascade_doc("", "p", Some("text-indent: 10%"));
-    assert_eq!(cv.text_indent, ComputedLengthPercentage::Percent(10.0));
+    assert_eq!(cv.text_indent, ComputedTextIndent::Percent(10.0));
 }
 
 #[test]
@@ -1633,15 +1865,12 @@ fn text_indent_inherits_from_parent_element() {
     let span = doc.push_element(p, "span", Some("font-size: 10px"));
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
-    assert_eq!(
-        r.computed[p].text_indent,
-        ComputedLengthPercentage::Px(40.0)
-    );
+    assert_eq!(r.computed[p].text_indent, ComputedTextIndent::Px(40.0));
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
         r.computed[span].text_indent,
-        ComputedLengthPercentage::Px(40.0),
+        ComputedTextIndent::Px(40.0),
         "child should inherit text-indent's already-absolutized 40px \
              unchanged (CSS Text 3 §8.1 inherited property), not re-resolve \
              `2em` against its own 10px font-size"
@@ -1702,10 +1931,7 @@ fn text_indent_inheritance_contrasts_with_padding_non_inheritance() {
     let span = doc.push_element(p, "span", None);
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
-    assert_eq!(
-        r.computed[p].text_indent,
-        ComputedLengthPercentage::Px(15.0)
-    );
+    assert_eq!(r.computed[p].text_indent, ComputedTextIndent::Px(15.0));
     assert_eq!(
         r.computed[p].padding.top,
         ComputedLengthPercentage::Px(15.0)
@@ -1714,7 +1940,7 @@ fn text_indent_inheritance_contrasts_with_padding_non_inheritance() {
     // failure, which doesn't happen while this test passes.
     assert_eq!(
         r.computed[span].text_indent,
-        ComputedLengthPercentage::Px(15.0),
+        ComputedTextIndent::Px(15.0),
         "text-indent must inherit (CSS Text 3 §8.1 Inherited: yes)"
     );
     // cov:ignore: panic-message literal only executed on assertion
@@ -1783,6 +2009,287 @@ fn font_style_child_own_value_wins_over_inherited() {
     let r = cascade(&doc, &tree).expect("cascade Ok");
     assert_eq!(r.computed[p].font_style, FontStyle::Italic);
     assert_eq!(r.computed[span].font_style, FontStyle::Normal);
+}
+
+#[test]
+fn font_kerning_inherits_and_child_value_overrides() {
+    use crate::property::FontKerning;
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("font-kerning: normal"));
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(parent, "em", Some("font-kerning: none"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(result.computed[parent].font_kerning, FontKerning::Normal);
+    assert_eq!(result.computed[inherited].font_kerning, FontKerning::Normal);
+    assert_eq!(
+        result.computed[override_child].font_kerning,
+        FontKerning::None
+    );
+}
+
+#[test]
+fn font_optical_sizing_inherits_and_child_value_overrides() {
+    use crate::property::FontOpticalSizing;
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("font-optical-sizing: none"));
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(parent, "em", Some("font-optical-sizing: auto"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].font_optical_sizing,
+        FontOpticalSizing::None
+    );
+    assert_eq!(
+        result.computed[inherited].font_optical_sizing,
+        FontOpticalSizing::None
+    );
+    assert_eq!(
+        result.computed[override_child].font_optical_sizing,
+        FontOpticalSizing::Auto
+    );
+}
+
+#[test]
+fn font_variant_emoji_inherits_and_child_value_overrides() {
+    use crate::property::FontVariantEmoji;
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("font-variant-emoji: emoji"));
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(parent, "em", Some("font-variant-emoji: unicode"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].font_variant_emoji,
+        FontVariantEmoji::Emoji
+    );
+    assert_eq!(
+        result.computed[inherited].font_variant_emoji,
+        FontVariantEmoji::Emoji
+    );
+    assert_eq!(
+        result.computed[override_child].font_variant_emoji,
+        FontVariantEmoji::Unicode
+    );
+}
+
+#[test]
+fn font_language_override_inherits_and_child_value_overrides() {
+    use crate::property::FontLanguageOverride;
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("font-language-override: \"KSW\""));
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(parent, "em", Some("font-language-override: \"ENG \""));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    let ksw = FontLanguageOverride::String("KSW".into());
+    let eng = FontLanguageOverride::String("ENG".into());
+    assert_eq!(result.computed[parent].font_language_override, ksw);
+    assert_eq!(result.computed[inherited].font_language_override, ksw);
+    assert_eq!(result.computed[override_child].font_language_override, eng);
+}
+
+#[test]
+fn font_variant_ligatures_inherits_and_child_value_overrides() {
+    use crate::property::FontVariantLigatures;
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "p",
+        Some("font-variant-ligatures: no-historical-ligatures"),
+    );
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(parent, "em", Some("font-variant-ligatures: contextual"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].font_variant_ligatures,
+        FontVariantLigatures::NoHistoricalLigatures
+    );
+    assert_eq!(
+        result.computed[inherited].font_variant_ligatures,
+        FontVariantLigatures::NoHistoricalLigatures
+    );
+    assert_eq!(
+        result.computed[override_child].font_variant_ligatures,
+        FontVariantLigatures::Contextual
+    );
+}
+
+#[test]
+fn font_variant_position_inherits_and_child_value_overrides() {
+    use crate::property::FontVariantPosition;
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("font-variant-position: sub"));
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(parent, "em", Some("font-variant-position: super"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].font_variant_position,
+        FontVariantPosition::Sub
+    );
+    assert_eq!(
+        result.computed[inherited].font_variant_position,
+        FontVariantPosition::Sub
+    );
+    assert_eq!(
+        result.computed[override_child].font_variant_position,
+        FontVariantPosition::Super
+    );
+}
+
+#[test]
+fn font_palette_inherits_and_child_value_overrides() {
+    use crate::property::FontPaletteValue;
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("font-palette: light"));
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(parent, "em", Some("font-palette: --pitchfork"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].font_palette,
+        FontPaletteValue::Light
+    );
+    assert_eq!(
+        result.computed[inherited].font_palette,
+        FontPaletteValue::Light
+    );
+    assert_eq!(
+        result.computed[override_child].font_palette,
+        FontPaletteValue::Palette("--pitchfork".into())
+    );
+}
+
+#[test]
+fn font_variant_numeric_inherits_and_child_value_overrides() {
+    use crate::property::FontVariantNumeric;
+
+    let parent_value = FontVariantNumeric {
+        oldstyle_nums: true,
+        tabular_nums: true,
+        stacked_fractions: true,
+        ordinal: true,
+        slashed_zero: true,
+        ..FontVariantNumeric::initial()
+    };
+    let child_value = FontVariantNumeric {
+        lining_nums: true,
+        proportional_nums: true,
+        diagonal_fractions: true,
+        ..FontVariantNumeric::initial()
+    };
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "p",
+        Some("font-variant-numeric: oldstyle-nums tabular-nums stacked-fractions ordinal slashed-zero"),
+    );
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(
+        parent,
+        "em",
+        Some("font-variant-numeric: lining-nums proportional-nums diagonal-fractions"),
+    );
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(result.computed[parent].font_variant_numeric, parent_value);
+    assert_eq!(
+        result.computed[inherited].font_variant_numeric,
+        parent_value
+    );
+    assert_eq!(
+        result.computed[override_child].font_variant_numeric,
+        child_value
+    );
+}
+
+#[test]
+fn font_variant_east_asian_inherits_and_child_value_overrides() {
+    use crate::property::{
+        FontVariantEastAsian, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
+    };
+
+    let parent_value = FontVariantEastAsian {
+        variant: Some(FontVariantEastAsianVariant::Jis78),
+        width: Some(FontVariantEastAsianWidth::ProportionalWidth),
+        ruby: false,
+    };
+    let child_value = FontVariantEastAsian {
+        variant: Some(FontVariantEastAsianVariant::Simplified),
+        width: Some(FontVariantEastAsianWidth::FullWidth),
+        ruby: true,
+    };
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "p",
+        Some("font-variant-east-asian: jis78 proportional-width"),
+    );
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(
+        parent,
+        "em",
+        Some("font-variant-east-asian: simplified full-width ruby"),
+    );
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].font_variant_east_asian,
+        parent_value
+    );
+    assert_eq!(
+        result.computed[inherited].font_variant_east_asian,
+        parent_value
+    );
+    assert_eq!(
+        result.computed[override_child].font_variant_east_asian,
+        child_value
+    );
+}
+
+#[test]
+fn font_synthesis_inherits_and_child_value_overrides() {
+    use crate::property::{FontSynthesisStyle, FontSynthesisValue};
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "p",
+        Some("font-synthesis: oblique-only small-caps position"),
+    );
+    let inherited = doc.push_element(parent, "span", None);
+    let override_child = doc.push_element(parent, "em", Some("font-synthesis: weight style"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    let parent_value = FontSynthesisValue {
+        weight: false,
+        style: FontSynthesisStyle::ObliqueOnly,
+        small_caps: true,
+        position: true,
+    };
+    assert_eq!(result.computed[parent].font_synthesis, parent_value);
+    assert_eq!(result.computed[inherited].font_synthesis, parent_value);
+    assert_eq!(
+        result.computed[override_child].font_synthesis,
+        FontSynthesisValue {
+            weight: true,
+            style: FontSynthesisStyle::Auto,
+            small_caps: false,
+            position: false,
+        }
+    );
 }
 
 #[test]
@@ -1907,6 +2414,139 @@ fn font_variant_caps_child_own_value_wins_over_inherited() {
 }
 
 #[test]
+fn writing_mode_cssom_values_preserve_keywords_without_changing_layout_fallback() {
+    assert_eq!(
+        ComputedValues::initial().cssom_writing_mode,
+        WritingMode::HorizontalTb
+    );
+
+    for (value, expected) in [
+        ("horizontal-tb", WritingMode::HorizontalTb),
+        ("vertical-rl", WritingMode::VerticalRl),
+        ("vertical-lr", WritingMode::VerticalLr),
+    ] {
+        let style = format!("writing-mode: {value}");
+        let computed = cascade_doc("", "p", Some(&style));
+        assert_eq!(computed.cssom_writing_mode, expected);
+        assert_eq!(computed.writing_mode, WritingMode::HorizontalTb);
+    }
+
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("writing-mode: vertical-rl"));
+    let child = doc.push_element(parent, "span", None);
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(
+        result.computed[parent].cssom_writing_mode,
+        WritingMode::VerticalRl
+    );
+    assert_eq!(
+        result.computed[child].cssom_writing_mode,
+        WritingMode::VerticalRl
+    );
+    assert_eq!(
+        result.computed[parent].writing_mode,
+        WritingMode::HorizontalTb
+    );
+    assert_eq!(
+        result.computed[child].writing_mode,
+        WritingMode::HorizontalTb
+    );
+}
+
+#[test]
+fn unicode_bidi_values_cascade_and_do_not_inherit() {
+    assert_eq!(ComputedValues::initial().unicode_bidi, UnicodeBidi::Normal);
+
+    for (value, expected) in [
+        ("normal", UnicodeBidi::Normal),
+        ("embed", UnicodeBidi::Embed),
+        ("isolate", UnicodeBidi::Isolate),
+        ("bidi-override", UnicodeBidi::BidiOverride),
+        ("isolate-override", UnicodeBidi::IsolateOverride),
+        ("plaintext", UnicodeBidi::Plaintext),
+    ] {
+        let style = format!("unicode-bidi: {value}");
+        let computed = cascade_doc("", "p", Some(&style));
+        assert_eq!(computed.unicode_bidi, expected);
+    }
+
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("unicode-bidi: isolate-override"));
+    let child = doc.push_element(parent, "span", None);
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(
+        result.computed[parent].unicode_bidi,
+        UnicodeBidi::IsolateOverride
+    );
+    assert_eq!(result.computed[child].unicode_bidi, UnicodeBidi::Normal);
+}
+
+#[test]
+fn text_combine_upright_keyword_values_cascade_and_inherit() {
+    assert_eq!(
+        ComputedValues::initial().text_combine_upright,
+        TextCombineUpright::None
+    );
+
+    for (value, expected) in [
+        ("none", TextCombineUpright::None),
+        ("all", TextCombineUpright::All),
+    ] {
+        let style = format!("text-combine-upright: {value}");
+        let computed = cascade_doc("", "p", Some(&style));
+        assert_eq!(computed.text_combine_upright, expected);
+    }
+
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("text-combine-upright: all"));
+    let child = doc.push_element(parent, "span", None);
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(
+        result.computed[parent].text_combine_upright,
+        TextCombineUpright::All
+    );
+    assert_eq!(
+        result.computed[child].text_combine_upright,
+        TextCombineUpright::All
+    );
+}
+
+#[test]
+fn text_orientation_keyword_values_cascade_and_inherit() {
+    assert_eq!(
+        ComputedValues::initial().text_orientation,
+        TextOrientation::Mixed
+    );
+
+    for (value, expected) in [
+        ("mixed", TextOrientation::Mixed),
+        ("upright", TextOrientation::Upright),
+        ("sideways", TextOrientation::Sideways),
+    ] {
+        let style = format!("text-orientation: {value}");
+        let computed = cascade_doc("", "p", Some(&style));
+        assert_eq!(computed.text_orientation, expected);
+    }
+
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("text-orientation: upright"));
+    let child = doc.push_element(parent, "span", None);
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(
+        result.computed[parent].text_orientation,
+        TextOrientation::Upright
+    );
+    assert_eq!(
+        result.computed[child].text_orientation,
+        TextOrientation::Upright
+    );
+}
+
+#[test]
 fn text_transform_wired_through_cascade_from_inline_style() {
     use crate::property::TextTransform;
     let cv = cascade_doc("", "p", Some("text-transform: uppercase"));
@@ -1930,6 +2570,18 @@ fn text_transform_inherits_from_parent_element() {
         TextTransform::Uppercase,
         "child should inherit text-transform from parent (CSS Text Module Level 3 §2.1 Inherited: yes)"
     );
+}
+
+#[test]
+fn text_transform_math_auto_cascades_and_inherits_as_computed_keyword() {
+    use crate::property::TextTransform;
+    let mut doc = TestDoc::new();
+    let p = doc.push_element(0, "p", Some("text-transform: math-auto"));
+    let span = doc.push_element(p, "span", None);
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[p].text_transform, TextTransform::MathAuto);
+    assert_eq!(r.computed[span].text_transform, TextTransform::MathAuto);
 }
 
 #[test]
@@ -2368,6 +3020,41 @@ fn word_spacing_wired_through_cascade_from_inline_style() {
 }
 
 #[test]
+fn word_spacing_preserves_css_text_4_computed_percentages_and_calcs() {
+    let percentage = cascade_doc("", "p", Some("font-size: 40px; word-spacing: 110%"));
+    assert_eq!(
+        percentage.word_spacing_computed,
+        ComputedLetterSpacing::Percent(110.0)
+    );
+    assert_eq!(percentage.word_spacing, ComputedLength::ZERO);
+
+    let absolute_calc = cascade_doc(
+        "",
+        "p",
+        Some("font-size: 40px; word-spacing: calc(10px - 0.5em)"),
+    );
+    assert_eq!(
+        absolute_calc.word_spacing_computed,
+        ComputedLetterSpacing::Px(-10.0)
+    );
+    assert_eq!(absolute_calc.word_spacing, ComputedLength::ZERO);
+
+    let mixed_calc = cascade_doc(
+        "",
+        "p",
+        Some("font-size: 40px; word-spacing: calc(10px - (5% + 10%))"),
+    );
+    assert_eq!(
+        mixed_calc.word_spacing_computed,
+        ComputedLetterSpacing::Calc(crate::property::CalcLengthPercentage {
+            percent: -15.0,
+            px: 10.0,
+        })
+    );
+    assert_eq!(mixed_calc.word_spacing, ComputedLength::ZERO);
+}
+
+#[test]
 fn word_spacing_ch_provenance_survives_inheritance() {
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("word-spacing: 1ch"));
@@ -2552,6 +3239,115 @@ fn text_shadow_wired_through_cascade_from_inline_style() {
             }),
         }]
     );
+}
+
+#[test]
+fn text_shadow_calc_resolves_mixed_terms_and_clamps_negative_blur() {
+    use crate::property::TextShadowColor;
+
+    let positive = cascade_doc(
+        "",
+        "p",
+        Some(
+            "font-size: 40px; text-shadow: calc(0.5em + 10px) calc(0.5em + 10px) calc(0.5em + 10px)",
+        ),
+    );
+    assert_eq!(
+        *positive.text_shadow,
+        vec![ComputedTextShadow {
+            offset_x: ComputedLength(30.0),
+            offset_y: ComputedLength(30.0),
+            blur_radius: ComputedLength(30.0),
+            color: TextShadowColor::CurrentColor,
+        }]
+    );
+
+    let negative = cascade_doc(
+        "",
+        "p",
+        Some(
+            "font-size: 40px; text-shadow: calc(-0.5em + 10px) calc(-0.5em + 10px) calc(-0.5em + 10px)",
+        ),
+    );
+    assert_eq!(
+        *negative.text_shadow,
+        vec![ComputedTextShadow {
+            offset_x: ComputedLength(-10.0),
+            offset_y: ComputedLength(-10.0),
+            blur_radius: ComputedLength::ZERO,
+            color: TextShadowColor::CurrentColor,
+        }]
+    );
+}
+
+#[test]
+fn text_shadow_var_substitution_preserves_mixed_calc_until_font_size_resolution() {
+    use crate::property::TextShadowColor;
+
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some(
+            "font-size: 40px; --shadow: calc(0.5em + 10px) calc(0.5em + 10px) calc(0.5em + 10px); text-shadow: var(--shadow)",
+        ),
+    );
+    assert_eq!(
+        *cv.text_shadow,
+        vec![ComputedTextShadow {
+            offset_x: ComputedLength(30.0),
+            offset_y: ComputedLength(30.0),
+            blur_radius: ComputedLength(30.0),
+            color: TextShadowColor::CurrentColor,
+        }]
+    );
+}
+
+#[test]
+fn text_underline_offset_var_substitution_preserves_mixed_calc_terms() {
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("font-size: 40px; --offset: calc(2em - 50%); text-underline-offset: var(--offset)"),
+    );
+    assert_eq!(
+        cv.text_underline_offset,
+        ComputedTextUnderlineOffset::Calc(CalcLengthPercentage {
+            percent: -50.0,
+            px: 80.0,
+        }),
+    );
+}
+
+#[test]
+fn text_shadow_var_substitution_clamps_calculated_negative_blur() {
+    use crate::property::TextShadowColor;
+
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some(
+            "font-size: 40px; --shadow: calc(-0.5em + 10px) calc(-0.5em + 10px) calc(-0.5em + 10px); text-shadow: var(--shadow)",
+        ),
+    );
+    assert_eq!(
+        *cv.text_shadow,
+        vec![ComputedTextShadow {
+            offset_x: ComputedLength(-10.0),
+            offset_y: ComputedLength(-10.0),
+            blur_radius: ComputedLength::ZERO,
+            color: TextShadowColor::CurrentColor,
+        }]
+    );
+}
+
+#[test]
+fn text_shadow_var_substitution_rejects_cancelled_percentage_terms() {
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("--shadow: calc(10% - 10% + 1px) 1px; text-shadow: var(--shadow)"),
+    );
+    assert!(cv.text_shadow.is_empty());
 }
 
 #[test]
@@ -2888,6 +3684,54 @@ fn white_space_child_own_value_wins_over_inherited() {
 }
 
 #[test]
+fn white_space_collapse_computes_to_each_specified_keyword() {
+    use crate::property::WhiteSpaceCollapse;
+
+    let cases = [
+        ("collapse", WhiteSpaceCollapse::Collapse),
+        ("discard", WhiteSpaceCollapse::Discard),
+        ("preserve", WhiteSpaceCollapse::Preserve),
+        ("preserve-breaks", WhiteSpaceCollapse::PreserveBreaks),
+        ("preserve-spaces", WhiteSpaceCollapse::PreserveSpaces),
+        ("break-spaces", WhiteSpaceCollapse::BreakSpaces),
+    ];
+
+    for (keyword, expected) in cases {
+        let declaration = format!("white-space-collapse: {keyword}");
+        let cv = cascade_doc("", "p", Some(&declaration));
+        assert_eq!(cv.white_space_collapse, expected);
+    }
+}
+
+#[test]
+fn white_space_collapse_initial_value_is_collapse() {
+    use crate::property::WhiteSpaceCollapse;
+
+    let cv = cascade_doc("", "p", None);
+    assert_eq!(cv.white_space_collapse, WhiteSpaceCollapse::Collapse);
+}
+
+#[test]
+fn white_space_collapse_inherits_from_parent_element() {
+    use crate::property::WhiteSpaceCollapse;
+
+    let mut doc = TestDoc::new();
+    let p = doc.push_element(0, "p", Some("white-space-collapse: preserve-spaces"));
+    let span = doc.push_element(p, "span", None);
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        r.computed[p].white_space_collapse,
+        WhiteSpaceCollapse::PreserveSpaces,
+    );
+    assert_eq!(
+        r.computed[span].white_space_collapse,
+        WhiteSpaceCollapse::PreserveSpaces,
+    );
+}
+
+#[test]
 fn hyphens_wired_through_cascade_from_inline_style() {
     use crate::property::Hyphens;
     let cv = cascade_doc("", "p", Some("hyphens: auto"));
@@ -2925,6 +3769,41 @@ fn hyphens_child_own_value_wins_over_inherited() {
     assert_eq!(r.computed[span].hyphens, Hyphens::None);
 }
 
+#[test]
+fn hyphenate_character_wired_through_cascade_from_inline_style() {
+    use crate::property::HyphenateCharacter;
+
+    let cv = cascade_doc("", "p", Some("hyphenate-character: \"=\""));
+    assert_eq!(
+        cv.hyphenate_character,
+        HyphenateCharacter::String("=".into())
+    );
+}
+
+#[test]
+fn hyphenate_character_inherits_and_child_override_wins() {
+    use crate::property::HyphenateCharacter;
+
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("hyphenate-character: \"—\""));
+    let child = doc.push_element(parent, "span", None);
+    let grandchild = doc.push_element(child, "i", Some("hyphenate-character: \"-\""));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[parent].hyphenate_character,
+        HyphenateCharacter::String("—".into())
+    );
+    assert_eq!(
+        result.computed[child].hyphenate_character,
+        HyphenateCharacter::String("—".into())
+    );
+    assert_eq!(
+        result.computed[grandchild].hyphenate_character,
+        HyphenateCharacter::String("-".into())
+    );
+}
 #[test]
 fn writing_mode_wired_through_cascade_from_inline_style() {
     use crate::property::WritingMode;
@@ -3546,6 +4425,18 @@ fn filter_wired_through_cascade_from_inline_style() {
 }
 
 #[test]
+fn filter_drop_shadow_mixed_calc_does_not_use_text_shadow_calc_path() {
+    // Mixed-unit calc support is scoped to text-shadow. Filter's drop-shadow
+    // continues to use its plain-length parser.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("filter: drop-shadow(calc(0.5em + 10px) 1px)"),
+    );
+    assert!(cv.filter.is_empty());
+}
+
+#[test]
 fn filter_defaults_to_none_without_declaration() {
     let cv = cascade_doc("", "div", None);
     assert!(cv.filter.is_empty());
@@ -3583,9 +4474,9 @@ fn filter_drop_shadow_zero_mantissa_huge_exponent_offset_resolves_through_real_c
     assert_eq!(
         *cv.filter,
         vec![FilterFunction::DropShadow(TextShadowItem {
-            offset_x: Length::Px(0.0),
-            offset_y: Length::Px(2.0),
-            blur_radius: Length::Px(0.0),
+            offset_x: crate::property::TextShadowLength::Length(Length::Px(0.0)),
+            offset_y: crate::property::TextShadowLength::Length(Length::Px(2.0)),
+            blur_radius: crate::property::TextShadowLength::Length(Length::Px(0.0)),
             color: TextShadowColor::CurrentColor,
         })]
     );
@@ -3605,9 +4496,9 @@ fn filter_drop_shadow_infinite_offset_passes_through_unclamped_through_real_casc
     assert_eq!(
         *cv.filter,
         vec![FilterFunction::DropShadow(TextShadowItem {
-            offset_x: Length::Px(f32::INFINITY),
-            offset_y: Length::Px(2.0),
-            blur_radius: Length::Px(0.0),
+            offset_x: crate::property::TextShadowLength::Length(Length::Px(f32::INFINITY)),
+            offset_y: crate::property::TextShadowLength::Length(Length::Px(2.0)),
+            blur_radius: crate::property::TextShadowLength::Length(Length::Px(0.0)),
             color: TextShadowColor::CurrentColor,
         })]
     );
@@ -6124,6 +7015,253 @@ fn text_decoration_shorthand_expands_to_line_style_and_color() {
 }
 
 #[test]
+fn text_decoration_thickness_computes_keywords_and_lengths() {
+    let auto = cascade_doc("", "div", Some("text-decoration-thickness: auto"));
+    assert_eq!(
+        auto.text_decoration_thickness,
+        ComputedTextDecorationThickness::Auto
+    );
+
+    let from_font = cascade_doc("", "div", Some("text-decoration-thickness: from-font"));
+    assert_eq!(
+        from_font.text_decoration_thickness,
+        ComputedTextDecorationThickness::FromFont,
+    );
+
+    let length = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 20px; text-decoration-thickness: 0.5em"),
+    );
+    assert_eq!(
+        length.text_decoration_thickness,
+        ComputedTextDecorationThickness::Length(ComputedLength(10.0)),
+    );
+
+    let (parent, child) = cascade_parent_child(
+        "div",
+        Some("text-decoration-thickness: from-font"),
+        "span",
+        None,
+    );
+    assert_eq!(
+        parent.text_decoration_thickness,
+        ComputedTextDecorationThickness::FromFont
+    );
+    assert_eq!(
+        child.text_decoration_thickness,
+        ComputedTextDecorationThickness::Auto
+    );
+}
+
+#[test]
+fn text_emphasis_position_preserves_keywords_and_inherits() {
+    let initial = cascade_doc("", "div", None);
+    assert_eq!(
+        initial.text_emphasis_position,
+        TextEmphasisPosition::Position {
+            vertical: TextEmphasisVEdge::Over,
+            horizontal: Some(TextEmphasisHEdge::Right),
+        },
+    );
+
+    let auto = cascade_doc("", "div", Some("text-emphasis-position: auto"));
+    assert_eq!(auto.text_emphasis_position, TextEmphasisPosition::Auto);
+
+    let under_left = cascade_doc("", "div", Some("text-emphasis-position: under left"));
+    assert_eq!(
+        under_left.text_emphasis_position,
+        TextEmphasisPosition::Position {
+            vertical: TextEmphasisVEdge::Under,
+            horizontal: Some(TextEmphasisHEdge::Left),
+        },
+    );
+
+    let (parent, child) = cascade_parent_child(
+        "div",
+        Some("text-emphasis-position: under left"),
+        "span",
+        None,
+    );
+    assert_eq!(child.text_emphasis_position, parent.text_emphasis_position);
+}
+
+#[test]
+fn text_emphasis_style_preserves_values_and_inherits() {
+    let initial = cascade_doc("", "div", None);
+    assert_eq!(initial.text_emphasis_style, TextEmphasisStyle::None);
+    assert_eq!(
+        initial.text_emphasis_color,
+        TextDecorationColor::CurrentColor
+    );
+
+    let specified = cascade_doc("", "div", Some("text-emphasis-style: open sesame"));
+    assert_eq!(
+        specified.text_emphasis_style,
+        TextEmphasisStyle::Shape {
+            fill: TextEmphasisFill::Open,
+            shape: TextEmphasisShape::Sesame,
+        },
+    );
+
+    let (parent, child) =
+        cascade_parent_child("div", Some(r#"text-emphasis-style: "*""#), "span", None);
+    assert_eq!(
+        parent.text_emphasis_style,
+        TextEmphasisStyle::String(SmolStr::new("*")),
+    );
+    assert_eq!(child.text_emphasis_style, parent.text_emphasis_style);
+
+    let (_, child_override) = cascade_parent_child(
+        "div",
+        Some(r#"text-emphasis-style: "*""#),
+        "span",
+        Some("text-emphasis-style: dot"),
+    );
+    assert_eq!(
+        child_override.text_emphasis_style,
+        TextEmphasisStyle::Shape {
+            fill: TextEmphasisFill::Filled,
+            shape: TextEmphasisShape::Dot,
+        },
+    );
+}
+
+#[test]
+fn text_emphasis_fill_only_shape_defaults_follow_typographic_writing_mode() {
+    let horizontal_open = cascade_doc("", "div", Some("text-emphasis-style: open"));
+    assert_eq!(
+        horizontal_open.text_emphasis_style,
+        TextEmphasisStyle::Shape {
+            fill: TextEmphasisFill::Open,
+            shape: TextEmphasisShape::Circle,
+        },
+    );
+
+    for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+        for (value, fill) in [
+            ("filled", TextEmphasisFill::Filled),
+            ("open", TextEmphasisFill::Open),
+        ] {
+            let declaration = format!("writing-mode: {mode}; text-emphasis-style: {value}");
+            let computed = cascade_doc("", "div", Some(&declaration));
+            assert_eq!(
+                computed.text_emphasis_style,
+                TextEmphasisStyle::Shape {
+                    fill,
+                    shape: TextEmphasisShape::Sesame,
+                },
+                "mode: {mode}, value: {value}",
+            );
+        }
+    }
+
+    let shorthand_default = cascade_doc(
+        "",
+        "div",
+        Some("writing-mode: vertical-lr; text-emphasis: open"),
+    );
+    assert_eq!(
+        shorthand_default.text_emphasis_style,
+        TextEmphasisStyle::Shape {
+            fill: TextEmphasisFill::Open,
+            shape: TextEmphasisShape::Sesame,
+        },
+    );
+
+    let explicit_shape = cascade_doc(
+        "",
+        "div",
+        Some("writing-mode: vertical-lr; text-emphasis-style: filled circle"),
+    );
+    assert_eq!(
+        explicit_shape.text_emphasis_style,
+        TextEmphasisStyle::Shape {
+            fill: TextEmphasisFill::Filled,
+            shape: TextEmphasisShape::Circle,
+        },
+    );
+
+    let (parent, child) = cascade_parent_child(
+        "div",
+        Some("writing-mode: vertical-lr; text-emphasis-style: open"),
+        "span",
+        None,
+    );
+    assert_eq!(
+        parent.text_emphasis_style,
+        TextEmphasisStyle::Shape {
+            fill: TextEmphasisFill::Open,
+            shape: TextEmphasisShape::Sesame,
+        },
+    );
+    assert_eq!(child.text_emphasis_style, parent.text_emphasis_style);
+}
+
+#[test]
+fn text_emphasis_color_inherits_currentcolor_and_resolves_at_the_child() {
+    let (parent, child) = cascade_parent_child(
+        "div",
+        Some("color: red; text-emphasis: dot"),
+        "span",
+        Some("color: blue"),
+    );
+    assert_eq!(
+        parent.text_emphasis_color,
+        TextDecorationColor::CurrentColor
+    );
+    assert_eq!(child.text_emphasis_color, TextDecorationColor::CurrentColor);
+    assert_eq!(child.text_emphasis_style, parent.text_emphasis_style);
+    assert_eq!(
+        child.color,
+        CssColor {
+            r: 0,
+            g: 0,
+            b: 255,
+            a: 255,
+        },
+    );
+
+    let (colored_parent, colored_child) =
+        cascade_parent_child("div", Some("text-emphasis: dot red"), "span", None);
+    let red = TextDecorationColor::Resolved(CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    });
+    assert_eq!(colored_parent.text_emphasis_color, red);
+    assert_eq!(colored_child.text_emphasis_color, red);
+}
+
+#[test]
+fn text_underline_position_preserves_keywords_and_inherits() {
+    let position = cascade_doc("", "div", Some("text-underline-position: from-font left"));
+    assert_eq!(
+        position.text_underline_position,
+        TextUnderlinePosition {
+            from_font: true,
+            under: false,
+            left: true,
+            right: false,
+        },
+    );
+
+    let (parent, child) = cascade_parent_child(
+        "div",
+        Some("text-underline-position: under right"),
+        "span",
+        None,
+    );
+    assert!(parent.text_underline_position.under);
+    assert!(parent.text_underline_position.right);
+    assert_eq!(
+        child.text_underline_position,
+        parent.text_underline_position
+    );
+}
+
+#[test]
 fn text_decoration_inset_resolves_and_keeps_auto_distinct() {
     let cv = cascade_doc(
         "",
@@ -6146,6 +7284,42 @@ fn text_decoration_inset_resolves_and_keeps_auto_distinct() {
 }
 
 #[test]
+fn text_decoration_inset_retains_each_ch_endpoint_font_provenance() {
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-family: Ahem; font-size: 20px; text-decoration-inset: 1ch -1ch"),
+    );
+    assert_eq!(
+        cv.text_decoration_inset,
+        ComputedTextDecorationInset::Lengths {
+            start: ComputedLength(10.0),
+            end: ComputedLength(-10.0),
+        }
+    );
+    let start = cv
+        .text_decoration_inset_start_ch
+        .as_ref()
+        .expect("retain start ch provenance");
+    let end = cv
+        .text_decoration_inset_end_ch
+        .as_ref()
+        .expect("retain end ch provenance");
+    assert_eq!(start.factor, 1.0);
+    assert_eq!(end.factor, -1.0);
+    for provenance in [start, end] {
+        assert_eq!(provenance.font.size, ComputedLength(20.0));
+        assert!(
+            provenance
+                .font
+                .family
+                .iter()
+                .any(|family| family.0.as_str() == "Ahem")
+        );
+    }
+}
+
+#[test]
 fn text_decoration_inset_is_non_inherited() {
     let mut doc = TestDoc::new();
     let parent = doc.push_element(0, "div", Some("text-decoration-inset: 3px 4px"));
@@ -6163,6 +7337,8 @@ fn text_decoration_inset_is_non_inherited() {
         result.computed[child].text_decoration_inset,
         ComputedValues::initial().text_decoration_inset
     );
+    assert_eq!(result.computed[child].text_decoration_inset_start_ch, None);
+    assert_eq!(result.computed[child].text_decoration_inset_end_ch, None);
 }
 
 #[test]
@@ -6626,5 +7802,50 @@ fn inherited_border_radius_handles_percent() {
     assert_eq!(
         inherited_border_radius(ComputedLengthPercentage::Px(4.0)),
         Length::Px(4.0)
+    );
+}
+
+#[test]
+fn hyphenate_limit_chars_inherits_and_author_value_overrides() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("hyphenate-limit-chars: 8 3"));
+    let child = doc.push_element(parent, "span", None);
+    let override_child =
+        doc.push_element(parent, "span", Some("hyphenate-limit-chars: auto 2 auto"));
+    let result = cascade(&doc, &RuleTree::empty()).expect("cascade Ok");
+
+    let inherited = HyphenateLimitChars {
+        total: HyphenateLimitCharsValue::Integer(8),
+        before: HyphenateLimitCharsValue::Integer(3),
+        after: HyphenateLimitCharsValue::Integer(3),
+    };
+    assert_eq!(result.computed[parent].hyphenate_limit_chars, inherited);
+    assert_eq!(result.computed[child].hyphenate_limit_chars, inherited);
+    assert_eq!(
+        result.computed[override_child].hyphenate_limit_chars,
+        HyphenateLimitChars {
+            total: HyphenateLimitCharsValue::Auto,
+            before: HyphenateLimitCharsValue::Integer(2),
+            after: HyphenateLimitCharsValue::Auto,
+        }
+    );
+}
+
+#[test]
+fn hyphenate_limit_chars_calc_and_variable_values_resolve_to_integer() {
+    let calc = cascade_doc("", "p", Some("hyphenate-limit-chars: calc(3.1)"));
+    assert_eq!(
+        calc.hyphenate_limit_chars.total,
+        HyphenateLimitCharsValue::Integer(3)
+    );
+
+    let variable = cascade_doc(
+        "",
+        "p",
+        Some("--limit: calc(3.1); hyphenate-limit-chars: var(--limit)"),
+    );
+    assert_eq!(
+        variable.hyphenate_limit_chars.total,
+        HyphenateLimitCharsValue::Integer(3)
     );
 }
