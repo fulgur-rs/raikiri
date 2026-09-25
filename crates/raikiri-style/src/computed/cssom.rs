@@ -5,8 +5,9 @@ use cssparser::ToCss as _;
 use crate::ChFontKey;
 use crate::computed::ComputedValues;
 use crate::property::{
-    CssColor, PropertyValue, serialize_calc_length_percentage, serialize_css_color,
-    serialize_dimension, serialize_number, serialize_percentage, serialize_value,
+    CalcLengthPercentage, CssColor, PropertyValue, serialize_calc_length_percentage,
+    serialize_css_color, serialize_dimension, serialize_number, serialize_percentage,
+    serialize_value,
 };
 use crate::resolve::{
     ComputedLength, ComputedLetterSpacing, ComputedTabSize, ComputedTextDecorationThickness,
@@ -496,12 +497,25 @@ impl ComputedProperty {
 // that belong to one property rather than to the value type (such as
 // `letter-spacing: 0px` serializing as `normal`) stay with the caller.
 
+/// Serializes a computed mixed `calc()`. Cascade folds a zero term into the
+/// plain length or percentage form before a value reaches here; values built
+/// directly get the same folding so they serialize identically.
+fn serialize_computed_calc(calc: &CalcLengthPercentage) -> String {
+    if calc.percent == 0.0 {
+        serialize_dimension(calc.px, "px")
+    } else if calc.px == 0.0 {
+        serialize_percentage(calc.percent)
+    } else {
+        serialize_calc_length_percentage(calc)
+    }
+}
+
 impl cssparser::ToCss for ComputedLetterSpacing {
     fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
         match *self {
             Self::Px(px) => dest.write_str(&serialize_dimension(px, "px")),
             Self::Percent(percent) => dest.write_str(&serialize_percentage(percent)),
-            Self::Calc(calc) => dest.write_str(&serialize_calc_length_percentage(&calc)),
+            Self::Calc(calc) => dest.write_str(&serialize_computed_calc(&calc)),
         }
     }
 }
@@ -511,7 +525,7 @@ impl cssparser::ToCss for ComputedTextIndent {
         match *self {
             Self::Px(px) => dest.write_str(&serialize_dimension(px, "px")),
             Self::Percent(percent) => dest.write_str(&serialize_percentage(percent)),
-            Self::Calc(calc) => dest.write_str(&serialize_calc_length_percentage(&calc)),
+            Self::Calc(calc) => dest.write_str(&serialize_computed_calc(&calc)),
         }
     }
 }
@@ -522,7 +536,7 @@ impl cssparser::ToCss for ComputedTextUnderlineOffset {
             Self::Auto => dest.write_str("auto"),
             Self::Length(length) => length.to_css(dest),
             Self::Percent(percent) => dest.write_str(&serialize_percentage(percent)),
-            Self::Calc(calc) => dest.write_str(&serialize_calc_length_percentage(&calc)),
+            Self::Calc(calc) => dest.write_str(&serialize_computed_calc(&calc)),
         }
     }
 }

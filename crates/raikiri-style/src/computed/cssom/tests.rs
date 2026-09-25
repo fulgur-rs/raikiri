@@ -77,3 +77,32 @@ fn text_decoration_inset_uses_shared_css_number_formatting() {
         Some("2.5px".to_owned())
     );
 }
+
+#[test]
+fn computed_calc_values_fold_a_zero_term_like_cascade_does() {
+    use crate::property::CalcLengthPercentage;
+    use crate::resolve::{ComputedLetterSpacing, ComputedTextIndent, ComputedTextUnderlineOffset};
+    use cssparser::ToCss as _;
+
+    let percent_only = CalcLengthPercentage {
+        percent: 10.0,
+        px: 0.0,
+    };
+    let px_only = CalcLengthPercentage {
+        percent: 0.0,
+        px: -2.0,
+    };
+    let mixed = CalcLengthPercentage {
+        percent: 10.0,
+        px: -2.0,
+    };
+    assert_eq!(
+        ComputedLetterSpacing::Calc(percent_only).to_css_string(),
+        "10%"
+    );
+    assert_eq!(ComputedTextIndent::Calc(px_only).to_css_string(), "-2px");
+    assert_eq!(
+        ComputedTextUnderlineOffset::Calc(mixed).to_css_string(),
+        "calc(10% - 2px)"
+    );
+}
