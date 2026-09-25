@@ -9,21 +9,9 @@ use crate::cascade::{
     resolve_custom_property_environment, resolve_deferred_value,
 };
 use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_properties};
-#[allow(unused_imports)]
 use crate::property::{
-    BackgroundShorthand, BackgroundSize, Border, BorderCollapseValue, BorderColor, BorderRadius,
-    BorderSpacingValue, BorderStyle, BoxShadowItem, CaptionSideValue, ColumnCountValue,
-    ColumnWidthValue, ColumnsShorthand, CssPosition, CssPositionOffset, CustomProperty,
-    EmptyCellsValue, FlexBasisValue, FlexFlow, FlexShorthand, FontShorthand, FontShorthandSize,
-    GapShorthand, GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
-    GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
-    Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowXY, PageValue, PropertyKey,
-    PropertyValue, Sides, TableLayoutValue, TextCombineUpright, TextDecorationInset,
-    TextDecorationShorthand, TextDecorationSkipInk, TextDecorationSkipSpaces,
-    TextDecorationThickness, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisVEdge,
-    TextIndentValue, TextOrientation, TextShadowItem, TextUnderlinePosition, TextWrapMode,
-    TransformFunction, UnicodeBidi, parse_length_allow_negative, parse_non_negative_length,
-    parse_value, resolve_overflow, resolve_writing_mode,
+    BorderStyle, CustomProperty, Length, OutlineStyle, OverflowValue, OverflowXY, PropertyKey,
+    PropertyValue, Sides,
 };
 use crate::resolve::{
     ComputedLength, ResolveContext, resolve_length, resolve_line_height, used_line_height_length,
@@ -1003,7 +991,7 @@ fn page_context_outline_style(
         .unwrap_or(OutlineStyle::None)
 }
 
-/// The page context's raw (pre-[`resolve_overflow`]) `overflow-x` +
+/// The page context's raw (pre-[`resolve_overflow`](crate::property::resolve_overflow)) `overflow-x` +
 /// `overflow-y` winners — the input to the CSS Overflow 3 §3.1 cross-axis
 /// coupling gate in phase 3.
 ///

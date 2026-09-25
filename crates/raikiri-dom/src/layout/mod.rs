@@ -72,36 +72,22 @@ mod inline_text;
 mod multicol;
 mod page;
 mod page_pipeline;
-mod sanitize;
+pub(crate) mod sanitize;
 
-#[allow(unused_imports)]
 use bridge::*;
-#[allow(unused_imports)]
 use inline_text::*;
-#[allow(unused_imports)]
 use multicol::*;
-#[allow(unused_imports)]
 use page::*;
-#[allow(unused_imports)]
 use page_pipeline::*;
-#[allow(unused_imports)]
 use sanitize::*;
 
-// only reached via an intra-doc link from outside layout/, not real code
-#[allow(unused_imports)]
-pub(crate) use sanitize::LAYOUT_WARN_CAP;
-pub(crate) use sanitize::LayoutWarn;
-// only reached via an intra-doc link from outside layout/, not real code
-#[allow(unused_imports)]
 pub(crate) use bridge::apply_computed_to_style;
 pub(crate) use multicol::compute_multicol_layout;
 pub(crate) use page::find_body;
+pub(crate) use sanitize::LayoutWarn;
 // only reached via an intra-doc link from outside layout/, not real code
 pub use inline_text::measure_ch_advance_for_font_key;
-#[allow(unused_imports)]
 pub(crate) use inline_text::preshape_text;
-// only reached via an intra-doc link from outside layout/, not real code
-#[allow(unused_imports)]
 pub(crate) use sanitize::sanitize_taffy;
 pub(crate) use sanitize::sanitize_taffy_layout;
 

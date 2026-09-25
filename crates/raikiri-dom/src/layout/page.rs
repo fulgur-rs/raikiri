@@ -35,7 +35,14 @@ pub(crate) fn find_body(doc: &Document) -> Option<usize> {
 /// CSS Paged Media の initial containing block = @page size。現行実装は @page 非対応
 /// のため body.style.size に直接注入する妥協。将来 @page cascade + per-page
 /// PageBox を導入する際に `<html>` root style に site を昇格予定。
-#[allow(dead_code)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "superseded in the layout pipeline by apply_page_content_box_to_body; \
+                  kept for its unit tests and the intra-doc links that describe it"
+    )
+)]
 pub(crate) fn apply_page_box_to_body(doc: &mut Document, body_id: usize, page_box: PageBox) {
     doc.nodes[body_id].style.size = Size {
         width: Dimension::length(page_box.width),

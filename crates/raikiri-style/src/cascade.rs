@@ -36,8 +36,6 @@ use crate::error::CascadeError;
 use crate::media::MediaContext;
 use crate::page::{PageCascadeResult, PageContextQuery, PageInheritance, cascade_page};
 use crate::property::{Sides, WritingMode};
-#[cfg_attr(not(test), allow(unused_imports))]
-use crate::ruletree::Origin;
 use crate::ruletree::RuleTree;
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 
@@ -274,14 +272,9 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
 
 mod collect;
 pub(crate) use collect::*;
-mod lang;
-mod selector_match;
-// Re-exported purely so intra-doc links elsewhere in the crate (e.g.
-// `crate::cascade::language_range_matches` in lib.rs) can resolve — this
-// module's own top-level API never calls into `lang` directly.
-#[allow(unused_imports)]
-pub(crate) use lang::*;
 mod directionality;
+pub(crate) mod lang;
+mod selector_match;
 pub(crate) use directionality::*;
 mod custom_property;
 mod html_quirks;
@@ -296,7 +289,7 @@ mod test_support;
 mod tests {
     use super::*;
     use crate::cascade::test_support::*;
-    use crate::ruletree::build_rule_tree;
+    use crate::ruletree::{Origin, build_rule_tree};
     use crate::test_dom::TestDoc;
 
     #[test]

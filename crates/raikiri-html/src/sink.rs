@@ -710,7 +710,7 @@ pub(crate) fn find_document_base_href(doc: &Document) -> Option<String> {
 /// 通りなら「複数の named stylesheet set のうち preferred set 以外は
 /// 無効化する」べきところを無視している。この逸脱は `<link>` /
 /// `<style>` 双方に共通する。
-#[allow(dead_code)] // retained as a narrow compatibility/test projection
+#[cfg(test)]
 pub(crate) fn collect_external_stylesheet_hrefs(
     doc: &Document,
 ) -> Vec<(raikiri_traits::NodeId, String)> {
