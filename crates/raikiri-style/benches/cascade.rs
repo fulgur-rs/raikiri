@@ -822,6 +822,61 @@ fn bench_cascade(c: &mut Criterion) {
         });
     }
 
+    // Keep inactive rules in the tree to measure media filtering separately
+    // from selector matching. Also exercise a fully active media workload.
+    for (name, n_rules, n_elems, query, active) in [
+        ("media_inactive_2000x1000", 2000, 1000, "screen", false),
+        ("media_active_50x500", 50, 500, "print", true),
+    ] {
+        let doc = BenchDoc::new(n_elems);
+        let (css, want) = stylesheet(n_rules);
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(&format!("@media {query} {{ {css} }}"), Origin::Author);
+        let initial = ComputedValues::initial();
+        let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+        assert_eq!(probe.computed.len(), doc.node_count());
+        for (idx, node) in doc.nodes.iter().enumerate() {
+            if node.kind != StyleNodeKind::Element {
+                continue;
+            }
+            let cv = &probe.computed[idx];
+            assert_eq!(cv.color, if active { want.color } else { initial.color });
+            assert_eq!(
+                cv.font_size.px(),
+                if active {
+                    want.font_size
+                } else {
+                    initial.font_size.px()
+                }
+            );
+        }
+        // Invert the context on the same tree to prove that the inactive
+        // case contains valid rules, and that filtering is per invocation.
+        let screen = raikiri_style::cascade_with_media_context(
+            &BenchDoc::new(1),
+            &tree,
+            &raikiri_style::MediaContext::screen(),
+        )
+        .expect(CASCADE_NEVER_ERRS);
+        assert_eq!(
+            screen.computed[1].color,
+            if active { initial.color } else { want.color }
+        );
+        assert_eq!(
+            screen.computed[1].font_size.px(),
+            if active {
+                initial.font_size.px()
+            } else {
+                want.font_size
+            }
+        );
+
+        group.throughput(Throughput::Elements(n_elems as u64));
+        group.bench_function(name, |b| {
+            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+        });
+    }
+
     // Combinator-chain config — see the module doc's "Combinator-chain
     // workload" section for why the two configs above cannot exercise
     // `match_combinator_chain` at all.
