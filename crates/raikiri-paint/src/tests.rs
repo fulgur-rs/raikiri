@@ -1958,6 +1958,44 @@ fn html_inline_svg_preserves_stylesheet_inherited_opacity() {
     assert_eq!(image.data.as_ref()[3], 128);
 }
 
+#[test]
+fn html_inline_svg_root_background_stays_inside_the_opacity_group() {
+    use raikiri_html::{ParseOptions, parse};
+
+    let html = br#"<html><body><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" style="opacity:.5;background-color:blue"><rect width="5" height="10" fill="red"/></svg></body></html>"#;
+    let options = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
+    let cascade = raikiri_html::build_cascaded(&uncascaded);
+    let mut doc = uncascaded.dom;
+    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new())
+        .expect("layout succeeds");
+
+    let mut scene = Scene::new();
+    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4);
+    let image = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::Fill(fill) => match &fill.brush {
+                anyrender::types::Paint::Image(brush) => Some(&brush.image),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("inline SVG produces an image fill");
+
+    assert!(scene.commands.iter().any(|command| matches!(
+        command,
+        RenderCommand::PushLayer(layer) if (layer.alpha - 0.5).abs() < f32::EPSILON
+    )));
+    assert_eq!(&image.data.as_ref()[..4], &[255, 0, 0, 255]);
+    assert_eq!(&image.data.as_ref()[9 * 4..10 * 4], &[0, 0, 255, 255]);
+}
+
 fn paint_inline_svg_with_external_image(style: &str) -> Vec<raikiri_traits::RenderWarning> {
     use raikiri_traits::{DecodedImage, ImagePixelSource};
     use std::sync::Arc;

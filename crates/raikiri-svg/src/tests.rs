@@ -345,6 +345,28 @@ fn root_opacity_neutralization_preserves_stylesheet_inherited_opacity() {
 }
 
 #[test]
+fn root_opacity_neutralization_does_not_promote_inherited_opacity_importance() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" opacity="0.5"><style>rect { opacity:inherit } .opaque { opacity:1 }</style><rect class="opaque" width="1" height="1" fill="#ff0000"/></svg>"##;
+    let svg = SvgDocument::parse(source).expect("valid SVG");
+    let image = svg
+        .rasterize(
+            SvgViewport {
+                width: 1.0,
+                height: 1.0,
+            },
+            SvgRootStyle {
+                opacity: 0.5,
+                neutralize_root_opacity: true,
+                ..SvgRootStyle::default()
+            },
+            None,
+        )
+        .expect("rasterization succeeds");
+
+    assert_eq!(&image.rgba, &[255, 0, 0, 255]);
+}
+
+#[test]
 fn root_opacity_neutralization_rewrites_cdata_stylesheet_content() {
     let svg = SvgDocument::parse(
         br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><style>

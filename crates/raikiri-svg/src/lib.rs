@@ -211,28 +211,11 @@ impl SvgDocument {
             } else {
                 root_style.opacity
             };
-            let opacity_to_remove = root_style
-                .neutralize_root_opacity
-                .then_some(root_style.opacity);
             if source == self.source {
-                render_tree(
-                    &self.tree,
-                    width,
-                    height,
-                    raster_opacity,
-                    opacity_to_remove,
-                    &mut pixels,
-                )?;
+                render_tree(&self.tree, width, height, raster_opacity, &mut pixels)?;
             } else {
                 let tree = parse_tree(&source)?;
-                render_tree(
-                    &tree,
-                    width,
-                    height,
-                    raster_opacity,
-                    opacity_to_remove,
-                    &mut pixels,
-                )?;
+                render_tree(&tree, width, height, raster_opacity, &mut pixels)?;
             }
         }
 
@@ -626,13 +609,10 @@ fn with_root_opacity_neutralized(
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
     let root = xml.root_element();
     let style_value = root.attribute("style").map_or_else(
-        || format!("opacity:{inherited_root_opacity}!important"),
+        || "opacity:1".to_owned(),
         |style| {
             let retained = strip_inline_style_properties(style, &["opacity"]);
-            append_inline_declarations(
-                &retained,
-                &format!("opacity:{inherited_root_opacity}!important"),
-            )
+            append_inline_declarations(&retained, "opacity:1")
         },
     );
     let replacement = format!("style=\"{}\"", escape_xml_attribute(&style_value));
@@ -673,11 +653,10 @@ fn with_root_opacity_neutralized(
         }
     }
 
-    // usvg keeps the first important declaration it encounters, even when a
-    // later root inline declaration should win. Exclude the root from every
-    // stylesheet opacity selector to a private attribute on descendants so
-    // the host opacity can own the root, while preserving original selectors.
-    let scope_attribute = unique_scope_attribute(source);
+    // Keep the source root at opacity 1 for rasterization. Split descendants
+    // into direct and nested selector scopes so direct-child `inherit` can use
+    // the host value while deeper inheritance follows the source tree normally.
+    let (direct_scope_attribute, nested_scope_attribute) = unique_scope_attributes(source);
     let mut has_scoped_stylesheet_opacity = false;
     for node in root
         .descendants()
@@ -697,7 +676,12 @@ fn with_root_opacity_neutralized(
         if stylesheet_text.is_empty() {
             continue;
         }
-        let Some(rewritten) = scope_stylesheet_opacity(&stylesheet_text, &scope_attribute) else {
+        let Some(rewritten) = scope_stylesheet_opacity(
+            &stylesheet_text,
+            &direct_scope_attribute,
+            &nested_scope_attribute,
+            &inherited_opacity,
+        ) else {
             continue;
         };
         has_scoped_stylesheet_opacity = true;
@@ -720,6 +704,11 @@ fn with_root_opacity_neutralized(
                 end - 1
             } else {
                 end
+            };
+            let scope_attribute = if descendant.parent() == Some(root) {
+                &direct_scope_attribute
+            } else {
+                &nested_scope_attribute
             };
             edits.push((insertion..insertion, format!(" {scope_attribute}=\"\"")));
         }
@@ -858,7 +847,9 @@ struct ParsedCssDeclaration {
 
 struct ScopedOpacityStylesheetParser<'a> {
     source: &'a str,
-    scope_attribute: &'a str,
+    direct_scope_attribute: &'a str,
+    nested_scope_attribute: &'a str,
+    inherited_root_opacity: &'a str,
     removals: Vec<Range<usize>>,
     scoped_rules: Vec<String>,
 }
@@ -987,36 +978,73 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedOpacityStylesheetParser<'_
                 }
                 range
             }));
+        let direct_declarations = opacity_declarations
+            .iter()
+            .map(|declaration| {
+                replace_inline_inherited_opacity(&declaration.raw, self.inherited_root_opacity)
+                    .unwrap_or_else(|| declaration.raw.clone())
+            })
+            .collect::<Vec<_>>();
+        let nested_declarations = opacity_declarations
+            .iter()
+            .map(|declaration| declaration.raw.clone())
+            .collect::<Vec<_>>();
         for selector in split_css_selector_list(&selector_list) {
             let selector = selector.trim();
             if selector.is_empty() {
                 continue;
             }
-            let insertion = selector_scope_insertion(selector);
-            let mut scoped_rule =
-                String::with_capacity(selector.len() + self.scope_attribute.len() + 16);
-            scoped_rule.push_str(&selector[..insertion]);
-            scoped_rule.push('[');
-            scoped_rule.push_str(self.scope_attribute);
-            scoped_rule.push(']');
-            scoped_rule.push_str(&selector[insertion..]);
-            scoped_rule.push_str(" {");
-            for declaration in &opacity_declarations {
-                scoped_rule.push(' ');
-                scoped_rule.push_str(&declaration.raw);
-                scoped_rule.push(';');
+            if let Some(rule) =
+                scoped_opacity_rule(selector, self.direct_scope_attribute, &direct_declarations)
+            {
+                self.scoped_rules.push(rule);
             }
-            scoped_rule.push_str(" }");
-            self.scoped_rules.push(scoped_rule);
+            if let Some(rule) =
+                scoped_opacity_rule(selector, self.nested_scope_attribute, &nested_declarations)
+            {
+                self.scoped_rules.push(rule);
+            }
         }
         Ok(())
     }
 }
 
-fn scope_stylesheet_opacity(source: &str, scope_attribute: &str) -> Option<String> {
+fn scoped_opacity_rule(
+    selector: &str,
+    scope_attribute: &str,
+    declarations: &[String],
+) -> Option<String> {
+    let insertion = selector_scope_insertion(selector);
+    if insertion == 0 {
+        return None;
+    }
+    let mut scoped_rule = String::with_capacity(selector.len() + scope_attribute.len() + 16);
+    scoped_rule.push_str(&selector[..insertion]);
+    scoped_rule.push('[');
+    scoped_rule.push_str(scope_attribute);
+    scoped_rule.push(']');
+    scoped_rule.push_str(&selector[insertion..]);
+    scoped_rule.push_str(" {");
+    for declaration in declarations {
+        scoped_rule.push(' ');
+        scoped_rule.push_str(declaration);
+        scoped_rule.push(';');
+    }
+    scoped_rule.push_str(" }");
+    Some(scoped_rule)
+}
+
+fn scope_stylesheet_opacity(
+    source: &str,
+    direct_scope_attribute: &str,
+    nested_scope_attribute: &str,
+    inherited_root_opacity: &str,
+) -> Option<String> {
     let mut parser_state = ScopedOpacityStylesheetParser {
         source,
-        scope_attribute,
+        direct_scope_attribute,
+        nested_scope_attribute,
+        inherited_root_opacity,
         removals: Vec::new(),
         scoped_rules: Vec::new(),
     };
@@ -1186,15 +1214,24 @@ fn xml_element_content_range(source: &str, node: roxmltree::Node<'_, '_>) -> Opt
     (content_start <= closing_tag_start).then_some(content_start..closing_tag_start)
 }
 
-fn unique_scope_attribute(source: &str) -> String {
+fn unique_scope_attributes(source: &str) -> (String, String) {
     let base = "data-raikiri-root-opacity-scope";
-    if !source.contains(base) {
-        return base.to_owned();
-    }
-    (1_u32..)
-        .map(|suffix| format!("{base}-{suffix}"))
-        .find(|candidate| !source.contains(candidate))
-        .unwrap_or_else(|| format!("{base}-fallback"))
+    (0_u32..)
+        .map(|suffix| {
+            let prefix = if suffix == 0 {
+                base.to_owned()
+            } else {
+                format!("{base}-{suffix}")
+            };
+            (format!("{prefix}-direct"), format!("{prefix}-nested"))
+        })
+        .find(|(direct, nested)| !source.contains(direct) && !source.contains(nested))
+        .unwrap_or_else(|| {
+            (
+                format!("{base}-direct-fallback"),
+                format!("{base}-nested-fallback"),
+            )
+        })
 }
 
 fn append_inline_declarations(style: &str, declarations: &str) -> String {
@@ -1405,7 +1442,6 @@ fn render_tree(
     width: u32,
     height: u32,
     opacity: f32,
-    opacity_to_remove: Option<f32>,
     pixels: &mut Vec<u8>,
 ) -> Result<(), SvgError> {
     let size =
@@ -1419,19 +1455,6 @@ fn render_tree(
         height as f32 / svg_size.height(),
     );
     resvg::render(tree, transform, &mut pixmap.as_mut());
-
-    if let Some(root_opacity) = opacity_to_remove {
-        // usvg resolves descendant `opacity: inherit` against the host value
-        // before rendering. Remove only the root group's alpha in premultiplied
-        // space so the caller can apply that value around the complete box.
-        for pixel in pixmap.data_mut().chunks_exact_mut(4) {
-            for channel in pixel {
-                *channel = (f64::from(*channel) / f64::from(root_opacity))
-                    .round()
-                    .clamp(0.0, 255.0) as u8;
-            }
-        }
-    }
 
     if opacity < 1.0 {
         for pixel in pixmap.data_mut().chunks_exact_mut(4) {
