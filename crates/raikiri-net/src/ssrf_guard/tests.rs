@@ -1,0 +1,215 @@
+use super::*;
+
+fn v4(s: &str) -> IpAddr {
+    s.parse::<Ipv4Addr>().unwrap().into()
+}
+fn v6(s: &str) -> IpAddr {
+    s.parse::<Ipv6Addr>().unwrap().into()
+}
+
+#[test]
+fn blocks_rfc1918_private_ranges() {
+    assert!(!is_globally_routable(v4("10.0.0.1")));
+    assert!(!is_globally_routable(v4("172.16.5.5")));
+    assert!(!is_globally_routable(v4("192.168.1.1")));
+}
+
+#[test]
+fn blocks_loopback() {
+    assert!(!is_globally_routable(v4("127.0.0.1")));
+    assert!(!is_globally_routable(v6("::1")));
+}
+
+#[test]
+fn blocks_this_network_range_which_reaches_localhost_on_linux() {
+    // 0.0.0.0/8: a connect to any of these reaches 127.0.0.1-bound
+    // services on Linux, so the whole /8 must be blocked, not just
+    // the single unspecified address.
+    assert!(!is_globally_routable(v4("0.0.0.0")));
+    assert!(!is_globally_routable(v4("0.1.2.3")));
+    assert!(!is_globally_routable(v4("0.255.255.255")));
+    // Same range reached through the IPv4-mapped and NAT64 unwrap paths.
+    assert!(!is_globally_routable(v6("::ffff:0.0.0.0")));
+    assert!(!is_globally_routable(v6("64:ff9b::")));
+    // Just outside the range.
+    assert!(is_globally_routable(v4("1.0.0.0")));
+}
+
+#[test]
+fn blocks_link_local_including_cloud_metadata() {
+    // AWS/GCP/Azure/OCI/DigitalOcean metadata endpoint.
+    assert!(!is_globally_routable(v4("169.254.169.254")));
+}
+
+#[test]
+fn blocks_cgnat_shared_address_space_including_alibaba_metadata() {
+    // 100.64.0.0/10 (RFC 6598) is neither RFC1918-private nor
+    // link-local; a naive check misses it. Alibaba Cloud's metadata
+    // endpoint lives here.
+    assert!(!is_globally_routable(v4("100.100.100.200")));
+    assert!(!is_globally_routable(v4("100.64.0.0")));
+    assert!(!is_globally_routable(v4("100.127.255.255")));
+    // Just outside the range on both sides must stay unaffected by this
+    // specific check (still checked by other rules below, e.g. 100.63.x
+    // and 100.128.x are ordinary public space).
+    assert!(is_globally_routable(v4("100.63.255.255")));
+    assert!(is_globally_routable(v4("100.128.0.0")));
+}
+
+#[test]
+fn blocks_ietf_protocol_assignment_and_6to4_relay_and_benchmarking_and_reserved() {
+    assert!(!is_globally_routable(v4("192.0.0.8"))); // 192.0.0.0/24
+    assert!(!is_globally_routable(v4("192.88.99.1"))); // 6to4 relay anycast
+    assert!(!is_globally_routable(v4("198.18.0.1"))); // benchmarking
+    assert!(!is_globally_routable(v4("198.19.255.255"))); // benchmarking, high end
+    assert!(!is_globally_routable(v4("240.0.0.1"))); // reserved
+    assert!(!is_globally_routable(v4("255.255.255.255"))); // broadcast
+}
+
+#[test]
+fn blocks_multicast_and_documentation() {
+    assert!(!is_globally_routable(v4("224.0.0.1")));
+    assert!(!is_globally_routable(v4("192.0.2.1"))); // TEST-NET-1
+    assert!(!is_globally_routable(v4("198.51.100.1"))); // TEST-NET-2
+    assert!(!is_globally_routable(v4("203.0.113.1"))); // TEST-NET-3
+}
+
+#[test]
+fn allows_ordinary_public_v4_addresses() {
+    assert!(is_globally_routable(v4("1.1.1.1")));
+    assert!(is_globally_routable(v4("8.8.8.8")));
+}
+
+#[test]
+fn blocks_ipv6_link_local_and_unique_local_including_aws_ipv6_metadata() {
+    assert!(!is_globally_routable(v6("fe80::1")));
+    // fc00::/7 unique-local; AWS's IPv6 metadata endpoint lives here.
+    assert!(!is_globally_routable(v6("fc00::1")));
+    assert!(!is_globally_routable(v6("fd00:ec2::254")));
+}
+
+#[test]
+fn blocks_ipv6_multicast_unspecified_and_documentation() {
+    assert!(!is_globally_routable(v6("ff02::1")));
+    assert!(!is_globally_routable(v6("::")));
+    assert!(!is_globally_routable(v6("2001:db8::1")));
+    assert!(!is_globally_routable(v6("3fff::1")));
+}
+
+#[test]
+fn unwraps_ipv4_mapped_ipv6_and_rechecks_the_embedded_address() {
+    // ::ffff:127.0.0.1 — url::Url normalizes the *syntax* to
+    // `[::ffff:7f00:1]` but does not flatten it to plain IPv4, so this
+    // crate must unwrap it itself before checking.
+    assert!(!is_globally_routable(v6("::ffff:127.0.0.1")));
+    assert!(!is_globally_routable(v6("::ffff:169.254.169.254")));
+    // A mapped *public* address must not be blanket-blocked just for
+    // being in mapped form.
+    assert!(is_globally_routable(v6("::ffff:8.8.8.8")));
+}
+
+#[test]
+fn unwraps_nat64_embedded_ipv4_and_rechecks_the_embedded_address() {
+    // 64:ff9b::/96 (RFC 6052 well-known prefix): low 32 bits are the
+    // embedded IPv4 address. 7f00:1 = 127.0.0.1.
+    assert!(!is_globally_routable(v6("64:ff9b::7f00:1")));
+    // 0808:0808 = 8.8.8.8 — a NAT64-embedded *public* address must not
+    // be blanket-blocked just for using the NAT64 prefix.
+    assert!(is_globally_routable(v6("64:ff9b::808:808")));
+}
+
+#[test]
+fn blocks_the_local_use_nat64_prefix_outright_without_unwrapping() {
+    // 64:ff9b:1::/48 (RFC 8215) is for translators local to one network,
+    // which may map to private space. It is blocked as a whole: these
+    // assertions must hold regardless of what the low bits embed.
+    assert!(!is_globally_routable(v6("64:ff9b:1::a00:1"))); // would be 10.0.0.1
+    assert!(!is_globally_routable(v6("64:ff9b:1::7f00:1"))); // would be 127.0.0.1
+    // Even a public-looking embedded value is not unwrapped and allowed.
+    assert!(!is_globally_routable(v6("64:ff9b:1::808:808")));
+    assert!(!is_globally_routable(v6(
+        "64:ff9b:1:ffff:ffff:ffff:ffff:ffff"
+    )));
+    // `is_nat64_local_use` itself must not over-match its /48 boundary,
+    // checked directly rather than through `is_globally_routable`: the
+    // whole `64:ff9b::/32` prefix sits outside IANA's `2000::/3` global
+    // unicast allocation regardless (see `is_global_unicast`), so
+    // `is_globally_routable` alone can't tell "blocked by this check" apart
+    // from "blocked because it isn't real global-unicast space at all" for
+    // an address just past either edge of the /48.
+    assert!(!is_nat64_local_use("64:ff9b:2::808:808".parse().unwrap()));
+    assert!(!is_nat64_local_use("64:ff9b:0:1::808:808".parse().unwrap()));
+}
+
+#[test]
+fn allows_ordinary_public_v6_addresses() {
+    assert!(is_globally_routable(v6("2606:4700:4700::1111")));
+}
+
+#[test]
+fn blocks_ipv6_forms_outside_the_global_unicast_allocation() {
+    // `2000::/3` is IANA's entire Global Unicast allocation; every one of
+    // these forms falls outside it despite not matching any other named
+    // exclusion above, so the floor must reject all of them without a
+    // check written specifically for each one.
+    assert!(!is_globally_routable(v6("fec0::1"))); // deprecated site-local (RFC 3879)
+    assert!(!is_globally_routable(v6("::7f00:1"))); // deprecated IPv4-compatible (RFC 4291), would be 127.0.0.1
+    assert!(!is_globally_routable(v6("::ffff:0:7f00:1"))); // IPv4-translated (RFC 2765), would be 127.0.0.1
+    assert!(!is_globally_routable(v6("100::1"))); // discard-only (RFC 6666)
+    // Just outside fec0::/10 on the low side is ordinary unique-local space
+    // (already blocked by `is_unique_local`, not this gate) — this checks
+    // the gate itself doesn't over-block into neighboring, already-handled
+    // ranges in a way that would mask a regression there.
+    assert!(!is_globally_routable(v6("fc00::1")));
+}
+
+#[test]
+fn blocks_6to4_and_teredo_transition_prefixes() {
+    // 2002::/16 (6to4) and 2001::/32 (Teredo) are both inside 2000::/3, so
+    // the global-unicast gate alone does not exclude them; both are legacy
+    // IPv6 transition mechanisms embedding an IPv4 address, blocked
+    // outright rather than unwrapped.
+    assert!(!is_globally_routable(v6("2002:7f00:1::"))); // 6to4 embedding 127.0.0.1
+    assert!(!is_globally_routable(v6("2002:808:808::"))); // 6to4 embedding a public 8.8.8.8 is still blocked
+    assert!(!is_globally_routable(v6(
+        "2001:0:4136:e378:8000:63bf:3fff:fdd2"
+    ))); // Teredo
+    // Just outside each prefix is ordinary global-unicast space, unaffected.
+    assert!(is_globally_routable(v6("2003::1"))); // outside 2002::/16
+    assert!(is_globally_routable(v6("2001:1::1"))); // outside 2001:0000::/32
+}
+
+/// Pins the `url` crate's WHATWG host parsing of non-canonical IPv4 host
+/// literals (decimal, hex, octal, shorthand) to canonical dotted-quad form.
+/// This crate's IP floor classifies real resolved `SocketAddr`s and does not
+/// depend on this normalization itself, but hostname-string checks layered
+/// above it (`raikiri_traits::ResourcePolicy::is_host_allowed` receives
+/// `Url::host_str()`) do: if a future `url` release stopped normalizing
+/// these forms, a string-based deny rule for `127.0.0.1` could be bypassed
+/// with `http://2130706433/`. This test makes such a change fail CI instead
+/// of passing silently.
+#[test]
+fn url_crate_normalizes_alternate_ipv4_host_literals_to_dotted_form() {
+    for input in [
+        "http://2130706433/",   // decimal
+        "http://0x7f000001/",   // hex
+        "http://017700000001/", // octal
+        "http://127.1/",        // shorthand
+        "http://0x7f.0.0.1/",   // per-part hex
+        "http://0177.0.0.1/",   // per-part octal
+    ] {
+        let url = url::Url::parse(input).unwrap();
+        assert_eq!(
+            url.host_str(),
+            Some("127.0.0.1"),
+            "{input} must normalize to the canonical dotted-quad host"
+        );
+        assert!(
+            matches!(url.host(), Some(url::Host::Ipv4(ip)) if ip == Ipv4Addr::LOCALHOST),
+            "{input} must parse as an IPv4 host, not a domain"
+        );
+    }
+    // An already-canonical address must be left exactly as written.
+    let metadata = url::Url::parse("http://169.254.169.254/").unwrap();
+    assert_eq!(metadata.host_str(), Some("169.254.169.254"));
+}

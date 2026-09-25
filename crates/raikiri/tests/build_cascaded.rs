@@ -488,23 +488,25 @@ fn concrete_network_provider_impl_via_raikiri_only_re_exports() {
     // (Method / Body / HeaderMap / ResourceKind) を全て raikiri から import して
     // struct 実装。round-trip 動作までは要求しない (fetch 内で NetworkError::Aborted 即返却)
     // — 目的は trait impl の name resolution 完結性の証明。
-    use raikiri::{Bytes, FetchedResource, NetworkError, NetworkProvider, Request, Url};
+    use raikiri::{
+        Bytes, FetchOutcome, FetchedResource, NetworkError, NetworkProvider, Request, Url,
+    };
 
     struct DummyProvider;
 
     impl NetworkProvider for DummyProvider {
-        fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+        fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
             // Request field を全て read できることを compile-time で確認 (unused でも OK)。
             let _url: &Url = &request.url;
             let _kind = request.kind;
 
             // FetchedResource を Bytes / Url ベースで construct できることを confirm。
-            Ok(FetchedResource {
+            Ok(FetchOutcome::Body(FetchedResource {
                 bytes: Bytes::from_static(b""),
                 content_type: None,
                 final_url: Url::parse("about:blank").unwrap(),
                 encoding: None,
-            })
+            }))
         }
     }
 
@@ -526,20 +528,20 @@ fn link_rel_stylesheet_fetched_css_reaches_computed_style_through_real_cascade()
     // と同じ理由: static reading だけでは「本当に繋がっているか」は確認
     // できない)。
     use raikiri::{
-        Bytes, DisplayValue, FetchedResource, NetworkError, NetworkProvider, ParseOptions, Request,
-        Url, build_cascaded, parse,
+        Bytes, DisplayValue, FetchOutcome, FetchedResource, NetworkError, NetworkProvider,
+        ParseOptions, Request, Url, build_cascaded, parse,
     };
 
     struct StylesheetProvider;
 
     impl NetworkProvider for StylesheetProvider {
-        fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
-            Ok(FetchedResource {
+        fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+            Ok(FetchOutcome::Body(FetchedResource {
                 bytes: Bytes::from_static(b"div { display: none }"),
                 content_type: Some("text/css".to_string()),
                 final_url: request.url,
                 encoding: None,
-            })
+            }))
         }
     }
 
@@ -576,8 +578,8 @@ fn imported_stylesheet_rules_reach_cascade_in_source_order() {
     use std::sync::Mutex;
 
     use raikiri::{
-        Bytes, FetchedResource, NetworkError, NetworkProvider, ParseOptions, Request, ResourceKind,
-        Url, build_cascaded, parse,
+        Bytes, FetchOutcome, FetchedResource, NetworkError, NetworkProvider, ParseOptions, Request,
+        ResourceKind, Url, build_cascaded, parse,
     };
 
     struct ImportProvider {
@@ -585,7 +587,7 @@ fn imported_stylesheet_rules_reach_cascade_in_source_order() {
     }
 
     impl NetworkProvider for ImportProvider {
-        fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+        fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
             let requested = request.url.to_string();
             self.calls
                 .lock()
@@ -601,12 +603,12 @@ fn imported_stylesheet_rules_reach_cascade_in_source_order() {
                 }
                 _ => return Err(NetworkError::Other("not found".to_owned())),
             };
-            Ok(FetchedResource {
+            Ok(FetchOutcome::Body(FetchedResource {
                 bytes: Bytes::from(css),
                 content_type: Some("text/css".to_owned()),
                 final_url: Url::parse(final_url).unwrap(),
                 encoding: None,
-            })
+            }))
         }
     }
 
@@ -646,14 +648,14 @@ fn imported_stylesheet_rules_reach_cascade_in_source_order() {
 #[test]
 fn imported_media_condition_is_evaluated_by_the_selected_cascade_context() {
     use raikiri::{
-        Bytes, FetchedResource, MediaContext, NetworkError, NetworkProvider, ParseOptions, Request,
-        Url, build_cascaded, build_cascaded_with_media_context, parse,
+        Bytes, FetchOutcome, FetchedResource, MediaContext, NetworkError, NetworkProvider,
+        ParseOptions, Request, Url, build_cascaded, build_cascaded_with_media_context, parse,
     };
 
     struct ImportProvider;
 
     impl NetworkProvider for ImportProvider {
-        fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+        fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
             let (css, final_url) = match request.url.as_str() {
                 "https://example.test/main.css" => (
                     r#"@import "nested.css" screen;"#,
@@ -664,12 +666,12 @@ fn imported_media_condition_is_evaluated_by_the_selected_cascade_context() {
                 }
                 _ => return Err(NetworkError::Other("not found".to_owned())),
             };
-            Ok(FetchedResource {
+            Ok(FetchOutcome::Body(FetchedResource {
                 bytes: Bytes::from(css),
                 content_type: Some("text/css".to_owned()),
                 final_url: Url::parse(final_url).unwrap(),
                 encoding: None,
-            })
+            }))
         }
     }
 

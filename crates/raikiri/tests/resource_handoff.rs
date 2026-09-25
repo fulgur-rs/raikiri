@@ -5,12 +5,12 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use raikiri::{
-    Bytes, DecodedImage, FetchedResource, FontContextBuilder, ImagePixelSource, IntrinsicBox,
-    NetworkError, NetworkProvider, PageDefaults, PageFragment, RenderError, RenderOptions,
-    RenderResources, RenderSink, RenderStatus, RenderSummary, ReplacedResolver, Request,
-    ResolveDisposition, ResolvedIntrinsic, ResolverError, ResolverRequest, ResourceKind,
-    ResourceLimits, ResourcePolicy, StreamingConfig, Url, WarningKind, parse_html_with_resources,
-    render_streaming,
+    Bytes, DecodedImage, FetchOutcome, FetchedResource, FontContextBuilder, ImagePixelSource,
+    IntrinsicBox, NetworkError, NetworkProvider, PageDefaults, PageFragment, RenderError,
+    RenderOptions, RenderResources, RenderSink, RenderStatus, RenderSummary, ReplacedResolver,
+    Request, ResolveDisposition, ResolvedIntrinsic, ResolverError, ResolverRequest, ResourceKind,
+    ResourceLimits, ResourcePolicy, StreamingConfig, Url, ViolationType, WarningKind,
+    parse_html_with_resources, render_streaming,
 };
 
 /// Parse with `resources`, then render with the same resource handoff.
@@ -67,7 +67,7 @@ struct CountingNetwork {
 }
 
 impl NetworkProvider for CountingNetwork {
-    fn fetch(&self, _request: Request) -> Result<FetchedResource, NetworkError> {
+    fn fetch_one_hop(&self, _request: Request) -> Result<FetchOutcome, NetworkError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Err(NetworkError::Aborted)
     }
@@ -253,14 +253,14 @@ struct OversizedStylesheetProvider {
 }
 
 impl NetworkProvider for OversizedStylesheetProvider {
-    fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
         self.requests.lock().unwrap().push(request.clone());
-        Ok(FetchedResource {
+        Ok(FetchOutcome::Body(FetchedResource {
             bytes: Bytes::from_static(b"12345"),
             content_type: Some("text/css".into()),
             final_url: request.url,
             encoding: None,
-        })
+        }))
     }
 }
 
@@ -313,14 +313,14 @@ struct OneByteProvider {
 }
 
 impl NetworkProvider for OneByteProvider {
-    fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
         self.requests.lock().unwrap().push(request.clone());
-        Ok(FetchedResource {
+        Ok(FetchOutcome::Body(FetchedResource {
             bytes: Bytes::from_static(b"x"),
             content_type: Some("text/css".into()),
             final_url: request.url,
             encoding: None,
-        })
+        }))
     }
 }
 
@@ -551,4 +551,229 @@ fn network_policy_applies_to_stylesheet_font_and_replaced_resource_fetches() {
             ..
         }
     )));
+}
+
+/// `NetworkProvider` that responds to a fixed sequence of redirects before
+/// finally succeeding (or never, if the caller doesn't follow that far),
+/// recording every URL it is actually asked to fetch. Used to prove a
+/// denied redirect target is never requested at all — not merely detected
+/// and reported after the request already went out.
+#[derive(Default)]
+struct RedirectChainNetwork {
+    requests: Mutex<Vec<String>>,
+    /// `from URL -> (redirect target, or None to finally succeed)`.
+    hops: std::collections::HashMap<&'static str, Option<&'static str>>,
+}
+
+impl NetworkProvider for RedirectChainNetwork {
+    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+        let requested = request.url.to_string();
+        self.requests.lock().unwrap().push(requested.clone());
+        match self.hops.get(requested.as_str()) {
+            Some(Some(next)) => Ok(FetchOutcome::Redirect {
+                location: Url::parse(next).unwrap(),
+                status: 302,
+            }),
+            Some(None) => Ok(FetchOutcome::Body(FetchedResource {
+                bytes: Bytes::from_static(b"final { color: blue }"),
+                content_type: Some("text/css".to_owned()),
+                final_url: request.url,
+                encoding: None,
+            })),
+            None => Err(NetworkError::Other("not found".to_owned())),
+        }
+    }
+}
+
+struct HostAllowListPolicy {
+    allowed_host: &'static str,
+    max_hops: u32,
+    hops_seen: Mutex<Vec<u32>>,
+}
+
+impl ResourcePolicy for HostAllowListPolicy {
+    fn is_scheme_allowed(&self, _scheme: &str, _kind: ResourceKind) -> bool {
+        true
+    }
+    fn is_host_allowed(&self, host: &str, _kind: ResourceKind) -> bool {
+        host == self.allowed_host
+    }
+    fn allow_redirect(&self, _from: &Url, _to: &Url, hop: u32) -> bool {
+        self.hops_seen.lock().unwrap().push(hop);
+        true
+    }
+    fn max_redirect_hops(&self, _kind: ResourceKind) -> u32 {
+        self.max_hops
+    }
+    fn max_fetch_bytes(&self, _kind: ResourceKind) -> Option<u64> {
+        None
+    }
+    fn max_decoded_bytes(&self, _kind: ResourceKind) -> Option<u64> {
+        None
+    }
+    fn fetch_timeout(&self, _kind: ResourceKind) -> Duration {
+        Duration::from_secs(1)
+    }
+    fn decode_timeout(&self, _kind: ResourceKind) -> Duration {
+        Duration::from_secs(1)
+    }
+    fn allowed_mime_types(&self, _kind: ResourceKind) -> Vec<String> {
+        Vec::new()
+    }
+    fn max_import_depth(&self) -> u32 {
+        1
+    }
+    fn max_svg_recursion_depth(&self) -> u32 {
+        1
+    }
+}
+
+#[test]
+fn a_redirect_to_a_denied_host_is_never_actually_requested() {
+    let network = RedirectChainNetwork {
+        requests: Mutex::new(Vec::new()),
+        hops: std::collections::HashMap::from([(
+            "https://allowed.test/book/main.css",
+            Some("https://denied.test/secret.css"),
+        )]),
+    };
+    let policy = HostAllowListPolicy {
+        allowed_host: "allowed.test",
+        max_hops: 10,
+        hops_seen: Mutex::new(Vec::new()),
+    };
+    let resources = RenderResources::new()
+        .base_url(Url::parse("https://allowed.test/book/page.html").unwrap())
+        .network_provider(&network)
+        .network_policy(&policy);
+    let mut sink = CapturingSink::default();
+
+    let status = parse_and_render(
+        &b"<html><head><link rel='stylesheet' href='main.css'></head><body><p>Hi</p></body></html>"
+            [..],
+        PageDefaults::default(),
+        &resources,
+        StreamingConfig::default(),
+        &mut sink,
+    )
+    .expect("a denied redirect target falls back without aborting render");
+    let RenderStatus::Completed(summary) = status else {
+        panic!("expected a complete render");
+    };
+
+    // A wrapper that only re-checks the *final* URL after the fact would
+    // already have sent this request by the time it noticed the redirect
+    // target was denied; the fix must refuse it before any request ever
+    // reaches the redirect target.
+    assert_eq!(
+        *network.requests.lock().unwrap(),
+        vec!["https://allowed.test/book/main.css".to_owned()],
+        "the denied redirect target must never actually be requested"
+    );
+    assert!(summary.warnings.iter().any(|warning| matches!(
+        &warning.kind,
+        WarningKind::PolicyWarning { violation }
+            if matches!(violation.violation_type, ViolationType::HostNotAllowed)
+                && violation.url.as_str() == "https://denied.test/secret.css"
+    )));
+}
+
+#[test]
+fn exceeding_max_redirect_hops_stops_before_the_next_hop_is_requested() {
+    let network = RedirectChainNetwork {
+        requests: Mutex::new(Vec::new()),
+        hops: std::collections::HashMap::from([
+            (
+                "https://allowed.test/book/main.css",
+                Some("https://allowed.test/hop1.css"),
+            ),
+            (
+                "https://allowed.test/hop1.css",
+                Some("https://allowed.test/hop2.css"),
+            ),
+            ("https://allowed.test/hop2.css", None),
+        ]),
+    };
+    let policy = HostAllowListPolicy {
+        allowed_host: "allowed.test",
+        max_hops: 1,
+        hops_seen: Mutex::new(Vec::new()),
+    };
+    let resources = RenderResources::new()
+        .base_url(Url::parse("https://allowed.test/book/page.html").unwrap())
+        .network_provider(&network)
+        .network_policy(&policy);
+    let mut sink = CapturingSink::default();
+
+    parse_and_render(
+        &b"<html><head><link rel='stylesheet' href='main.css'></head><body><p>Hi</p></body></html>"
+            [..],
+        PageDefaults::default(),
+        &resources,
+        StreamingConfig::default(),
+        &mut sink,
+    )
+    .expect("a redirect chain exceeding the hop cap falls back without aborting render");
+
+    assert_eq!(
+        *network.requests.lock().unwrap(),
+        vec![
+            "https://allowed.test/book/main.css".to_owned(),
+            "https://allowed.test/hop1.css".to_owned(),
+        ],
+        "the second hop must never be requested once the cap is exceeded"
+    );
+}
+
+#[test]
+fn allow_redirect_receives_the_real_hop_number_not_a_fixed_one() {
+    let network = RedirectChainNetwork {
+        requests: Mutex::new(Vec::new()),
+        hops: std::collections::HashMap::from([
+            (
+                "https://allowed.test/book/main.css",
+                Some("https://allowed.test/hop1.css"),
+            ),
+            (
+                "https://allowed.test/hop1.css",
+                Some("https://allowed.test/hop2.css"),
+            ),
+            ("https://allowed.test/hop2.css", None),
+        ]),
+    };
+    let policy = HostAllowListPolicy {
+        allowed_host: "allowed.test",
+        max_hops: 10,
+        hops_seen: Mutex::new(Vec::new()),
+    };
+    let resources = RenderResources::new()
+        .base_url(Url::parse("https://allowed.test/book/page.html").unwrap())
+        .network_provider(&network)
+        .network_policy(&policy);
+    let mut sink = CapturingSink::default();
+
+    parse_and_render(
+        &b"<html><head><link rel='stylesheet' href='main.css'></head><body><p>Hi</p></body></html>"
+            [..],
+        PageDefaults::default(),
+        &resources,
+        StreamingConfig::default(),
+        &mut sink,
+    )
+    .expect("a fully allowed redirect chain completes without aborting render");
+
+    assert_eq!(
+        *network.requests.lock().unwrap(),
+        vec![
+            "https://allowed.test/book/main.css".to_owned(),
+            "https://allowed.test/hop1.css".to_owned(),
+            "https://allowed.test/hop2.css".to_owned(),
+        ]
+    );
+    assert_eq!(
+        *policy.hops_seen.lock().unwrap(),
+        vec![1, 2],
+        "each redirect must be reported with its real, incrementing hop number, \
+         not a fixed value"
+    );
 }

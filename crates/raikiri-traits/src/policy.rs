@@ -150,6 +150,12 @@ pub enum ViolationType {
         /// The recursion depth that exceeded the limit.
         depth: u32,
     },
+    /// The resolved connection address failed the non-overridable
+    /// SSRF safety floor (private, loopback, link-local, CGNAT, or
+    /// metadata-range destination). Distinct from `HostNotAllowed`,
+    /// which is a Consumer-configured `ResourcePolicy` decision — this
+    /// variant fires regardless of policy configuration.
+    PrivateNetworkBlocked,
     /// その他。
     Other,
 }
@@ -174,56 +180,13 @@ impl std::fmt::Display for ViolationType {
             Self::RecursionExceeded { depth } => {
                 write!(f, "recursion depth exceeded ({depth})")
             }
+            Self::PrivateNetworkBlocked => {
+                write!(f, "destination is a private network address")
+            }
             Self::Other => write!(f, "unspecified policy violation"),
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn policy_violation_display_includes_kind_url_violation_type_details() {
-        let violation = PolicyViolation {
-            kind: ResourceKind::ExternalStylesheet,
-            url: Url::parse("https://example.test/main.css").expect("valid url"),
-            violation_type: ViolationType::MimeNotAllowed {
-                mime: "text/plain".into(),
-            },
-            details: "expected text/css".to_string(),
-        };
-        let s = format!("{violation}");
-        // kind (Display of ResourceKind, not Debug)
-        assert!(
-            s.contains("external stylesheet"),
-            "display must include kind via ResourceKind::Display: got {s:?}"
-        );
-        // Regression check: Debug format must not leak (auto-derived Debug can
-        // silently change when variant fields are added; new tests below check
-        // every ResourceKind variant's Display string).
-        assert!(
-            !s.contains("ExternalStylesheet"),
-            "display must not leak ResourceKind Debug format: got {s:?}"
-        );
-        // violation_type (Display of ViolationType, which for MimeNotAllowed includes the mime)
-        assert!(
-            s.contains("MIME type not allowed"),
-            "display must include violation_type: got {s:?}"
-        );
-        assert!(
-            s.contains("text/plain"),
-            "display must include violation_type payload: got {s:?}"
-        );
-        // url
-        assert!(
-            s.contains("https://example.test/main.css"),
-            "display must include url: got {s:?}"
-        );
-        // details
-        assert!(
-            s.contains("expected text/css"),
-            "display must include details: got {s:?}"
-        );
-    }
-}
+mod tests;

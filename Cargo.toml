@@ -69,6 +69,26 @@ rustc-hash = "2.1"
 bytes      = "1"
 url        = "2.5"
 
+# ── HTTP client (raikiri-net's SSRF-hardened NetworkProvider) ──────────
+# Exact-pinned: `ureq`'s `unversioned::resolver`/`unversioned::transport`
+# modules (used for the custom DNS-resolver hook this crate relies on for
+# its IP-address safety floor) explicitly do not follow semver and can
+# change in a *minor* version bump (see ureq's own `unversioned` module
+# doc comment). A caret requirement here could silently pick up a breaking
+# change to that surface.
+#
+# `default-features = ["rustls", "gzip"]` is kept: `rustls` is required for
+# `https://` fetches (the overwhelming majority of real resource URLs) and
+# `gzip` for real-world compressed CSS/font/image responses. `rustls`'s
+# default crypto provider (`ring`) has a `[build-dependencies] cc` edge —
+# checked via `cargo tree -e normal,build` against this exact pin — so this
+# is a real Non-Pure-Rust build-graph edge (walls.md 壁7's "Non-Pure-Rust
+# dep 追加" trigger category). It does not fire the wasm32 half of that
+# trigger ("WASM 未対応 かつ代替なし") because this dependency is `optional
+# = true` behind raikiri-net's non-default `http-ureq` feature and is never
+# part of a wasm32-unknown-unknown build of this crate's default features.
+ureq = "=3.4.2"
+
 # ── Image decode (Pure Rust) ────────────────────────────────────────────
 # raikiri-net's ImageResolver decodes fetched or data: <img> bytes to raw
 # RGBA8 pixels. Keep the format set explicit so the dependency remains
@@ -96,6 +116,12 @@ blitz-paint         = "=0.3.0-beta.2"
 # ── Dev-only: lint fixtures + bin tests (raikiri-spike-yps) ────────────
 tempfile   = "3"
 assert_cmd = "2"
+
+# ── Dev-only: gzip fixtures for raikiri-net's decompression-bomb test ───
+# Already in the build graph through ureq's `gzip` feature; the dev-dep only
+# lets the test build a compressed response body. Default backend
+# (miniz_oxide) is Pure Rust.
+flate2 = "1"
 
 # ── Dev-only: benchmarking (raikiri-spike-zpui origin, promoted here by
 # raikiri-spike-vvf6 now that a second crate — raikiri-bench — legitimately

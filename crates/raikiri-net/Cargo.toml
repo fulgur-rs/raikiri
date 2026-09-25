@@ -1,7 +1,7 @@
 [package]
 name = "raikiri-net"
 version = "0.1.0"
-description = "NetworkProvider / ReplacedResolver base implementations for raikiri (FileNetworkProvider, ImageResolver<N>). Sandboxed*/DenyAllPolicy/DefaultSandboxPolicy wrappers are a separate, not-yet-implemented follow-up."
+description = "NetworkProvider / ReplacedResolver base implementations for raikiri (FileNetworkProvider, ImageResolver<N>, ssrf_guard, and UreqHttpProvider behind the http-ureq feature)."
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -11,10 +11,18 @@ data-url       = { workspace = true }
 image          = { workspace = true }
 raikiri-traits = { workspace = true }
 url            = { workspace = true }
+ureq           = { workspace = true, optional = true }
 
 [dev-dependencies]
+flate2   = { workspace = true }
 png      = { workspace = true }
 tempfile = { workspace = true }
+
+[features]
+# Off by default: `FileNetworkProvider`-only consumers (tests, examples)
+# must not gain the `ureq`/`rustls`/`ring` dependency chain. See root
+# Cargo.toml's `ureq` entry for the Pure-Rust/WASM rationale.
+http-ureq = ["dep:ureq"]
 
 [lints]
 workspace = true

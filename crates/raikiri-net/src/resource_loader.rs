@@ -97,13 +97,13 @@ fn decode_data_url(url: &str) -> Result<Vec<u8>, ResolverError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use raikiri_traits::{NetworkError, NetworkProvider};
+    use raikiri_traits::{FetchOutcome, NetworkError, NetworkProvider};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct RejectingProvider;
 
     impl NetworkProvider for RejectingProvider {
-        fn fetch(&self, _request: Request) -> Result<FetchedResource, NetworkError> {
+        fn fetch_one_hop(&self, _request: Request) -> Result<FetchOutcome, NetworkError> {
             Err(NetworkError::Other("provider was called".into()))
         }
     }
@@ -174,16 +174,16 @@ mod tests {
     }
 
     impl NetworkProvider for RecordingProvider {
-        fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+        fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
             assert_eq!(request.method, Method::Get);
             assert!(matches!(request.kind, ResourceKind::Image));
             self.fetch_count.fetch_add(1, Ordering::Relaxed);
-            Ok(FetchedResource {
+            Ok(FetchOutcome::Body(FetchedResource {
                 bytes: self.bytes.to_vec().into(),
                 content_type: Some("image/png".into()),
                 final_url: request.url,
                 encoding: None,
-            })
+            }))
         }
     }
 

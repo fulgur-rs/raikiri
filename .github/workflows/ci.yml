@@ -127,6 +127,21 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --workspace --document-private-items --locked
 
+      # raikiri-net の `http-ureq` feature (UreqHttpProvider) は default off で、
+      # workspace 内のどの crate も有効化しないため、上の workspace 単位の
+      # test / clippy / doc では一切 compile されない。scripts/gate.sh と同一
+      # コマンドで feature を明示して個別に回す。
+      - name: Test (raikiri-net, http-ureq feature)
+        run: cargo test -p raikiri-net --features http-ureq --locked
+
+      - name: Clippy (raikiri-net, http-ureq feature, deny warnings)
+        run: cargo clippy -p raikiri-net --features http-ureq --all-targets --locked -- -D warnings
+
+      - name: Rustdoc (raikiri-net, http-ureq feature, private items, deny warnings)
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps -p raikiri-net --features http-ureq --document-private-items --locked
+
   coverage:
     name: coverage
     needs: changes
@@ -163,8 +178,11 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
+      # `--features raikiri-net/http-ureq`: 上の test job と同じく、default off
+      # の UreqHttpProvider (http_provider / http_resolver) を coverage 対象に
+      # 含めるため明示的に有効化する。他 crate の挙動には影響しない。
       - name: Generate LCOV report
-        run: cargo llvm-cov --workspace --locked --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --features raikiri-net/http-ureq --locked --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

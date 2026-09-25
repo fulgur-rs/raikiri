@@ -108,21 +108,21 @@ mod tests {
     fn adapter_wraps_raikiri_provider() {
         use bytes::Bytes;
         use net::{NetProvider, Request};
-        use raikiri_traits::{FetchedResource, NetworkError, NetworkProvider};
+        use raikiri_traits::{FetchOutcome, FetchedResource, NetworkError, NetworkProvider};
         use url::Url;
 
         struct Dummy;
         impl NetworkProvider for Dummy {
-            fn fetch(
+            fn fetch_one_hop(
                 &self,
                 _request: raikiri_traits::Request,
-            ) -> Result<FetchedResource, NetworkError> {
-                Ok(FetchedResource {
+            ) -> Result<FetchOutcome, NetworkError> {
+                Ok(FetchOutcome::Body(FetchedResource {
                     bytes: Bytes::from_static(b"hello"),
                     content_type: Some("text/html".to_string()),
                     final_url: Url::parse("https://example.com/").unwrap(),
                     encoding: None,
-                })
+                }))
             }
         }
 

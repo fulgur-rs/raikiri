@@ -6,14 +6,14 @@
 //! `raikiri_traits::NetworkProvider`'s doc comment) — this type only reads
 //! bytes off the local filesystem for `file://` URLs.
 
-use raikiri_traits::{FetchedResource, NetworkError, NetworkProvider, Request};
+use raikiri_traits::{FetchOutcome, FetchedResource, NetworkError, NetworkProvider, Request};
 
 /// Reads local files for `file://` URLs. Any other scheme is rejected.
 #[derive(Debug, Default)]
 pub struct FileNetworkProvider;
 
 impl NetworkProvider for FileNetworkProvider {
-    fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
         if request.url.scheme() != "file" {
             return Err(NetworkError::Other(format!(
                 "FileNetworkProvider only supports file:// URLs, got: {}",
@@ -25,12 +25,12 @@ impl NetworkProvider for FileNetworkProvider {
             .to_file_path()
             .map_err(|_| NetworkError::Other(format!("invalid file:// URL: {}", request.url)))?;
         let bytes = std::fs::read(&path).map_err(NetworkError::Io)?;
-        Ok(FetchedResource {
+        Ok(FetchOutcome::Body(FetchedResource {
             bytes: bytes.into(),
             content_type: Some("image/png".to_string()),
             final_url: request.url,
             encoding: None,
-        })
+        }))
     }
 }
 
