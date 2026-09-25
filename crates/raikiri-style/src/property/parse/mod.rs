@@ -602,7 +602,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "font-variant-east-asian" => {
             parse_font_variant_east_asian(input).map(PropertyValue::FontVariantEastAsian)
         }
-        // CSS Fonts 4 axis coordinates are preserved as computed data only.
+        // CSS Fonts 4 axis coordinates stay data-only; preserve the specified sequence.
         "font-variation-settings" => {
             parse_font_variation_settings(input).map(PropertyValue::FontVariationSettings)
         }
@@ -820,8 +820,9 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // (initial `show`, inherited). matching 規則は直上の
         // `table-layout` arm と同じ。
         "empty-cells" => parse_empty_cells(input).map(PropertyValue::EmptyCells),
-        // CSS Fonts 4 §2.1 font shorthand — 6 longhand への展開は
-        // `crate::rule::expand_shorthand_into` が行う (同 doc 参照)。
+        // CSS Fonts 4 §2.1 font shorthand — 7 longhand (6 grammar components plus
+        // the font-variation-settings initial-value reset) are expanded by
+        // `crate::rule::expand_shorthand_into` (see its doc).
         "font" => parse_font_shorthand(input).map(PropertyValue::Font),
         // CSS Text Module Level 3 §4.2
         // <https://www.w3.org/TR/css-text-3/#tab-size-property>.

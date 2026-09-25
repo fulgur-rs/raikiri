@@ -6,7 +6,7 @@ use smol_str::SmolStr;
 
 use crate::computed::CustomPropertyEnvironment;
 use crate::property::{
-    CalcLengthPercentage, CustomProperty, DeferredValue, LengthOrAuto,
+    CalcLengthPercentage, CustomProperty, DeferredValue, FontVariationSettings, LengthOrAuto,
     MAX_DEFERRED_VALUE_NESTING_DEPTH, MAX_SUBSTITUTED_VALUE_BYTES, PropertyKey, PropertyValue,
     VerticalAlign, is_custom_property_name, parse_value,
 };
@@ -414,6 +414,9 @@ pub(crate) fn project_deferred_value(
                 PropertyValue::LineHeight(shorthand.line_height)
             }
             crate::property::PropertyKey::FontFamily => PropertyValue::FontFamily(shorthand.family),
+            crate::property::PropertyKey::FontVariationSettings => {
+                PropertyValue::FontVariationSettings(FontVariationSettings::Normal)
+            }
             _ => return None,
         },
         PropertyValue::Background(shorthand) => match key {
@@ -1572,20 +1575,50 @@ mod tests {
     fn var_in_font_shorthand_projects_each_deferred_longhand() {
         // `var_in_background_shorthand_projects_each_deferred_longhand` の
         // sibling — `font: var(--f)` は `PropertyKey::Font` の deferred
-        // として 6 longhand に fan-out し、各々が substitution 後に
-        // re-parse される (`expand_deferred` + `project_deferred_value` 経路)。
-        use crate::property::{FontStyle, FontVariantCaps};
-        let cv = cascade_doc(
-            "",
+        // として 7 longhand (6 grammar values and the variation-settings reset)
+        // に fan-out し、各々が substitution 後に re-parse される
+        // (`expand_deferred` + `project_deferred_value` 経路)。
+        use crate::property::{
+            FontStyle, FontVariantCaps, FontVariationSetting, FontVariationSettings,
+        };
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(0, "p", Some("font-variation-settings: \"wght\" 640"));
+        let child = doc.push_element(
+            parent,
             "div",
             Some("--f: italic small-caps bold 20px/1.5 serif; font: var(--f)"),
         );
+        let child_with_later_longhand = doc.push_element(
+            parent,
+            "em",
+            Some(
+                "--f: italic small-caps bold 20px/1.5 serif; font: var(--f); font-variation-settings: \"wght\" 700",
+            ),
+        );
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        let cv = &result.computed[child];
         assert_eq!(cv.font_style, FontStyle::Italic);
         assert_eq!(cv.font_variant_caps, FontVariantCaps::SmallCaps);
         assert_eq!(cv.font_weight, 700.0);
         assert_eq!(cv.font_size, ComputedLength(20.0));
         assert_eq!(cv.line_height, ComputedLineHeight::Number(1.5));
         assert_eq!(cv.font_family[0].to_string(), "serif");
+        assert_eq!(
+            result.computed[parent].font_variation_settings,
+            FontVariationSettings::Settings(vec![FontVariationSetting {
+                tag: "wght".into(),
+                value: 640.0,
+            }])
+        );
+        assert_eq!(cv.font_variation_settings, FontVariationSettings::Normal);
+        assert_eq!(
+            result.computed[child_with_later_longhand].font_variation_settings,
+            FontVariationSettings::Settings(vec![FontVariationSetting {
+                tag: "wght".into(),
+                value: 700.0,
+            }])
+        );
     }
 
     #[test]

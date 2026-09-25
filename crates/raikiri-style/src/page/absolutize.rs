@@ -514,7 +514,6 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::FontPalette(_)
         | PropertyValue::FontVariantNumeric(_)
         | PropertyValue::FontVariantEastAsian(_)
-        | PropertyValue::FontVariationSettings(_)
         | PropertyValue::FontVariantCaps(_)
         | PropertyValue::TextTransform(_)
         | PropertyValue::Visibility(_)
@@ -587,6 +586,10 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::BorderCollapse(_)
         | PropertyValue::CaptionSide(_)
         | PropertyValue::EmptyCells(_)) => v,
+        // Preserve specified order until the page context produces its computed value.
+        PropertyValue::FontVariationSettings(settings) => {
+            PropertyValue::FontVariationSettings(settings.canonicalized())
+        }
         PropertyValue::ColumnWidth(ColumnWidthValue::Length(length)) => {
             PropertyValue::ColumnWidth(ColumnWidthValue::Length(Length::Px(
                 resolve_length(length, font_size, own_line_height, ctx).px(),

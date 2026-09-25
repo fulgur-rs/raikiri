@@ -1,7 +1,6 @@
 //! Font and text property parsers, including `text-decoration`, `text-shadow`
 //! and the `font` shorthand.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cssparser::{ParseError, Parser, ParserInput, Token};
@@ -778,10 +777,10 @@ pub(super) fn parse_font_variant_east_asian(
     seen_any.then_some(value)
 }
 
-/// Parse CSS Fonts 4 `font-variation-settings` for computed-value CSSOM exposure.
+/// Parse CSS Fonts 4 `font-variation-settings` while preserving the specified list.
 ///
-/// Duplicate tags keep their last value. A `BTreeMap` produces the spec's
-/// ascending tag order without quadratic duplicate searches.
+/// Specified-value serialization retains authored order and duplicate tags;
+/// computed-value canonicalization occurs during style finalization.
 pub(super) fn parse_font_variation_settings(
     input: &mut Parser<'_, '_>,
 ) -> Option<FontVariationSettings> {
@@ -791,7 +790,7 @@ pub(super) fn parse_font_variation_settings(
             .then_some(FontVariationSettings::Normal);
     }
 
-    let mut settings = BTreeMap::new();
+    let mut settings = Vec::new();
     loop {
         let tag = {
             let tag = input.expect_string().ok()?;
@@ -801,22 +800,14 @@ pub(super) fn parse_font_variation_settings(
             SmolStr::new(tag.as_ref())
         };
         let value = expect_number_stable(input).ok()?;
-        settings.insert(tag, value);
+        settings.push(FontVariationSetting { tag, value });
 
         if input.try_parse(|input| input.expect_comma()).is_err() {
             break;
         }
     }
 
-    if settings.is_empty() {
-        return None;
-    }
-    Some(FontVariationSettings::Settings(
-        settings
-            .into_iter()
-            .map(|(tag, value)| FontVariationSetting { tag, value })
-            .collect(),
-    ))
+    Some(FontVariationSettings::Settings(settings))
 }
 
 pub(super) fn parse_font_style(input: &mut Parser<'_, '_>) -> Option<FontStyle> {
@@ -2256,6 +2247,8 @@ pub enum FontShorthandSize {
 /// [font-style, font-variant, font-weight, font-size, line-height,
 /// font-family]" — 省略成分は spec initial value で埋める
 /// ([`BackgroundShorthand`] doc の同名節と同じ規則)。
+/// `font-variation-settings` is an additional subproperty reset by the shorthand
+/// to its initial `normal` value; it is not part of the parsed grammar payload.
 /// [`parse_font_shorthand`] は省略された `style` → [`FontStyle::Normal`]、
 /// `variant` → [`FontVariantCaps::Normal`]、 `weight` → `400`、
 /// `line-height` → [`LineHeight::Normal`] で埋める (`size` と `family` は
@@ -2266,7 +2259,8 @@ pub enum FontShorthandSize {
 /// [`PropertyValue::FontStyle`] / [`PropertyValue::FontVariantCaps`] /
 /// [`PropertyValue::FontWeight`] / size ([`PropertyValue::FontSize`] /
 /// [`PropertyValue::FontSizeRelative`]) / [`PropertyValue::LineHeight`] /
-/// [`PropertyValue::FontFamily`] の 6 longhand に展開する —
+/// [`PropertyValue::FontFamily`] / [`PropertyValue::FontVariationSettings`]
+/// (`normal` reset) の 7 longhand に展開する —
 /// margin/padding/border/outline shorthand precedent と同じ
 /// "parse-time expansion, never reaches cascade" 設計 (詳細は同関数の doc)。
 ///

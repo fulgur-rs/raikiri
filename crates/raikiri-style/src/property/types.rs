@@ -1437,18 +1437,20 @@ impl FontVariantEastAsian {
     }
 }
 
-/// `font-variation-settings` value preserved for computed-style exposure.
+/// `font-variation-settings` value used for specified and computed style.
 /// CSS Fonts 4 §8.2 <https://www.w3.org/TR/css-fonts-4/#font-variation-settings-def>.
 ///
-/// Axis settings are canonicalized by keeping the last value for each
-/// case-sensitive tag and sorting the result by tag. This is CSSOM data only;
-/// no variation axis, font selection, shaping, or rendering behavior is applied.
+/// The specified value retains authored order and duplicate tags. The computed
+/// value keeps the last value for each case-sensitive tag and sorts by tag. This
+/// is CSSOM data only; no variation axis, font selection, shaping, or rendering
+/// behavior is applied.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub enum FontVariationSettings {
     /// `normal` — initial value.
     Normal,
-    /// Non-empty, deduplicated settings sorted by tag.
+    /// Non-empty setting list. It keeps authored order when specified and
+    /// canonical order when computed.
     Settings(Vec<FontVariationSetting>),
 }
 
@@ -1458,8 +1460,31 @@ pub enum FontVariationSettings {
 pub struct FontVariationSetting {
     /// Case-sensitive, four-printable-ASCII-character axis tag.
     pub tag: SmolStr,
-    /// The computed numeric coordinate.
+    /// The numeric axis coordinate.
     pub value: f32,
+}
+
+impl FontVariationSettings {
+    /// Return the computed representation: last entry per tag, sorted by tag.
+    pub(crate) fn canonicalized(self) -> Self {
+        match self {
+            Self::Normal => Self::Normal,
+            Self::Settings(mut settings) => {
+                settings.sort_by(|left, right| left.tag.cmp(&right.tag));
+                let mut canonical: Vec<FontVariationSetting> = Vec::with_capacity(settings.len());
+                for setting in settings {
+                    if let Some(last) = canonical.last_mut()
+                        && last.tag == setting.tag
+                    {
+                        *last = setting;
+                        continue;
+                    }
+                    canonical.push(setting);
+                }
+                Self::Settings(canonical)
+            }
+        }
+    }
 }
 
 /// `font-synthesis` shorthand value preserved for computed-style exposure.
@@ -8880,7 +8905,8 @@ pub enum PropertyValue {
     /// 参照)。[`crate::rule::expand_shorthand_into`] が
     /// [`Self::FontStyle`] / [`Self::FontVariantCaps`] /
     /// [`Self::FontWeight`] / [`Self::FontSize`]・[`Self::FontSizeRelative`] /
-    /// [`Self::LineHeight`] / [`Self::FontFamily`] の 6 longhand に展開する。
+    /// [`Self::LineHeight`] / [`Self::FontFamily`] / [`Self::FontVariationSettings`]
+    /// (`normal` reset) の 7 longhand に展開する。
     /// 末尾に追加 (shorthand は cascade 段に到達しない
     /// ([`crate::rule::expand_shorthand_into`] doc) ので discriminant 順は
     /// 意味を持たない — 既存 variant を shift させない配置を優先する、

@@ -12,10 +12,11 @@ use crate::RaikiriSelectorImpl;
 use crate::consumer::{ConsumerPropertyGrammar, ConsumerPropertyRegistration};
 use crate::property::{
     BackgroundShorthand, Border, BorderColor, BorderStyle, CustomProperty, DeferredValue, FlexFlow,
-    FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand, GridLineShorthand, Length,
-    LengthOrAuto, Outline, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand,
-    PlaceSelfShorthand, PropertyKey, PropertyValue, Sides, StartEnd, TextDecorationShorthand,
-    TextEmphasisShorthand, consume_deferred_value, parse_consumer_text_value, parse_value,
+    FlexShorthand, FontShorthand, FontShorthandSize, FontVariationSettings, GapShorthand,
+    GridLineShorthand, Length, LengthOrAuto, Outline, OverflowXY, PlaceContentShorthand,
+    PlaceItemsShorthand, PlaceSelfShorthand, PropertyKey, PropertyValue, Sides, StartEnd,
+    TextDecorationShorthand, TextEmphasisShorthand, consume_deferred_value,
+    parse_consumer_text_value, parse_value,
 };
 
 /// 1 property declaration = value + `!important` flag。
@@ -572,11 +573,9 @@ fn expand_deferred(
             PropertyKey::OutlineStyle,
             PropertyKey::OutlineColor,
         ],
-        // `font` shorthand — 6 longhand (style/variant-caps/weight/size/
-        // line-height/family)。`size` は `PropertyValue::FontSize` /
-        // `PropertyValue::FontSizeRelative` のどちらで勝っても key は
-        // `PropertyKey::FontSize` の 1 つのため slice は 6 要素
-        // (`property.rs` の `FontShorthandSize` doc 参照)。
+        // `font` shorthand deferred expansion — 6 grammar longhands plus the
+        // `font-variation-settings` subproperty reset to `normal`. `size` is
+        // one key whether its parsed value is absolute or relative.
         PropertyKey::Font => &[
             PropertyKey::FontStyle,
             PropertyKey::FontVariantCaps,
@@ -584,6 +583,7 @@ fn expand_deferred(
             PropertyKey::FontSize,
             PropertyKey::LineHeight,
             PropertyKey::FontFamily,
+            PropertyKey::FontVariationSettings,
         ],
         PropertyKey::Flex => &[
             PropertyKey::FlexGrow,
@@ -896,12 +896,11 @@ pub(crate) fn expand_outline(outline: Outline, mut push: impl FnMut(PropertyValu
     push(PropertyValue::OutlineColor(outline.color));
 }
 
-/// `font` shorthand を 6 longhand (style/variant-caps/weight/size/
-/// line-height/family) に展開する cold helper ([`FontShorthand`] doc 参照)。
-/// 省略成分は shorthand parser (`property.rs` の `parse_font_shorthand`、
-/// private fn のため直接 link 不可) が既に spec initial value で埋めているため
-/// ([`FontShorthand`] doc の "Initial value fill" 節)、本関数は 6 field を
-/// そのまま 6 declaration に分配するだけでよい —
+/// `font` shorthand を 7 longhand (6 grammar values plus the
+/// `font-variation-settings` reset) に展開する cold helper
+/// ([`FontShorthand`] doc 参照)。省略された grammar 成分は shorthand parser が
+/// spec initial value で埋めているため、本関数は 6 field をそのまま分配し、
+/// 追加 subproperty を [`FontVariationSettings::Normal`] に reset する。
 /// [`expand_text_decoration`] と同じ形。`family` は `Arc` のため `.clone()` は
 /// bump のみ ([`BackgroundShorthand`] の `image.clone()` と同じ理由付け)。
 /// `size` の 2 通りは対応する [`PropertyValue`] variant にそのまま載せる
@@ -917,6 +916,9 @@ pub(crate) fn expand_font(shorthand: &FontShorthand, mut push: impl FnMut(Proper
     });
     push(PropertyValue::LineHeight(shorthand.line_height));
     push(PropertyValue::FontFamily(shorthand.family.clone()));
+    push(PropertyValue::FontVariationSettings(
+        FontVariationSettings::Normal,
+    ));
 }
 
 /// `background` shorthand を 8 longhand (color/image/repeat/attachment/
@@ -1212,6 +1214,7 @@ mod tests {
                     PropertyKey::FontSize,
                     PropertyKey::LineHeight,
                     PropertyKey::FontFamily,
+                    PropertyKey::FontVariationSettings,
                 ],
             ),
             (
@@ -1801,13 +1804,13 @@ mod tests {
     // ── font shorthand expansion (CSS Fonts 4 §2.1) ──
 
     #[test]
-    fn font_shorthand_expands_into_six_longhand_declarations() {
+    fn font_shorthand_expands_into_seven_longhand_declarations() {
         // CSS Fonts 4 §2.1: the shorthand sets each of font-style,
         // font-variant (here: font-variant-caps), font-weight, font-size,
         // line-height and font-family as if expanded in place, in that
-        // order.
+        // order; it also resets font-variation-settings to its initial value.
         let decls = parse_block("font: italic small-caps bold 12px/1.5 serif;");
-        assert_eq!(decls.len(), 6, "shorthand must expand to 6 longhand decls");
+        assert_eq!(decls.len(), 7, "shorthand must expand to 7 longhand decls");
         assert_eq!(decls[0].value, PropertyValue::FontStyle(FontStyle::Italic));
         assert_eq!(
             decls[1].value,
@@ -1826,6 +1829,10 @@ mod tests {
             decls[5].value,
             PropertyValue::FontFamily(Arc::new(vec!["serif".into()]))
         );
+        assert_eq!(
+            decls[6].value,
+            PropertyValue::FontVariationSettings(FontVariationSettings::Normal)
+        );
     }
 
     #[test]
@@ -1833,7 +1840,7 @@ mod tests {
         // CSS Fonts 4 §2.1: omitted components are set to their initial
         // values (`FontShorthand` doc's "Initial value fill" section).
         let decls = parse_block("font: 12px serif;");
-        assert_eq!(decls.len(), 6);
+        assert_eq!(decls.len(), 7);
         assert_eq!(decls[0].value, PropertyValue::FontStyle(FontStyle::Normal));
         assert_eq!(
             decls[1].value,
@@ -1847,6 +1854,10 @@ mod tests {
             decls[4].value,
             PropertyValue::LineHeight(LineHeight::Normal)
         );
+        assert_eq!(
+            decls[6].value,
+            PropertyValue::FontVariationSettings(FontVariationSettings::Normal)
+        );
     }
 
     #[test]
@@ -1854,7 +1865,7 @@ mod tests {
         // `larger` keeps its `FontSizeRelative` carrier (same `PropertyKey`
         // as `FontSize`, so cascade still sees a single slot).
         let decls = parse_block("font: italic larger serif;");
-        assert_eq!(decls.len(), 6);
+        assert_eq!(decls.len(), 7);
         assert_eq!(
             decls[3].value,
             PropertyValue::FontSizeRelative(RelativeFontSize::Larger)
@@ -1870,7 +1881,7 @@ mod tests {
         // CSS Cascading 4 §3: shorthand `!important` は全 longhand に copy
         // される (outline / overflow important 拡張と同 pattern)。
         let decls = parse_block("font: italic 12px serif !important;");
-        assert_eq!(decls.len(), 6);
+        assert_eq!(decls.len(), 7);
         for d in &decls {
             assert!(d.important, "important must propagate to every longhand");
         }
