@@ -1,7 +1,8 @@
 use cssparser::{CowRcStr, ParseError, Parser, ParserInput, ToCss as _, Token};
 
 use super::calc_serialize::{
-    CalcNode, CalcUnitKind, parse_calc_or_plain, serialize_calc_node, serialize_calc_node_as_angle,
+    CalcNode, CalcUnitKind, integer_value, parse_calc_or_plain, serialize_calc_node,
+    serialize_calc_node_as_angle,
 };
 use super::parse::{channel_to_u8, parse_color, parse_color_float};
 use super::types::*;
@@ -369,11 +370,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
 /// `Token` and calling its `to_css_string()` reuses that algorithm instead
 /// of reimplementing CSS number serialization here.
 fn serialize_dimension(value: f32, unit: &str) -> String {
-    let int_value = if value.fract() == 0.0 {
-        Some(value as i32)
-    } else {
-        None
-    };
+    let int_value = integer_value(value);
     Token::Dimension {
         has_sign: false,
         value,
@@ -384,11 +381,7 @@ fn serialize_dimension(value: f32, unit: &str) -> String {
 }
 
 fn serialize_percentage(value: f32) -> String {
-    let int_value = if value.fract() == 0.0 {
-        Some(value as i32)
-    } else {
-        None
-    };
+    let int_value = integer_value(value);
     Token::Percentage {
         has_sign: false,
         unit_value: value / 100.0,
@@ -521,11 +514,7 @@ pub(crate) fn serialize_alpha_channel(alpha: u8) -> String {
 }
 
 pub(crate) fn serialize_number(value: f32) -> String {
-    let int_value = if value.fract() == 0.0 {
-        Some(value as i32)
-    } else {
-        None
-    };
+    let int_value = integer_value(value);
     Token::Number {
         has_sign: false,
         value,

@@ -161,13 +161,18 @@ pub(crate) fn parse_calc_or_plain(
 /// import them without inverting that direction. If a third consumer of
 /// this exact formatting shows up later, that's the point to factor it
 /// out — not before.
+/// The `int_value` a serialized numeric token carries: the integer itself
+/// when `value` is integral and fits in `i32`, so it prints without a
+/// fractional part. Outside that range `value as i32` would saturate and
+/// print a different number, so such values fall back to float formatting.
+pub(super) fn integer_value(value: f32) -> Option<i32> {
+    const I32_RANGE: std::ops::Range<f32> = i32::MIN as f32..-(i32::MIN as f32);
+    (value.fract() == 0.0 && I32_RANGE.contains(&value)).then_some(value as i32)
+}
+
 fn format_number(value: f64) -> String {
     let value = value as f32;
-    let int_value = if value.fract() == 0.0 {
-        Some(value as i32)
-    } else {
-        None
-    };
+    let int_value = integer_value(value);
     Token::Number {
         has_sign: false,
         value,
@@ -178,11 +183,7 @@ fn format_number(value: f64) -> String {
 
 fn format_percentage(value: f64) -> String {
     let value = value as f32;
-    let int_value = if value.fract() == 0.0 {
-        Some(value as i32)
-    } else {
-        None
-    };
+    let int_value = integer_value(value);
     Token::Percentage {
         has_sign: false,
         unit_value: value / 100.0,
