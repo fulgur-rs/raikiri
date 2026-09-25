@@ -2835,7 +2835,7 @@ pub fn measure_ch_advance_for_font_key(
     let family = key
         .family
         .iter()
-        .map(|atom| atom.0.as_str())
+        .map(|family| family.as_str())
         .collect::<Vec<_>>()
         .join(", ");
     let mut layout_cx = LayoutContext::<()>::new();
@@ -3186,7 +3186,7 @@ fn spacing_ch_advance(
             let family = key
                 .family
                 .iter()
-                .map(|a| a.0.as_str())
+                .map(|family| family.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
             cached_ch_advance(
@@ -3216,7 +3216,7 @@ fn measured_ch_length_px(
     let family_atoms = source.map(|key| &key.family).unwrap_or(&cv.font_family);
     let family = family_atoms
         .iter()
-        .map(|a| a.0.as_str())
+        .map(|family| family.as_str())
         .collect::<Vec<_>>()
         .join(", ");
     let size = source.map_or(cv.font_size, |key| key.size);
@@ -5196,7 +5196,7 @@ pub(crate) fn preshape_text(
     fn family_str_of(cv: &ComputedValues) -> String {
         cv.font_family
             .iter()
-            .map(|a| a.0.as_str())
+            .map(|family| family.as_str())
             .collect::<Vec<_>>()
             .join(", ")
     }

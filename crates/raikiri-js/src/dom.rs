@@ -396,6 +396,7 @@ globalThis.CSS = {
         return host.cssSupports(String(property), String(value));
     }
 };
+globalThis.window = globalThis;
 })(globalThis.__raikiri_host);
 delete globalThis.__raikiri_host;
 "#;

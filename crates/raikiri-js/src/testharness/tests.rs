@@ -214,6 +214,38 @@ fn runs_assertions_against_the_dom_backend() {
 }
 
 #[test]
+fn exposes_window_as_the_dom_global_object() {
+    let outcomes = run_testharness_script(
+        "test(function() { assert_true(window === globalThis); assert_true(window.document === document); assert_true(typeof window.getComputedStyle === 'function'); }, 'window global');",
+        TestDom::default(),
+    )
+    .unwrap();
+
+    assert_eq!(outcomes.len(), 1);
+    assert!(outcomes[0].passed, "{:?}", outcomes[0]);
+}
+
+#[test]
+fn assert_not_equals_checks_inequality_and_reports_equal_values() {
+    let passed = run_testharness_script(
+        "test(function() { assert_not_equals('a', 'b'); }, 'different values');",
+        TestDom::default(),
+    )
+    .unwrap();
+    assert_eq!(passed.len(), 1);
+    assert!(passed[0].passed, "{:?}", passed[0]);
+
+    let failed = run_testharness_script(
+        "test(function() { assert_not_equals('a', 'a'); }, 'equal values');",
+        TestDom::default(),
+    )
+    .unwrap();
+    assert_eq!(failed.len(), 1);
+    assert!(!failed[0].passed);
+    assert!(failed[0].message.contains("assert_not_equals"));
+}
+
+#[test]
 fn assert_in_array_checks_membership_and_reports_non_members() {
     let passed = run_testharness_script(
         "test(function() { assert_in_array('b', ['a', 'b', 'c']); }, 'member');",

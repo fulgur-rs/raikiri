@@ -12,13 +12,12 @@ use std::sync::{Arc, OnceLock};
 
 use smol_str::SmolStr;
 
-use crate::Atom;
 use crate::property::{
     AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
     BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderStyle, BoxSizing,
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue, EmptyCellsValue,
-    FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontKerning,
+    FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName, FontKerning,
     FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
     FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
     FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
@@ -239,7 +238,7 @@ pub struct RunningTemplate {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChFontKey {
     /// Font family list used by the shaping resolver.
-    pub family: Arc<Vec<Atom>>,
+    pub family: Arc<Vec<FontFamilyName>>,
     /// Computed font size in CSS px.
     pub size: ComputedLength,
     /// Computed numeric font weight.
@@ -296,9 +295,9 @@ pub struct ComputedValues {
     /// <https://www.w3.org/TR/css-fonts-4/#font-family-prop> の spec 上の
     /// initial は "depends on user agent" — spec は具体的な family name を
     /// 規定しない ([`crate::property::initial_font_family`] doc 参照)。
-    /// 本実装は `[Atom::from("serif")]` を採る。
+    /// 本実装は generic family `[FontFamilyName::generic("serif")]` を採る。
     ///
-    pub font_family: Arc<Vec<Atom>>,
+    pub font_family: Arc<Vec<FontFamilyName>>,
     /// `font-size`。**inherited**、initial: 16px (spec は `medium`、実 px は
     /// UA 依存)。CSS Fonts 4 §2.5 "Font size: the font-size property"
     /// <https://www.w3.org/TR/css-fonts-4/#propdef-font-size> は

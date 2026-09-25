@@ -1800,3 +1800,19 @@ fn font_variation_settings_computed_wpt_case_uses_the_pinned_computed_helper() {
     assert_eq!(result.total(), 8);
     assert!(result.all_passed(), "{:?}", result.outcomes);
 }
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn font_shorthand_subproperties_reset_wpt_case_uses_the_pinned_fixture() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-fonts/font-shorthand-subproperties-reset.html");
+    let result = run_testharness_file(&test_file, &wpt_root);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(
+        result.total(),
+        10,
+        "the pinned fixture should cover each currently-supported subproperty",
+    );
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}

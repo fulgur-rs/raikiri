@@ -66,7 +66,10 @@ fn initial_values_match_spec() {
     // と同じ理由 — `initial_font_family()` 参照に書き換えると自己参照になり
     // 同 helper の誤編集を検出できなくなる)。`*cv.font_family` で
     // `Arc<Vec<Atom>>` を `Vec<Atom>` に deref してから比較する。
-    assert_eq!(*cv.font_family, vec![Atom::from("serif")]);
+    assert_eq!(
+        *cv.font_family,
+        vec![crate::property::FontFamilyName::generic("serif")]
+    );
     // CSS Fonts 4 §2.5: font-size initial は `medium` = 本実装では 16px
     // (<https://www.w3.org/TR/css-fonts-4/#propdef-font-size>)。
     // **この 16.0 は意図的な literal** — `INITIAL_FONT_SIZE_PX` 参照に
@@ -244,7 +247,7 @@ fn non_initial_parent() -> ComputedValues {
             b: 30,
             a: 255,
         },
-        font_family: Arc::new(vec![Atom::from("sans-serif")]),
+        font_family: Arc::new(vec![crate::property::FontFamilyName::generic("sans-serif")]),
         font_size: ComputedLength(24.0),
         font_weight: 700.0,
         line_height: ComputedLineHeight::Length(ComputedLength(30.0)),

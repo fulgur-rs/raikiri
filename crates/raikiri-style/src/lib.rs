@@ -43,12 +43,12 @@ pub use property::{
     BackgroundAttachment, BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, BasicShape,
     BorderRadius, BoxShadowItem, CircleShape, ClipPath, ColumnCountValue, ColumnWidthValue,
     ColumnsShorthand, CssColor, CssPosition, CssPositionOffset, DisplayValue, EllipseShape,
-    FillRule, GeometryBox, InsetBorderRadius, InsetShape, Length, LengthOrAuto, LengthOrNormal,
-    LetterSpacingValue, ListStylePosition, ListStyleType, ObjectFit, Outline, OutlineColor,
-    OutlineStyle, PathShape, PolygonShape, PropertyKey, PropertyValue, ShapeRadius, Sides,
-    TextDecorationSkipInk, TextDecorationSkipSpaces, TextOrientation, TextShadowColor,
-    TextShadowItem, TextShadowLength, TextSpacingTrim, TextUnderlineOffset, VisualBox,
-    WordSpaceTransform, WordSpacingValue,
+    FillRule, FontFamilyKind, FontFamilyName, GeometryBox, InsetBorderRadius, InsetShape, Length,
+    LengthOrAuto, LengthOrNormal, LetterSpacingValue, ListStylePosition, ListStyleType, ObjectFit,
+    Outline, OutlineColor, OutlineStyle, PathShape, PolygonShape, PropertyKey, PropertyValue,
+    ShapeRadius, Sides, TextDecorationSkipInk, TextDecorationSkipSpaces, TextOrientation,
+    TextShadowColor, TextShadowItem, TextShadowLength, TextSpacingTrim, TextUnderlineOffset,
+    VisualBox, WordSpaceTransform, WordSpacingValue,
 };
 
 pub mod rule;

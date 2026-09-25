@@ -23,8 +23,8 @@
 
 use parley::FontContext;
 use raikiri_style::{
-    Atom, ChFontKey, ComputedValues, FontFaceRegistry, FontFaceRule, FontFaceSource, FontFaceStyle,
-    FontFaceWeight,
+    ChFontKey, ComputedValues, FontFaceRegistry, FontFaceRule, FontFaceSource, FontFaceStyle,
+    FontFaceWeight, FontFamilyKind, FontFamilyName,
 };
 use smol_str::SmolStr;
 use std::path::{Path, PathBuf};
@@ -1476,7 +1476,9 @@ fn ordered_font_face_rules(faces: &FontFaceRegistry) -> Vec<(&SmolStr, &FontFace
 fn remove_unavailable_ch_family(computed: &mut [ComputedValues], family: &str) {
     fn remove_from_key(key: &mut ChFontKey, family: &str) {
         let mut families = key.family.as_ref().clone();
-        families.retain(|candidate| !candidate.0.as_str().eq_ignore_ascii_case(family));
+        families.retain(|candidate| {
+            candidate.1 != FontFamilyKind::Named || !candidate.as_str().eq_ignore_ascii_case(family)
+        });
         key.family = std::sync::Arc::new(families);
     }
     for cv in computed {
@@ -1531,16 +1533,20 @@ fn remove_unavailable_ch_family(computed: &mut [ComputedValues], family: &str) {
 fn expand_font_face_alias(computed: &mut [ComputedValues], face: &str, target: &str) {
     use std::sync::Arc;
 
-    fn alias_family_list(families: &[Atom], face: &str, target: &str) -> Option<Vec<Atom>> {
+    fn alias_family_list(
+        families: &[FontFamilyName],
+        face: &str,
+        target: &str,
+    ) -> Option<Vec<FontFamilyName>> {
         let face_index = families
             .iter()
-            .position(|a| a.0.as_str().eq_ignore_ascii_case(face))?;
+            .position(|a| a.1 == FontFamilyKind::Named && a.as_str().eq_ignore_ascii_case(face))?;
         if face.eq_ignore_ascii_case(target) {
             return None;
         }
         if families
             .iter()
-            .position(|a| a.0.as_str().eq_ignore_ascii_case(target))
+            .position(|a| a.1 == FontFamilyKind::Named && a.as_str().eq_ignore_ascii_case(target))
             .is_some_and(|target_index| target_index < face_index)
         {
             // An explicitly earlier target already wins over the alias.
@@ -1548,12 +1554,12 @@ fn expand_font_face_alias(computed: &mut [ComputedValues], face: &str, target: &
         }
         let mut expanded = Vec::with_capacity(families.len() + 1);
         for (index, family) in families.iter().enumerate() {
-            if family.0.as_str().eq_ignore_ascii_case(target) {
+            if family.1 == FontFamilyKind::Named && family.as_str().eq_ignore_ascii_case(target) {
                 continue;
             }
             expanded.push(family.clone());
             if index == face_index {
-                expanded.push(Atom(SmolStr::new(target)));
+                expanded.push(FontFamilyName::named(target));
             }
         }
         Some(expanded)
@@ -2851,7 +2857,7 @@ mod tests {
 
     fn computed_with_family(family: &str) -> ComputedValues {
         let mut cv = ComputedValues::initial();
-        cv.font_family = std::sync::Arc::new(vec![Atom(SmolStr::new(family))]);
+        cv.font_family = std::sync::Arc::new(vec![FontFamilyName::named(family)]);
         cv
     }
 
@@ -3090,7 +3096,7 @@ mod tests {
             super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
         assert!(report.applied.is_empty());
         assert!(report.aliased.is_empty());
-        assert_eq!(computed[0].font_family[0].0.as_str(), "Unloaded");
+        assert_eq!(computed[0].font_family[0].as_str(), "Unloaded");
     }
 
     #[test]
@@ -3116,8 +3122,9 @@ mod tests {
         }
         let mut aliased_cv = computed_with_family("AliasFam");
         aliased_cv.font_family = std::sync::Arc::new(vec![
-            Atom(SmolStr::new("AliasFam")),
-            Atom(SmolStr::new("Fallback")),
+            FontFamilyName::named("AliasFam"),
+            FontFamilyName::named("Fallback"),
+            FontFamilyName::generic("serif"),
         ]);
         let source_key = ChFontKey {
             family: aliased_cv.font_family.clone(),
@@ -3160,12 +3167,10 @@ mod tests {
             report.aliased,
             vec![("AliasFam".to_string(), "RealFam".to_string())]
         );
-        let names: Vec<&str> = computed[0]
-            .font_family
-            .iter()
-            .map(|a| a.0.as_str())
-            .collect();
-        assert_eq!(names, vec!["AliasFam", "RealFam", "Fallback"]);
+        let names: Vec<&str> = computed[0].font_family.iter().map(|a| a.as_str()).collect();
+        assert_eq!(names, vec!["AliasFam", "RealFam", "Fallback", "serif"]);
+        assert_eq!(computed[0].font_family[1].1, FontFamilyKind::Named);
+        assert_eq!(computed[0].font_family[3].1, FontFamilyKind::Generic);
         let key_names = |key: &ChFontKey| -> Vec<String> {
             key.family.iter().map(|a| a.0.to_string()).collect()
         };
@@ -3174,7 +3179,8 @@ mod tests {
             vec![
                 "AliasFam".to_string(),
                 "RealFam".to_string(),
-                "Fallback".to_string()
+                "Fallback".to_string(),
+                "serif".to_string()
             ]
         );
         assert_eq!(
@@ -3182,7 +3188,8 @@ mod tests {
             vec![
                 "AliasFam".to_string(),
                 "RealFam".to_string(),
-                "Fallback".to_string()
+                "Fallback".to_string(),
+                "serif".to_string()
             ]
         );
         assert_eq!(
@@ -3190,7 +3197,8 @@ mod tests {
             vec![
                 "AliasFam".to_string(),
                 "RealFam".to_string(),
-                "Fallback".to_string()
+                "Fallback".to_string(),
+                "serif".to_string()
             ]
         );
         assert_eq!(
@@ -3198,7 +3206,8 @@ mod tests {
             vec![
                 "AliasFam".to_string(),
                 "RealFam".to_string(),
-                "Fallback".to_string()
+                "Fallback".to_string(),
+                "serif".to_string()
             ]
         );
         assert_eq!(
@@ -3206,7 +3215,8 @@ mod tests {
             vec![
                 "AliasFam".to_string(),
                 "RealFam".to_string(),
-                "Fallback".to_string()
+                "Fallback".to_string(),
+                "serif".to_string()
             ]
         );
         for provenance in [
@@ -3218,19 +3228,18 @@ mod tests {
                 vec![
                     "AliasFam".to_string(),
                     "RealFam".to_string(),
-                    "Fallback".to_string()
+                    "Fallback".to_string(),
+                    "serif".to_string()
                 ]
             );
         }
         // Idempotent — a second application must not duplicate.
         let again =
             super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
-        let names: Vec<&str> = computed[0]
-            .font_family
-            .iter()
-            .map(|a| a.0.as_str())
-            .collect();
-        assert_eq!(names, vec!["AliasFam", "RealFam", "Fallback"]);
+        let names: Vec<&str> = computed[0].font_family.iter().map(|a| a.as_str()).collect();
+        assert_eq!(names, vec!["AliasFam", "RealFam", "Fallback", "serif"]);
+        assert_eq!(computed[0].font_family[1].1, FontFamilyKind::Named);
+        assert_eq!(computed[0].font_family[3].1, FontFamilyKind::Generic);
         assert_eq!(again.aliased.len(), 1);
     }
 
@@ -3255,8 +3264,8 @@ mod tests {
 
         let mut cv = computed_with_family("AliasFam");
         cv.font_family = std::sync::Arc::new(vec![
-            Atom(SmolStr::new("AliasFam")),
-            Atom(SmolStr::new("Fallback")),
+            FontFamilyName::named("AliasFam"),
+            FontFamilyName::named("Fallback"),
         ]);
         let source_key = ChFontKey {
             family: cv.font_family.clone(),
@@ -3294,7 +3303,7 @@ mod tests {
         let names: Vec<&str> = computed[0]
             .font_family
             .iter()
-            .map(|atom| atom.0.as_str())
+            .map(|atom| atom.as_str())
             .collect();
         assert_eq!(names, vec!["AliasFam", "RealFam", "Fallback"]);
         let provenance_names = |key: &ChFontKey| -> Vec<String> {
@@ -3336,26 +3345,26 @@ mod tests {
     fn expand_font_face_alias_keeps_existing_precedence() {
         let mut same = computed_with_family("AliasFam");
         super::expand_font_face_alias(std::slice::from_mut(&mut same), "AliasFam", "AliasFam");
-        assert_eq!(same.font_family[0].0.as_str(), "AliasFam");
+        assert_eq!(same.font_family[0].as_str(), "AliasFam");
 
         let mut earlier = computed_with_family("RealFam");
         earlier.font_family = std::sync::Arc::new(vec![
-            Atom(SmolStr::new("RealFam")),
-            Atom(SmolStr::new("AliasFam")),
+            FontFamilyName::named("RealFam"),
+            FontFamilyName::named("AliasFam"),
         ]);
         super::expand_font_face_alias(std::slice::from_mut(&mut earlier), "AliasFam", "RealFam");
         assert_eq!(
             earlier
                 .font_family
                 .iter()
-                .map(|atom| atom.0.as_str())
+                .map(|atom| atom.as_str())
                 .collect::<Vec<_>>(),
             vec!["RealFam", "AliasFam"]
         );
 
         let mut computed = vec![computed_with_family("AliasFam")];
         super::expand_font_face_alias(&mut computed, "AliasFam", "RealFam");
-        assert_eq!(computed[0].font_family[1].0.as_str(), "RealFam");
+        assert_eq!(computed[0].font_family[1].as_str(), "RealFam");
     }
 
     #[test]
@@ -3787,8 +3796,8 @@ mod tests {
     fn expand_font_face_alias_is_noop_when_face_absent_from_list() {
         let mut cv = computed_with_family("Other");
         cv.font_family = std::sync::Arc::new(vec![
-            Atom(SmolStr::new("Other")),
-            Atom(SmolStr::new("Fallback")),
+            FontFamilyName::named("Other"),
+            FontFamilyName::named("Fallback"),
         ]);
         let before = cv.font_family.clone();
         let mut computed = vec![cv];
@@ -3800,17 +3809,13 @@ mod tests {
     fn expand_font_face_alias_repositions_an_existing_later_target() {
         let mut cv = computed_with_family("Face");
         cv.font_family = std::sync::Arc::new(vec![
-            Atom(SmolStr::new("Face")),
-            Atom(SmolStr::new("Other")),
-            Atom(SmolStr::new("Target")),
+            FontFamilyName::named("Face"),
+            FontFamilyName::named("Other"),
+            FontFamilyName::named("Target"),
         ]);
         let mut computed = vec![cv];
         super::expand_font_face_alias(&mut computed, "Face", "Target");
-        let names: Vec<&str> = computed[0]
-            .font_family
-            .iter()
-            .map(|a| a.0.as_str())
-            .collect();
+        let names: Vec<&str> = computed[0].font_family.iter().map(|a| a.as_str()).collect();
         // Target already appeared, but after Face -- it must be
         // deduplicated and reinserted immediately after Face rather than
         // left duplicated or in its old spot (idempotency requires this:
@@ -3825,11 +3830,7 @@ mod tests {
         // Args use different casing than what's authored in the computed
         // list; CSS family-name matching is ASCII case-insensitive.
         super::expand_font_face_alias(&mut computed, "ALIASFAM", "realfam");
-        let names: Vec<&str> = computed[0]
-            .font_family
-            .iter()
-            .map(|a| a.0.as_str())
-            .collect();
+        let names: Vec<&str> = computed[0].font_family.iter().map(|a| a.as_str()).collect();
         assert_eq!(names, vec!["AliasFam", "realfam"]);
     }
 
@@ -3839,12 +3840,12 @@ mod tests {
         // font_family deliberately omits "Face" so this assertion proves
         // each field below is resolved from its own family list, not from
         // `font_family`.
-        cv.font_family = std::sync::Arc::new(vec![Atom(SmolStr::new("Other"))]);
+        cv.font_family = std::sync::Arc::new(vec![FontFamilyName::named("Other")]);
 
         let key_with = |extra: &str| ChFontKey {
             family: std::sync::Arc::new(vec![
-                Atom(SmolStr::new("Face")),
-                Atom(SmolStr::new(extra)),
+                FontFamilyName::named("Face"),
+                FontFamilyName::named(extra),
             ]),
             size: cv.font_size,
             weight: cv.font_weight,
@@ -3876,7 +3877,7 @@ mod tests {
             computed[0]
                 .font_family
                 .iter()
-                .map(|a| a.0.as_str())
+                .map(|a| a.as_str())
                 .collect::<Vec<_>>(),
             vec!["Other"],
             "font_family never mentioned Face and must stay untouched"
@@ -3991,7 +3992,10 @@ mod tests {
     fn remove_unavailable_ch_family_removes_case_insensitively_from_every_ch_field() {
         let mut cv = ComputedValues::initial();
         let key_with = |first: &str, extra: &str| ChFontKey {
-            family: std::sync::Arc::new(vec![Atom(SmolStr::new(first)), Atom(SmolStr::new(extra))]),
+            family: std::sync::Arc::new(vec![
+                FontFamilyName::named(first),
+                FontFamilyName::named(extra),
+            ]),
             size: cv.font_size,
             weight: cv.font_weight,
             style: cv.font_style,
@@ -4047,10 +4051,37 @@ mod tests {
     }
 
     #[test]
+    fn remove_unavailable_ch_family_preserves_generic_family_with_same_name() {
+        let mut computed = ComputedValues::initial();
+        computed.text_indent_ch_font = Some(ChFontKey {
+            family: std::sync::Arc::new(vec![
+                FontFamilyName::generic("serif"),
+                FontFamilyName::named("serif"),
+            ]),
+            size: computed.font_size,
+            weight: computed.font_weight,
+            style: computed.font_style,
+        });
+        let mut computed = vec![computed];
+
+        super::remove_unavailable_ch_family(&mut computed, "serif");
+
+        assert_eq!(
+            computed[0]
+                .text_indent_ch_font
+                .as_ref()
+                .unwrap()
+                .family
+                .as_ref(),
+            &[FontFamilyName::generic("serif")]
+        );
+    }
+
+    #[test]
     fn remove_unavailable_ch_family_is_noop_when_family_absent_and_skips_unset_fields() {
         let mut cv = ComputedValues::initial();
         cv.text_indent_ch_font = Some(ChFontKey {
-            family: std::sync::Arc::new(vec![Atom(SmolStr::new("Unrelated"))]),
+            family: std::sync::Arc::new(vec![FontFamilyName::named("Unrelated")]),
             size: cv.font_size,
             weight: cv.font_weight,
             style: cv.font_style,
@@ -4066,7 +4097,7 @@ mod tests {
                 .unwrap()
                 .family
                 .iter()
-                .map(|a| a.0.as_str())
+                .map(|a| a.as_str())
                 .collect::<Vec<_>>(),
             vec!["Unrelated"]
         );

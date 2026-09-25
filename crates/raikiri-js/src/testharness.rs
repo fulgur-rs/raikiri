@@ -96,6 +96,12 @@ function assert_equals(actual, expected, message) {
             String(expected) + ", got " + String(actual));
     }
 }
+function assert_not_equals(actual, expected, message) {
+    if (actual === expected) {
+        throw new Error((message || "assert_not_equals") + ": expected values to differ, got " +
+            String(actual));
+    }
+}
 function assert_in_array(actual, expectedArray, message) {
     if (!Array.isArray(expectedArray) || expectedArray.indexOf(actual) === -1) {
         throw new Error((message || "assert_in_array") + ": value " +

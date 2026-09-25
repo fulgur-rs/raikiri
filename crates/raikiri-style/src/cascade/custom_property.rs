@@ -414,6 +414,30 @@ pub(crate) fn project_deferred_value(
                 PropertyValue::LineHeight(shorthand.line_height)
             }
             crate::property::PropertyKey::FontFamily => PropertyValue::FontFamily(shorthand.family),
+            crate::property::PropertyKey::FontKerning => {
+                PropertyValue::FontKerning(crate::property::FontKerning::Auto)
+            }
+            crate::property::PropertyKey::FontLanguageOverride => {
+                PropertyValue::FontLanguageOverride(crate::property::FontLanguageOverride::Normal)
+            }
+            crate::property::PropertyKey::FontOpticalSizing => {
+                PropertyValue::FontOpticalSizing(crate::property::FontOpticalSizing::Auto)
+            }
+            crate::property::PropertyKey::FontVariantEastAsian => {
+                PropertyValue::FontVariantEastAsian(crate::property::FontVariantEastAsian::initial())
+            }
+            crate::property::PropertyKey::FontVariantEmoji => {
+                PropertyValue::FontVariantEmoji(crate::property::FontVariantEmoji::Normal)
+            }
+            crate::property::PropertyKey::FontVariantLigatures => {
+                PropertyValue::FontVariantLigatures(crate::property::FontVariantLigatures::Normal)
+            }
+            crate::property::PropertyKey::FontVariantNumeric => {
+                PropertyValue::FontVariantNumeric(crate::property::FontVariantNumeric::initial())
+            }
+            crate::property::PropertyKey::FontVariantPosition => {
+                PropertyValue::FontVariantPosition(crate::property::FontVariantPosition::Normal)
+            }
             crate::property::PropertyKey::FontVariationSettings => {
                 PropertyValue::FontVariationSettings(FontVariationSettings::Normal)
             }
@@ -1574,15 +1598,26 @@ mod tests {
     #[test]
     fn var_in_font_shorthand_projects_each_deferred_longhand() {
         // `var_in_background_shorthand_projects_each_deferred_longhand` の
-        // sibling — `font: var(--f)` は `PropertyKey::Font` の deferred
-        // として 7 longhand (6 grammar values and the variation-settings reset)
-        // に fan-out し、各々が substitution 後に re-parse される
-        // (`expand_deferred` + `project_deferred_value` 経路)。
+        // sibling — `font: var(--f)` expands 6 grammar longhands plus 9
+        // reset-only subproperties after substitution.
         use crate::property::{
-            FontStyle, FontVariantCaps, FontVariationSetting, FontVariationSettings,
+            FontKerning, FontLanguageOverride, FontOpticalSizing, FontStyle, FontVariantCaps,
+            FontVariantEastAsian, FontVariantEastAsianWidth, FontVariantEmoji,
+            FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSetting,
+            FontVariationSettings,
         };
         let mut doc = TestDoc::new();
-        let parent = doc.push_element(0, "p", Some("font-variation-settings: \"wght\" 640"));
+        let parent = doc.push_element(
+            0,
+            "p",
+            Some(concat!(
+                "font-variation-settings: \"wght\" 640; ",
+                "font-kerning: normal; font-language-override: \"SRB\"; ",
+                "font-optical-sizing: none; font-variant-east-asian: full-width; ",
+                "font-variant-emoji: text; font-variant-ligatures: none; ",
+                "font-variant-numeric: ordinal; font-variant-position: sub",
+            )),
+        );
         let child = doc.push_element(
             parent,
             "div",
@@ -1591,29 +1626,81 @@ mod tests {
         let child_with_later_longhand = doc.push_element(
             parent,
             "em",
-            Some(
-                "--f: italic small-caps bold 20px/1.5 serif; font: var(--f); font-variation-settings: \"wght\" 700",
-            ),
+            Some(concat!(
+                "--f: italic small-caps bold 20px/1.5 serif; font: var(--f); ",
+                "font-kerning: normal; font-language-override: \"SRB\"; ",
+                "font-optical-sizing: none; font-variant-east-asian: full-width; ",
+                "font-variant-emoji: text; font-variant-ligatures: none; ",
+                "font-variant-numeric: ordinal; font-variant-position: sub; ",
+                "font-variation-settings: \"wght\" 700",
+            )),
         );
         let tree = build_rule_tree(&doc);
         let result = cascade(&doc, &tree).expect("cascade Ok");
+        let parent_cv = &result.computed[parent];
         let cv = &result.computed[child];
+        let child_later_cv = &result.computed[child_with_later_longhand];
+
         assert_eq!(cv.font_style, FontStyle::Italic);
         assert_eq!(cv.font_variant_caps, FontVariantCaps::SmallCaps);
         assert_eq!(cv.font_weight, 700.0);
         assert_eq!(cv.font_size, ComputedLength(20.0));
         assert_eq!(cv.line_height, ComputedLineHeight::Number(1.5));
         assert_eq!(cv.font_family[0].to_string(), "serif");
+        assert_eq!(parent_cv.font_kerning, FontKerning::Normal);
         assert_eq!(
-            result.computed[parent].font_variation_settings,
+            parent_cv.font_language_override,
+            FontLanguageOverride::String("SRB".into())
+        );
+        assert_eq!(parent_cv.font_optical_sizing, FontOpticalSizing::None);
+        assert_eq!(
+            parent_cv.font_variant_east_asian.width,
+            Some(FontVariantEastAsianWidth::FullWidth)
+        );
+        assert_eq!(parent_cv.font_variant_emoji, FontVariantEmoji::Text);
+        assert_eq!(parent_cv.font_variant_ligatures, FontVariantLigatures::None);
+        assert!(parent_cv.font_variant_numeric.ordinal);
+        assert_eq!(parent_cv.font_variant_position, FontVariantPosition::Sub);
+        assert_eq!(
+            parent_cv.font_variation_settings,
             FontVariationSettings::Settings(vec![FontVariationSetting {
                 tag: "wght".into(),
                 value: 640.0,
             }])
         );
+
+        assert_eq!(cv.font_kerning, FontKerning::Auto);
+        assert_eq!(cv.font_language_override, FontLanguageOverride::Normal);
+        assert_eq!(cv.font_optical_sizing, FontOpticalSizing::Auto);
+        assert_eq!(cv.font_variant_east_asian, FontVariantEastAsian::initial());
+        assert_eq!(cv.font_variant_emoji, FontVariantEmoji::Normal);
+        assert_eq!(cv.font_variant_ligatures, FontVariantLigatures::Normal);
+        assert_eq!(cv.font_variant_numeric, FontVariantNumeric::initial());
+        assert_eq!(cv.font_variant_position, FontVariantPosition::Normal);
         assert_eq!(cv.font_variation_settings, FontVariationSettings::Normal);
+
+        assert_eq!(child_later_cv.font_kerning, FontKerning::Normal);
         assert_eq!(
-            result.computed[child_with_later_longhand].font_variation_settings,
+            child_later_cv.font_language_override,
+            FontLanguageOverride::String("SRB".into())
+        );
+        assert_eq!(child_later_cv.font_optical_sizing, FontOpticalSizing::None);
+        assert_eq!(
+            child_later_cv.font_variant_east_asian.width,
+            Some(FontVariantEastAsianWidth::FullWidth)
+        );
+        assert_eq!(child_later_cv.font_variant_emoji, FontVariantEmoji::Text);
+        assert_eq!(
+            child_later_cv.font_variant_ligatures,
+            FontVariantLigatures::None
+        );
+        assert!(child_later_cv.font_variant_numeric.ordinal);
+        assert_eq!(
+            child_later_cv.font_variant_position,
+            FontVariantPosition::Sub
+        );
+        assert_eq!(
+            child_later_cv.font_variation_settings,
             FontVariationSettings::Settings(vec![FontVariationSetting {
                 tag: "wght".into(),
                 value: 700.0,
@@ -1789,6 +1876,15 @@ mod tests {
                     PropertyKey::FontSize,
                     PropertyKey::LineHeight,
                     PropertyKey::FontFamily,
+                    PropertyKey::FontKerning,
+                    PropertyKey::FontLanguageOverride,
+                    PropertyKey::FontOpticalSizing,
+                    PropertyKey::FontVariantEastAsian,
+                    PropertyKey::FontVariantEmoji,
+                    PropertyKey::FontVariantLigatures,
+                    PropertyKey::FontVariantNumeric,
+                    PropertyKey::FontVariantPosition,
+                    PropertyKey::FontVariationSettings,
                 ],
             ),
             (
@@ -1801,6 +1897,15 @@ mod tests {
                     PropertyKey::FontSize,
                     PropertyKey::LineHeight,
                     PropertyKey::FontFamily,
+                    PropertyKey::FontKerning,
+                    PropertyKey::FontLanguageOverride,
+                    PropertyKey::FontOpticalSizing,
+                    PropertyKey::FontVariantEastAsian,
+                    PropertyKey::FontVariantEmoji,
+                    PropertyKey::FontVariantLigatures,
+                    PropertyKey::FontVariantNumeric,
+                    PropertyKey::FontVariantPosition,
+                    PropertyKey::FontVariationSettings,
                 ],
             ),
         ];

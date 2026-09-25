@@ -2114,7 +2114,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
         weight: FontWeightValue::Absolute(700.0),
         size: FontShorthandSize::Absolute(Length::Em(1.5)),
         line_height: LineHeight::Length(Length::Rem(2.0)),
-        family: Arc::new(vec![Atom::from("serif")]),
+        family: Arc::new(vec![crate::property::FontFamilyName::generic("serif")]),
     };
     assert_eq!(
         absolutize_in_page_context(
@@ -2993,7 +2993,7 @@ macro_rules! property_key_samples {
 property_key_samples! {
     Color => PropertyValue::Color(RED),
     BackgroundColor => PropertyValue::BackgroundColor(BLUE),
-    FontFamily => PropertyValue::FontFamily(Arc::new(vec![Atom::from("serif")])),
+    FontFamily => PropertyValue::FontFamily(Arc::new(vec![crate::property::FontFamilyName::generic("serif")])),
     FontSize => PropertyValue::FontSize(Length::Em(2.0)),
     FontWeight => PropertyValue::FontWeight(FontWeightValue::Bolder),
     LineHeight => PropertyValue::LineHeight(LineHeight::Length(Length::Em(2.0))),
@@ -3598,7 +3598,7 @@ property_key_samples! {
         weight: FontWeightValue::Absolute(700.0),
         size: FontShorthandSize::Absolute(Length::Em(1.5)),
         line_height: LineHeight::Number(1.5),
-        family: Arc::new(vec![Atom::from("serif")]),
+        family: Arc::new(vec![crate::property::FontFamilyName::generic("serif")]),
     }),
     // CSS Paged Media 3 §8.1 — keyword-only, carries no length.
     // `Named` is the non-initial worst case (`Auto` is the spec
@@ -5121,7 +5121,7 @@ fn font_shorthand_relative_size_is_specified_layer_residue() {
         weight: FontWeightValue::Absolute(400.0),
         size: FontShorthandSize::Relative(RelativeFontSize::Larger),
         line_height: LineHeight::Normal,
-        family: Arc::new(vec![Atom::from("serif")]),
+        family: Arc::new(vec![crate::property::FontFamilyName::generic("serif")]),
     };
     assert_eq!(
         specified_layer_residue(&PropertyValue::Font(shorthand)),

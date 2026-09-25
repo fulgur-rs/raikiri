@@ -6,7 +6,6 @@ use std::sync::Arc;
 use cssparser::{ParseError, Parser, ParserInput, Token};
 use smol_str::SmolStr;
 
-use crate::Atom;
 use crate::property::types::*;
 
 use super::color::*;
@@ -21,20 +20,27 @@ use super::common::*;
 /// 末尾で comma が続かなければ loop を止め、残り input (`!important` 等) は
 /// 手を付けずに downstream (caller の `parse_important` / `expect_exhausted`)
 /// に委ねる — `!` を garbage として拒否しないための Finding 3 対応。
-pub(super) fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>> {
+pub(super) fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<FontFamilyName>> {
     let mut families = Vec::new();
     loop {
-        // Try quoted string first (e.g. "Times New Roman")
+        // Quoted strings are named families even when their text matches a
+        // generic keyword (for example, `"serif"`).
         let family = if let Ok(s) = input.try_parse(|i| i.expect_string().cloned()) {
-            Atom::from(s.as_ref())
+            FontFamilyName::named(s.as_ref())
         } else if let Ok(first) = input.try_parse(|i| i.expect_ident().cloned()) {
-            // Unquoted ident sequence: `Times New Roman` = 3 idents joined by space
+            // Unquoted ident sequence: `Times New Roman` = 3 idents joined by space.
             let mut buf = first.as_ref().to_string();
+            let mut single_ident = true;
             while let Ok(next) = input.try_parse(|i| i.expect_ident().cloned()) {
+                single_ident = false;
                 buf.push(' ');
                 buf.push_str(next.as_ref());
             }
-            Atom::from(buf.as_str())
+            if single_ident && is_generic_font_family_keyword(&buf) {
+                FontFamilyName::generic(buf)
+            } else {
+                FontFamilyName::named(buf)
+            }
         } else {
             return None;
         };
@@ -49,6 +55,27 @@ pub(super) fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>>
     } else {
         Some(families)
     }
+}
+
+fn is_generic_font_family_keyword(name: &str) -> bool {
+    const GENERIC_FAMILIES: &[&str] = &[
+        "serif",
+        "sans-serif",
+        "monospace",
+        "cursive",
+        "fantasy",
+        "system-ui",
+        "ui-serif",
+        "ui-sans-serif",
+        "ui-monospace",
+        "ui-rounded",
+        "math",
+        "emoji",
+        "fangsong",
+    ];
+    GENERIC_FAMILIES
+        .iter()
+        .any(|generic| name.eq_ignore_ascii_case(generic))
 }
 
 /// `text-indent`'s full grammar.
@@ -2222,8 +2249,9 @@ pub enum FontShorthandSize {
 ///   `lighter` / `<number [1,1000]>`) を受理。`font-variant-css2`
 ///   (`normal` / `small-caps`) は [`FontVariantCaps::Normal`] /
 ///   [`FontVariantCaps::SmallCaps`] に畳む — CSS Fonts 3 §6.9 の `font-variant`
-///   shorthand 全体ではなく CSS2 subset のみ対応 (本 crate が持つのは
-///   `font-variant-caps` longhand だけで、他 sub-property が無いため)。
+///   shorthand 全体ではなく CSS2 subset のみ対応。`font-variant-caps` だけを
+///   preface から parse し、他の supported `font-variant-*` longhand は shorthand
+///   適用時の reset-only subproperty として扱う。
 ///   `font-width-css3` (`font-stretch`) longhand は本 crate に存在しないため
 ///   `normal` のみ consume して捨てる (initial と同じ値なので reset 効果は
 ///   observable ではない)。`normal` 以外の stretch keyword
@@ -2247,8 +2275,13 @@ pub enum FontShorthandSize {
 /// [font-style, font-variant, font-weight, font-size, line-height,
 /// font-family]" — 省略成分は spec initial value で埋める
 /// ([`BackgroundShorthand`] doc の同名節と同じ規則)。
-/// `font-variation-settings` is an additional subproperty reset by the shorthand
-/// to its initial `normal` value; it is not part of the parsed grammar payload.
+/// The shorthand also resets the currently modeled reset-only subproperties to
+/// their initial values: `font-kerning`, `font-language-override`,
+/// `font-optical-sizing`, `font-variant-east-asian`, `font-variant-emoji`,
+/// `font-variant-ligatures`, `font-variant-numeric`, `font-variant-position`,
+/// and `font-variation-settings`. They are not part of the parsed grammar payload;
+/// `font-variant-caps` is the grammar's `variant` slot. `font-palette` and
+/// `font-synthesis` are not reset by `font`.
 /// [`parse_font_shorthand`] は省略された `style` → [`FontStyle::Normal`]、
 /// `variant` → [`FontVariantCaps::Normal`]、 `weight` → `400`、
 /// `line-height` → [`LineHeight::Normal`] で埋める (`size` と `family` は
@@ -2259,8 +2292,12 @@ pub enum FontShorthandSize {
 /// [`PropertyValue::FontStyle`] / [`PropertyValue::FontVariantCaps`] /
 /// [`PropertyValue::FontWeight`] / size ([`PropertyValue::FontSize`] /
 /// [`PropertyValue::FontSizeRelative`]) / [`PropertyValue::LineHeight`] /
-/// [`PropertyValue::FontFamily`] / [`PropertyValue::FontVariationSettings`]
-/// (`normal` reset) の 7 longhand に展開する —
+/// [`PropertyValue::FontFamily`] と、8 supported reset-only longhand
+/// ([`PropertyValue::FontKerning`], [`PropertyValue::FontLanguageOverride`],
+/// [`PropertyValue::FontOpticalSizing`], [`PropertyValue::FontVariantEastAsian`],
+/// [`PropertyValue::FontVariantEmoji`], [`PropertyValue::FontVariantLigatures`],
+/// [`PropertyValue::FontVariantNumeric`], [`PropertyValue::FontVariantPosition`])、
+/// [`PropertyValue::FontVariationSettings`] (`normal` reset) の 15 longhand に展開する —
 /// margin/padding/border/outline shorthand precedent と同じ
 /// "parse-time expansion, never reaches cascade" 設計 (詳細は同関数の doc)。
 ///
@@ -2287,7 +2324,7 @@ pub struct FontShorthand {
     pub line_height: LineHeight,
     /// `font-family` 成分 (必須) — [`parse_font_family`] の結果を共有する
     /// `Arc` ([`PropertyValue::FontFamily`] と同じ DoS 対策 pattern)。
-    pub family: Arc<Vec<Atom>>,
+    pub family: Arc<Vec<FontFamilyName>>,
 }
 
 /// `font` shorthand を parse する ([`FontShorthand`] doc の grammar 節参照)。

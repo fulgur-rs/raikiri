@@ -25,7 +25,6 @@ use std::sync::Arc;
 
 use smol_str::SmolStr;
 
-use crate::Atom;
 use crate::computed::{ChFontKey, ChLengthProvenance, ComputedValues, RunningTemplate};
 use crate::property::{
     AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage,
@@ -34,11 +33,11 @@ use crate::property::{
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ColumnWidthValue, ContentAlignmentValue, ContentComponent, CssColor, CssPosition,
     CssPositionOffset, Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue,
-    FlexDirectionValue, FlexWrapValue, FloatValue, FontKerning, FontLanguageOverride,
-    FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue, FontVariantCaps,
-    FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures, FontVariantNumeric,
-    FontVariantPosition, FontVariationSettings, GridAutoFlowValue, GridLineValue,
-    GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, HangingPunctuation,
+    FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName, FontKerning,
+    FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
+    FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
+    FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
+    GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, HangingPunctuation,
     HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, Length, LengthOrAuto,
     LengthOrNormal, LetterSpacingValue, LineBreak, LineHeight, ListStylePosition, ListStyleType,
     MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle, OverflowValue,
@@ -157,7 +156,7 @@ pub struct SpecifiedValues {
     /// [`ComputedValues::background_color`] の staging。層は computed-equivalent。
     pub background_color: CssColor,
     /// [`ComputedValues::font_family`] の staging。層は computed-equivalent。
-    pub font_family: Arc<Vec<Atom>>,
+    pub font_family: Arc<Vec<FontFamilyName>>,
     /// `font-size` の **specified** value。phase 2 ([`resolve_font_size`]) で
     /// **親の** computed font-size を基準に絶対化される。
     pub font_size: Length,
@@ -1034,7 +1033,7 @@ impl SpecifiedValues {
         // 「簡約」すると `font_family` の `Vec` を 1 度 allocate → drop してから
         // parent から clone し直すことになり無駄
         // (本 comment は `ComputedValues::inherit_from` から移設したもの)。
-        // `font_family` は `Arc<Vec<Atom>>` 化されたため、この特定の
+        // `font_family` は `Arc<Vec<FontFamilyName>>` 化されたため、この特定の
         // malloc→drop は解消済み
         // (`initial_font_family()` は shared slot の bump のみ) —
         // ただし本 directive (下記) はそれとは独立に立つ (per-field 網羅列挙が

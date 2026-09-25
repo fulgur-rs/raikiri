@@ -212,20 +212,31 @@ fn font_size_accepts_zero() {
 fn font_family_parse_comma_list() {
     let got = parse(r#"Arial, "Times New Roman", serif"#, "font-family");
     let expected = Some(PropertyValue::FontFamily(Arc::new(vec![
-        Atom::from("Arial"),
-        Atom::from("Times New Roman"),
-        Atom::from("serif"),
+        FontFamilyName::named("Arial"),
+        FontFamilyName::named("Times New Roman"),
+        FontFamilyName::generic("serif"),
     ])));
     assert_eq!(got, expected);
+}
+
+#[test]
+fn font_family_preserves_quoted_generic_keyword_as_named_family() {
+    let got = parse(r#""serif""#, "font-family");
+    assert_eq!(
+        got,
+        Some(PropertyValue::FontFamily(Arc::new(vec![
+            FontFamilyName::named("serif"),
+        ])))
+    );
 }
 
 #[test]
 fn font_family_unquoted_multi_word_single_family() {
     // CSS4: unquoted multi-word family name = ident sequence joined by space。
     let got = parse("Times New Roman", "font-family");
-    let expected = Some(PropertyValue::FontFamily(Arc::new(vec![Atom::from(
-        "Times New Roman",
-    )])));
+    let expected = Some(PropertyValue::FontFamily(Arc::new(vec![
+        FontFamilyName::named("Times New Roman"),
+    ])));
     assert_eq!(got, expected);
 }
 
@@ -4948,7 +4959,7 @@ fn font_shorthand_minimal_size_and_family_fill_the_rest_with_initial_values() {
             weight: FontWeightValue::Absolute(400.0),
             size: FontShorthandSize::Absolute(Length::Px(16.0)),
             line_height: LineHeight::Normal,
-            family: Arc::new(vec![Atom::from("serif")]),
+            family: Arc::new(vec![crate::property::FontFamilyName::generic("serif")]),
         }
     );
 }
@@ -4966,7 +4977,10 @@ fn font_shorthand_full_preface_with_slash_line_height_and_family_list() {
             weight: FontWeightValue::Absolute(700.0),
             size: FontShorthandSize::Absolute(Length::Px(16.0)),
             line_height: LineHeight::Number(1.5),
-            family: Arc::new(vec![Atom::from("Times New Roman"), Atom::from("serif")]),
+            family: Arc::new(vec![
+                crate::property::FontFamilyName::named("Times New Roman"),
+                crate::property::FontFamilyName::generic("serif"),
+            ]),
         }
     );
 }
@@ -5124,7 +5138,7 @@ fn font_shorthand_key_maps_to_font_property_key() {
         weight: FontWeightValue::Absolute(400.0),
         size: FontShorthandSize::Absolute(Length::Px(16.0)),
         line_height: LineHeight::Normal,
-        family: Arc::new(vec![Atom::from("serif")]),
+        family: Arc::new(vec![crate::property::FontFamilyName::generic("serif")]),
     });
     assert_eq!(v.key(), PropertyKey::Font);
 }

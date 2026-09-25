@@ -10,8 +10,8 @@ use crate::property::{
     serialize_value,
 };
 use crate::resolve::{
-    ComputedLength, ComputedLetterSpacing, ComputedTabSize, ComputedTextDecorationThickness,
-    ComputedTextIndent, ComputedTextUnderlineOffset,
+    ComputedLength, ComputedLetterSpacing, ComputedLineHeight, ComputedTabSize,
+    ComputedTextDecorationThickness, ComputedTextIndent, ComputedTextUnderlineOffset,
 };
 
 /// A property whose computed value [`ComputedProperty::serialize`] can read
@@ -25,6 +25,7 @@ pub enum ComputedProperty {
     HyphenateCharacter,
     HyphenateLimitChars,
     Hyphens,
+    Font,
     FontKerning,
     FontVariantCaps,
     FontOpticalSizing,
@@ -84,6 +85,7 @@ impl ComputedProperty {
         Self::HyphenateCharacter,
         Self::HyphenateLimitChars,
         Self::Hyphens,
+        Self::Font,
         Self::FontKerning,
         Self::FontVariantCaps,
         Self::FontOpticalSizing,
@@ -146,6 +148,7 @@ impl ComputedProperty {
             "hyphenate-character" => Self::HyphenateCharacter,
             "hyphenate-limit-chars" => Self::HyphenateLimitChars,
             "hyphens" => Self::Hyphens,
+            "font" => Self::Font,
             "font-kerning" => Self::FontKerning,
             "font-variant-caps" => Self::FontVariantCaps,
             "font-optical-sizing" => Self::FontOpticalSizing,
@@ -212,6 +215,7 @@ impl ComputedProperty {
     ) -> Option<String> {
         let value = match self {
             ComputedProperty::Direction => computed.direction.as_css_str(),
+            ComputedProperty::Font => return serialize_font_shorthand(computed),
             ComputedProperty::FontKerning => computed.font_kerning.as_css_str(),
             ComputedProperty::FontVariantCaps => computed.font_variant_caps.as_css_str(),
             ComputedProperty::FontOpticalSizing => computed.font_optical_sizing.as_css_str(),
@@ -524,6 +528,80 @@ impl ComputedProperty {
         };
         Some(value.to_owned())
     }
+}
+
+fn serialize_font_shorthand(computed: &ComputedValues) -> Option<String> {
+    // Reset-only subproperties cannot be expressed by the serialized `font` grammar.
+    if computed.font_kerning != crate::property::FontKerning::Auto
+        || computed.font_optical_sizing != crate::property::FontOpticalSizing::Auto
+        || computed.font_variant_emoji != crate::property::FontVariantEmoji::Normal
+        || computed.font_language_override != crate::property::FontLanguageOverride::Normal
+        || computed.font_variant_ligatures != crate::property::FontVariantLigatures::Normal
+        || computed.font_variant_position != crate::property::FontVariantPosition::Normal
+        || computed.font_variant_numeric != crate::property::FontVariantNumeric::initial()
+        || computed.font_variant_east_asian != crate::property::FontVariantEastAsian::initial()
+        || computed.font_variation_settings != crate::property::FontVariationSettings::Normal
+    {
+        return None;
+    }
+
+    let mut preface = Vec::with_capacity(3);
+    let style = match computed.font_style {
+        crate::property::FontStyle::Normal => None,
+        crate::property::FontStyle::Italic => Some("italic"),
+        crate::property::FontStyle::Oblique => Some("oblique"),
+    };
+    if let Some(style) = style {
+        preface.push(style.to_owned());
+    }
+    match computed.font_variant_caps {
+        crate::property::FontVariantCaps::Normal => {}
+        crate::property::FontVariantCaps::SmallCaps => preface.push("small-caps".to_owned()),
+        _ => return None,
+    }
+    if computed.font_weight != 400.0 {
+        preface.push(serialize_number(computed.font_weight));
+    }
+
+    let mut value = preface.join(" ");
+    if !value.is_empty() {
+        value.push(' ');
+    }
+    value.push_str(&computed.font_size.to_css_string());
+    match computed.line_height {
+        ComputedLineHeight::Normal => {}
+        ComputedLineHeight::Number(number) => {
+            value.push('/');
+            value.push_str(&serialize_number(number));
+        }
+        ComputedLineHeight::Length(length) => {
+            value.push('/');
+            value.push_str(&length.to_css_string());
+        }
+    }
+    value.push(' ');
+    value.push_str(&serialize_font_family(computed.font_family.as_ref())?);
+    Some(value)
+}
+
+fn serialize_font_family(families: &[crate::property::FontFamilyName]) -> Option<String> {
+    if families.is_empty() {
+        return None;
+    }
+
+    let mut serialized = Vec::with_capacity(families.len());
+    for family in families {
+        let name = family.as_str();
+        if family.1 == crate::property::FontFamilyKind::Generic {
+            serialized.push(name.to_owned());
+        } else {
+            let mut quoted = String::new();
+            cssparser::serialize_string(name, &mut quoted)
+                .expect("serializing a CSS string into String cannot fail");
+            serialized.push(quoted);
+        }
+    }
+    Some(serialized.join(", "))
 }
 
 // Computed-value serialization for types that exist only after cascade. Rules
