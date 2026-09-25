@@ -161,6 +161,24 @@ fn no_proxy_config() -> ureq::config::Config {
     ureq::config::Config::builder().proxy(None).build()
 }
 
+/// Builds a provider around the same connector chain `UreqHttpProvider::new()`
+/// wires in production (`deadline_transport`'s deadline-aware TCP transport,
+/// chained into rustls) with `resolver` in place of `SsrfSafeResolver`,
+/// instead of `ureq`'s own `DefaultConnector`. Tests that only need to swap
+/// out the resolver (to allow a loopback target, or to simulate a blocked
+/// redirect hop) should use this rather than hand-rolling a `DefaultConnector`
+/// agent, so they exercise the transport this crate actually ships.
+fn provider_with(resolver: impl Resolver) -> UreqHttpProvider {
+    let connector = ()
+        .chain(crate::deadline_transport::DeadlineTcpConnector::default())
+        .chain(ureq::unversioned::transport::RustlsConnector::default());
+    UreqHttpProvider::with_agent(ureq::Agent::with_parts(
+        no_proxy_config(),
+        connector,
+        resolver,
+    ))
+}
+
 /// Stands in for `SsrfSafeResolver` in this one test: delegates real
 /// resolution to `DefaultResolver`, then drops any candidate whose
 /// *port* matches `blocked_port`. A hermetic test can't stand up a
@@ -198,6 +216,128 @@ impl Resolver for PortBlockingResolver {
         }
         Ok(safe)
     }
+}
+
+/// Resolver that returns a fixed list of addresses regardless of the URI
+/// queried, standing in for a DNS answer with several records. Drives
+/// `DeadlineTcpConnector::connect`'s per-address fallback without needing to
+/// construct a `ConnectionDetails` directly.
+#[derive(Debug)]
+struct FixedAddrsResolver(Vec<std::net::SocketAddr>);
+
+impl Resolver for FixedAddrsResolver {
+    fn resolve(
+        &self,
+        _uri: &ureq::http::Uri,
+        _config: &ureq::config::Config,
+        _timeout: NextTimeout,
+    ) -> Result<ResolvedSocketAddrs, ureq::Error> {
+        let mut out = self.empty();
+        for addr in &self.0 {
+            out.push(*addr);
+        }
+        Ok(out)
+    }
+}
+
+/// Binds a listener on loopback, returns its address, then immediately
+/// drops the listener: a subsequent connection attempt to that address
+/// fails fast with `ConnectionRefused`, standing in for one dead address
+/// among several DNS records.
+fn refused_addr() -> std::net::SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind throwaway listener");
+    listener.local_addr().expect("local_addr")
+}
+
+#[test]
+fn a_refused_first_address_falls_back_to_the_next_resolved_address() {
+    // `DeadlineTcpConnector::connect` tries every resolved address in turn
+    // and only gives up once every one of them fails with an
+    // address-specific error (`is_addr_specific_error`) — this drives that
+    // fallback with a real refused connection ahead of a real listener.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+    let live_addr = listener.local_addr().unwrap();
+    thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept conn");
+        serve_one_response(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi",
+        );
+    });
+
+    let provider = provider_with(FixedAddrsResolver(vec![refused_addr(), live_addr]));
+    let request = Request {
+        url: Url::parse("http://fallback.invalid/").unwrap(),
+        method: RaikiriMethod::Get,
+        content_type: None,
+        headers: Vec::new(),
+        body: Body::Empty,
+        signal: None,
+        kind: ResourceKind::Image,
+    };
+
+    let resource = provider
+        .fetch(request)
+        .expect("a refused first address must not fail the whole fetch");
+    assert_eq!(resource.bytes.as_ref(), b"hi");
+}
+
+#[test]
+fn all_addresses_refused_surfaces_a_connection_refused_error() {
+    let provider = provider_with(FixedAddrsResolver(vec![refused_addr(), refused_addr()]));
+    let request = Request {
+        url: Url::parse("http://all-refused.invalid/").unwrap(),
+        method: RaikiriMethod::Get,
+        content_type: None,
+        headers: Vec::new(),
+        body: Body::Empty,
+        signal: None,
+        kind: ResourceKind::Image,
+    };
+
+    let err = provider
+        .fetch(request)
+        .expect_err("a fetch with every resolved address refused must fail");
+    assert!(
+        matches!(&err, NetworkError::Io(e) if e.kind() == std::io::ErrorKind::ConnectionRefused),
+        "expected NetworkError::Io(ConnectionRefused), got {err:?}"
+    );
+}
+
+#[test]
+fn an_already_elapsed_connect_deadline_fails_fast_without_attempting_any_address() {
+    // `DeadlineTcpConnector::connect` checks the remaining time before
+    // *every* per-address attempt, not only once up front — a
+    // `timeout_connect` so short it has already elapsed by the time the
+    // first address is checked must fail as a typed timeout rather than
+    // falling through to actually dialing a (possibly slow) address.
+    let config = ureq::config::Config::builder()
+        .proxy(None)
+        .timeout_connect(Some(std::time::Duration::from_nanos(1)))
+        .build();
+    let connector = ()
+        .chain(crate::deadline_transport::DeadlineTcpConnector::default())
+        .chain(ureq::unversioned::transport::RustlsConnector::default());
+    let agent = ureq::Agent::with_parts(config, connector, DefaultResolver::default());
+    let provider = UreqHttpProvider::with_agent(agent);
+
+    let request = Request {
+        url: Url::parse("http://127.0.0.1:1/").unwrap(),
+        method: RaikiriMethod::Get,
+        content_type: None,
+        headers: Vec::new(),
+        body: Body::Empty,
+        signal: None,
+        kind: ResourceKind::Image,
+    };
+
+    let err = provider
+        .fetch(request)
+        .expect_err("an already-elapsed connect deadline must fail immediately");
+    assert!(
+        matches!(&err, NetworkError::Io(e) if e.kind() == std::io::ErrorKind::TimedOut),
+        "expected NetworkError::Io(TimedOut), got {err:?}"
+    );
 }
 
 /// Reads and discards a raw HTTP/1.1 request line + headers from
@@ -246,15 +386,10 @@ fn redirect_target_is_revalidated_and_blocked_even_though_the_first_hop_was_allo
         serve_one_response(stream, &response);
     });
 
-    let agent = ureq::Agent::with_parts(
-        no_proxy_config(),
-        DefaultConnector::default(),
-        PortBlockingResolver {
-            inner: DefaultResolver::default(),
-            blocked_port: target_port,
-        },
-    );
-    let provider = UreqHttpProvider::with_agent(agent);
+    let provider = provider_with(PortBlockingResolver {
+        inner: DefaultResolver::default(),
+        blocked_port: target_port,
+    });
 
     let request = Request {
         url: Url::parse(&format!("http://127.0.0.1:{source_port}/")).unwrap(),
@@ -314,12 +449,7 @@ fn fetch_reads_back_a_real_successful_response_end_to_end() {
 
     // Unfiltered resolver here — this test is about the success path,
     // not the SSRF floor, so there is nothing to block.
-    let agent = ureq::Agent::with_parts(
-        no_proxy_config(),
-        DefaultConnector::default(),
-        DefaultResolver::default(),
-    );
-    let provider = UreqHttpProvider::with_agent(agent);
+    let provider = provider_with(DefaultResolver::default());
 
     let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
     let request = Request {
@@ -400,12 +530,7 @@ fn gzip_decompression_bomb_is_rejected_instead_of_materialized() {
         serve_one_raw_response(stream, &head, &body);
     });
 
-    let agent = ureq::Agent::with_parts(
-        no_proxy_config(),
-        DefaultConnector::default(),
-        DefaultResolver::default(),
-    );
-    let provider = UreqHttpProvider::with_agent(agent);
+    let provider = provider_with(DefaultResolver::default());
     let request = Request {
         url: Url::parse(&format!("http://127.0.0.1:{port}/bomb")).unwrap(),
         method: RaikiriMethod::Get,
@@ -497,12 +622,7 @@ fn a_small_gzip_body_is_still_decoded_end_to_end() {
         );
         serve_one_raw_response(stream, &head, &body);
     });
-    let agent = ureq::Agent::with_parts(
-        no_proxy_config(),
-        DefaultConnector::default(),
-        DefaultResolver::default(),
-    );
-    let provider = UreqHttpProvider::with_agent(agent);
+    let provider = provider_with(DefaultResolver::default());
     let request = Request {
         url: Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(),
         method: RaikiriMethod::Get,
@@ -825,12 +945,7 @@ fn post_sends_body_and_headers_and_reads_back_the_response() {
             .unwrap();
     });
 
-    let agent = ureq::Agent::with_parts(
-        no_proxy_config(),
-        DefaultConnector::default(),
-        DefaultResolver::default(),
-    );
-    let provider = UreqHttpProvider::with_agent(agent);
+    let provider = provider_with(DefaultResolver::default());
 
     let request = Request {
         url: Url::parse(&format!("http://127.0.0.1:{port}/submit")).unwrap(),
@@ -874,12 +989,7 @@ fn post_with_an_empty_body_sends_no_body_bytes() {
             .unwrap();
     });
 
-    let agent = ureq::Agent::with_parts(
-        no_proxy_config(),
-        DefaultConnector::default(),
-        DefaultResolver::default(),
-    );
-    let provider = UreqHttpProvider::with_agent(agent);
+    let provider = provider_with(DefaultResolver::default());
 
     let request = Request {
         url: Url::parse(&format!("http://127.0.0.1:{port}/ping")).unwrap(),
@@ -912,12 +1022,7 @@ fn get_sends_the_requests_custom_headers() {
             .unwrap();
     });
 
-    let agent = ureq::Agent::with_parts(
-        no_proxy_config(),
-        DefaultConnector::default(),
-        DefaultResolver::default(),
-    );
-    let provider = UreqHttpProvider::with_agent(agent);
+    let provider = provider_with(DefaultResolver::default());
 
     let request = Request {
         url: Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(),

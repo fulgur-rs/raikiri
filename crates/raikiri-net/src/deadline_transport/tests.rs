@@ -108,6 +108,61 @@ fn an_unchanged_next_timeout_does_not_extend_the_deadline_but_a_changed_one_anch
 }
 
 #[test]
+fn is_addr_specific_error_classifies_only_per_address_failures() {
+    for kind in [
+        io::ErrorKind::ConnectionRefused,
+        io::ErrorKind::HostUnreachable,
+        io::ErrorKind::NetworkUnreachable,
+        io::ErrorKind::AddrNotAvailable,
+    ] {
+        let err = io::Error::from(kind);
+        assert!(
+            is_addr_specific_error(&err),
+            "{kind:?} must be classified as address-specific"
+        );
+    }
+
+    // Not every I/O error means "try the next address" — a fetch-wide
+    // failure (here, a stand-in for a permission error) must not be
+    // mistaken for one address's problem.
+    let err = io::Error::from(io::ErrorKind::PermissionDenied);
+    assert!(
+        !is_addr_specific_error(&err),
+        "PermissionDenied must not be classified as address-specific"
+    );
+}
+
+#[test]
+fn debug_impl_names_the_peer_address() {
+    let (client, server) = loopback_pair();
+    let peer_addr = server.local_addr().expect("server local_addr");
+    let transport = DeadlineTcpTransport::new(client, LazyBuffers::new(1024, 1024));
+
+    let formatted = format!("{transport:?}");
+
+    assert!(
+        formatted.contains("DeadlineTcpTransport"),
+        "expected the Debug output to name the type, got {formatted:?}"
+    );
+    assert!(
+        formatted.contains(&peer_addr.to_string()),
+        "expected the Debug output to include the peer address {peer_addr}, \
+         got {formatted:?}"
+    );
+}
+
+#[test]
+fn is_open_returns_true_for_a_healthy_idle_connection() {
+    let (client, _server) = loopback_pair();
+    let mut transport = DeadlineTcpTransport::new(client, LazyBuffers::new(1024, 1024));
+
+    assert!(
+        transport.is_open(),
+        "an idle connection with no pending data and no error must probe healthy"
+    );
+}
+
+#[test]
 fn is_open_resets_deadline_tracking_for_pooled_connection_reuse() {
     let (client, server) = loopback_pair();
     drop(server);

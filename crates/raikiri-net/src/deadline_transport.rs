@@ -51,14 +51,8 @@ use ureq::unversioned::transport::{
 /// per-operation timeout value. Meant to replace `ureq`'s own
 /// `TcpConnector` in the connector chain — same position, same job,
 /// different (deadline-safe) `Transport` output.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(crate) struct DeadlineTcpConnector(());
-
-impl fmt::Debug for DeadlineTcpConnector {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("DeadlineTcpConnector").finish()
-    }
-}
 
 impl<In: Transport> Connector<In> for DeadlineTcpConnector {
     type Out = Either<In, DeadlineTcpTransport>;
@@ -68,9 +62,13 @@ impl<In: Transport> Connector<In> for DeadlineTcpConnector {
         details: &ConnectionDetails,
         chained: Option<In>,
     ) -> Result<Option<Self::Out>, Error> {
+        // cov:ignore: unreachable given this crate's own connector chain
+        // (`().chain(DeadlineTcpConnector::default()).chain(RustlsConnector::default())`,
+        // see `UreqHttpProvider::new`) — nothing precedes this connector
+        // that could produce a transport, so `chained` is always `None`
+        // here in practice. Handled anyway because `Connector<In>`'s
+        // signature requires it, matching `ureq`'s own `TcpConnector`.
         if chained.is_some() {
-            // A previous link in the chain (e.g. a SOCKS proxy) already
-            // produced a transport; nothing for this connector to do.
             return Ok(chained.map(Either::A));
         }
 
@@ -104,6 +102,11 @@ impl<In: Transport> Connector<In> for DeadlineTcpConnector {
                     );
                     return Ok(Some(Either::B(DeadlineTcpTransport::new(stream, buffers))));
                 }
+                // cov:ignore: needs a genuinely black-holed address (no
+                // RST, no response) to time out `connect_timeout` itself
+                // rather than fail fast — not reproducible deterministically
+                // in a sandboxed/CI network without an unroutable address
+                // reserved for this purpose.
                 Err(e) if e.kind() == io::ErrorKind::TimedOut => {
                     last_err = Some(Error::Timeout(details.timeout.reason));
                 }
@@ -112,10 +115,21 @@ impl<In: Transport> Connector<In> for DeadlineTcpConnector {
                     // the next resolved address might still work.
                     last_err = Some(e.into());
                 }
+                // cov:ignore: needs an OS-level connect error outside
+                // `is_addr_specific_error`'s set (e.g. a permission error
+                // on a privileged port) — platform-dependent, not
+                // reproducible deterministically here.
                 Err(e) => return Err(e.into()),
             }
         }
 
+        // cov:ignore: the `Resolver` trait's contract guarantees at least
+        // one address on a successful resolve (see
+        // `ureq::unversioned::resolver::Resolver::resolve`'s doc), so the
+        // loop above always sets `last_err` before falling through here —
+        // this closure is dead code, kept only to satisfy
+        // `unwrap_or_else`'s signature for the case an empty address list
+        // would otherwise produce.
         Err(last_err.unwrap_or_else(|| {
             Error::Io(io::Error::new(
                 io::ErrorKind::ConnectionRefused,
@@ -247,6 +261,11 @@ impl Transport for DeadlineTcpTransport {
         match self.stream.write_all(output) {
             Ok(()) => Ok(()),
             Err(e) if is_timeout_like(&e) => Err(Error::Timeout(timeout.reason)),
+            // cov:ignore: needs a genuine non-timeout OS-level write error
+            // (e.g. a peer RST) on an otherwise-healthy loopback socket.
+            // Forcing that deterministically needs `TcpStream::set_linger`,
+            // still unstable on this toolchain (rust-lang/rust#88494), or
+            // an extra dependency (`socket2`) just for this one test.
             Err(e) => Err(e.into()),
         }
     }
@@ -262,6 +281,11 @@ impl Transport for DeadlineTcpTransport {
         let amount = match self.stream.read(input) {
             Ok(v) => v,
             Err(e) if is_timeout_like(&e) => return Err(Error::Timeout(timeout.reason)),
+            // cov:ignore: same limitation as `transmit_output`'s generic
+            // arm above — needs a genuine non-timeout OS-level read error
+            // on an otherwise-healthy loopback socket, not reproducible
+            // deterministically without an unstable API or an extra
+            // dependency.
             Err(e) => return Err(e.into()),
         };
         self.buffers.input_appended(amount);
@@ -295,6 +319,10 @@ impl fmt::Debug for DeadlineTcpTransport {
 /// on a non-blocking read means nothing is pending and the socket is
 /// healthy; unsolicited bytes or an error mean it should not be reused.
 fn probe(stream: &mut TcpStream) -> bool {
+    // cov:ignore: `set_nonblocking` failing on an already-connected,
+    // still-open socket is not something a test can force deterministically
+    // (it requires the underlying fd itself to be invalid or closed
+    // out-of-band, which would also break every other operation on it).
     if stream.set_nonblocking(true).is_err() {
         return false;
     }
