@@ -1077,6 +1077,29 @@ fn text_spacing_reuses_full_autospace_component_grammar_and_rejects_invalid_valu
 
 #[test] // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
 // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+fn text_spacing_bounds_components_before_trying_permutations() {
+    assert_eq!(
+        parse_entire(
+            "trim-all ideograph-alpha ideograph-numeric punctuation replace",
+            "text-spacing"
+        ),
+        Some(PropertyValue::TextSpacingShorthand(TextSpacingShorthand {
+            trim: TextSpacingTrim::TrimAll,
+            autospace: TextAutospace::Custom {
+                ideograph_alpha: true,
+                ideograph_numeric: true,
+                punctuation: true,
+                mode: TextAutospaceMode::Replace,
+            },
+        }))
+    );
+
+    let repeated_normal = vec!["normal"; 9_000].join(" ");
+    assert_eq!(parse_entire(&repeated_normal, "text-spacing"), None);
+}
+
+#[test] // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+// cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
 fn text_spacing_is_registered_and_maps_to_its_shorthand_key() {
     assert!(is_supported_property_name("text-spacing"));
     assert!(is_supported_property_name("TEXT-SPACING"));

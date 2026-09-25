@@ -823,6 +823,9 @@ pub(super) fn parse_text_wrap_style(input: &mut Parser<'_, '_>) -> Option<TextWr
     }
 }
 
+// One trim keyword plus at most three autospace boundary keywords and one mode.
+const MAX_TEXT_SPACING_COMPONENTS: usize = 5;
+
 /// Parse CSS Text 4 `text-spacing` and expand its aliases to the two longhands.
 /// This carries computed-value data only; spacing behavior remains out of scope.
 pub(super) fn parse_text_spacing_shorthand(
@@ -830,6 +833,9 @@ pub(super) fn parse_text_spacing_shorthand(
 ) -> Option<TextSpacingShorthand> {
     let mut components = Vec::new();
     while !input.is_exhausted() {
+        if components.len() == MAX_TEXT_SPACING_COMPONENTS {
+            return None;
+        }
         components.push(input.expect_ident().ok()?.to_ascii_lowercase());
     }
 
