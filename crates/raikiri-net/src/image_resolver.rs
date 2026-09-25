@@ -57,16 +57,18 @@ mod tests {
 
     struct StaticBytesProvider(&'static [u8]);
     impl raikiri_traits::NetworkProvider for StaticBytesProvider {
-        fn fetch(
+        fn fetch_one_hop(
             &self,
             _request: raikiri_traits::Request,
-        ) -> Result<raikiri_traits::FetchedResource, raikiri_traits::NetworkError> {
-            Ok(raikiri_traits::FetchedResource {
-                bytes: self.0.to_vec().into(),
-                content_type: Some("image/png".into()),
-                final_url: url::Url::parse("file:///fixture.png").unwrap(),
-                encoding: None,
-            })
+        ) -> Result<raikiri_traits::FetchOutcome, raikiri_traits::NetworkError> {
+            Ok(raikiri_traits::FetchOutcome::Body(
+                raikiri_traits::FetchedResource {
+                    bytes: self.0.to_vec().into(),
+                    content_type: Some("image/png".into()),
+                    final_url: url::Url::parse("file:///fixture.png").unwrap(),
+                    encoding: None,
+                },
+            ))
         }
     }
 
@@ -277,10 +279,10 @@ mod tests {
     struct RejectingProvider;
 
     impl raikiri_traits::NetworkProvider for RejectingProvider {
-        fn fetch(
+        fn fetch_one_hop(
             &self,
             _request: raikiri_traits::Request,
-        ) -> Result<raikiri_traits::FetchedResource, raikiri_traits::NetworkError> {
+        ) -> Result<raikiri_traits::FetchOutcome, raikiri_traits::NetworkError> {
             Err(raikiri_traits::NetworkError::Other(
                 "data URL must not reach the provider".into(),
             ))

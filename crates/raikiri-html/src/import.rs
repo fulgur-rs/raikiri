@@ -1078,7 +1078,7 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use raikiri_traits::{
-        FetchedResource, NetworkError, PolicyViolation, ResourceKind, ViolationType,
+        FetchOutcome, FetchedResource, NetworkError, PolicyViolation, ResourceKind, ViolationType,
     };
     use std::collections::HashMap;
     use std::sync::Mutex;
@@ -1117,7 +1117,7 @@ mod tests {
     }
 
     impl NetworkProvider for MapProvider {
-        fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+        fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
             self.requests.lock().unwrap().push(request.url.to_string());
             let Some(css) = self
                 .responses
@@ -1128,12 +1128,12 @@ mod tests {
             else {
                 return Err(NetworkError::Other("not found".to_owned()));
             };
-            Ok(FetchedResource {
+            Ok(FetchOutcome::Body(FetchedResource {
                 bytes: Bytes::from(css),
                 content_type: self.content_type.clone(),
                 final_url: request.url,
                 encoding: None,
-            })
+            }))
         }
 
         fn max_import_depth(&self) -> Option<u32> {
@@ -1282,7 +1282,7 @@ mod tests {
         struct PolicyProvider;
 
         impl NetworkProvider for PolicyProvider {
-            fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+            fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
                 Err(NetworkError::PolicyViolation(PolicyViolation {
                     kind: ResourceKind::StylesheetImport,
                     url: request.url,
@@ -1384,22 +1384,28 @@ mod tests {
         }
 
         impl NetworkProvider for RedirectProvider {
-            fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+            fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
                 let requested = request.url.to_string();
                 self.requests.lock().unwrap().push(requested.clone());
                 match requested.as_str() {
-                    "https://origin.test/styles/nested.css" => Ok(FetchedResource {
-                        bytes: Bytes::from_static(b"@import \"grand.css\"; .nested { color: red }"),
-                        content_type: Some("text/css".to_owned()),
-                        final_url: Url::parse("https://cdn.test/assets/nested.css").unwrap(),
-                        encoding: None,
-                    }),
-                    "https://cdn.test/assets/grand.css" => Ok(FetchedResource {
-                        bytes: Bytes::from_static(b".grand { color: blue }"),
-                        content_type: Some("text/css".to_owned()),
-                        final_url: Url::parse("https://cdn.test/assets/grand.css").unwrap(),
-                        encoding: None,
-                    }),
+                    "https://origin.test/styles/nested.css" => {
+                        Ok(FetchOutcome::Body(FetchedResource {
+                            bytes: Bytes::from_static(
+                                b"@import \"grand.css\"; .nested { color: red }",
+                            ),
+                            content_type: Some("text/css".to_owned()),
+                            final_url: Url::parse("https://cdn.test/assets/nested.css").unwrap(),
+                            encoding: None,
+                        }))
+                    }
+                    "https://cdn.test/assets/grand.css" => {
+                        Ok(FetchOutcome::Body(FetchedResource {
+                            bytes: Bytes::from_static(b".grand { color: blue }"),
+                            content_type: Some("text/css".to_owned()),
+                            final_url: Url::parse("https://cdn.test/assets/grand.css").unwrap(),
+                            encoding: None,
+                        }))
+                    }
                     _ => Err(NetworkError::Other("not found".to_owned())),
                 }
             }
@@ -1513,14 +1519,14 @@ mod tests {
         }
 
         impl NetworkProvider for LargeProvider {
-            fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+            fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
                 *self.requests.lock().unwrap() += 1;
-                Ok(FetchedResource {
+                Ok(FetchOutcome::Body(FetchedResource {
                     bytes: self.response.clone(),
                     content_type: Some("text/css".to_owned()),
                     final_url: request.url,
                     encoding: None,
-                })
+                }))
             }
         }
 

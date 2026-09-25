@@ -175,8 +175,8 @@ mod tests {
     mod external_link_stylesheet_fetch_tests {
         use super::*;
         use raikiri_traits::{
-            FetchedResource, NetworkError, NetworkProvider, PolicyViolation, Request, ResourceKind,
-            ViolationType, WarningKind,
+            FetchOutcome, FetchedResource, NetworkError, NetworkProvider, PolicyViolation, Request,
+            ResourceKind, ViolationType, WarningKind,
         };
 
         /// `NetworkProvider` that echoes the resolved request URL back as
@@ -187,13 +187,13 @@ mod tests {
         struct EchoUrlProvider;
 
         impl NetworkProvider for EchoUrlProvider {
-            fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
-                Ok(FetchedResource {
+            fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+                Ok(FetchOutcome::Body(FetchedResource {
                     bytes: bytes::Bytes::from(format!("/* {} */", request.url).into_bytes()),
                     content_type: Some("text/css".to_string()),
                     final_url: request.url,
                     encoding: None,
-                })
+                }))
             }
         }
 
@@ -202,7 +202,7 @@ mod tests {
         }
 
         impl NetworkProvider for ImportProvider {
-            fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+            fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
                 let requested = request.url.to_string();
                 self.requests
                     .lock()
@@ -223,12 +223,12 @@ mod tests {
                     ),
                     _ => return Err(NetworkError::Other("not found".to_owned())),
                 };
-                Ok(FetchedResource {
+                Ok(FetchOutcome::Body(FetchedResource {
                     bytes: bytes::Bytes::from(css),
                     content_type: Some("text/css".to_owned()),
                     final_url: url::Url::parse(final_url).unwrap(),
                     encoding: None,
-                })
+                }))
             }
         }
 
@@ -277,13 +277,13 @@ mod tests {
         struct EmptyBodyProvider;
 
         impl NetworkProvider for EmptyBodyProvider {
-            fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
-                Ok(FetchedResource {
+            fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+                Ok(FetchOutcome::Body(FetchedResource {
                     bytes: bytes::Bytes::new(),
                     content_type: Some("text/css".to_string()),
                     final_url: request.url,
                     encoding: None,
-                })
+                }))
             }
         }
 
@@ -293,7 +293,7 @@ mod tests {
         struct AlwaysErrorProvider(fn() -> NetworkError);
 
         impl NetworkProvider for AlwaysErrorProvider {
-            fn fetch(&self, _request: Request) -> Result<FetchedResource, NetworkError> {
+            fn fetch_one_hop(&self, _request: Request) -> Result<FetchOutcome, NetworkError> {
                 Err((self.0)())
             }
         }
@@ -308,7 +308,7 @@ mod tests {
             // cov:ignore: this fn's body must never execute — that is
             // exactly what every test using this mock asserts. See the
             // type's doc comment above.
-            fn fetch(&self, _request: Request) -> Result<FetchedResource, NetworkError> {
+            fn fetch_one_hop(&self, _request: Request) -> Result<FetchOutcome, NetworkError> {
                 panic!("fetch must not be called for a <link> that is not a stylesheet reference");
             }
         }

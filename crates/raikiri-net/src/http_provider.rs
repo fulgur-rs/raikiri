@@ -9,8 +9,8 @@ use std::io::{self, Read as _};
 use std::time::Duration;
 
 use raikiri_traits::{
-    Body, FetchedResource, Method as RaikiriMethod, NetworkError, NetworkProvider, PolicyViolation,
-    Request, ResourceKind, ViolationType,
+    Body, FetchOutcome, FetchedResource, Method as RaikiriMethod, NetworkError, NetworkProvider,
+    PolicyViolation, Request, ResourceKind, ViolationType,
 };
 use ureq::ResponseExt as _;
 use ureq::unversioned::transport::Connector as _;
@@ -18,11 +18,16 @@ use url::Url;
 
 use crate::http_resolver::{SsrfBlocked, SsrfSafeResolver};
 
-/// End-to-end time limit for a single `NetworkProvider::fetch` call on
-/// `UreqHttpProvider`, from DNS lookup to the end of the response body
-/// (redirects included). Sized for one sub-resource (image, stylesheet,
-/// font). Not a hard deadline over `https://`: see the TLS-read gap
-/// described on [`UreqHttpProvider`].
+/// Time limit for one hop: [`UreqHttpProvider::fetch_one_hop`], from DNS
+/// lookup to the end of that hop's response body, not including any
+/// redirect it points to. `fetch()`'s own redirect-following loop (see
+/// [`raikiri_traits::NetworkProvider::fetch`]) budgets this fresh for each
+/// hop, so a chain of hops is bounded by roughly this value times
+/// [`raikiri_traits::MAX_AUTO_REDIRECT_HOPS`], not by this value alone — a
+/// caller that must bound total wall-clock time across a whole redirect
+/// chain should enforce its own outer deadline. Sized for one sub-resource
+/// (image, stylesheet, font). Not a hard deadline over `https://`: see the
+/// TLS-read gap described on [`UreqHttpProvider`].
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Time limit for establishing a connection: TCP connect and, for
@@ -82,10 +87,11 @@ impl UreqHttpProvider {
     /// Builds a provider whose `Agent` always resolves through the
     /// crate-internal `SsrfSafeResolver`, never uses a proxy, bounds each
     /// connection attempt (TCP connect plus TLS handshake) by a 10-second
-    /// connect timeout, and bounds every fetch (DNS lookup through the end
-    /// of the response body, including redirects) by a 30-second
-    /// end-to-end timeout that holds even against a server trickling bytes
-    /// (see [`UreqHttpProvider`]'s doc).
+    /// connect timeout, and bounds every hop (DNS lookup through the end of
+    /// that hop's response body) by a 30-second timeout that holds even
+    /// against a server trickling bytes (see [`UreqHttpProvider`]'s doc). A
+    /// multi-hop redirect chain budgets this fresh per hop — see
+    /// `FETCH_TIMEOUT`'s doc for what that means for the whole chain.
     pub fn new() -> Self {
         let connector = ()
             .chain(crate::deadline_transport::DeadlineTcpConnector::default())
@@ -211,8 +217,16 @@ fn agent_config() -> ureq::config::Config {
         .build()
 }
 
+/// Redirect status codes that carry a `Location` to follow. Excludes 300
+/// (Multiple Choices, no single `Location` semantics) and 304 (Not
+/// Modified, a caching response with no body and typically no `Location`
+/// at all) — neither is something a caller should be asked to "follow".
+fn is_followable_redirect(status: u16) -> bool {
+    matches!(status, 301 | 302 | 303 | 307 | 308)
+}
+
 impl NetworkProvider for UreqHttpProvider {
-    fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
         // Only checked up front: a signal aborted after this point does not
         // interrupt a fetch already in progress.
         if request.signal.as_ref().is_some_and(|s| s.is_aborted()) {
@@ -228,9 +242,13 @@ impl NetworkProvider for UreqHttpProvider {
         let kind = request.kind;
         let url_str = request.url.as_str();
 
+        // `max_redirects(0)`: this method fetches exactly one hop and
+        // reports a 3xx back to the caller instead of following it, so a
+        // policy-enforcing caller can check the redirect target before any
+        // request is ever sent to it.
         let result = match request.method {
             RaikiriMethod::Get => {
-                let mut builder = self.agent.get(url_str);
+                let mut builder = self.agent.get(url_str).config().max_redirects(0).build();
                 for (name, value) in &request.headers {
                     builder = builder.header(name.as_str(), value.as_str());
                 }
@@ -255,7 +273,7 @@ impl NetworkProvider for UreqHttpProvider {
                         ));
                     }
                 };
-                let mut builder = self.agent.post(url_str);
+                let mut builder = self.agent.post(url_str).config().max_redirects(0).build();
                 for (name, value) in &request.headers {
                     builder = builder.header(name.as_str(), value.as_str());
                 }
@@ -276,21 +294,39 @@ impl NetworkProvider for UreqHttpProvider {
 
         let mut response = result.map_err(|e| map_ureq_error(&request.url, kind, e))?;
 
+        let status = response.status().as_u16();
+        if is_followable_redirect(status) {
+            let location = response
+                .headers()
+                .get(ureq::http::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| {
+                    NetworkError::Other(format!(
+                        "redirect response ({status}) had no usable Location header"
+                    ))
+                })?;
+            let resolved = request.url.join(location).map_err(|e| {
+                NetworkError::Other(format!("invalid redirect Location {location:?}: {e}"))
+            })?;
+            return Ok(FetchOutcome::Redirect {
+                location: resolved,
+                status,
+            });
+        }
+
         let final_url = Url::parse(&response.get_uri().to_string())
             .map_err(|e| NetworkError::Other(format!("invalid final URL: {e}")))?;
         let content_type = response.body().mime_type().map(str::to_owned);
         let encoding = response.body().charset().map(str::to_owned);
-        // Body errors are reported against the URL the body actually came
-        // from, which after a redirect is not `request.url`.
         let bytes = read_body_capped(response.body_mut(), MAX_RESPONSE_BYTES)
             .map_err(|e| map_ureq_error(&final_url, kind, e))?;
 
-        Ok(FetchedResource {
+        Ok(FetchOutcome::Body(FetchedResource {
             bytes: bytes.into(),
             content_type,
             final_url,
             encoding,
-        })
+        }))
     }
 }
 

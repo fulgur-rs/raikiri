@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use parley::FontContext;
 use raikiri_dom::FontFaceLoader;
 use raikiri_traits::{
-    Body, DecodedImage, FetchedResource, Method, NetworkError, NetworkProvider, PolicyViolation,
+    Body, DecodedImage, FetchOutcome, Method, NetworkError, NetworkProvider, PolicyViolation,
     RenderLimits, RenderWarning, Request, ResourceKind, ResourcePolicy, ViolationType, WarningKind,
 };
 use url::Url;
@@ -141,14 +141,17 @@ impl<'a> RenderResources<'a> {
 
     /// Apply this consumer policy to requests made through this configuration.
     ///
-    /// Scheme, host, final-URL redirect, MIME, per-resource-size, and
+    /// Scheme, host, per-hop redirect, MIME, per-resource-size, and
     /// aggregate-size checks are applied around stylesheet and font provider
-    /// calls. The same scheme/host policy is checked before replaced-resource
-    /// resolution, and `max_decoded_bytes(Image)` is checked before paint pixels
-    /// are returned. Since [`NetworkProvider::fetch`] returns only the final
-    /// URL, a provider that follows multiple redirects must enforce each hop and
-    /// the hop count while fetching. The provider and any custom replaced-
-    /// resource resolver remain responsible for transfer-time byte limits and
+    /// calls. Redirects are driven hop by hop via
+    /// [`NetworkProvider::fetch_one_hop`] (not [`NetworkProvider::fetch`],
+    /// which would already have followed every hop by the time it returns):
+    /// each hop's target is checked against scheme/host policy and
+    /// `allow_redirect`/`max_redirect_hops` *before* a request is made to
+    /// it. The same scheme/host policy is checked before replaced-resource
+    /// resolution, and `max_decoded_bytes(Image)` is checked before paint
+    /// pixels are returned. The provider and any custom replaced-resource
+    /// resolver remain responsible for transfer-time byte limits and
     /// fetch/decode timeouts because they materialize data before returning.
     pub fn network_policy(mut self, policy: &'a dyn ResourcePolicy) -> Self {
         self.policy = Some(policy);
@@ -304,14 +307,19 @@ pub(crate) struct ResourceNetworkProvider<'a> {
 }
 
 impl ResourceNetworkProvider<'_> {
+    /// Builds a `PolicyViolation` naming `url` — the URL the check that
+    /// failed actually inspected, which after a redirect hop is not
+    /// necessarily `request.url` — rather than always reporting the
+    /// original request URL regardless of which URL was actually denied.
     fn violation(
         request: &Request,
+        url: &Url,
         violation_type: ViolationType,
         details: impl Into<String>,
     ) -> NetworkError {
         NetworkError::PolicyViolation(PolicyViolation {
             kind: request.kind,
-            url: request.url.clone(),
+            url: url.clone(),
             violation_type,
             details: details.into(),
         })
@@ -325,6 +333,7 @@ impl ResourceNetworkProvider<'_> {
         if !policy.is_scheme_allowed(url.scheme(), request.kind) {
             return Err(Self::violation(
                 request,
+                url,
                 ViolationType::SchemeNotAllowed,
                 "resource URL scheme is denied by policy",
             ));
@@ -333,6 +342,7 @@ impl ResourceNetworkProvider<'_> {
         if !policy.is_host_allowed(host, request.kind) {
             return Err(Self::violation(
                 request,
+                url,
                 ViolationType::HostNotAllowed,
                 "resource URL host is denied by policy",
             ));
@@ -351,23 +361,48 @@ impl ResourceNetworkProvider<'_> {
 }
 
 impl NetworkProvider for ResourceNetworkProvider<'_> {
-    fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
         self.check_url_policy(&request, &request.url)?;
-        let fetched = self.inner.fetch(request.clone())?;
 
-        if fetched.final_url != request.url {
-            self.check_url_policy(&request, &fetched.final_url)?;
-            if let Some(policy) = self.policy
-                && (policy.max_redirect_hops(request.kind) == 0
-                    || !policy.allow_redirect(&request.url, &fetched.final_url, 1))
-            {
-                return Err(Self::violation(
-                    &request,
-                    ViolationType::RedirectDenied,
-                    "resource redirect is denied by policy",
-                ));
+        // Drives `inner.fetch_one_hop` itself rather than delegating to
+        // `inner.fetch()`, so every hop's target is checked against policy
+        // *before* any request reaches it — not only the initial URL and
+        // the final response's URL after the fact, by which point a
+        // provider that follows redirects internally (e.g. `ureq`'s
+        // default behavior) would have already sent every intermediate
+        // request. `hop` here is the real count of redirects actually
+        // taken, unlike a fixed `1` passed to every `allow_redirect` call.
+        let mut current = request.clone();
+        let mut hop = 0u32;
+        let fetched = loop {
+            match self.inner.fetch_one_hop(current.clone())? {
+                FetchOutcome::Body(fetched) => break fetched,
+                FetchOutcome::Redirect { location, .. } => {
+                    hop += 1;
+                    if let Some(policy) = self.policy
+                        && (hop > policy.max_redirect_hops(request.kind)
+                            || !policy.allow_redirect(&current.url, &location, hop))
+                    {
+                        return Err(Self::violation(
+                            &request,
+                            &location,
+                            ViolationType::RedirectDenied,
+                            "resource redirect is denied by policy",
+                        ));
+                    }
+                    self.check_url_policy(&request, &location)?;
+                    current.url = location;
+                }
+                // cov:ignore: `FetchOutcome` is `#[non_exhaustive]`; this
+                // crate cannot construct a third variant to exercise this
+                // arm from a test, only `Body`/`Redirect` exist today.
+                _ => {
+                    return Err(NetworkError::Other(
+                        "unknown FetchOutcome variant".to_owned(),
+                    ));
+                }
             }
-        }
+        };
 
         let actual = fetched.bytes.len() as u64;
         if let Some(limit) = self.byte_limit(request.kind)
@@ -375,6 +410,7 @@ impl NetworkProvider for ResourceNetworkProvider<'_> {
         {
             return Err(Self::violation(
                 &request,
+                &request.url,
                 ViolationType::FetchTooLarge { limit, actual },
                 "resource response exceeded its byte limit",
             ));
@@ -386,6 +422,7 @@ impl NetworkProvider for ResourceNetworkProvider<'_> {
                 let content_type = fetched.content_type.as_deref().ok_or_else(|| {
                     Self::violation(
                         &request,
+                        &request.url,
                         ViolationType::MimeNotAllowed {
                             mime: "<missing>".to_owned(),
                         },
@@ -403,6 +440,7 @@ impl NetworkProvider for ResourceNetworkProvider<'_> {
                 {
                     return Err(Self::violation(
                         &request,
+                        &request.url,
                         ViolationType::MimeNotAllowed {
                             mime: mime.to_owned(),
                         },
@@ -422,6 +460,7 @@ impl NetworkProvider for ResourceNetworkProvider<'_> {
         {
             return Err(Self::violation(
                 &request,
+                &request.url,
                 ViolationType::FetchTooLarge {
                     limit,
                     actual: total,
@@ -430,7 +469,7 @@ impl NetworkProvider for ResourceNetworkProvider<'_> {
             ));
         }
         *used = total;
-        Ok(fetched)
+        Ok(FetchOutcome::Body(fetched))
     }
 
     fn max_import_depth(&self) -> Option<u32> {

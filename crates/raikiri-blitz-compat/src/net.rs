@@ -284,10 +284,10 @@ impl<P> raikiri_traits::NetworkProvider for BlitzNetProviderAdapter<P>
 where
     P: NetProvider,
 {
-    fn fetch(
+    fn fetch_one_hop(
         &self,
         request: raikiri_traits::Request,
-    ) -> Result<raikiri_traits::FetchedResource, raikiri_traits::NetworkError> {
+    ) -> Result<raikiri_traits::FetchOutcome, raikiri_traits::NetworkError> {
         let blitz_req = from_raikiri_request(request);
         let (tx, rx) = std::sync::mpsc::channel::<(String, Bytes)>();
         struct ChannelHandler {
@@ -304,12 +304,18 @@ where
             Ok((url_str, bytes)) => {
                 let url = url::Url::parse(&url_str)
                     .unwrap_or_else(|_| url::Url::parse("about:blank").unwrap());
-                Ok(raikiri_traits::FetchedResource {
-                    bytes,
-                    content_type: None,
-                    final_url: url,
-                    encoding: None,
-                })
+                // `blitz`'s `NetProvider::fetch` is a single callback with
+                // no per-hop visibility: any redirects it follows happen
+                // entirely inside the callback, so this adapter can only
+                // ever report the final result, never an intermediate hop.
+                Ok(raikiri_traits::FetchOutcome::Body(
+                    raikiri_traits::FetchedResource {
+                        bytes,
+                        content_type: None,
+                        final_url: url,
+                        encoding: None,
+                    },
+                ))
             }
             Err(_) => Err(raikiri_traits::NetworkError::Other(
                 "blitz adapter timeout".to_string(),

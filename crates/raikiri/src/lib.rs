@@ -77,8 +77,8 @@ pub use raikiri_dom::{FontError, PageMargins, PageSlice, build_wpt_font_ctx, fir
 pub use raikiri_traits::{
     // ── 既存 ──
     AbortController, AbortSignal, Body, CascadeError, ConsumerPropertyEvent,
-    ConsumerPropertyObserver, ConsumerPropertyValue, DecodedImage, Dom, Element, FetchedResource,
-    HeaderMap, ImagePixelSource, Method, NetworkError, NetworkProvider,
+    ConsumerPropertyObserver, ConsumerPropertyValue, DecodedImage, Dom, Element, FetchOutcome,
+    FetchedResource, HeaderMap, ImagePixelSource, Method, NetworkError, NetworkProvider,
     Node, NodeId, NodeKind, ParseError, QuirksMode, RenderError, RenderWarning,
     Request, ResourceKind, StylesheetKind, WarningKind,
 

@@ -54,8 +54,8 @@ pub use error::{
 pub use image::{DecodedImage, ImagePixelSource};
 pub use io::{OversizePhase, RejectReason, read_bounded_regular_file};
 pub use net::{
-    AbortController, AbortSignal, Body, FetchedResource, HeaderMap, Method, NetworkError,
-    NetworkProvider, Request,
+    AbortController, AbortSignal, Body, FetchOutcome, FetchedResource, HeaderMap,
+    MAX_AUTO_REDIRECT_HOPS, Method, NetworkError, NetworkProvider, Request,
 };
 pub use page::{
     ContentSource, ContentValueConvertError, ContentValueItem, CounterStack, FormData,

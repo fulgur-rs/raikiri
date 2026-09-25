@@ -27,7 +27,15 @@ pub type HeaderMap = Vec<(String, String)>;
 /// Finding #6 対応 (round 7 未対応 finding: byte enforcement 戦略確定は
 /// sandboxed-net-provider-impl 実装前)。
 pub trait NetworkProvider: Send + Sync {
-    /// 1 fetch を同期実行し、結果か error を返す。
+    /// Fetches exactly one HTTP hop: if the response is itself a redirect
+    /// (a 3xx status carrying a `Location`), returns it as
+    /// [`FetchOutcome::Redirect`] instead of silently following it. This is
+    /// the method a policy-enforcing caller (see `raikiri-html`'s
+    /// `ResourceNetworkProvider`) drives directly, so it can check the
+    /// redirect target — and count hops itself — *before* any request ever
+    /// reaches it, not after the fact. A provider with no real redirect
+    /// concept (serves from memory, reads a local file, ...) always
+    /// returns `FetchOutcome::Body`.
     ///
     /// `NetworkError` は spec §4 で `PolicyViolation(PolicyViolation)` variant を
     /// 直接持つため約 144 bytes となり、clippy::result_large_err の閾値 (128 bytes)
@@ -35,7 +43,28 @@ pub trait NetworkProvider: Send + Sync {
     /// Box wrapper 化 (`PolicyViolation(Box<PolicyViolation>)`) の適用可否は
     /// sandboxed-net-provider-impl 実装段階で NetworkError 実利用と併せて再判断する。
     #[allow(clippy::result_large_err)]
-    fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError>;
+    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError>;
+
+    /// Fetches `request` to completion, automatically following up to
+    /// [`MAX_AUTO_REDIRECT_HOPS`] redirects via repeated calls to
+    /// [`NetworkProvider::fetch_one_hop`]. Applies no policy between hops —
+    /// a caller that must enforce a [`crate::ResourcePolicy`] (host
+    /// allow-list, redirect hop count, ...) drives `fetch_one_hop` itself
+    /// instead of using this method, since by the time this method returns
+    /// every hop has already been requested.
+    #[allow(clippy::result_large_err)]
+    fn fetch(&self, request: Request) -> Result<FetchedResource, NetworkError> {
+        let mut current = request;
+        for _ in 0..=MAX_AUTO_REDIRECT_HOPS {
+            match self.fetch_one_hop(current.clone())? {
+                FetchOutcome::Body(resource) => return Ok(resource),
+                FetchOutcome::Redirect { location, .. } => {
+                    current.url = location;
+                }
+            }
+        }
+        Err(NetworkError::Other("too many redirects".to_owned()))
+    }
 
     /// Optional upper bound for recursive stylesheet imports.
     ///
@@ -46,6 +75,27 @@ pub trait NetworkProvider: Send + Sync {
     fn max_import_depth(&self) -> Option<u32> {
         None
     }
+}
+
+/// Cap on the redirects [`NetworkProvider::fetch`]'s default implementation
+/// follows on its own. Matches the historical default most HTTP clients
+/// (including `ureq`) use for automatic redirect-following.
+pub const MAX_AUTO_REDIRECT_HOPS: u32 = 10;
+
+/// Outcome of [`NetworkProvider::fetch_one_hop`].
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub enum FetchOutcome {
+    /// The final response body — this hop was not a redirect.
+    Body(FetchedResource),
+    /// A redirect response naming where it points, not followed.
+    Redirect {
+        /// The `Location` the redirect points to, already resolved to an
+        /// absolute URL against the request that produced it.
+        location: Url,
+        /// The redirect's HTTP status code (e.g. 301, 302, 303, 307, 308).
+        status: u16,
+    },
 }
 
 /// Fetch 要求の全情報。
