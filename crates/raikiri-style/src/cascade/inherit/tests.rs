@@ -6352,10 +6352,19 @@ fn resolve_inheritance_grows_undersized_output_vectors() {
     // resize path is never exercised end-to-end. A direct call with
     // deliberately undersized (empty) vectors verifies the safety net
     // actually grows them instead of panicking on out-of-bounds writes.
+    // A later sibling must still inherit from its own parent after the
+    // earlier sibling's subtree has grown the output arena several times.
     let mut doc = TestDoc::new();
-    let e = doc.push_element(0, "div", None);
+    let e = doc.push_element(0, "div", Some("color: red"));
+    let first_child = doc.push_element(e, "span", Some("color: blue"));
+    let later_sibling = doc.push_element(e, "span", None);
+    let mut deepest = first_child;
+    for _ in 0..32 {
+        deepest = doc.push_element(deepest, "span", None);
+    }
     let id = StyleNodeId(e as u64);
-    let cascaded = CascadedArena::new();
+    let mut cascaded = CascadedArena::new();
+    crate::cascade::collect::collect_cascaded(&doc, id, &RuleTree::empty(), &mut cascaded);
     let mut out: Vec<ComputedValues> = Vec::new();
     let mut non_ua_margin_sides: Vec<Sides<bool>> = Vec::new();
     let mut authored_writing_modes: Vec<Option<WritingMode>> = Vec::new();
@@ -6372,9 +6381,13 @@ fn resolve_inheritance_grows_undersized_output_vectors() {
         &mut page_values,
         &mut pseudo_out,
     );
-    assert!(out.len() > e);
-    assert!(non_ua_margin_sides.len() > e);
-    assert!(authored_writing_modes.len() > e);
+    assert!(out.len() > deepest);
+    assert!(non_ua_margin_sides.len() > deepest);
+    assert!(authored_writing_modes.len() > deepest);
+    assert_eq!(out[e].color, RED);
+    assert_eq!(out[first_child].color, BLUE);
+    assert_eq!(out[deepest].color, BLUE);
+    assert_eq!(out[later_sibling].color, RED);
 }
 
 #[test]
