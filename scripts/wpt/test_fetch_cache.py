@@ -49,6 +49,7 @@ class FetchCacheTests(unittest.TestCase):
 
     def _make_wpt_remote(self) -> None:
         self._init_git(self.wpt_source)
+        self._write(self.wpt_source, "acid/test.html", "acid root\n")
         self._write(self.wpt_source, "css/test.html", "css root\n")
         self._write(self.wpt_source, "fonts/ahem.txt", "font root\n")
         self._write(self.wpt_source, "images/ref.txt", "image root\n")
@@ -107,7 +108,7 @@ class FetchCacheTests(unittest.TestCase):
         self.assertEqual(first.returncode, 0, first.stderr)
         self.assertEqual(self.cache.resolve(), self.cache)
         self.assertEqual((self.cache / ".git" / "info" / "sparse-checkout").read_text(),
-                         "css\nfonts\nimages\n")
+                         "acid\ncss\nfonts\nimages\n")
         self.assertEqual(
             (self.cache / ".git" / "info" / "sparse-checkout").stat().st_mode & 0o222,
             0,
