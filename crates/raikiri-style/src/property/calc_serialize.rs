@@ -159,6 +159,10 @@ pub(crate) fn parse_calc_or_plain(
 /// and percentage serializer in this crate formats its numeric part here so
 /// they cannot disagree.
 pub(super) fn format_css_number(value: f32) -> String {
+    if value == 0.0 {
+        // Negative zero is not negative, so it takes no sign.
+        return "0".to_owned();
+    }
     if value.is_finite() && value.fract() == 0.0 && integer_value(value).is_none() {
         // An integer too large for the token's `int_value`: print its exact
         // value, as integers inside the `i32` range are, rather than a

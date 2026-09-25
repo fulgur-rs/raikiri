@@ -581,3 +581,13 @@ fn percentages_format_their_own_number_without_scaling_error() {
         "1.56253%"
     );
 }
+
+#[test]
+fn negative_zero_serializes_without_a_sign() {
+    use cssparser::ToCss as _;
+
+    assert_eq!(serialize_number(-0.0), "0");
+    assert_eq!(serialize_length(&Length::Px(-0.0)), "0px");
+    assert_eq!(serialize_length(&Length::Percent(-0.0)), "0%");
+    assert_eq!(crate::ComputedLength(-0.0).to_css_string(), "0px");
+}
