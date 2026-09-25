@@ -3,6 +3,63 @@ use crate::node::NodeFlags;
 use taffy::Style;
 
 #[test]
+fn replace_children_from_empty_source_invalidates_and_preserves_detached_subtrees() {
+    let mut target = Document::new();
+    let parent = target.append_element(Some(0), "main", Style::default(), None::<&str>);
+    let first = target.append_element(Some(parent), "span", Style::default(), None::<&str>);
+    let descendant = target.append_text(first, "old subtree");
+    let second = target.append_text(parent, "old sibling");
+    let outside = target.append_text(0, "outside");
+    let node_count = target.node_count();
+    target.mark_in_document_flags();
+    assert!(
+        target.nodes[descendant]
+            .flags
+            .contains(NodeFlags::IS_IN_DOCUMENT)
+    );
+    target.layout_dirty = false;
+    let source = Document::new();
+
+    target.replace_children_from(parent, &source, source.root_index());
+
+    assert!(target.nodes[parent].children.is_empty());
+    assert_eq!(target.node_count(), node_count);
+    assert_eq!(target.parent_of(first), None);
+    assert_eq!(target.parent_of(second), None);
+    assert_eq!(target.parent_of(descendant), Some(first));
+    assert_eq!(target.parent_of(outside), Some(0));
+    assert!(target.layout_dirty);
+    assert!(target.flags_dirty);
+    target.mark_in_document_flags();
+    for detached in [first, descendant, second] {
+        assert!(
+            !target.nodes[detached]
+                .flags
+                .contains(NodeFlags::IS_IN_DOCUMENT)
+        );
+    }
+    assert!(
+        target.nodes[outside]
+            .flags
+            .contains(NodeFlags::IS_IN_DOCUMENT)
+    );
+}
+
+#[test]
+fn replace_children_from_empty_to_empty_preserves_dirty_state() {
+    let source = Document::new();
+    for dirty in [false, true] {
+        let mut target = Document::new();
+        target.layout_dirty = dirty;
+        target.flags_dirty = dirty;
+        target.replace_children_from(0, &source, source.root_index());
+        assert_eq!(target.layout_dirty, dirty);
+        assert_eq!(target.flags_dirty, dirty);
+        assert_eq!(target.node_count(), 1);
+    }
+}
+
+#[test]
 fn replace_children_from_deep_copies_nodes_in_order_and_detaches_old_subtree() {
     let mut target = Document::new();
     let target_parent = target.append_element(Some(0), "main", Style::default(), None::<&str>);

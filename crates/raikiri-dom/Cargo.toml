@@ -35,3 +35,7 @@ workspace = true
 [[bench]]
 name = "layout"
 harness = false
+
+[[bench]]
+name = "mutation"
+harness = false
