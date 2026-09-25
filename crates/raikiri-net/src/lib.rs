@@ -11,9 +11,9 @@
 //! redirect hop.
 
 mod file_provider;
-#[cfg(feature = "http-ureq")]
+#[cfg(feature = "http-ureq")] // cov:ignore: attribute line has no executable code
 mod http_provider;
-#[cfg(feature = "http-ureq")]
+#[cfg(feature = "http-ureq")] // cov:ignore: attribute line has no executable code
 mod http_resolver;
 mod image_decoder; // cov:ignore: module declaration has no executable line
 mod image_resolver;
@@ -21,6 +21,6 @@ mod resource_loader; // cov:ignore: module declaration has no executable line
 pub mod ssrf_guard;
 
 pub use file_provider::FileNetworkProvider;
-#[cfg(feature = "http-ureq")]
+#[cfg(feature = "http-ureq")] // cov:ignore: attribute line has no executable code
 pub use http_provider::UreqHttpProvider;
 pub use image_resolver::ImageResolver;

@@ -1,6 +1,6 @@
 use super::*;
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::thread;
 
@@ -621,4 +621,141 @@ fn a_not_yet_aborted_signal_does_not_block_the_fetch() {
         matches!(err, NetworkError::PolicyViolation(_)),
         "expected the fetch to proceed to the floor, got {err:?}"
     );
+}
+
+#[test]
+fn default_impl_delegates_to_new_and_still_enforces_the_floor() {
+    // `Default::default()` must reach the same construction path as
+    // `new()` (proxy disabled, `SsrfSafeResolver` wired in), not some
+    // separate, potentially unguarded, provider. No real network needed:
+    // the floor rejects the loopback target before any connection.
+    let err = UreqHttpProvider::default()
+        .fetch(Request {
+            url: Url::parse("http://127.0.0.1:1/").unwrap(),
+            method: RaikiriMethod::Get,
+            content_type: None,
+            headers: Vec::new(),
+            body: Body::Empty,
+            signal: None,
+            kind: ResourceKind::Image,
+        })
+        .expect_err("the floor must still reject a loopback target");
+    assert!(matches!(err, NetworkError::PolicyViolation(_)));
+}
+
+#[test]
+fn io_error_maps_to_network_error_io() {
+    let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "boom");
+    let err = map_ureq_error(&test_url(), ResourceKind::Image, ureq::Error::Io(io_err));
+    assert!(
+        matches!(&err, NetworkError::Io(e) if e.kind() == std::io::ErrorKind::ConnectionReset),
+        "expected NetworkError::Io(ConnectionReset), got {err:?}"
+    );
+}
+
+/// Reads a raw HTTP/1.1 request from `stream` far enough to capture the
+/// request line, the `Content-Type` header (if any), and the body (read
+/// according to `Content-Length`), then writes a fixed `200 OK` back.
+/// Good enough for a one-shot test server asserting what a POST actually
+/// sent — these tests do not need a real HTTP parser.
+fn serve_one_response_capturing_post(
+    stream: std::net::TcpStream,
+) -> (String, Option<String>, Vec<u8>) {
+    let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+    let mut request_line = String::new();
+    reader
+        .read_line(&mut request_line)
+        .expect("read request line");
+
+    let mut content_type = None;
+    let mut content_length = 0usize;
+    loop {
+        let mut header_line = String::new();
+        reader
+            .read_line(&mut header_line)
+            .expect("read header line");
+        if header_line == "\r\n" || header_line.is_empty() {
+            break;
+        }
+        let lower = header_line.to_ascii_lowercase();
+        if let Some(value) = lower.strip_prefix("content-type:") {
+            content_type = Some(value.trim().to_owned());
+        } else if let Some(value) = lower.strip_prefix("content-length:") {
+            content_length = value.trim().parse().expect("valid content-length");
+        }
+    }
+
+    let mut body = vec![0u8; content_length];
+    if content_length > 0 {
+        reader.read_exact(&mut body).expect("read request body");
+    }
+
+    let mut stream = stream;
+    stream
+        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+        .expect("write response");
+
+    (request_line, content_type, body)
+}
+
+#[test]
+fn post_sends_body_and_headers_and_reads_back_the_response() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+    let port = listener.local_addr().unwrap().port();
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept conn");
+        tx.send(serve_one_response_capturing_post(stream)).unwrap();
+    });
+
+    let agent = ureq::Agent::with_parts(
+        no_proxy_config(),
+        DefaultConnector::default(),
+        DefaultResolver::default(),
+    );
+    let provider = UreqHttpProvider::with_agent(agent);
+
+    let request = Request {
+        url: Url::parse(&format!("http://127.0.0.1:{port}/submit")).unwrap(),
+        method: RaikiriMethod::Post,
+        content_type: Some("application/x-www-form-urlencoded".to_owned()),
+        headers: vec![("X-Test".to_owned(), "yes".to_owned())],
+        body: Body::Bytes(b"a=1&b=2".to_vec().into()),
+        signal: None,
+        kind: ResourceKind::Other,
+    };
+    let resource = provider.fetch(request).expect("POST fetch must succeed");
+    assert_eq!(resource.bytes.as_ref(), b"ok");
+
+    let (request_line, content_type, body) = rx.recv().expect("server captured the request");
+    assert!(
+        request_line.starts_with("POST "),
+        "expected a POST request line, got {request_line:?}"
+    );
+    assert_eq!(
+        content_type.as_deref(),
+        Some("application/x-www-form-urlencoded")
+    );
+    assert_eq!(body, b"a=1&b=2");
+}
+
+#[test]
+fn post_with_form_body_is_rejected_before_any_network_activity() {
+    // `Body::Form` returns before `UreqHttpProvider` ever builds a
+    // request, so no listener is needed — a URL with nothing listening
+    // would fail differently (a connection error) if this ever reached
+    // the network.
+    let request = Request {
+        url: Url::parse("http://127.0.0.1:1/").unwrap(),
+        method: RaikiriMethod::Post,
+        content_type: None,
+        headers: Vec::new(),
+        body: Body::Form(raikiri_traits::page::FormData::new()),
+        signal: None,
+        kind: ResourceKind::Other,
+    };
+    let err = UreqHttpProvider::new()
+        .fetch(request)
+        .expect_err("Body::Form must be rejected");
+    assert!(matches!(err, NetworkError::Other(_)));
 }

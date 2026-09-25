@@ -266,6 +266,9 @@ impl NetworkProvider for UreqHttpProvider {
                 }
                 builder.send(&bytes[..])
             }
+            // cov:ignore: `raikiri_traits::Method` is `#[non_exhaustive]`;
+            // this crate cannot construct a third variant to exercise this
+            // arm from a test, only `Get`/`Post` exist today.
             _ => {
                 return Err(NetworkError::Other(
                     "UreqHttpProvider only supports GET and POST".into(),

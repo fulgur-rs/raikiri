@@ -125,3 +125,15 @@ fn passes_an_inner_resolution_failure_through_unchanged() {
         "a genuine DNS failure must not be relabeled as SsrfBlocked, got {err:?}"
     );
 }
+
+#[test]
+fn ssrf_blocked_display_names_the_rejected_uri() {
+    let uri: Uri = "http://169.254.169.254/latest/meta-data/".parse().unwrap();
+    let blocked = SsrfBlocked { uri };
+    let message = blocked.to_string();
+    assert!(
+        message.contains("http://169.254.169.254/latest/meta-data/"),
+        "SsrfBlocked's Display must name the rejected URI so diagnostics \
+         can identify what was blocked, got: {message:?}"
+    );
+}
