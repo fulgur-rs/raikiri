@@ -1,7 +1,8 @@
 use cssparser::{CowRcStr, ParseError, Parser, ParserInput, ToCss as _, Token};
 
 use super::calc_serialize::{
-    CalcNode, CalcUnitKind, parse_calc_or_plain, serialize_calc_node, serialize_calc_node_as_angle,
+    CalcNode, CalcUnitKind, format_css_number, parse_calc_or_plain, serialize_calc_node,
+    serialize_calc_node_as_angle,
 };
 use super::parse::{channel_to_u8, parse_color, parse_color_float};
 use super::types::*;
@@ -362,39 +363,15 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
     }
 }
 
-/// Serializes a numeric CSS dimension (`10px`, `1.5em`) using the exact
-/// number-formatting algorithm `cssparser`'s own tokenizer uses for
-/// `Token::Dimension`/`Token::Percentage` (shortest round-tripping decimal
-/// via `dtoa_short`, integers printed without a decimal point). Building a
-/// `Token` and calling its `to_css_string()` reuses that algorithm instead
-/// of reimplementing CSS number serialization here.
+/// Serializes a numeric CSS dimension (`10px`, `1.5em`). `unit` is always a
+/// CSS unit name, so it needs no identifier escaping.
 fn serialize_dimension(value: f32, unit: &str) -> String {
-    let int_value = if value.fract() == 0.0 {
-        Some(value as i32)
-    } else {
-        None
-    };
-    Token::Dimension {
-        has_sign: false,
-        value,
-        int_value,
-        unit: CowRcStr::from(unit),
-    }
-    .to_css_string()
+    format!("{}{unit}", format_css_number(value))
 }
 
+/// Serializes a percentage from its own number (`12.5` is `12.5%`).
 fn serialize_percentage(value: f32) -> String {
-    let int_value = if value.fract() == 0.0 {
-        Some(value as i32)
-    } else {
-        None
-    };
-    Token::Percentage {
-        has_sign: false,
-        unit_value: value / 100.0,
-        int_value,
-    }
-    .to_css_string()
+    format!("{}%", format_css_number(value))
 }
 
 /// Serializes a [`Length`] back to CSS text (`Length::Px(10.0)` -> `"10px"`).
@@ -521,17 +498,7 @@ pub(crate) fn serialize_alpha_channel(alpha: u8) -> String {
 }
 
 pub(crate) fn serialize_number(value: f32) -> String {
-    let int_value = if value.fract() == 0.0 {
-        Some(value as i32)
-    } else {
-        None
-    };
-    Token::Number {
-        has_sign: false,
-        value,
-        int_value,
-    }
-    .to_css_string()
+    format_css_number(value)
 }
 
 /// Serializes a [`CssColor`] as legacy `rgb()`/`rgba()` notation. CSS Color 4
@@ -1020,5 +987,71 @@ pub(crate) fn serialize_start_end<T: PartialEq>(
         start
     } else {
         format!("{start} {end}")
+    }
+}
+
+// Computed-value serialization for types that exist only after cascade. Rules
+// that belong to one property rather than to the value type (such as
+// `letter-spacing: 0px` serializing as `normal`) stay with the caller.
+
+impl cssparser::ToCss for crate::ComputedLetterSpacing {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        match *self {
+            Self::Px(px) => dest.write_str(&serialize_dimension(px, "px")),
+            Self::Percent(percent) => dest.write_str(&serialize_percentage(percent)),
+            Self::Calc(calc) => dest.write_str(&serialize_calc_length_percentage(&calc)),
+        }
+    }
+}
+
+impl cssparser::ToCss for crate::ComputedTextIndent {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        match *self {
+            Self::Px(px) => dest.write_str(&serialize_dimension(px, "px")),
+            Self::Percent(percent) => dest.write_str(&serialize_percentage(percent)),
+            Self::Calc(calc) => dest.write_str(&serialize_calc_length_percentage(&calc)),
+        }
+    }
+}
+
+impl cssparser::ToCss for crate::ComputedTextUnderlineOffset {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        match *self {
+            Self::Auto => dest.write_str("auto"),
+            Self::Length(length) => length.to_css(dest),
+            Self::Percent(percent) => dest.write_str(&serialize_percentage(percent)),
+            Self::Calc(calc) => dest.write_str(&serialize_calc_length_percentage(&calc)),
+        }
+    }
+}
+
+impl cssparser::ToCss for crate::ComputedTextDecorationThickness {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        match *self {
+            Self::Auto => dest.write_str("auto"),
+            Self::FromFont => dest.write_str("from-font"),
+            Self::Length(length) => length.to_css(dest),
+        }
+    }
+}
+
+impl cssparser::ToCss for crate::ComputedTabSize {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        match *self {
+            Self::Number(number) => dest.write_str(&serialize_number(number)),
+            Self::Length(length) => length.to_css(dest),
+        }
+    }
+}
+
+impl cssparser::ToCss for crate::ComputedLength {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        dest.write_str(&serialize_dimension(self.px(), "px"))
+    }
+}
+
+impl cssparser::ToCss for CssColor {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        dest.write_str(&serialize_css_color(self))
     }
 }

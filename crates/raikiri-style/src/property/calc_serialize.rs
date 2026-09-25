@@ -154,41 +154,48 @@ pub(crate) fn parse_calc_or_plain(
     parse_calc_value(input, unit_kind)
 }
 
-/// Duplicates `serialize.rs`'s `serialize_number`/`serialize_percentage`
-/// (same `Token::Number`/`Token::Percentage` + `to_css_string()` approach).
-/// The duplication is deliberate: this module has no dependency on
-/// `serialize.rs` (it depends on nothing but `cssparser`), so it can't
-/// import them without inverting that direction. If a third consumer of
-/// this exact formatting shows up later, that's the point to factor it
-/// out — not before.
-fn format_number(value: f64) -> String {
-    let value = value as f32;
-    let int_value = if value.fract() == 0.0 {
-        Some(value as i32)
-    } else {
-        None
-    };
+/// Serializes a CSS `<number>`: the shortest decimal that round-trips,
+/// with integers printed without a decimal point. Every number, dimension
+/// and percentage serializer in this crate formats its numeric part here so
+/// they cannot disagree.
+pub(super) fn format_css_number(value: f32) -> String {
+    if value == 0.0 {
+        // Negative zero is not negative, so it takes no sign.
+        return "0".to_owned();
+    }
+    if value.is_finite() && value.fract() == 0.0 && integer_value(value).is_none() {
+        // An integer too large for the token's `int_value`: print its exact
+        // value, as integers inside the `i32` range are, rather than a
+        // rounded or exponent form. CSS numbers never serialize in
+        // scientific notation.
+        return format!("{value:.0}");
+    }
     Token::Number {
         has_sign: false,
         value,
-        int_value,
+        int_value: integer_value(value),
     }
     .to_css_string()
 }
 
+/// The `int_value` a serialized numeric token carries: the integer itself
+/// when `value` is integral and fits in `i32`, so it prints without a
+/// fractional part. Outside that range `value as i32` would saturate and
+/// print a different number, so [`format_css_number`] formats such values
+/// itself.
+fn integer_value(value: f32) -> Option<i32> {
+    const I32_RANGE: std::ops::Range<f32> = i32::MIN as f32..-(i32::MIN as f32);
+    (value.fract() == 0.0 && I32_RANGE.contains(&value)).then_some(value as i32)
+}
+
+fn format_number(value: f64) -> String {
+    format_css_number(value as f32)
+}
+
+/// Formats the percentage's own number rather than a `value / 100` fraction,
+/// which would lose precision when scaled back up for output.
 fn format_percentage(value: f64) -> String {
-    let value = value as f32;
-    let int_value = if value.fract() == 0.0 {
-        Some(value as i32)
-    } else {
-        None
-    };
-    Token::Percentage {
-        has_sign: false,
-        unit_value: value / 100.0,
-        int_value,
-    }
-    .to_css_string()
+    format!("{}%", format_css_number(value as f32))
 }
 
 /// Attempts to fold `node` to a single constant. `None` means some part of

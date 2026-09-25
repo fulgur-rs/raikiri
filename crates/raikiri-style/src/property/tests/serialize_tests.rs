@@ -470,3 +470,124 @@ fn serialize_color_value_returns_none_for_relative_lab_syntax() {
         None
     );
 }
+
+#[test]
+fn computed_only_values_serialize_with_shared_css_number_formatting() {
+    use crate::{
+        ComputedLength, ComputedLetterSpacing, ComputedTabSize, ComputedTextDecorationThickness,
+        ComputedTextIndent, ComputedTextUnderlineOffset,
+    };
+    use cssparser::ToCss as _;
+
+    let mixed = CalcLengthPercentage {
+        percent: 10.0,
+        px: -2.0,
+    };
+    assert_eq!(ComputedLetterSpacing::Px(1.5).to_css_string(), "1.5px");
+    assert_eq!(
+        ComputedLetterSpacing::Percent(110.0).to_css_string(),
+        "110%"
+    );
+    assert_eq!(
+        ComputedLetterSpacing::Calc(mixed).to_css_string(),
+        "calc(10% - 2px)"
+    );
+    assert_eq!(
+        ComputedTextIndent::Px(1.2345678).to_css_string(),
+        "1.23457px"
+    );
+    assert_eq!(ComputedTextIndent::Percent(5.0).to_css_string(), "5%");
+    assert_eq!(
+        ComputedTextIndent::Calc(mixed).to_css_string(),
+        "calc(10% - 2px)"
+    );
+    assert_eq!(ComputedTextUnderlineOffset::Auto.to_css_string(), "auto");
+    assert_eq!(
+        ComputedTextUnderlineOffset::Length(ComputedLength(3.0)).to_css_string(),
+        "3px"
+    );
+    assert_eq!(
+        ComputedTextUnderlineOffset::Percent(10.0).to_css_string(),
+        "10%"
+    );
+    assert_eq!(
+        ComputedTextUnderlineOffset::Calc(mixed).to_css_string(),
+        "calc(10% - 2px)"
+    );
+    assert_eq!(
+        ComputedTextDecorationThickness::Auto.to_css_string(),
+        "auto"
+    );
+    assert_eq!(
+        ComputedTextDecorationThickness::FromFont.to_css_string(),
+        "from-font"
+    );
+    assert_eq!(
+        ComputedTextDecorationThickness::Length(ComputedLength(2.0)).to_css_string(),
+        "2px"
+    );
+    assert_eq!(ComputedTabSize::Number(4.0).to_css_string(), "4");
+    assert_eq!(
+        ComputedTabSize::Length(ComputedLength(12.5)).to_css_string(),
+        "12.5px"
+    );
+    assert_eq!(
+        CssColor {
+            r: 1,
+            g: 2,
+            b: 3,
+            a: 255
+        }
+        .to_css_string(),
+        "rgb(1, 2, 3)"
+    );
+    assert_eq!(
+        CssColor {
+            r: 1,
+            g: 2,
+            b: 3,
+            a: 128
+        }
+        .to_css_string(),
+        "rgba(1, 2, 3, 0.5)"
+    );
+}
+
+#[test]
+fn numbers_outside_i32_keep_their_value_instead_of_saturating() {
+    assert_eq!(serialize_number(4.0), "4");
+    assert_eq!(serialize_number(2.9), "2.9");
+    // The largest f32 below 2^31 and i32::MIN still print as integers.
+    assert_eq!(serialize_number(2147483520.0), "2147483520");
+    assert_eq!(serialize_number(-2147483648.0), "-2147483648");
+    // Past the i32 range every digit is kept, without clamping or exponent form.
+    assert_eq!(serialize_number(2147483648.0), "2147483648");
+    assert_eq!(serialize_number(3.0e9), "3000000000");
+    assert_eq!(serialize_number(-3.0e9), "-3000000000");
+    assert_eq!(serialize_length(&Length::Px(1.0e10)), "10000000000px");
+    assert_eq!(serialize_length(&Length::Percent(3.0e9)), "3000000000%");
+}
+
+#[test]
+fn percentages_format_their_own_number_without_scaling_error() {
+    use cssparser::ToCss as _;
+
+    // Formatting `value / 100` and scaling it back up rounds 1.562525 down.
+    assert_eq!(serialize_length(&Length::Percent(1.562525)), "1.56253%");
+    assert_eq!(serialize_length(&Length::Percent(12.5)), "12.5%");
+    assert_eq!(serialize_length(&Length::Percent(-10.0)), "-10%");
+    assert_eq!(
+        crate::ComputedLetterSpacing::Percent(1.562525).to_css_string(),
+        "1.56253%"
+    );
+}
+
+#[test]
+fn negative_zero_serializes_without_a_sign() {
+    use cssparser::ToCss as _;
+
+    assert_eq!(serialize_number(-0.0), "0");
+    assert_eq!(serialize_length(&Length::Px(-0.0)), "0px");
+    assert_eq!(serialize_length(&Length::Percent(-0.0)), "0%");
+    assert_eq!(crate::ComputedLength(-0.0).to_css_string(), "0px");
+}
