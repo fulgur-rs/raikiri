@@ -3,7 +3,7 @@
 
 validate_shared_wpt_subset() {
   local subset_file="$1"
-  local -a expected=(css fonts images)
+  local -a expected=(acid css fonts images)
   local -a actual=()
 
   if [ ! -r "$subset_file" ]; then
@@ -15,13 +15,13 @@ validate_shared_wpt_subset() {
   )
 
   if [ "${#actual[@]}" -ne "${#expected[@]}" ]; then
-    echo "error: $subset_file must contain exactly: css, fonts, images" >&2
+    echo "error: $subset_file must contain exactly: acid, css, fonts, images" >&2
     return 2
   fi
   local index
   for index in "${!expected[@]}"; do
     if [ "${actual[$index]}" != "${expected[$index]}" ]; then
-      echo "error: $subset_file must contain exactly: css, fonts, images" >&2
+      echo "error: $subset_file must contain exactly: acid, css, fonts, images" >&2
       return 2
     fi
   done

@@ -6,7 +6,7 @@ worktree gets a replaceable `target/wpt` symlink to that checkout for existing
 commands and Rust tests. Removing `target/` (for example with `cargo clean`)
 removes only the link; `fetch.sh` and the gate recreate it from the home cache.
 
-`subset.txt` defines the shared sparse roots: all of `css/`, `fonts/`, and
+`subset.txt` defines the shared sparse roots: all of `acid/`, `css/`, `fonts/`, and
 `images/`. `fetch.sh` validates this exact set and atomically replaces the
 cache's sparse-pattern file with a read-only inode. An already-open stale
 writer is detached; later runs of an old `fetch.sh` fail instead of narrowing
