@@ -450,6 +450,7 @@ impl ComputedProperty {
             ComputedProperty::LetterSpacing => match measured_spacing(
                 computed.letter_spacing_computed,
                 computed.letter_spacing_ch_factor,
+                computed.letter_spacing_ch_font.as_ref(),
                 computed,
                 ch_advance,
             ) {
@@ -461,6 +462,7 @@ impl ComputedProperty {
                 let word_spacing = measured_spacing(
                     computed.word_spacing_computed,
                     computed.word_spacing_ch_factor,
+                    computed.word_spacing_ch_font.as_ref(),
                     computed,
                     ch_advance,
                 );
@@ -531,17 +533,23 @@ fn own_ch_font(computed: &ComputedValues) -> ChFontKey {
 }
 
 /// Replaces the style layer's `ch` fallback in a `letter-spacing` or
-/// `word-spacing` length with the element's measured `0` advance, the same
-/// font text layout shapes with. Percentages and `calc()` carry no `ch` factor.
+/// `word-spacing` length with the measured `0` advance of the font that
+/// declared it, falling back to the element's own font. Percentages and
+/// `calc()` carry no `ch` factor.
 fn measured_spacing(
     value: ComputedLetterSpacing,
     ch_factor: Option<f32>,
+    ch_font: Option<&ChFontKey>,
     computed: &ComputedValues,
     ch_advance: &mut dyn FnMut(&ChFontKey) -> f32,
 ) -> ComputedLetterSpacing {
     match (ch_factor, value) {
         (Some(factor), ComputedLetterSpacing::Px(_)) => {
-            ComputedLetterSpacing::Px(factor * ch_advance(&own_ch_font(computed)))
+            let advance = match ch_font {
+                Some(font) => ch_advance(font),
+                None => ch_advance(&own_ch_font(computed)),
+            };
+            ComputedLetterSpacing::Px(factor * advance)
         }
         _ => value,
     }

@@ -149,6 +149,12 @@ fn ch_spacing_and_indent_are_measured_through_the_callback() {
         ComputedProperty::TextIndent.serialize(&computed, &mut ch_advance),
         Some("27px".to_owned())
     );
+    // An inherited `ch` spacing measures with the font that declared it.
+    computed.word_spacing_ch_font = Some(declaring_font.clone());
+    assert_eq!(
+        ComputedProperty::WordSpacing.serialize(&computed, &mut ch_advance),
+        Some("9px".to_owned())
+    );
     // A zero `ch` letter-spacing still reads back as `normal`.
     computed.letter_spacing_ch_factor = Some(0.0);
     assert_eq!(
