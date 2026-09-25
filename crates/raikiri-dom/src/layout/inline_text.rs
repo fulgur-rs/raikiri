@@ -4560,10 +4560,7 @@ fn is_leading_body_text(document: &Document, body_id: Option<usize>, node_id: us
     false
 }
 
-fn parley_word_break(value: WordBreak, line_break: LineBreak) -> ParleyWordBreak {
-    if matches!(line_break, LineBreak::Anywhere) {
-        return ParleyWordBreak::BreakAll;
-    }
+fn parley_word_break(value: WordBreak, _line_break: LineBreak) -> ParleyWordBreak {
     match value {
         WordBreak::BreakAll => ParleyWordBreak::BreakAll,
         WordBreak::KeepAll => ParleyWordBreak::KeepAll,
@@ -4577,14 +4574,35 @@ fn parley_word_break(value: WordBreak, line_break: LineBreak) -> ParleyWordBreak
     }
 }
 
+fn line_break_anywhere_override(context: parley::LineBreakContext) -> Option<bool> {
+    // A mandatory newline already ends the current line. Do not create a
+    // second soft opportunity immediately before it.
+    Some(context.after != '\n')
+}
+
+static LINE_BREAK_ANYWHERE_OVERRIDE: &parley::LineBreakOverrideFn =
+    &(line_break_anywhere_override as fn(parley::LineBreakContext) -> Option<bool>);
+
+fn parley_line_break_override(
+    line_break: LineBreak,
+    white_space: WhiteSpace,
+) -> Option<&'static parley::LineBreakOverrideFn> {
+    if !matches!(line_break, LineBreak::Anywhere) {
+        return None;
+    }
+    if matches!(white_space, WhiteSpace::PreWrap | WhiteSpace::BreakSpaces) {
+        // Registry Parley does not expose CSS hanging-space controls. Keep both
+        // preserved-space modes on their existing layout path in this slice.
+        return None;
+    }
+    Some(LINE_BREAK_ANYWHERE_OVERRIDE)
+}
+
 fn parley_overflow_wrap(
     word_break: WordBreak,
-    line_break: LineBreak,
+    _line_break: LineBreak,
     value: OverflowWrap,
 ) -> ParleyOverflowWrap {
-    if matches!(line_break, LineBreak::Anywhere) {
-        return ParleyOverflowWrap::Anywhere;
-    }
     if matches!(word_break, WordBreak::BreakWord) {
         return ParleyOverflowWrap::BreakWord;
     }
@@ -4939,7 +4957,7 @@ pub(crate) fn preshape_text(
             multicol_column_width_for_text(cascade, &parent_of, idx, max_advance);
         // cov:ignore: authored auto-width fallback is exercised by the ignored foundation WPT run.
         let authored_advance = if multicol_advance.is_none() {
-            authored_containing_width(cascade, &parent_of, idx, max_advance)
+            authored_containing_width_with_resolved_ch(doc, cascade, &parent_of, idx, max_advance)
         } else {
             None
         };
@@ -5259,6 +5277,10 @@ pub(crate) fn preshape_text(
             // the same metrics as Parley's painted baselines.
             let quantize_metrics = !job.simple_pre_block && !job.simple_preserved_run;
             let mut builder = layout_cx.ranged_builder(fonts, &job.text, 1.0, quantize_metrics);
+            builder.set_line_break_override(parley_line_break_override(
+                job.line_break,
+                job.white_space,
+            ));
             builder.push_default(StyleProperty::FontFamily(font_family));
             builder.push_default(StyleProperty::FontSize(font_size_px));
             builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
@@ -5350,6 +5372,10 @@ pub(crate) fn preshape_text(
                 let quantize_metrics = !job.simple_pre_block && !job.simple_preserved_run;
                 let mut builder =
                     lcx.ranged_builder(&mut fonts_thread, &job.text, 1.0, quantize_metrics);
+                builder.set_line_break_override(parley_line_break_override(
+                    job.line_break,
+                    job.white_space,
+                ));
                 builder.push_default(StyleProperty::FontFamily(font_family));
                 builder.push_default(StyleProperty::FontSize(font_size_px));
                 builder.push_default(StyleProperty::FontWeight(FontWeight::new(font_weight)));
