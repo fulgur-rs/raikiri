@@ -470,3 +470,85 @@ fn serialize_color_value_returns_none_for_relative_lab_syntax() {
         None
     );
 }
+
+#[test]
+fn computed_only_values_serialize_with_shared_css_number_formatting() {
+    use crate::{
+        ComputedLength, ComputedLetterSpacing, ComputedTabSize, ComputedTextDecorationThickness,
+        ComputedTextIndent, ComputedTextUnderlineOffset,
+    };
+    use cssparser::ToCss as _;
+
+    let mixed = CalcLengthPercentage {
+        percent: 10.0,
+        px: -2.0,
+    };
+    assert_eq!(ComputedLetterSpacing::Px(1.5).to_css_string(), "1.5px");
+    assert_eq!(
+        ComputedLetterSpacing::Percent(110.0).to_css_string(),
+        "110%"
+    );
+    assert_eq!(
+        ComputedLetterSpacing::Calc(mixed).to_css_string(),
+        "calc(10% - 2px)"
+    );
+    assert_eq!(
+        ComputedTextIndent::Px(1.2345678).to_css_string(),
+        "1.23457px"
+    );
+    assert_eq!(ComputedTextIndent::Percent(5.0).to_css_string(), "5%");
+    assert_eq!(
+        ComputedTextIndent::Calc(mixed).to_css_string(),
+        "calc(10% - 2px)"
+    );
+    assert_eq!(ComputedTextUnderlineOffset::Auto.to_css_string(), "auto");
+    assert_eq!(
+        ComputedTextUnderlineOffset::Length(ComputedLength(3.0)).to_css_string(),
+        "3px"
+    );
+    assert_eq!(
+        ComputedTextUnderlineOffset::Percent(10.0).to_css_string(),
+        "10%"
+    );
+    assert_eq!(
+        ComputedTextUnderlineOffset::Calc(mixed).to_css_string(),
+        "calc(10% - 2px)"
+    );
+    assert_eq!(
+        ComputedTextDecorationThickness::Auto.to_css_string(),
+        "auto"
+    );
+    assert_eq!(
+        ComputedTextDecorationThickness::FromFont.to_css_string(),
+        "from-font"
+    );
+    assert_eq!(
+        ComputedTextDecorationThickness::Length(ComputedLength(2.0)).to_css_string(),
+        "2px"
+    );
+    assert_eq!(ComputedTabSize::Number(4.0).to_css_string(), "4");
+    assert_eq!(
+        ComputedTabSize::Length(ComputedLength(12.5)).to_css_string(),
+        "12.5px"
+    );
+    assert_eq!(
+        CssColor {
+            r: 1,
+            g: 2,
+            b: 3,
+            a: 255
+        }
+        .to_css_string(),
+        "rgb(1, 2, 3)"
+    );
+    assert_eq!(
+        CssColor {
+            r: 1,
+            g: 2,
+            b: 3,
+            a: 128
+        }
+        .to_css_string(),
+        "rgba(1, 2, 3, 0.5)"
+    );
+}
