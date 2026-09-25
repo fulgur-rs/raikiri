@@ -79,20 +79,20 @@ use super::*;
 /// inert でなくなるため — default のままだろうと期待するのではなく
 /// 明示的に上書きする必要がある。
 ///
-/// `align_items: Baseline` を set するのは、`bridge_alignment` が copy
-/// した author の `align-items` を上書きし、参加する text children の
-/// first baseline を揃えるためである。`taffy_impl.rs` は text leaf の
-/// Parley first-line baseline を report し、`inline` / `inline-block`
-/// wrapper では in-flow text baseline を box へ伝える。baseline を持たない
-/// replaced box 等は taffy の bottom-edge fallback に残る。`vertical-align`
-/// の top / bottom は child の `align_self` で引き続き別扱いする。
+/// `align_items: Baseline` is used only when a direct, in-flow `inline-block`
+/// or inline replaced image (`<img>`) participates. This implements the
+/// supported atomic/replaced baseline slice; it does not make the synthetic
+/// flex wrapper a full inline formatting context. Text-only roots and plain
+/// inline wrappers keep `FlexStart`. `taffy_impl.rs` reports text baselines for the
+/// inline-block path; replaced images without a baseline use Taffy's
+/// bottom-edge fallback. `vertical-align: top` / `bottom` remains a child
+/// `align_self` override.
 ///
-/// `vertical-align` の実装済み length / sub / super shift は paint 時に
-/// glyph へ適用する一方、その shift 分を line root の synthetic leading /
-/// trailing として sizing に加える。これにより raised / lowered box が
-/// line box の高さへ参加し、他の child も同じ text baseline を基準に配置
-/// される。Synthetic extent は authored padding に加算されるため、既存の
-/// padding 値と共存する。
+/// Supported `vertical-align` shifts are accumulated at the containing line
+/// root from in-flow inline descendants. Nested offsets add along each inline
+/// path; traversal stops at atomic inline-blocks and nested synthetic roots so
+/// an extent is counted once rather than padding every wrapper. The root's
+/// synthetic leading/trailing is added to authored padding.
 ///
 /// container 自身は `justify_content: None` (taffy 自身の default、CSS
 /// の `normal` 相当) へも reset する — 全く同じ「もう inert ではない」
@@ -132,7 +132,7 @@ use super::*;
 /// main size を直接決めてしまうため、`flex_shrink: 0` だけでは守れない
 /// (自身の content 基準の flex basis に戻すことで、box は常に自身の
 /// shaped content 以上の幅を持つ)。`align_self` を `None` (= `auto`) へ
-/// 戻す理由は、container 側の `align_items: Baseline` へ一貫して
+/// 戻す理由は、container 側で上記の条件により選ばれた alignment へ
 /// fallback させるためである (`auto` は親の `align-items` へ fallback
 /// する契約、`bridge_alignment` の doc 参照)。`vertical-align: top` /
 /// `bottom` はそれぞれ `FlexStart` / `FlexEnd` に明示変換する。
@@ -861,6 +861,78 @@ pub(crate) fn prepare_ch_box_values_before_taffy(
     }
 }
 
+// A helper for the replaced-only post-pass below: mixed inline rows must retain
+// Taffy's computed text/replaced baselines rather than being reflowed as image
+// and whitespace runs.
+fn inline_root_has_unhandled_baseline_content(
+    doc: &Document,
+    parent_id: usize,
+    cascade: &CascadeResult,
+) -> bool {
+    doc.nodes[parent_id].children.iter().any(|&child| {
+        let child_cv = &cascade.computed[child];
+        match &doc.nodes[child].data {
+            NodeData::Text(text) => {
+                let has_text = !text.text_content.is_empty();
+                let has_preserved_break = has_text
+                    && !matches!(
+                        child_cv.white_space,
+                        WhiteSpace::Normal | WhiteSpace::Nowrap
+                    )
+                    && text
+                        .text_content
+                        .chars()
+                        .any(|ch| matches!(ch, '\n' | '\r' | '\x0C'));
+                let has_non_whitespace = has_text
+                    && !text
+                        .text_content
+                        .chars()
+                        .all(|ch| is_collapsible_ws(ch) || ch == '\u{00A0}');
+                has_preserved_break || has_non_whitespace
+            }
+            NodeData::Element(_) => doc.nodes[child].tag_name() != Some("img"),
+            _ => false,
+        }
+    })
+}
+
+fn relative_position_x_offset(
+    cascade: &CascadeResult,
+    child_id: usize,
+    containing_width: f32,
+) -> f32 {
+    let child_cv = &cascade.computed[child_id];
+    if !matches!(
+        child_cv.position,
+        PositionValue::Relative | PositionValue::Sticky
+    ) {
+        return 0.0;
+    }
+    let left =
+        super::page::used_computed_length_percentage_or_auto(child_cv.left, containing_width);
+    let right =
+        super::page::used_computed_length_percentage_or_auto(child_cv.right, containing_width);
+    left.or_else(|| right.map(|value| -value)).unwrap_or(0.0)
+}
+
+fn relative_position_y_offset(
+    cascade: &CascadeResult,
+    child_id: usize,
+    containing_height: f32,
+) -> f32 {
+    let child_cv = &cascade.computed[child_id];
+    if !matches!(
+        child_cv.position,
+        PositionValue::Relative | PositionValue::Sticky
+    ) {
+        return 0.0;
+    }
+    let top = super::page::used_computed_length_percentage_or_auto(child_cv.top, containing_height);
+    let bottom =
+        super::page::used_computed_length_percentage_or_auto(child_cv.bottom, containing_height);
+    top.or_else(|| bottom.map(|value| -value)).unwrap_or(0.0)
+}
+
 // cov:ignore: exercised by resource-enabled ignored WPT reftests; default coverage has no sparse asset run.
 pub(crate) fn realign_inline_replaced_children(doc: &mut Document, cascade: &CascadeResult) {
     for parent_id in 0..doc.nodes.len() {
@@ -876,6 +948,13 @@ pub(crate) fn realign_inline_replaced_children(doc: &mut Document, cascade: &Cas
         if !has_replaced_child {
             continue;
         }
+        let baseline_aligned =
+            doc.nodes[parent_id].style.align_items == Some(TaffyAlignItems::BASELINE);
+        if baseline_aligned && inline_root_has_unhandled_baseline_content(doc, parent_id, cascade) {
+            // Taffy's positions must survive on mixed rows and rows with
+            // explicit breaks that already have line-specific baseline geometry.
+            continue;
+        }
         let parent_width = doc.nodes[parent_id].unrounded_layout.size.width.max(0.0);
         if !parent_width.is_finite() || parent_width <= 0.0 {
             continue;
@@ -887,6 +966,7 @@ pub(crate) fn realign_inline_replaced_children(doc: &mut Document, cascade: &Cas
         let mut x = 0.0_f32;
         let mut y = 0.0_f32;
         let mut line_height_used = line_height;
+        let mut baseline_for_line = None;
         for &child in &doc.nodes[parent_id].children.clone() {
             if !doc.nodes[child].is_in_document() {
                 continue;
@@ -897,18 +977,26 @@ pub(crate) fn realign_inline_replaced_children(doc: &mut Document, cascade: &Cas
                 line_height_used = line_height;
                 continue;
             }
-            let is_collapsible_whitespace = matches!(
-                &doc.nodes[child].data,
-                NodeData::Text(text)
-                    if text.text_content.chars().all(is_collapsible_ws)
-            );
-            let is_nonbreaking_space_run = matches!(
+            let is_inline_whitespace = matches!(
                 &doc.nodes[child].data,
                 NodeData::Text(text)
                     if !text.text_content.is_empty()
-                        && text.text_content.chars().all(|ch| ch == '\u{00a0}')
+                        && text
+                            .text_content
+                            .chars()
+                            .all(|ch| is_collapsible_ws(ch) || ch == '\u{00A0}')
             );
-            let (width, height) = if is_collapsible_whitespace || is_nonbreaking_space_run {
+            let is_collapsible_whitespace = is_inline_whitespace
+                && matches!(
+                    cascade.computed[child].white_space,
+                    WhiteSpace::Normal | WhiteSpace::Nowrap | WhiteSpace::PreLine
+                )
+                && matches!(
+                    &doc.nodes[child].data,
+                    NodeData::Text(text)
+                        if text.text_content.chars().all(is_collapsible_ws)
+                );
+            let (width, height) = if is_inline_whitespace {
                 (
                     doc.nodes[child].unrounded_layout.size.width.max(
                         style_dimension_length(doc.nodes[child].style.size.width).unwrap_or(0.0),
@@ -930,6 +1018,7 @@ pub(crate) fn realign_inline_replaced_children(doc: &mut Document, cascade: &Cas
                 x = 0.0;
                 y += line_height_used;
                 line_height_used = line_height;
+                baseline_for_line = None;
                 if is_collapsible_whitespace {
                     continue;
                 }
@@ -939,8 +1028,38 @@ pub(crate) fn realign_inline_replaced_children(doc: &mut Document, cascade: &Cas
                 // U+00A0 is not collapsible and keeps its measured advance.
                 continue;
             }
-            doc.nodes[child].unrounded_layout.location.x = x;
-            doc.nodes[child].unrounded_layout.location.y = y;
+            let taffy_y = doc.nodes[child].unrounded_layout.location.y;
+            let relative_offset_y = relative_position_y_offset(
+                cascade,
+                child,
+                doc.nodes[parent_id].unrounded_layout.size.height.max(0.0),
+            );
+            let flow_taffy_y = taffy_y - relative_offset_y;
+            let child_y = if !baseline_aligned {
+                y + relative_offset_y
+            } else if doc.nodes[child].style.align_self == Some(TaffyAlignItems::FLEX_START) {
+                flow_taffy_y + y + relative_offset_y
+            } else if doc.nodes[child].style.align_self == Some(TaffyAlignItems::FLEX_END) {
+                if y == 0.0 {
+                    flow_taffy_y + relative_offset_y
+                } else {
+                    y + line_height_used - height + relative_offset_y
+                }
+            } else {
+                let baseline_offset = *baseline_for_line.get_or_insert(if y == 0.0 {
+                    flow_taffy_y + height
+                } else {
+                    height
+                });
+                y + baseline_offset - height + relative_offset_y
+            };
+            let relative_offset_x = relative_position_x_offset(
+                cascade,
+                child,
+                doc.nodes[parent_id].unrounded_layout.size.width.max(0.0),
+            );
+            doc.nodes[child].unrounded_layout.location.x = x + relative_offset_x;
+            doc.nodes[child].unrounded_layout.location.y = child_y;
             x += width;
             line_height_used = line_height_used.max(height);
         }
@@ -949,7 +1068,12 @@ pub(crate) fn realign_inline_replaced_children(doc: &mut Document, cascade: &Cas
         } else {
             y
         };
-        doc.nodes[parent_id].unrounded_layout.size.height = used_height;
+        let taffy_height = doc.nodes[parent_id].unrounded_layout.size.height;
+        doc.nodes[parent_id].unrounded_layout.size.height = if baseline_aligned {
+            taffy_height.max(used_height)
+        } else {
+            used_height
+        };
     }
 }
 
@@ -1546,6 +1670,67 @@ fn vertical_align_linebox_extent(
     }
 }
 
+#[derive(Default)]
+struct SyntheticLineboxExtents {
+    leading: f32,
+    trailing: f32,
+}
+
+/// Accumulate vertical-align extents from an in-flow inline subtree into one
+/// containing synthetic line root. Inline offsets compose along a descendant
+/// path. Atomic inline-blocks and nested synthetic roots own their own content
+/// line boxes, so stop after accounting for their outer shift.
+fn collect_inline_linebox_extents(
+    doc: &Document,
+    cascade: &CascadeResult,
+    synthetic_line_roots: &[bool],
+    idx: usize,
+    parent_font_size_px: f32,
+    ancestor_shift_px: f32,
+    extents: &mut SyntheticLineboxExtents,
+) {
+    if doc.nodes[idx].kind() != NodeKind::Element || !doc.nodes[idx].is_in_document() {
+        return;
+    }
+    let computed = &cascade.computed[idx];
+    if computed.display == DisplayValue::None
+        || matches!(
+            computed.position,
+            PositionValue::Absolute | PositionValue::Fixed
+        )
+        || !matches!(
+            computed.display,
+            DisplayValue::Inline | DisplayValue::InlineBlock
+        )
+    {
+        return;
+    }
+
+    let (leading, trailing) =
+        vertical_align_linebox_extent(computed.vertical_align, parent_font_size_px);
+    let shifted_baseline = ancestor_shift_px + trailing - leading;
+    extents.leading = extents.leading.max(-shifted_baseline);
+    extents.trailing = extents.trailing.max(shifted_baseline);
+
+    if computed.display == DisplayValue::InlineBlock
+        || synthetic_line_roots.get(idx).copied().unwrap_or(false)
+    {
+        return;
+    }
+    let descendant_parent_font_size_px = computed.font_size.px();
+    for &child in &doc.nodes[idx].children {
+        collect_inline_linebox_extents(
+            doc,
+            cascade,
+            synthetic_line_roots,
+            child,
+            descendant_parent_font_size_px,
+            shifted_baseline,
+            extents,
+        );
+    }
+}
+
 /// Add synthetic line-box leading/trailing to authored padding without losing
 /// a percentage component. Taffy's calc callback already resolves this mixed
 /// value for bridged CSS lengths.
@@ -1591,6 +1776,8 @@ pub(crate) fn establish_minimal_line_boxes(doc: &mut Document, cascade: &Cascade
         }
     }
     let mut autospace_candidates_by_root = HashMap::new();
+    let mut synthetic_line_roots = vec![false; doc.nodes.len()];
+    let mut multicol_roots = vec![false; doc.nodes.len()];
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
             continue;
@@ -1606,10 +1793,9 @@ pub(crate) fn establish_minimal_line_boxes(doc: &mut Document, cascade: &Cascade
             )
         // cov:ignore: multicol fragmentainer roots are exercised by the ignored foundation WPT run.
         {
-            doc.nodes[idx].flags.remove(NodeFlags::IS_INLINE_ROOT);
+            multicol_roots[idx] = true;
             continue;
         }
-        collapse_block_in_inline_margins(doc, idx, cascade);
         let has_autospace_candidate = if cascade.computed[idx].display == DisplayValue::Inline {
             let context_root = inline_formatting_context_root(cascade, &parent_of, idx);
             *autospace_candidates_by_root
@@ -1620,7 +1806,19 @@ pub(crate) fn establish_minimal_line_boxes(doc: &mut Document, cascade: &Cascade
         } else {
             false
         };
-        let qualifies = qualifies_for_minimal_line_box(doc, idx, cascade, has_autospace_candidate);
+        synthetic_line_roots[idx] =
+            qualifies_for_minimal_line_box(doc, idx, cascade, has_autospace_candidate);
+    }
+    for idx in 0..doc.nodes.len() {
+        if doc.nodes[idx].kind() != NodeKind::Element {
+            continue;
+        }
+        if multicol_roots[idx] {
+            doc.nodes[idx].flags.remove(NodeFlags::IS_INLINE_ROOT);
+            continue;
+        }
+        collapse_block_in_inline_margins(doc, idx, cascade);
+        let qualifies = synthetic_line_roots[idx];
         doc.nodes[idx]
             .flags
             .set(NodeFlags::IS_INLINE_ROOT, qualifies);
@@ -1650,19 +1848,35 @@ pub(crate) fn establish_minimal_line_boxes(doc: &mut Document, cascade: &Cascade
         let has_ch_indent = container_cv.text_indent_ch_factor.is_some()
             && !container_cv.text_indent_hanging
             && !container_cv.text_indent_each_line;
-        let mut linebox_leading = 0.0_f32;
-        let mut linebox_trailing = 0.0_f32;
+        // The synthetic flex bridge has no full inline formatting context, so
+        // text-only roots and plain inline wrappers keep FlexStart. Preserve
+        // Taffy's baseline fallback for direct in-flow inline-block and
+        // replaced inline-image participants.
+        let baseline_aligns_supported_boxes = participating_children.iter().any(|&child| {
+            let child_cv = &cascade.computed[child];
+            let is_baseline_box = child_cv.display == DisplayValue::InlineBlock
+                || (child_cv.display == DisplayValue::Inline
+                    && doc.nodes[child].tag_name() == Some("img"));
+            is_baseline_box
+                && !matches!(
+                    child_cv.position,
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+        });
+        let mut linebox_extents = SyntheticLineboxExtents::default();
         for &child in &participating_children {
-            if cascade.computed[child].display == DisplayValue::None {
-                continue;
-            }
-            let (leading, trailing) = vertical_align_linebox_extent(
-                cascade.computed[child].vertical_align,
+            collect_inline_linebox_extents(
+                doc,
+                cascade,
+                &synthetic_line_roots,
+                child,
                 container_cv.font_size.px(),
+                0.0,
+                &mut linebox_extents,
             );
-            linebox_leading = linebox_leading.max(leading);
-            linebox_trailing = linebox_trailing.max(trailing);
         }
+        let linebox_leading = linebox_extents.leading;
+        let linebox_trailing = linebox_extents.trailing;
         let linebox_padding_top = (linebox_leading > 0.0).then(|| {
             padding_with_linebox_extent(
                 doc,
@@ -1694,7 +1908,11 @@ pub(crate) fn establish_minimal_line_boxes(doc: &mut Document, cascade: &Cascade
             } else {
                 TaffyFlexWrap::NoWrap
             };
-            style.align_items = Some(TaffyAlignItems::BASELINE);
+            style.align_items = Some(if baseline_aligns_supported_boxes {
+                TaffyAlignItems::BASELINE
+            } else {
+                TaffyAlignItems::FLEX_START
+            });
             style.align_content = Some(TaffyAlignContent::FLEX_START);
             // `text-align: center` の line box 全体の中央寄せは flex の
             // main-axis 配置で実現する (parley 側ではなく container 側)。

@@ -1044,6 +1044,107 @@ fn vertical_align_linebox_extent_splits_ascent_and_descent() {
         (0.0, 0.0)
     );
 }
+#[test]
+fn collect_inline_linebox_extents_composes_shifts_and_stops_at_boundaries() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let p = doc.append_element(
+        Some(body),
+        "p",
+        Style::default(),
+        Some("display:block;font-size:16px"),
+    );
+    let outer = doc.append_element(
+        Some(p),
+        "span",
+        Style::default(),
+        Some("display:inline;vertical-align:super"),
+    );
+    let inner = doc.append_element(
+        Some(outer),
+        "span",
+        Style::default(),
+        Some("display:inline;vertical-align:super"),
+    );
+    doc.append_text(inner, "nested");
+    let block_child = doc.append_element(
+        Some(outer),
+        "div",
+        Style::default(),
+        Some("display:block;vertical-align:super"),
+    );
+    let block_inner = doc.append_element(
+        Some(block_child),
+        "span",
+        Style::default(),
+        Some("display:inline;vertical-align:super"),
+    );
+    doc.append_text(block_inner, "block");
+    let atomic = doc.append_element(
+        Some(p),
+        "span",
+        Style::default(),
+        Some("display:inline-block;vertical-align:super"),
+    );
+    let atomic_child = doc.append_element(
+        Some(atomic),
+        "span",
+        Style::default(),
+        Some("display:inline;vertical-align:super"),
+    );
+    doc.append_text(atomic_child, "atomic");
+
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    let mut synthetic_line_roots = vec![false; doc.nodes.len()];
+    let mut extents = SyntheticLineboxExtents::default();
+
+    collect_inline_linebox_extents(
+        &doc,
+        &cr,
+        &synthetic_line_roots,
+        outer,
+        16.0,
+        0.0,
+        &mut extents,
+    );
+    assert_eq!(extents.leading, 16.0 / 3.0 + 16.0 / 3.0);
+    assert_eq!(extents.trailing, 0.0);
+
+    // A nested synthetic root owns the extent of its descendants; the
+    // containing root sees only that wrapper's outer vertical-align shift.
+    synthetic_line_roots[outer] = true;
+    extents = SyntheticLineboxExtents::default();
+    collect_inline_linebox_extents(
+        &doc,
+        &cr,
+        &synthetic_line_roots,
+        outer,
+        16.0,
+        0.0,
+        &mut extents,
+    );
+    assert_eq!(extents.leading, 16.0 / 3.0);
+    assert_eq!(extents.trailing, 0.0);
+
+    // An inline-block contributes its own outer shift, not its internal
+    // line-box shifts, to the containing line root.
+    extents = SyntheticLineboxExtents::default();
+    collect_inline_linebox_extents(
+        &doc,
+        &cr,
+        &synthetic_line_roots,
+        atomic,
+        16.0,
+        0.0,
+        &mut extents,
+    );
+    assert_eq!(extents.leading, 16.0 / 3.0);
+    assert_eq!(extents.trailing, 0.0);
+}
 
 #[test]
 fn padding_with_linebox_extent_preserves_percent_components() {
