@@ -15,6 +15,43 @@ use crate::Atom;
 // those items move to their own modules and get re-exported the same way.
 use super::*;
 
+/// Implements keyword serialization, and optionally parsing, for a CSS
+/// keyword enum from one variant-to-keyword table, so the two directions
+/// cannot drift apart.
+///
+/// `css_keywords!(Type { Variant => "keyword", ... })` adds `as_css_str`
+/// and an ASCII case-insensitive `from_css_ident`. The `@serialize` form adds
+/// only `as_css_str`, for enums whose grammar spans several tokens.
+macro_rules! css_keywords {
+    (@serialize $ty:ident { $($variant:ident => $css:literal),+ $(,)? }) => {
+        impl $ty {
+            /// Every variant, in table order.
+            #[cfg(test)]
+            pub(crate) const ALL: &'static [Self] = &[$(Self::$variant),+];
+
+            /// The CSS keyword text this value serializes as.
+            pub const fn as_css_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $css,)+
+                }
+            }
+        }
+    };
+    ($ty:ident { $($variant:ident => $css:literal),+ $(,)? }) => {
+        css_keywords!(@serialize $ty { $($variant => $css),+ });
+
+        impl $ty {
+            /// Parses one keyword, ASCII case-insensitively.
+            pub(crate) fn from_css_ident(ident: &str) -> Option<Self> {
+                cssparser::match_ignore_ascii_case! { ident,
+                    $($css => Some(Self::$variant),)+
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+
 /// 空 `<content-list>` を表す shared Arc — cascade で全 node が持ちうる
 /// initial / inherit_from の default 値を per-node 新規 allocate せず、
 /// 単一 heap slot を bump-share するための helper。
@@ -1148,6 +1185,12 @@ pub enum FontKerning {
     None,
 }
 
+css_keywords!(FontKerning {
+    Auto => "auto",
+    Normal => "normal",
+    None => "none",
+});
+
 /// `font-optical-sizing` property keywords from CSS Fonts Module Level 4.
 /// <https://www.w3.org/TR/css-fonts-4/#font-optical-sizing-def>
 ///
@@ -1162,6 +1205,11 @@ pub enum FontOpticalSizing {
     /// `none`.
     None,
 }
+
+css_keywords!(FontOpticalSizing {
+    Auto => "auto",
+    None => "none",
+});
 
 /// `font-variant-emoji` keywords from CSS Fonts Module Level 4.
 /// <https://www.w3.org/TR/css-fonts-4/#font-variant-emoji-prop>
@@ -1181,6 +1229,13 @@ pub enum FontVariantEmoji {
     /// `unicode`.
     Unicode,
 }
+
+css_keywords!(FontVariantEmoji {
+    Normal => "normal",
+    Text => "text",
+    Emoji => "emoji",
+    Unicode => "unicode",
+});
 
 /// `font-language-override` keyword or string from CSS Fonts Module Level 4.
 /// <https://www.w3.org/TR/css-fonts-4/#font-language-override-prop>
@@ -1229,6 +1284,19 @@ pub enum FontVariantLigatures {
     NoContextual,
 }
 
+css_keywords!(FontVariantLigatures {
+    Normal => "normal",
+    None => "none",
+    CommonLigatures => "common-ligatures",
+    NoCommonLigatures => "no-common-ligatures",
+    DiscretionaryLigatures => "discretionary-ligatures",
+    NoDiscretionaryLigatures => "no-discretionary-ligatures",
+    HistoricalLigatures => "historical-ligatures",
+    NoHistoricalLigatures => "no-historical-ligatures",
+    Contextual => "contextual",
+    NoContextual => "no-contextual",
+});
+
 /// Individual `font-variant-position` computed keywords from CSS Fonts Module Level 3 §6.5.
 /// <https://www.w3.org/TR/css-fonts-3/#font-variant-position-prop>
 ///
@@ -1244,6 +1312,12 @@ pub enum FontVariantPosition {
     /// `super`.
     Super,
 }
+
+css_keywords!(FontVariantPosition {
+    Normal => "normal",
+    Sub => "sub",
+    Super => "super",
+});
 
 /// The `font-palette` values exercised by the pinned computed-value case.
 /// CSS Fonts 4 §9.1 <https://drafts.csswg.org/css-fonts/#font-palette-prop>.
@@ -1577,6 +1651,16 @@ pub enum FontVariantCaps {
     TitlingCaps,
 }
 
+css_keywords!(FontVariantCaps {
+    Normal => "normal",
+    SmallCaps => "small-caps",
+    AllSmallCaps => "all-small-caps",
+    PetiteCaps => "petite-caps",
+    AllPetiteCaps => "all-petite-caps",
+    Unicase => "unicase",
+    TitlingCaps => "titling-caps",
+});
+
 /// `text-transform` property の value。
 ///
 /// CSS Text Module Level 4 property definition:
@@ -1631,6 +1715,26 @@ pub enum TextTransform {
     UppercaseFullWidthFullSizeKana,
     LowercaseFullWidthFullSizeKana,
 }
+
+css_keywords!(@serialize TextTransform {
+    None => "none",
+    MathAuto => "math-auto",
+    Capitalize => "capitalize",
+    Uppercase => "uppercase",
+    Lowercase => "lowercase",
+    FullWidth => "full-width",
+    FullSizeKana => "full-size-kana",
+    CapitalizeFullWidth => "capitalize full-width",
+    UppercaseFullWidth => "uppercase full-width",
+    LowercaseFullWidth => "lowercase full-width",
+    CapitalizeFullSizeKana => "capitalize full-size-kana",
+    UppercaseFullSizeKana => "uppercase full-size-kana",
+    LowercaseFullSizeKana => "lowercase full-size-kana",
+    FullWidthFullSizeKana => "full-width full-size-kana",
+    CapitalizeFullWidthFullSizeKana => "capitalize full-width full-size-kana",
+    UppercaseFullWidthFullSizeKana => "uppercase full-width full-size-kana",
+    LowercaseFullWidthFullSizeKana => "lowercase full-width full-size-kana",
+});
 
 /// `visibility` property の value。
 ///
@@ -3330,6 +3434,19 @@ pub enum TextAlign {
     JustifyAll,
 }
 
+css_keywords!(TextAlign {
+    Start => "start",
+    End => "end",
+    Left => "left",
+    Right => "right",
+    Center => "center",
+    Justify => "justify",
+    MatchParent => "match-parent",
+    Inherit => "inherit",
+    InternalCenter => "-internal-center",
+    JustifyAll => "justify-all",
+});
+
 /// `direction` property の value。
 ///
 /// CSS Writing Modes 4 §2.1 "Specifying Directionality: the direction property"
@@ -3375,6 +3492,11 @@ pub enum Direction {
     /// `rtl` — right-to-left。
     Rtl,
 }
+
+css_keywords!(Direction {
+    Ltr => "ltr",
+    Rtl => "rtl",
+});
 
 /// `writing-mode` property の value。
 ///
@@ -3468,6 +3590,14 @@ pub enum WritingMode {
     /// `sideways-lr` — [`VerticalRl`](Self::VerticalRl) と同じ Non-goal 扱い。
     SidewaysLr,
 }
+
+css_keywords!(WritingMode {
+    HorizontalTb => "horizontal-tb",
+    VerticalRl => "vertical-rl",
+    VerticalLr => "vertical-lr",
+    SidewaysRl => "sideways-rl",
+    SidewaysLr => "sideways-lr",
+});
 
 /// `overflow-x` / `overflow-y` の共通 value type。
 ///
@@ -3982,6 +4112,14 @@ pub enum TextDecorationStyle {
     Wavy,
 }
 
+css_keywords!(TextDecorationStyle {
+    Solid => "solid",
+    Double => "double",
+    Dotted => "dotted",
+    Dashed => "dashed",
+    Wavy => "wavy",
+});
+
 /// `text-decoration-color` computed value — [`BorderColor`] と同型の
 /// `currentcolor` keyword / resolved `<color>` distinction。
 ///
@@ -4067,6 +4205,12 @@ pub enum TextDecorationSkipInk {
     /// `all`。
     All,
 }
+
+css_keywords!(TextDecorationSkipInk {
+    Auto => "auto",
+    None => "none",
+    All => "all",
+});
 
 /// `text-decoration-skip-spaces: none | all | [ start || end ]` の value.
 ///
@@ -4649,6 +4793,15 @@ pub enum WordBreak {
     BreakWord,
 }
 
+css_keywords!(WordBreak {
+    Normal => "normal",
+    KeepAll => "keep-all",
+    BreakAll => "break-all",
+    Manual => "manual",
+    AutoPhrase => "auto-phrase",
+    BreakWord => "break-word",
+});
+
 /// `overflow-wrap` property の value (legacy name alias `word-wrap` は同一
 /// property を指す — 下記「legacy alias」節参照)。
 ///
@@ -4720,6 +4873,12 @@ pub enum OverflowWrap {
     /// `anywhere`。
     Anywhere,
 }
+
+css_keywords!(OverflowWrap {
+    Normal => "normal",
+    BreakWord => "break-word",
+    Anywhere => "anywhere",
+});
 
 /// `break-before` / `break-after` property の value ([`PropertyValue::BreakBefore`]
 /// / [`PropertyValue::BreakAfter`] が共有する — 両 property は同一 grammar を
@@ -5189,6 +5348,11 @@ pub enum TextWrapMode {
     Nowrap,
 }
 
+css_keywords!(TextWrapMode {
+    Wrap => "wrap",
+    Nowrap => "nowrap",
+});
+
 /// CSS Text 4 §5.4 `text-wrap-style` computed keyword (initial `auto`, inherited).
 /// <https://drafts.csswg.org/css-text-4/#text-wrap-style>
 #[non_exhaustive]
@@ -5203,6 +5367,13 @@ pub enum TextWrapStyle {
     /// `stable`.
     Stable,
 }
+
+css_keywords!(TextWrapStyle {
+    Auto => "auto",
+    Balance => "balance",
+    Pretty => "pretty",
+    Stable => "stable",
+});
 
 /// The normalized components of the CSS Text 4 `text-wrap` shorthand.
 /// Omitted components are stored with their initial values before cascade.
@@ -5237,6 +5408,15 @@ pub enum WhiteSpace {
     BreakSpaces,
 }
 
+css_keywords!(WhiteSpace {
+    Normal => "normal",
+    Pre => "pre",
+    Nowrap => "nowrap",
+    PreWrap => "pre-wrap",
+    PreLine => "pre-line",
+    BreakSpaces => "break-spaces",
+});
+
 /// `white-space-collapse` property value.
 ///
 /// CSS Text Module Level 4 property definition:
@@ -5263,6 +5443,15 @@ pub enum WhiteSpaceCollapse {
     /// `break-spaces`.
     BreakSpaces,
 }
+
+css_keywords!(WhiteSpaceCollapse {
+    Collapse => "collapse",
+    Discard => "discard",
+    Preserve => "preserve",
+    PreserveBreaks => "preserve-breaks",
+    PreserveSpaces => "preserve-spaces",
+    BreakSpaces => "break-spaces",
+});
 
 /// `hyphens` property の value。
 ///
@@ -5337,6 +5526,12 @@ pub enum Hyphens {
     /// 上記型 doc の「Downstream handoff」節参照。
     Auto,
 }
+
+css_keywords!(Hyphens {
+    None => "none",
+    Manual => "manual",
+    Auto => "auto",
+});
 
 /// The specified/computed value of CSS Text 4 `hyphenate-character`.
 ///
@@ -5456,6 +5651,14 @@ pub enum LineBreak {
     Anywhere,
 }
 
+css_keywords!(LineBreak {
+    Auto => "auto",
+    Loose => "loose",
+    Normal => "normal",
+    Strict => "strict",
+    Anywhere => "anywhere",
+});
+
 /// `text-justify` property の value (CSS Text 3 §6.2).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -5469,6 +5672,14 @@ pub enum TextJustify {
     /// parley 側に区別が無いため consumer では `Justify` と同扱い。
     Distribute,
 }
+
+css_keywords!(TextJustify {
+    Auto => "auto",
+    None => "none",
+    InterWord => "inter-word",
+    InterCharacter => "inter-character",
+    Distribute => "distribute",
+});
 
 /// CSS Text 4 `word-space-transform` computed value.
 ///
@@ -5488,6 +5699,14 @@ pub enum WordSpaceTransform {
     /// `ideographic-space auto-phrase`.
     IdeographicSpaceAutoPhrase,
 }
+
+css_keywords!(@serialize WordSpaceTransform {
+    None => "none",
+    Space => "space",
+    IdeographicSpace => "ideographic-space",
+    SpaceAutoPhrase => "space auto-phrase",
+    IdeographicSpaceAutoPhrase => "ideographic-space auto-phrase",
+});
 
 /// `text-autospace` property value (CSS Text Module Level 4).
 ///
@@ -5552,6 +5771,16 @@ pub enum TextSpacingTrim {
     SpaceFirst,
 }
 
+css_keywords!(TextSpacingTrim {
+    Auto => "auto",
+    Normal => "normal",
+    SpaceAll => "space-all",
+    TrimBoth => "trim-both",
+    TrimAll => "trim-all",
+    TrimStart => "trim-start",
+    SpaceFirst => "space-first",
+});
+
 /// The normalized longhand values of the CSS Text 4 `text-spacing` shorthand.
 ///
 /// The shorthand expands to [`TextSpacingTrim`] and [`TextAutospace`]. Omitted
@@ -5591,6 +5820,17 @@ pub enum TextAlignLast {
     MatchParent,
 }
 
+css_keywords!(TextAlignLast {
+    Auto => "auto",
+    Start => "start",
+    End => "end",
+    Left => "left",
+    Right => "right",
+    Center => "center",
+    Justify => "justify",
+    MatchParent => "match-parent",
+});
+
 /// `text-combine-upright` property の value (CSS Writing Modes 3 §9.1).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -5598,6 +5838,11 @@ pub enum TextCombineUpright {
     None,
     All,
 }
+
+css_keywords!(TextCombineUpright {
+    None => "none",
+    All => "all",
+});
 
 /// `text-orientation` property の value (CSS Writing Modes 3 §5.1).
 #[non_exhaustive]
@@ -5607,6 +5852,12 @@ pub enum TextOrientation {
     Upright,
     Sideways,
 }
+
+css_keywords!(TextOrientation {
+    Mixed => "mixed",
+    Upright => "upright",
+    Sideways => "sideways",
+});
 
 /// `unicode-bidi` property の value (CSS Writing Modes 3 §2.2).
 #[non_exhaustive]
@@ -5619,6 +5870,15 @@ pub enum UnicodeBidi {
     IsolateOverride,
     Plaintext,
 }
+
+css_keywords!(UnicodeBidi {
+    Normal => "normal",
+    Embed => "embed",
+    Isolate => "isolate",
+    BidiOverride => "bidi-override",
+    IsolateOverride => "isolate-override",
+    Plaintext => "plaintext",
+});
 
 /// `table-layout` property の value.
 ///

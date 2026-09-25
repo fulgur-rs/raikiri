@@ -718,32 +718,13 @@ impl DomBackend for LiveDocumentBackend {
             .and_then(|styles| styles.get(index))
             .ok_or_else(|| format!("computed style is missing for DOM node {node}"))?;
         let value = match property {
-            ComputedProperty::Direction => {
-                let value = match computed.direction {
-                    raikiri_style::property::Direction::Ltr => "ltr",
-                    raikiri_style::property::Direction::Rtl => "rtl",
-                    _ => return Ok(None),
-                };
-                return Ok(Some(value.to_owned()));
-            }
+            ComputedProperty::Direction => computed.direction.as_css_str(),
             ComputedProperty::FontKerning => {
                 let property_value =
                     raikiri_style::property::PropertyValue::FontKerning(computed.font_kerning);
                 return Ok(raikiri_style::property::serialize_value(&property_value));
             }
-            ComputedProperty::FontVariantCaps => {
-                let value = match computed.font_variant_caps {
-                    raikiri_style::property::FontVariantCaps::Normal => "normal",
-                    raikiri_style::property::FontVariantCaps::SmallCaps => "small-caps",
-                    raikiri_style::property::FontVariantCaps::AllSmallCaps => "all-small-caps",
-                    raikiri_style::property::FontVariantCaps::PetiteCaps => "petite-caps",
-                    raikiri_style::property::FontVariantCaps::AllPetiteCaps => "all-petite-caps",
-                    raikiri_style::property::FontVariantCaps::Unicase => "unicase",
-                    raikiri_style::property::FontVariantCaps::TitlingCaps => "titling-caps",
-                    _ => return Ok(None),
-                };
-                return Ok(Some(value.to_owned()));
-            }
+            ComputedProperty::FontVariantCaps => computed.font_variant_caps.as_css_str(),
             ComputedProperty::FontOpticalSizing => {
                 let property_value = raikiri_style::property::PropertyValue::FontOpticalSizing(
                     computed.font_optical_sizing,
@@ -797,46 +778,10 @@ impl DomBackend for LiveDocumentBackend {
                 );
                 return Ok(raikiri_style::property::serialize_value(&property_value));
             }
-            ComputedProperty::TextCombineUpright => {
-                let value = match computed.text_combine_upright {
-                    raikiri_style::property::TextCombineUpright::None => "none",
-                    raikiri_style::property::TextCombineUpright::All => "all",
-                    _ => return Ok(None),
-                };
-                return Ok(Some(value.to_owned()));
-            }
-            ComputedProperty::TextOrientation => {
-                let value = match computed.text_orientation {
-                    raikiri_style::property::TextOrientation::Mixed => "mixed",
-                    raikiri_style::property::TextOrientation::Upright => "upright",
-                    raikiri_style::property::TextOrientation::Sideways => "sideways",
-                    _ => return Ok(None),
-                };
-                return Ok(Some(value.to_owned()));
-            }
-            ComputedProperty::WritingMode => {
-                let value = match computed.cssom_writing_mode {
-                    raikiri_style::property::WritingMode::HorizontalTb => "horizontal-tb",
-                    raikiri_style::property::WritingMode::VerticalRl => "vertical-rl",
-                    raikiri_style::property::WritingMode::VerticalLr => "vertical-lr",
-                    raikiri_style::property::WritingMode::SidewaysRl => "sideways-rl",
-                    raikiri_style::property::WritingMode::SidewaysLr => "sideways-lr",
-                    _ => return Ok(None),
-                };
-                return Ok(Some(value.to_owned()));
-            }
-            ComputedProperty::UnicodeBidi => {
-                let value = match computed.unicode_bidi {
-                    raikiri_style::property::UnicodeBidi::Normal => "normal",
-                    raikiri_style::property::UnicodeBidi::Embed => "embed",
-                    raikiri_style::property::UnicodeBidi::Isolate => "isolate",
-                    raikiri_style::property::UnicodeBidi::BidiOverride => "bidi-override",
-                    raikiri_style::property::UnicodeBidi::IsolateOverride => "isolate-override",
-                    raikiri_style::property::UnicodeBidi::Plaintext => "plaintext",
-                    _ => return Ok(None),
-                };
-                return Ok(Some(value.to_owned()));
-            }
+            ComputedProperty::TextCombineUpright => computed.text_combine_upright.as_css_str(),
+            ComputedProperty::TextOrientation => computed.text_orientation.as_css_str(),
+            ComputedProperty::WritingMode => computed.cssom_writing_mode.as_css_str(),
+            ComputedProperty::UnicodeBidi => computed.unicode_bidi.as_css_str(),
             ComputedProperty::TextWrap => {
                 let mode = match computed.text_wrap {
                     raikiri_style::property::TextWrapMode::Wrap => "wrap",
@@ -940,19 +885,7 @@ impl DomBackend for LiveDocumentBackend {
                 };
                 return Ok(Some(value));
             }
-            ComputedProperty::TextSpacingTrim => {
-                let value = match computed.text_spacing_trim {
-                    raikiri_style::property::TextSpacingTrim::Auto => "auto",
-                    raikiri_style::property::TextSpacingTrim::Normal => "normal",
-                    raikiri_style::property::TextSpacingTrim::SpaceAll => "space-all",
-                    raikiri_style::property::TextSpacingTrim::TrimBoth => "trim-both",
-                    raikiri_style::property::TextSpacingTrim::TrimAll => "trim-all",
-                    raikiri_style::property::TextSpacingTrim::TrimStart => "trim-start",
-                    raikiri_style::property::TextSpacingTrim::SpaceFirst => "space-first",
-                    _ => return Ok(None),
-                };
-                return Ok(Some(value.to_owned()));
-            }
+            ComputedProperty::TextSpacingTrim => computed.text_spacing_trim.as_css_str(),
             ComputedProperty::TextAutospace => {
                 let value = match computed.text_autospace {
                     raikiri_style::property::TextAutospace::Normal => "normal".to_owned(),
@@ -992,23 +925,7 @@ impl DomBackend for LiveDocumentBackend {
                 };
                 return Ok(Some(value));
             }
-            ComputedProperty::WordSpaceTransform => {
-                let value = match computed.word_space_transform {
-                    raikiri_style::property::WordSpaceTransform::None => "none",
-                    raikiri_style::property::WordSpaceTransform::Space => "space",
-                    raikiri_style::property::WordSpaceTransform::IdeographicSpace => {
-                        "ideographic-space"
-                    }
-                    raikiri_style::property::WordSpaceTransform::SpaceAutoPhrase => {
-                        "space auto-phrase"
-                    }
-                    raikiri_style::property::WordSpaceTransform::IdeographicSpaceAutoPhrase => {
-                        "ideographic-space auto-phrase"
-                    }
-                    _ => return Ok(None),
-                };
-                return Ok(Some(value.to_owned()));
-            }
+            ComputedProperty::WordSpaceTransform => computed.word_space_transform.as_css_str(),
             ComputedProperty::TextDecorationSkipInk => {
                 let Some(value) = raikiri_style::property::serialize_value(
                     &raikiri_style::property::PropertyValue::TextDecorationSkipInk(
@@ -1321,140 +1238,28 @@ impl DomBackend for LiveDocumentBackend {
                 };
                 return Ok(Some(value));
             }
-            ComputedProperty::WhiteSpace => match computed.white_space {
-                raikiri_style::property::WhiteSpace::Normal => "normal",
-                raikiri_style::property::WhiteSpace::Pre => "pre",
-                raikiri_style::property::WhiteSpace::Nowrap => "nowrap",
-                raikiri_style::property::WhiteSpace::PreWrap => "pre-wrap",
-                raikiri_style::property::WhiteSpace::PreLine => "pre-line",
-                raikiri_style::property::WhiteSpace::BreakSpaces => "break-spaces",
-                _ => return Ok(None),
+            ComputedProperty::WhiteSpace => computed.white_space.as_css_str(),
+            ComputedProperty::WhiteSpaceCollapse => computed.white_space_collapse.as_css_str(),
+            ComputedProperty::LineBreak => computed.line_break.as_css_str(),
+            ComputedProperty::Hyphens => computed.hyphens.as_css_str(),
+            ComputedProperty::OverflowWrap => computed.overflow_wrap.as_css_str(),
+            ComputedProperty::WordBreak => computed.word_break.as_css_str(),
+            ComputedProperty::TextAlign => match computed.text_align {
+                // Intermediate-only values must not leak as computed CSSOM values.
+                raikiri_style::property::TextAlign::MatchParent
+                | raikiri_style::property::TextAlign::Inherit
+                | raikiri_style::property::TextAlign::InternalCenter => return Ok(None),
+                text_align => text_align.as_css_str(),
             },
-            ComputedProperty::WhiteSpaceCollapse => match computed.white_space_collapse {
-                raikiri_style::property::WhiteSpaceCollapse::Collapse => "collapse",
-                raikiri_style::property::WhiteSpaceCollapse::Discard => "discard",
-                raikiri_style::property::WhiteSpaceCollapse::Preserve => "preserve",
-                raikiri_style::property::WhiteSpaceCollapse::PreserveBreaks => "preserve-breaks",
-                raikiri_style::property::WhiteSpaceCollapse::PreserveSpaces => "preserve-spaces",
-                raikiri_style::property::WhiteSpaceCollapse::BreakSpaces => "break-spaces",
-                _ => return Ok(None),
+            ComputedProperty::TextWrapMode => computed.text_wrap.as_css_str(),
+            ComputedProperty::TextWrapStyle => computed.text_wrap_style.as_css_str(),
+            ComputedProperty::TextAlignLast => computed.text_align_last.as_css_str(),
+            ComputedProperty::TextJustify => match computed.text_justify {
+                // CSS Text 3 defines legacy `distribute` as computing to `inter-character`.
+                raikiri_style::property::TextJustify::Distribute => "inter-character",
+                text_justify => text_justify.as_css_str(),
             },
-            ComputedProperty::LineBreak => match computed.line_break {
-                raikiri_style::property::LineBreak::Auto => "auto",
-                raikiri_style::property::LineBreak::Loose => "loose",
-                raikiri_style::property::LineBreak::Normal => "normal",
-                raikiri_style::property::LineBreak::Strict => "strict",
-                raikiri_style::property::LineBreak::Anywhere => "anywhere",
-                _ => return Ok(None),
-            },
-            ComputedProperty::Hyphens => match computed.hyphens {
-                raikiri_style::property::Hyphens::None => "none",
-                raikiri_style::property::Hyphens::Manual => "manual",
-                raikiri_style::property::Hyphens::Auto => "auto",
-                _ => return Ok(None),
-            },
-            ComputedProperty::OverflowWrap => match computed.overflow_wrap {
-                raikiri_style::property::OverflowWrap::Normal => "normal",
-                raikiri_style::property::OverflowWrap::BreakWord => "break-word",
-                raikiri_style::property::OverflowWrap::Anywhere => "anywhere",
-                _ => return Ok(None),
-            },
-            ComputedProperty::WordBreak => match computed.word_break {
-                raikiri_style::property::WordBreak::Normal => "normal",
-                raikiri_style::property::WordBreak::KeepAll => "keep-all",
-                raikiri_style::property::WordBreak::BreakAll => "break-all",
-                raikiri_style::property::WordBreak::Manual => "manual",
-                raikiri_style::property::WordBreak::AutoPhrase => "auto-phrase",
-                raikiri_style::property::WordBreak::BreakWord => "break-word",
-                _ => return Ok(None),
-            },
-            ComputedProperty::TextAlign => {
-                match computed.text_align {
-                    raikiri_style::property::TextAlign::Start => "start",
-                    raikiri_style::property::TextAlign::End => "end",
-                    raikiri_style::property::TextAlign::Left => "left",
-                    raikiri_style::property::TextAlign::Right => "right",
-                    raikiri_style::property::TextAlign::Center => "center",
-                    raikiri_style::property::TextAlign::Justify => "justify",
-                    raikiri_style::property::TextAlign::JustifyAll => "justify-all",
-                    // Intermediate-only values must not leak as computed CSSOM values.
-                    _ => return Ok(None),
-                }
-            }
-            ComputedProperty::TextWrapMode => match computed.text_wrap {
-                raikiri_style::property::TextWrapMode::Wrap => "wrap",
-                raikiri_style::property::TextWrapMode::Nowrap => "nowrap",
-                _ => return Ok(None),
-            },
-            ComputedProperty::TextWrapStyle => match computed.text_wrap_style {
-                raikiri_style::property::TextWrapStyle::Auto => "auto",
-                raikiri_style::property::TextWrapStyle::Balance => "balance",
-                raikiri_style::property::TextWrapStyle::Pretty => "pretty",
-                raikiri_style::property::TextWrapStyle::Stable => "stable",
-                _ => return Ok(None),
-            },
-            ComputedProperty::TextAlignLast => match computed.text_align_last {
-                raikiri_style::property::TextAlignLast::Auto => "auto",
-                raikiri_style::property::TextAlignLast::Start => "start",
-                raikiri_style::property::TextAlignLast::End => "end",
-                raikiri_style::property::TextAlignLast::Left => "left",
-                raikiri_style::property::TextAlignLast::Right => "right",
-                raikiri_style::property::TextAlignLast::Center => "center",
-                raikiri_style::property::TextAlignLast::Justify => "justify",
-                raikiri_style::property::TextAlignLast::MatchParent => "match-parent",
-                _ => return Ok(None),
-            },
-            ComputedProperty::TextJustify => {
-                match computed.text_justify {
-                    raikiri_style::property::TextJustify::Auto => "auto",
-                    raikiri_style::property::TextJustify::None => "none",
-                    raikiri_style::property::TextJustify::InterWord => "inter-word",
-                    raikiri_style::property::TextJustify::InterCharacter => "inter-character",
-                    // CSS Text 3 defines legacy `distribute` as computing to `inter-character`.
-                    raikiri_style::property::TextJustify::Distribute => "inter-character",
-                    _ => return Ok(None),
-                }
-            }
-            ComputedProperty::TextTransform => match computed.text_transform {
-                raikiri_style::property::TextTransform::None => "none",
-                raikiri_style::property::TextTransform::MathAuto => "math-auto",
-                raikiri_style::property::TextTransform::Capitalize => "capitalize",
-                raikiri_style::property::TextTransform::Uppercase => "uppercase",
-                raikiri_style::property::TextTransform::Lowercase => "lowercase",
-                raikiri_style::property::TextTransform::FullWidth => "full-width",
-                raikiri_style::property::TextTransform::FullSizeKana => "full-size-kana",
-                raikiri_style::property::TextTransform::CapitalizeFullWidth => {
-                    "capitalize full-width"
-                }
-                raikiri_style::property::TextTransform::UppercaseFullWidth => {
-                    "uppercase full-width"
-                }
-                raikiri_style::property::TextTransform::LowercaseFullWidth => {
-                    "lowercase full-width"
-                }
-                raikiri_style::property::TextTransform::CapitalizeFullSizeKana => {
-                    "capitalize full-size-kana"
-                }
-                raikiri_style::property::TextTransform::UppercaseFullSizeKana => {
-                    "uppercase full-size-kana"
-                }
-                raikiri_style::property::TextTransform::LowercaseFullSizeKana => {
-                    "lowercase full-size-kana"
-                }
-                raikiri_style::property::TextTransform::FullWidthFullSizeKana => {
-                    "full-width full-size-kana"
-                }
-                raikiri_style::property::TextTransform::CapitalizeFullWidthFullSizeKana => {
-                    "capitalize full-width full-size-kana"
-                }
-                raikiri_style::property::TextTransform::UppercaseFullWidthFullSizeKana => {
-                    "uppercase full-width full-size-kana"
-                }
-                raikiri_style::property::TextTransform::LowercaseFullWidthFullSizeKana => {
-                    "lowercase full-width full-size-kana"
-                }
-                _ => return Ok(None),
-            },
+            ComputedProperty::TextTransform => computed.text_transform.as_css_str(),
         };
         Ok(Some(value.to_owned()))
     }

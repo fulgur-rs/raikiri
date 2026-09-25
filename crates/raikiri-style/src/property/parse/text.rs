@@ -583,47 +583,19 @@ pub(crate) fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeight
 /// ASCII case-insensitive で ident を比較する (sibling [`parse_direction`]
 /// と同 flavor)。
 pub(super) fn parse_text_spacing_trim(input: &mut Parser<'_, '_>) -> Option<TextSpacingTrim> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "auto" => Some(TextSpacingTrim::Auto),
-        "normal" => Some(TextSpacingTrim::Normal),
-        "space-all" => Some(TextSpacingTrim::SpaceAll),
-        "trim-both" => Some(TextSpacingTrim::TrimBoth),
-        "trim-all" => Some(TextSpacingTrim::TrimAll),
-        "trim-start" => Some(TextSpacingTrim::TrimStart),
-        "space-first" => Some(TextSpacingTrim::SpaceFirst),
-        _ => None,
-    }
+    TextSpacingTrim::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_font_kerning(input: &mut Parser<'_, '_>) -> Option<FontKerning> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "auto" => Some(FontKerning::Auto),
-        "normal" => Some(FontKerning::Normal),
-        "none" => Some(FontKerning::None),
-        _ => None,
-    }
+    FontKerning::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_font_optical_sizing(input: &mut Parser<'_, '_>) -> Option<FontOpticalSizing> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "auto" => Some(FontOpticalSizing::Auto),
-        "none" => Some(FontOpticalSizing::None),
-        _ => None,
-    }
+    FontOpticalSizing::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_font_variant_emoji(input: &mut Parser<'_, '_>) -> Option<FontVariantEmoji> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "normal" => Some(FontVariantEmoji::Normal),
-        "text" => Some(FontVariantEmoji::Text),
-        "emoji" => Some(FontVariantEmoji::Emoji),
-        "unicode" => Some(FontVariantEmoji::Unicode),
-        _ => None,
-    }
+    FontVariantEmoji::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_font_language_override(
@@ -690,32 +662,13 @@ pub(super) fn parse_font_synthesis(input: &mut Parser<'_, '_>) -> Option<FontSyn
 pub(super) fn parse_font_variant_ligatures(
     input: &mut Parser<'_, '_>,
 ) -> Option<FontVariantLigatures> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "normal" => Some(FontVariantLigatures::Normal),
-        "none" => Some(FontVariantLigatures::None),
-        "common-ligatures" => Some(FontVariantLigatures::CommonLigatures),
-        "no-common-ligatures" => Some(FontVariantLigatures::NoCommonLigatures),
-        "discretionary-ligatures" => Some(FontVariantLigatures::DiscretionaryLigatures),
-        "no-discretionary-ligatures" => Some(FontVariantLigatures::NoDiscretionaryLigatures),
-        "historical-ligatures" => Some(FontVariantLigatures::HistoricalLigatures),
-        "no-historical-ligatures" => Some(FontVariantLigatures::NoHistoricalLigatures),
-        "contextual" => Some(FontVariantLigatures::Contextual),
-        "no-contextual" => Some(FontVariantLigatures::NoContextual),
-        _ => None,
-    }
+    FontVariantLigatures::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_font_variant_position(
     input: &mut Parser<'_, '_>,
 ) -> Option<FontVariantPosition> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "normal" => Some(FontVariantPosition::Normal),
-        "sub" => Some(FontVariantPosition::Sub),
-        "super" => Some(FontVariantPosition::Super),
-        _ => None,
-    }
+    FontVariantPosition::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_font_palette(input: &mut Parser<'_, '_>) -> Option<FontPaletteValue> {
@@ -845,17 +798,7 @@ pub(super) fn parse_font_style(input: &mut Parser<'_, '_>) -> Option<FontStyle> 
 /// ASCII case-insensitive で ident を比較する (sibling [`parse_font_style`]
 /// と同 flavor)。
 pub(super) fn parse_font_variant_caps(input: &mut Parser<'_, '_>) -> Option<FontVariantCaps> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "normal" => Some(FontVariantCaps::Normal),
-        "small-caps" => Some(FontVariantCaps::SmallCaps),
-        "all-small-caps" => Some(FontVariantCaps::AllSmallCaps),
-        "petite-caps" => Some(FontVariantCaps::PetiteCaps),
-        "all-petite-caps" => Some(FontVariantCaps::AllPetiteCaps),
-        "unicase" => Some(FontVariantCaps::Unicase),
-        "titling-caps" => Some(FontVariantCaps::TitlingCaps),
-        _ => None,
-    }
+    FontVariantCaps::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parse the CSS Text `text-transform` grammar.
@@ -926,16 +869,7 @@ pub(super) fn parse_text_transform(input: &mut Parser<'_, '_>) -> Option<TextTra
 /// `None` とする。ASCII case-insensitive で ident を比較する (sibling
 /// `parse_font_style` と同 flavor)。
 pub(super) fn parse_word_break(input: &mut Parser<'_, '_>) -> Option<WordBreak> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "normal" => Some(WordBreak::Normal),
-        "keep-all" => Some(WordBreak::KeepAll),
-        "break-all" => Some(WordBreak::BreakAll),
-        "manual" => Some(WordBreak::Manual),
-        "auto-phrase" => Some(WordBreak::AutoPhrase),
-        "break-word" => Some(WordBreak::BreakWord),
-        _ => None,
-    }
+    WordBreak::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `overflow-wrap: <ident>` (`word-wrap` legacy alias 名でも呼ばれる、
@@ -948,13 +882,7 @@ pub(super) fn parse_word_break(input: &mut Parser<'_, '_>) -> Option<WordBreak> 
 /// keyword、[`OverflowWrap`] doc 参照)。ASCII case-insensitive で ident を
 /// 比較する (sibling `parse_word_break` と同 flavor)。
 pub(super) fn parse_overflow_wrap(input: &mut Parser<'_, '_>) -> Option<OverflowWrap> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "normal" => Some(OverflowWrap::Normal),
-        "break-word" => Some(OverflowWrap::BreakWord),
-        "anywhere" => Some(OverflowWrap::Anywhere),
-        _ => None,
-    }
+    OverflowWrap::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `white-space: <ident>` を parse する (CSS Text 3 §3
@@ -968,32 +896,14 @@ pub(super) fn parse_overflow_wrap(input: &mut Parser<'_, '_>) -> Option<Overflow
 /// silent drop = `None` とする。ASCII case-insensitive で ident を比較する
 /// (sibling `parse_word_break` と同 flavor)。
 pub(super) fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<WhiteSpace> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "normal" => Some(WhiteSpace::Normal),
-        "pre" => Some(WhiteSpace::Pre),
-        "nowrap" => Some(WhiteSpace::Nowrap),
-        "pre-wrap" => Some(WhiteSpace::PreWrap),
-        "pre-line" => Some(WhiteSpace::PreLine),
-        "break-spaces" => Some(WhiteSpace::BreakSpaces),
-        _ => None,
-    }
+    WhiteSpace::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses one `white-space-collapse` keyword (CSS Text 4:
 /// <https://www.w3.org/TR/css-text-4/#propdef-white-space-collapse>).
 /// Property identifiers are matched ASCII case-insensitively.
 pub(super) fn parse_white_space_collapse(input: &mut Parser<'_, '_>) -> Option<WhiteSpaceCollapse> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "collapse" => Some(WhiteSpaceCollapse::Collapse),
-        "discard" => Some(WhiteSpaceCollapse::Discard),
-        "preserve" => Some(WhiteSpaceCollapse::Preserve),
-        "preserve-breaks" => Some(WhiteSpaceCollapse::PreserveBreaks),
-        "preserve-spaces" => Some(WhiteSpaceCollapse::PreserveSpaces),
-        "break-spaces" => Some(WhiteSpaceCollapse::BreakSpaces),
-        _ => None,
-    }
+    WhiteSpaceCollapse::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `hyphens: <ident>` を parse する (CSS Text 3 §5.3
@@ -1007,12 +917,7 @@ pub(super) fn parse_white_space_collapse(input: &mut Parser<'_, '_>) -> Option<W
 /// (sibling `parse_word_break` と同 flavor)。
 /// Parses the `text-wrap-mode: wrap | nowrap` longhand (CSS Text 4 §5.1).
 pub(super) fn parse_text_wrap_mode(input: &mut Parser<'_, '_>) -> Option<TextWrapMode> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "wrap" => Some(TextWrapMode::Wrap),
-        "nowrap" => Some(TextWrapMode::Nowrap),
-        _ => None,
-    }
+    TextWrapMode::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_text_wrap_shorthand(input: &mut Parser<'_, '_>) -> Option<TextWrapShorthand> {
@@ -1041,14 +946,7 @@ pub(super) fn parse_text_wrap_shorthand(input: &mut Parser<'_, '_>) -> Option<Te
 }
 
 pub(super) fn parse_text_wrap_style(input: &mut Parser<'_, '_>) -> Option<TextWrapStyle> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "auto" => Some(TextWrapStyle::Auto),
-        "balance" => Some(TextWrapStyle::Balance),
-        "pretty" => Some(TextWrapStyle::Pretty),
-        "stable" => Some(TextWrapStyle::Stable),
-        _ => None,
-    }
+    TextWrapStyle::from_css_ident(input.expect_ident().ok()?)
 }
 
 // One trim keyword plus at most three autospace boundary keywords and one mode.
@@ -1149,13 +1047,7 @@ fn parse_text_autospace_components(components: &[String]) -> Option<TextAutospac
 }
 
 pub(super) fn parse_hyphens(input: &mut Parser<'_, '_>) -> Option<Hyphens> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "none" => Some(Hyphens::None),
-        "manual" => Some(Hyphens::Manual),
-        "auto" => Some(Hyphens::Auto),
-        _ => None,
-    }
+    Hyphens::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parse `hyphenate-character: auto | <string>` without applying hyphenation.
@@ -1248,27 +1140,11 @@ fn parse_hyphenate_limit_math_integer(source: &str) -> Option<u32> {
 }
 
 pub(super) fn parse_line_break(input: &mut Parser<'_, '_>) -> Option<LineBreak> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "auto" => Some(LineBreak::Auto),
-        "loose" => Some(LineBreak::Loose),
-        "normal" => Some(LineBreak::Normal),
-        "strict" => Some(LineBreak::Strict),
-        "anywhere" => Some(LineBreak::Anywhere),
-        _ => None,
-    }
+    LineBreak::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_text_justify(input: &mut Parser<'_, '_>) -> Option<TextJustify> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "auto" => Some(TextJustify::Auto),
-        "none" => Some(TextJustify::None),
-        "inter-word" => Some(TextJustify::InterWord),
-        "inter-character" => Some(TextJustify::InterCharacter),
-        "distribute" => Some(TextJustify::Distribute),
-        _ => None,
-    }
+    TextJustify::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `text-autospace: normal | <autospace> | auto` を parse する
@@ -1376,18 +1252,7 @@ pub(super) fn parse_text_align_all(input: &mut Parser<'_, '_>) -> Option<TextAli
 }
 
 pub(super) fn parse_text_align_last(input: &mut Parser<'_, '_>) -> Option<TextAlignLast> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "auto" => Some(TextAlignLast::Auto),
-        "start" => Some(TextAlignLast::Start),
-        "end" => Some(TextAlignLast::End),
-        "left" => Some(TextAlignLast::Left),
-        "right" => Some(TextAlignLast::Right),
-        "center" => Some(TextAlignLast::Center),
-        "justify" => Some(TextAlignLast::Justify),
-        "match-parent" => Some(TextAlignLast::MatchParent),
-        _ => None,
-    }
+    TextAlignLast::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `display: <ident>` を parse する。
@@ -1430,35 +1295,15 @@ pub(super) fn parse_text_align_last(input: &mut Parser<'_, '_>) -> Option<TextAl
 /// §3.1 "Pre-defined Keywords" <https://www.w3.org/TR/css-values-3/#keywords>:
 /// keyword は ASCII case-insensitive)。
 pub(super) fn parse_text_combine_upright(input: &mut Parser<'_, '_>) -> Option<TextCombineUpright> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "none" => Some(TextCombineUpright::None),
-        "all" => Some(TextCombineUpright::All),
-        _ => None,
-    }
+    TextCombineUpright::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_text_orientation(input: &mut Parser<'_, '_>) -> Option<TextOrientation> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "mixed" => Some(TextOrientation::Mixed),
-        "upright" => Some(TextOrientation::Upright),
-        "sideways" => Some(TextOrientation::Sideways),
-        _ => None,
-    }
+    TextOrientation::from_css_ident(input.expect_ident().ok()?)
 }
 
 pub(super) fn parse_unicode_bidi(input: &mut Parser<'_, '_>) -> Option<UnicodeBidi> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "normal" => Some(UnicodeBidi::Normal),
-        "embed" => Some(UnicodeBidi::Embed),
-        "isolate" => Some(UnicodeBidi::Isolate),
-        "bidi-override" => Some(UnicodeBidi::BidiOverride),
-        "isolate-override" => Some(UnicodeBidi::IsolateOverride),
-        "plaintext" => Some(UnicodeBidi::Plaintext),
-        _ => None,
-    }
+    UnicodeBidi::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `text-align: <ident>` を parse する
@@ -1483,20 +1328,7 @@ pub(super) fn parse_unicode_bidi(input: &mut Parser<'_, '_>) -> Option<UnicodeBi
 ///   が canonical)。
 /// - **(a) spec-invalid**: 未知 keyword (`middle` 等) は silent drop = `None`。
 pub(super) fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "start" => Some(TextAlign::Start),
-        "end" => Some(TextAlign::End),
-        "left" => Some(TextAlign::Left),
-        "right" => Some(TextAlign::Right),
-        "center" => Some(TextAlign::Center),
-        "justify" => Some(TextAlign::Justify),
-        "match-parent" => Some(TextAlign::MatchParent),
-        "inherit" => Some(TextAlign::Inherit),
-        "-internal-center" => Some(TextAlign::InternalCenter),
-        "justify-all" => Some(TextAlign::JustifyAll),
-        _ => None,
-    }
+    TextAlign::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parses the implemented `hanging-punctuation` subset from CSS Text 3 §8.2.1.
@@ -1522,12 +1354,7 @@ pub(super) fn parse_hanging_punctuation(input: &mut Parser<'_, '_>) -> Option<Ha
 ///   未実装で silent drop。
 /// - **(a) spec-invalid**: `ltr` / `rtl` 以外の ident は silent drop = `None`。
 pub(super) fn parse_direction(input: &mut Parser<'_, '_>) -> Option<Direction> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "ltr" => Some(Direction::Ltr),
-        "rtl" => Some(Direction::Rtl),
-        _ => None,
-    }
+    Direction::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `writing-mode: <ident>` を parse する
@@ -1547,15 +1374,7 @@ pub(super) fn parse_direction(input: &mut Parser<'_, '_>) -> Option<Direction> {
 ///   が canonical)。
 /// - **(a) spec-invalid**: 上記 5 keyword 以外の ident は silent drop = `None`。
 pub(super) fn parse_writing_mode(input: &mut Parser<'_, '_>) -> Option<WritingMode> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "horizontal-tb" => Some(WritingMode::HorizontalTb),
-        "vertical-rl" => Some(WritingMode::VerticalRl),
-        "vertical-lr" => Some(WritingMode::VerticalLr),
-        "sideways-rl" => Some(WritingMode::SidewaysRl),
-        "sideways-lr" => Some(WritingMode::SidewaysLr),
-        _ => None,
-    }
+    WritingMode::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// Parse `ruby-position` keywords (CSS Ruby Layout 1 §3).
@@ -1672,15 +1491,7 @@ pub(crate) fn parse_text_decoration_line(input: &mut Parser<'_, '_>) -> Option<T
 pub(super) fn parse_text_decoration_style(
     input: &mut Parser<'_, '_>,
 ) -> Option<TextDecorationStyle> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "solid" => Some(TextDecorationStyle::Solid),
-        "double" => Some(TextDecorationStyle::Double),
-        "dotted" => Some(TextDecorationStyle::Dotted),
-        "dashed" => Some(TextDecorationStyle::Dashed),
-        "wavy" => Some(TextDecorationStyle::Wavy),
-        _ => None,
-    }
+    TextDecorationStyle::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `text-decoration-color: <color>` を parse する (CSS Text Decoration Module
@@ -1792,13 +1603,7 @@ pub(crate) fn parse_text_decoration_shorthand(
 pub(super) fn parse_text_decoration_skip_ink(
     input: &mut Parser<'_, '_>,
 ) -> Option<TextDecorationSkipInk> {
-    let ident = input.expect_ident().ok()?.clone();
-    match ident.to_ascii_lowercase().as_str() {
-        "auto" => Some(TextDecorationSkipInk::Auto),
-        "none" => Some(TextDecorationSkipInk::None),
-        "all" => Some(TextDecorationSkipInk::All),
-        _ => None,
-    }
+    TextDecorationSkipInk::from_css_ident(input.expect_ident().ok()?)
 }
 
 /// `text-decoration-skip-spaces: none | all | [ start || end ]` を parse する
