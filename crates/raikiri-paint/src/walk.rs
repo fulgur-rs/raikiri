@@ -4559,11 +4559,10 @@ fn paint_inline_svg(
                 },
                 raikiri_svg::SvgRootStyle {
                     inherited_color,
-                    // Root opacity is part of the outer paint group alongside
-                    // background and border when the host cascade supplied it.
-                    // SVG-internal stylesheets are applied by usvg and stay on
-                    // the source root when the host had no opacity declaration.
-                    opacity: 1.0,
+                    // The host opacity remains the SVG root's inherited value
+                    // while the rasterizer removes its group alpha. The outer
+                    // paint group applies it with backgrounds and borders.
+                    opacity,
                     neutralize_root_opacity: host_opacity_is_specified,
                     visible,
                 },

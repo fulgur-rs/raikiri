@@ -35,7 +35,9 @@ pub struct SvgViewport {
 pub struct SvgRootStyle {
     /// The inherited CSS `color`, in straight RGBA8.
     pub inherited_color: [u8; 4],
-    /// Host computed opacity, applied once to the completed raster.
+    /// Host computed opacity. When root opacity is neutralized, this remains
+    /// the SVG root's inherited value and the caller composites it externally.
+    /// Otherwise it is applied once to the completed raster.
     pub opacity: f32,
     /// Neutralize the source root opacity when the caller composites the
     /// computed opacity around the SVG and its box decorations as one group.
@@ -177,6 +179,8 @@ impl SvgDocument {
     /// The effective output limit is the smaller of 32 MiB and
     /// `max_output_bytes`. Pixel dimensions are rounded up before checking
     /// multiplication overflow and allocating a pixmap.
+    /// When `root_style.neutralize_root_opacity` is set, the output excludes
+    /// the host opacity so the caller can composite it with the SVG's box.
     pub fn rasterize(
         &self,
         viewport: SvgViewport,
@@ -202,11 +206,33 @@ impl SvgDocument {
                 source
             };
             let source = with_inherited_color(&source, root_style.inherited_color)?;
+            let raster_opacity = if root_style.neutralize_root_opacity {
+                1.0
+            } else {
+                root_style.opacity
+            };
+            let opacity_to_remove = root_style
+                .neutralize_root_opacity
+                .then_some(root_style.opacity);
             if source == self.source {
-                render_tree(&self.tree, width, height, root_style.opacity, &mut pixels)?;
+                render_tree(
+                    &self.tree,
+                    width,
+                    height,
+                    raster_opacity,
+                    opacity_to_remove,
+                    &mut pixels,
+                )?;
             } else {
                 let tree = parse_tree(&source)?;
-                render_tree(&tree, width, height, root_style.opacity, &mut pixels)?;
+                render_tree(
+                    &tree,
+                    width,
+                    height,
+                    raster_opacity,
+                    opacity_to_remove,
+                    &mut pixels,
+                )?;
             }
         }
 
@@ -600,10 +626,13 @@ fn with_root_opacity_neutralized(
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
     let root = xml.root_element();
     let style_value = root.attribute("style").map_or_else(
-        || "opacity:1!important".to_owned(),
+        || format!("opacity:{inherited_root_opacity}!important"),
         |style| {
             let retained = strip_inline_style_properties(style, &["opacity"]);
-            append_inline_declarations(&retained, "opacity:1!important")
+            append_inline_declarations(
+                &retained,
+                &format!("opacity:{inherited_root_opacity}!important"),
+            )
         },
     );
     let replacement = format!("style=\"{}\"", escape_xml_attribute(&style_value));
@@ -963,7 +992,15 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedOpacityStylesheetParser<'_
             if selector.is_empty() {
                 continue;
             }
-            let mut scoped_rule = format!("{selector}[{}] {{", self.scope_attribute);
+            let insertion = selector_scope_insertion(selector);
+            let mut scoped_rule =
+                String::with_capacity(selector.len() + self.scope_attribute.len() + 16);
+            scoped_rule.push_str(&selector[..insertion]);
+            scoped_rule.push('[');
+            scoped_rule.push_str(self.scope_attribute);
+            scoped_rule.push(']');
+            scoped_rule.push_str(&selector[insertion..]);
+            scoped_rule.push_str(" {");
             for declaration in &opacity_declarations {
                 scoped_rule.push(' ');
                 scoped_rule.push_str(&declaration.raw);
@@ -1074,6 +1111,71 @@ fn split_css_selector_list(selectors: &str) -> Vec<&str> {
     }
     result.push(&selectors[start..]);
     result
+}
+
+fn selector_scope_insertion(selector: &str) -> usize {
+    let bytes = selector.as_bytes();
+    let mut index = 0;
+    let mut last_significant_end = 0;
+    let mut bracket_depth = 0_u32;
+    let mut parenthesis_depth = 0_u32;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut in_comment = false;
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if in_comment {
+            if byte == b'*' && bytes.get(index + 1) == Some(&b'/') {
+                in_comment = false;
+                index += 2;
+                continue;
+            }
+            index += 1;
+            continue;
+        }
+        if let Some(quote_byte) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == quote_byte {
+                quote = None;
+            }
+            index += 1;
+            last_significant_end = index;
+            continue;
+        }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            in_comment = true;
+            index += 2;
+            continue;
+        }
+        if byte == b'\\' {
+            index += 1;
+            if index < bytes.len() {
+                let escaped_char_len = selector[index..].chars().next().map_or(0, char::len_utf8);
+                index += escaped_char_len;
+            }
+            last_significant_end = index;
+            continue;
+        }
+        match byte {
+            b'\'' | b'"' => quote = Some(byte),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'(' => parenthesis_depth += 1,
+            b')' => parenthesis_depth = parenthesis_depth.saturating_sub(1),
+            _ => {}
+        }
+        if !byte.is_ascii_whitespace() {
+            last_significant_end = index + 1;
+        }
+        index += 1;
+    }
+
+    debug_assert!(selector.is_char_boundary(last_significant_end));
+    last_significant_end
 }
 
 fn xml_element_content_range(source: &str, node: roxmltree::Node<'_, '_>) -> Option<Range<usize>> {
@@ -1303,6 +1405,7 @@ fn render_tree(
     width: u32,
     height: u32,
     opacity: f32,
+    opacity_to_remove: Option<f32>,
     pixels: &mut Vec<u8>,
 ) -> Result<(), SvgError> {
     let size =
@@ -1316,6 +1419,19 @@ fn render_tree(
         height as f32 / svg_size.height(),
     );
     resvg::render(tree, transform, &mut pixmap.as_mut());
+
+    if let Some(root_opacity) = opacity_to_remove {
+        // usvg resolves descendant `opacity: inherit` against the host value
+        // before rendering. Remove only the root group's alpha in premultiplied
+        // space so the caller can apply that value around the complete box.
+        for pixel in pixmap.data_mut().chunks_exact_mut(4) {
+            for channel in pixel {
+                *channel = (f64::from(*channel) / f64::from(root_opacity))
+                    .round()
+                    .clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
 
     if opacity < 1.0 {
         for pixel in pixmap.data_mut().chunks_exact_mut(4) {

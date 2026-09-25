@@ -272,7 +272,7 @@ fn root_opacity_neutralization_preserves_inherited_opacity_on_children() {
 
         assert_eq!(
             &image.rgba,
-            &[255, 0, 0, 64],
+            &[255, 0, 0, 128],
             "failed to preserve inherited child opacity in {}",
             String::from_utf8_lossy(source)
         );
@@ -280,8 +280,30 @@ fn root_opacity_neutralization_preserves_inherited_opacity_on_children() {
 }
 
 #[test]
+fn root_opacity_neutralization_keeps_nested_inherited_opacity() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" opacity="0.5"><g opacity="0.25"><rect width="1" height="1" style="opacity:inherit" fill="#ff0000"/></g></svg>"##;
+    let svg = SvgDocument::parse(source).expect("valid SVG");
+    let image = svg
+        .rasterize(
+            SvgViewport {
+                width: 1.0,
+                height: 1.0,
+            },
+            SvgRootStyle {
+                opacity: 0.5,
+                neutralize_root_opacity: true,
+                ..SvgRootStyle::default()
+            },
+            None,
+        )
+        .expect("rasterization succeeds");
+
+    assert_eq!(&image.rgba, &[255, 0, 0, 16]);
+}
+
+#[test]
 fn root_opacity_neutralization_preserves_quoted_attribute_selectors() {
-    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><style>[data-name="a'b"] { opacity:.25; fill:red }</style><rect data-name="a'b" width="1" height="1"/></svg>"##;
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><style>[data-name="a'b"] { fill:red } rect /* note */ { opacity:.25 }</style><rect data-name="a'b" width="1" height="1"/></svg>"##;
     let svg = SvgDocument::parse(source).expect("valid SVG");
     let image = svg
         .rasterize(
@@ -298,6 +320,28 @@ fn root_opacity_neutralization_preserves_quoted_attribute_selectors() {
         .expect("rasterization succeeds");
 
     assert_eq!(&image.rgba, &[255, 0, 0, 64]);
+}
+
+#[test]
+fn root_opacity_neutralization_preserves_stylesheet_inherited_opacity() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" opacity="0.5"><style>rect { opacity:inherit }</style><rect width="1" height="1" fill="#ff0000"/></svg>"##;
+    let svg = SvgDocument::parse(source).expect("valid SVG");
+    let image = svg
+        .rasterize(
+            SvgViewport {
+                width: 1.0,
+                height: 1.0,
+            },
+            SvgRootStyle {
+                opacity: 0.5,
+                neutralize_root_opacity: true,
+                ..SvgRootStyle::default()
+            },
+            None,
+        )
+        .expect("rasterization succeeds");
+
+    assert_eq!(&image.rgba, &[255, 0, 0, 128]);
 }
 
 #[test]
