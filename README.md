@@ -1,6 +1,6 @@
 # raikiri
 
-[![CI](https://github.com/mitsuru/raikiri/actions/workflows/ci.yml/badge.svg)](https://github.com/mitsuru/raikiri/actions/workflows/ci.yml)
+[![CI](https://github.com/fulgur-rs/raikiri/actions/workflows/ci.yml/badge.svg)](https://github.com/fulgur-rs/raikiri/actions/workflows/ci.yml)
 
 A Rust-based HTML/CSS paged layout and rendering foundation developed to replace fulgur's layout engine.
 It aims to provide an incremental migration path from fulgur. It parses HTML, applies CSS cascading and layout, and currently focuses on single-page PNG output.

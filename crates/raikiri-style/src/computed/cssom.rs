@@ -36,6 +36,7 @@ pub enum ComputedProperty {
     FontPalette,
     FontVariantNumeric,
     FontVariantEastAsian,
+    FontVariationSettings,
     OverflowWrap,
     WordBreak,
     TextTransform,
@@ -94,6 +95,7 @@ impl ComputedProperty {
         Self::FontPalette,
         Self::FontVariantNumeric,
         Self::FontVariantEastAsian,
+        Self::FontVariationSettings,
         Self::OverflowWrap,
         Self::WordBreak,
         Self::TextTransform,
@@ -155,6 +157,7 @@ impl ComputedProperty {
             "font-palette" => Self::FontPalette,
             "font-variant-numeric" => Self::FontVariantNumeric,
             "font-variant-east-asian" => Self::FontVariantEastAsian,
+            "font-variation-settings" => Self::FontVariationSettings,
             "overflow-wrap" => Self::OverflowWrap,
             "word-wrap" => Self::OverflowWrap,
             "word-break" => Self::WordBreak,
@@ -234,6 +237,11 @@ impl ComputedProperty {
             ComputedProperty::FontVariantEastAsian => {
                 return serialize_value(&PropertyValue::FontVariantEastAsian(
                     computed.font_variant_east_asian,
+                ));
+            }
+            ComputedProperty::FontVariationSettings => {
+                return serialize_value(&PropertyValue::FontVariationSettings(
+                    computed.font_variation_settings.clone(),
                 ));
             }
             ComputedProperty::TextCombineUpright => computed.text_combine_upright.as_css_str(),

@@ -514,6 +514,7 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::FontPalette(_)
         | PropertyValue::FontVariantNumeric(_)
         | PropertyValue::FontVariantEastAsian(_)
+        | PropertyValue::FontVariationSettings(_)
         | PropertyValue::FontVariantCaps(_)
         | PropertyValue::TextTransform(_)
         | PropertyValue::Visibility(_)

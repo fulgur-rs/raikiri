@@ -37,24 +37,24 @@ use crate::property::{
     FlexDirectionValue, FlexWrapValue, FloatValue, FontKerning, FontLanguageOverride,
     FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue, FontVariantCaps,
     FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures, FontVariantNumeric,
-    FontVariantPosition, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
-    GridTemplateTracks, GridTrackSize, HangingPunctuation, HyphenateCharacter, HyphenateLimitChars,
-    Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal, LetterSpacingValue, LineBreak,
-    LineHeight, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline,
-    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue, PositionValue,
-    RubyPosition, SelfAlignmentValue, Sides, TabSize, TableLayoutValue, TextAlign, TextAlignLast,
-    TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationInset,
-    TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle,
-    TextDecorationThickness, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisShape,
-    TextEmphasisStyle, TextEmphasisVEdge, TextIndentLength, TextJustify, TextOrientation,
-    TextShadowItem, TextSpacingTrim, TextTransform, TextUnderlineOffset, TextUnderlinePosition,
-    TextWrapMode, TextWrapStyle, TransformFunction, UnicodeBidi, VerticalAlign, Visibility,
-    VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak, WordSpaceTransform, WordSpacingValue,
-    WritingMode, ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
-    empty_filter_list, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
-    empty_transform_list, initial_font_family, initial_grid_auto_track_list,
-    resolve_display_for_float, resolve_overflow, resolve_text_align_internal_center,
-    resolve_text_align_match_parent, resolve_writing_mode,
+    FontVariantPosition, FontVariationSettings, GridAutoFlowValue, GridLineValue,
+    GridTemplateAreasValue, GridTemplateTracks, GridTrackSize, HangingPunctuation,
+    HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, Length, LengthOrAuto,
+    LengthOrNormal, LetterSpacingValue, LineBreak, LineHeight, ListStylePosition, ListStyleType,
+    MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle, OverflowValue,
+    OverflowWrap, OverflowXY, PageValue, PositionValue, RubyPosition, SelfAlignmentValue, Sides,
+    TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
+    TextDecorationColor, TextDecorationInset, TextDecorationLine, TextDecorationSkipInk,
+    TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge,
+    TextEmphasisPosition, TextEmphasisShape, TextEmphasisStyle, TextEmphasisVEdge,
+    TextIndentLength, TextJustify, TextOrientation, TextShadowItem, TextSpacingTrim, TextTransform,
+    TextUnderlineOffset, TextUnderlinePosition, TextWrapMode, TextWrapStyle, TransformFunction,
+    UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
+    WordSpaceTransform, WordSpacingValue, WritingMode, ZIndexValue, empty_box_shadow_list,
+    empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
+    empty_string_set_entries, empty_text_shadow_list, empty_transform_list, initial_font_family,
+    initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
+    resolve_text_align_internal_center, resolve_text_align_match_parent, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ComputedTextIndent, ResolveContext,
@@ -365,6 +365,8 @@ pub struct SpecifiedValues {
     pub font_variant_numeric: FontVariantNumeric,
     /// [`ComputedValues::font_variant_east_asian`] staging; inherited computed value.
     pub font_variant_east_asian: FontVariantEastAsian,
+    /// [`ComputedValues::font_variation_settings`] staging; inherited canonical setting list.
+    pub font_variation_settings: FontVariationSettings,
     /// [`ComputedValues::font_variant_caps`] の staging。層は
     /// computed-equivalent (`FontVariantCaps` は length を運ばない)。
     pub font_variant_caps: FontVariantCaps,
@@ -801,6 +803,7 @@ impl SpecifiedValues {
             font_palette: FontPaletteValue::Normal,
             font_variant_numeric: FontVariantNumeric::initial(),
             font_variant_east_asian: FontVariantEastAsian::initial(),
+            font_variation_settings: FontVariationSettings::Normal,
             // CSS Fonts Module Level 3 §6.6: font-variant-caps initial は
             // `normal`。
             font_variant_caps: FontVariantCaps::Normal,
@@ -1103,6 +1106,7 @@ impl SpecifiedValues {
             font_palette: parent.font_palette.clone(),
             font_variant_numeric: parent.font_variant_numeric,
             font_variant_east_asian: parent.font_variant_east_asian,
+            font_variation_settings: parent.font_variation_settings.clone(),
             // CSS Fonts Module Level 3 §6.6: font-variant-caps は inherited。
             font_variant_caps: parent.font_variant_caps,
             // CSS Text Module Level 3 §2.1: text-transform は inherited。
@@ -1945,6 +1949,7 @@ impl SpecifiedValues {
             font_palette: self.font_palette.clone(),
             font_variant_numeric: self.font_variant_numeric,
             font_variant_east_asian: self.font_variant_east_asian,
+            font_variation_settings: self.font_variation_settings.clone(),
             // computed value = specified keyword (`FontVariantCaps` doc 参照、
             // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
             // そのまま素通し。

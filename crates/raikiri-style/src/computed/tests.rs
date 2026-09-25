@@ -1,7 +1,8 @@
 use super::*;
 use crate::property::{
-    FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth, GeometryBox,
-    HyphenateLimitChars, HyphenateLimitCharsValue, Length, TextShadowColor,
+    FontSynthesisStyle, FontVariantEastAsianVariant, FontVariantEastAsianWidth,
+    FontVariationSetting, FontVariationSettings, GeometryBox, HyphenateLimitChars,
+    HyphenateLimitCharsValue, Length, TextShadowColor,
 };
 use crate::resolve::{
     ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
@@ -114,6 +115,7 @@ fn initial_values_match_spec() {
     assert_eq!(cv.font_palette, FontPaletteValue::Normal);
     assert_eq!(cv.font_variant_numeric, FontVariantNumeric::initial());
     assert_eq!(cv.font_variant_east_asian, FontVariantEastAsian::initial());
+    assert_eq!(cv.font_variation_settings, FontVariationSettings::Normal);
     // CSS Fonts Module Level 3 §6.6: font-variant-caps initial は
     // `normal`。
     assert_eq!(cv.font_variant_caps, FontVariantCaps::Normal);
@@ -403,6 +405,10 @@ fn non_initial_parent() -> ComputedValues {
             width: Some(FontVariantEastAsianWidth::ProportionalWidth),
             ruby: true,
         },
+        font_variation_settings: FontVariationSettings::Settings(vec![FontVariationSetting {
+            tag: SmolStr::new("wght"),
+            value: 640.0,
+        }]),
         // CSS Fonts Module Level 3 §6.6: `SmallCaps` — initial
         // (`Normal`) と異なる値 (non_initial_parent の趣旨どおり全
         // field を非 initial に)。

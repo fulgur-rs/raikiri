@@ -602,6 +602,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "font-variant-east-asian" => {
             parse_font_variant_east_asian(input).map(PropertyValue::FontVariantEastAsian)
         }
+        // CSS Fonts 4 axis coordinates are preserved as computed data only.
+        "font-variation-settings" => {
+            parse_font_variation_settings(input).map(PropertyValue::FontVariationSettings)
+        }
         // CSS Text 4 `text-spacing-trim`: preserve the specified keyword as
         // its computed value; layout behavior is intentionally out of scope.
         "text-spacing-trim" => parse_text_spacing_trim(input).map(PropertyValue::TextSpacingTrim),
