@@ -1533,3 +1533,9 @@ css/css-text/line-break/line-break-anywhere-overrides-uax-behavior-006.html
 css/css-text/line-break/line-break-anywhere-overrides-uax-behavior-010.html
 css/css-text/line-break/line-break-anywhere-overrides-uax-behavior-012.html
 css/css-text/line-break/line-break-anywhere-overrides-uax-behavior-015.html
+# --- css-page basic-pagination (exact, 800x600, 2026-09-25) ---
+css/css-page/basic-pagination-001-print.html
+css/css-page/basic-pagination-002-print.html
+css/css-page/basic-pagination-003-print.html
+css/css-page/basic-pagination-004-print.html
+css/css-page/basic-pagination-005-print.html
