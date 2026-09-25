@@ -3077,6 +3077,60 @@ fn letter_spacing_ch_provenance_survives_inheritance() {
 }
 
 #[test]
+fn spacing_ch_preserves_source_font_through_inheritance_and_override() {
+    let mut doc = TestDoc::new();
+    let p = doc.push_element(
+        0,
+        "p",
+        Some("font-size: 20px; letter-spacing: 1ch; word-spacing: 2ch"),
+    );
+    let inherited = doc.push_element(p, "span", Some("font-size: 40px"));
+    let explicit = doc.push_element(
+        p,
+        "b",
+        Some("font-size: 40px; letter-spacing: inherit; word-spacing: inherit"),
+    );
+    let own = doc.push_element(p, "strong", Some("font-size: 40px; letter-spacing: 3ch"));
+    let cleared = doc.push_element(p, "em", Some("font-size: 40px; letter-spacing: 1px"));
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    let size = |font: &Option<crate::ChFontKey>| font.as_ref().map(|font| font.size);
+
+    assert_eq!(
+        size(&r.computed[p].letter_spacing_ch_font),
+        Some(ComputedLength(20.0))
+    );
+    assert_eq!(
+        size(&r.computed[p].word_spacing_ch_font),
+        Some(ComputedLength(20.0))
+    );
+    for child in [inherited, explicit] {
+        // A descendant keeps measuring with the font that declared the value.
+        assert_eq!(r.computed[child].letter_spacing_ch_factor, Some(1.0));
+        assert_eq!(
+            size(&r.computed[child].letter_spacing_ch_font),
+            Some(ComputedLength(20.0))
+        );
+        assert_eq!(
+            size(&r.computed[child].word_spacing_ch_font),
+            Some(ComputedLength(20.0))
+        );
+    }
+    assert_eq!(r.computed[own].letter_spacing_ch_factor, Some(3.0));
+    assert_eq!(
+        size(&r.computed[own].letter_spacing_ch_font),
+        Some(ComputedLength(40.0))
+    );
+    // The inherited word-spacing still points at the parent's font.
+    assert_eq!(
+        size(&r.computed[own].word_spacing_ch_font),
+        Some(ComputedLength(20.0))
+    );
+    assert_eq!(r.computed[cleared].letter_spacing_ch_factor, None);
+    assert_eq!(r.computed[cleared].letter_spacing_ch_font, None);
+}
+
+#[test]
 fn letter_spacing_and_word_spacing_inherit_from_parent_element() {
     // CSS Text 3 §7.2 / §7.1: both are **inherited**.
     let mut doc = TestDoc::new();

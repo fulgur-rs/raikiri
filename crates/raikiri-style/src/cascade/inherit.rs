@@ -1432,6 +1432,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
                 }
                 _ => None,
             };
+            target.letter_spacing_ch_font = None;
         }
         PropertyValue::WordSpacing(ws) => {
             target.word_spacing = ws;
@@ -1439,6 +1440,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
                 WordSpacingValue::Length(Length::Ch(factor)) if factor.is_finite() => Some(factor),
                 _ => None,
             };
+            target.word_spacing_ch_font = None;
         }
         PropertyValue::TabSize(ts) => target.tab_size = ts,
         PropertyValue::BreakBefore(bb) => target.break_before = bb,

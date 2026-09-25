@@ -433,9 +433,11 @@ fn non_initial_parent() -> ComputedValues {
         letter_spacing: ComputedLength(2.0),
         letter_spacing_computed: ComputedLetterSpacing::Px(2.0),
         letter_spacing_ch_factor: None,
+        letter_spacing_ch_font: None,
         word_spacing: ComputedLength(4.0),
         word_spacing_computed: ComputedLetterSpacing::Px(4.0),
         word_spacing_ch_factor: None,
+        word_spacing_ch_font: None,
         // CSS Text Module Level 3 §4.2: initial (`8`) と異なる値
         // (non_initial_parent の趣旨どおり全 field を非 initial に)。
         tab_size: ComputedTabSize::Number(3.0),
