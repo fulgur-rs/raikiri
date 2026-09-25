@@ -402,12 +402,17 @@ pub struct SpecifiedValues {
     /// Authored `ch` factor retained through inheritance so the text-layout
     /// sink can replace the style fallback with a font metric.
     pub letter_spacing_ch_factor: Option<f32>,
+    /// Font that declared an inherited `ch` [`Self::letter_spacing_ch_factor`],
+    /// so descendants measure it with that font rather than their own.
+    pub letter_spacing_ch_font: Option<ChFontKey>,
     /// `word-spacing` の **specified** value。CSS Text 4 length-percentage
     /// grammar is preserved through phase 3 for CSSOM computed-value exposure.
     pub word_spacing: WordSpacingValue,
     /// Authored `ch` factor retained through inheritance so the text-layout
     /// sink can replace the style-layer fallback with a font metric.
     pub word_spacing_ch_factor: Option<f32>,
+    /// Font that declared an inherited `ch` [`Self::word_spacing_ch_factor`].
+    pub word_spacing_ch_font: Option<ChFontKey>,
     /// `tab-size` の **specified** value。phase 3 ([`resolve_tab_size`]) で
     /// 自 node の computed font-size を基準に絶対化される (`<length>` 側
     /// のみ — `<number>` は絶対化不要、[`Self::flex_grow`] と同じ扱い)。
@@ -821,8 +826,10 @@ impl SpecifiedValues {
             // initial は共に `normal`。
             letter_spacing: LetterSpacingValue::Normal,
             letter_spacing_ch_factor: None,
+            letter_spacing_ch_font: None,
             word_spacing: WordSpacingValue::Normal,
             word_spacing_ch_factor: None,
+            word_spacing_ch_font: None,
             // CSS Text Module Level 3 §4.2: tab-size initial は `8`。
             tab_size: TabSize::Number(8.0),
             // CSS Fragmentation Module Level 3 §3.1 / §3.2: break-before /
@@ -1118,8 +1125,10 @@ impl SpecifiedValues {
             // separate in `ComputedValues::word_spacing`.
             letter_spacing: lift_letter_spacing(parent.letter_spacing_computed),
             letter_spacing_ch_factor: parent.letter_spacing_ch_factor,
+            letter_spacing_ch_font: parent.letter_spacing_ch_font.clone(),
             word_spacing: lift_word_spacing(parent.word_spacing_computed),
             word_spacing_ch_factor: parent.word_spacing_ch_factor,
+            word_spacing_ch_font: parent.word_spacing_ch_font.clone(),
             // CSS Text Module Level 3 §4.2: tab-size は inherited。computed
             // `<number>` / `<length>` → specified 表現の lift
             // (`lift_line_height` と同型)。
@@ -1612,14 +1621,36 @@ impl SpecifiedValues {
                 .or(authored_text_indent_ch_factor),
             TextIndentLength::Calc(_) => None,
         };
-        let own_text_indent_ch_font = || ChFontKey {
+        let own_ch_font = || ChFontKey {
             family: self.font_family.clone(),
             size: font_size,
             weight: self.font_weight,
             style: self.font_style,
         };
+        // A `ch` value declared on this node measures with its own font; one
+        // inherited from an ancestor keeps measuring with the ancestor's font.
+        let declaring_ch_font =
+            |authored: Option<f32>, factor: Option<f32>, inherited: &Option<ChFontKey>| {
+                if authored.is_some() {
+                    Some(own_ch_font())
+                } else if factor.is_some() {
+                    inherited.clone()
+                } else {
+                    None
+                }
+            };
+        let letter_spacing_ch_font = declaring_ch_font(
+            letter_spacing.ch_factor,
+            self.letter_spacing_ch_factor,
+            &self.letter_spacing_ch_font,
+        );
+        let word_spacing_ch_font = declaring_ch_font(
+            word_spacing.ch_factor,
+            self.word_spacing_ch_factor,
+            &self.word_spacing_ch_font,
+        );
         let text_indent_ch_font = if authored_text_indent_ch_factor.is_some() {
-            Some(own_text_indent_ch_font())
+            Some(own_ch_font())
         } else if text_indent_ch_factor.is_some() {
             self.text_indent_ch_font.clone()
         } else {
@@ -1628,7 +1659,7 @@ impl SpecifiedValues {
         let ch_provenance = |length: Length| match length {
             Length::Ch(factor) if factor.is_finite() => Some(ChLengthProvenance {
                 factor,
-                font: own_text_indent_ch_font(),
+                font: own_ch_font(),
             }),
             _ => None,
         };
@@ -1954,9 +1985,11 @@ impl SpecifiedValues {
             // Preserve the `ch` provenance through inheritance for the
             // font-metric-aware text-layout consumer.
             letter_spacing_ch_factor: self.letter_spacing_ch_factor.or(letter_spacing.ch_factor),
+            letter_spacing_ch_font,
             word_spacing: word_spacing.value,
             word_spacing_computed,
             word_spacing_ch_factor: self.word_spacing_ch_factor.or(word_spacing.ch_factor),
+            word_spacing_ch_font,
             // `tab-size` の `1lh` 解決基準も他の box property と同じ
             // `own_line_height` (CSS Text Module Level 3 §4.2 は line-height
             // 基準の特別扱いを持たない)。

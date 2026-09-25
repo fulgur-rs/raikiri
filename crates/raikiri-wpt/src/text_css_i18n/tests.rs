@@ -1767,3 +1767,22 @@ fn computed_ch_lengths_match_the_measured_zero_advance() {
         );
     }
 }
+
+#[test]
+fn inherited_ch_spacing_keeps_the_declaring_elements_length() {
+    let root = tempfile::tempdir().unwrap();
+    let mut backend = live_backend(
+        r#"<!doctype html><html><body><div id="parent" style="font-family: sans-serif; font-size: 20px; letter-spacing: 2ch; word-spacing: 2ch"><span id="child" style="font-family: monospace; font-size: 10px">x</span></div></body></html>"#,
+        root.path(),
+    );
+    let parent = backend.get_element_by_id("parent").unwrap().unwrap();
+    let child = backend.get_element_by_id("child").unwrap().unwrap();
+    for property in ["letter-spacing", "word-spacing"] {
+        let declared = backend.computed_style_property(parent, property).unwrap();
+        assert_eq!(
+            backend.computed_style_property(child, property).unwrap(),
+            declared,
+            "{property}"
+        );
+    }
+}

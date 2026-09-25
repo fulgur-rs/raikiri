@@ -1086,6 +1086,10 @@ pub struct ComputedValues {
     /// Authored `ch` factor for `letter-spacing`, retained so the text-layout
     /// sink can replace the style fallback with the shaping font's `0` advance.
     pub letter_spacing_ch_factor: Option<f32>,
+    /// Font that declared [`Self::letter_spacing_ch_factor`]. The computed
+    /// value is an absolute length, so an inherited `ch` measures with the
+    /// declaring element's font, not the inheriting element's.
+    pub letter_spacing_ch_font: Option<ChFontKey>,
     /// Absolute renderer/layout fallback for `word-spacing`. The inherited CSSOM
     /// computed form, including percentages and mixed calc terms, is retained in
     /// [`Self::word_spacing_computed`]. Initial fallback: zero.
@@ -1098,6 +1102,9 @@ pub struct ComputedValues {
     /// inheritance so the text-layout sink can replace the style-layer
     /// fallback with the shaping font's `0` glyph advance.
     pub word_spacing_ch_factor: Option<f32>,
+    /// Font that declared [`Self::word_spacing_ch_factor`]; see
+    /// [`Self::letter_spacing_ch_font`].
+    pub word_spacing_ch_font: Option<ChFontKey>,
     /// `tab-size`. **inherited**, initial: [`ComputedTabSize::Number`]`(8.0)`
     /// (CSS Text Module Level 3 §4.2 "Tab Character Size: the tab-size
     /// property" <https://www.w3.org/TR/css-text-3/#tab-size-property>,
@@ -1913,9 +1920,11 @@ impl ComputedValues {
             letter_spacing: ComputedLength::ZERO,
             letter_spacing_computed: ComputedLetterSpacing::Px(0.0),
             letter_spacing_ch_factor: None,
+            letter_spacing_ch_font: None,
             word_spacing: ComputedLength::ZERO,
             word_spacing_computed: ComputedWordSpacing::Px(0.0),
             word_spacing_ch_factor: None,
+            word_spacing_ch_font: None,
             // CSS Text Module Level 3 §4.2: tab-size initial は `8`.
             tab_size: ComputedTabSize::Number(8.0),
             // CSS Fragmentation Module Level 3 §3.1 / §3.2: break-before /

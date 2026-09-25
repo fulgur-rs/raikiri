@@ -3141,6 +3141,70 @@ fn probe_ic_zero_advance(
 /// [`probe_text_advance`], and the caller supplies the same font context that
 /// shaped the document's text. The caller supplies the authored factor only
 /// for `ch` values; this function returns the clamped used px value.
+/// `probe_ch_text_advance`, cached per font selection in `probes`.
+fn cached_ch_advance(
+    fonts: &mut FontContext,
+    layout_cx: &mut LayoutContext<()>,
+    probes: &mut HashMap<(String, u32, u32, u8), f32>,
+    family: &str,
+    size_px: f32,
+    weight: f32,
+    font_style: StyleFontStyle,
+) -> f32 {
+    let style = match font_style {
+        StyleFontStyle::Normal => 0,
+        StyleFontStyle::Italic => 1,
+        StyleFontStyle::Oblique => 2,
+        _ => 0,
+    };
+    let key = (
+        family.to_owned(),
+        size_px.to_bits(),
+        weight.to_bits(),
+        style,
+    );
+    *probes.entry(key).or_insert_with(|| {
+        probe_ch_text_advance(fonts, layout_cx, family, size_px, weight, font_style)
+    })
+}
+
+/// The `ch` advance for a spacing value: measured with the font that declared
+/// it when `source` records one, otherwise with the given shaping font.
+#[allow(clippy::too_many_arguments)]
+fn spacing_ch_advance(
+    fonts: &mut FontContext,
+    layout_cx: &mut LayoutContext<()>,
+    probes: &mut HashMap<(String, u32, u32, u8), f32>,
+    source: Option<&raikiri_style::ChFontKey>,
+    family: &str,
+    size_px: f32,
+    weight: f32,
+    font_style: StyleFontStyle,
+) -> f32 {
+    match source {
+        Some(key) => {
+            let family = key
+                .family
+                .iter()
+                .map(|a| a.0.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            cached_ch_advance(
+                fonts,
+                layout_cx,
+                probes,
+                &family,
+                key.size.px(),
+                key.weight,
+                key.style,
+            )
+        }
+        None => cached_ch_advance(
+            fonts, layout_cx, probes, family, size_px, weight, font_style,
+        ),
+    }
+}
+
 fn measured_ch_length_px(
     factor: f32,
     source: Option<&raikiri_style::ChFontKey>,
@@ -3158,16 +3222,15 @@ fn measured_ch_length_px(
     let size = source.map_or(cv.font_size, |key| key.size);
     let weight = source.map_or(cv.font_weight, |key| key.weight);
     let font_style = source.map_or(cv.font_style, |key| key.style);
-    let style = match font_style {
-        StyleFontStyle::Normal => 0,
-        StyleFontStyle::Italic => 1,
-        StyleFontStyle::Oblique => 2,
-        _ => 0,
-    };
-    let key = (family.clone(), size.px().to_bits(), weight.to_bits(), style);
-    let advance = *probes.entry(key).or_insert_with(|| {
-        probe_ch_text_advance(fonts, layout_cx, &family, size.px(), weight, font_style)
-    });
+    let advance = cached_ch_advance(
+        fonts,
+        layout_cx,
+        probes,
+        &family,
+        size.px(),
+        weight,
+        font_style,
+    );
     let used = factor * advance;
     if used.is_nan() {
         0.0
@@ -5080,11 +5143,14 @@ pub(crate) fn preshape_text(
         // Preserve authored `ch` so the shaping font's `0` advance can replace
         // the style-layer fallback before Parley lays out the text.
         letter_spacing_ch_factor: Option<f32>,
+        // Font that declared an inherited `ch` letter-spacing.
+        letter_spacing_ch_font: Option<raikiri_style::ChFontKey>,
         // Style-layer fallback in CSS px; replaced with a measured `ch`
         // advance when the authored-unit marker below is present.
         word_spacing_raw: f32,
         // Preserve the authored unit because `ComputedLength` alone loses it.
         word_spacing_ch_factor: Option<f32>,
+        word_spacing_ch_font: Option<raikiri_style::ChFontKey>,
         tab_size: ComputedTabSize,
         white_space: WhiteSpace,
         word_break: WordBreak,
@@ -5105,48 +5171,16 @@ pub(crate) fn preshape_text(
         metrics_style: StyleFontStyle,
         metrics_letter_spacing_raw: f32,
         metrics_letter_spacing_ch_factor: Option<f32>,
+        metrics_letter_spacing_ch_font: Option<raikiri_style::ChFontKey>,
         metrics_word_spacing_raw: f32,
         metrics_word_spacing_ch_factor: Option<f32>,
+        metrics_word_spacing_ch_font: Option<raikiri_style::ChFontKey>,
         simple_pre_block: bool,
         // Preserve the metric quantization used by a simple pre block when
         // one inline wrapper contains the only text run and a terminal
         // preserved newline is the sole sibling.
         simple_preserved_run: bool,
         tab_spacing_ranges: Vec<(std::ops::Range<usize>, f32)>,
-    }
-
-    /// probe cache key: (family, size bits, weight bits, style discriminant)。
-    /// tab-stop の metrics は block-container 祖先の font で取る
-    /// (CSS Text 3 §4.2 — integer-004 / block-ancestor が pin)。
-    /// shape 自体の font (own) とは別物であることに注意。
-    fn font_key(job: &Job) -> (String, u32, u32, u8) {
-        let style = match job.metrics_style {
-            StyleFontStyle::Normal => 0,
-            StyleFontStyle::Italic => 1,
-            StyleFontStyle::Oblique => 2,
-            _ => 0,
-        };
-        (
-            job.metrics_family.clone(),
-            job.metrics_size.to_bits(),
-            job.metrics_weight.to_bits(),
-            style,
-        )
-    }
-
-    fn shape_font_key(job: &Job) -> (String, u32, u32, u8) {
-        let style = match job.font_style {
-            StyleFontStyle::Normal => 0,
-            StyleFontStyle::Italic => 1,
-            StyleFontStyle::Oblique => 2,
-            _ => 0,
-        };
-        (
-            job.family_str.clone(),
-            job.font_size_raw.to_bits(),
-            job.font_weight_raw.to_bits(),
-            style,
-        )
     }
 
     // Shared parent map for simple pre-block eligibility and whitespace
@@ -5510,8 +5544,10 @@ pub(crate) fn preshape_text(
             line_height_raw: cv.line_height,
             letter_spacing_raw: cv.letter_spacing.px(),
             letter_spacing_ch_factor: cv.letter_spacing_ch_factor,
+            letter_spacing_ch_font: cv.letter_spacing_ch_font.clone(),
             word_spacing_raw: cv.word_spacing.px(),
             word_spacing_ch_factor: cv.word_spacing_ch_factor,
+            word_spacing_ch_font: cv.word_spacing_ch_font.clone(),
             tab_size: cv.tab_size,
             white_space: cv.white_space,
             word_break: cv.word_break,
@@ -5533,8 +5569,10 @@ pub(crate) fn preshape_text(
             metrics_style: mcv.font_style,
             metrics_letter_spacing_raw: mcv.letter_spacing.px(),
             metrics_letter_spacing_ch_factor: mcv.letter_spacing_ch_factor,
+            metrics_letter_spacing_ch_font: mcv.letter_spacing_ch_font.clone(),
             metrics_word_spacing_raw: mcv.word_spacing.px(),
             metrics_word_spacing_ch_factor: mcv.word_spacing_ch_factor,
+            metrics_word_spacing_ch_font: mcv.word_spacing_ch_font.clone(),
             simple_pre_block,
             simple_preserved_run,
             tab_spacing_ranges: Vec::new(),
@@ -5546,58 +5584,62 @@ pub(crate) fn preshape_text(
     }
 
     // Resolve `ch` before measuring block-container stops or text prefixes.
-    let mut ch_probes: std::collections::HashMap<(String, u32, u32, u8), f32> =
-        std::collections::HashMap::new();
-    for job in &jobs {
-        if job.letter_spacing_ch_factor.is_some() || job.word_spacing_ch_factor.is_some() {
-            let key = shape_font_key(job);
-            if let std::collections::hash_map::Entry::Vacant(entry) = ch_probes.entry(key) {
-                entry.insert(probe_ch_text_advance(
+    // Spacing declared on the text's own element measures with its shaping
+    // (or tab-metrics) font; spacing inherited in `ch` measures with the font
+    // that declared it, since the computed value is an absolute length.
+    let mut ch_probes: HashMap<(String, u32, u32, u8), f32> = HashMap::new();
+    for job in &mut jobs {
+        if let Some(factor) = job.letter_spacing_ch_factor {
+            job.letter_spacing_raw = factor
+                * spacing_ch_advance(
                     fonts,
                     layout_cx,
+                    &mut ch_probes,
+                    job.letter_spacing_ch_font.as_ref(),
                     &job.family_str,
                     job.font_size_raw,
                     job.font_weight_raw,
                     job.font_style,
-                ));
-            }
+                );
         }
-        if job.metrics_letter_spacing_ch_factor.is_some()
-            || job.metrics_word_spacing_ch_factor.is_some()
-        {
-            let key = font_key(job);
-            if let std::collections::hash_map::Entry::Vacant(entry) = ch_probes.entry(key) {
-                entry.insert(probe_ch_text_advance(
+        if let Some(factor) = job.word_spacing_ch_factor {
+            job.word_spacing_raw = factor
+                * spacing_ch_advance(
                     fonts,
                     layout_cx,
+                    &mut ch_probes,
+                    job.word_spacing_ch_font.as_ref(),
+                    &job.family_str,
+                    job.font_size_raw,
+                    job.font_weight_raw,
+                    job.font_style,
+                );
+        }
+        if let Some(factor) = job.metrics_letter_spacing_ch_factor {
+            job.metrics_letter_spacing_raw = factor
+                * spacing_ch_advance(
+                    fonts,
+                    layout_cx,
+                    &mut ch_probes,
+                    job.metrics_letter_spacing_ch_font.as_ref(),
                     &job.metrics_family,
                     job.metrics_size,
                     job.metrics_weight,
                     job.metrics_style,
-                ));
-            }
+                );
         }
-    }
-    for job in &mut jobs {
-        if let Some(factor) = job.letter_spacing_ch_factor
-            && let Some(&advance) = ch_probes.get(&shape_font_key(job))
-        {
-            job.letter_spacing_raw = factor * advance;
-        }
-        if let Some(factor) = job.word_spacing_ch_factor
-            && let Some(&advance) = ch_probes.get(&shape_font_key(job))
-        {
-            job.word_spacing_raw = factor * advance;
-        }
-        if let Some(factor) = job.metrics_letter_spacing_ch_factor
-            && let Some(&advance) = ch_probes.get(&font_key(job))
-        {
-            job.metrics_letter_spacing_raw = factor * advance;
-        }
-        if let Some(factor) = job.metrics_word_spacing_ch_factor
-            && let Some(&advance) = ch_probes.get(&font_key(job))
-        {
-            job.metrics_word_spacing_raw = factor * advance;
+        if let Some(factor) = job.metrics_word_spacing_ch_factor {
+            job.metrics_word_spacing_raw = factor
+                * spacing_ch_advance(
+                    fonts,
+                    layout_cx,
+                    &mut ch_probes,
+                    job.metrics_word_spacing_ch_font.as_ref(),
+                    &job.metrics_family,
+                    job.metrics_size,
+                    job.metrics_weight,
+                    job.metrics_style,
+                );
         }
         if !matches!(
             job.white_space,

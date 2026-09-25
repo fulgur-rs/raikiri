@@ -1744,7 +1744,14 @@ fn remove_unavailable_ch_family(computed: &mut [ComputedValues], family: &str) {
         key.family = std::sync::Arc::new(families);
     }
     for cv in computed {
-        if let Some(key) = cv.text_indent_ch_font.as_mut() {
+        for key in [
+            cv.text_indent_ch_font.as_mut(),
+            cv.letter_spacing_ch_font.as_mut(),
+            cv.word_spacing_ch_font.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        {
             remove_from_key(key, family);
         }
         for provenance in [
@@ -1826,7 +1833,14 @@ fn expand_font_face_alias(computed: &mut [ComputedValues], face: &str, target: &
         if let Some(expanded) = alias_family_list(&cv.font_family, face, target) {
             cv.font_family = Arc::new(expanded);
         }
-        if let Some(key) = cv.text_indent_ch_font.as_mut() {
+        for key in [
+            cv.text_indent_ch_font.as_mut(),
+            cv.letter_spacing_ch_font.as_mut(),
+            cv.word_spacing_ch_font.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        {
             update_key(key, face, target);
         }
         for provenance in [
@@ -4257,6 +4271,8 @@ mod tests {
         };
 
         cv.text_indent_ch_font = Some(key_with("Indent"));
+        cv.letter_spacing_ch_font = Some(key_with("Letter"));
+        cv.word_spacing_ch_font = Some(key_with("Word"));
         cv.width_ch = Some(prov_with("Width"));
         cv.height_ch = Some(prov_with("Height"));
         cv.padding_ch.top = Some(prov_with("PadTop"));
@@ -4292,6 +4308,18 @@ mod tests {
                 "Indent".to_string()
             ]
         );
+        for (key, extra) in [
+            (
+                computed[0].letter_spacing_ch_font.as_ref().unwrap(),
+                "Letter",
+            ),
+            (computed[0].word_spacing_ch_font.as_ref().unwrap(), "Word"),
+        ] {
+            assert_eq!(
+                names(key),
+                vec!["Face".to_string(), "Target".to_string(), extra.to_string()]
+            );
+        }
         assert_eq!(
             names(&computed[0].width_ch.as_ref().unwrap().font),
             vec![
@@ -4391,6 +4419,8 @@ mod tests {
         // Different casing than the "DropMe" argument below -- the removal
         // must still match via `eq_ignore_ascii_case`.
         cv.text_indent_ch_font = Some(key_with("DROPME", "Keep"));
+        cv.letter_spacing_ch_font = Some(key_with("DropMe", "Keep"));
+        cv.word_spacing_ch_font = Some(key_with("dropMe", "Keep"));
         cv.width_ch = Some(prov_with("DropMe", "Keep"));
         cv.height_ch = Some(prov_with("dropme", "Keep"));
         cv.padding_ch.top = Some(prov_with("DropMe", "Keep"));
@@ -4408,10 +4438,13 @@ mod tests {
         let names = |key: &ChFontKey| -> Vec<String> {
             key.family.iter().map(|a| a.0.to_string()).collect()
         };
-        assert_eq!(
-            names(computed[0].text_indent_ch_font.as_ref().unwrap()),
-            vec!["Keep".to_string()]
-        );
+        for key in [
+            computed[0].text_indent_ch_font.as_ref().unwrap(),
+            computed[0].letter_spacing_ch_font.as_ref().unwrap(),
+            computed[0].word_spacing_ch_font.as_ref().unwrap(),
+        ] {
+            assert_eq!(names(key), vec!["Keep".to_string()]);
+        }
         for provenance in [
             computed[0].width_ch.as_ref().unwrap(),
             computed[0].height_ch.as_ref().unwrap(),
