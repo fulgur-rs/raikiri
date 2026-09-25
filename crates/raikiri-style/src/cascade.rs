@@ -35,7 +35,7 @@ use crate::counter_style::CounterStyleRegistry;
 use crate::error::CascadeError;
 use crate::media::MediaContext;
 use crate::page::{PageCascadeResult, PageContextQuery, PageInheritance, cascade_page};
-use crate::property::{Sides, WritingMode};
+use crate::property::{PropertyKey, Sides, WritingMode};
 use crate::ruletree::RuleTree;
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 
@@ -56,6 +56,10 @@ pub struct CascadeResult {
     /// Per-node computed values (NodeId.0 as usize で index)。
     /// Element / Text / Document 全 kind に populate、範囲外は panic (caller 責任)。
     pub computed: Vec<ComputedValues>,
+    /// Per-node flags indicating whether the cascade had an explicit
+    /// `opacity` declaration for that node. Inline SVG painting uses this to
+    /// decide whether source-root opacity belongs in the host paint group.
+    pub opacity_specified: Vec<bool>,
     /// Per-node flags identifying margin sides whose winning declaration came
     /// from an origin other than the user-agent stylesheet.  The paged DOM
     /// adapter uses this to distinguish an authored `margin: 8px` from the
@@ -214,6 +218,17 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
         &mut cascaded,
         media_context,
     );
+    let opacity_specified = (0..dom.node_count())
+        .map(|index| {
+            cascaded
+                .candidates(StyleNodeId::new(index as u64))
+                .is_some_and(|candidates| {
+                    candidates
+                        .iter()
+                        .any(|(value, ..)| value.key() == PropertyKey::Opacity)
+                })
+        })
+        .collect::<Vec<_>>();
 
     // Phase 2: inheritance walk。
     //
@@ -261,6 +276,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
     Ok(CascadeResult {
         generation: NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed),
         computed,
+        opacity_specified,
         non_ua_margin_sides,
         authored_writing_modes,
         page,

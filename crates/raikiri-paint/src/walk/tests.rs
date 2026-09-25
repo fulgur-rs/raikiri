@@ -6,24 +6,6 @@ use raikiri_style::{build_rule_tree, cascade};
 use taffy::Style;
 
 #[test]
-fn inline_svg_root_opacity_detection_requires_a_concrete_value() {
-    assert!(inline_svg_root_has_opacity(Some("0.5"), None));
-    assert!(inline_svg_root_has_opacity(
-        None,
-        Some("fill: red; opacity: 50% !important")
-    ));
-    assert!(!inline_svg_root_has_opacity(Some("var(--opacity)"), None));
-    assert!(!inline_svg_root_has_opacity(
-        None,
-        Some("opacity: var(--opacity)")
-    ));
-    assert!(!inline_svg_root_has_opacity(
-        None,
-        Some("fill: red; opacity: invalid")
-    ));
-}
-
-#[test]
 fn vertical_align_length_uses_css_raise_lower_sign_in_y_down_space() {
     assert_eq!(
         vertical_align_shift_px(
@@ -1262,5 +1244,31 @@ fn inherited_margin_box_font_uses_root_computed_family() {
     assert_eq!(
         inherited_margin_box_font(&document, &cascade, rule),
         (16.0, "serif".to_owned())
+    );
+}
+
+#[test]
+fn ratio_only_auto_background_uses_positioning_area_as_default_size() {
+    let intrinsic = raikiri_traits::ImageIntrinsicSize {
+        width: None,
+        height: None,
+        aspect_ratio: Some(2.0),
+    };
+    let auto = ComputedBackgroundSize::Explicit {
+        width: ComputedLengthPercentageOrAuto::Auto,
+        height: ComputedLengthPercentageOrAuto::Auto,
+    };
+
+    assert_eq!(
+        background_image_dimensions(&auto, 600.0, 400.0, intrinsic),
+        Some((600.0, 300.0))
+    );
+    assert_eq!(
+        background_image_dimensions(&ComputedBackgroundSize::Contain, 600.0, 400.0, intrinsic),
+        Some((600.0, 300.0))
+    );
+    assert_eq!(
+        background_image_dimensions(&ComputedBackgroundSize::Cover, 600.0, 400.0, intrinsic),
+        Some((800.0, 400.0))
     );
 }

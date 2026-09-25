@@ -516,13 +516,14 @@ fn strip_xhtml_cdata_wrapper(text: &str) -> String {
 
 /// Return whether an element is a stylesheet-bearing `<style>` element.
 ///
-/// Host document CSS accepts HTML/XHTML style elements. SVG style elements
-/// remain in the SVG subtree and are consumed by the SVG parser at paint time.
+/// Host document CSS accepts HTML/XHTML and SVG style elements. SVG style
+/// text also remains in its subtree so the SVG parser can apply paint-only
+/// properties to the serialized vector content.
 fn is_stylesheet_style_element(element: &impl raikiri_traits::Element) -> bool {
     element.tag_name() == "style"
         && matches!(
             element.namespace_uri(),
-            None | Some("http://www.w3.org/1999/xhtml")
+            None | Some("http://www.w3.org/1999/xhtml") | Some("http://www.w3.org/2000/svg")
         )
 }
 

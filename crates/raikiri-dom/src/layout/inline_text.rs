@@ -697,6 +697,9 @@ pub(crate) fn prepare_text_indent_before_taffy(
         if !doc.nodes[idx].is_in_document() {
             continue;
         }
+        if doc.nodes[idx].is_inline_svg_content() {
+            continue;
+        }
         let cv = &cascade.computed[idx];
         let Some(parent_idx) = parent_of[idx] else {
             continue; // cov:ignore: in-document text nodes always have a parent.
@@ -5230,7 +5233,7 @@ pub(crate) fn preshape_text(
         if doc.nodes[idx].kind() != NodeKind::Text {
             continue;
         }
-        if !doc.nodes[idx].is_in_document() {
+        if !doc.nodes[idx].is_in_document() || doc.nodes[idx].is_inline_svg_content() {
             continue;
         }
         let raw: String = match &doc.nodes[idx].data {

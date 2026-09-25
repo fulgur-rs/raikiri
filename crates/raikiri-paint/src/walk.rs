@@ -3693,7 +3693,7 @@ fn paint_document_impl(
                 // until the deferred `PaintAfter` and overflow clip frames
                 // have finished so overlapping descendants are composited as
                 // one group instead of being alpha-blended individually.
-                let has_opacity_layer = cv.opacity < 1.0 && !node.is_inline_svg_root();
+                let has_opacity_layer = cv.opacity < 1.0;
                 if has_opacity_layer {
                     let opacity_clip = Rect::new(
                         0.0,
@@ -3849,6 +3849,11 @@ fn paint_document_impl(
                             &paint_padding,
                             [cv.color.r, cv.color.g, cv.color.b, cv.color.a],
                             cv.opacity,
+                            cascade
+                                .opacity_specified
+                                .get(node_id)
+                                .copied()
+                                .unwrap_or(false),
                             cv.visibility != Visibility::Hidden,
                             warnings,
                         )
@@ -4525,6 +4530,7 @@ fn paint_inline_svg(
     padding: &taffy::Rect<f32>,
     inherited_color: [u8; 4],
     opacity: f32,
+    host_opacity_is_specified: bool,
     visible: bool,
     warnings: &mut Vec<RenderWarning>,
 ) -> bool {
@@ -4540,9 +4546,6 @@ fn paint_inline_svg(
         return true;
     }
 
-    let node_has_root_opacity = document.get_node(node_id).is_some_and(|node| {
-        inline_svg_root_has_opacity(node.attribute("opacity"), node.attribute("style"))
-    });
     let svg = document
         .serialize_svg_subtree(node_id)
         .ok()
@@ -4556,10 +4559,12 @@ fn paint_inline_svg(
                 },
                 raikiri_svg::SvgRootStyle {
                     inherited_color,
-                    // Inline root opacity is already present in the serialized
-                    // SVG and is applied by usvg. The host opacity is needed
-                    // for stylesheet-computed opacity that is not serialized.
-                    opacity: if node_has_root_opacity { 1.0 } else { opacity },
+                    // Root opacity is part of the outer paint group alongside
+                    // background and border when the host cascade supplied it.
+                    // SVG-internal stylesheets are applied by usvg and stay on
+                    // the source root when the host had no opacity declaration.
+                    opacity: 1.0,
+                    neutralize_root_opacity: host_opacity_is_specified,
                     visible,
                 },
                 None,
@@ -4619,87 +4624,6 @@ fn paint_inline_svg(
     );
     scene.pop_layer();
     true
-}
-
-fn inline_svg_root_has_opacity(presentation_attr: Option<&str>, style: Option<&str>) -> bool {
-    presentation_attr.is_some_and(css_value_is_concrete_opacity)
-        || style.is_some_and(inline_style_has_concrete_opacity)
-}
-
-fn css_value_is_concrete_opacity(value: &str) -> bool {
-    inline_style_has_concrete_opacity(&format!("opacity:{value}"))
-}
-
-fn inline_style_has_concrete_opacity(style: &str) -> bool {
-    use cssparser::{
-        AtRuleParser, DeclarationParser, ParseError, Parser, ParserInput, ParserState,
-        QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser,
-    };
-
-    struct OpacityDeclarationParser;
-
-    impl<'i> DeclarationParser<'i> for OpacityDeclarationParser {
-        type Declaration = bool;
-        type Error = ();
-
-        fn parse_value<'t>(
-            &mut self,
-            name: cssparser::CowRcStr<'i>,
-            input: &mut Parser<'i, 't>,
-            _declaration_start: &ParserState,
-        ) -> Result<bool, ParseError<'i, Self::Error>> {
-            if !name.eq_ignore_ascii_case("opacity") {
-                while input.next_including_whitespace_and_comments().is_ok() {}
-                return Ok(false);
-            }
-
-            let is_concrete_opacity = input
-                .parse_until_before(cssparser::Delimiter::Bang, |value| {
-                    Ok::<_, ParseError<'i, Self::Error>>(raikiri_style::property::parse_value(
-                        "opacity", value,
-                    ))
-                })
-                .ok()
-                .flatten()
-                .is_some_and(|value| matches!(value, PropertyValue::Opacity(_)));
-            input.try_parse(cssparser::parse_important).ok();
-            input.expect_exhausted().map_err(
-                |error: cssparser::BasicParseError<'i>| -> ParseError<'i, Self::Error> {
-                    error.into()
-                },
-            )?;
-            Ok(is_concrete_opacity)
-        }
-    }
-
-    impl<'i> AtRuleParser<'i> for OpacityDeclarationParser {
-        type Prelude = ();
-        type AtRule = bool;
-        type Error = ();
-    }
-
-    impl<'i> QualifiedRuleParser<'i> for OpacityDeclarationParser {
-        type Prelude = ();
-        type QualifiedRule = bool;
-        type Error = ();
-    }
-
-    impl<'i> RuleBodyItemParser<'i, bool, ()> for OpacityDeclarationParser {
-        fn parse_qualified(&self) -> bool {
-            false
-        }
-
-        fn parse_declarations(&self) -> bool {
-            true
-        }
-    }
-
-    let mut input = ParserInput::new(style);
-    let mut parser = Parser::new(&mut input);
-    let mut declaration_parser = OpacityDeclarationParser;
-    RuleBodyParser::new(&mut parser, &mut declaration_parser)
-        .filter_map(Result::ok)
-        .any(|is_opacity| is_opacity)
 }
 
 /// `vertical-align` が inline-level box の位置へ寄与する pixel offset。
@@ -5065,6 +4989,10 @@ fn background_image_dimensions(
         (Some(width), None, Some(ratio)) if width > 0.0 && ratio > 0.0 => (width, width / ratio),
         (None, Some(height), Some(ratio)) if height > 0.0 && ratio > 0.0 => {
             (height * ratio, height)
+        }
+        (None, None, Some(ratio)) if ratio > 0.0 && area_w > 0.0 && area_h > 0.0 => {
+            let width = area_w.min(area_h * ratio);
+            (width, width / ratio)
         }
         (None, None, Some(ratio)) if ratio > 0.0 => {
             let width = DEFAULT_WIDTH.min(DEFAULT_HEIGHT * ratio);

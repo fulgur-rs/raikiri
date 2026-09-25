@@ -105,6 +105,7 @@ png = "0.18"
 resvg = { version = "=0.48.1", default-features = false }
 usvg = { version = "=0.48.1", default-features = false }
 roxmltree = "0.21.1"
+simplecss = "0.2.2"
 
 # Pure-Rust WOFF/WOFF2 decompression for @font-face resources.
 wuff = "0.2.9"

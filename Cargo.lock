@@ -2440,9 +2440,11 @@ dependencies = [
 name = "raikiri-svg"
 version = "0.1.0"
 dependencies = [
+ "cssparser",
  "raikiri-traits",
  "resvg",
  "roxmltree 0.21.1",
+ "simplecss",
  "usvg",
 ]
 

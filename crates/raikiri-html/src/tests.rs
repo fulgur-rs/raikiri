@@ -3142,13 +3142,16 @@ fn parse_skips_body_style_inside_template_element() {
 }
 
 #[test]
-fn parse_keeps_svg_style_out_of_host_stylesheet_sources() {
+fn parse_includes_svg_and_html_styles_in_host_stylesheet_sources() {
     let html = b"<html><body><svg><style>circle{fill:red}</style></svg>                     <math><style>p{color:orange}</style></math>                     <style>p{color:green}</style><p>x</p></body></html>";
     let opts = empty_options();
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
     assert_eq!(
         uncascaded.stylesheet_sources,
-        vec![String::from("p{color:green}")]
+        vec![
+            String::from("circle{fill:red}"),
+            String::from("p{color:green}"),
+        ]
     );
 }
 

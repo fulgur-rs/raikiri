@@ -530,6 +530,35 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                 // `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
                 // continues to check the outcome this comment claims.
                 push_img_dimension_hints(&elem, &mut out.decls);
+                const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
+                let is_svg_root = elem.tag_name() == "svg"
+                    && elem.namespace_uri() == Some(SVG_NAMESPACE)
+                    && !ancestor_path.iter().any(|ancestor_id| {
+                        dom.node(*ancestor_id).is_some_and(|ancestor| {
+                            ancestor.as_element().is_some_and(|ancestor| {
+                                ancestor.tag_name() == "svg"
+                                    && ancestor.namespace_uri() == Some(SVG_NAMESPACE)
+                            })
+                        })
+                    });
+                if is_svg_root && let Some(raw_opacity) = elem.attr("opacity") {
+                    let mut input = ParserInput::new(raw_opacity);
+                    let mut parser = Parser::new(&mut input);
+                    if let Some(value) = crate::property::parse_value("opacity", &mut parser)
+                        && value.key() == crate::property::PropertyKey::Opacity
+                        && parser.expect_exhausted().is_ok()
+                    {
+                        push_cascaded_decl(
+                            &mut out.decls,
+                            &mut out.custom_decls,
+                            value,
+                            false,
+                            Origin::AuthorPresentationalHint,
+                            PRESENTATIONAL_HINT_SPECIFICITY,
+                            PRESENTATIONAL_HINT_SOURCE_ORDER,
+                        );
+                    }
+                }
                 // HTML LS §15.3.9 margin-collapsing quirks (quirks-mode
                 // margin-block zeroing) — `ancestor_path` here is still
                 // `id`'s ancestor chain *without* `id` itself (that push

@@ -1768,7 +1768,7 @@ fn img_element_paints_its_decoded_pixels() {
 }
 
 #[test]
-fn inline_svg_is_atomic_and_paints_inherited_current_color_with_root_opacity() {
+fn inline_svg_is_atomic_and_groups_root_opacity_with_decorations() {
     use raikiri_traits::{DecodedImage, ImagePixelSource};
     use std::sync::Arc;
 
@@ -1781,6 +1781,11 @@ fn inline_svg_is_atomic_and_paints_inherited_current_color_with_root_opacity() {
 
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(html), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        ".svg-root { opacity:0.75; background-color:blue; border:1px solid red }",
+    );
     let body = doc.append_element(
         Some(html),
         "body",
@@ -1791,12 +1796,14 @@ fn inline_svg_is_atomic_and_paints_inherited_current_color_with_root_opacity() {
         Some(body),
         "svg",
         Style::default(),
-        Some("width:10px;height:10px;opacity:0.5"),
+        Some("width:10px;height:10px"),
     );
     doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
     doc.set_element_attributes(
         svg,
         vec![
+            ("class".into(), "svg-root".into()),
+            ("opacity".into(), "0.25".into()),
             ("viewBox".into(), "0 0 1 1".into()),
             ("width".into(), "1".into()),
             ("height".into(), "1".into()),
@@ -1815,6 +1822,7 @@ fn inline_svg_is_atomic_and_paints_inherited_current_color_with_root_opacity() {
 
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade succeeds");
+    assert_eq!(cascade.computed[svg].opacity, 0.75);
     layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new())
         .expect("layout succeeds");
 
@@ -1843,7 +1851,74 @@ fn inline_svg_is_atomic_and_paints_inherited_current_color_with_root_opacity() {
 
     assert!(warnings.is_empty());
     assert_eq!((image.width, image.height), (10, 10));
-    assert_eq!(&image.data.as_ref()[..4], &[0, 128, 0, 128]);
+
+    let layer_start = scene
+        .commands
+        .iter()
+        .position(|command| matches!(command, RenderCommand::PushLayer(layer) if (layer.alpha - 0.75).abs() < f32::EPSILON))
+        .expect("computed SVG opacity wraps the complete paint item");
+    let layer_end = scene
+        .commands
+        .iter()
+        .enumerate()
+        .skip(layer_start + 1)
+        .find_map(|(index, command)| matches!(command, RenderCommand::PopLayer).then_some(index))
+        .expect("opacity layer closes after the SVG paint item");
+    let grouped_commands = &scene.commands[layer_start + 1..layer_end];
+    assert!(grouped_commands.iter().any(|command| matches!(
+        command,
+        RenderCommand::Fill(fill)
+            if fill.brush == anyrender::Paint::Solid(Color::from_rgba8(0, 0, 255, 255))
+    )));
+    assert!(grouped_commands.iter().any(|command| matches!(
+        command,
+        RenderCommand::Fill(fill)
+            if fill.brush == anyrender::Paint::Solid(Color::from_rgba8(255, 0, 0, 255))
+    )));
+    assert!(grouped_commands.iter().any(|command| matches!(
+        command,
+        RenderCommand::Fill(fill)
+            if matches!(&fill.brush, anyrender::Paint::Image(_))
+    )));
+    assert_eq!(&image.data.as_ref()[..4], &[0, 128, 0, 255]);
+}
+
+#[test]
+fn html_inline_svg_stylesheet_opacity_groups_the_complete_root() {
+    use raikiri_html::{ParseOptions, parse};
+
+    let html = br#"<html><body><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><style>svg { opacity:0.25 }</style><rect width="10" height="10" fill="red"/></svg></body></html>"#;
+    let options = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
+    assert_eq!(uncascaded.stylesheet_sources.len(), 1);
+    let cascade = raikiri_html::build_cascaded(&uncascaded);
+    let mut doc = uncascaded.dom;
+    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new())
+        .expect("layout succeeds");
+
+    let mut scene = Scene::new();
+    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4);
+    let image = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::Fill(fill) => match &fill.brush {
+                anyrender::types::Paint::Image(brush) => Some(&brush.image),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("inline SVG produces an image fill");
+
+    assert!(scene.commands.iter().any(|command| matches!(
+        command,
+        RenderCommand::PushLayer(layer) if (layer.alpha - 0.25).abs() < f32::EPSILON
+    )));
+    assert_eq!(image.data.as_ref()[3], 255);
 }
 
 fn paint_inline_svg_with_external_image(style: &str) -> Vec<raikiri_traits::RenderWarning> {

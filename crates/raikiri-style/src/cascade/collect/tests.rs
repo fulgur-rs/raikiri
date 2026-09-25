@@ -13,6 +13,52 @@ fn inline_style_beats_type_selector() {
 }
 
 #[test]
+fn inline_svg_root_opacity_attribute_is_a_stylesheet_overridable_hint() {
+    const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
+
+    let mut attr_only = TestDoc::new();
+    let svg =
+        attr_only.push_element_with_namespace(0, "svg", SVG_NAMESPACE, &[("opacity", "0.25")]);
+    let rules = build_rule_tree(&attr_only);
+    let result = cascade(&attr_only, &rules).expect("cascade Ok");
+    assert_eq!(result.computed[svg].opacity, 0.25);
+    assert!(result.opacity_specified[svg]);
+
+    let mut stylesheet_override = TestDoc::new();
+    let style = stylesheet_override.push_element(0, "style", None);
+    stylesheet_override.push_text(style, ".root { opacity: 0.75 } ");
+    let svg = stylesheet_override.push_element_with_namespace(
+        0,
+        "svg",
+        SVG_NAMESPACE,
+        &[("opacity", "0.25"), ("class", "root")],
+    );
+    let rules = build_rule_tree(&stylesheet_override);
+    let result = cascade(&stylesheet_override, &rules).expect("cascade Ok");
+    assert_eq!(result.computed[svg].opacity, 0.75);
+    assert!(result.opacity_specified[svg]);
+
+    let mut deferred = TestDoc::new();
+    let svg = deferred.push_element_with_namespace(
+        0,
+        "svg",
+        SVG_NAMESPACE,
+        &[("opacity", "var(--svg-opacity)")],
+    );
+    deferred.nodes[svg].inline_style = Some("--svg-opacity:0.6".to_owned());
+    let rules = build_rule_tree(&deferred);
+    let result = cascade(&deferred, &rules).expect("cascade Ok");
+    assert_eq!(result.computed[svg].opacity, 0.6);
+    assert!(result.opacity_specified[svg]);
+
+    let mut initial = TestDoc::new();
+    let svg = initial.push_element_with_namespace(0, "svg", SVG_NAMESPACE, &[]);
+    let rules = build_rule_tree(&initial);
+    let result = cascade(&initial, &rules).expect("cascade Ok");
+    assert!(!result.opacity_specified[svg]);
+}
+
+#[test]
 fn comma_separated_selector_list_uses_max_specificity_across_matches() {
     // `match_complex_selector_list` tracks the *best* (highest)
     // specificity across every selector in a comma-separated list that

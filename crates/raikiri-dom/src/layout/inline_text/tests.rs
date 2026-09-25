@@ -821,6 +821,41 @@ fn preshape_text_populates_text_layout_for_text_nodes() {
 }
 
 #[test]
+fn preshape_text_skips_inline_svg_descendant_text() {
+    use parley::{FontContext, LayoutContext};
+    use raikiri_style::{build_rule_tree, cascade};
+
+    const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let svg = doc.append_element(Some(body), "svg", Style::default(), None::<&str>);
+    doc.set_element_namespace(svg, Some(SVG_NAMESPACE.into()));
+    let svg_text = doc.append_element(Some(svg), "text", Style::default(), Some("text-indent:1ch"));
+    doc.set_element_namespace(svg_text, Some(SVG_NAMESPACE.into()));
+    let text = doc.append_text(svg_text, "SVG text must stay unshaped");
+    doc.mark_in_document_flags();
+    assert!(doc.nodes[text].is_inline_svg_content());
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut fonts = FontContext::new();
+    let mut layout_cx = LayoutContext::<()>::new();
+    preshape_text(&mut doc, &cascade, &mut fonts, &mut layout_cx, 400.0, 400.0);
+    prepare_text_indent_before_taffy(&mut doc, &cascade, &mut fonts, &mut layout_cx, 400.0);
+
+    assert!(doc.nodes[text].text_layout().is_none());
+    assert!(matches!(
+        &doc.nodes[text].data,
+        crate::node::NodeData::Text(data)
+            if data.text_indent_px.is_none()
+                && !data.text_indent_hanging
+                && !data.text_indent_each_line
+                && !data.text_indent_rebreak
+    ));
+}
+
+#[test]
 fn preshape_text_measures_preserved_inline_whitespace_item() {
     use parley::{FontContext, LayoutContext};
     use raikiri_style::{build_rule_tree, cascade};
