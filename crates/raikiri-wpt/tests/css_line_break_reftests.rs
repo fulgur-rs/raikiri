@@ -276,3 +276,43 @@ fn line_break_anywhere_u2011_uses_bundled_fallback_font_exactly() {
         result.mismatched_pixels
     );
 }
+
+#[test]
+fn explicit_font_context_override_renders_synthetic_reftest_pair() {
+    let target = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target");
+    let temp_dir = tempfile::tempdir_in(target).expect("create temporary reftest directory");
+    let test = temp_dir.path().join("font-context-test.html");
+    let reference = temp_dir.path().join("font-context-reference.html");
+    std::fs::write(
+        &test,
+        r#"<!doctype html><meta charset="utf-8"><link rel="match" href="font-context-reference.html"><style>html,body{margin:0;background:white}.swatch{width:20px;height:20px;background:lime}</style><div class="swatch"></div>"#,
+    )
+    .expect("write synthetic reftest");
+    std::fs::write(
+        &reference,
+        r#"<!doctype html><meta charset="utf-8"><style>html,body{margin:0;background:white}.swatch{width:20px;height:20px;background:lime}</style><div class="swatch"></div>"#,
+    )
+    .expect("write synthetic reference");
+    let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(temp_dir.path()))
+        .expect("discover synthetic reftest pair");
+    assert_eq!(pairs.len(), 1);
+
+    let font_context = raikiri::FontContext::new();
+    let mut config = ReftestConfig::default();
+    config.width = 64;
+    config.height = 64;
+    config.tolerance = Tolerance::EXACT;
+    let result = run_pair_with_images_and_font_context(&pairs[0], config, &font_context)
+        .expect("render synthetic pair with explicit font context");
+    assert!(
+        matches!(result.outcome, TestOutcome::Pass),
+        "identical pages should match when the runner receives an explicit font context: {:?}",
+        result.outcome
+    );
+
+    std::fs::remove_file(&test).expect("remove test file to exercise the reader error path");
+    assert!(matches!(
+        run_pair_with_images_and_font_context(&pairs[0], config, &font_context),
+        Err(raikiri_wpt::reftest::ReftestError::Io { .. })
+    ));
+}
