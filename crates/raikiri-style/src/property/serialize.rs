@@ -1051,7 +1051,7 @@ impl cssparser::ToCss for crate::ComputedTextUnderlineOffset {
     fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
         match *self {
             Self::Auto => dest.write_str("auto"),
-            Self::Length(length) => dest.write_str(&serialize_dimension(length.px(), "px")),
+            Self::Length(length) => length.to_css(dest),
             Self::Percent(percent) => dest.write_str(&serialize_percentage(percent)),
             Self::Calc(calc) => dest.write_str(&serialize_calc_length_percentage(&calc)),
         }
@@ -1063,7 +1063,7 @@ impl cssparser::ToCss for crate::ComputedTextDecorationThickness {
         match *self {
             Self::Auto => dest.write_str("auto"),
             Self::FromFont => dest.write_str("from-font"),
-            Self::Length(length) => dest.write_str(&serialize_dimension(length.px(), "px")),
+            Self::Length(length) => length.to_css(dest),
         }
     }
 }
@@ -1072,8 +1072,14 @@ impl cssparser::ToCss for crate::ComputedTabSize {
     fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
         match *self {
             Self::Number(number) => dest.write_str(&serialize_number(number)),
-            Self::Length(length) => dest.write_str(&serialize_dimension(length.px(), "px")),
+            Self::Length(length) => length.to_css(dest),
         }
+    }
+}
+
+impl cssparser::ToCss for crate::ComputedLength {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        dest.write_str(&serialize_dimension(self.px(), "px"))
     }
 }
 

@@ -1646,7 +1646,7 @@ fn computed_style_property_serializes_structured_properties() {
         (
             "text-decoration",
             "underline dotted from-font rgba(0, 0, 255, 0.5)",
-            "underline dotted from-font rgba(0, 0, 255, 0.5019607843137255)",
+            "underline dotted from-font rgba(0, 0, 255, 0.5)",
         ),
         (
             "text-decoration",
@@ -1663,7 +1663,7 @@ fn computed_style_property_serializes_structured_properties() {
         (
             "text-shadow",
             "1px 2px 3px red, 4px 5px rgba(0, 0, 0, 0.5)",
-            "rgb(255, 0, 0) 1px 2px 3px, rgba(0, 0, 0, 0.5019607843137255) 4px 5px 0px",
+            "rgb(255, 0, 0) 1px 2px 3px, rgba(0, 0, 0, 0.5) 4px 5px 0px",
         ),
         ("text-shadow", "1px 1px", "rgb(0, 0, 0) 1px 1px 0px"),
         ("text-emphasis-style", "filled sesame", "sesame"),
@@ -1675,7 +1675,7 @@ fn computed_style_property_serializes_structured_properties() {
         (
             "text-emphasis",
             "dot rgba(0, 0, 0, 0.5)",
-            "dot rgba(0, 0, 0, 0.5019607843137255)",
+            "dot rgba(0, 0, 0, 0.5)",
         ),
         ("text-underline-position", "under", "under"),
         ("text-underline-offset", "auto", "auto"),
@@ -1690,7 +1690,7 @@ fn computed_style_property_serializes_structured_properties() {
         (
             "text-decoration-color",
             "rgba(255, 0, 0, 0.5)",
-            "rgba(255, 0, 0, 0.5019607843137255)",
+            "rgba(255, 0, 0, 0.5)",
         ),
         ("letter-spacing", "normal", "normal"),
         ("letter-spacing", "1.2345678px", "1.23457px"),

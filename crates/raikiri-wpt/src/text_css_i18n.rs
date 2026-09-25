@@ -888,15 +888,7 @@ impl DomBackend for LiveDocumentBackend {
                     _ => return Ok(None),
                 };
                 if let Some(color) = color {
-                    if color.a == 255 {
-                        components.push(format!("rgb({}, {}, {})", color.r, color.g, color.b));
-                    } else {
-                        let alpha = f64::from(color.a) / 255.0;
-                        components.push(format!(
-                            "rgba({}, {}, {}, {alpha})",
-                            color.r, color.g, color.b
-                        ));
-                    }
+                    components.push(color.to_css_string());
                 }
                 if components.is_empty() {
                     components.push("none".to_owned());
@@ -959,17 +951,12 @@ impl DomBackend for LiveDocumentBackend {
                         raikiri_style::property::TextShadowColor::Resolved(color) => color,
                         _ => return Ok(None),
                     };
-                    let color = if color.a == 255 {
-                        format!("rgb({}, {}, {})", color.r, color.g, color.b)
-                    } else {
-                        let alpha = f64::from(color.a) / 255.0;
-                        format!("rgba({}, {}, {}, {alpha})", color.r, color.g, color.b)
-                    };
                     shadows.push(format!(
-                        "{color} {}px {}px {}px",
-                        shadow.offset_x.px(),
-                        shadow.offset_y.px(),
-                        shadow.blur_radius.px()
+                        "{} {} {} {}",
+                        color.to_css_string(),
+                        shadow.offset_x.to_css_string(),
+                        shadow.offset_y.to_css_string(),
+                        shadow.blur_radius.to_css_string()
                     ));
                 }
                 return Ok(Some(shadows.join(", ")));
@@ -990,13 +977,7 @@ impl DomBackend for LiveDocumentBackend {
                     raikiri_style::property::TextDecorationColor::Resolved(color) => color,
                     _ => return Ok(None),
                 };
-                let color = if color.a == 255 {
-                    format!("rgb({}, {}, {})", color.r, color.g, color.b)
-                } else {
-                    let alpha = f64::from(color.a) / 255.0;
-                    format!("rgba({}, {}, {}, {alpha})", color.r, color.g, color.b)
-                };
-                return Ok(Some(format!("{style} {color}")));
+                return Ok(Some(format!("{style} {}", color.to_css_string())));
             }
             ComputedProperty::TextUnderlinePosition => {
                 return Ok(serialize_value(&PropertyValue::TextUnderlinePosition(
@@ -1012,13 +993,7 @@ impl DomBackend for LiveDocumentBackend {
                     raikiri_style::property::TextDecorationColor::Resolved(color) => color,
                     _ => return Ok(None),
                 };
-                let value = if color.a == 255 {
-                    format!("rgb({}, {}, {})", color.r, color.g, color.b)
-                } else {
-                    let alpha = f64::from(color.a) / 255.0;
-                    format!("rgba({}, {}, {}, {alpha})", color.r, color.g, color.b)
-                };
-                return Ok(Some(value));
+                return Ok(Some(color.to_css_string()));
             }
             ComputedProperty::LetterSpacing => match computed.letter_spacing_computed {
                 // `normal` computes to zero, so a zero length reads back as `normal`.
