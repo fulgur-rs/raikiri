@@ -26,8 +26,16 @@ impl SelectorQuery {
 
     /// Whether the element `elem_id` matches any selector in the list.
     ///
-    /// `ancestors` lists the element's ancestors from the root side first,
-    /// ending with its parent. Non-element ids never match.
+    /// `ancestors` holds `elem_id`'s ancestor **element** ids only, root
+    /// side first and ending with `elem_id`'s parent element. The Document
+    /// node (and any other non-element ancestor) is excluded — CSS
+    /// Selectors L4 descendant/child combinators are defined over elements
+    /// (e.g. <https://www.w3.org/TR/selectors-4/#descendant-combinators>),
+    /// so a non-element node is never itself a combinator ancestor — which
+    /// means `ancestors` is empty when `elem_id` is the document element.
+    /// This is the same shape [`super::collect::collect_cascaded`]'s DFS
+    /// builds internally, and what `:root` (`ancestors.is_empty()`) relies
+    /// on. Non-element `elem_id`s never match.
     pub fn matches<D: StyleDom>(
         &self,
         dom: &D,
