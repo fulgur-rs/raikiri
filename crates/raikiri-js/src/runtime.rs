@@ -33,7 +33,6 @@ pub(crate) struct State {
     #[allow(dead_code, reason = "populated by the inline style binding")]
     pub style_objects: HashMap<usize, JsObject>,
     /// Per-element `classList` objects so `el.classList === el.classList`.
-    #[allow(dead_code, reason = "populated by the classList binding")]
     pub class_lists: HashMap<usize, JsObject>,
 }
 

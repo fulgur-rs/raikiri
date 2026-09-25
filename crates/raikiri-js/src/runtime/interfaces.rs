@@ -63,14 +63,18 @@ fn illegal_constructor(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<
 
 /// A native getter/setter/method function object with the given `name` and
 /// `length` (ECMA-262 §10.2.9: `length` is non-writable, non-enumerable,
-/// configurable).
-pub(crate) fn function(
+/// configurable), built from `native`.
+///
+/// Shared by [`function`] (interface members, a plain function pointer) and
+/// [`closure_function`] (bindings that capture state, such as a `classList`
+/// method closing over its element's arena index).
+fn function_with_length(
     context: &mut Context,
     name: &str,
     length: usize,
-    f: NativeFunctionPointer,
+    native: NativeFunction,
 ) -> JsResult<JsFunction> {
-    let function = FunctionObjectBuilder::new(context.realm(), NativeFunction::from_fn_ptr(f))
+    let function = FunctionObjectBuilder::new(context.realm(), native)
         .name(JsString::from(name))
         .build();
     let length = PropertyDescriptor::builder()
@@ -80,6 +84,26 @@ pub(crate) fn function(
         .configurable(true);
     function.define_property_or_throw(js_string!("length"), length, context)?;
     Ok(function)
+}
+
+/// [`function_with_length`] for a plain function pointer.
+pub(crate) fn function(
+    context: &mut Context,
+    name: &str,
+    length: usize,
+    f: NativeFunctionPointer,
+) -> JsResult<JsFunction> {
+    function_with_length(context, name, length, NativeFunction::from_fn_ptr(f))
+}
+
+/// [`function_with_length`] for a [`NativeFunction`] built from a closure.
+pub(crate) fn closure_function(
+    context: &mut Context,
+    name: &str,
+    length: usize,
+    native: NativeFunction,
+) -> JsResult<JsFunction> {
+    function_with_length(context, name, length, native)
 }
 
 /// Members of one interface prototype.
