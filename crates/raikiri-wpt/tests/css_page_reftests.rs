@@ -124,6 +124,28 @@ fn nested_named_page_propagation_pairs_are_pixel_exact_at_800x600() {
     }
 }
 
+/// Basic pagination: forced page breaks paginate exactly; multi-page
+/// outputs differ from their single-page refs (mismatch PASS).
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn basic_pagination_pairs_are_pixel_exact_at_800x600() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    for name in [
+        "basic-pagination-001-print.html",
+        "basic-pagination-002-print.html",
+        "basic-pagination-003-print.html",
+        "basic-pagination-004-print.html",
+        "basic-pagination-005-print.html",
+    ] {
+        run_exact_pair(&root, "css/css-page", name, config);
+    }
+}
+
 fn run_exact_pair(root: &std::path::Path, dir: &str, name: &str, config: ReftestConfig) {
     let test = root.join(dir).join(name);
     let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(root))
