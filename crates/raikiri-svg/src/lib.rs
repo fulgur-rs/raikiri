@@ -42,6 +42,9 @@ pub struct SvgRootStyle {
     /// Neutralize the source root opacity when the caller composites the
     /// computed opacity around the SVG and its box decorations as one group.
     pub neutralize_root_opacity: bool,
+    /// The host paints the SVG root's `background-color` with its box, so omit
+    /// that background from the SVG viewport raster.
+    pub host_paints_root_background: bool,
     /// Whether the host computed visibility permits painting.
     pub visible: bool,
 }
@@ -52,6 +55,7 @@ impl Default for SvgRootStyle {
             inherited_color: [0, 0, 0, 255],
             opacity: 1.0,
             neutralize_root_opacity: false,
+            host_paints_root_background: false,
             visible: true,
         }
     }
@@ -200,11 +204,17 @@ impl SvgDocument {
             } else {
                 with_root_viewport_size(&self.source, width, height)?
             };
-            let source = if root_style.neutralize_root_opacity {
-                with_root_opacity_neutralized(&source, root_style.opacity)?
-            } else {
-                source
-            };
+            let source =
+                if root_style.neutralize_root_opacity || root_style.host_paints_root_background {
+                    with_root_style_overrides(
+                        &source,
+                        root_style.opacity,
+                        root_style.neutralize_root_opacity,
+                        root_style.host_paints_root_background,
+                    )?
+                } else {
+                    source
+                };
             let source = with_inherited_color(&source, root_style.inherited_color)?;
             let raster_opacity = if root_style.neutralize_root_opacity {
                 1.0
@@ -212,10 +222,28 @@ impl SvgDocument {
                 root_style.opacity
             };
             if source == self.source {
-                render_tree(&self.tree, width, height, raster_opacity, &mut pixels)?;
+                render_tree(
+                    &self.tree,
+                    width,
+                    height,
+                    raster_opacity,
+                    root_style
+                        .neutralize_root_opacity
+                        .then_some(root_style.opacity),
+                    &mut pixels,
+                )?;
             } else {
                 let tree = parse_tree(&source)?;
-                render_tree(&tree, width, height, raster_opacity, &mut pixels)?;
+                render_tree(
+                    &tree,
+                    width,
+                    height,
+                    raster_opacity,
+                    root_style
+                        .neutralize_root_opacity
+                        .then_some(root_style.opacity),
+                    &mut pixels,
+                )?;
             }
         }
 
@@ -601,63 +629,62 @@ fn with_root_viewport_size(source: &str, width: u32, height: u32) -> Result<Stri
     Ok(result)
 }
 
-fn with_root_opacity_neutralized(
+fn with_root_style_overrides(
     source: &str,
     inherited_root_opacity: f32,
+    neutralize_root_opacity: bool,
+    host_paints_root_background: bool,
 ) -> Result<String, SvgError> {
     let xml = roxmltree::Document::parse(source)
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
     let root = xml.root_element();
-    let style_value = root.attribute("style").map_or_else(
-        || "opacity:1".to_owned(),
-        |style| {
-            let retained = strip_inline_style_properties(style, &["opacity"]);
-            append_inline_declarations(&retained, "opacity:1")
-        },
-    );
-    let replacement = format!("style=\"{}\"", escape_xml_attribute(&style_value));
     let mut edits = Vec::<(Range<usize>, String)>::new();
     let mut inserted_root_attributes = String::new();
-    if let Some(attribute) = root
-        .attributes()
-        .find(|attribute| attribute.name() == "style")
-    {
-        edits.push((attribute.range(), replacement));
-    } else {
-        inserted_root_attributes.push(' ');
-        inserted_root_attributes.push_str(&replacement);
+
+    let mut root_style_properties = Vec::new();
+    let mut stylesheet_properties = Vec::new();
+    if neutralize_root_opacity {
+        root_style_properties.push("opacity");
+        stylesheet_properties.push("opacity");
+    }
+    if host_paints_root_background {
+        root_style_properties.extend(["background-color", "background"]);
+        stylesheet_properties.extend(["background-color", "background"]);
+        for attribute in root.attributes().filter(|attribute| {
+            attribute.name() == "background-color" || attribute.name() == "background"
+        }) {
+            edits.push((attribute.range(), String::new()));
+        }
     }
 
-    let inherited_opacity = inherited_root_opacity.to_string();
-    for child in root.children().filter(|child| child.is_element()) {
-        if let Some(attribute) = child
-            .attributes()
-            .find(|attribute| attribute.name() == "opacity")
-            && attribute.value().trim().eq_ignore_ascii_case("inherit")
-        {
-            edits.push((
-                attribute.range(),
-                format!("opacity=\"{inherited_opacity}\""),
-            ));
-        }
-        if let Some(attribute) = child
+    if !root_style_properties.is_empty() {
+        let existing_style = root.attribute("style");
+        let retained = existing_style.map_or_else(String::new, |style| {
+            strip_inline_style_properties(style, &root_style_properties)
+        });
+        let style_value = if neutralize_root_opacity {
+            append_inline_declarations(&retained, &format!("opacity:{inherited_root_opacity}"))
+        } else {
+            retained
+        };
+        if let Some(attribute) = root
             .attributes()
             .find(|attribute| attribute.name() == "style")
-            && let Some(style) =
-                replace_inline_inherited_opacity(attribute.value(), &inherited_opacity)
         {
             edits.push((
                 attribute.range(),
-                format!("style=\"{}\"", escape_xml_attribute(&style)),
+                format!("style=\"{}\"", escape_xml_attribute(&style_value)),
+            ));
+        } else if neutralize_root_opacity {
+            inserted_root_attributes.push_str(&format!(
+                " style=\"{}\"",
+                escape_xml_attribute(&style_value)
             ));
         }
     }
 
-    // Keep the source root at opacity 1 for rasterization. Split descendants
-    // into direct and nested selector scopes so direct-child `inherit` can use
-    // the host value while deeper inheritance follows the source tree normally.
-    let (direct_scope_attribute, nested_scope_attribute) = unique_scope_attributes(source);
-    let mut has_scoped_stylesheet_opacity = false;
+    let scope_attribute = unique_scope_attribute(source);
+    let mut has_scoped_stylesheet_properties = false;
     for node in root
         .descendants()
         .filter(|node| node.is_element() && node.tag_name().name() == "style")
@@ -676,22 +703,19 @@ fn with_root_opacity_neutralized(
         if stylesheet_text.is_empty() {
             continue;
         }
-        let Some(rewritten) = scope_stylesheet_opacity(
-            &stylesheet_text,
-            &direct_scope_attribute,
-            &nested_scope_attribute,
-            &inherited_opacity,
-        ) else {
+        let Some(rewritten) =
+            scope_stylesheet_properties(&stylesheet_text, &scope_attribute, &stylesheet_properties)
+        else {
             continue;
         };
-        has_scoped_stylesheet_opacity = true;
+        has_scoped_stylesheet_properties = true;
         let content_range = xml_element_content_range(source, node).ok_or_else(|| {
             SvgError::InvalidDocument("unterminated SVG style element".to_owned())
         })?;
         edits.push((content_range, escape_xml_text(&rewritten)));
     }
 
-    if has_scoped_stylesheet_opacity {
+    if has_scoped_stylesheet_properties {
         for descendant in root.descendants().filter(|node| node.is_element()) {
             if descendant == root {
                 continue;
@@ -704,11 +728,6 @@ fn with_root_opacity_neutralized(
                 end - 1
             } else {
                 end
-            };
-            let scope_attribute = if descendant.parent() == Some(root) {
-                &direct_scope_attribute
-            } else {
-                &nested_scope_attribute
             };
             edits.push((insertion..insertion, format!(" {scope_attribute}=\"\"")));
         }
@@ -734,122 +753,16 @@ fn with_root_opacity_neutralized(
     Ok(result)
 }
 
-fn replace_inline_inherited_opacity(style: &str, opacity: &str) -> Option<String> {
-    struct ResolvedDeclaration {
-        raw: String,
-        inherited_root_opacity: bool,
-    }
-
-    struct ResolveInheritedOpacity<'a> {
-        opacity: &'a str,
-    }
-
-    impl<'i> cssparser::DeclarationParser<'i> for ResolveInheritedOpacity<'_> {
-        type Declaration = Option<ResolvedDeclaration>;
-        type Error = ();
-
-        fn parse_value<'t>(
-            &mut self,
-            name: cssparser::CowRcStr<'i>,
-            input: &mut cssparser::Parser<'i, 't>,
-            declaration_start: &cssparser::ParserState,
-        ) -> Result<Self::Declaration, cssparser::ParseError<'i, Self::Error>> {
-            let inherited = if name.eq_ignore_ascii_case("opacity") {
-                input
-                    .try_parse(|value| {
-                        let keyword = value.expect_ident_cloned()?;
-                        if !keyword.eq_ignore_ascii_case("inherit") {
-                            return Err(value.new_error(
-                                cssparser::BasicParseErrorKind::UnexpectedToken(
-                                    cssparser::Token::Ident(keyword),
-                                ),
-                            ));
-                        }
-                        let important = value.try_parse(cssparser::parse_important).is_ok();
-                        value.expect_exhausted()?;
-                        Ok::<_, cssparser::ParseError<'i, ()>>(important)
-                    })
-                    .ok()
-            } else {
-                None
-            };
-            while input.next_including_whitespace_and_comments().is_ok() {}
-            let declaration = input
-                .slice(declaration_start.position()..input.position())
-                .trim()
-                .to_owned();
-            if let Some(important) = inherited {
-                Ok(Some(ResolvedDeclaration {
-                    raw: format!(
-                        "opacity:{}{}",
-                        self.opacity,
-                        if important { " !important" } else { "" }
-                    ),
-                    inherited_root_opacity: true,
-                }))
-            } else {
-                Ok((!declaration.is_empty()).then_some(ResolvedDeclaration {
-                    raw: declaration,
-                    inherited_root_opacity: false,
-                }))
-            }
-        }
-    }
-
-    impl<'i> cssparser::AtRuleParser<'i> for ResolveInheritedOpacity<'_> {
-        type Prelude = ();
-        type AtRule = Option<ResolvedDeclaration>;
-        type Error = ();
-    }
-
-    impl<'i> cssparser::QualifiedRuleParser<'i> for ResolveInheritedOpacity<'_> {
-        type Prelude = ();
-        type QualifiedRule = Option<ResolvedDeclaration>;
-        type Error = ();
-    }
-
-    impl<'i> cssparser::RuleBodyItemParser<'i, Option<ResolvedDeclaration>, ()>
-        for ResolveInheritedOpacity<'_>
-    {
-        fn parse_qualified(&self) -> bool {
-            false
-        }
-
-        fn parse_declarations(&self) -> bool {
-            true
-        }
-    }
-
-    let mut input = cssparser::ParserInput::new(style);
-    let mut parser = cssparser::Parser::new(&mut input);
-    let mut declaration_parser = ResolveInheritedOpacity { opacity };
-    let declarations = cssparser::RuleBodyParser::new(&mut parser, &mut declaration_parser)
-        .filter_map(Result::ok)
-        .flatten()
-        .collect::<Vec<_>>();
-    declarations
-        .iter()
-        .any(|declaration| declaration.inherited_root_opacity)
-        .then(|| {
-            declarations
-                .into_iter()
-                .map(|declaration| declaration.raw)
-                .collect::<Vec<_>>()
-                .join(";")
-        })
-}
-
 struct ParsedCssDeclaration {
     name: String,
     raw: String,
     range: Range<usize>,
 }
 
-struct ScopedOpacityStylesheetParser<'a> {
+struct ScopedStylesheetParser<'a> {
     source: &'a str,
-    direct_scope_attribute: &'a str,
-    nested_scope_attribute: &'a str,
-    inherited_root_opacity: &'a str,
+    scope_attribute: &'a str,
+    properties: &'a [&'a str],
     removals: Vec<Range<usize>>,
     scoped_rules: Vec<String>,
 }
@@ -903,7 +816,7 @@ impl<'i> cssparser::RuleBodyItemParser<'i, ParsedCssDeclaration, ()>
     }
 }
 
-impl<'i> cssparser::AtRuleParser<'i> for ScopedOpacityStylesheetParser<'_> {
+impl<'i> cssparser::AtRuleParser<'i> for ScopedStylesheetParser<'_> {
     type Prelude = ();
     type AtRule = ();
     type Error = ();
@@ -928,7 +841,7 @@ impl<'i> cssparser::AtRuleParser<'i> for ScopedOpacityStylesheetParser<'_> {
     }
 }
 
-impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedOpacityStylesheetParser<'_> {
+impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedStylesheetParser<'_> {
     type Prelude = String;
     type QualifiedRule = ();
     type Error = ();
@@ -954,16 +867,20 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedOpacityStylesheetParser<'_
         let declarations = cssparser::RuleBodyParser::new(input, &mut declaration_parser)
             .filter_map(Result::ok)
             .collect::<Vec<_>>();
-        let opacity_declarations = declarations
+        let scoped_declarations = declarations
             .iter()
-            .filter(|declaration| declaration.name.eq_ignore_ascii_case("opacity"))
+            .filter(|declaration| {
+                self.properties
+                    .iter()
+                    .any(|property| declaration.name.eq_ignore_ascii_case(property))
+            })
             .collect::<Vec<_>>();
-        if opacity_declarations.is_empty() {
+        if scoped_declarations.is_empty() {
             return Ok(());
         }
 
         self.removals
-            .extend(opacity_declarations.iter().map(|declaration| {
+            .extend(scoped_declarations.iter().map(|declaration| {
                 let mut range = declaration.range.clone();
                 while self
                     .source
@@ -978,14 +895,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedOpacityStylesheetParser<'_
                 }
                 range
             }));
-        let direct_declarations = opacity_declarations
-            .iter()
-            .map(|declaration| {
-                replace_inline_inherited_opacity(&declaration.raw, self.inherited_root_opacity)
-                    .unwrap_or_else(|| declaration.raw.clone())
-            })
-            .collect::<Vec<_>>();
-        let nested_declarations = opacity_declarations
+        let raw_declarations = scoped_declarations
             .iter()
             .map(|declaration| declaration.raw.clone())
             .collect::<Vec<_>>();
@@ -995,12 +905,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedOpacityStylesheetParser<'_
                 continue;
             }
             if let Some(rule) =
-                scoped_opacity_rule(selector, self.direct_scope_attribute, &direct_declarations)
-            {
-                self.scoped_rules.push(rule);
-            }
-            if let Some(rule) =
-                scoped_opacity_rule(selector, self.nested_scope_attribute, &nested_declarations)
+                scoped_property_rule(selector, self.scope_attribute, &raw_declarations)
             {
                 self.scoped_rules.push(rule);
             }
@@ -1009,7 +914,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedOpacityStylesheetParser<'_
     }
 }
 
-fn scoped_opacity_rule(
+fn scoped_property_rule(
     selector: &str,
     scope_attribute: &str,
     declarations: &[String],
@@ -1034,17 +939,15 @@ fn scoped_opacity_rule(
     Some(scoped_rule)
 }
 
-fn scope_stylesheet_opacity(
+fn scope_stylesheet_properties(
     source: &str,
-    direct_scope_attribute: &str,
-    nested_scope_attribute: &str,
-    inherited_root_opacity: &str,
+    scope_attribute: &str,
+    properties: &[&str],
 ) -> Option<String> {
-    let mut parser_state = ScopedOpacityStylesheetParser {
+    let mut parser_state = ScopedStylesheetParser {
         source,
-        direct_scope_attribute,
-        nested_scope_attribute,
-        inherited_root_opacity,
+        scope_attribute,
+        properties,
         removals: Vec::new(),
         scoped_rules: Vec::new(),
     };
@@ -1214,24 +1117,18 @@ fn xml_element_content_range(source: &str, node: roxmltree::Node<'_, '_>) -> Opt
     (content_start <= closing_tag_start).then_some(content_start..closing_tag_start)
 }
 
-fn unique_scope_attributes(source: &str) -> (String, String) {
+fn unique_scope_attribute(source: &str) -> String {
     let base = "data-raikiri-root-opacity-scope";
     (0_u32..)
         .map(|suffix| {
-            let prefix = if suffix == 0 {
+            if suffix == 0 {
                 base.to_owned()
             } else {
                 format!("{base}-{suffix}")
-            };
-            (format!("{prefix}-direct"), format!("{prefix}-nested"))
+            }
         })
-        .find(|(direct, nested)| !source.contains(direct) && !source.contains(nested))
-        .unwrap_or_else(|| {
-            (
-                format!("{base}-direct-fallback"),
-                format!("{base}-nested-fallback"),
-            )
-        })
+        .find(|candidate| !source.contains(candidate))
+        .unwrap_or_else(|| format!("{base}-fallback"))
 }
 
 fn append_inline_declarations(style: &str, declarations: &str) -> String {
@@ -1442,6 +1339,7 @@ fn render_tree(
     width: u32,
     height: u32,
     opacity: f32,
+    neutralized_root_opacity: Option<f32>,
     pixels: &mut Vec<u8>,
 ) -> Result<(), SvgError> {
     let size =
@@ -1455,6 +1353,20 @@ fn render_tree(
         height as f32 / svg_size.height(),
     );
     resvg::render(tree, transform, &mut pixmap.as_mut());
+
+    if let Some(root_opacity) = neutralized_root_opacity.filter(|opacity| *opacity < 1.0) {
+        // Keep the host value available while parsing so explicit `inherit`
+        // declarations (including nodes expanded from `<use>`) resolve in
+        // their original context. Remove the resulting SVG root group alpha
+        // here, while pixels are premultiplied, because the host composites
+        // that opacity around the raster and its box decorations together.
+        let inverse_opacity = 1.0 / root_opacity;
+        for channel in pixmap.data_mut() {
+            *channel = (f32::from(*channel) * inverse_opacity)
+                .round()
+                .clamp(0.0, 255.0) as u8;
+        }
+    }
 
     if opacity < 1.0 {
         for pixel in pixmap.data_mut().chunks_exact_mut(4) {

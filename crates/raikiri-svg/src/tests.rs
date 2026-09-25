@@ -367,6 +367,53 @@ fn root_opacity_neutralization_does_not_promote_inherited_opacity_importance() {
 }
 
 #[test]
+fn root_opacity_neutralization_preserves_use_instance_inheritance() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1" viewBox="0 0 2 1" opacity="0.5"><rect id="source" width="1" height="1" opacity="inherit" fill="#ff0000"/><use href="#source" x="1" opacity="0.25"/></svg>"##;
+    let svg = SvgDocument::parse(source).expect("valid SVG");
+    let image = svg
+        .rasterize(
+            SvgViewport {
+                width: 2.0,
+                height: 1.0,
+            },
+            SvgRootStyle {
+                opacity: 0.5,
+                neutralize_root_opacity: true,
+                ..SvgRootStyle::default()
+            },
+            None,
+        )
+        .expect("rasterization succeeds");
+
+    assert_eq!(&image.rgba[..4], &[255, 0, 0, 128]);
+    assert_eq!(&image.rgba[4..8], &[255, 0, 0, 16]);
+}
+
+#[test]
+fn host_painted_root_background_is_omitted_from_svg_raster() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1" style="opacity:.5;background-color:rgba(0,0,255,.5)"><rect width="1" height="1" fill="#ff0000"/></svg>"##;
+    let svg = SvgDocument::parse(source).expect("valid SVG");
+    let image = svg
+        .rasterize(
+            SvgViewport {
+                width: 2.0,
+                height: 1.0,
+            },
+            SvgRootStyle {
+                opacity: 0.5,
+                neutralize_root_opacity: true,
+                host_paints_root_background: true,
+                ..SvgRootStyle::default()
+            },
+            None,
+        )
+        .expect("rasterization succeeds");
+
+    assert_eq!(&image.rgba[..4], &[255, 0, 0, 255]);
+    assert_eq!(&image.rgba[4..8], &[0, 0, 0, 0]);
+}
+
+#[test]
 fn root_opacity_neutralization_rewrites_cdata_stylesheet_content() {
     let svg = SvgDocument::parse(
         br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><style>

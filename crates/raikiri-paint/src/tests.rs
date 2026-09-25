@@ -1962,7 +1962,7 @@ fn html_inline_svg_preserves_stylesheet_inherited_opacity() {
 fn html_inline_svg_root_background_stays_inside_the_opacity_group() {
     use raikiri_html::{ParseOptions, parse};
 
-    let html = br#"<html><body><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" style="opacity:.5;background-color:blue"><rect width="5" height="10" fill="red"/></svg></body></html>"#;
+    let html = br#"<html><body><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" style="opacity:.5;background-color:rgba(0,0,255,.5)"><rect width="5" height="10" fill="red"/></svg></body></html>"#;
     let options = ParseOptions {
         extra_stylesheets: &[],
         network: None,
@@ -1993,7 +1993,12 @@ fn html_inline_svg_root_background_stays_inside_the_opacity_group() {
         RenderCommand::PushLayer(layer) if (layer.alpha - 0.5).abs() < f32::EPSILON
     )));
     assert_eq!(&image.data.as_ref()[..4], &[255, 0, 0, 255]);
-    assert_eq!(&image.data.as_ref()[9 * 4..10 * 4], &[0, 0, 255, 255]);
+    assert_eq!(&image.data.as_ref()[9 * 4..10 * 4], &[0, 0, 0, 0]);
+    assert!(scene.commands.iter().any(|command| matches!(
+        command,
+        RenderCommand::Fill(fill)
+            if fill.brush == anyrender::Paint::Solid(Color::from_rgba8(0, 0, 255, 128))
+    )));
 }
 
 fn paint_inline_svg_with_external_image(style: &str) -> Vec<raikiri_traits::RenderWarning> {
