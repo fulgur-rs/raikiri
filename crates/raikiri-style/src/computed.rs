@@ -2115,5 +2115,8 @@ impl ComputedValues {
     }
 }
 
+mod cssom;
+pub use cssom::ComputedProperty;
+
 #[cfg(test)]
 mod tests;

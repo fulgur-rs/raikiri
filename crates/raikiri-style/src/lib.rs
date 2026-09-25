@@ -85,7 +85,7 @@ pub use ruletree::{
 };
 
 pub mod computed;
-pub use computed::{ChFontKey, ChLengthProvenance, ComputedValues};
+pub use computed::{ChFontKey, ChLengthProvenance, ComputedProperty, ComputedValues};
 
 pub mod resolve;
 pub use resolve::{

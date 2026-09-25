@@ -1722,3 +1722,22 @@ fn computed_style_property_serializes_structured_properties() {
         ("tab-size", "12px", "12px"),
     ]);
 }
+
+#[test]
+fn computed_text_decoration_inset_measures_ch_with_the_document_fonts() {
+    let root = tempfile::tempdir().unwrap();
+    let mut backend = live_backend(
+        r#"<!doctype html><html><body><div id="box" style="text-decoration-inset: 2ch">x</div></body></html>"#,
+        root.path(),
+    );
+    let node = backend.get_element_by_id("box").unwrap().unwrap();
+    let value = backend
+        .computed_style_property(node, "text-decoration-inset")
+        .unwrap()
+        .expect("text-decoration-inset has a computed value");
+    let px: f32 = value
+        .strip_suffix("px")
+        .and_then(|number| number.parse().ok())
+        .unwrap_or_else(|| panic!("expected one px length, got {value:?}"));
+    assert!(px > 0.0, "{value}");
+}
