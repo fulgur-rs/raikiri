@@ -108,6 +108,41 @@ fn an_unchanged_next_timeout_does_not_extend_the_deadline_but_a_changed_one_anch
 }
 
 #[test]
+fn a_write_to_an_unread_peer_times_out_mid_write() {
+    // The read side's timeout arm is covered by the trickle test above; this
+    // covers `transmit_output`'s equivalent. The peer accepts the
+    // connection but never reads, so a single large write blocks once the
+    // kernel's send buffer fills, and `set_write_timeout` must cut that
+    // blocked write off at the deadline rather than let it hang.
+    let (client, server) = loopback_pair();
+    let _server = server;
+
+    const PAYLOAD: usize = 16 * 1024 * 1024; // far exceeds typical loopback socket buffers
+    let mut transport = DeadlineTcpTransport::new(client, LazyBuffers::new(PAYLOAD, PAYLOAD));
+    transport.buffers().output(); // force allocation at PAYLOAD size
+
+    let timeout = NextTimeout {
+        after: UreqDuration::from_millis(200),
+        reason: Timeout::Global,
+    };
+
+    let start = StdInstant::now();
+    let err = transport
+        .transmit_output(PAYLOAD, timeout)
+        .expect_err("a write that outlasts the deadline mid-flight must time out");
+    let elapsed = start.elapsed();
+
+    assert!(
+        matches!(err, Error::Timeout(Timeout::Global)),
+        "expected Error::Timeout(Global), got {err:?}"
+    );
+    assert!(
+        elapsed < StdDuration::from_secs(10),
+        "expected the write to time out close to the 200ms deadline, took {elapsed:?}"
+    );
+}
+
+#[test]
 fn is_addr_specific_error_classifies_only_per_address_failures() {
     for kind in [
         io::ErrorKind::ConnectionRefused,

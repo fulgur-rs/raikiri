@@ -189,10 +189,8 @@ fn remaining_or_timeout(
 /// as equivalent (some platforms surface an expired `SO_RCVTIMEO`/
 /// `SO_SNDTIMEO` as `WouldBlock` rather than `TimedOut`).
 fn is_timeout_like(e: &io::Error) -> bool {
-    matches!(
-        e.kind(),
-        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-    )
+    let kind = e.kind();
+    kind == io::ErrorKind::WouldBlock || kind == io::ErrorKind::TimedOut
 }
 
 /// TCP transport that re-derives its own deadline from real elapsed time on
