@@ -3213,6 +3213,57 @@ fn preshape_text_applies_computed_word_spacing_ch_to_advance() {
 }
 
 #[test]
+fn preshape_text_measures_inherited_ch_spacing_with_the_declaring_font() {
+    use parley::{FontContext, LayoutContext};
+    use raikiri_style::{build_rule_tree, cascade};
+
+    fn child_width(parent_style: &str, child_style: &str, text: &str) -> f32 {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(Some(body), "p", Style::default(), Some(parent_style));
+        let span = doc.append_element(Some(p), "span", Style::default(), Some(child_style));
+        let text = doc.append_text(span, text);
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        preshape_text(
+            &mut doc,
+            &cr,
+            &mut fonts,
+            &mut layout_cx,
+            PageBox::A4.width,
+            PageBox::A4.width,
+        );
+        doc.nodes[text]
+            .text_layout()
+            .expect("text should be shaped")
+            .full_width()
+    }
+
+    for (property, text) in [("letter-spacing", "ABCD"), ("word-spacing", "A B C D")] {
+        // A `ch` declared on the 40px parent is an absolute length the 10px
+        // child inherits; re-measuring it with the child's font would make it
+        // as narrow as the child's own `2ch`.
+        let inherited = child_width(
+            &format!("font-size: 40px; {property}: 2ch"),
+            "font-size: 10px",
+            text,
+        );
+        let own = child_width(
+            "font-size: 40px",
+            &format!("font-size: 10px; {property}: 2ch"),
+            text,
+        );
+        assert!(
+            inherited > own + 30.0,
+            "{property}: inherited={inherited}, own={own}"
+        );
+    }
+}
+
+#[test]
 fn text_transform_maps_case_width_kana_and_language_tailoring() {
     assert_eq!(
         apply_text_transform("hello world", TextTransform::Capitalize, ""),
