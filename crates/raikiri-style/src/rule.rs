@@ -332,6 +332,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::FontPalette(_)
         | PropertyValue::FontVariantNumeric(_)
         | PropertyValue::FontVariantEastAsian(_)
+        | PropertyValue::FontVariationSettings(_)
         | PropertyValue::TextTransform(_)
         | PropertyValue::Visibility(_)
         | PropertyValue::ZIndex(_)

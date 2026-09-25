@@ -21,18 +21,19 @@ use crate::property::{
     FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontKerning,
     FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
     FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
-    FontVariantNumeric, FontVariantPosition, GridAutoFlowValue, GridLineValue,
-    GridTemplateAreasValue, HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, Hyphens,
-    Isolation, LineBreak, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit,
-    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
-    RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextAlignLast,
-    TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationLine,
-    TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle, TextEmphasisHEdge,
-    TextEmphasisPosition, TextEmphasisStyle, TextEmphasisVEdge, TextJustify, TextOrientation,
-    TextSpacingTrim, TextTransform, TextUnderlinePosition, TextWrapMode, TextWrapStyle,
-    UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
-    WordSpaceTransform, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
-    empty_filter_list, empty_quotes_entries, empty_string_set_entries, initial_font_family,
+    FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
+    GridLineValue, GridTemplateAreasValue, HangingPunctuation, HyphenateCharacter,
+    HyphenateLimitChars, Hyphens, Isolation, LineBreak, ListStylePosition, ListStyleType,
+    MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
+    OverflowXY, PositionValue, RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue,
+    TextAlign, TextAlignLast, TextAutospace, TextCombineUpright, TextDecorationColor,
+    TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle,
+    TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisStyle, TextEmphasisVEdge, TextJustify,
+    TextOrientation, TextSpacingTrim, TextTransform, TextUnderlinePosition, TextWrapMode,
+    TextWrapStyle, UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace,
+    WhiteSpaceCollapse, WordBreak, WordSpaceTransform, WritingMode, ZIndexValue,
+    empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
+    empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
@@ -259,7 +260,7 @@ pub struct ChLengthProvenance {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / orphans / widows / list_style_type / list_style_position、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variation_settings / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / orphans / widows / list_style_type / list_style_position、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing /
 /// overflow / text_decoration / unicode_bidi / vertical_align / z_index / float / clear)。
@@ -986,6 +987,9 @@ pub struct ComputedValues {
     /// `font-variant-east-asian` — inherited, initial `normal`, computed as specified.
     /// Stored as CSSOM data only; glyph substitution is unchanged.
     pub font_variant_east_asian: FontVariantEastAsian,
+    /// `font-variation-settings` — inherited, initial `normal`, computed as a deduplicated sorted list.
+    /// Stored as CSSOM data only; font axes and shaping are not applied.
+    pub font_variation_settings: FontVariationSettings,
     /// `font-variant-caps`. **inherited**, initial:
     /// [`FontVariantCaps::Normal`] (CSS Fonts Module Level 3 §6.6
     /// "Capitalization: the font-variant-caps property"
@@ -1894,6 +1898,7 @@ impl ComputedValues {
             font_palette: FontPaletteValue::Normal,
             font_variant_numeric: FontVariantNumeric::initial(),
             font_variant_east_asian: FontVariantEastAsian::initial(),
+            font_variation_settings: FontVariationSettings::Normal,
             // CSS Fonts Module Level 3 §6.6: font-variant-caps initial は
             // `normal`。
             font_variant_caps: FontVariantCaps::Normal,

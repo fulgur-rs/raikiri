@@ -28,10 +28,10 @@ use crate::property::{
     FlexDirectionValue, FlexWrapValue, FloatValue, FontKerning, FontLanguageOverride,
     FontOpticalSizing, FontPaletteValue, FontShorthand, FontShorthandSize, FontStyle,
     FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
-    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontWeightValue, GeometryBox,
-    GridAreaShorthand, GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand, GridLineValue,
-    GridRepeatCount, GridShorthand, GridTemplateAreaEntry, GridTemplateAreas,
-    GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
+    FontWeightValue, GeometryBox, GridAreaShorthand, GridAutoFlowValue, GridInflexibleBreadth,
+    GridLineShorthand, GridLineValue, GridRepeatCount, GridShorthand, GridTemplateAreaEntry,
+    GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, HangingPunctuation, HyphenateCharacter,
     HyphenateLimitChars, HyphenateLimitCharsValue, Hyphens, Isolation, Length, LengthOrAuto,
     LengthOrNormal, LengthPercentageCalc, LetterSpacingValue, LineBreak, LineHeight,
@@ -2904,7 +2904,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 142;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 143;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -3639,7 +3639,10 @@ property_key_samples! {
     },
     FontVariantEastAsian => {
         PropertyValue::FontVariantEastAsian(FontVariantEastAsian::initial())
-    }
+    },
+    FontVariationSettings => {
+        PropertyValue::FontVariationSettings(FontVariationSettings::Normal)
+    },
 }
 
 /// `sample_for` の 1:1 `PropertyKey -> PropertyValue` マッピングに
@@ -3972,6 +3975,7 @@ property_value_variant_registry! {
     FontPalette,
     FontVariantNumeric,
     FontVariantEastAsian,
+    FontVariationSettings,
 }
 
 /// `page_corpus()` が `property_value_variant_registry!` に登録された
@@ -4480,6 +4484,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::FontPalette(_)
             | PropertyValue::FontVariantNumeric(_)
             | PropertyValue::FontVariantEastAsian(_)
+            | PropertyValue::FontVariationSettings(_)
             // `FontVariantCaps` carries no length either.
             | PropertyValue::FontVariantCaps(_)
             // `TextTransform` carries no length either.

@@ -359,6 +359,20 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
             })
         }
 
+        PropertyValue::FontVariationSettings(value) => Some(match value {
+            FontVariationSettings::Normal => "normal".to_owned(),
+            FontVariationSettings::Settings(settings) if settings.is_empty() => "normal".to_owned(),
+            FontVariationSettings::Settings(settings) => settings
+                .iter()
+                .map(|setting| {
+                    let tag =
+                        Token::QuotedString(CowRcStr::from(setting.tag.as_str())).to_css_string();
+                    format!("{tag} {}", serialize_number(setting.value))
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+        }),
+
         // Not canonically serialized yet: callers fall back to echoing the
         // raw input. A new variant must be added either to an arm above or
         // here, so the choice is explicit rather than a silent wildcard.
