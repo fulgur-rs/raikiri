@@ -159,6 +159,13 @@ pub(crate) fn parse_calc_or_plain(
 /// and percentage serializer in this crate formats its numeric part here so
 /// they cannot disagree.
 pub(super) fn format_css_number(value: f32) -> String {
+    if value.is_finite() && value.fract() == 0.0 && integer_value(value).is_none() {
+        // An integer too large for the token's `int_value`: print its exact
+        // value, as integers inside the `i32` range are, rather than a
+        // rounded or exponent form. CSS numbers never serialize in
+        // scientific notation.
+        return format!("{value:.0}");
+    }
     Token::Number {
         has_sign: false,
         value,
@@ -170,7 +177,8 @@ pub(super) fn format_css_number(value: f32) -> String {
 /// The `int_value` a serialized numeric token carries: the integer itself
 /// when `value` is integral and fits in `i32`, so it prints without a
 /// fractional part. Outside that range `value as i32` would saturate and
-/// print a different number, so such values fall back to float formatting.
+/// print a different number, so [`format_css_number`] formats such values
+/// itself.
 fn integer_value(value: f32) -> Option<i32> {
     const I32_RANGE: std::ops::Range<f32> = i32::MIN as f32..-(i32::MIN as f32);
     (value.fract() == 0.0 && I32_RANGE.contains(&value)).then_some(value as i32)

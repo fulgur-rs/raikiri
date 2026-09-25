@@ -560,11 +560,12 @@ fn numbers_outside_i32_keep_their_value_instead_of_saturating() {
     // The largest f32 below 2^31 and i32::MIN still print as integers.
     assert_eq!(serialize_number(2147483520.0), "2147483520");
     assert_eq!(serialize_number(-2147483648.0), "-2147483648");
-    // Past the i32 range the value must survive instead of clamping to i32::MAX/MIN.
-    assert_eq!(serialize_number(3.0e9), "3000000000.0");
-    assert_eq!(serialize_number(-3.0e9), "-3000000000.0");
-    assert_eq!(serialize_length(&Length::Px(1.0e10)), "10000000000.0px");
-    assert_eq!(serialize_length(&Length::Percent(3.0e9)), "3000000000.0%");
+    // Past the i32 range every digit is kept, without clamping or exponent form.
+    assert_eq!(serialize_number(2147483648.0), "2147483648");
+    assert_eq!(serialize_number(3.0e9), "3000000000");
+    assert_eq!(serialize_number(-3.0e9), "-3000000000");
+    assert_eq!(serialize_length(&Length::Px(1.0e10)), "10000000000px");
+    assert_eq!(serialize_length(&Length::Percent(3.0e9)), "3000000000%");
 }
 
 #[test]
