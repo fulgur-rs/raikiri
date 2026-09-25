@@ -81,10 +81,10 @@ use page::*;
 use page_pipeline::*;
 use sanitize::*;
 
-pub(crate) use sanitize::LayoutWarn;
 pub(crate) use bridge::apply_computed_to_style;
 pub(crate) use multicol::compute_multicol_layout;
 pub(crate) use page::find_body;
+pub(crate) use sanitize::LayoutWarn;
 // only reached via an intra-doc link from outside layout/, not real code
 pub use inline_text::measure_ch_advance_for_font_key;
 pub(crate) use inline_text::preshape_text;
