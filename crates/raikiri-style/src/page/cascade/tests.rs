@@ -31,10 +31,10 @@ use crate::property::{
     FloatValue, FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue,
     FontShorthand, FontShorthandSize, FontStyle, FontSynthesisValue, FontVariantCaps,
     FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures, FontVariantNumeric,
-    FontVariantPosition, FontVariationSettings, FontWeightValue, GapShorthand, GeometryBox,
-    GridAreaShorthand, GridAutoFlowValue, GridInflexibleBreadth, GridLineShorthand, GridLineValue,
-    GridRepeatCount, GridShorthand, GridTemplateAreaEntry, GridTemplateAreas,
-    GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+    FontVariantPosition, FontVariationSetting, FontVariationSettings, FontWeightValue,
+    GapShorthand, GeometryBox, GridAreaShorthand, GridAutoFlowValue, GridInflexibleBreadth,
+    GridLineShorthand, GridLineValue, GridRepeatCount, GridShorthand, GridTemplateAreaEntry,
+    GridTemplateAreas, GridTemplateAreasValue, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, HangingPunctuation, HyphenateCharacter,
     HyphenateLimitChars, HyphenateLimitCharsValue, Hyphens, Isolation, Length, LengthOrAuto,
     LengthOrNormal, LengthPercentageCalc, LetterSpacingValue, LineBreak, LineHeight,
@@ -643,6 +643,33 @@ fn cascade_page_multiple_properties_all_win_independently() {
     assert_eq!(
         result.declarations().get(&PropertyKey::FontWeight),
         Some(&PropertyValue::FontWeight(FontWeightValue::Absolute(700.0)))
+    );
+}
+
+#[test]
+fn cascade_page_font_variation_settings_canonicalizes_computed_value() {
+    let root = ComputedValues::initial();
+    let result = page(
+        "@page { font-variation-settings: \"wght\" 700, \"wdth\" 200, \"wght\" 640 }",
+        &root,
+    );
+
+    assert_eq!(
+        result
+            .declarations()
+            .get(&PropertyKey::FontVariationSettings),
+        Some(&PropertyValue::FontVariationSettings(
+            FontVariationSettings::Settings(vec![
+                FontVariationSetting {
+                    tag: "wdth".into(),
+                    value: 200.0,
+                },
+                FontVariationSetting {
+                    tag: "wght".into(),
+                    value: 640.0,
+                },
+            ])
+        ))
     );
 }
 
