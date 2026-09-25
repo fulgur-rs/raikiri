@@ -566,3 +566,17 @@ fn numbers_outside_i32_keep_their_value_instead_of_saturating() {
     assert_eq!(serialize_length(&Length::Px(1.0e10)), "10000000000.0px");
     assert_eq!(serialize_length(&Length::Percent(3.0e9)), "3000000000.0%");
 }
+
+#[test]
+fn percentages_format_their_own_number_without_scaling_error() {
+    use cssparser::ToCss as _;
+
+    // Formatting `value / 100` and scaling it back up rounds 1.562525 down.
+    assert_eq!(serialize_length(&Length::Percent(1.562525)), "1.56253%");
+    assert_eq!(serialize_length(&Length::Percent(12.5)), "12.5%");
+    assert_eq!(serialize_length(&Length::Percent(-10.0)), "-10%");
+    assert_eq!(
+        crate::ComputedLetterSpacing::Percent(1.562525).to_css_string(),
+        "1.56253%"
+    );
+}

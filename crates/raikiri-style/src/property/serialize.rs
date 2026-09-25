@@ -1,7 +1,7 @@
 use cssparser::{CowRcStr, ParseError, Parser, ParserInput, ToCss as _, Token};
 
 use super::calc_serialize::{
-    CalcNode, CalcUnitKind, integer_value, parse_calc_or_plain, serialize_calc_node,
+    CalcNode, CalcUnitKind, format_css_number, parse_calc_or_plain, serialize_calc_node,
     serialize_calc_node_as_angle,
 };
 use super::parse::{channel_to_u8, parse_color, parse_color_float};
@@ -363,31 +363,15 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
     }
 }
 
-/// Serializes a numeric CSS dimension (`10px`, `1.5em`) using the exact
-/// number-formatting algorithm `cssparser`'s own tokenizer uses for
-/// `Token::Dimension`/`Token::Percentage` (shortest round-tripping decimal
-/// via `dtoa_short`, integers printed without a decimal point). Building a
-/// `Token` and calling its `to_css_string()` reuses that algorithm instead
-/// of reimplementing CSS number serialization here.
+/// Serializes a numeric CSS dimension (`10px`, `1.5em`). `unit` is always a
+/// CSS unit name, so it needs no identifier escaping.
 fn serialize_dimension(value: f32, unit: &str) -> String {
-    let int_value = integer_value(value);
-    Token::Dimension {
-        has_sign: false,
-        value,
-        int_value,
-        unit: CowRcStr::from(unit),
-    }
-    .to_css_string()
+    format!("{}{unit}", format_css_number(value))
 }
 
+/// Serializes a percentage from its own number (`12.5` is `12.5%`).
 fn serialize_percentage(value: f32) -> String {
-    let int_value = integer_value(value);
-    Token::Percentage {
-        has_sign: false,
-        unit_value: value / 100.0,
-        int_value,
-    }
-    .to_css_string()
+    format!("{}%", format_css_number(value))
 }
 
 /// Serializes a [`Length`] back to CSS text (`Length::Px(10.0)` -> `"10px"`).
@@ -514,13 +498,7 @@ pub(crate) fn serialize_alpha_channel(alpha: u8) -> String {
 }
 
 pub(crate) fn serialize_number(value: f32) -> String {
-    let int_value = integer_value(value);
-    Token::Number {
-        has_sign: false,
-        value,
-        int_value,
-    }
-    .to_css_string()
+    format_css_number(value)
 }
 
 /// Serializes a [`CssColor`] as legacy `rgb()`/`rgba()` notation. CSS Color 4
