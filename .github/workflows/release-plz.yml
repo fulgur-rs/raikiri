@@ -11,6 +11,8 @@ jobs:
   release-pr:
     name: Create or update Release PR
     runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: stable
     concurrency:
       group: release-plz-release-pr-${{ github.ref }}
       cancel-in-progress: false
@@ -21,6 +23,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Update stable Rust for cargo-semver-checks
+        run: rustup update stable
 
       - name: Create repository-scoped GitHub App token
         id: app-token
