@@ -86,10 +86,9 @@ const FONT_SIZE_CAP: u64 = 100 * 1024 * 1024;
 /// `raikiri_traits::io::open_bounded_regular_file` and
 /// `read_bounded_from_open_file`) so the callsite policy (`Io` → propagate,
 /// other reasons → warn+skip) reads the same as before the delegation. A
-/// local enum is kept alongside the traits crate's `RejectReason` because
-/// this module's variants also need to carry the path-containment rejects
-/// (`PathEscape` / `PathEscapePostOpen`) that stay module-local — see
-/// `check_open_handle_containment` below for why.
+/// local enum is kept alongside the traits crate's `RejectReason` so the
+/// `Display` wording and the walker-vs-read warn taxonomy stay specific to
+/// the fonts directory.
 #[derive(Debug)]
 enum FontReadReject {
     /// `symlink_metadata().file_type().is_symlink()` returned true, **or**
@@ -141,12 +140,12 @@ enum FontReadReject {
         /// Canonicalized fonts root that the target should have stayed under.
         root: PathBuf,
     },
-    /// Post-open, fd-bound containment recheck (`check_open_handle_containment`)
-    /// found the already-opened descriptor resolves outside `canonical_root`.
+    /// Post-open, fd-bound containment recheck (inside
+    /// [`raikiri_traits::io::read_bounded_contained_file`]) found the
+    /// already-opened descriptor resolves outside `canonical_root`.
     /// Unlike [`FontReadReject::PathEscape`] (a fresh, path-based
-    /// `canonicalize` re-resolution — itself TOCTOU-vulnerable to a second
-    /// swap before this recheck runs, and, per [`read_bounded_font_file`]'s
-    /// own doc, now performed *after* the open rather than before it),
+    /// `canonicalize` re-resolution, run after the open and itself
+    /// TOCTOU-vulnerable to a second swap before this recheck runs),
     /// this variant is derived from the fd the open actually returned —
     /// on Linux via `/proc/self/fd/<fd>`, on Apple platforms via
     /// `fcntl(fd, F_GETPATH, ..)` — so firing here
@@ -201,203 +200,8 @@ impl std::fmt::Display for FontReadReject {
     }
 }
 
-/// Post-open fd-bound containment recheck: verify the descriptor
-/// `raikiri_traits::io::open_bounded_regular_file` returned still resolves
-/// under `canonical_root`, using a path derived **from the fd itself**
-/// rather than a fresh path-based `canonicalize` call.
-///
-/// # Why this closes the intermediate-dir-swap TOCTOU
-///
-/// `read_bounded_font_file`'s `canonicalize` gate (which, per that
-/// function's own doc, runs after the open rather than before it) checks
-/// `starts_with(canonical_root)`. That check and the open inside
-/// `open_bounded_regular_file` independently re-resolve the same pathname,
-/// so they are two separate lookups of a mutable filesystem tree, not one
-/// atomic operation on one object: an attacker who swaps an intermediate
-/// directory component between the two calls can make the canonicalize
-/// observe a path inside `canonical_root` while the open's own pathname
-/// resolution — running microseconds earlier or later — binds the fd to a
-/// different, outside-root object. The leaf is still a regular file either
-/// way, so neither the post-open kind check inside
-/// `open_bounded_regular_file` (kind only) nor the path-based
-/// canonicalize check (independently re-resolved, stale by the time this
-/// runs) catches the swap.
-///
-/// The fix is to derive the containment check from the **same fd** that
-/// will be read, so there is no second pathname resolution after the
-/// check to race against. On Linux, `/proc/self/fd/<fd>` is a magic
-/// symlink the kernel keeps pointing at the dentry the fd is actually
-/// bound to; `readlink`-ing it costs one syscall and does not walk
-/// `path` again, so the check is bound to the fd the open actually returned
-/// rather than to an independent re-resolution of `path` — which is
-/// exactly the attack this closes. (Precisely: the kernel reconstructs
-/// the *reported path string* from the dentry chain at readlink time, so
-/// a rename of an ancestor directory between the open and this call
-/// can still change what `readlink` reports; what cannot happen is a
-/// second, attacker-steerable *pathname lookup* of `path` — the class of
-/// swap this task closes.) Because the same `file` is used for both this
-/// check and the subsequent read, "checked" and "used" are provably the
-/// same fd — matching the pattern `raikiri_traits::io::open_bounded_regular_file`
-/// already establishes internally for its own post-open kind check.
-///
-/// If `/proc` is unavailable (e.g. a container/chroot without procfs
-/// mounted), `read_link` returns `Err` and this function propagates it
-/// via `FontReadReject::Io`. At the `read_bounded_font_file` callsite
-/// that reject is **not** warn+skip — `FontReadReject::Io` hard-aborts
-/// the whole font-context build as `FontError::Io` (see the "Not
-/// surfaced" section on [`FontWarn`]). This is deliberate fail-closed:
-/// a filesystem that cannot support the authoritative containment check
-/// is treated as a hard error rather than silently falling back to the
-/// weaker path-based-only guarantee (the `canonicalize` check alone,
-/// without this fd-based recheck).
-///
-/// # Portability
-///
-/// Two platform families have an active fd-to-path primitive; a third
-/// (everything else, including non-Apple BSDs and Windows) has none wired
-/// up and falls back to a no-op.
-///
-/// - **Linux** (this impl): `std::fs::read_link` on `/proc/self/fd/<fd>`
-///   (pure Rust, no `unsafe`, no new dependency, no raw FFI call).
-/// - **Apple platforms** (macOS/iOS/tvOS/watchOS/visionOS, see the
-///   `#[cfg(any(target_os = "macos", ...))]` impl below): `fcntl(fd,
-///   F_GETPATH, ..)` via `rustix::fs::getpath`, a safe wrapper — added
-///   as a direct dependency: Pure Rust, already transitively vetted in this
-///   dependency tree (`Cargo.lock` carried rustix v1.1.4 via `tempfile`
-///   before this change), keeps raikiri-dom's own `unsafe` surface at
-///   zero for this fix. `F_GETPATH` is a Darwin/XNU-specific `fcntl`
-///   command — it is not a generic BSD primitive; FreeBSD/OpenBSD/NetBSD/
-///   DragonFly have no equivalent, and `rustix::fs::getpath` itself is
-///   `#[cfg(apple)]`-gated internally (see rustix's own `build.rs`) to
-///   exactly this platform set, so this fix covers Apple platforms only.
-/// - **Everything else** (non-Apple BSDs, Windows, ...): no-op fallback
-///   (below) that leaves the `canonicalize` + `starts_with` check (which
-///   runs *after* the open, not before — see [`read_bounded_font_file`]'s
-///   own doc) as the only *intermediate-directory-swap containment* gate
-///   there — no worse than
-///   before this fix landed. Non-Apple BSDs remain an untracked residual
-///   as of this change. This is a distinct gap from Windows' leaf-swap-at-
-///   open defense, which `raikiri_traits::io::open_bounded_regular_file`
-///   already closes via `FILE_FLAG_OPEN_REPARSE_POINT` plus a post-open
-///   attribute recheck — see that function's doc for details.
-///
-/// Closes the intermediate-directory-swap PathEscape residual.
-#[cfg(target_os = "linux")]
-fn check_open_handle_containment(
-    file: &std::fs::File,
-    canonical_root: &Path,
-) -> Result<(), FontReadReject> {
-    use std::os::unix::io::AsRawFd;
-    let fd_link = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
-    let canonical = std::fs::read_link(&fd_link).map_err(FontReadReject::Io)?;
-    if !canonical.starts_with(canonical_root) {
-        return Err(FontReadReject::PathEscapePostOpen {
-            canonical,
-            root: canonical_root.to_path_buf(),
-        });
-    }
-    Ok(())
-}
-
-/// Apple-platform implementation: derives the post-open containment path
-/// from the same fd the open returned, via `fcntl(fd, F_GETPATH, ..)`
-/// through [`rustix::fs::getpath`] — the Darwin/XNU analogue of the Linux
-/// arm's `/proc/self/fd/<fd>` readlink above. Same race-freedom argument
-/// applies: `F_GETPATH` asks the kernel for the path bound to *this*
-/// vnode via *this* descriptor, not a fresh pathname lookup of `path`, so
-/// there is no second attacker-steerable resolution to race against.
-/// (Caveat mirroring the Linux arm's: the kernel reconstructs the
-/// *reported path string* from the vnode's cached name cache entry, which
-/// can still change if an ancestor directory is renamed, or go stale
-/// after the last hard link to the file is unlinked; what cannot happen
-/// is a second, attacker-steerable *pathname lookup* of `path` — the
-/// class of swap this task closes.)
-///
-/// A `getpath` failure is mapped through `From<rustix::io::Errno> for
-/// std::io::Error` into `FontReadReject::Io`, taking the same fail-closed
-/// hard-abort path as the Linux arm's `read_link` failure (see the
-/// "deliberate fail-closed" paragraph above): a
-/// filesystem that cannot support the authoritative containment check is
-/// a hard error, not a silent fallback to the weaker path-based-only
-/// guarantee (the `canonicalize` check alone, without this fd-based
-/// recheck). Note the failure *shape* differs from Linux: a live fd's
-/// `/proc/self/fd/<fd>` entry effectively cannot fail to `readlink`, while
-/// `F_GETPATH` reconstructs its answer from the vnode's name cache and has
-/// a genuine (if rare) failure path even for a live, still-open
-/// descriptor — the fail-closed mapping above treats that the same as any
-/// other containment-check failure.
-///
-/// # Untested in CI
-///
-/// No CI target for any Apple platform exists in this repo yet. The unit
-/// tests mirroring
-/// `check_open_handle_containment_accepts_file_within_root` /
-/// `_rejects_file_outside_root` are compiled and pinned under this same
-/// `cfg` below but have never executed against a real toolchain. This is a
-/// deliberate tradeoff: document untested-status rather than block on
-/// standing up Apple CI. If a future
-/// Apple CI run fails these tests, the first suspect should be
-/// `F_GETPATH`'s path *form* rather than the containment logic — Darwin
-/// resolves several common temp-dir prefixes to a different canonical
-/// form than the path used to reach them (`/tmp` → `/private/tmp`,
-/// `/var` → `/private/var`), and `tempfile::tempdir()` on macOS lands
-/// under `/var/folders/...`, i.e. exactly such a prefix. This function
-/// itself does not care (`canonical_root` is derived the same way, from
-/// `std::fs::canonicalize` on the same temp dir, so both sides of the
-/// `starts_with` comparison would resolve consistently), but a mismatch
-/// here is the first thing to check before suspecting the containment
-/// check proper.
-#[cfg(any(
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "tvos",
-    target_os = "watchos",
-    target_os = "visionos"
-))]
-fn check_open_handle_containment(
-    file: &std::fs::File,
-    canonical_root: &Path,
-) -> Result<(), FontReadReject> {
-    use std::os::unix::ffi::OsStringExt;
-    let path_cstr = rustix::fs::getpath(file)
-        .map_err(|errno| FontReadReject::Io(std::io::Error::from(errno)))?;
-    let canonical = PathBuf::from(std::ffi::OsString::from_vec(path_cstr.into_bytes()));
-    if !canonical.starts_with(canonical_root) {
-        return Err(FontReadReject::PathEscapePostOpen {
-            canonical,
-            root: canonical_root.to_path_buf(),
-        });
-    }
-    Ok(())
-}
-
-/// Fallback for every other platform (non-Apple BSDs, Windows, ...): no
-/// portable primitive is wired up (see the Portability section on the
-/// `target_os = "linux"` impl above). No-op so behavior on these
-/// platforms is unchanged by this task — the `canonicalize` + `starts_with`
-/// gate in `read_bounded_font_file` (which now runs *after* the open, per
-/// that function's own comments) remains the only containment check,
-/// exactly as it was before the post-open containment recheck existed.
-#[cfg(not(any(
-    target_os = "linux",
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "tvos",
-    target_os = "watchos",
-    target_os = "visionos"
-)))]
-fn check_open_handle_containment(
-    _file: &std::fs::File,
-    _canonical_root: &Path,
-) -> Result<(), FontReadReject> {
-    Ok(())
-}
-
 /// Map a [`raikiri_traits::io::RejectReason`] onto this module's
-/// [`FontReadReject`] taxonomy. `raikiri_traits::io::open_bounded_regular_file`
-/// and `read_bounded_from_open_file` carry no `path` field (the caller
-/// already has it), so `FontReadReject`'s path-carrying variants are not in
-/// play here — this mapping only ever produces the path-free variants.
+/// [`FontReadReject`] taxonomy, one variant to one variant.
 ///
 /// `RejectReason` and `OversizePhase` are both `#[non_exhaustive]`; a future
 /// variant this match has not been updated for falls through to the
@@ -420,102 +224,34 @@ fn map_reject_reason(reason: raikiri_traits::io::RejectReason) -> FontReadReject
             cap,
             phase: OversizePhase::DuringRead,
         } => FontReadReject::OversizedDuringRead { size, cap },
+        RejectReason::PathEscape { canonical, root } => {
+            FontReadReject::PathEscape { canonical, root }
+        }
+        RejectReason::PathEscapePostOpen { canonical, root } => {
+            FontReadReject::PathEscapePostOpen { canonical, root }
+        }
         RejectReason::Io(source) => FontReadReject::Io(source),
-        // cov:ignore: unreachable while RejectReason is Symlink|NotRegularFile|
-        // NotRegularFilePostOpen|Oversized|Io only (all explicitly matched
-        // above); required for its #[non_exhaustive] contract.
+        // cov:ignore: unreachable while every current RejectReason variant is
+        // matched explicitly above; required for its #[non_exhaustive]
+        // contract.
         other => FontReadReject::Io(std::io::Error::other(other.to_string())),
     }
 }
 
-/// Read a regular font file with the leaf-swap TOCTOU defense stack:
-/// `raikiri_traits::io::open_bounded_regular_file` provides the pre-open
-/// `symlink_metadata` + `is_file()` + size-cap gates, the `O_NOFOLLOW |
-/// O_NONBLOCK` open (unix) / reparse-point-aware open (Windows), and the
-/// post-open fd-based kind recheck (rejects non-regular kinds bound to the
-/// descriptor). This function layers the path-containment defense on top —
-/// a `canonicalize` + `starts_with(canonical_root)` gate, and
-/// [`check_open_handle_containment`] (rejects an fd resolving outside
-/// `canonical_root`, on Linux via `/proc/self/fd/<fd>`, on Apple platforms
-/// via `fcntl(fd, F_GETPATH, ..)`) — race-free against a path-swap because
-/// it consults the fd the traits helper's open actually returned rather
-/// than re-resolving `path` — and the `+1-probe` bounded read via
-/// `raikiri_traits::io::read_bounded_from_open_file`.
-///
-/// # `canonical_root` containment
-///
-/// `canonical_root` is the pre-canonicalized walker root, threaded through
-/// so `read_bounded_font_file` can verify that after canonicalization the
-/// candidate path stays inside that root.  Belt-and-suspenders against the
-/// intermediate-symlink attack (walker recorded `subdir/font.ttf`, attacker
-/// swapped `subdir/` into a symlink to `/tmp/evil/` between walk and read).
-/// The leaf-symlink check does not cover this — `symlink_metadata` follows
-/// intermediate components and only refuses to follow the final component —
-/// so an intermediate-symlink escape produces `is_symlink() == false` on the
-/// leaf and would slip past every existing gate.  Mirrors
-/// `raikiri_vrt::reference::read_bounded_fixture_file`. Closes the
-/// intermediate-directory-swap PathEscape gap.
-///
-/// This `canonicalize`-based gate is **not** race-free by itself: it and
-/// the open inside `open_bounded_regular_file` are two independent
-/// pathname resolutions of a mutable tree, so an intermediate directory can
-/// be swapped between them regardless of which one runs first — it is run
-/// *after* the open below purely because the open must happen first to
-/// obtain the handle [`check_open_handle_containment`] needs. On platforms
-/// where that fd-based recheck is actually wired up (Linux, Apple; see the
-/// Portability section above), the ordering is immaterial: the post-open
-/// recheck is authoritative regardless of when this `canonicalize` runs.
-/// On the no-op fallback platforms, though, this ordering means a regular
-/// file outside `canonical_root` is now briefly opened before being
-/// rejected — never read, so no content is disclosed, but the fd exists
-/// for a moment where it previously would not have; a documented residual
-/// on those platforms, not a claim that the ordering has zero effect
-/// anywhere.
-/// [`check_open_handle_containment`] closes the residual window post-open,
-/// deriving the containment check from the fd the open actually returned
-/// instead of a second path-based lookup. Closes the
-/// intermediate-directory-swap PathEscape residual.
+/// Read a regular font file that must stay inside the walked fonts
+/// directory, via `raikiri_traits::io::read_bounded_contained_file` (leaf
+/// symlink / kind / size gates, containment under `canonical_root` including
+/// an fd-derived post-open recheck, and a bounded read). `canonical_root` is
+/// the pre-canonicalized walker root; the containment checks reject an
+/// intermediate directory swapped into a symlink pointing outside it
+/// between the walk and the read.
 fn read_bounded_font_file(
     path: &Path,
     canonical_root: &Path,
     size_cap: u64,
 ) -> Result<Vec<u8>, FontReadReject> {
-    let (mut file, _len) =
-        raikiri_traits::io::open_bounded_regular_file(path, size_cap).map_err(map_reject_reason)?;
-
-    // Containment check via canonicalization.  Given the leaf `is_symlink()`
-    // gate inside `open_bounded_regular_file`, an unresolvable escape via a
-    // *leaf* symlink is already rejected; this branch covers
-    // *intermediate*-directory-symlink escapes (e.g. `fonts_dir/subdir/`
-    // swapped into a symlink to `/tmp/evil/` between walk and read, with
-    // `subdir/Ahem.ttf` still a regular file leaf so `is_symlink()` on the
-    // leaf does not fire).  Mirrors
-    // `raikiri_vrt::reference::read_bounded_fixture_file`. Closes the
-    // intermediate-directory-swap PathEscape gap.  Only "belt": the
-    // fd-bound `check_open_handle_containment` call below (post-open,
-    // derived from the fd the open above actually returned) is what closes
-    // the window.
-    let canonical = std::fs::canonicalize(path).map_err(FontReadReject::Io)?;
-    if !canonical.starts_with(canonical_root) {
-        return Err(FontReadReject::PathEscape {
-            canonical,
-            root: canonical_root.to_path_buf(),
-        });
-    }
-    // Post-open fd-bound containment recheck: verify the descriptor the
-    // open above bound still resolves under `canonical_root`, derived from
-    // the fd itself (Linux: `/proc/self/fd/<fd>` readlink; Apple platforms:
-    // `fcntl(fd, F_GETPATH, ..)`) rather than a fresh path-based
-    // `canonicalize`. Closes the intermediate-dir-swap TOCTOU window
-    // between the open above and this recheck itself — the `canonicalize`
-    // above is its own separate, independently re-resolved pathname lookup
-    // and cannot close that window by construction (see this function's
-    // own doc comment). See `check_open_handle_containment` doc for the full
-    // rationale and the remaining no-op fallback for platforms without a
-    // wired-up primitive.
-    check_open_handle_containment(&file, canonical_root)?;
-
-    raikiri_traits::io::read_bounded_from_open_file(&mut file, size_cap).map_err(map_reject_reason)
+    raikiri_traits::io::read_bounded_contained_file(path, canonical_root, size_cap)
+        .map_err(map_reject_reason)
 }
 
 /// Structured warn event emitted by [`build_wpt_font_ctx_with_observer`] for
@@ -642,8 +378,8 @@ pub enum FontWarn<'a> {
     /// candidate whose opened descriptor resolved outside the walker's
     /// canonical root. This is the race-free complement to
     /// [`FontWarn::ReadRejectedPathEscape`]: that check's `canonicalize`
-    /// (which, per [`read_bounded_font_file`]'s own doc, now runs after the
-    /// open rather than before it) re-resolves the pathname a second time
+    /// (run after the open, see
+    /// [`raikiri_traits::io::read_bounded_contained_file`]) re-resolves the pathname a second time
     /// (independently of the open's own resolution), leaving a window for
     /// an intermediate-directory swap between the two lookups; this fd-bound
     /// recheck (Linux: `/proc/self/fd/<fd>` readlink; Apple platforms:
@@ -976,11 +712,11 @@ pub fn build_wpt_font_ctx_with_observer(
         //   descriptor (race-free by construction) — this closes the
         //   FIFO/device leaf-swap gap.  `PathEscapePostOpen` covers
         //   the intermediate-dir-swap subclass that survives even
-        //   `PathEscape`'s `canonicalize` check (which itself now runs
-        //   after the open, not before): an attacker swaps the
+        //   `PathEscape`'s `canonicalize` check (which runs after the
+        //   open): an attacker swaps the
         //   intermediate directory again between the open and this
-        //   `canonicalize` check.  The fd-bound
-        //   `check_open_handle_containment` recheck (Linux: `/proc/self/fd/
+        //   `canonicalize` check.  The fd-bound containment
+        //   recheck (Linux: `/proc/self/fd/
         //   <fd>` readlink; Apple platforms: `fcntl(fd, F_GETPATH, ..)`) is
         //   derived from the fd the open actually returned, so it is
         //   race-free against that second swap by construction — this
@@ -2538,6 +2274,22 @@ mod tests {
                 cap: 100
             }
         ));
+        assert!(matches!(
+            map_reject_reason(RejectReason::PathEscape {
+                canonical: PathBuf::from("/outside/a.ttf"),
+                root: PathBuf::from("/fonts"),
+            }),
+            FontReadReject::PathEscape { canonical, root }
+                if canonical == Path::new("/outside/a.ttf") && root == Path::new("/fonts")
+        ));
+        assert!(matches!(
+            map_reject_reason(RejectReason::PathEscapePostOpen {
+                canonical: PathBuf::from("/outside/b.ttf"),
+                root: PathBuf::from("/fonts"),
+            }),
+            FontReadReject::PathEscapePostOpen { canonical, root }
+                if canonical == Path::new("/outside/b.ttf") && root == Path::new("/fonts")
+        ));
         let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
         assert!(matches!(
             map_reject_reason(RejectReason::Io(io_err)),
@@ -2545,89 +2297,8 @@ mod tests {
         ));
     }
 
-    // ------------------------------------------------------------------
-    // Post-open fd-bound containment tests (intermediate-dir-swap TOCTOU
-    // between the open and this fd-based recheck itself)
-    // ------------------------------------------------------------------
-    //
-    // Like the FIFO/device swap window the traits-crate tests cover, the
-    // actual intermediate-dir swap race — between the open and
-    // `check_open_handle_containment`'s fd-based recheck — is not
-    // deterministically reachable through the composed function
-    // `read_bounded_font_file` — it requires a second attacker action
-    // landing in a microseconds-wide window between two syscalls on the
-    // same thread. The defense is instead exercised at the primitive
-    // level: `raikiri_traits::io::open_bounded_regular_file` +
-    // `check_open_handle_containment` called directly with a matching and
-    // a mismatching `canonical_root`, proving the fd-derived path used for
-    // the check is bound to the actual opened file regardless of what a
-    // path string observed at a different point in time would say.
-
-    /// `check_open_handle_containment` accepts a file whose fd resolves
-    /// under the given `canonical_root` — the happy-path regression check
-    /// that the `/proc/self/fd/<fd>` readlink does not spuriously reject
-    /// files that are, in fact, inside the root.
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn check_open_handle_containment_accepts_file_within_root() {
-        let tmp = tempfile::tempdir().unwrap();
-        let canonical_root = std::fs::canonicalize(tmp.path()).unwrap();
-        let path = canonical_root.join("inside.ttf");
-        std::fs::File::create(&path)
-            .unwrap()
-            .write_all(b"inside content")
-            .unwrap();
-
-        let (file, _len) = raikiri_traits::io::open_bounded_regular_file(&path, FONT_SIZE_CAP)
-            .expect("open should succeed on regular file");
-        check_open_handle_containment(&file, &canonical_root)
-            .expect("fd resolving inside canonical_root must pass containment recheck");
-    }
-
-    /// `check_open_handle_containment` rejects a file whose fd resolves
-    /// outside the given `canonical_root`. This is the primitive-level check
-    /// of the actual defense: even though the open succeeded (it is a
-    /// perfectly regular file, just not under the expected root), the
-    /// fd-derived `/proc/self/fd/<fd>` path fails
-    /// `starts_with(canonical_root)` and the recheck rejects — proving the
-    /// check does not trust a path string, only the fd's own resolved
-    /// target. Simulates what an intermediate-dir-swap attacker would
-    /// achieve: an fd bound to a location outside `canonical_root`, opened
-    /// via a pathname that (at a *different* point in time, e.g. the
-    /// `canonicalize` above) resolved inside it. Closes the
-    /// intermediate-directory-swap PathEscape residual.
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn check_open_handle_containment_rejects_file_outside_root() {
-        let fonts_tmp = tempfile::tempdir().unwrap();
-        let outside_tmp = tempfile::tempdir().unwrap();
-        let canonical_root = std::fs::canonicalize(fonts_tmp.path()).unwrap();
-        let canonical_outside = std::fs::canonicalize(outside_tmp.path()).unwrap();
-
-        let outside_leaf = canonical_outside.join("font.ttf");
-        std::fs::File::create(&outside_leaf)
-            .unwrap()
-            .write_all(b"outside content")
-            .unwrap();
-
-        let (file, _len) =
-            raikiri_traits::io::open_bounded_regular_file(&outside_leaf, FONT_SIZE_CAP)
-                .expect("open should succeed on regular file");
-        match check_open_handle_containment(&file, &canonical_root) {
-            Err(FontReadReject::PathEscapePostOpen { canonical, root }) => {
-                assert_eq!(canonical, outside_leaf);
-                assert_eq!(root, canonical_root);
-            }
-            other => panic!(
-                "expected PathEscapePostOpen for fd resolving outside canonical_root, got {other:?}"
-            ),
-        }
-    }
-
     /// `FontReadReject::PathEscapePostOpen`'s `Display` output. Constructed
-    /// directly (no filesystem I/O) since this is a pure formatting check —
-    /// the variant's actual construction sites are pinned by
-    /// `check_open_handle_containment_rejects_file_outside_root` above.
+    /// directly (no filesystem I/O) since this is a pure formatting check.
     #[test]
     fn font_read_reject_path_escape_post_open_display_contains_paths() {
         let err = FontReadReject::PathEscapePostOpen {
@@ -2657,92 +2328,6 @@ mod tests {
             s,
             "skipping /tmp/fake.ttf (canonicalizes to /tmp/outside/font.ttf which escapes fonts root /tmp/fonts)"
         );
-    }
-
-    // ------------------------------------------------------------------
-    // Apple-platform post-open fd-bound containment tests (the
-    // Apple-platform arm of the same defense the
-    // Linux tests above pin, via `fcntl(fd, F_GETPATH, ..)` instead of
-    // `/proc/self/fd/<fd>` readlink).
-    // ------------------------------------------------------------------
-    //
-    // These mirror `check_open_handle_containment_accepts_file_within_root`
-    // / `_rejects_file_outside_root` above structurally (same setup, same
-    // assertions) — only the underlying platform primitive differs. They
-    // do not run in this repo's Linux CI and have never executed against
-    // a real Apple toolchain (no Apple CI target exists here yet; see the
-    // "Untested in CI" section on the
-    // `check_open_handle_containment` Apple-platform impl above for the
-    // accepted-risk rationale and the `F_GETPATH` path-form caveat to
-    // check first if either of these ever fails on real Apple CI).
-
-    /// `check_open_handle_containment` (Apple-platform arm) accepts a file
-    /// whose fd resolves under the given `canonical_root` — the happy-path
-    /// regression check that `fcntl(fd, F_GETPATH, ..)` does not spuriously
-    /// reject files that are, in fact, inside the root.
-    #[cfg(any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "watchos",
-        target_os = "visionos"
-    ))]
-    #[test]
-    fn check_open_handle_containment_accepts_file_within_root() {
-        let tmp = tempfile::tempdir().unwrap();
-        let canonical_root = std::fs::canonicalize(tmp.path()).unwrap();
-        let path = canonical_root.join("inside.ttf");
-        std::fs::File::create(&path)
-            .unwrap()
-            .write_all(b"inside content")
-            .unwrap();
-
-        let (file, _len) = raikiri_traits::io::open_bounded_regular_file(&path, FONT_SIZE_CAP)
-            .expect("open should succeed on regular file");
-        check_open_handle_containment(&file, &canonical_root)
-            .expect("fd resolving inside canonical_root must pass containment recheck");
-    }
-
-    /// `check_open_handle_containment` (Apple-platform arm) rejects a file
-    /// whose fd resolves outside the given `canonical_root`. Mirrors the
-    /// Linux primitive-level check: even though the open succeeded (it is a
-    /// perfectly regular file, just not under the expected root), the
-    /// fd-derived `F_GETPATH` path fails
-    /// `starts_with(canonical_root)` and the recheck rejects — proving the
-    /// check does not trust a path string, only the fd's own resolved
-    /// target.
-    #[cfg(any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "watchos",
-        target_os = "visionos"
-    ))]
-    #[test]
-    fn check_open_handle_containment_rejects_file_outside_root() {
-        let fonts_tmp = tempfile::tempdir().unwrap();
-        let outside_tmp = tempfile::tempdir().unwrap();
-        let canonical_root = std::fs::canonicalize(fonts_tmp.path()).unwrap();
-        let canonical_outside = std::fs::canonicalize(outside_tmp.path()).unwrap();
-
-        let outside_leaf = canonical_outside.join("font.ttf");
-        std::fs::File::create(&outside_leaf)
-            .unwrap()
-            .write_all(b"outside content")
-            .unwrap();
-
-        let (file, _len) =
-            raikiri_traits::io::open_bounded_regular_file(&outside_leaf, FONT_SIZE_CAP)
-                .expect("open should succeed on regular file");
-        match check_open_handle_containment(&file, &canonical_root) {
-            Err(FontReadReject::PathEscapePostOpen { canonical, root }) => {
-                assert_eq!(canonical, outside_leaf);
-                assert_eq!(root, canonical_root);
-            }
-            other => panic!(
-                "expected PathEscapePostOpen for fd resolving outside canonical_root, got {other:?}"
-            ),
-        }
     }
 
     // ------------------------------------------------------------------

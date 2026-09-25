@@ -27,5 +27,16 @@ tempfile = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# `io::read_bounded_contained_file`'s Apple-platform arm resolves the opened
+# descriptor's path with `fcntl(fd, F_GETPATH, ..)` via the safe
+# `rustix::fs::getpath` wrapper (no `unsafe` in this crate). Target-gated to
+# the same platform set as that `cfg` arm; `rustix::fs::getpath` is itself
+# Apple-only. Default features (`std`, hence `alloc`) are load-bearing:
+# `getpath` requires `alloc`, and the `Errno` -> `std::io::Error` conversion
+# requires `std`, so do not add `default-features = false` without
+# re-adding `std`.
+[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos", target_os = "visionos"))'.dependencies]
+rustix = { version = "1", features = ["fs"] }
+
 [lints]
 workspace = true
