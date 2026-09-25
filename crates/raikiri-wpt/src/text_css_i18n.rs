@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use raikiri_js::TestOutcome;
 use raikiri_js::dom::{DomBackend, DomNodeId, DomRect, ElementGeometry};
 use raikiri_js::testharness::run_testharness_script;
+use raikiri_style::property::{PropertyValue, serialize_value};
 
 use crate::reftest::{DEFAULT_REFTTEST_HEIGHT, DEFAULT_REFTTEST_WIDTH, prepare_wpt_live_document};
 
@@ -719,64 +720,36 @@ impl DomBackend for LiveDocumentBackend {
             .ok_or_else(|| format!("computed style is missing for DOM node {node}"))?;
         let value = match property {
             ComputedProperty::Direction => computed.direction.as_css_str(),
-            ComputedProperty::FontKerning => {
-                let property_value =
-                    raikiri_style::property::PropertyValue::FontKerning(computed.font_kerning);
-                return Ok(raikiri_style::property::serialize_value(&property_value));
-            }
+            ComputedProperty::FontKerning => computed.font_kerning.as_css_str(),
             ComputedProperty::FontVariantCaps => computed.font_variant_caps.as_css_str(),
-            ComputedProperty::FontOpticalSizing => {
-                let property_value = raikiri_style::property::PropertyValue::FontOpticalSizing(
-                    computed.font_optical_sizing,
-                );
-                return Ok(raikiri_style::property::serialize_value(&property_value));
-            }
-            ComputedProperty::FontVariantEmoji => {
-                let property_value = raikiri_style::property::PropertyValue::FontVariantEmoji(
-                    computed.font_variant_emoji,
-                );
-                return Ok(raikiri_style::property::serialize_value(&property_value));
-            }
+            ComputedProperty::FontOpticalSizing => computed.font_optical_sizing.as_css_str(),
+            ComputedProperty::FontVariantEmoji => computed.font_variant_emoji.as_css_str(),
             ComputedProperty::FontLanguageOverride => {
-                let property_value = raikiri_style::property::PropertyValue::FontLanguageOverride(
+                return Ok(serialize_value(&PropertyValue::FontLanguageOverride(
                     computed.font_language_override.clone(),
-                );
-                return Ok(raikiri_style::property::serialize_value(&property_value));
+                )));
             }
-            ComputedProperty::FontVariantLigatures => {
-                let property_value = raikiri_style::property::PropertyValue::FontVariantLigatures(
-                    computed.font_variant_ligatures,
-                );
-                return Ok(raikiri_style::property::serialize_value(&property_value));
-            }
+            ComputedProperty::FontVariantLigatures => computed.font_variant_ligatures.as_css_str(),
             ComputedProperty::FontSynthesis => {
-                let property_value =
-                    raikiri_style::property::PropertyValue::FontSynthesis(computed.font_synthesis);
-                return Ok(raikiri_style::property::serialize_value(&property_value));
+                return Ok(serialize_value(&PropertyValue::FontSynthesis(
+                    computed.font_synthesis,
+                )));
             }
-            ComputedProperty::FontVariantPosition => {
-                let property_value = raikiri_style::property::PropertyValue::FontVariantPosition(
-                    computed.font_variant_position,
-                );
-                return Ok(raikiri_style::property::serialize_value(&property_value));
-            }
+            ComputedProperty::FontVariantPosition => computed.font_variant_position.as_css_str(),
             ComputedProperty::FontPalette => {
-                let property_value = raikiri_style::property::PropertyValue::FontPalette(
+                return Ok(serialize_value(&PropertyValue::FontPalette(
                     computed.font_palette.clone(),
-                );
-                return Ok(raikiri_style::property::serialize_value(&property_value));
+                )));
             }
             ComputedProperty::FontVariantNumeric => {
-                let property_value = raikiri_style::property::PropertyValue::FontVariantNumeric(
+                return Ok(serialize_value(&PropertyValue::FontVariantNumeric(
                     computed.font_variant_numeric,
-                );
-                return Ok(raikiri_style::property::serialize_value(&property_value));
+                )));
             }
             ComputedProperty::FontVariantEastAsian => {
-                let property_value = raikiri_style::property::PropertyValue::FontVariantEastAsian(
+                return Ok(serialize_value(&PropertyValue::FontVariantEastAsian(
                     computed.font_variant_east_asian,
-                );
-                return Ok(raikiri_style::property::serialize_value(&property_value));
+                )));
             }
             ComputedProperty::TextCombineUpright => computed.text_combine_upright.as_css_str(),
             ComputedProperty::TextOrientation => computed.text_orientation.as_css_str(),
@@ -852,16 +825,14 @@ impl DomBackend for LiveDocumentBackend {
                 return Ok(Some(value));
             }
             ComputedProperty::TextSpacing => {
-                let Some(trim) = raikiri_style::property::serialize_value(
-                    &raikiri_style::property::PropertyValue::TextSpacingTrim(
-                        computed.text_spacing_trim,
-                    ),
-                ) else {
+                let Some(trim) =
+                    serialize_value(&PropertyValue::TextSpacingTrim(computed.text_spacing_trim))
+                else {
                     return Ok(None);
                 };
-                let Some(autospace) = raikiri_style::property::serialize_value(
-                    &raikiri_style::property::PropertyValue::TextAutospace(computed.text_autospace),
-                ) else {
+                let Some(autospace) =
+                    serialize_value(&PropertyValue::TextAutospace(computed.text_autospace))
+                else {
                     return Ok(None);
                 };
                 let value = if trim == "normal" && autospace == "normal" {
@@ -887,72 +858,24 @@ impl DomBackend for LiveDocumentBackend {
             }
             ComputedProperty::TextSpacingTrim => computed.text_spacing_trim.as_css_str(),
             ComputedProperty::TextAutospace => {
-                let value = match computed.text_autospace {
-                    raikiri_style::property::TextAutospace::Normal => "normal".to_owned(),
-                    raikiri_style::property::TextAutospace::Auto => "auto".to_owned(),
-                    raikiri_style::property::TextAutospace::NoAutospace => {
-                        "no-autospace".to_owned()
-                    }
-                    raikiri_style::property::TextAutospace::Custom {
-                        ideograph_alpha,
-                        ideograph_numeric,
-                        punctuation,
-                        mode,
-                    } => {
-                        let mut keywords = Vec::with_capacity(4);
-                        if ideograph_alpha {
-                            keywords.push("ideograph-alpha");
-                        }
-                        if ideograph_numeric {
-                            keywords.push("ideograph-numeric");
-                        }
-                        if punctuation {
-                            keywords.push("punctuation");
-                        }
-                        match mode {
-                            raikiri_style::property::TextAutospaceMode::None => {}
-                            raikiri_style::property::TextAutospaceMode::Insert => {
-                                keywords.push("insert");
-                            }
-                            raikiri_style::property::TextAutospaceMode::Replace => {
-                                keywords.push("replace");
-                            }
-                            _ => return Ok(None),
-                        }
-                        keywords.join(" ")
-                    }
-                    _ => return Ok(None),
-                };
-                return Ok(Some(value));
+                return Ok(serialize_value(&PropertyValue::TextAutospace(
+                    computed.text_autospace,
+                )));
             }
             ComputedProperty::WordSpaceTransform => computed.word_space_transform.as_css_str(),
             ComputedProperty::TextDecorationSkipInk => {
-                let Some(value) = raikiri_style::property::serialize_value(
-                    &raikiri_style::property::PropertyValue::TextDecorationSkipInk(
-                        computed.text_decoration_skip_ink,
-                    ),
-                ) else {
-                    return Ok(None);
-                };
-                return Ok(Some(value));
+                computed.text_decoration_skip_ink.as_css_str()
             }
             ComputedProperty::TextDecorationSkipSpaces => {
-                let Some(value) = raikiri_style::property::serialize_value(
-                    &raikiri_style::property::PropertyValue::TextDecorationSkipSpaces(
-                        computed.text_decoration_skip_spaces,
-                    ),
-                ) else {
-                    return Ok(None);
-                };
-                return Ok(Some(value));
+                return Ok(serialize_value(&PropertyValue::TextDecorationSkipSpaces(
+                    computed.text_decoration_skip_spaces,
+                )));
             }
             ComputedProperty::TextDecoration => {
                 let mut components = Vec::with_capacity(4);
-                let Some(line) = raikiri_style::property::serialize_value(
-                    &raikiri_style::property::PropertyValue::TextDecorationLine(
-                        computed.text_decoration_line,
-                    ),
-                ) else {
+                let Some(line) = serialize_value(&PropertyValue::TextDecorationLine(
+                    computed.text_decoration_line,
+                )) else {
                     return Ok(None);
                 };
                 if line != "none" {
@@ -961,14 +884,7 @@ impl DomBackend for LiveDocumentBackend {
                 if computed.text_decoration_style
                     != raikiri_style::property::TextDecorationStyle::Solid
                 {
-                    let Some(style) = raikiri_style::property::serialize_value(
-                        &raikiri_style::property::PropertyValue::TextDecorationStyle(
-                            computed.text_decoration_style,
-                        ),
-                    ) else {
-                        return Ok(None);
-                    };
-                    components.push(style);
+                    components.push(computed.text_decoration_style.as_css_str().to_owned());
                 }
                 match computed.text_decoration_thickness {
                     raikiri_style::ComputedTextDecorationThickness::Auto => {}
@@ -1000,25 +916,11 @@ impl DomBackend for LiveDocumentBackend {
                 }
                 return Ok(Some(components.join(" ")));
             }
-            ComputedProperty::TextDecorationStyle => {
-                let Some(value) = raikiri_style::property::serialize_value(
-                    &raikiri_style::property::PropertyValue::TextDecorationStyle(
-                        computed.text_decoration_style,
-                    ),
-                ) else {
-                    return Ok(None);
-                };
-                return Ok(Some(value));
-            }
+            ComputedProperty::TextDecorationStyle => computed.text_decoration_style.as_css_str(),
             ComputedProperty::TextDecorationLine => {
-                let Some(value) = raikiri_style::property::serialize_value(
-                    &raikiri_style::property::PropertyValue::TextDecorationLine(
-                        computed.text_decoration_line,
-                    ),
-                ) else {
-                    return Ok(None);
-                };
-                return Ok(Some(value));
+                return Ok(serialize_value(&PropertyValue::TextDecorationLine(
+                    computed.text_decoration_line,
+                )));
             }
             ComputedProperty::TextDecorationInset => {
                 let value = match computed.text_decoration_inset {
@@ -1055,14 +957,9 @@ impl DomBackend for LiveDocumentBackend {
                 return Ok(Some(value));
             }
             ComputedProperty::TextEmphasisPosition => {
-                let Some(value) = raikiri_style::property::serialize_value(
-                    &raikiri_style::property::PropertyValue::TextEmphasisPosition(
-                        computed.text_emphasis_position,
-                    ),
-                ) else {
-                    return Ok(None);
-                };
-                return Ok(Some(value));
+                return Ok(serialize_value(&PropertyValue::TextEmphasisPosition(
+                    computed.text_emphasis_position,
+                )));
             }
             ComputedProperty::TextShadow => {
                 if computed.text_shadow.is_empty() {
@@ -1091,21 +988,14 @@ impl DomBackend for LiveDocumentBackend {
                 return Ok(Some(shadows.join(", ")));
             }
             ComputedProperty::TextEmphasisStyle => {
-                let Some(value) = raikiri_style::property::serialize_value(
-                    &raikiri_style::property::PropertyValue::TextEmphasisStyle(
-                        computed.text_emphasis_style.clone(),
-                    ),
-                ) else {
-                    return Ok(None);
-                };
-                return Ok(Some(value));
+                return Ok(serialize_value(&PropertyValue::TextEmphasisStyle(
+                    computed.text_emphasis_style.clone(),
+                )));
             }
             ComputedProperty::TextEmphasis => {
-                let Some(style) = raikiri_style::property::serialize_value(
-                    &raikiri_style::property::PropertyValue::TextEmphasisStyle(
-                        computed.text_emphasis_style.clone(),
-                    ),
-                ) else {
+                let Some(style) = serialize_value(&PropertyValue::TextEmphasisStyle(
+                    computed.text_emphasis_style.clone(),
+                )) else {
                     return Ok(None);
                 };
                 let color = match computed.text_emphasis_color {
@@ -1122,14 +1012,9 @@ impl DomBackend for LiveDocumentBackend {
                 return Ok(Some(format!("{style} {color}")));
             }
             ComputedProperty::TextUnderlinePosition => {
-                let Some(value) = raikiri_style::property::serialize_value(
-                    &raikiri_style::property::PropertyValue::TextUnderlinePosition(
-                        computed.text_underline_position,
-                    ),
-                ) else {
-                    return Ok(None);
-                };
-                return Ok(Some(value));
+                return Ok(serialize_value(&PropertyValue::TextUnderlinePosition(
+                    computed.text_underline_position,
+                )));
             }
             ComputedProperty::TextUnderlineOffset => {
                 let value = match computed.text_underline_offset {
@@ -1156,9 +1041,8 @@ impl DomBackend for LiveDocumentBackend {
                         )
                     }
                 };
-                let Some(value) = raikiri_style::property::serialize_value(
-                    &raikiri_style::property::PropertyValue::TextUnderlineOffset(value),
-                ) else {
+                let Some(value) = serialize_value(&PropertyValue::TextUnderlineOffset(value))
+                else {
                     return Ok(None);
                 };
                 return Ok(Some(value));
