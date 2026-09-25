@@ -1539,3 +1539,10 @@ css/css-page/basic-pagination-002-print.html
 css/css-page/basic-pagination-003-print.html
 css/css-page/basic-pagination-004-print.html
 css/css-page/basic-pagination-005-print.html
+# --- css-page monolithic-overflow PASS-now (exact, 800x600, 2026-09-26) ---
+# WPT rev 97ea26e26a2aac3eec7e770650b25e7049ed4a4e
+css/css-page/monolithic-overflow-001-print.html
+css/css-page/monolithic-overflow-002-print.html
+css/css-page/monolithic-overflow-003-print.html
+css/css-page/monolithic-overflow-004-print.html
+css/css-page/monolithic-overflow-006-print.html
