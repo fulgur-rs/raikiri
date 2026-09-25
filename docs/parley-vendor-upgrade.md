@@ -35,7 +35,9 @@ cargo clippy --locked -p raikiri-dom -p raikiri-paint -p raikiri-wpt --all-targe
 
 Check that `cargo tree` resolves Parley through this workspace's `vendor/parley` path. The DOM/paint tests cover the local layout/paint integration. The first WPT command runs the synthetic whitespace/newline regressions. The ignored-WPT command runs the pinned 24-case first-stage suite and the four shared-inline cases at exact 800×600. All must pass against their real references.
 
-The upstream unit-test module exists under `vendor/parley/src/tests`, but the vendored package is not a member of the root workspace. `cargo test --locked -p parley` fails because it is not a workspace member; invoking its manifest directly also fails because it sees the enclosing workspace without being listed as a member. These commands are not part of the upgrade check. The separate `.71` issue tracks the upstream-only test harness disposition; do not mistake a failed Parley test invocation for a pass.
+The upstream unit-test module exists under `vendor/parley/src/tests`, but the vendored package is not a member of the root workspace. `cargo test --locked -p parley` fails because it is not a workspace member; invoking its manifest directly also fails because it sees the enclosing workspace without being listed as a member. Its upstream test builder also references the unavailable `parley_dev` support crate.
+
+**Disposition for Raikiri:** keep this upstream-only harness outside the workspace and required gates. Recreating Parley's developer/test environment is not needed to validate this local patch; use the downstream DOM/paint tests and exact WPT suite above. Do not treat either failed Parley test invocation as a pass. If a future Parley upgrade requires upstream unit coverage, port the needed support in its own scoped change rather than adding the package to the workspace without its test dependencies. This is the disposition recorded for issue `.71`.
 
 ## Raikiri integration points
 
