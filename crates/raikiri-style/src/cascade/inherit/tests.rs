@@ -2263,16 +2263,28 @@ fn font_variant_east_asian_inherits_and_child_value_overrides() {
 fn font_variation_settings_inherits_and_child_value_overrides() {
     use crate::property::{FontVariationSetting, FontVariationSettings};
 
-    let parent_value = FontVariationSettings::Settings(vec![FontVariationSetting {
-        tag: "wght".into(),
-        value: 640.0,
-    }]);
+    // Specified order and duplicate tags are retained by parsing; the computed
+    // value keeps the last tag value and sorts the canonical list.
+    let parent_value = FontVariationSettings::Settings(vec![
+        FontVariationSetting {
+            tag: "wdth".into(),
+            value: 200.0,
+        },
+        FontVariationSetting {
+            tag: "wght".into(),
+            value: 640.0,
+        },
+    ]);
     let child_value = FontVariationSettings::Settings(vec![FontVariationSetting {
         tag: "wdth".into(),
         value: 120.0,
     }]);
     let mut doc = TestDoc::new();
-    let parent = doc.push_element(0, "p", Some("font-variation-settings: \"wght\" 640"));
+    let parent = doc.push_element(
+        0,
+        "p",
+        Some("font-variation-settings: \"wght\" 700, \"wdth\" 200, \"wght\" 640"),
+    );
     let inherited = doc.push_element(parent, "span", None);
     let override_child =
         doc.push_element(parent, "em", Some("font-variation-settings: \"wdth\" 120"));
@@ -6985,11 +6997,12 @@ fn background_shorthand_comma_separated_multi_layer_declaration_dropped_through_
 }
 
 #[test]
-fn font_shorthand_expands_to_6_longhands_through_real_cascade() {
+fn font_shorthand_expands_to_7_longhands_through_real_cascade() {
     // `background_shorthand_expands_to_8_longhands_through_real_cascade`
     // の sibling — literal な `font:` declaration が parse → cascade
-    // pipeline を通り 6 longhand に展開されることの pin。
-    use crate::property::{FontStyle, FontVariantCaps};
+    // pipeline を通り、`font-variation-settings` を含む 7 longhand に
+    // 展開されることの pin。
+    use crate::property::{FontStyle, FontVariantCaps, FontVariationSettings};
     let cv = cascade_doc(
         "",
         "div",
@@ -7001,6 +7014,53 @@ fn font_shorthand_expands_to_6_longhands_through_real_cascade() {
     assert_eq!(cv.font_size, ComputedLength(20.0));
     assert_eq!(cv.line_height, ComputedLineHeight::Number(1.5));
     assert_eq!(cv.font_family[0].to_string(), "serif");
+    assert_eq!(cv.font_variation_settings, FontVariationSettings::Normal);
+}
+
+#[test]
+fn font_shorthand_resets_inherited_variation_settings_and_respects_source_order() {
+    use crate::property::{FontVariationSetting, FontVariationSettings};
+
+    let inherited_value = FontVariationSettings::Settings(vec![FontVariationSetting {
+        tag: "wght".into(),
+        value: 640.0,
+    }]);
+    let explicit_value = FontVariationSettings::Settings(vec![FontVariationSetting {
+        tag: "wght".into(),
+        value: 700.0,
+    }]);
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "p", Some("font-variation-settings: \"wght\" 640"));
+    let shorthand_child = doc.push_element(parent, "span", Some("font: 16px serif"));
+    let shorthand_last = doc.push_element(
+        parent,
+        "em",
+        Some("font-variation-settings: \"wght\" 700; font: 16px serif"),
+    );
+    let longhand_last = doc.push_element(
+        parent,
+        "strong",
+        Some("font: 16px serif; font-variation-settings: \"wght\" 700"),
+    );
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[shorthand_child].font_variation_settings,
+        FontVariationSettings::Normal
+    );
+    assert_eq!(
+        result.computed[shorthand_last].font_variation_settings,
+        FontVariationSettings::Normal
+    );
+    assert_eq!(
+        result.computed[longhand_last].font_variation_settings,
+        explicit_value
+    );
+    assert_eq!(
+        result.computed[parent].font_variation_settings,
+        inherited_value
+    );
 }
 
 #[test]

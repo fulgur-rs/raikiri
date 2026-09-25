@@ -365,7 +365,8 @@ pub struct SpecifiedValues {
     pub font_variant_numeric: FontVariantNumeric,
     /// [`ComputedValues::font_variant_east_asian`] staging; inherited computed value.
     pub font_variant_east_asian: FontVariantEastAsian,
-    /// [`ComputedValues::font_variation_settings`] staging; inherited canonical setting list.
+    /// Specified sequence; preserves authored order and duplicates until finalization.
+    /// Inherited values come from the parent computed value.
     pub font_variation_settings: FontVariationSettings,
     /// [`ComputedValues::font_variant_caps`] の staging。層は
     /// computed-equivalent (`FontVariantCaps` は length を運ばない)。
@@ -1949,7 +1950,7 @@ impl SpecifiedValues {
             font_palette: self.font_palette.clone(),
             font_variant_numeric: self.font_variant_numeric,
             font_variant_east_asian: self.font_variant_east_asian,
-            font_variation_settings: self.font_variation_settings.clone(),
+            font_variation_settings: self.font_variation_settings.canonicalized(),
             // computed value = specified keyword (`FontVariantCaps` doc 参照、
             // length を運ばないため相対解決なし) — 自 node の winner 適用結果を
             // そのまま素通し。
