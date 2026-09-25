@@ -43,7 +43,11 @@ fn text_decoration_inset_measures_ch_lengths_through_the_callback() {
         start: crate::resolve::ComputedLength(1.0),
         end: crate::resolve::ComputedLength(4.0),
     };
-    computed.text_decoration_inset_start_ch = Some(crate::ChLengthProvenance { factor: 2.0, font });
+    computed.text_decoration_inset_start_ch = Some(crate::ChLengthProvenance {
+        factor: 2.0,
+        font: font.clone(),
+    });
+    computed.text_decoration_inset_end_ch = Some(crate::ChLengthProvenance { factor: 1.0, font });
     let mut calls = 0;
     let mut ch_advance = |_: &ChFontKey| {
         calls += 1;
@@ -51,9 +55,9 @@ fn text_decoration_inset_measures_ch_lengths_through_the_callback() {
     };
     assert_eq!(
         ComputedProperty::TextDecorationInset.serialize(&computed, &mut ch_advance),
-        Some("3px 4px".to_owned())
+        Some("3px 1.5px".to_owned())
     );
-    assert_eq!(calls, 1);
+    assert_eq!(calls, 2);
 }
 
 #[test]
