@@ -5,6 +5,7 @@ description = "HTML document entry points for raikiri: html5ever parsing, cascad
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 raikiri-traits = { workspace = true }

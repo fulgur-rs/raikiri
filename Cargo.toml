@@ -19,6 +19,7 @@ members = [
 edition = "2024"
 rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/fulgur-rs/raikiri"
 
 [workspace.dependencies]
 # ── In-repo (populated per crate as they land in Tasks 2–6) ────────────

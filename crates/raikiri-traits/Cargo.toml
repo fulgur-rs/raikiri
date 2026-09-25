@@ -5,6 +5,7 @@ description = "Foundation traits and neutral model types for raikiri (RenderSink
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 # raikiri-style ownership of CascadeError (Stylo

@@ -34,7 +34,7 @@ use raikiri_dom::{CounterSnapshot, Document};
 use raikiri_style::property::{
     BackgroundImage, Border, BorderColor, BorderStyle, ColumnCountValue, ContentComponent,
     CounterStyle, CssColor, DisplayValue, FloatValue, Gradient, GradientStopColor, Length,
-    LengthOrAuto, LineBreak, ListStyleType, ObjectFit, OutlineColor, OutlineStyle, OverflowValue,
+    LengthOrAuto, ListStyleType, ObjectFit, OutlineColor, OutlineStyle, OverflowValue,
     PositionValue, PropertyKey, PropertyValue, QuoteKeyword, Sides, TextAlign, TextShadowColor,
     VerticalAlign, Visibility, WritingMode, ZIndexValue,
 };
@@ -4022,32 +4022,13 @@ fn paint_document_impl(
                         );
                         scene.push_clip_layer(Affine::IDENTITY, &clip);
                     }
-                    // The current walker carries two copies of the
-                    // one-character advance into an `anywhere` text node: the
-                    // Taffy sibling offset and Parley's run line origin.
-                    // Remove both copies so separate text runs (including
-                    // runs around an inline span) share the same line origin.
-                    let anywhere_text_width = node
-                        .text_layout()
-                        .map(|text_layout| text_layout.width())
-                        .filter(|width| width.is_finite() && *width > 0.0);
-                    let anywhere_text_run =
-                        matches!(cascade.computed[node_id].line_break, LineBreak::Anywhere)
-                            && anywhere_text_width.is_some();
                     text::draw_text_node(
                         scene,
                         node,
                         cascade,
                         node_id,
                         text::TextPosition {
-                            abs_x: abs_x
-                                - if anywhere_text_run {
-                                    anywhere_text_width.unwrap_or(0.0) * 2.0
-                                } else {
-                                    0.0
-                                }
-                                + page_offset_x
-                                + transform_x,
+                            abs_x: abs_x + page_offset_x + transform_x,
                             abs_y: abs_y + page_offset_y + transform_y,
                             shift_y,
                         },

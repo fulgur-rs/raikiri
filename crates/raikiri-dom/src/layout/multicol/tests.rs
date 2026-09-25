@@ -16,6 +16,82 @@ fn multicol_min_constrained_child_requires_all_constraints() {
 }
 
 #[test]
+fn authored_containing_width_uses_the_resolved_ch_style_width() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:4ch;font-size:25px;font-family:monospace"),
+    );
+    let text = doc.append_text(container, "test");
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cascade);
+
+    let mut fonts = FontContext::new();
+    let mut layout_cx = LayoutContext::<()>::new();
+    prepare_ch_box_values_before_taffy(&mut doc, &cascade, &mut fonts, &mut layout_cx);
+
+    let mut parent_of = vec![None; doc.nodes.len()];
+    for parent in 0..doc.nodes.len() {
+        for &child in &doc.nodes[parent].children {
+            parent_of[child] = Some(parent);
+        }
+    }
+    let taffy_width = style_dimension_length(doc.nodes[container].style.size.width)
+        .expect("resolved ch width should be a finite length");
+    assert_eq!(
+        authored_containing_width_with_resolved_ch(&doc, &cascade, &parent_of, text, 800.0),
+        Some(taffy_width),
+    );
+}
+
+#[test]
+fn authored_containing_width_preserves_percentage_fallback_behavior() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:200px"),
+    );
+    let percentage = doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:block;width:50%"),
+    );
+    let text = doc.append_text(percentage, "percentage");
+    let auto_text = doc.append_text(body, "auto");
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+
+    let mut parent_of = vec![None; doc.nodes.len()];
+    for parent in 0..doc.nodes.len() {
+        for &child in &doc.nodes[parent].children {
+            parent_of[child] = Some(parent);
+        }
+    }
+    assert_eq!(
+        authored_containing_width_with_resolved_ch(&doc, &cascade, &parent_of, text, 800.0),
+        Some(100.0),
+    );
+    assert_eq!(
+        authored_containing_width_with_resolved_ch(&doc, &cascade, &parent_of, auto_text, 800.0,),
+        None,
+    );
+}
+
+#[test]
 fn compute_multicol_layout_spaces_break_avoid_min_height_children_across_a_definite_height() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;

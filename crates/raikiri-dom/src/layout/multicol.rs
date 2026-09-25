@@ -642,6 +642,61 @@ pub(crate) fn authored_containing_width(
     None
 }
 
+// Text shaping must use the same measured `ch` width that Taffy will use.
+// The cascade retains a style-layer fallback, while pre-Taffy preparation has
+// already written the measured value to the node style. This avoids shaping
+// text against a narrower fallback than its containing block.
+// cov:ignore: exercised by resource-enabled CSS Text WPT runs.
+fn computed_content_width_with_resolved_ch(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    node_id: usize,
+    fallback: f32,
+) -> f32 {
+    let parent_width = parent_of[node_id]
+        .map(|parent| {
+            computed_content_width_with_resolved_ch(doc, cascade, parent_of, parent, fallback)
+        })
+        .unwrap_or(fallback);
+    let cv = &cascade.computed[node_id];
+    if cv.width_ch.is_some()
+        && let Some(width) = style_dimension_length(doc.nodes[node_id].style.size.width)
+    {
+        return width.max(0.0);
+    }
+    match cv.width {
+        ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
+        ComputedLengthPercentageOrAuto::Percent(value) if value.is_finite() => {
+            (parent_width * value / 100.0).max(0.0)
+        }
+        _ => parent_width.max(0.0),
+    }
+}
+
+// cov:ignore: exercised by the resource-enabled line-break:anywhere WPT run.
+pub(crate) fn authored_containing_width_with_resolved_ch(
+    doc: &Document,
+    cascade: &CascadeResult,
+    parent_of: &[Option<usize>],
+    node_id: usize,
+    fallback: f32,
+) -> Option<f32> {
+    let mut ancestor = parent_of.get(node_id).copied().flatten();
+    while let Some(id) = ancestor {
+        if !matches!(
+            cascade.computed[id].width,
+            ComputedLengthPercentageOrAuto::Auto
+        ) {
+            return Some(computed_content_width_with_resolved_ch(
+                doc, cascade, parent_of, id, fallback,
+            ));
+        }
+        ancestor = parent_of.get(id).copied().flatten();
+    }
+    None
+}
+
 // cov:ignore: exercised by ignored WPT regression and multicol reftests; default coverage skips ignored reftests.
 fn has_nonzero_horizontal_margin(cv: &ComputedValues) -> bool {
     let is_zero = |value: ComputedLengthPercentageOrAuto| match value {
