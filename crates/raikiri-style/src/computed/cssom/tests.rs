@@ -110,3 +110,49 @@ fn computed_calc_values_fold_a_zero_term_like_cascade_does() {
         "calc(10% - 2px)"
     );
 }
+
+#[test]
+fn ch_spacing_and_indent_are_measured_through_the_callback() {
+    let mut computed = ComputedValues::initial();
+    computed.letter_spacing_computed = crate::resolve::ComputedLetterSpacing::Px(8.0);
+    computed.letter_spacing_ch_factor = Some(2.0);
+    computed.word_spacing_computed = crate::resolve::ComputedLetterSpacing::Px(4.0);
+    computed.word_spacing_ch_factor = Some(1.0);
+    computed.text_indent = crate::resolve::ComputedTextIndent::Px(12.0);
+    computed.text_indent_ch_factor = Some(3.0);
+    let declaring_font = ChFontKey {
+        family: computed.font_family.clone(),
+        size: crate::resolve::ComputedLength(40.0),
+        weight: computed.font_weight,
+        style: computed.font_style,
+    };
+    computed.text_indent_ch_font = Some(declaring_font.clone());
+    let own_size = computed.font_size;
+    // The own font measures 5px per ch; the declaring font 9px.
+    let mut ch_advance = |font: &ChFontKey| {
+        if *font == declaring_font {
+            9.0
+        } else {
+            assert_eq!(font.size, own_size);
+            5.0
+        }
+    };
+    assert_eq!(
+        ComputedProperty::LetterSpacing.serialize(&computed, &mut ch_advance),
+        Some("10px".to_owned())
+    );
+    assert_eq!(
+        ComputedProperty::WordSpacing.serialize(&computed, &mut ch_advance),
+        Some("5px".to_owned())
+    );
+    assert_eq!(
+        ComputedProperty::TextIndent.serialize(&computed, &mut ch_advance),
+        Some("27px".to_owned())
+    );
+    // A zero `ch` letter-spacing still reads back as `normal`.
+    computed.letter_spacing_ch_factor = Some(0.0);
+    assert_eq!(
+        ComputedProperty::LetterSpacing.serialize(&computed, &mut ch_advance),
+        Some("normal".to_owned())
+    );
+}
