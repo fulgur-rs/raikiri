@@ -2,37 +2,21 @@
 //! stack.
 //!
 //! Shared defense stack for filesystem input taken from consumer-controlled
-//! locations (WPT fixture tree, WPT bundled font dir).  Consolidates the two
-//! prior hand-rolled `safe_open` pipelines at
-//! `raikiri_dom::fonts::read_bounded_font_file` and
-//! `raikiri_vrt::reference::read_bounded_fixture_file`: both crates now call
-//! into [`open_bounded_regular_file`] and [`read_bounded_from_open_file`]
-//! (or the [`read_bounded_regular_file`] convenience wrapper, for a caller
-//! with no extra post-open check of its own) instead of carrying their own
-//! `safe_open`.
+//! locations (WPT fixture tree, WPT bundled font dir).
 //!
-//! Downstream-crate paths are shown as plain code (not intra-doc links)
-//! because raikiri-dom / raikiri-vrt are not in scope from this crate.
+//! - [`open_bounded_regular_file`] + [`read_bounded_from_open_file`]: the
+//!   leaf-swap defense (pre-open kind and size gates, `O_NOFOLLOW` open,
+//!   post-open fd kind recheck) and the `+1-probe` bounded read.
+//! - [`read_bounded_regular_file`]: both of the above in one call, for a
+//!   caller with no path-containment requirement.
+//! - [`read_bounded_contained_file`]: the same, plus path containment under
+//!   a canonical root, including a post-open recheck derived from the
+//!   opened descriptor itself (`/proc/self/fd/<fd>` readlink on Linux,
+//!   `fcntl(fd, F_GETPATH, ..)` on Apple platforms) so the checked file and
+//!   the read file are the same fd.
 //!
 //! # What this module does not cover
 //!
-//! Callers layer domain-specific checks on top of the primitives here:
-//!
-//! - **Path containment** (bounding the resolved path to a canonical root,
-//!   e.g. the WPT fixture tree or the WPT font directory): a
-//!   `canonicalize().starts_with(root)` check (run after the open, per the
-//!   two callers' own docs) plus — for the residual intermediate-directory-
-//!   swap window between the open and that check — a post-open, fd-derived
-//!   recheck (`/proc/self/fd/<fd>` readlink
-//!   on Linux, `fcntl(fd, F_GETPATH, ..)` on Apple platforms).
-//!   [`open_bounded_regular_file`] returns the open [`std::fs::File`] handle
-//!   precisely so a caller can run this recheck against the same descriptor
-//!   before reading from it — "checked" and "used" are then the same fd, so
-//!   no second pathname lookup remains to race. This module does not
-//!   implement the recheck directly: the Apple-platform arm needs an extra
-//!   dependency (`rustix`, for `fcntl(fd, F_GETPATH, ..)`) this foundation
-//!   crate does not take on, and the check needs a `canonical_root`
-//!   parameter this module has no other use for.
 //! - **Aggregate caps across multiple files**: per-file only.  Callers doing
 //!   directory-walk aggregation (fixture-tree pages, font directories) must
 //!   track running totals themselves.
@@ -102,7 +86,28 @@ pub enum RejectReason {
         /// Phase in which the size-cap check tripped.
         phase: OversizePhase,
     },
-    /// I/O error from `symlink_metadata`, the open, or `read_to_end`.
+    /// The path's `canonicalize` result is not under the caller's
+    /// canonical root (an intermediate directory resolved outside it).
+    /// Produced only by [`read_bounded_contained_file`].
+    PathEscape {
+        /// `canonicalize(path)` result.
+        canonical: std::path::PathBuf,
+        /// Canonical root the path had to stay under.
+        root: std::path::PathBuf,
+    },
+    /// The path the *opened descriptor* resolves to is not under the
+    /// caller's canonical root: an intermediate directory was swapped
+    /// between the pathname checks and the open. Derived from the fd
+    /// itself, so unlike [`RejectReason::PathEscape`] it cannot be raced by
+    /// a further swap. Produced only by [`read_bounded_contained_file`].
+    PathEscapePostOpen {
+        /// Path the opened descriptor resolves to.
+        canonical: std::path::PathBuf,
+        /// Canonical root the descriptor had to stay under.
+        root: std::path::PathBuf,
+    },
+    /// I/O error from `symlink_metadata`, the open, `canonicalize`, the
+    /// fd-to-path lookup, or `read_to_end`.
     Io(std::io::Error),
 }
 
@@ -140,6 +145,18 @@ impl std::fmt::Display for RejectReason {
             } => write!(
                 f,
                 "file grew past cap during read: {size} bytes read, cap {cap} bytes (TOCTOU-grow)"
+            ),
+            RejectReason::PathEscape { canonical, root } => write!(
+                f,
+                "path resolves to {} outside root {}",
+                canonical.display(),
+                root.display()
+            ),
+            RejectReason::PathEscapePostOpen { canonical, root } => write!(
+                f,
+                "opened fd resolves to {} outside root {} (intermediate-directory swap)",
+                canonical.display(),
+                root.display()
             ),
             RejectReason::Io(source) => write!(f, "I/O error: {source}"),
         }
@@ -298,10 +315,9 @@ fn check_open_handle_regular(file: &std::fs::File) -> Result<(), RejectReason> {
 /// [`read_bounded_regular_file`] does short of the actual bounded read.
 ///
 /// Split out from [`read_bounded_regular_file`] so a caller that also needs
-/// a post-open, fd-derived check of its own (e.g. path containment against a
-/// canonical root — see the module-level "What this module does not cover"
-/// section) can run it against the same descriptor before handing it to
-/// [`read_bounded_from_open_file`]. "Checked" and "used" then refer to the
+/// a post-open, fd-derived check (such as the path containment
+/// [`read_bounded_contained_file`] performs) can run it against the same
+/// descriptor before handing it to [`read_bounded_from_open_file`]. "Checked" and "used" then refer to the
 /// same fd, so no second pathname lookup remains to race.
 ///
 /// Returns the open handle together with `metadata.len()` observed at the
@@ -474,14 +490,159 @@ pub fn read_bounded_from_open_file(
 /// bounded read (see [`read_bounded_from_open_file`]).
 ///
 /// Convenience wrapper over the two split primitives, for a caller that
-/// doesn't need a post-open check of its own (e.g. path containment)
-/// between the open and the read.  A caller that does need one should call
-/// [`open_bounded_regular_file`] and [`read_bounded_from_open_file`]
-/// directly, running its own check against the returned handle in between —
-/// see the module-level "What this module does not cover" section.
+/// doesn't need a post-open check between the open and the read. For path
+/// containment under a root use [`read_bounded_contained_file`]; for any
+/// other post-open check, call [`open_bounded_regular_file`] and
+/// [`read_bounded_from_open_file`] directly and run it against the returned
+/// handle in between.
 pub fn read_bounded_regular_file(path: &Path, size_cap: u64) -> Result<Vec<u8>, RejectReason> {
     let (mut file, _len) = open_bounded_regular_file(path, size_cap)?;
     read_bounded_from_open_file(&mut file, size_cap)
+}
+
+/// [`read_bounded_regular_file`] plus containment under `canonical_root`:
+/// the read is rejected unless the file resolves inside that directory.
+///
+/// `canonical_root` must already be canonicalized (`std::fs::canonicalize`);
+/// both containment checks compare against it with `Path::starts_with`.
+///
+/// # Checks, in order
+///
+/// 1. [`open_bounded_regular_file`] (leaf-symlink, kind and size gates;
+///    `O_NOFOLLOW` open; post-open kind recheck).
+/// 2. `canonicalize(path).starts_with(canonical_root)`, rejecting with
+///    [`RejectReason::PathEscape`]. This covers an *intermediate*-directory
+///    symlink that points outside the root: the leaf-symlink gate only
+///    inspects the final component, so such a path still has a regular-file
+///    leaf and passes step 1.
+/// 3. A containment recheck derived from the opened descriptor (Linux:
+///    `/proc/self/fd/<fd>` readlink; Apple platforms: `fcntl(fd, F_GETPATH,
+///    ..)`), rejecting with [`RejectReason::PathEscapePostOpen`]. Step 2 is
+///    a separate pathname resolution from the open, so an intermediate
+///    directory can be swapped between the two; this step asks the kernel
+///    what the *opened* file is, so there is no second lookup left to race.
+///    It is authoritative wherever it is implemented, which makes the
+///    relative order of steps 1 and 2 immaterial there.
+/// 4. [`read_bounded_from_open_file`] on that same descriptor.
+///
+/// # Platform coverage
+///
+/// On platforms without an fd-to-path primitive wired up (non-Apple BSDs,
+/// Windows, ...) step 3 is a no-op and step 2 is the only containment
+/// check. Because step 2 runs after the open, a regular file outside the
+/// root is briefly opened (never read) before being rejected on those
+/// platforms.
+///
+/// # Errors
+///
+/// A failing fd-to-path lookup in step 3 is reported as
+/// [`RejectReason::Io`], never skipped: a filesystem that cannot answer
+/// the authoritative check fails closed rather than falling back to
+/// step 2 alone.
+pub fn read_bounded_contained_file(
+    path: &Path,
+    canonical_root: &Path,
+    size_cap: u64,
+) -> Result<Vec<u8>, RejectReason> {
+    let (mut file, _len) = open_bounded_regular_file(path, size_cap)?;
+
+    let canonical = std::fs::canonicalize(path).map_err(RejectReason::Io)?;
+    if !canonical.starts_with(canonical_root) {
+        return Err(RejectReason::PathEscape {
+            canonical,
+            root: canonical_root.to_path_buf(),
+        });
+    }
+    check_open_handle_containment(&file, canonical_root)?;
+
+    read_bounded_from_open_file(&mut file, size_cap)
+}
+
+/// Linux: the path the kernel reports for `/proc/self/fd/<fd>` is the file
+/// bound to *this* descriptor, not a fresh lookup of the original pathname.
+/// (The reported string can still change if an ancestor is later renamed;
+/// what cannot happen is a second, attacker-steerable pathname lookup.)
+#[cfg(target_os = "linux")]
+fn check_open_handle_containment(
+    file: &std::fs::File,
+    canonical_root: &Path,
+) -> Result<(), RejectReason> {
+    use std::os::unix::io::AsRawFd;
+    let fd_link = std::path::PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+    // cov:ignore: readlink on a descriptor this process just opened fails
+    // only on an environment fault (procfs unmounted, fd-table race), which
+    // is not deterministically unit-testable.
+    let canonical = std::fs::read_link(&fd_link).map_err(RejectReason::Io)?;
+    ensure_contained(canonical, canonical_root)
+}
+
+/// Apple platforms: `fcntl(fd, F_GETPATH, ..)` via [`rustix::fs::getpath`],
+/// the Darwin/XNU analogue of the Linux `/proc/self/fd/<fd>` readlink. The
+/// kernel rebuilds the path from the vnode's name cache, so unlike Linux it
+/// has a genuine (if rare) failure path even for a live descriptor; that
+/// failure maps to [`RejectReason::Io`] like any other.
+///
+/// No Apple CI target exists, so this arm and its tests are compiled but
+/// not executed in CI. If they ever fail, check the path *form* first:
+/// Darwin reports `/private/var/...` for paths reached through `/var`
+/// (where `tempfile::tempdir()` lands), and the root must be canonicalized
+/// the same way for `starts_with` to agree.
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos",
+    target_os = "visionos"
+))]
+fn check_open_handle_containment(
+    file: &std::fs::File,
+    canonical_root: &Path,
+) -> Result<(), RejectReason> {
+    use std::os::unix::ffi::OsStringExt;
+    let path_cstr =
+        rustix::fs::getpath(file).map_err(|errno| RejectReason::Io(std::io::Error::from(errno)))?;
+    let canonical = std::path::PathBuf::from(std::ffi::OsString::from_vec(path_cstr.into_bytes()));
+    ensure_contained(canonical, canonical_root)
+}
+
+/// Every other platform (non-Apple BSDs, Windows, ...): no fd-to-path
+/// primitive is wired up, so the `canonicalize` check in
+/// [`read_bounded_contained_file`] is the only containment gate.
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos",
+    target_os = "visionos"
+)))]
+fn check_open_handle_containment(
+    _file: &std::fs::File,
+    _canonical_root: &Path,
+) -> Result<(), RejectReason> {
+    Ok(())
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "tvos",
+    target_os = "watchos",
+    target_os = "visionos"
+))]
+fn ensure_contained(
+    canonical: std::path::PathBuf,
+    canonical_root: &Path,
+) -> Result<(), RejectReason> {
+    if canonical.starts_with(canonical_root) {
+        Ok(())
+    } else {
+        Err(RejectReason::PathEscapePostOpen {
+            canonical,
+            root: canonical_root.to_path_buf(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -943,5 +1104,131 @@ mod tests {
         let io_reason = RejectReason::Io(io_err);
         assert!(io_reason.to_string().starts_with("I/O error: "));
         assert!(io_reason.source().is_some());
+    }
+
+    #[test]
+    fn read_bounded_contained_file_reads_file_inside_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let path = root.join("inside.bin");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"inside content")
+            .unwrap();
+
+        let bytes = read_bounded_contained_file(&path, &root, 1024).expect("inside root");
+        assert_eq!(bytes, b"inside content");
+    }
+
+    /// An intermediate directory symlinked outside the root leaves a
+    /// regular-file leaf, so it passes the leaf-symlink gate and must be
+    /// caught by the `canonicalize` containment check.
+    #[cfg(unix)]
+    #[test]
+    fn read_bounded_contained_file_rejects_intermediate_symlink_escape() {
+        let root_tmp = tempfile::tempdir().unwrap();
+        let outside_tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(root_tmp.path()).unwrap();
+        let outside = std::fs::canonicalize(outside_tmp.path()).unwrap();
+        let outside_leaf = outside.join("leaf.bin");
+        std::fs::File::create(&outside_leaf)
+            .unwrap()
+            .write_all(b"outside content")
+            .unwrap();
+        let sub_link = root_tmp.path().join("sub");
+        std::os::unix::fs::symlink(&outside, &sub_link).unwrap();
+        let leaf_via_intermediate = sub_link.join("leaf.bin");
+        assert!(
+            !std::fs::symlink_metadata(&leaf_via_intermediate)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the leaf itself must not be a symlink, or this exercises the leaf-symlink gate"
+        );
+
+        match read_bounded_contained_file(&leaf_via_intermediate, &root, 1024) {
+            Err(RejectReason::PathEscape { canonical, root: r }) => {
+                assert_eq!(canonical, outside_leaf);
+                assert_eq!(r, root);
+            }
+            other => panic!("expected PathEscape, got {other:?}"),
+        }
+    }
+
+    /// The fd-derived recheck accepts a descriptor that resolves inside the
+    /// root (no spurious rejection of the happy path).
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos",
+        target_os = "visionos"
+    ))]
+    #[test]
+    fn check_open_handle_containment_accepts_fd_inside_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(tmp.path()).unwrap();
+        let path = root.join("inside.bin");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(b"x")
+            .unwrap();
+
+        let (file, _len) = open_bounded_regular_file(&path, 1024).unwrap();
+        check_open_handle_containment(&file, &root).expect("fd inside root must pass");
+    }
+
+    /// The fd-derived recheck rejects a descriptor that resolves outside
+    /// the root even though the open itself succeeded: it trusts only the
+    /// path bound to the fd, which is what an intermediate-directory swap
+    /// between the pathname checks and the open would produce.
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos",
+        target_os = "visionos"
+    ))]
+    #[test]
+    fn check_open_handle_containment_rejects_fd_outside_root() {
+        let root_tmp = tempfile::tempdir().unwrap();
+        let outside_tmp = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(root_tmp.path()).unwrap();
+        let outside = std::fs::canonicalize(outside_tmp.path()).unwrap();
+        let outside_leaf = outside.join("leaf.bin");
+        std::fs::File::create(&outside_leaf)
+            .unwrap()
+            .write_all(b"x")
+            .unwrap();
+
+        let (file, _len) = open_bounded_regular_file(&outside_leaf, 1024).unwrap();
+        match check_open_handle_containment(&file, &root) {
+            Err(RejectReason::PathEscapePostOpen { canonical, root: r }) => {
+                assert_eq!(canonical, outside_leaf);
+                assert_eq!(r, root);
+            }
+            other => panic!("expected PathEscapePostOpen, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reject_reason_path_escape_display_contains_paths() {
+        for reason in [
+            RejectReason::PathEscape {
+                canonical: std::path::PathBuf::from("/outside/leaf"),
+                root: std::path::PathBuf::from("/the/root"),
+            },
+            RejectReason::PathEscapePostOpen {
+                canonical: std::path::PathBuf::from("/outside/leaf"),
+                root: std::path::PathBuf::from("/the/root"),
+            },
+        ] {
+            let s = reason.to_string();
+            assert!(s.contains("/outside/leaf"), "missing canonical: {s}");
+            assert!(s.contains("/the/root"), "missing root: {s}");
+            assert!(std::error::Error::source(&reason).is_none());
+        }
     }
 }
