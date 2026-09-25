@@ -33,7 +33,15 @@ fn interface_members_become_prototype_accessors_and_operations() {
         return d.enumerable && d.configurable \
             && d.get.name === 'get value' && d.set.name === 'set value' \
             && d.get.call() === 1 && d.set.call(null, 5) === 5 \
-            && m.length === 2 && m(1, 2, 3) === 3; \
+            && m.length === 2 && m(1, 2, 3) === 3 \
+            && d.get.length === 0 && d.set.length === 1; \
     })()";
     assert!(rt.evaluate(check).unwrap().to_boolean());
+    let operation = "(() => { \
+        const d = Object.getOwnPropertyDescriptor(Probe.prototype, 'count'); \
+        const l = Object.getOwnPropertyDescriptor(d.value, 'length'); \
+        return d.enumerable && d.writable && d.configurable && d.value.name === 'count' \
+            && l.value === 2 && !l.writable && !l.enumerable && l.configurable; \
+    })()";
+    assert!(rt.evaluate(operation).unwrap().to_boolean());
 }

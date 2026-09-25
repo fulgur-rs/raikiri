@@ -3,7 +3,7 @@
 use boa_engine::native_function::NativeFunctionPointer;
 use boa_engine::object::builtins::JsFunction;
 use boa_engine::object::{ConstructorBuilder, FunctionObjectBuilder, JsObject};
-use boa_engine::property::Attribute;
+use boa_engine::property::{Attribute, PropertyDescriptor};
 use boa_engine::{
     Context, Finalize, JsData, JsNativeError, JsResult, JsString, JsValue, NativeFunction, Trace,
     js_string,
@@ -61,11 +61,25 @@ fn illegal_constructor(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<
         .into())
 }
 
-/// A native getter/setter/method function object.
-pub(crate) fn function(context: &mut Context, name: &str, f: NativeFunctionPointer) -> JsFunction {
-    FunctionObjectBuilder::new(context.realm(), NativeFunction::from_fn_ptr(f))
+/// A native getter/setter/method function object with the given `name` and
+/// `length` (ECMA-262 §10.2.9: `length` is non-writable, non-enumerable,
+/// configurable).
+pub(crate) fn function(
+    context: &mut Context,
+    name: &str,
+    length: usize,
+    f: NativeFunctionPointer,
+) -> JsResult<JsFunction> {
+    let function = FunctionObjectBuilder::new(context.realm(), NativeFunction::from_fn_ptr(f))
         .name(JsString::from(name))
-        .build()
+        .build();
+    let length = PropertyDescriptor::builder()
+        .value(length)
+        .writable(false)
+        .enumerable(false)
+        .configurable(true);
+    function.define_property_or_throw(js_string!("length"), length, context)?;
+    Ok(function)
 }
 
 /// Members of one interface prototype.
@@ -107,19 +121,24 @@ fn interface(
     let getters: Vec<_> = members
         .getters
         .iter()
-        .map(|&(n, f)| (n, function(context, &format!("get {n}"), f)))
-        .collect();
+        .map(|&(n, f)| Ok((n, function(context, &format!("get {n}"), 0, f)?)))
+        .collect::<JsResult<_>>()?;
     let accessors: Vec<_> = members
         .accessors
         .iter()
         .map(|&(n, g, s)| {
-            (
-                n,
-                function(context, &format!("get {n}"), g),
-                function(context, &format!("set {n}"), s),
-            )
+            let getter = function(context, &format!("get {n}"), 0, g)?;
+            let setter = function(context, &format!("set {n}"), 1, s)?;
+            Ok((n, getter, setter))
         })
-        .collect();
+        .collect::<JsResult<_>>()?;
+    // WebIDL §3.7.6: operations are writable, enumerable, configurable data
+    // properties on the interface prototype.
+    let operations: Vec<_> = members
+        .methods
+        .iter()
+        .map(|&(n, length, f)| Ok((n, function(context, n, length, f)?)))
+        .collect::<JsResult<_>>()?;
     let mut builder =
         ConstructorBuilder::new(context, NativeFunction::from_fn_ptr(illegal_constructor));
     builder.name(name).length(0).constructor(true);
@@ -136,8 +155,9 @@ fn interface(
     for (n, getter, setter) in accessors {
         builder.accessor(JsString::from(n), Some(getter), Some(setter), attr);
     }
-    for &(n, length, f) in members.methods {
-        builder.method(NativeFunction::from_fn_ptr(f), JsString::from(n), length);
+    let operation = Attribute::WRITABLE | Attribute::ENUMERABLE | Attribute::CONFIGURABLE;
+    for (n, f) in operations {
+        builder.property(JsString::from(n), f, operation);
     }
     let standard = builder.build();
     let constructor = standard.constructor();

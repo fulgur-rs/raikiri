@@ -349,6 +349,8 @@ fn reentrant_state_access_is_an_exception_and_a_host_failure() {
         // Later failures while the first is parked are not recorded.
         let _ = host_failure(ctx, HostError("ignored".into()));
     }
+    // A failure recorded after the borrow ends does not displace the parked one.
+    let _ = host_failure(rt.context_mut(), HostError("later".into()));
     assert_eq!(
         rt.evaluate("1"),
         Err(RuntimeError::Host("re-entrant DOM runtime access".into()))

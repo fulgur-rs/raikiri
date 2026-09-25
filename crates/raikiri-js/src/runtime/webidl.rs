@@ -96,9 +96,13 @@ pub(crate) fn host_failure(context: &mut Context, error: HostError) -> JsError {
 /// parked in the context and merged by [`super::DomRuntime::evaluate`].
 fn record_failure(context: &mut Context, message: &str) {
     let shared = shared(context);
+    // A parked failure predates anything recorded now, so it keeps priority.
+    let parked = context.get_data::<DeferredHostFailure>().is_some();
     if let Ok(mut state) = shared.0.try_borrow_mut() {
-        state.host_failure.get_or_insert_with(|| message.to_owned());
-    } else if context.get_data::<DeferredHostFailure>().is_none() {
+        if !parked {
+            state.host_failure.get_or_insert_with(|| message.to_owned());
+        }
+    } else if !parked {
         context.insert_data(DeferredHostFailure(message.to_owned()));
     }
 }
