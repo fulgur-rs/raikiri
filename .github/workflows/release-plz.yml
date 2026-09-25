@@ -34,6 +34,8 @@ jobs:
           permission-pull-requests: write
 
       - uses: release-plz/action@v0.5
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         with:
           command: release-pr
           token: ${{ steps.app-token.outputs.token }}
@@ -50,6 +52,8 @@ jobs:
           fetch-depth: 0
 
       - uses: release-plz/action@v0.5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           command: release
           token: ${{ secrets.GITHUB_TOKEN }}
