@@ -96,6 +96,12 @@ function assert_equals(actual, expected, message) {
             String(expected) + ", got " + String(actual));
     }
 }
+function assert_in_array(actual, expectedArray, message) {
+    if (!Array.isArray(expectedArray) || expectedArray.indexOf(actual) === -1) {
+        throw new Error((message || "assert_in_array") + ": value " +
+            JSON.stringify(actual) + " not in array " + JSON.stringify(expectedArray));
+    }
+}
 function assert_approx_equals(actual, expected, epsilon, message) {
     if (typeof actual !== "number" || typeof expected !== "number" ||
         typeof epsilon !== "number" || !Number.isFinite(actual) ||
