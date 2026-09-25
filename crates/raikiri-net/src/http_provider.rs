@@ -56,20 +56,24 @@ const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
 /// unwrapped and re-checked.
 ///
 /// Fetch timeouts have one known gap, and it is broader than just the TLS
-/// handshake: for every `https://` read — the handshake *and* every
-/// encrypted read of the response header/body that follows it — `ureq`
-/// 3.4.2's rustls transport hands the socket read the same *relative*
-/// timeout window (computed fresh for each read) instead of checking the
-/// time left until an absolute deadline. A server that answers with a
-/// trickle of bytes, each arriving inside that window, therefore keeps a
-/// `fetch` blocked well past the connect and global timeouts — for as long
-/// as it keeps trickling, on any part of the exchange, not only during the
-/// handshake. The connect timeout only bounds the TCP-connect-plus-handshake
-/// phase (so a server that stalls outright, sending nothing at all, fails
-/// after 10 seconds); it does not bound a server that keeps sending a slow
-/// trickle once connected, during or after the handshake. Consumers that
-/// must bound wall-clock time strictly should run fetches under their own
-/// deadline (for example on a dedicated thread, joined with a timeout).
+/// handshake: it covers every `https://` read, the handshake *and* every
+/// encrypted read of the response header/body that follows it. `ureq`
+/// 3.4.2's own timeout accounting is correctly based on an absolute
+/// deadline, and is recomputed (correctly shrinking) each time a new
+/// logical operation starts — but its rustls transport adapter takes a
+/// snapshot of that value once per operation (once before the handshake,
+/// once per logical response read) and reuses it unchanged for every raw
+/// socket read `rustls`'s own internal retry loop performs to service that
+/// one operation. A server that keeps a slow trickle of bytes arriving
+/// inside that frozen window — on any part of the exchange, not only
+/// during the handshake — can make that one operation run far longer than
+/// the configured deadline, because the window is never re-derived from
+/// elapsed wall-clock time until the next logical operation begins. The
+/// connect timeout only bounds a server that stalls outright, sending
+/// nothing at all (that case fails after 10 seconds); it does not bound
+/// this slow-trickle case at any phase. Consumers that must bound
+/// wall-clock time strictly should run fetches under their own deadline
+/// (for example on a dedicated thread, joined with a timeout).
 pub struct UreqHttpProvider {
     agent: ureq::Agent,
 }
