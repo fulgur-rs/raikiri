@@ -800,7 +800,7 @@ pub(super) fn parse_font_variation_settings(
             }
             SmolStr::new(tag.as_ref())
         };
-        let value = input.expect_number().ok()?;
+        let value = expect_number_stable(input).ok()?;
         settings.insert(tag, value);
 
         if input.try_parse(|input| input.expect_comma()).is_err() {

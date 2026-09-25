@@ -5189,6 +5189,14 @@ fn font_variation_settings_parses_and_serializes_the_pinned_values() {
     let cases = [
         ("normal", FontVariationSettings::Normal, "normal"),
         (
+            "\"wght\" 0e999",
+            FontVariationSettings::Settings(vec![FontVariationSetting {
+                tag: SmolStr::new("wght"),
+                value: 0.0,
+            }]),
+            "\"wght\" 0",
+        ),
+        (
             "\"wght\" 700",
             FontVariationSettings::Settings(vec![FontVariationSetting {
                 tag: SmolStr::new("wght"),
