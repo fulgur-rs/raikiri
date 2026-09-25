@@ -784,10 +784,9 @@ impl Document {
     /// Template contents are copied into a fresh detached fragment root.
     /// Attribute `style` remains in the separate inline-style slot.
     ///
-    /// Tree changes go through the existing `detach_from_parent`, `append_*`,
-    /// and template-fragment mutation methods, so layout caches and flat-tree
-    /// membership are marked dirty in the usual way. The source document is
-    /// not modified.
+    /// Existing children are detached together by clearing their parent's
+    /// child list. Tree changes mark layout caches and flat-tree membership
+    /// dirty in the usual way. The source document is not modified.
     pub fn replace_children_from(
         &mut self,
         target_parent: usize,
@@ -797,9 +796,12 @@ impl Document {
         let target_parent = self.nodes[target_parent]
             .template_contents()
             .unwrap_or(target_parent);
-        let old_children = self.nodes[target_parent].children.clone();
-        for child in old_children {
-            self.detach_from_parent(child);
+        if !self.nodes[target_parent].children.is_empty() {
+            // The parent is already known. Avoid a whole-arena parent lookup
+            // and shifting the remaining child IDs for every removed child.
+            self.nodes[target_parent].children.clear();
+            self.invalidate_layout_cache();
+            self.flags_dirty = true;
         }
 
         // A LIFO worklist avoids recursion on deeply nested parsed documents.
