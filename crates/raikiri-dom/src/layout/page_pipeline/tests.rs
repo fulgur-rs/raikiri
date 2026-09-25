@@ -291,6 +291,111 @@ fn establish_minimal_line_boxes_aligns_inline_block_text_baselines() {
     );
 }
 
+fn inline_image_positions(
+    parent_width: u32,
+    image_specs: &[(u32, &str)],
+    spaces_between: bool,
+) -> Vec<(f32, f32, f32)> {
+    use parley::FontContext;
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let p_style = format!("display:block;width:{parent_width}px;font-size:20px;line-height:20px");
+    let p = doc.append_element(Some(body), "p", Style::default(), Some(&p_style));
+    let mut images = Vec::with_capacity(image_specs.len());
+    for (index, (height, extra_style)) in image_specs.iter().enumerate() {
+        if spaces_between && index > 0 {
+            doc.append_text(p, " ");
+        }
+        let image_style = format!("display:inline;width:8px;height:{height}px;{extra_style}");
+        images.push(doc.append_element(Some(p), "img", Style::default(), Some(&image_style)));
+    }
+
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4, FontContext::new()).expect("layout Ok");
+    assert_eq!(
+        doc.nodes[p].style.align_items,
+        Some(TaffyAlignItems::BASELINE)
+    );
+
+    images
+        .into_iter()
+        .map(|image| {
+            let layout = doc.nodes[image].unrounded_layout;
+            (layout.location.x, layout.location.y, layout.size.height)
+        })
+        .collect()
+}
+
+#[test]
+fn establish_minimal_line_boxes_keep_relative_image_offsets_out_of_shared_baseline() {
+    let first_relative =
+        inline_image_positions(100, &[(8, "position:relative;top:5px"), (4, "")], true);
+    let bottom = |index: usize| first_relative[index].1 + first_relative[index].2;
+    assert!(
+        (bottom(0) - bottom(1) - 5.0).abs() < 1e-3,
+        "a relative inset on the first image must not move its baseline sibling"
+    );
+
+    let second_relative =
+        inline_image_positions(100, &[(8, ""), (4, "position:relative;top:5px")], true);
+    let bottom = |index: usize| second_relative[index].1 + second_relative[index].2;
+    assert!(
+        (bottom(1) - bottom(0) - 5.0).abs() < 1e-3,
+        "a relative inset on a later image must remain local to that image"
+    );
+}
+
+#[test]
+fn establish_minimal_line_boxes_keep_relative_horizontal_offsets_per_image() {
+    let normal = inline_image_positions(100, &[(8, ""), (4, "")], true);
+    let first_left =
+        inline_image_positions(100, &[(8, "position:relative;left:5px"), (4, "")], true);
+    let first_right =
+        inline_image_positions(100, &[(8, "position:relative;right:5px"), (4, "")], true);
+    let second_left =
+        inline_image_positions(100, &[(8, ""), (4, "position:relative;left:5px")], true);
+    let second_right =
+        inline_image_positions(100, &[(8, ""), (4, "position:relative;right:5px")], true);
+    let epsilon = 1e-3;
+
+    assert!((first_left[0].0 - normal[0].0 - 5.0).abs() < epsilon);
+    assert!((first_left[1].0 - normal[1].0).abs() < epsilon);
+    assert!((first_right[0].0 - normal[0].0 + 5.0).abs() < epsilon);
+    assert!((first_right[1].0 - normal[1].0).abs() < epsilon);
+    assert!((second_left[0].0 - normal[0].0).abs() < epsilon);
+    assert!((second_left[1].0 - normal[1].0 - 5.0).abs() < epsilon);
+    assert!((second_right[0].0 - normal[0].0).abs() < epsilon);
+    assert!((second_right[1].0 - normal[1].0 + 5.0).abs() < epsilon);
+}
+
+#[test]
+fn establish_minimal_line_boxes_keep_bottom_relative_offset_after_manual_wrap() {
+    let images = inline_image_positions(
+        16,
+        &[
+            (8, "vertical-align:bottom"),
+            (4, "vertical-align:bottom"),
+            (6, "vertical-align:bottom"),
+            (3, "vertical-align:bottom;position:relative;top:5px"),
+        ],
+        false,
+    );
+    let bottom = |index: usize| images[index].1 + images[index].2;
+    assert!(
+        (bottom(0) - bottom(1)).abs() < 1e-3,
+        "the first bottom-aligned image row must share its line edge"
+    );
+    assert!(
+        (bottom(3) - bottom(2) - 5.0).abs() < 1e-3,
+        "the later row must preserve only the last image's relative inset"
+    );
+}
+
 fn assert_inline_image_bottom_matches_text_baseline(text_content: &str, white_space: &str) {
     use parley::FontContext;
     use raikiri_style::{build_rule_tree, cascade};

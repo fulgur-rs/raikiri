@@ -896,6 +896,43 @@ fn inline_root_has_unhandled_baseline_content(
     })
 }
 
+fn relative_position_x_offset(
+    cascade: &CascadeResult,
+    child_id: usize,
+    containing_width: f32,
+) -> f32 {
+    let child_cv = &cascade.computed[child_id];
+    if !matches!(
+        child_cv.position,
+        PositionValue::Relative | PositionValue::Sticky
+    ) {
+        return 0.0;
+    }
+    let left =
+        super::page::used_computed_length_percentage_or_auto(child_cv.left, containing_width);
+    let right =
+        super::page::used_computed_length_percentage_or_auto(child_cv.right, containing_width);
+    left.or_else(|| right.map(|value| -value)).unwrap_or(0.0)
+}
+
+fn relative_position_y_offset(
+    cascade: &CascadeResult,
+    child_id: usize,
+    containing_height: f32,
+) -> f32 {
+    let child_cv = &cascade.computed[child_id];
+    if !matches!(
+        child_cv.position,
+        PositionValue::Relative | PositionValue::Sticky
+    ) {
+        return 0.0;
+    }
+    let top = super::page::used_computed_length_percentage_or_auto(child_cv.top, containing_height);
+    let bottom =
+        super::page::used_computed_length_percentage_or_auto(child_cv.bottom, containing_height);
+    top.or_else(|| bottom.map(|value| -value)).unwrap_or(0.0)
+}
+
 // cov:ignore: exercised by resource-enabled ignored WPT reftests; default coverage has no sparse asset run.
 pub(crate) fn realign_inline_replaced_children(doc: &mut Document, cascade: &CascadeResult) {
     for parent_id in 0..doc.nodes.len() {
@@ -992,25 +1029,36 @@ pub(crate) fn realign_inline_replaced_children(doc: &mut Document, cascade: &Cas
                 continue;
             }
             let taffy_y = doc.nodes[child].unrounded_layout.location.y;
+            let relative_offset_y = relative_position_y_offset(
+                cascade,
+                child,
+                doc.nodes[parent_id].unrounded_layout.size.height.max(0.0),
+            );
+            let flow_taffy_y = taffy_y - relative_offset_y;
             let child_y = if !baseline_aligned {
-                y
+                y + relative_offset_y
             } else if doc.nodes[child].style.align_self == Some(TaffyAlignItems::FLEX_START) {
-                taffy_y + y
+                flow_taffy_y + y + relative_offset_y
             } else if doc.nodes[child].style.align_self == Some(TaffyAlignItems::FLEX_END) {
                 if y == 0.0 {
-                    taffy_y
+                    flow_taffy_y + relative_offset_y
                 } else {
-                    y + line_height_used - height
+                    y + line_height_used - height + relative_offset_y
                 }
             } else {
                 let baseline_offset = *baseline_for_line.get_or_insert(if y == 0.0 {
-                    taffy_y + height
+                    flow_taffy_y + height
                 } else {
                     height
                 });
-                y + baseline_offset - height
+                y + baseline_offset - height + relative_offset_y
             };
-            doc.nodes[child].unrounded_layout.location.x = x;
+            let relative_offset_x = relative_position_x_offset(
+                cascade,
+                child,
+                doc.nodes[parent_id].unrounded_layout.size.width.max(0.0),
+            );
+            doc.nodes[child].unrounded_layout.location.x = x + relative_offset_x;
             doc.nodes[child].unrounded_layout.location.y = child_y;
             x += width;
             line_height_used = line_height_used.max(height);

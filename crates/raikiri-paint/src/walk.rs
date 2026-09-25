@@ -3231,10 +3231,17 @@ fn paint_document_impl(
                 let own_shift =
                     vertical_align_shift_px(cv.vertical_align, cv.display, parent_font_size);
                 let child_shift_y = shift_y + own_shift;
-                // Taffy applies `inset` to inline nodes' layout locations,
+                // Taffy applies `inset` to inline-level boxes' layout locations,
                 // while the table-caption path still needs the paint-side
                 // relative offset. Avoid shifting inline descendants twice.
-                let (pos_dx, pos_dy) = if matches!(cv.display, DisplayValue::Inline) {
+                let (pos_dx, pos_dy) = if matches!(
+                    cv.display,
+                    DisplayValue::Inline
+                        | DisplayValue::InlineBlock
+                        | DisplayValue::InlineFlex
+                        | DisplayValue::InlineGrid
+                        | DisplayValue::InlineTable
+                ) {
                     (0.0, 0.0)
                 } else {
                     position_offset_px(cv)
