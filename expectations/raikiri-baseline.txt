@@ -1511,10 +1511,12 @@ css/css-page/page-name-canvas-002-print.html
 # --- css-page nested named-page propagation exact 800x600 PASS-only (2026-09-23) ---
 css/css-page/page-name-propagated-001-print.html
 css/css-page/page-name-propagated-002-print.html
-# --- CSS Text line-break:anywhere first-stage exact 800x600 PASS-only (+19) ---
+# --- CSS Text line-break:anywhere first-stage exact 800x600 PASS-only (+21) ---
 css/css-text/line-break/line-break-anywhere-002.html
 css/css-text/line-break/line-break-anywhere-004.html
+css/css-text/line-break/line-break-anywhere-006.html
 css/css-text/line-break/line-break-anywhere-007.html
+css/css-text/line-break/line-break-anywhere-010.html
 css/css-text/line-break/line-break-anywhere-011.html
 css/css-text/line-break/line-break-anywhere-012.html
 css/css-text/line-break/line-break-anywhere-013.html

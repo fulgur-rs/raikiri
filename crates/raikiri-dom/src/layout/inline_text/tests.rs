@@ -3224,3 +3224,395 @@ fn text_autospace_boxes_insert_expected_boundary_advances() {
         text_autospace_boxes_with_edges("国", TextAutospace::Normal, "", 40.0, None, Some('A'));
     assert_eq!(cross_after[0].index, 3);
 }
+
+#[test]
+fn anywhere_nbsp_boxes_keep_utf8_offsets_and_advance() {
+    let existing = [
+        InlineBox {
+            id: 17,
+            kind: InlineBoxKind::InFlow,
+            index: 7,
+            width: 2.0,
+            height: 0.0,
+        },
+        InlineBox {
+            id: 18,
+            kind: InlineBoxKind::InFlow,
+            index: 10,
+            width: 3.0,
+            height: 0.0,
+        },
+    ];
+    let (text, boxes) =
+        replace_nbsp_with_inline_boxes("A界\u{00A0}B\u{00A0}C", 12.5, &existing).unwrap();
+    assert_eq!(text, "A界BC");
+    let mut adapter = boxes.iter().filter(|item| {
+        item.id >= LINE_BREAK_NBSP_INLINE_BOX_ID_BASE
+            && item.id < LINE_BREAK_NBSP_INLINE_BOX_ID_LIMIT
+    });
+    assert_eq!(
+        adapter.clone().map(|item| item.index).collect::<Vec<_>>(),
+        vec![4, 5]
+    );
+    assert!(adapter.clone().all(|item| {
+        item.kind == InlineBoxKind::InFlow && item.width == 12.5 && item.height == 0.0
+    }));
+    assert!(adapter.all(|item| item.id < LINE_BREAK_NBSP_INLINE_BOX_ID_LIMIT));
+    assert_eq!(boxes.iter().find(|item| item.id == 17).unwrap().index, 5);
+    assert_eq!(boxes.iter().find(|item| item.id == 18).unwrap().index, 6);
+}
+
+#[test]
+fn anywhere_nbsp_boxes_preserve_order_at_removed_character_boundaries() {
+    let existing = [
+        InlineBox {
+            id: 17,
+            kind: InlineBoxKind::InFlow,
+            index: 1,
+            width: 1.0,
+            height: 0.0,
+        },
+        InlineBox {
+            id: 18,
+            kind: InlineBoxKind::InFlow,
+            index: 3,
+            width: 2.0,
+            height: 0.0,
+        },
+        InlineBox {
+            id: 19,
+            kind: InlineBoxKind::InFlow,
+            index: 5,
+            width: 3.0,
+            height: 0.0,
+        },
+    ];
+    let (text, boxes) =
+        replace_nbsp_with_inline_boxes("A\u{00A0}\u{00A0}B", 4.0, &existing).unwrap();
+
+    assert_eq!(text, "AB");
+    assert_eq!(
+        boxes.iter().map(|item| item.id).collect::<Vec<_>>(),
+        vec![
+            17,
+            LINE_BREAK_NBSP_INLINE_BOX_ID_BASE,
+            18,
+            LINE_BREAK_NBSP_INLINE_BOX_ID_BASE + 1,
+            19,
+        ]
+    );
+    assert!(boxes.iter().all(|item| item.index == 1));
+}
+
+#[test]
+fn anywhere_nbsp_adapter_rejects_invalid_advances() {
+    for advance in [0.0, -1.0, f32::INFINITY, f32::NAN] {
+        assert!(replace_nbsp_with_inline_boxes("A\u{00A0}B", advance, &[]).is_none());
+    }
+}
+
+#[test]
+fn anywhere_override_support_predicate_matches_bounded_modes() {
+    let cases = [
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::Normal,
+            false,
+            "A\u{00A0}B",
+            true,
+        ),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::Normal,
+            false,
+            "A\u{2011}B",
+            false,
+        ),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::Normal,
+            false,
+            "A\u{202F}B",
+            false,
+        ),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::Normal,
+            false,
+            "A\u{0301}B",
+            false,
+        ),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::Normal,
+            false,
+            "A\u{2060}B",
+            true,
+        ),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::Normal,
+            false,
+            "A\u{FEFF}B",
+            true,
+        ),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::Normal,
+            false,
+            "A\u{200B}B",
+            true,
+        ),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::Normal,
+            false,
+            "A\u{180E}B",
+            true,
+        ),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::Normal,
+            false,
+            "A\u{034F}B",
+            true,
+        ),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::Normal,
+            false,
+            "A\u{200D}B",
+            true,
+        ),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::PreLine,
+            false,
+            "A\nB",
+            true,
+        ),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::PreWrap,
+            false,
+            "XXXX\u{00A0}XXXX X X",
+            true,
+        ),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::PreWrap,
+            false,
+            "X   Y",
+            false,
+        ),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::PreWrap,
+            false,
+            "X\tY",
+            false,
+        ),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::PreWrap,
+            false,
+            "X\nY",
+            false,
+        ),
+        (LineBreak::Anywhere, WhiteSpace::PreWrap, false, " X", false),
+        (LineBreak::Anywhere, WhiteSpace::PreWrap, false, "X ", false),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::PreWrap,
+            false,
+            "X  Y",
+            false,
+        ),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::PreWrap,
+            false,
+            "A\u{00A0}B\u{00A0}C",
+            false,
+        ),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::PreWrap,
+            false,
+            "A B",
+            false,
+        ),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::BreakSpaces,
+            false,
+            "A B",
+            false,
+        ),
+        (LineBreak::Anywhere, WhiteSpace::Normal, true, "A B", false),
+        (
+            LineBreak::Anywhere,
+            WhiteSpace::Normal,
+            false,
+            "\u{00A0}",
+            false,
+        ),
+        (LineBreak::Normal, WhiteSpace::Normal, false, "A B", false),
+    ];
+
+    for (line_break, white_space, nowrap, text, expected) in cases {
+        assert_eq!(
+            should_enable_anywhere_override(line_break, white_space, nowrap, text),
+            expected,
+            "text={text:?}, white_space={white_space:?}"
+        );
+    }
+}
+
+#[test]
+fn anywhere_callback_requires_adapter_for_nbsp() {
+    assert!(should_enable_anywhere_callback(
+        LineBreak::Anywhere,
+        WhiteSpace::Normal,
+        false,
+        "A B",
+        false,
+    ));
+    assert!(!should_enable_anywhere_callback(
+        LineBreak::Anywhere,
+        WhiteSpace::Normal,
+        false,
+        "A\u{00A0}B",
+        false,
+    ));
+    assert!(should_enable_anywhere_callback(
+        LineBreak::Anywhere,
+        WhiteSpace::Normal,
+        false,
+        "A\u{00A0}B",
+        true,
+    ));
+    assert!(!should_enable_anywhere_callback(
+        LineBreak::Anywhere,
+        WhiteSpace::Normal,
+        false,
+        "A\u{2011}B",
+        true,
+    ));
+}
+
+#[test]
+fn anywhere_nbsp_adapter_stays_out_of_inline_root_fallback() {
+    let text = "A\u{00A0}B";
+    assert!(should_enable_nbsp_adapter(
+        LineBreak::Anywhere,
+        WhiteSpace::Normal,
+        false,
+        text,
+        false,
+        false,
+    ));
+    assert!(!should_enable_nbsp_adapter(
+        LineBreak::Anywhere,
+        WhiteSpace::Normal,
+        false,
+        text,
+        false,
+        true,
+    ));
+    assert!(!should_enable_nbsp_adapter(
+        LineBreak::Anywhere,
+        WhiteSpace::PreWrap,
+        false,
+        "XXXX\u{00A0}XXXX X X",
+        false,
+        true,
+    ));
+    assert!(!should_enable_nbsp_adapter(
+        LineBreak::Anywhere,
+        WhiteSpace::PreWrap,
+        false,
+        "XXXX\u{00A0}XXXX X X",
+        true,
+        false,
+    ));
+}
+
+#[test]
+fn anywhere_nbsp_adapter_preserves_dom_text() {
+    use parley::{FontContext, LayoutContext};
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;line-break:anywhere;font-family:monospace;font-size:20px;white-space:normal"),
+    );
+    let text = doc.append_text(block, "XXXX\u{00A0}XXXX");
+
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    let mut fonts = FontContext::new();
+    let mut layout_cx = LayoutContext::<()>::new();
+    preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, 100.0, 100.0);
+
+    assert_eq!(doc.nodes[text].text_content().unwrap(), "XXXX\u{00A0}XXXX");
+    let layout = doc.nodes[text].text_layout().expect("NBSP text shaped");
+    let adapter_boxes = layout
+        .inline_boxes()
+        .iter()
+        .filter(|item| {
+            item.id >= LINE_BREAK_NBSP_INLINE_BOX_ID_BASE
+                && item.id < LINE_BREAK_NBSP_INLINE_BOX_ID_LIMIT
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(adapter_boxes.len(), 1);
+    assert_eq!(adapter_boxes[0].index, 4);
+    assert!(adapter_boxes[0].width.is_finite() && adapter_boxes[0].width > 0.0);
+    assert_eq!(adapter_boxes[0].height, 0.0);
+}
+
+#[test]
+fn anywhere_nbsp_adapter_keeps_inline_root_on_per_node_fallback() {
+    use parley::{FontContext, LayoutContext};
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let root = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;line-break:anywhere;font-family:monospace;font-size:20px;white-space:normal"),
+    );
+    let first = doc.append_element(Some(root), "span", Style::default(), Some("display:inline"));
+    let first_text = doc.append_text(first, "XXXX\u{00A0}");
+    let second = doc.append_element(Some(root), "span", Style::default(), Some("display:inline"));
+    doc.append_text(second, "XXXX");
+
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cr);
+    assert!(doc.nodes[root].flags.contains(NodeFlags::IS_INLINE_ROOT));
+
+    let mut fonts = FontContext::new();
+    let mut layout_cx = LayoutContext::<()>::new();
+    preshape_text(&mut doc, &cr, &mut fonts, &mut layout_cx, 100.0, 100.0);
+
+    assert_eq!(
+        doc.nodes[first_text].text_content().unwrap(),
+        "XXXX\u{00A0}"
+    );
+    let layout = doc.nodes[first_text]
+        .text_layout()
+        .expect("inline-root text shaped");
+    assert!(layout.inline_boxes().iter().all(|item| {
+        !(LINE_BREAK_NBSP_INLINE_BOX_ID_BASE..LINE_BREAK_NBSP_INLINE_BOX_ID_LIMIT)
+            .contains(&item.id)
+    }));
+}

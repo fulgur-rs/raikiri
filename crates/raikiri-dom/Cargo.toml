@@ -5,6 +5,7 @@ description = "DOM data model + taffy/parley layout engine + PageStream/LayoutBu
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 bitflags       = "2"

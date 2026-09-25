@@ -2230,6 +2230,91 @@ fn remap_boxes_through_tab_rewrite(original: &str, tab_lens: &[usize], boxes: &m
     }
 }
 
+const LINE_BREAK_NBSP_INLINE_BOX_ID_BASE: u64 = 1 << 62;
+const LINE_BREAK_NBSP_INLINE_BOX_ID_LIMIT: u64 = 1 << 63;
+
+/// Replace U+00A0 in Parley's input with a nonpainting advance box.
+///
+/// Existing inline-box offsets are based on the source string and must move
+/// left by two UTF-8 bytes for every preceding NBSP that is removed.
+fn replace_nbsp_with_inline_boxes(
+    text: &str,
+    advance: f32,
+    existing_boxes: &[InlineBox],
+) -> Option<(String, Vec<InlineBox>)> {
+    if !advance.is_finite() || advance <= 0.0 {
+        return None;
+    }
+
+    let nbsp_offsets: Vec<usize> = text
+        .match_indices('\u{00A0}')
+        .map(|(offset, _)| offset)
+        .collect();
+    if nbsp_offsets.is_empty() {
+        return Some((text.to_owned(), existing_boxes.to_vec()));
+    }
+
+    let id_count = u64::try_from(nbsp_offsets.len()).ok()?;
+    let last_id = LINE_BREAK_NBSP_INLINE_BOX_ID_BASE.checked_add(id_count.checked_sub(1)?)?;
+    if last_id >= LINE_BREAK_NBSP_INLINE_BOX_ID_LIMIT
+        || existing_boxes.iter().any(|inline_box| {
+            (LINE_BREAK_NBSP_INLINE_BOX_ID_BASE..LINE_BREAK_NBSP_INLINE_BOX_ID_LIMIT)
+                .contains(&inline_box.id)
+        })
+    {
+        return None;
+    }
+
+    let mut output = String::with_capacity(text.len());
+    let mut adapter_boxes = Vec::with_capacity(nbsp_offsets.len());
+    for (source_index, character) in text.char_indices() {
+        if character == '\u{00A0}' {
+            let ordinal = u64::try_from(adapter_boxes.len()).ok()?;
+            adapter_boxes.push(InlineBox {
+                id: LINE_BREAK_NBSP_INLINE_BOX_ID_BASE.checked_add(ordinal)?,
+                kind: InlineBoxKind::InFlow,
+                index: output.len(),
+                width: advance,
+                height: 0.0,
+            });
+        } else {
+            debug_assert!(source_index <= text.len());
+            output.push(character);
+        }
+    }
+
+    let mut ordered_boxes = Vec::with_capacity(existing_boxes.len() + adapter_boxes.len());
+    for (order, inline_box) in existing_boxes.iter().enumerate() {
+        let source_index = inline_box.index;
+        if source_index > text.len() || !text.is_char_boundary(source_index) {
+            return None;
+        }
+        let removed_bytes = nbsp_offsets
+            .partition_point(|&offset| offset < source_index)
+            .checked_mul('\u{00A0}'.len_utf8())?;
+        let output_index = source_index.checked_sub(removed_bytes)?;
+        let mut inline_box = inline_box.clone();
+        inline_box.index = output_index;
+        // At a shared output index, the original source boundary determines
+        // whether a box was before, between, or after removed NBSP characters.
+        ordered_boxes.push((output_index, source_index, 0_u8, order, inline_box));
+    }
+    for (order, (source_index, inline_box)) in
+        nbsp_offsets.iter().copied().zip(adapter_boxes).enumerate()
+    {
+        let output_index = inline_box.index;
+        ordered_boxes.push((output_index, source_index, 1_u8, order, inline_box));
+    }
+    ordered_boxes.sort_by_key(|(output_index, source_index, kind, order, _)| {
+        (*output_index, *source_index, *kind, *order)
+    });
+    let boxes = ordered_boxes
+        .into_iter()
+        .map(|(_, _, _, _, inline_box)| inline_box)
+        .collect();
+    Some((output, boxes))
+}
+
 /// Resolve `tab-size` to an absolute stop interval in CSS pixels.
 fn tab_stop_advance(tab_size: ComputedTabSize, block_space_advance: f32) -> f32 {
     match tab_size {
@@ -4574,6 +4659,110 @@ fn parley_word_break(value: WordBreak, _line_break: LineBreak) -> ParleyWordBrea
     }
 }
 
+fn has_visible_non_nbsp_character(text: &str) -> bool {
+    text.chars()
+        .any(|character| character != '\u{00A0}' && !is_css_white_space(character))
+}
+
+// The callback overrides every analyzed UAX line boundary. Keep control
+// classes without exact WPT coverage on the per-job fallback path.
+fn line_break_class_map()
+-> icu_properties::CodePointMapDataBorrowed<'static, icu_properties::props::LineBreak> {
+    icu_properties::CodePointMapDataBorrowed::<icu_properties::props::LineBreak>::new()
+}
+
+fn has_unverified_anywhere_control(text: &str) -> bool {
+    use icu_properties::props::LineBreak as UnicodeLineBreak;
+
+    let classes = line_break_class_map();
+    text.chars().any(|character| {
+        matches!(
+            classes.get(character),
+            UnicodeLineBreak::Glue
+                | UnicodeLineBreak::WordJoiner
+                | UnicodeLineBreak::ZWSpace
+                | UnicodeLineBreak::ZWJ
+                | UnicodeLineBreak::CombiningMark
+        ) && !matches!(
+            character,
+            '\u{00A0}' // verified WPT -006/-010; replaced by the Raikiri adapter
+                | '\u{2060}' // verified WPT overrides-uax-behavior-001
+                | '\u{FEFF}' // verified WPT overrides-uax-behavior-002
+                | '\u{200B}' // verified WPT overrides-uax-behavior-003
+                | '\u{180E}' // verified WPT overrides-uax-behavior-010
+                | '\u{034F}' // verified WPT overrides-uax-behavior-012
+                | '\u{200D}' // verified WPT overrides-uax-behavior-015
+        )
+    })
+}
+
+fn pre_wrap_anywhere_subset(text: &str) -> bool {
+    text.matches('\u{00A0}').count() == 1
+        && text
+            .chars()
+            .all(|character| !is_css_white_space(character) || character == ' ')
+        && !text.starts_with(' ')
+        && !text.ends_with(' ')
+        && !text.contains("  ")
+        && has_visible_non_nbsp_character(text)
+}
+
+fn should_enable_anywhere_override(
+    line_break: LineBreak,
+    white_space: WhiteSpace,
+    nowrap: bool,
+    text: &str,
+) -> bool {
+    if line_break != LineBreak::Anywhere
+        || nowrap
+        || !has_visible_non_nbsp_character(text)
+        || has_unverified_anywhere_control(text)
+    {
+        return false;
+    }
+
+    match white_space {
+        WhiteSpace::Normal | WhiteSpace::PreLine => true,
+        WhiteSpace::PreWrap => pre_wrap_anywhere_subset(text),
+        _ => false,
+    }
+}
+
+fn should_enable_anywhere_callback(
+    line_break: LineBreak,
+    white_space: WhiteSpace,
+    nowrap: bool,
+    text: &str,
+    nbsp_adapter_enabled: bool,
+) -> bool {
+    should_enable_anywhere_override(line_break, white_space, nowrap, text)
+        && (!text.contains('\u{00A0}') || nbsp_adapter_enabled)
+}
+
+fn should_enable_nbsp_adapter(
+    line_break: LineBreak,
+    white_space: WhiteSpace,
+    nowrap: bool,
+    text: &str,
+    has_authored_tab: bool,
+    has_inline_root_ancestor: bool,
+) -> bool {
+    !(has_inline_root_ancestor || (white_space == WhiteSpace::PreWrap && has_authored_tab))
+        && text.contains('\u{00A0}')
+        && should_enable_anywhere_override(line_break, white_space, nowrap, text)
+}
+
+fn has_inline_root_ancestor(doc: &Document, parent_of: &[Option<usize>], node: usize) -> bool {
+    let mut ancestor = parent_of[node];
+    while let Some(index) = ancestor {
+        if doc.nodes[index].flags.contains(NodeFlags::IS_INLINE_ROOT) {
+            return true;
+        }
+        ancestor = parent_of[index];
+    }
+    false
+}
+
 fn line_break_anywhere_override(context: parley::LineBreakContext) -> Option<bool> {
     // A mandatory newline already ends the current line. Do not create a
     // second soft opportunity immediately before it.
@@ -4583,19 +4772,8 @@ fn line_break_anywhere_override(context: parley::LineBreakContext) -> Option<boo
 static LINE_BREAK_ANYWHERE_OVERRIDE: &parley::LineBreakOverrideFn =
     &(line_break_anywhere_override as fn(parley::LineBreakContext) -> Option<bool>);
 
-fn parley_line_break_override(
-    line_break: LineBreak,
-    white_space: WhiteSpace,
-) -> Option<&'static parley::LineBreakOverrideFn> {
-    if !matches!(line_break, LineBreak::Anywhere) {
-        return None;
-    }
-    if matches!(white_space, WhiteSpace::PreWrap | WhiteSpace::BreakSpaces) {
-        // Registry Parley does not expose CSS hanging-space controls. Keep both
-        // preserved-space modes on their existing layout path in this slice.
-        return None;
-    }
-    Some(LINE_BREAK_ANYWHERE_OVERRIDE)
+fn parley_line_break_override(enabled: bool) -> Option<&'static parley::LineBreakOverrideFn> {
+    enabled.then_some(LINE_BREAK_ANYWHERE_OVERRIDE)
 }
 
 fn parley_overflow_wrap(
@@ -4641,6 +4819,7 @@ pub(crate) fn preshape_text(
     // are Send and avoid sharing &Document across threads.
     struct Job {
         idx: usize,
+        had_tab: bool,
         text: String,
         family_str: String,
         font_size_raw: f32,
@@ -4660,6 +4839,8 @@ pub(crate) fn preshape_text(
         white_space: WhiteSpace,
         word_break: WordBreak,
         line_break: LineBreak,
+        line_break_override_enabled: bool,
+        has_inline_root_ancestor: bool,
         overflow_wrap: OverflowWrap,
         text_wrap_mode: TextWrapMode,
         autospace_boxes: Vec<InlineBox>,
@@ -5070,6 +5251,7 @@ pub(crate) fn preshape_text(
         }
         jobs.push(Job {
             idx,
+            had_tab: text.contains('\t'),
             text,
             family_str,
             font_size_raw: cv.font_size.px(),
@@ -5084,6 +5266,8 @@ pub(crate) fn preshape_text(
             white_space: cv.white_space,
             word_break: cv.word_break,
             line_break: cv.line_break,
+            line_break_override_enabled: false,
+            has_inline_root_ancestor: has_inline_root_ancestor(doc, &parent_of, idx),
             overflow_wrap: cv.overflow_wrap,
             text_wrap_mode: cv.text_wrap,
             autospace_boxes,
@@ -5242,6 +5426,60 @@ pub(crate) fn preshape_text(
         job.tab_spacing_ranges = spacing_ranges;
     }
 
+    for job in &mut jobs {
+        let adapter_enabled = should_enable_nbsp_adapter(
+            job.line_break,
+            job.white_space,
+            job.nowrap,
+            &job.text,
+            job.had_tab,
+            job.has_inline_root_ancestor,
+        );
+        job.line_break_override_enabled = should_enable_anywhere_callback(
+            job.line_break,
+            job.white_space,
+            job.nowrap,
+            &job.text,
+            adapter_enabled,
+        );
+        if job.white_space == WhiteSpace::PreWrap && !adapter_enabled {
+            job.line_break_override_enabled = false;
+        }
+        if !adapter_enabled {
+            continue;
+        }
+
+        let word_spacing = if job.word_spacing_ch_factor.is_some() || job.word_spacing_raw < 0.0 {
+            job.word_spacing_raw
+        } else {
+            0.0
+        };
+        let advance = probe_text_full_width(
+            fonts,
+            layout_cx,
+            "\u{00A0}",
+            TextProbeStyle {
+                family_str: &job.family_str,
+                font_size_px: job.font_size_raw,
+                font_weight: job.font_weight_raw,
+                font_style: job.font_style,
+                letter_spacing: job.letter_spacing_raw,
+                word_spacing,
+            },
+        );
+        if !advance.is_finite() || advance <= 0.0 {
+            job.line_break_override_enabled = false;
+            continue;
+        }
+        match replace_nbsp_with_inline_boxes(&job.text, advance, &job.autospace_boxes) {
+            Some((text, inline_boxes)) => {
+                job.text = text;
+                job.autospace_boxes = inline_boxes;
+            }
+            None => job.line_break_override_enabled = false,
+        }
+    }
+
     // Copy original FontContext once; each rayon task clones from this base.
     // LayoutContext is cheap (clone returns new empty), so per-task new() is fine.
     // For very small job counts rayon overhead dominates; use sequential fallback.
@@ -5278,8 +5516,7 @@ pub(crate) fn preshape_text(
             let quantize_metrics = !job.simple_pre_block && !job.simple_preserved_run;
             let mut builder = layout_cx.ranged_builder(fonts, &job.text, 1.0, quantize_metrics);
             builder.set_line_break_override(parley_line_break_override(
-                job.line_break,
-                job.white_space,
+                job.line_break_override_enabled,
             ));
             builder.push_default(StyleProperty::FontFamily(font_family));
             builder.push_default(StyleProperty::FontSize(font_size_px));
@@ -5373,8 +5610,7 @@ pub(crate) fn preshape_text(
                 let mut builder =
                     lcx.ranged_builder(&mut fonts_thread, &job.text, 1.0, quantize_metrics);
                 builder.set_line_break_override(parley_line_break_override(
-                    job.line_break,
-                    job.white_space,
+                    job.line_break_override_enabled,
                 ));
                 builder.push_default(StyleProperty::FontFamily(font_family));
                 builder.push_default(StyleProperty::FontSize(font_size_px));
