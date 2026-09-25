@@ -3188,9 +3188,9 @@ fn filter_parse_drop_shadow_full_form() {
     assert_eq!(
         expect_filter(parse("drop-shadow(red 1px 2px 3px)", "filter")),
         vec![FilterFunction::DropShadow(TextShadowItem {
-            offset_x: Length::Px(1.0),
-            offset_y: Length::Px(2.0),
-            blur_radius: Length::Px(3.0),
+            offset_x: crate::property::TextShadowLength::Length(Length::Px(1.0)),
+            offset_y: crate::property::TextShadowLength::Length(Length::Px(2.0)),
+            blur_radius: crate::property::TextShadowLength::Length(Length::Px(3.0)),
             color: TextShadowColor::Resolved(RED),
         })]
     );
@@ -3201,9 +3201,9 @@ fn filter_drop_shadow_omitted_color_defaults_to_currentcolor() {
     assert_eq!(
         expect_filter(parse("drop-shadow(1px 2px)", "filter")),
         vec![FilterFunction::DropShadow(TextShadowItem {
-            offset_x: Length::Px(1.0),
-            offset_y: Length::Px(2.0),
-            blur_radius: Length::Px(0.0),
+            offset_x: crate::property::TextShadowLength::Length(Length::Px(1.0)),
+            offset_y: crate::property::TextShadowLength::Length(Length::Px(2.0)),
+            blur_radius: crate::property::TextShadowLength::Length(Length::Px(0.0)),
             color: TextShadowColor::CurrentColor,
         })]
     );
@@ -3234,9 +3234,9 @@ fn filter_drop_shadow_zero_mantissa_huge_exponent_offset_resolves_to_zero() {
     assert_eq!(
         expect_filter(parse("drop-shadow(0e999px 2px)", "filter")),
         vec![FilterFunction::DropShadow(TextShadowItem {
-            offset_x: Length::Px(0.0),
-            offset_y: Length::Px(2.0),
-            blur_radius: Length::Px(0.0),
+            offset_x: crate::property::TextShadowLength::Length(Length::Px(0.0)),
+            offset_y: crate::property::TextShadowLength::Length(Length::Px(2.0)),
+            blur_radius: crate::property::TextShadowLength::Length(Length::Px(0.0)),
             color: TextShadowColor::CurrentColor,
         })]
     );
@@ -3252,18 +3252,18 @@ fn filter_drop_shadow_offset_infinity_passes_through_unclamped() {
     assert_eq!(
         expect_filter(parse("drop-shadow(1e40px 2px)", "filter")),
         vec![FilterFunction::DropShadow(TextShadowItem {
-            offset_x: Length::Px(f32::INFINITY),
-            offset_y: Length::Px(2.0),
-            blur_radius: Length::Px(0.0),
+            offset_x: crate::property::TextShadowLength::Length(Length::Px(f32::INFINITY)),
+            offset_y: crate::property::TextShadowLength::Length(Length::Px(2.0)),
+            blur_radius: crate::property::TextShadowLength::Length(Length::Px(0.0)),
             color: TextShadowColor::CurrentColor,
         })]
     );
     assert_eq!(
         expect_filter(parse("drop-shadow(-1e40px 2px)", "filter")),
         vec![FilterFunction::DropShadow(TextShadowItem {
-            offset_x: Length::Px(f32::NEG_INFINITY),
-            offset_y: Length::Px(2.0),
-            blur_radius: Length::Px(0.0),
+            offset_x: crate::property::TextShadowLength::Length(Length::Px(f32::NEG_INFINITY)),
+            offset_y: crate::property::TextShadowLength::Length(Length::Px(2.0)),
+            blur_radius: crate::property::TextShadowLength::Length(Length::Px(0.0)),
             color: TextShadowColor::CurrentColor,
         })]
     );

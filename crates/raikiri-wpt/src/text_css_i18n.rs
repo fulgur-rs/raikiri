@@ -132,6 +132,7 @@ struct LiveDocumentBackend {
     setup: crate::reftest::LiveWptSetup,
     wpt_root: PathBuf,
     page_scene: Option<raikiri::PageScene>,
+    computed_styles: Option<Vec<raikiri_style::ComputedValues>>,
     layout_dirty: bool,
     #[cfg(test)]
     layout_flush_count: usize,
@@ -143,6 +144,7 @@ impl LiveDocumentBackend {
             setup,
             wpt_root: wpt_root.to_path_buf(),
             page_scene: None,
+            computed_styles: None,
             layout_dirty: true,
             #[cfg(test)]
             layout_flush_count: 0,
@@ -262,6 +264,7 @@ impl LiveDocumentBackend {
     fn invalidate_layout(&mut self) {
         self.layout_dirty = true;
         self.page_scene = None;
+        self.computed_styles = None;
     }
 
     fn flush_layout(&mut self) -> Result<(), String> {
@@ -315,6 +318,7 @@ impl LiveDocumentBackend {
             0.0,
             page_name,
         ));
+        self.computed_styles = Some(cascade.computed);
         self.layout_dirty = false;
         Ok(())
     }
@@ -588,6 +592,736 @@ impl DomBackend for LiveDocumentBackend {
         Ok(self.style_property_for(index, property))
     }
 
+    fn computed_style_property(
+        &mut self,
+        node: DomNodeId,
+        property: &str,
+    ) -> Result<Option<String>, String> {
+        if !property.eq_ignore_ascii_case("white-space")
+            && !property.eq_ignore_ascii_case("white-space-collapse")
+            && !property.eq_ignore_ascii_case("line-break")
+            && !property.eq_ignore_ascii_case("hyphenate-character")
+            && !property.eq_ignore_ascii_case("hyphenate-limit-chars")
+            && !property.eq_ignore_ascii_case("hyphens")
+            && !property.eq_ignore_ascii_case("overflow-wrap")
+            && !property.eq_ignore_ascii_case("word-wrap")
+            && !property.eq_ignore_ascii_case("word-break")
+            && !property.eq_ignore_ascii_case("text-transform")
+            && !property.eq_ignore_ascii_case("text-combine-upright")
+            && !property.eq_ignore_ascii_case("text-orientation")
+            && !property.eq_ignore_ascii_case("direction")
+            && !property.eq_ignore_ascii_case("unicode-bidi")
+            && !property.eq_ignore_ascii_case("writing-mode")
+            && !property.eq_ignore_ascii_case("text-autospace")
+            && !property.eq_ignore_ascii_case("word-space-transform")
+            && !property.eq_ignore_ascii_case("text-decoration-skip-ink")
+            && !property.eq_ignore_ascii_case("text-decoration-skip-spaces")
+            && !property.eq_ignore_ascii_case("text-decoration")
+            && !property.eq_ignore_ascii_case("text-decoration-style")
+            && !property.eq_ignore_ascii_case("text-decoration-line")
+            && !property.eq_ignore_ascii_case("text-shadow")
+            && !property.eq_ignore_ascii_case("text-decoration-inset")
+            && !property.eq_ignore_ascii_case("text-decoration-color")
+            && !property.eq_ignore_ascii_case("text-underline-position")
+            && !property.eq_ignore_ascii_case("text-underline-offset")
+            && !property.eq_ignore_ascii_case("text-emphasis-position")
+            && !property.eq_ignore_ascii_case("text-emphasis-style")
+            && !property.eq_ignore_ascii_case("text-emphasis")
+            && !property.eq_ignore_ascii_case("text-spacing-trim")
+            && !property.eq_ignore_ascii_case("text-spacing")
+            && !property.eq_ignore_ascii_case("text-wrap")
+            && !property.eq_ignore_ascii_case("text-wrap-mode")
+            && !property.eq_ignore_ascii_case("text-wrap-style")
+            && !property.eq_ignore_ascii_case("text-align")
+            && !property.eq_ignore_ascii_case("text-align-last")
+            && !property.eq_ignore_ascii_case("text-justify")
+            && !property.eq_ignore_ascii_case("text-indent")
+            && !property.eq_ignore_ascii_case("tab-size")
+            && !property.eq_ignore_ascii_case("letter-spacing")
+            && !property.eq_ignore_ascii_case("word-spacing")
+        {
+            return Ok(None);
+        }
+        let index = self.element_index(node)?;
+        self.flush_layout()?;
+        let computed = self
+            .computed_styles
+            .as_ref()
+            .and_then(|styles| styles.get(index))
+            .ok_or_else(|| format!("computed style is missing for DOM node {node}"))?;
+        if property.eq_ignore_ascii_case("direction") {
+            let value = match computed.direction {
+                raikiri_style::property::Direction::Ltr => "ltr",
+                raikiri_style::property::Direction::Rtl => "rtl",
+                _ => return Ok(None),
+            };
+            return Ok(Some(value.to_owned()));
+        }
+        if property.eq_ignore_ascii_case("text-combine-upright") {
+            let value = match computed.text_combine_upright {
+                raikiri_style::property::TextCombineUpright::None => "none",
+                raikiri_style::property::TextCombineUpright::All => "all",
+                _ => return Ok(None),
+            };
+            return Ok(Some(value.to_owned()));
+        }
+        if property.eq_ignore_ascii_case("text-orientation") {
+            let value = match computed.text_orientation {
+                raikiri_style::property::TextOrientation::Mixed => "mixed",
+                raikiri_style::property::TextOrientation::Upright => "upright",
+                raikiri_style::property::TextOrientation::Sideways => "sideways",
+                _ => return Ok(None),
+            };
+            return Ok(Some(value.to_owned()));
+        }
+        if property.eq_ignore_ascii_case("writing-mode") {
+            let value = match computed.cssom_writing_mode {
+                raikiri_style::property::WritingMode::HorizontalTb => "horizontal-tb",
+                raikiri_style::property::WritingMode::VerticalRl => "vertical-rl",
+                raikiri_style::property::WritingMode::VerticalLr => "vertical-lr",
+                raikiri_style::property::WritingMode::SidewaysRl => "sideways-rl",
+                raikiri_style::property::WritingMode::SidewaysLr => "sideways-lr",
+                _ => return Ok(None),
+            };
+            return Ok(Some(value.to_owned()));
+        }
+        if property.eq_ignore_ascii_case("unicode-bidi") {
+            let value = match computed.unicode_bidi {
+                raikiri_style::property::UnicodeBidi::Normal => "normal",
+                raikiri_style::property::UnicodeBidi::Embed => "embed",
+                raikiri_style::property::UnicodeBidi::Isolate => "isolate",
+                raikiri_style::property::UnicodeBidi::BidiOverride => "bidi-override",
+                raikiri_style::property::UnicodeBidi::IsolateOverride => "isolate-override",
+                raikiri_style::property::UnicodeBidi::Plaintext => "plaintext",
+                _ => return Ok(None),
+            };
+            return Ok(Some(value.to_owned()));
+        }
+        if property.eq_ignore_ascii_case("text-wrap") {
+            let mode = match computed.text_wrap {
+                raikiri_style::property::TextWrapMode::Wrap => "wrap",
+                raikiri_style::property::TextWrapMode::Nowrap => "nowrap",
+                _ => return Ok(None),
+            };
+            let style = match computed.text_wrap_style {
+                raikiri_style::property::TextWrapStyle::Auto => "auto",
+                raikiri_style::property::TextWrapStyle::Balance => "balance",
+                raikiri_style::property::TextWrapStyle::Pretty => "pretty",
+                raikiri_style::property::TextWrapStyle::Stable => "stable",
+                _ => return Ok(None),
+            };
+            let value = if mode == "wrap" {
+                if style == "auto" {
+                    "wrap".to_owned()
+                } else {
+                    style.to_owned()
+                }
+            } else if style == "auto" {
+                mode.to_owned()
+            } else {
+                format!("{mode} {style}")
+            };
+            return Ok(Some(value));
+        }
+        if property.eq_ignore_ascii_case("hyphenate-limit-chars") {
+            let value = &computed.hyphenate_limit_chars;
+            let values = [&value.total, &value.before, &value.after];
+            // Omit the third value only when it defaults to the second; two `auto` values serialize as `auto`.
+            let value_count = if values[1] == values[2] {
+                if matches!(
+                    values[1],
+                    &raikiri_style::property::HyphenateLimitCharsValue::Auto
+                ) {
+                    1
+                } else {
+                    2
+                }
+            } else {
+                3
+            };
+            let mut serialized = Vec::with_capacity(value_count);
+            for component in values.iter().take(value_count).copied() {
+                serialized.push(match *component {
+                    raikiri_style::property::HyphenateLimitCharsValue::Auto => "auto".to_owned(),
+                    raikiri_style::property::HyphenateLimitCharsValue::Integer(value) => {
+                        value.to_string()
+                    }
+                    _ => return Ok(None),
+                });
+            }
+            return Ok(Some(serialized.join(" ")));
+        }
+        if property.eq_ignore_ascii_case("hyphenate-character") {
+            let value = match &computed.hyphenate_character {
+                raikiri_style::property::HyphenateCharacter::Auto => "auto".to_owned(),
+                raikiri_style::property::HyphenateCharacter::String(value) => {
+                    let mut serialized = String::new();
+                    cssparser::serialize_string(value, &mut serialized)
+                        .expect("serializing a CSS string into String cannot fail");
+                    serialized
+                }
+                _ => return Ok(None),
+            };
+            return Ok(Some(value));
+        }
+        if property.eq_ignore_ascii_case("text-spacing") {
+            let Some(trim) = raikiri_style::property::serialize_value(
+                &raikiri_style::property::PropertyValue::TextSpacingTrim(
+                    computed.text_spacing_trim,
+                ),
+            ) else {
+                return Ok(None);
+            };
+            let Some(autospace) = raikiri_style::property::serialize_value(
+                &raikiri_style::property::PropertyValue::TextAutospace(computed.text_autospace),
+            ) else {
+                return Ok(None);
+            };
+            let value = if trim == "normal" && autospace == "normal" {
+                "normal".to_owned()
+            } else if trim == "space-all" && autospace == "no-autospace" {
+                "none".to_owned()
+            } else if trim == "auto" && autospace == "auto" {
+                "auto".to_owned()
+            } else {
+                // Keep `normal` explicit when omitting it would turn the other
+                // `auto` longhand into the shorthand's two-longhand `auto` alias.
+                let keep_normal = (trim == "auto") != (autospace == "auto");
+                let mut components = Vec::with_capacity(2);
+                if trim != "normal" || keep_normal {
+                    components.push(trim);
+                }
+                if autospace != "normal" || keep_normal {
+                    components.push(autospace);
+                }
+                components.join(" ")
+            };
+            return Ok(Some(value));
+        }
+        if property.eq_ignore_ascii_case("text-spacing-trim") {
+            let value = match computed.text_spacing_trim {
+                raikiri_style::property::TextSpacingTrim::Auto => "auto",
+                raikiri_style::property::TextSpacingTrim::Normal => "normal",
+                raikiri_style::property::TextSpacingTrim::SpaceAll => "space-all",
+                raikiri_style::property::TextSpacingTrim::TrimBoth => "trim-both",
+                raikiri_style::property::TextSpacingTrim::TrimAll => "trim-all",
+                raikiri_style::property::TextSpacingTrim::TrimStart => "trim-start",
+                raikiri_style::property::TextSpacingTrim::SpaceFirst => "space-first",
+                _ => return Ok(None),
+            };
+            return Ok(Some(value.to_owned()));
+        }
+        if property.eq_ignore_ascii_case("text-autospace") {
+            let value = match computed.text_autospace {
+                raikiri_style::property::TextAutospace::Normal => "normal".to_owned(),
+                raikiri_style::property::TextAutospace::Auto => "auto".to_owned(),
+                raikiri_style::property::TextAutospace::NoAutospace => "no-autospace".to_owned(),
+                raikiri_style::property::TextAutospace::Custom {
+                    ideograph_alpha,
+                    ideograph_numeric,
+                    punctuation,
+                    mode,
+                } => {
+                    let mut keywords = Vec::with_capacity(4);
+                    if ideograph_alpha {
+                        keywords.push("ideograph-alpha");
+                    }
+                    if ideograph_numeric {
+                        keywords.push("ideograph-numeric");
+                    }
+                    if punctuation {
+                        keywords.push("punctuation");
+                    }
+                    match mode {
+                        raikiri_style::property::TextAutospaceMode::None => {}
+                        raikiri_style::property::TextAutospaceMode::Insert => {
+                            keywords.push("insert");
+                        }
+                        raikiri_style::property::TextAutospaceMode::Replace => {
+                            keywords.push("replace");
+                        }
+                        _ => return Ok(None),
+                    }
+                    keywords.join(" ")
+                }
+                _ => return Ok(None),
+            };
+            return Ok(Some(value));
+        }
+        if property.eq_ignore_ascii_case("word-space-transform") {
+            let value = match computed.word_space_transform {
+                raikiri_style::property::WordSpaceTransform::None => "none",
+                raikiri_style::property::WordSpaceTransform::Space => "space",
+                raikiri_style::property::WordSpaceTransform::IdeographicSpace => {
+                    "ideographic-space"
+                }
+                raikiri_style::property::WordSpaceTransform::SpaceAutoPhrase => "space auto-phrase",
+                raikiri_style::property::WordSpaceTransform::IdeographicSpaceAutoPhrase => {
+                    "ideographic-space auto-phrase"
+                }
+                _ => return Ok(None),
+            };
+            return Ok(Some(value.to_owned()));
+        }
+        if property.eq_ignore_ascii_case("text-decoration-skip-ink") {
+            let Some(value) = raikiri_style::property::serialize_value(
+                &raikiri_style::property::PropertyValue::TextDecorationSkipInk(
+                    computed.text_decoration_skip_ink,
+                ),
+            ) else {
+                return Ok(None);
+            };
+            return Ok(Some(value));
+        }
+        if property.eq_ignore_ascii_case("text-decoration-skip-spaces") {
+            let Some(value) = raikiri_style::property::serialize_value(
+                &raikiri_style::property::PropertyValue::TextDecorationSkipSpaces(
+                    computed.text_decoration_skip_spaces,
+                ),
+            ) else {
+                return Ok(None);
+            };
+            return Ok(Some(value));
+        }
+        if property.eq_ignore_ascii_case("text-decoration") {
+            let mut components = Vec::with_capacity(4);
+            let Some(line) = raikiri_style::property::serialize_value(
+                &raikiri_style::property::PropertyValue::TextDecorationLine(
+                    computed.text_decoration_line,
+                ),
+            ) else {
+                return Ok(None);
+            };
+            if line != "none" {
+                components.push(line);
+            }
+            if computed.text_decoration_style != raikiri_style::property::TextDecorationStyle::Solid
+            {
+                let Some(style) = raikiri_style::property::serialize_value(
+                    &raikiri_style::property::PropertyValue::TextDecorationStyle(
+                        computed.text_decoration_style,
+                    ),
+                ) else {
+                    return Ok(None);
+                };
+                components.push(style);
+            }
+            match computed.text_decoration_thickness {
+                raikiri_style::ComputedTextDecorationThickness::Auto => {}
+                raikiri_style::ComputedTextDecorationThickness::FromFont => {
+                    components.push("from-font".to_owned());
+                }
+                raikiri_style::ComputedTextDecorationThickness::Length(length) => {
+                    components.push(format!("{}px", length.px()));
+                }
+            }
+            let color = match computed.text_decoration_color {
+                raikiri_style::property::TextDecorationColor::CurrentColor => None,
+                raikiri_style::property::TextDecorationColor::Resolved(color) => Some(color),
+                _ => return Ok(None),
+            };
+            if let Some(color) = color {
+                if color.a == 255 {
+                    components.push(format!("rgb({}, {}, {})", color.r, color.g, color.b));
+                } else {
+                    let alpha = f64::from(color.a) / 255.0;
+                    components.push(format!(
+                        "rgba({}, {}, {}, {alpha})",
+                        color.r, color.g, color.b
+                    ));
+                }
+            }
+            if components.is_empty() {
+                components.push("none".to_owned());
+            }
+            return Ok(Some(components.join(" ")));
+        }
+        if property.eq_ignore_ascii_case("text-decoration-style") {
+            let Some(value) = raikiri_style::property::serialize_value(
+                &raikiri_style::property::PropertyValue::TextDecorationStyle(
+                    computed.text_decoration_style,
+                ),
+            ) else {
+                return Ok(None);
+            };
+            return Ok(Some(value));
+        }
+        if property.eq_ignore_ascii_case("text-decoration-line") {
+            let Some(value) = raikiri_style::property::serialize_value(
+                &raikiri_style::property::PropertyValue::TextDecorationLine(
+                    computed.text_decoration_line,
+                ),
+            ) else {
+                return Ok(None);
+            };
+            return Ok(Some(value));
+        }
+        if property.eq_ignore_ascii_case("text-decoration-inset") {
+            let value = match computed.text_decoration_inset {
+                raikiri_style::ComputedTextDecorationInset::Auto => "auto".to_owned(),
+                raikiri_style::ComputedTextDecorationInset::Lengths { start, end } => {
+                    let mut font_context = self.setup.font_context.clone();
+                    let start_px = computed.text_decoration_inset_start_ch.as_ref().map_or(
+                        start.px(),
+                        |provenance| {
+                            provenance.factor
+                                * raikiri_dom::layout::measure_ch_advance_for_font_key(
+                                    &mut font_context,
+                                    &provenance.font,
+                                )
+                        },
+                    );
+                    let end_px = computed.text_decoration_inset_end_ch.as_ref().map_or(
+                        end.px(),
+                        |provenance| {
+                            provenance.factor
+                                * raikiri_dom::layout::measure_ch_advance_for_font_key(
+                                    &mut font_context,
+                                    &provenance.font,
+                                )
+                        },
+                    );
+                    if start_px == end_px {
+                        format!("{start_px}px")
+                    } else {
+                        format!("{start_px}px {end_px}px")
+                    }
+                }
+            };
+            return Ok(Some(value));
+        }
+        if property.eq_ignore_ascii_case("text-emphasis-position") {
+            let Some(value) = raikiri_style::property::serialize_value(
+                &raikiri_style::property::PropertyValue::TextEmphasisPosition(
+                    computed.text_emphasis_position,
+                ),
+            ) else {
+                return Ok(None);
+            };
+            return Ok(Some(value));
+        }
+        if property.eq_ignore_ascii_case("text-shadow") {
+            if computed.text_shadow.is_empty() {
+                return Ok(Some("none".to_owned()));
+            }
+            let mut shadows = Vec::with_capacity(computed.text_shadow.len());
+            for shadow in computed.text_shadow.iter() {
+                let color = match shadow.color {
+                    raikiri_style::property::TextShadowColor::CurrentColor => computed.color,
+                    raikiri_style::property::TextShadowColor::Resolved(color) => color,
+                    _ => return Ok(None),
+                };
+                let color = if color.a == 255 {
+                    format!("rgb({}, {}, {})", color.r, color.g, color.b)
+                } else {
+                    let alpha = f64::from(color.a) / 255.0;
+                    format!("rgba({}, {}, {}, {alpha})", color.r, color.g, color.b)
+                };
+                shadows.push(format!(
+                    "{color} {}px {}px {}px",
+                    shadow.offset_x.px(),
+                    shadow.offset_y.px(),
+                    shadow.blur_radius.px()
+                ));
+            }
+            return Ok(Some(shadows.join(", ")));
+        }
+        if property.eq_ignore_ascii_case("text-emphasis-style") {
+            let Some(value) = raikiri_style::property::serialize_value(
+                &raikiri_style::property::PropertyValue::TextEmphasisStyle(
+                    computed.text_emphasis_style.clone(),
+                ),
+            ) else {
+                return Ok(None);
+            };
+            return Ok(Some(value));
+        }
+        if property.eq_ignore_ascii_case("text-emphasis") {
+            let Some(style) = raikiri_style::property::serialize_value(
+                &raikiri_style::property::PropertyValue::TextEmphasisStyle(
+                    computed.text_emphasis_style.clone(),
+                ),
+            ) else {
+                return Ok(None);
+            };
+            let color = match computed.text_emphasis_color {
+                raikiri_style::property::TextDecorationColor::CurrentColor => computed.color,
+                raikiri_style::property::TextDecorationColor::Resolved(color) => color,
+                _ => return Ok(None),
+            };
+            let color = if color.a == 255 {
+                format!("rgb({}, {}, {})", color.r, color.g, color.b)
+            } else {
+                let alpha = f64::from(color.a) / 255.0;
+                format!("rgba({}, {}, {}, {alpha})", color.r, color.g, color.b)
+            };
+            return Ok(Some(format!("{style} {color}")));
+        }
+        if property.eq_ignore_ascii_case("text-underline-position") {
+            let Some(value) = raikiri_style::property::serialize_value(
+                &raikiri_style::property::PropertyValue::TextUnderlinePosition(
+                    computed.text_underline_position,
+                ),
+            ) else {
+                return Ok(None);
+            };
+            return Ok(Some(value));
+        }
+        if property.eq_ignore_ascii_case("text-underline-offset") {
+            let value = match computed.text_underline_offset {
+                raikiri_style::ComputedTextUnderlineOffset::Auto => {
+                    raikiri_style::property::TextUnderlineOffset::Auto
+                }
+                raikiri_style::ComputedTextUnderlineOffset::Length(length) => {
+                    raikiri_style::property::TextUnderlineOffset::Length(
+                        raikiri_style::property::Length::Px(length.px()),
+                    )
+                }
+                raikiri_style::ComputedTextUnderlineOffset::Percent(percent) => {
+                    raikiri_style::property::TextUnderlineOffset::Length(
+                        raikiri_style::property::Length::Percent(percent),
+                    )
+                }
+                raikiri_style::ComputedTextUnderlineOffset::Calc(calc) => {
+                    raikiri_style::property::TextUnderlineOffset::Calc(
+                        raikiri_style::property::LengthPercentageCalc {
+                            percent: calc.percent,
+                            px: calc.px,
+                            em: 0.0,
+                        },
+                    )
+                }
+            };
+            let Some(value) = raikiri_style::property::serialize_value(
+                &raikiri_style::property::PropertyValue::TextUnderlineOffset(value),
+            ) else {
+                return Ok(None);
+            };
+            return Ok(Some(value));
+        }
+        if property.eq_ignore_ascii_case("text-decoration-color") {
+            let color = match computed.text_decoration_color {
+                raikiri_style::property::TextDecorationColor::CurrentColor => computed.color,
+                raikiri_style::property::TextDecorationColor::Resolved(color) => color,
+                _ => return Ok(None),
+            };
+            let value = if color.a == 255 {
+                format!("rgb({}, {}, {})", color.r, color.g, color.b)
+            } else {
+                let alpha = f64::from(color.a) / 255.0;
+                format!("rgba({}, {}, {}, {alpha})", color.r, color.g, color.b)
+            };
+            return Ok(Some(value));
+        }
+        if property.eq_ignore_ascii_case("letter-spacing") {
+            let value = match computed.letter_spacing_computed {
+                raikiri_style::ComputedLetterSpacing::Px(0.0) => "normal".to_owned(),
+                raikiri_style::ComputedLetterSpacing::Px(px) => format!("{px}px"),
+                raikiri_style::ComputedLetterSpacing::Percent(percent) => format!("{percent}%"),
+                raikiri_style::ComputedLetterSpacing::Calc(calc) => {
+                    let operator = if calc.px.is_sign_negative() {
+                        " - "
+                    } else {
+                        " + "
+                    };
+                    format!("calc({}%{}{}px)", calc.percent, operator, calc.px.abs())
+                }
+            };
+            return Ok(Some(value));
+        }
+        if property.eq_ignore_ascii_case("word-spacing") {
+            let value = match computed.word_spacing_computed {
+                raikiri_style::ComputedWordSpacing::Px(px) => format!("{px}px"),
+                raikiri_style::ComputedWordSpacing::Percent(percent) => format!("{percent}%"),
+                raikiri_style::ComputedWordSpacing::Calc(calc) => {
+                    let operator = if calc.px.is_sign_negative() {
+                        " - "
+                    } else {
+                        " + "
+                    };
+                    format!("calc({}%{}{}px)", calc.percent, operator, calc.px.abs())
+                }
+            };
+            return Ok(Some(value));
+        }
+        if property.eq_ignore_ascii_case("text-indent") {
+            let mut value = match computed.text_indent {
+                raikiri_style::ComputedTextIndent::Px(px) => format!("{px}px"),
+                raikiri_style::ComputedTextIndent::Percent(percent) => {
+                    format!("{percent}%")
+                }
+                raikiri_style::ComputedTextIndent::Calc(calc) => {
+                    let operator = if calc.px.is_sign_negative() {
+                        " - "
+                    } else {
+                        " + "
+                    };
+                    format!("calc({}%{}{}px)", calc.percent, operator, calc.px.abs())
+                }
+            };
+            if computed.text_indent_hanging {
+                value.push_str(" hanging");
+            }
+            if computed.text_indent_each_line {
+                value.push_str(" each-line");
+            }
+            return Ok(Some(value));
+        }
+        if property.eq_ignore_ascii_case("tab-size") {
+            let value = match computed.tab_size {
+                raikiri_style::ComputedTabSize::Number(number) => format!("{number}"),
+                raikiri_style::ComputedTabSize::Length(length) => format!("{}px", length.0),
+            };
+            return Ok(Some(value));
+        }
+        let value = if property.eq_ignore_ascii_case("white-space") {
+            match computed.white_space {
+                raikiri_style::property::WhiteSpace::Normal => "normal",
+                raikiri_style::property::WhiteSpace::Pre => "pre",
+                raikiri_style::property::WhiteSpace::Nowrap => "nowrap",
+                raikiri_style::property::WhiteSpace::PreWrap => "pre-wrap",
+                raikiri_style::property::WhiteSpace::PreLine => "pre-line",
+                raikiri_style::property::WhiteSpace::BreakSpaces => "break-spaces",
+                _ => return Ok(None),
+            }
+        } else if property.eq_ignore_ascii_case("white-space-collapse") {
+            match computed.white_space_collapse {
+                raikiri_style::property::WhiteSpaceCollapse::Collapse => "collapse",
+                raikiri_style::property::WhiteSpaceCollapse::Discard => "discard",
+                raikiri_style::property::WhiteSpaceCollapse::Preserve => "preserve",
+                raikiri_style::property::WhiteSpaceCollapse::PreserveBreaks => "preserve-breaks",
+                raikiri_style::property::WhiteSpaceCollapse::PreserveSpaces => "preserve-spaces",
+                raikiri_style::property::WhiteSpaceCollapse::BreakSpaces => "break-spaces",
+                _ => return Ok(None),
+            }
+        } else if property.eq_ignore_ascii_case("line-break") {
+            match computed.line_break {
+                raikiri_style::property::LineBreak::Auto => "auto",
+                raikiri_style::property::LineBreak::Loose => "loose",
+                raikiri_style::property::LineBreak::Normal => "normal",
+                raikiri_style::property::LineBreak::Strict => "strict",
+                raikiri_style::property::LineBreak::Anywhere => "anywhere",
+                _ => return Ok(None),
+            }
+        } else if property.eq_ignore_ascii_case("hyphens") {
+            match computed.hyphens {
+                raikiri_style::property::Hyphens::None => "none",
+                raikiri_style::property::Hyphens::Manual => "manual",
+                raikiri_style::property::Hyphens::Auto => "auto",
+                _ => return Ok(None),
+            }
+        } else if property.eq_ignore_ascii_case("overflow-wrap")
+            || property.eq_ignore_ascii_case("word-wrap")
+        {
+            match computed.overflow_wrap {
+                raikiri_style::property::OverflowWrap::Normal => "normal",
+                raikiri_style::property::OverflowWrap::BreakWord => "break-word",
+                raikiri_style::property::OverflowWrap::Anywhere => "anywhere",
+                _ => return Ok(None),
+            }
+        } else if property.eq_ignore_ascii_case("word-break") {
+            match computed.word_break {
+                raikiri_style::property::WordBreak::Normal => "normal",
+                raikiri_style::property::WordBreak::KeepAll => "keep-all",
+                raikiri_style::property::WordBreak::BreakAll => "break-all",
+                raikiri_style::property::WordBreak::Manual => "manual",
+                raikiri_style::property::WordBreak::AutoPhrase => "auto-phrase",
+                raikiri_style::property::WordBreak::BreakWord => "break-word",
+                _ => return Ok(None),
+            }
+        } else if property.eq_ignore_ascii_case("text-align") {
+            match computed.text_align {
+                raikiri_style::property::TextAlign::Start => "start",
+                raikiri_style::property::TextAlign::End => "end",
+                raikiri_style::property::TextAlign::Left => "left",
+                raikiri_style::property::TextAlign::Right => "right",
+                raikiri_style::property::TextAlign::Center => "center",
+                raikiri_style::property::TextAlign::Justify => "justify",
+                raikiri_style::property::TextAlign::JustifyAll => "justify-all",
+                // Intermediate-only values must not leak as computed CSSOM values.
+                _ => return Ok(None),
+            }
+        } else if property.eq_ignore_ascii_case("text-wrap-mode") {
+            match computed.text_wrap {
+                raikiri_style::property::TextWrapMode::Wrap => "wrap",
+                raikiri_style::property::TextWrapMode::Nowrap => "nowrap",
+                _ => return Ok(None),
+            }
+        } else if property.eq_ignore_ascii_case("text-wrap-style") {
+            match computed.text_wrap_style {
+                raikiri_style::property::TextWrapStyle::Auto => "auto",
+                raikiri_style::property::TextWrapStyle::Balance => "balance",
+                raikiri_style::property::TextWrapStyle::Pretty => "pretty",
+                raikiri_style::property::TextWrapStyle::Stable => "stable",
+                _ => return Ok(None),
+            }
+        } else if property.eq_ignore_ascii_case("text-align-last") {
+            match computed.text_align_last {
+                raikiri_style::property::TextAlignLast::Auto => "auto",
+                raikiri_style::property::TextAlignLast::Start => "start",
+                raikiri_style::property::TextAlignLast::End => "end",
+                raikiri_style::property::TextAlignLast::Left => "left",
+                raikiri_style::property::TextAlignLast::Right => "right",
+                raikiri_style::property::TextAlignLast::Center => "center",
+                raikiri_style::property::TextAlignLast::Justify => "justify",
+                raikiri_style::property::TextAlignLast::MatchParent => "match-parent",
+                _ => return Ok(None),
+            }
+        } else if property.eq_ignore_ascii_case("text-justify") {
+            match computed.text_justify {
+                raikiri_style::property::TextJustify::Auto => "auto",
+                raikiri_style::property::TextJustify::None => "none",
+                raikiri_style::property::TextJustify::InterWord => "inter-word",
+                raikiri_style::property::TextJustify::InterCharacter => "inter-character",
+                // CSS Text 3 defines legacy `distribute` as computing to `inter-character`.
+                raikiri_style::property::TextJustify::Distribute => "inter-character",
+                _ => return Ok(None),
+            }
+        } else {
+            match computed.text_transform {
+                raikiri_style::property::TextTransform::None => "none",
+                raikiri_style::property::TextTransform::MathAuto => "math-auto",
+                raikiri_style::property::TextTransform::Capitalize => "capitalize",
+                raikiri_style::property::TextTransform::Uppercase => "uppercase",
+                raikiri_style::property::TextTransform::Lowercase => "lowercase",
+                raikiri_style::property::TextTransform::FullWidth => "full-width",
+                raikiri_style::property::TextTransform::FullSizeKana => "full-size-kana",
+                raikiri_style::property::TextTransform::CapitalizeFullWidth => {
+                    "capitalize full-width"
+                }
+                raikiri_style::property::TextTransform::UppercaseFullWidth => {
+                    "uppercase full-width"
+                }
+                raikiri_style::property::TextTransform::LowercaseFullWidth => {
+                    "lowercase full-width"
+                }
+                raikiri_style::property::TextTransform::CapitalizeFullSizeKana => {
+                    "capitalize full-size-kana"
+                }
+                raikiri_style::property::TextTransform::UppercaseFullSizeKana => {
+                    "uppercase full-size-kana"
+                }
+                raikiri_style::property::TextTransform::LowercaseFullSizeKana => {
+                    "lowercase full-size-kana"
+                }
+                raikiri_style::property::TextTransform::FullWidthFullSizeKana => {
+                    "full-width full-size-kana"
+                }
+                raikiri_style::property::TextTransform::CapitalizeFullWidthFullSizeKana => {
+                    "capitalize full-width full-size-kana"
+                }
+                raikiri_style::property::TextTransform::UppercaseFullWidthFullSizeKana => {
+                    "uppercase full-width full-size-kana"
+                }
+                raikiri_style::property::TextTransform::LowercaseFullWidthFullSizeKana => {
+                    "lowercase full-width full-size-kana"
+                }
+                _ => return Ok(None),
+            }
+        };
+        Ok(Some(value.to_owned()))
+    }
+
     fn set_style_property(
         &mut self,
         node: DomNodeId,
@@ -660,6 +1394,14 @@ pub fn run_css_text_i18n(
 }
 
 fn run_testharness_file(path: &Path, wpt_root: &Path) -> TestHarnessFileResult {
+    run_testharness_file_with_helper(path, wpt_root, "")
+}
+
+fn run_testharness_file_with_helper(
+    path: &Path,
+    wpt_root: &Path,
+    helper_script: &str,
+) -> TestHarnessFileResult {
     let test_id = path
         .strip_prefix(wpt_root)
         .unwrap_or(path)
@@ -675,7 +1417,12 @@ fn run_testharness_file(path: &Path, wpt_root: &Path) -> TestHarnessFileResult {
             };
         }
     };
-    let script = inline_test_scripts(&html);
+    let inline_script = inline_test_scripts(&html);
+    let script = if helper_script.is_empty() {
+        inline_script
+    } else {
+        format!("{helper_script}\n{inline_script}")
+    };
     if !script.contains("test(") {
         return TestHarnessFileResult {
             test_id,

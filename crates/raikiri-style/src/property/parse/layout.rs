@@ -426,11 +426,9 @@ fn parse_align_self_res<'i>(
 /// parser (CSS Box Alignment Module Level 3 §8.1
 /// <https://www.w3.org/TR/css-align-3/#propdef-row-gap>)。
 ///
-/// [`parse_letter_or_word_spacing`](super::text::parse_letter_or_word_spacing) と shape は同じ (`normal` branch →
-/// length branch) だが、**percentage を受理する**点が異なる
-/// (`allow_percentage = true`、letter-spacing/word-spacing は "Percentages:
-/// N/A" だが gap は `<length-percentage>`)。non-negative constraint は
-/// [`parse_padding_side`](super::box_model::parse_padding_side) と同 pattern。
+/// `normal` branch → length branch の parser. The shared length parser
+/// accepts percentages; this property additionally rejects negative values,
+/// matching the `[0,∞]` constraint with [`parse_padding_side`](super::box_model::parse_padding_side).
 pub(crate) fn parse_gap_value(input: &mut Parser<'_, '_>) -> Option<LengthOrNormal> {
     if input
         .try_parse(|i| i.expect_ident_matching("normal"))

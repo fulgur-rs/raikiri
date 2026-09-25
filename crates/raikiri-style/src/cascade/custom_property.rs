@@ -23,6 +23,36 @@ pub(crate) fn resolve_deferred_value(
     custom_properties: &CustomPropertyEnvironment,
 ) -> Option<PropertyValue> {
     let substituted = substitute_vars(&deferred.value, &mut |name| custom_properties.get(name), 0)?;
+    if deferred.key == PropertyKey::HyphenateLimitChars {
+        // The integer components need to know whether a fractional number came
+        // from a math function: calc results are rounded, direct fractional
+        // tokens are invalid. Parse the substituted token stream before the
+        // generic math simplifier erases that distinction.
+        let mut input = ParserInput::new(substituted.as_ref());
+        let mut parser = Parser::new(&mut input);
+        let value = parse_value(&deferred.property, &mut parser)?;
+        parser.expect_exhausted().ok()?;
+        return project_deferred_value(value, deferred.key);
+    }
+    if deferred.key == PropertyKey::TextUnderlineOffset {
+        // Preserve the substituted calc's em and percentage terms for the
+        // property-specific computed-value resolver.
+        let mut input = ParserInput::new(substituted.as_ref());
+        let mut parser = Parser::new(&mut input);
+        let value = parse_value(&deferred.property, &mut parser)?;
+        parser.expect_exhausted().ok()?;
+        return project_deferred_value(value, deferred.key);
+    }
+    if deferred.key == PropertyKey::TextShadow {
+        // The text-shadow parser must see the substituted calc source: generic
+        // simplification would erase mixed em/px terms, calculated-blur
+        // provenance, or percentages that cancel to zero.
+        let mut input = ParserInput::new(substituted.as_ref());
+        let mut parser = Parser::new(&mut input);
+        let value = parse_value(&deferred.property, &mut parser)?;
+        parser.expect_exhausted().ok()?;
+        return project_deferred_value(value, deferred.key);
+    }
     let simplified = match simplify_math_functions(&substituted) {
         Some(value) => value,
         None => {
@@ -284,6 +314,16 @@ pub(crate) fn project_deferred_value(
             }
             crate::property::PropertyKey::TextDecorationColor => {
                 PropertyValue::TextDecorationColor(shorthand.color)
+            }
+            _ => return None,
+        },
+        // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
+        PropertyValue::TextEmphasis(shorthand) => match key {
+            crate::property::PropertyKey::TextEmphasisStyle => {
+                PropertyValue::TextEmphasisStyle(shorthand.style)
+            }
+            crate::property::PropertyKey::TextEmphasisColor => {
+                PropertyValue::TextEmphasisColor(shorthand.color)
             }
             _ => return None,
         },
@@ -1643,6 +1683,14 @@ mod tests {
                     PropertyKey::TextDecorationThickness,
                     PropertyKey::TextDecorationStyle,
                     PropertyKey::TextDecorationColor,
+                ],
+            ),
+            (
+                "text-emphasis",
+                "dot red",
+                vec![
+                    PropertyKey::TextEmphasisStyle,
+                    PropertyKey::TextEmphasisColor,
                 ],
             ),
             (

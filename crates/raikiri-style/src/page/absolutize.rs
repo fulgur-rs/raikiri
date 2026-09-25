@@ -10,22 +10,24 @@ use crate::property::{
     FlexBasisValue, FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand,
     GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
-    Outline, OutlineColor, OutlineStyle, OverflowXY, PropertyValue, Sides, TextDecorationInset,
-    TextDecorationShorthand, TextDecorationThickness, TextIndentValue, TextShadowItem,
-    TransformFunction, resolve_overflow, resolve_writing_mode,
+    LengthPercentageCalc, Outline, OutlineColor, OutlineStyle, OverflowXY, PropertyValue, Sides,
+    TextDecorationInset, TextDecorationShorthand, TextDecorationThickness, TextIndentLength,
+    TextIndentValue, TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction,
+    resolve_overflow, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedCssPositionOffset, ComputedFlexBasis,
     ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
     ComputedGridTrackListComponent, ComputedGridTrackSize, ComputedLength,
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
-    ResolveContext, lift_border_spacing, lift_length_or_normal, lift_line_height, lift_tab_size,
-    resolve_background_size, resolve_border, resolve_border_radius, resolve_border_spacing,
-    resolve_box_shadow_item, resolve_css_position, resolve_flex_basis,
-    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
-    resolve_length_or_normal, resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_length_percentage_or_normal, resolve_line_height, resolve_margin_length_or_auto,
-    resolve_outline, resolve_tab_size, resolve_vertical_align,
+    ComputedTextIndent, ResolveContext, lift_border_spacing, lift_letter_spacing, lift_line_height,
+    lift_tab_size, lift_text_indent, lift_word_spacing, resolve_background_size, resolve_border,
+    resolve_border_radius, resolve_border_spacing, resolve_box_shadow_item, resolve_css_position,
+    resolve_flex_basis, resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
+    resolve_length_percentage, resolve_length_percentage_or_auto,
+    resolve_length_percentage_or_normal, resolve_letter_spacing, resolve_line_height,
+    resolve_margin_length_or_auto, resolve_outline, resolve_tab_size, resolve_text_indent_calc,
+    resolve_text_shadow_item, resolve_vertical_align, resolve_word_spacing,
 };
 
 /// Basis for resolving lengths in the page context: the page context's own
@@ -239,42 +241,18 @@ impl PageLengthBasis<'_> {
             .px(),
         )
     }
-    /// One `text-shadow` item: absolutize the 3 lengths (`offset-x`/
-    /// `offset-y`/`blur-radius`), round-tripped back into the specified-layer
-    /// `Length::Px` shape (`resolve_length` is the percentage-less resolver —
-    /// text-shadow's lengths don't allow `<percentage>`, `TextShadowItem`
-    /// doc). `color` carries no length (`TextShadowColor` doc) — passed
-    /// through unchanged, same as `Border`'s `color` field above.
+    /// One `text-shadow` item: resolve all three lengths through the same
+    /// computed-value helper used by element styles, then store the absolute
+    /// pixel values back in the page's specified-value bag. This also applies
+    /// the calculated blur-radius clamp consistently.
     fn text_shadow_item(self, specified: TextShadowItem) -> TextShadowItem {
+        let computed =
+            resolve_text_shadow_item(specified, self.font_size, self.own_line_height, self.ctx);
         TextShadowItem {
-            offset_x: Length::Px(
-                resolve_length(
-                    specified.offset_x,
-                    self.font_size,
-                    self.own_line_height,
-                    self.ctx,
-                )
-                .px(),
-            ),
-            offset_y: Length::Px(
-                resolve_length(
-                    specified.offset_y,
-                    self.font_size,
-                    self.own_line_height,
-                    self.ctx,
-                )
-                .px(),
-            ),
-            blur_radius: Length::Px(
-                resolve_length(
-                    specified.blur_radius,
-                    self.font_size,
-                    self.own_line_height,
-                    self.ctx,
-                )
-                .px(),
-            ),
-            color: specified.color,
+            offset_x: TextShadowLength::Length(Length::Px(computed.offset_x.px())),
+            offset_y: TextShadowLength::Length(Length::Px(computed.offset_y.px())),
+            blur_radius: TextShadowLength::Length(Length::Px(computed.blur_radius.px())),
+            color: computed.color,
         }
     }
 
@@ -501,6 +479,8 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::TextAlign(_)
         | PropertyValue::HangingPunctuation(_)
         | PropertyValue::TextAutospace(_)
+        | PropertyValue::WordSpaceTransform(_)
+        | PropertyValue::TextSpacingTrim(_)
         | PropertyValue::Direction(_)
         | PropertyValue::BorderTopStyle(_)
         | PropertyValue::BorderRightStyle(_)
@@ -519,6 +499,9 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::TextDecorationSkipInk(_)
         | PropertyValue::TextDecorationSkipSpaces(_)
         | PropertyValue::TextEmphasisPosition(_)
+        | PropertyValue::TextEmphasisStyle(_)
+        | PropertyValue::TextEmphasisColor(_)
+        | PropertyValue::TextEmphasis(_)
         | PropertyValue::TextUnderlinePosition(_)
         | PropertyValue::FontStyle(_)
         | PropertyValue::FontVariantCaps(_)
@@ -533,8 +516,14 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::Float(_)
         | PropertyValue::Clear(_)
         | PropertyValue::WhiteSpace(_)
+        | PropertyValue::WhiteSpaceCollapse(_)
         | PropertyValue::TextWrap(_)
+        | PropertyValue::TextWrapStyle(_)
+        | PropertyValue::TextWrapShorthand(_)
+        | PropertyValue::TextSpacingShorthand(_)
         | PropertyValue::Hyphens(_)
+        | PropertyValue::HyphenateCharacter(_)
+        | PropertyValue::HyphenateLimitChars(_)
         | PropertyValue::LineBreak(_)
         | PropertyValue::TextJustify(_)
         | PropertyValue::TextAlignAll(_)
@@ -623,8 +612,14 @@ pub(super) fn absolutize_in_page_context(
         )),
         // ── text-indent ───────────────────────────────────────────────────
         PropertyValue::TextIndent(v) => {
+            let length = match v.length {
+                TextIndentLength::Length(length) => TextIndentLength::Length(basis.lp(length)),
+                TextIndentLength::Calc(calc) => {
+                    lift_text_indent(resolve_text_indent_calc(calc, font_size))
+                }
+            };
             PropertyValue::TextIndent(TextIndentValue {
-                length: basis.lp(v.length),
+                length,
                 hanging: v.hanging,
                 each_line: v.each_line,
             })
@@ -775,15 +770,29 @@ pub(super) fn absolutize_in_page_context(
         }
         PropertyValue::TextUnderlineOffset(value) => {
             PropertyValue::TextUnderlineOffset(match value {
-                LengthOrAuto::Auto => LengthOrAuto::Auto,
+                TextUnderlineOffset::Auto => TextUnderlineOffset::Auto,
                 // Percentages inherit as relative values.
-                LengthOrAuto::Length(Length::Percent(percent)) => {
-                    LengthOrAuto::Length(Length::Percent(percent))
+                TextUnderlineOffset::Length(Length::Percent(percent)) => {
+                    TextUnderlineOffset::Length(Length::Percent(percent))
                 }
-                LengthOrAuto::Length(length) => LengthOrAuto::Length(Length::Px(
+                TextUnderlineOffset::Length(length) => TextUnderlineOffset::Length(Length::Px(
                     resolve_length(length, font_size, own_line_height, ctx).px(),
                 )),
-                LengthOrAuto::Calc(_) => LengthOrAuto::Auto,
+                TextUnderlineOffset::Calc(calc) => match resolve_text_indent_calc(calc, font_size) {
+                    ComputedTextIndent::Px(px) => {
+                        TextUnderlineOffset::Length(Length::Px(px))
+                    }
+                    ComputedTextIndent::Percent(percent) => {
+                        TextUnderlineOffset::Length(Length::Percent(percent))
+                    }
+                    ComputedTextIndent::Calc(calc) => {
+                        TextUnderlineOffset::Calc(LengthPercentageCalc {
+                            percent: calc.percent,
+                            px: calc.px,
+                            em: 0.0,
+                        })
+                    }
+                },
             })
         }
         PropertyValue::TextDecoration(shorthand) => {
@@ -843,12 +852,22 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::WritingMode(v) => PropertyValue::WritingMode(resolve_writing_mode(v)),
         PropertyValue::RubyPosition(v) => PropertyValue::RubyPosition(v),
         // ── letter-spacing / word-spacing ───────────────────────────────────
-        PropertyValue::LetterSpacing(v) => PropertyValue::LetterSpacing(lift_length_or_normal(
-            resolve_length_or_normal(v, font_size, own_line_height, ctx),
-        )),
-        PropertyValue::WordSpacing(v) => PropertyValue::WordSpacing(lift_length_or_normal(
-            resolve_length_or_normal(v, font_size, own_line_height, ctx),
-        )),
+        PropertyValue::LetterSpacing(v) => {
+            PropertyValue::LetterSpacing(lift_letter_spacing(resolve_letter_spacing(
+                v,
+                font_size,
+                own_line_height,
+                ctx,
+            )))
+        }
+        PropertyValue::WordSpacing(v) => {
+            PropertyValue::WordSpacing(lift_word_spacing(resolve_word_spacing(
+                v,
+                font_size,
+                own_line_height,
+                ctx,
+            )))
+        }
         // ── tab-size ─────────────────────────────────────────────────────
         PropertyValue::TabSize(v) => {
             PropertyValue::TabSize(lift_tab_size(resolve_tab_size(v, font_size, own_line_height, ctx)))

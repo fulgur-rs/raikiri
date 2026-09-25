@@ -15,7 +15,7 @@ use crate::property::{
     FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand, GridLineShorthand, Length,
     LengthOrAuto, Outline, OverflowXY, PlaceContentShorthand, PlaceItemsShorthand,
     PlaceSelfShorthand, PropertyKey, PropertyValue, Sides, StartEnd, TextDecorationShorthand,
-    consume_deferred_value, parse_consumer_text_value, parse_value,
+    TextEmphasisShorthand, consume_deferred_value, parse_consumer_text_value, parse_value,
 };
 
 /// 1 property declaration = value + `!important` flag。
@@ -198,7 +198,7 @@ pub(crate) fn parse_declaration_block_with_consumer_properties(
 /// requires an explicit decision about its expansion here.
 #[inline]
 pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declaration)) {
-    let push_longhand = |value| {
+    let mut push_longhand = |value| {
         push(Declaration {
             value,
             important: d.important,
@@ -220,7 +220,18 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         PropertyValue::TextDecoration(shorthand) => {
             expand_text_decoration(shorthand, push_longhand)
         }
+        PropertyValue::TextEmphasis(ref shorthand) => {
+            expand_text_emphasis(shorthand, push_longhand)
+        }
         PropertyValue::Outline(outline) => expand_outline(outline, push_longhand),
+        PropertyValue::TextWrapShorthand(shorthand) => {
+            push_longhand(PropertyValue::TextWrap(shorthand.mode));
+            push_longhand(PropertyValue::TextWrapStyle(shorthand.style));
+        }
+        PropertyValue::TextSpacingShorthand(shorthand) => {
+            push_longhand(PropertyValue::TextSpacingTrim(shorthand.trim));
+            push_longhand(PropertyValue::TextAutospace(shorthand.autospace));
+        }
         // `FontShorthand` は `family: Arc<Vec<Atom>>` を持ち `Copy` ではない —
         // 他の shorthand payload (`Sides<..>` / `FlexShorthand` 等、全て Copy)
         // と異なり値を move できないため、`ref` binding で参照のまま渡す
@@ -255,6 +266,8 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::TextAlign(_)
         | PropertyValue::HangingPunctuation(_)
         | PropertyValue::TextAutospace(_)
+        | PropertyValue::WordSpaceTransform(_)
+        | PropertyValue::TextSpacingTrim(_)
         | PropertyValue::TextIndent(_)
         | PropertyValue::PaddingTop(_)
         | PropertyValue::PaddingRight(_)
@@ -304,6 +317,8 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::TextDecorationInset(_)
         | PropertyValue::TextUnderlineOffset(_)
         | PropertyValue::TextEmphasisPosition(_)
+        | PropertyValue::TextEmphasisStyle(_)
+        | PropertyValue::TextEmphasisColor(_)
         | PropertyValue::TextUnderlinePosition(_)
         | PropertyValue::VerticalAlign(_)
         | PropertyValue::FontStyle(_)
@@ -327,7 +342,9 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::Float(_)
         | PropertyValue::Clear(_)
         | PropertyValue::WhiteSpace(_)
+        | PropertyValue::WhiteSpaceCollapse(_)
         | PropertyValue::TextWrap(_)
+        | PropertyValue::TextWrapStyle(_)
         | PropertyValue::FlexDirection(_)
         | PropertyValue::FlexWrap(_)
         | PropertyValue::FlexGrow(_)
@@ -342,6 +359,10 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::ColumnGap(_)
         // `hyphens` (CSS Text Module Level 3 §5.3) has no shorthand form.
         | PropertyValue::Hyphens(_)
+        // `hyphenate-character` / `hyphenate-limit-chars` (CSS Text 4) are
+        // standalone properties.
+        | PropertyValue::HyphenateCharacter(_)
+        | PropertyValue::HyphenateLimitChars(_)
         | PropertyValue::FontVariantCaps(_)
         | PropertyValue::Quotes(_)
         | PropertyValue::TextShadow(_)
@@ -530,6 +551,10 @@ fn expand_deferred(
             PropertyKey::TextDecorationThickness,
             PropertyKey::TextDecorationStyle,
             PropertyKey::TextDecorationColor,
+        ],
+        PropertyKey::TextEmphasis => &[
+            PropertyKey::TextEmphasisStyle,
+            PropertyKey::TextEmphasisColor,
         ],
         PropertyKey::Outline => &[
             PropertyKey::OutlineWidth,
@@ -842,6 +867,16 @@ pub(crate) fn expand_text_decoration(
     push(PropertyValue::TextDecorationColor(shorthand.color));
 }
 
+/// Expand `text-emphasis` into its style and color longhands.
+#[inline(never)]
+pub(crate) fn expand_text_emphasis(
+    shorthand: &TextEmphasisShorthand,
+    mut push: impl FnMut(PropertyValue),
+) {
+    push(PropertyValue::TextEmphasisStyle(shorthand.style.clone()));
+    push(PropertyValue::TextEmphasisColor(shorthand.color));
+}
+
 /// `outline` shorthand を width/style/color の longhand に展開する。
 #[inline(never)]
 pub(crate) fn expand_outline(outline: Outline, mut push: impl FnMut(PropertyValue)) {
@@ -1140,6 +1175,13 @@ mod tests {
                     PropertyKey::TextDecorationThickness,
                     PropertyKey::TextDecorationStyle,
                     PropertyKey::TextDecorationColor,
+                ],
+            ),
+            (
+                PropertyKey::TextEmphasis,
+                &[
+                    PropertyKey::TextEmphasisStyle,
+                    PropertyKey::TextEmphasisColor,
                 ],
             ),
             (

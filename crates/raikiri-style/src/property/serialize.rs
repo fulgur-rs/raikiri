@@ -6,6 +6,44 @@ use super::calc_serialize::{
 use super::parse::{channel_to_u8, parse_color, parse_color_float};
 use super::types::*;
 
+fn serialize_text_decoration_line(value: TextDecorationLine) -> Option<String> {
+    if value.spelling_error || value.grammar_error {
+        if value.spelling_error == value.grammar_error
+            || value.underline
+            || value.overline
+            || value.line_through
+            || value.blink
+        {
+            return None;
+        }
+        return Some(
+            if value.spelling_error {
+                "spelling-error"
+            } else {
+                "grammar-error"
+            }
+            .to_owned(),
+        );
+    }
+
+    let mut components = Vec::with_capacity(4);
+    for (enabled, component) in [
+        (value.underline, "underline"),
+        (value.overline, "overline"),
+        (value.line_through, "line-through"),
+        (value.blink, "blink"),
+    ] {
+        if enabled {
+            components.push(component);
+        }
+    }
+    Some(if components.is_empty() {
+        "none".to_owned()
+    } else {
+        components.join(" ")
+    })
+}
+
 /// Serializes a parsed [`PropertyValue`] back to canonical CSS text, for
 /// WPT `test_valid_value` assertions that expect a specific serialization
 /// rather than an echo of the input. Returns `None` for any variant this
@@ -76,6 +114,39 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         // can produce the same `CssColor`).
         PropertyValue::BorderColor(_) => None,
 
+        PropertyValue::TextDecorationStyle(value) => Some(
+            match value {
+                TextDecorationStyle::Solid => "solid",
+                TextDecorationStyle::Double => "double",
+                TextDecorationStyle::Dotted => "dotted",
+                TextDecorationStyle::Dashed => "dashed",
+                TextDecorationStyle::Wavy => "wavy",
+            }
+            .to_owned(),
+        ),
+
+        PropertyValue::TextDecorationLine(value) => serialize_text_decoration_line(*value),
+
+        PropertyValue::TextDecorationSkipInk(value) => Some(
+            match value {
+                TextDecorationSkipInk::Auto => "auto",
+                TextDecorationSkipInk::None => "none",
+                TextDecorationSkipInk::All => "all",
+            }
+            .to_owned(),
+        ),
+
+        PropertyValue::TextDecorationSkipSpaces(value) => Some(
+            match value {
+                TextDecorationSkipSpaces::None => "none",
+                TextDecorationSkipSpaces::All => "all",
+                TextDecorationSkipSpaces::Start => "start",
+                TextDecorationSkipSpaces::End => "end",
+                TextDecorationSkipSpaces::StartEnd => "start end",
+            }
+            .to_owned(),
+        ),
+
         PropertyValue::TextDecorationInset(inset) => Some(match inset {
             TextDecorationInset::Auto => "auto".to_owned(),
             TextDecorationInset::Lengths { start, end } => {
@@ -89,7 +160,71 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
             }
         }),
 
-        PropertyValue::TextUnderlineOffset(value) => Some(serialize_length_or_auto(value)),
+        PropertyValue::TextUnderlineOffset(value) => Some(serialize_text_underline_offset(value)),
+
+        PropertyValue::TextUnderlinePosition(value) => {
+            if (value.from_font && value.under) || (value.left && value.right) {
+                None
+            } else if *value == TextUnderlinePosition::AUTO {
+                Some("auto".to_owned())
+            } else {
+                let mut parts = Vec::with_capacity(3);
+                if value.from_font {
+                    parts.push("from-font");
+                }
+                if value.under {
+                    parts.push("under");
+                }
+                if value.left {
+                    parts.push("left");
+                }
+                if value.right {
+                    parts.push("right");
+                }
+                Some(parts.join(" "))
+            }
+        }
+
+        PropertyValue::TextEmphasisPosition(value) => Some(match value {
+            TextEmphasisPosition::Auto => "auto".to_owned(),
+            TextEmphasisPosition::Position {
+                vertical,
+                horizontal,
+            } => {
+                let vertical = match vertical {
+                    TextEmphasisVEdge::Over => "over",
+                    TextEmphasisVEdge::Under => "under",
+                };
+                match horizontal {
+                    Some(TextEmphasisHEdge::Left) => format!("{vertical} left"),
+                    Some(TextEmphasisHEdge::Right) | None => vertical.to_owned(),
+                }
+            }
+        }),
+
+        PropertyValue::TextEmphasisStyle(value) => Some(match value {
+            TextEmphasisStyle::None => "none".to_owned(),
+            TextEmphasisStyle::String(value) => {
+                Token::QuotedString(CowRcStr::from(value.as_str())).to_css_string()
+            }
+            TextEmphasisStyle::Shape { fill, shape } => {
+                let shape = match shape {
+                    TextEmphasisShape::Dot => "dot",
+                    TextEmphasisShape::Circle => "circle",
+                    TextEmphasisShape::DoubleCircle => "double-circle",
+                    TextEmphasisShape::Triangle => "triangle",
+                    TextEmphasisShape::Sesame => "sesame",
+                };
+                match fill {
+                    TextEmphasisFill::Filled => shape.to_owned(),
+                    TextEmphasisFill::Open => format!("open {shape}"),
+                }
+            }
+            TextEmphasisStyle::DefaultShape { fill } => match fill {
+                TextEmphasisFill::Filled => "circle".to_owned(),
+                TextEmphasisFill::Open => "open circle".to_owned(),
+            },
+        }),
 
         PropertyValue::HangingPunctuation(value) => Some(match value {
             HangingPunctuation::None => "none".to_owned(),
@@ -124,6 +259,30 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
                 parts.join(" ")
             }
         }),
+
+        PropertyValue::WordSpaceTransform(value) => Some(
+            match value {
+                WordSpaceTransform::None => "none",
+                WordSpaceTransform::Space => "space",
+                WordSpaceTransform::IdeographicSpace => "ideographic-space",
+                WordSpaceTransform::SpaceAutoPhrase => "space auto-phrase",
+                WordSpaceTransform::IdeographicSpaceAutoPhrase => "ideographic-space auto-phrase",
+            }
+            .to_owned(),
+        ),
+
+        PropertyValue::TextSpacingTrim(value) => Some(
+            match value {
+                TextSpacingTrim::Auto => "auto",
+                TextSpacingTrim::Normal => "normal",
+                TextSpacingTrim::SpaceAll => "space-all",
+                TextSpacingTrim::TrimBoth => "trim-both",
+                TextSpacingTrim::TrimAll => "trim-all",
+                TextSpacingTrim::TrimStart => "trim-start",
+                TextSpacingTrim::SpaceFirst => "space-first",
+            }
+            .to_owned(),
+        ),
 
         _ => None,
     }
@@ -224,6 +383,46 @@ pub(crate) fn serialize_length_or_auto(value: &LengthOrAuto) -> String {
         LengthOrAuto::Length(l) => serialize_length(l),
         LengthOrAuto::Auto => "auto".to_owned(),
         LengthOrAuto::Calc(calc) => serialize_calc_length_percentage(calc),
+    }
+}
+
+fn serialize_text_underline_offset(value: &TextUnderlineOffset) -> String {
+    match value {
+        TextUnderlineOffset::Auto => "auto".to_owned(),
+        TextUnderlineOffset::Length(length) => serialize_length(length),
+        TextUnderlineOffset::Calc(calc) if calc.em == 0.0 => {
+            serialize_calc_length_percentage(&CalcLengthPercentage {
+                percent: calc.percent,
+                px: calc.px,
+            })
+        }
+        TextUnderlineOffset::Calc(calc) => {
+            let terms = [
+                (calc.percent, serialize_percentage(calc.percent.abs())),
+                (calc.em, serialize_dimension(calc.em.abs(), "em")),
+                (calc.px, serialize_dimension(calc.px.abs(), "px")),
+            ];
+            let mut expression = String::new();
+            for (coefficient, term) in terms {
+                if coefficient == 0.0 {
+                    continue;
+                }
+                if expression.is_empty() {
+                    if coefficient.is_sign_negative() {
+                        expression.push('-');
+                    }
+                } else if coefficient.is_sign_negative() {
+                    expression.push_str(" - ");
+                } else {
+                    expression.push_str(" + ");
+                }
+                expression.push_str(&term);
+            }
+            if expression.is_empty() {
+                expression.push_str("0px");
+            }
+            format!("calc({expression})")
+        }
     }
 }
 

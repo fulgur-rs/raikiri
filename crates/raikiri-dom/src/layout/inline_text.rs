@@ -1144,8 +1144,9 @@ pub(crate) fn realign_text_after_layout(
         // The indent applies per node position (see `indent_options_for_node`
         // doc): MidLine never, BlockStart always, AfterBreak per flags.
         let nonzero_indent = match cv.text_indent {
-            ComputedLengthPercentage::Px(px) => px != 0.0,
-            ComputedLengthPercentage::Percent(p) => p != 0.0,
+            ComputedTextIndent::Px(px) => px != 0.0,
+            ComputedTextIndent::Percent(p) => p != 0.0,
+            ComputedTextIndent::Calc(calc) => calc.px != 0.0 || calc.percent != 0.0,
         };
         let indent_options = if nonzero_indent {
             indent_options_for_node(
@@ -2515,6 +2516,36 @@ fn generic_family_has_ch_glyphs(
     has_ch_glyphs
 }
 
+/// Measure CSS `ch` from the selected font's U+0030 advance.
+///
+/// Uses the same font-selection and glyph-coverage checks as the layout sink.
+/// If no selected face provides a usable zero glyph, this returns the
+/// deterministic `0.5em` fallback used by style resolution.
+///
+/// [`raikiri_style::ChFontKey`] preserves the declaring element's family,
+/// size, weight, and style so callers can resolve authored `ch` provenance
+/// after font-face registration.
+pub fn measure_ch_advance_for_font_key(
+    fonts: &mut FontContext,
+    key: &raikiri_style::ChFontKey,
+) -> f32 {
+    let family = key
+        .family
+        .iter()
+        .map(|atom| atom.0.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut layout_cx = LayoutContext::<()>::new();
+    probe_ch_text_advance(
+        fonts,
+        &mut layout_cx,
+        &family,
+        key.size.px(),
+        key.weight,
+        key.style,
+    )
+}
+
 /// Probe U+0030 using the first remaining family that can supply the glyph.
 ///
 /// Named faces are checked through Fontique cmap metadata. An unregistered
@@ -2860,13 +2891,14 @@ fn measured_text_indent_px(
 }
 
 pub(crate) fn bounded_text_indent_amount(
-    value: ComputedLengthPercentage,
+    value: ComputedTextIndent,
     containing_width: f32,
     measured: Option<f32>,
 ) -> f32 {
     let raw = match value {
-        ComputedLengthPercentage::Px(px) => measured.unwrap_or(px),
-        ComputedLengthPercentage::Percent(percent) => containing_width * percent / 100.0,
+        ComputedTextIndent::Px(px) => measured.unwrap_or(px),
+        ComputedTextIndent::Percent(percent) => containing_width * percent / 100.0,
+        ComputedTextIndent::Calc(calc) => calc.px + containing_width * calc.percent / 100.0,
     };
     if raw.is_nan() {
         0.0

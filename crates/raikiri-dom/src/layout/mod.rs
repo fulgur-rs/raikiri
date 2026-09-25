@@ -40,7 +40,7 @@ use raikiri_style::{
     ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackListComponent,
     ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
-    ComputedTabSize, ComputedValues,
+    ComputedTabSize, ComputedTextIndent, ComputedValues,
 };
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
@@ -97,6 +97,7 @@ pub(crate) use bridge::apply_computed_to_style;
 pub(crate) use multicol::compute_multicol_layout;
 pub(crate) use page::find_body;
 // only reached via an intra-doc link from outside layout/, not real code
+pub use inline_text::measure_ch_advance_for_font_key;
 #[allow(unused_imports)]
 pub(crate) use inline_text::preshape_text;
 // only reached via an intra-doc link from outside layout/, not real code

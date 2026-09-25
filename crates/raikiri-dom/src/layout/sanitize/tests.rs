@@ -232,24 +232,35 @@ fn text_indent_px_offsets_first_line() {
 #[test]
 fn text_indent_amount_bounds_nonfinite_values() {
     assert_eq!(
-        bounded_text_indent_amount(ComputedLengthPercentage::Px(f32::INFINITY), 100.0, None,),
+        bounded_text_indent_amount(ComputedTextIndent::Px(f32::INFINITY), 100.0, None,),
         MAX_TAFFY_MAGNITUDE
     );
     assert_eq!(
-        bounded_text_indent_amount(ComputedLengthPercentage::Px(f32::NEG_INFINITY), 100.0, None,),
+        bounded_text_indent_amount(ComputedTextIndent::Px(f32::NEG_INFINITY), 100.0, None,),
         -MAX_TAFFY_MAGNITUDE
     );
     assert_eq!(
-        bounded_text_indent_amount(ComputedLengthPercentage::Px(f32::NAN), 100.0, None),
+        bounded_text_indent_amount(ComputedTextIndent::Px(f32::NAN), 100.0, None),
         0.0
     );
     assert_eq!(
         bounded_text_indent_amount(
-            ComputedLengthPercentage::Px(1.0),
+            ComputedTextIndent::Px(1.0),
             100.0,
             Some(MAX_TAFFY_MAGNITUDE * 2.0),
         ),
         MAX_TAFFY_MAGNITUDE
+    );
+    assert_eq!(
+        bounded_text_indent_amount(
+            ComputedTextIndent::Calc(CalcLengthPercentage {
+                percent: 25.0,
+                px: 10.0,
+            }),
+            200.0,
+            None,
+        ),
+        60.0
     );
 }
 

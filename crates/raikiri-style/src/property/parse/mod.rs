@@ -20,6 +20,11 @@ pub(crate) use layout::*;
 pub use text::*;
 pub use visual::*;
 
+/// Returns whether `name` is registered as a supported CSS property.
+pub fn is_supported_property_name(name: &str) -> bool {
+    property_key_for_name(name).is_some()
+}
+
 /// Property name + Parser から `PropertyValue` を produce。
 /// 認識できない name / invalid value は `None`。
 pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
@@ -52,6 +57,77 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
             return None;
         }
         if !contains_function_in_source(&value, "var") {
+            if normalized_name == "hyphenate-limit-chars" {
+                // Integer math is rounded only when it came from a math
+                // function. Reparse the original token stream so direct
+                // fractional number tokens remain invalid.
+                let mut reparsed_input = ParserInput::new(value.as_ref());
+                let mut reparsed = Parser::new(&mut reparsed_input);
+                let parsed = parse_hyphenate_limit_chars(&mut reparsed)?;
+                if reparsed.expect_exhausted().is_ok() {
+                    return Some(PropertyValue::HyphenateLimitChars(parsed));
+                }
+                return None;
+            }
+            // `text-indent` keeps its simple additive calc terms instead of
+            // reducing mixed units to the generic deferred fallback. This
+            // also lets `hanging` / `each-line` stay attached to the value.
+            if normalized_name == "text-indent" {
+                let mut reparsed_input = ParserInput::new(value.as_ref());
+                let mut reparsed = Parser::new(&mut reparsed_input);
+                if let Some(parsed) = parse_text_indent(&mut reparsed)
+                    && reparsed.expect_exhausted().is_ok()
+                {
+                    return Some(PropertyValue::TextIndent(parsed));
+                }
+            }
+            // `letter-spacing` also keeps a simple mixed calc instead of
+            // reducing it through the generic deferred-value path.
+            if normalized_name == "letter-spacing" {
+                let mut reparsed_input = ParserInput::new(value.as_ref());
+                let mut reparsed = Parser::new(&mut reparsed_input);
+                if let Some(parsed) = parse_letter_spacing(&mut reparsed)
+                    && reparsed.expect_exhausted().is_ok()
+                {
+                    return Some(PropertyValue::LetterSpacing(parsed));
+                }
+            }
+            if normalized_name == "word-spacing" {
+                let mut reparsed_input = ParserInput::new(value.as_ref());
+                let mut reparsed = Parser::new(&mut reparsed_input);
+                if let Some(parsed) = parse_word_spacing(&mut reparsed)
+                    && reparsed.expect_exhausted().is_ok()
+                {
+                    return Some(PropertyValue::WordSpacing(parsed));
+                }
+            }
+            if normalized_name == "text-underline-offset" {
+                let mut reparsed_input = ParserInput::new(value.as_ref());
+                let mut reparsed = Parser::new(&mut reparsed_input);
+                if let Some(parsed) = parse_text_underline_offset(&mut reparsed)
+                    && reparsed.expect_exhausted().is_ok()
+                {
+                    return Some(PropertyValue::TextUnderlineOffset(parsed));
+                }
+            }
+            if normalized_name == "text-shadow"
+                && !contains_function_in_source(value.as_ref(), "var")
+            {
+                if math_source_has_percentage(value.as_ref()) {
+                    return None;
+                }
+                let mut reparsed_input = ParserInput::new(value.as_ref());
+                let mut reparsed = Parser::new(&mut reparsed_input);
+                if let Some(parsed) = parse_text_shadow(&mut reparsed)
+                    && reparsed.expect_exhausted().is_ok()
+                {
+                    return Some(PropertyValue::TextShadow(if parsed.is_empty() {
+                        empty_text_shadow_list()
+                    } else {
+                        Arc::new(parsed)
+                    }));
+                }
+            }
             if is_color_property {
                 // Parse the original color grammar so each calc() keeps its
                 // position-specific numeric type. This covers ordinary color
@@ -247,10 +323,19 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "hanging-punctuation" => {
             parse_hanging_punctuation(input).map(PropertyValue::HangingPunctuation)
         }
+        // CSS Text 4 `text-spacing` shorthand: preserve and expand both
+        // longhand values; no spacing behavior is added here.
+        "text-spacing" => {
+            parse_text_spacing_shorthand(input).map(PropertyValue::TextSpacingShorthand)
+        }
         // CSS Text 4 text-autospace. The computed value is an inherited
         // keyword/flag set; layout support consumes the `normal` and
         // `no-autospace` forms first, while the full grammar is preserved.
         "text-autospace" => parse_text_autospace(input).map(PropertyValue::TextAutospace),
+        // CSS Text 4 `word-space-transform`; retain the specified keyword set only.
+        "word-space-transform" => {
+            parse_word_space_transform(input).map(PropertyValue::WordSpaceTransform)
+        }
         // CSS Text 3 §8.1 text-indent — `<length-percentage>` component only
         // (`hanging`/`each-line` out of scope, `PropertyValue::TextIndent` doc).
         "text-indent" => parse_text_indent(input).map(PropertyValue::TextIndent),
@@ -450,6 +535,15 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "text-underline-position" => {
             parse_text_underline_position(input).map(PropertyValue::TextUnderlinePosition)
         }
+        // CSS Text Decoration 4 text-emphasis-style. Preserve the tested
+        // fill, shape, and string forms as inherited computed data.
+        "text-emphasis-style" => {
+            parse_text_emphasis_style(input).map(PropertyValue::TextEmphasisStyle)
+        }
+        "text-emphasis-color" => {
+            parse_text_decoration_color(input).map(PropertyValue::TextEmphasisColor)
+        }
+        "text-emphasis" => parse_text_emphasis_shorthand(input).map(PropertyValue::TextEmphasis),
         // CSS Text Decoration 4 §2.8 text-underline-offset:
         // `auto | <length-percentage>`.
         "text-underline-offset" => {
@@ -472,12 +566,13 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // `normal`, inherited, computed value = specified keyword
         // (angle-bearing branch unreachable at this scope).
         "font-style" => parse_font_style(input).map(PropertyValue::FontStyle),
-        // CSS Text Module Level 3 §2.1 text-transform. grammar: `none |
-        // [capitalize | uppercase | lowercase] || full-width ||
-        // full-size-kana`, restricted here to `none` / `capitalize` /
-        // `uppercase` / `lowercase` (`TextTransform` doc's "Scope carving"
-        // section — `full-width` / `full-size-kana` are spec-valid but
-        // unimplemented). initial `none`, inherited, computed value =
+        // CSS Text 4 `text-spacing-trim`: preserve the specified keyword as
+        // its computed value; layout behavior is intentionally out of scope.
+        "text-spacing-trim" => parse_text_spacing_trim(input).map(PropertyValue::TextSpacingTrim),
+        // CSS Text 4 text-transform grammar: `none | [capitalize | uppercase |
+        // lowercase] || full-width || full-size-kana | math-auto`. Case and
+        // width combinations are preserved as computed values; `math-auto` is
+        // a standalone keyword. Initial `none`, inherited, computed value =
         // specified keyword.
         "text-transform" => parse_text_transform(input).map(PropertyValue::TextTransform),
         // CSS Display 3 §4 visibility. grammar: `visible |
@@ -508,15 +603,13 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         }
         // CSS Text 3 §7.2 "Tracking: the letter-spacing property"
         // <https://www.w3.org/TR/css-text-3/#letter-spacing-property>.
-        // grammar: `normal | <length>`, initial `normal`, inherited,
-        // percentage NOT supported ("Percentages: n/a"), negative lengths
-        // allowed ("Values may be negative, but there may be
-        // implementation-dependent limits.") — see `parse_letter_or_word_spacing`.
-        "letter-spacing" => parse_letter_or_word_spacing(input).map(PropertyValue::LetterSpacing),
-        // CSS Text 3 §7.1 "Word Spacing: the word-spacing property"
-        // <https://www.w3.org/TR/css-text-3/#word-spacing-property>. Same
-        // `normal | <length>` grammar as `letter-spacing` above.
-        "word-spacing" => parse_letter_or_word_spacing(input).map(PropertyValue::WordSpacing),
+        // The pinned computed-value case covers normal, length, percentage,
+        // and simple mixed calc forms. Negative lengths are permitted by CSS
+        // Text's stated implementation-dependent limit.
+        "letter-spacing" => parse_letter_spacing(input).map(PropertyValue::LetterSpacing),
+        // CSS Text 4 §8.1 "Word Spacing: the word-spacing property"
+        // <https://drafts.csswg.org/css-text-4/#propdef-word-spacing>.
+        "word-spacing" => parse_word_spacing(input).map(PropertyValue::WordSpacing),
         // CSS Fragmentation Module Level 3 §3.1 break-before / break-after.
         // grammar (this crate's scope): `auto | avoid | avoid-page | page`
         // (`BreakBetween` doc's "Scope carving" section). initial `auto`,
@@ -563,9 +656,16 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // carving" section). initial `normal`, inherited, computed value =
         // specified keyword.
         "white-space" => parse_white_space(input).map(PropertyValue::WhiteSpace),
-        // CSS Text 4 §5 text-wrap (subset: single `wrap | nowrap` keyword;
-        // full shorthand with wrap-style deferred — see the TextWrapMode doc).
-        "text-wrap" => parse_text_wrap_mode(input).map(PropertyValue::TextWrap),
+        // CSS Text 4 `white-space-collapse`: all six specified keywords are
+        // preserved through the computed-value path; text behavior is deferred.
+        "white-space-collapse" => {
+            parse_white_space_collapse(input).map(PropertyValue::WhiteSpaceCollapse)
+        }
+        // CSS Text 4 `text-wrap-mode` and `text-wrap-style` longhands plus
+        // the `text-wrap` shorthand, which expands into both longhands.
+        "text-wrap" => parse_text_wrap_shorthand(input).map(PropertyValue::TextWrapShorthand),
+        "text-wrap-mode" => parse_text_wrap_mode(input).map(PropertyValue::TextWrap),
+        "text-wrap-style" => parse_text_wrap_style(input).map(PropertyValue::TextWrapStyle),
         // CSS Flexible Box Layout Module Level 1 §5.1
         // <https://www.w3.org/TR/css-flexbox-1/#flex-direction-property>.
         "flex-direction" => parse_flex_direction(input).map(PropertyValue::FlexDirection),
@@ -628,6 +728,15 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // handoff" section — this crate does not collapse it to `manual` at
         // parse time).
         "hyphens" => parse_hyphens(input).map(PropertyValue::Hyphens),
+        // CSS Text 4 `hyphenate-character` accepts `auto` or a CSS string.
+        "hyphenate-character" => {
+            parse_hyphenate_character(input).map(PropertyValue::HyphenateCharacter)
+        }
+        // CSS Text 4: one to three non-negative integer or `auto` values;
+        // the parser expands omitted components into the computed triple.
+        "hyphenate-limit-chars" => {
+            parse_hyphenate_limit_chars(input).map(PropertyValue::HyphenateLimitChars)
+        }
         // CSS Text 3 §5.2 line-break. grammar: `auto | loose | normal | strict | anywhere`.
         "line-break" => parse_line_break(input).map(PropertyValue::LineBreak),
         // CSS Text 3 §6.2 text-justify. grammar: `auto | none | inter-word | inter-character`.
@@ -814,10 +923,9 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // CSS Writing Modes 4 §3.2 writing-mode.
         // value grammar `horizontal-tb | vertical-rl | vertical-lr |
         // sideways-rl | sideways-lr`, initial `horizontal-tb`, inherited.
-        // All 5 keywords parse successfully — the computed-value collapse of
-        // the 4 non-horizontal keywords happens later, in
-        // `resolve_writing_mode` (`WritingMode` doc's Non-goal section), not
-        // here.
+        // All 5 keywords parse successfully. The 4 non-horizontal keywords
+        // are preserved for CSSOM; `resolve_writing_mode` later normalizes the
+        // renderer-facing fallback, not the computed CSSOM value.
         "writing-mode" => parse_writing_mode(input).map(PropertyValue::WritingMode),
         "ruby-position" => parse_ruby_position(input).map(PropertyValue::RubyPosition),
         // CSS Backgrounds and Borders 3 §2.4-§2.9. `background-clip` /

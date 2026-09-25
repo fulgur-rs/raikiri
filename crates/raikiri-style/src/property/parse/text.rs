@@ -3,7 +3,8 @@
 
 use std::sync::Arc;
 
-use cssparser::{ParseError, Parser, Token};
+use cssparser::{ParseError, Parser, ParserInput, Token};
+use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::property::types::*;
@@ -55,31 +56,27 @@ pub(super) fn parse_font_family(input: &mut Parser<'_, '_>) -> Option<Vec<Atom>>
 /// grammar reference: CSS Text 3 §8.1
 /// <https://www.w3.org/TR/css-text-3/#text-indent-property>, whose full
 /// grammar is `<length-percentage> && hanging? && each-line?` — this helper
-/// covers all three components, returning [`TextIndentValue`].
+/// covers all three components, returning [`TextIndentValue`]. Simple additive
+/// `calc()` expressions retain their `em` coefficient until the element's
+/// computed font size is known.
 ///
 /// No non-negative filter, unlike [`parse_padding_side`](super::box_model::parse_padding_side) — the spec places no
 /// `[0,∞]` restriction on this grammar (negative indents are valid, sibling
 /// [`parse_margin_side`](super::box_model::parse_margin_side) applies the same "no filter" treatment for the same
 /// reason its own grammar allows negative values).
 pub(super) fn parse_text_indent(input: &mut Parser<'_, '_>) -> Option<TextIndentValue> {
-    // CSS Text 3 §8.1 grammar: `<length-percentage> && hanging? && each-line?`
-    // Order-independent, but at least the length component must be present.
-    // We collect optional hanging/each-line idents and one length-percentage,
-    // in any order, then ensure no extra tokens.
-    let mut length: Option<Length> = None;
+    let mut length: Option<TextIndentLength> = None;
     let mut hanging = false;
     let mut each_line = false;
     loop {
-        // Try length-percentage (allow_percentage true)
         if length.is_none()
-            && let Ok(l) = input.try_parse(|i| {
-                parse_length_value(i, true).ok_or_else(|| i.new_custom_error::<(), ()>(()))
+            && let Ok(parsed) = input.try_parse(|i| {
+                parse_text_indent_length(i).ok_or_else(|| i.new_custom_error::<(), ()>(()))
             })
         {
-            length = Some(l);
+            length = Some(parsed);
             continue;
         }
-        // Try hanging
         if !hanging
             && input
                 .try_parse(|i| i.expect_ident_matching("hanging"))
@@ -88,7 +85,6 @@ pub(super) fn parse_text_indent(input: &mut Parser<'_, '_>) -> Option<TextIndent
             hanging = true;
             continue;
         }
-        // Try each-line
         if !each_line
             && input
                 .try_parse(|i| i.expect_ident_matching("each-line"))
@@ -104,6 +100,136 @@ pub(super) fn parse_text_indent(input: &mut Parser<'_, '_>) -> Option<TextIndent
         hanging,
         each_line,
     })
+}
+
+fn parse_text_indent_length(input: &mut Parser<'_, '_>) -> Option<TextIndentLength> {
+    input
+        .try_parse(|i| parse_text_indent_calc(i).ok_or_else(|| i.new_custom_error::<(), ()>(())))
+        .ok()
+        .or_else(|| parse_length_value(input, true).map(TextIndentLength::Length))
+}
+
+fn parse_text_indent_calc(input: &mut Parser<'_, '_>) -> Option<TextIndentLength> {
+    input
+        .try_parse(|i| -> Result<TextIndentLength, ParseError<'_, ()>> {
+            match i.next()?.clone() {
+                Token::Function(name) if name.eq_ignore_ascii_case("calc") => {}
+                token => return Err(i.new_unexpected_token_error(token)),
+            }
+            i.parse_nested_block(parse_text_indent_calc_terms)
+        })
+        .ok()
+}
+
+fn parse_text_indent_calc_terms<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<TextIndentLength, ParseError<'i, ()>> {
+    let value = parse_text_indent_calc_sum(input)?;
+    if value.em == 0.0 {
+        if value.percent == 0.0 {
+            Ok(TextIndentLength::Length(Length::Px(value.px)))
+        } else if value.px == 0.0 {
+            Ok(TextIndentLength::Length(Length::Percent(value.percent)))
+        } else {
+            Ok(TextIndentLength::Calc(value))
+        }
+    } else if value.percent == 0.0 && value.px == 0.0 {
+        Ok(TextIndentLength::Length(Length::Em(value.em)))
+    } else {
+        Ok(TextIndentLength::Calc(value))
+    }
+}
+
+fn parse_text_indent_calc_sum<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<LengthPercentageCalc, ParseError<'i, ()>> {
+    let mut value = parse_text_indent_calc_term(input)?;
+    while !input.is_exhausted() {
+        let sign = match input.next()?.clone() {
+            Token::Delim('+') => 1.0,
+            Token::Delim('-') => -1.0,
+            token => return Err(input.new_unexpected_token_error(token)),
+        };
+        let term = parse_text_indent_calc_term(input)?;
+        value.percent += sign * term.percent;
+        value.px += sign * term.px;
+        value.em += sign * term.em;
+        if !value.percent.is_finite() || !value.px.is_finite() || !value.em.is_finite() {
+            return Err(input.new_custom_error(()));
+        }
+    }
+    Ok(value)
+}
+
+fn parse_text_indent_calc_term<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<LengthPercentageCalc, ParseError<'i, ()>> {
+    let start = input.state();
+    if matches!(input.next()?.clone(), Token::ParenthesisBlock) {
+        return input.parse_nested_block(parse_text_indent_calc_sum);
+    }
+    input.reset(&start);
+
+    // A bare number is not a `<length-percentage>` calc term, even for zero.
+    let token = next_numeric_stable(input)?;
+    if !matches!(&token, Token::Dimension { .. } | Token::Percentage { .. }) {
+        return Err(input.new_unexpected_token_error(token));
+    }
+    input.reset(&start);
+    let length = parse_length_value(input, true).ok_or_else(|| input.new_custom_error(()))?;
+    let value = match length {
+        Length::Px(px) => LengthPercentageCalc {
+            percent: 0.0,
+            px,
+            em: 0.0,
+        },
+        Length::Pt(v) => LengthPercentageCalc {
+            percent: 0.0,
+            px: v * (96.0 / 72.0),
+            em: 0.0,
+        },
+        Length::Cm(v) => LengthPercentageCalc {
+            percent: 0.0,
+            px: v * (96.0 / 2.54),
+            em: 0.0,
+        },
+        Length::Mm(v) => LengthPercentageCalc {
+            percent: 0.0,
+            px: v * (96.0 / 25.4),
+            em: 0.0,
+        },
+        Length::Q(v) => LengthPercentageCalc {
+            percent: 0.0,
+            px: v * (96.0 / 101.6),
+            em: 0.0,
+        },
+        Length::In(v) => LengthPercentageCalc {
+            percent: 0.0,
+            px: v * 96.0,
+            em: 0.0,
+        },
+        Length::Pc(v) => LengthPercentageCalc {
+            percent: 0.0,
+            px: v * 16.0,
+            em: 0.0,
+        },
+        Length::Em(em) => LengthPercentageCalc {
+            percent: 0.0,
+            px: 0.0,
+            em,
+        },
+        Length::Percent(percent) => LengthPercentageCalc {
+            percent,
+            px: 0.0,
+            em: 0.0,
+        },
+        _ => return Err(input.new_custom_error(())),
+    };
+    if value.percent.is_finite() && value.px.is_finite() && value.em.is_finite() {
+        Ok(value)
+    } else {
+        Err(input.new_custom_error(()))
+    }
 }
 
 /// `font-size: <absolute-size> | <relative-size> | <length-percentage [0,∞]> |
@@ -340,59 +466,43 @@ pub(super) fn parse_tab_size(input: &mut Parser<'_, '_>) -> Option<TabSize> {
     (l.payload() >= 0.0).then_some(TabSize::Length(l))
 }
 
-/// `letter-spacing: normal | <length>` / `word-spacing: normal | <length>`
-/// を parse する。両 property は grammar が完全に同型 (CSS Text 3 §7.2
-/// <https://www.w3.org/TR/css-text-3/#letter-spacing-property> / §7.1
-/// <https://www.w3.org/TR/css-text-3/#word-spacing-property>) なので 1
-/// 関数を共有する ([`LengthOrNormal`] doc の reuse pattern 節参照)。
+/// Parse `word-spacing: normal | <length-percentage>`.
 ///
-/// # Ordering
-///
-/// `normal` (`try_parse` + `expect_ident_matching`) → [`parse_length_value`]
-/// (`allow_percentage = false`) — [`parse_line_height`] と同じ 2-branch
-/// shape だが、`<number>` branch が無い (grammar 自体に `<number>`
-/// alternative が無いため、CSS Values 3 §5 の number-vs-length
-/// disambiguation は本 property には適用されない — bare `0` はそのまま
-/// [`parse_length_value`] の unitless-zero clause 経由で `Length::Px(0.0)`
-/// になる)。
-///
-/// # Percentage は非対応
-///
-/// 両 property とも spec が "Percentages: N/A" (word-spacing) /
-/// "Percentages: n/a" (letter-spacing) と明記する — `allow_percentage =
-/// false` により `5%` は `_ => None` (Percentage token に対する
-/// `allow_percentage` guard 不成立) で drop される。
-///
-/// # Negative length は許容 (non-negative filter を掛けない)
-///
-/// [`parse_line_height`] / [`parse_font_size`] 等の `[0,∞]` callers とは
-/// 異なり、本関数は [`Length::payload`] による `>= 0.0` post-filter を
-/// **意図的に行わない**。CSS Text 3 §7.2 (letter-spacing) / §7.1
-/// (word-spacing) がいずれも "Values may be negative, but there may be
-/// implementation-dependent limits." と明記するため — spec 自身が sign を
-/// 制限していない ([`LengthOrAuto`] を使う `margin-*` と同じ扱い、`padding`
-/// / `border-width` の non-negative constraint とは対照的)。
-///
-/// # Non-goals
-///
-/// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
-///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
-///   が canonical)。
-/// - **(b) 非対応**: `calc()` / `var()` は未実装 (css-variables-and-math)、
-///   silent drop
-/// - **(a) spec-invalid → drop**: `<percentage>`、`auto` 等 spec-invalid
-///   keyword は spec grammar 違反、drop
-pub(crate) fn parse_letter_or_word_spacing(input: &mut Parser<'_, '_>) -> Option<LengthOrNormal> {
-    // 1. `normal` keyword — spec initial value、"Computes to zero"。
+/// Preserve mixed calc terms until the element's computed font size is known,
+/// using the same length-percentage representation as `letter-spacing`.
+pub(crate) fn parse_word_spacing(input: &mut Parser<'_, '_>) -> Option<WordSpacingValue> {
     if input
         .try_parse(|i| i.expect_ident_matching("normal"))
         .is_ok()
     {
-        return Some(LengthOrNormal::Normal);
+        return Some(WordSpacingValue::Normal);
     }
-    // 2. `<length-percentage>` — CSS Text 4 adds percentage support
-    //    (WPT letter-spacing-valid expects 120% / -10%). Sign not restricted.
-    parse_length_value(input, true).map(LengthOrNormal::Length)
+    if let Some(parsed) = parse_text_indent_calc(input) {
+        return Some(match parsed {
+            TextIndentLength::Length(length) => WordSpacingValue::Length(length),
+            TextIndentLength::Calc(calc) => WordSpacingValue::Calc(calc),
+        });
+    }
+    parse_length_value(input, true).map(WordSpacingValue::Length)
+}
+
+/// Parse `letter-spacing: normal | <length-percentage>`.
+///
+/// Preserve a mixed calc until the element's computed font size is known.
+pub(crate) fn parse_letter_spacing(input: &mut Parser<'_, '_>) -> Option<LetterSpacingValue> {
+    if input
+        .try_parse(|i| i.expect_ident_matching("normal"))
+        .is_ok()
+    {
+        return Some(LetterSpacingValue::Normal);
+    }
+    if let Some(parsed) = parse_text_indent_calc(input) {
+        return Some(match parsed {
+            TextIndentLength::Length(length) => LetterSpacingValue::Length(length),
+            TextIndentLength::Calc(calc) => LetterSpacingValue::Calc(calc),
+        });
+    }
+    parse_length_value(input, true).map(LetterSpacingValue::Length)
 }
 
 /// `font-weight: <font-weight-absolute> | bolder | lighter` を parse する。
@@ -472,6 +582,20 @@ pub(crate) fn parse_font_weight(input: &mut Parser<'_, '_>) -> Option<FontWeight
 /// ([`parse_text_transform`] doc の「case keyword が先」ケースと同 mechanism)。
 /// ASCII case-insensitive で ident を比較する (sibling [`parse_direction`]
 /// と同 flavor)。
+pub(super) fn parse_text_spacing_trim(input: &mut Parser<'_, '_>) -> Option<TextSpacingTrim> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "auto" => Some(TextSpacingTrim::Auto),
+        "normal" => Some(TextSpacingTrim::Normal),
+        "space-all" => Some(TextSpacingTrim::SpaceAll),
+        "trim-both" => Some(TextSpacingTrim::TrimBoth),
+        "trim-all" => Some(TextSpacingTrim::TrimAll),
+        "trim-start" => Some(TextSpacingTrim::TrimStart),
+        "space-first" => Some(TextSpacingTrim::SpaceFirst),
+        _ => None,
+    }
+}
+
 pub(super) fn parse_font_style(input: &mut Parser<'_, '_>) -> Option<FontStyle> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
@@ -509,7 +633,8 @@ pub(super) fn parse_font_variant_caps(input: &mut Parser<'_, '_>) -> Option<Font
 /// Parse the CSS Text `text-transform` grammar.
 ///
 /// The optional case keyword and width keywords may appear in any order. At
-/// most one case keyword and each width keyword are accepted.
+/// most one case keyword and each width keyword are accepted. `math-auto` is a
+/// separate top-level alternative, not a combinable modifier.
 pub(super) fn parse_text_transform(input: &mut Parser<'_, '_>) -> Option<TextTransform> {
     let mut case = None;
     let mut full_width = false;
@@ -523,6 +648,7 @@ pub(super) fn parse_text_transform(input: &mut Parser<'_, '_>) -> Option<TextTra
         count += 1;
         match ident.to_ascii_lowercase().as_str() {
             "none" if count == 1 => return Some(TextTransform::None),
+            "math-auto" if count == 1 => return Some(TextTransform::MathAuto),
             "capitalize" if case.is_none() => case = Some(TextTransform::Capitalize),
             "uppercase" if case.is_none() => case = Some(TextTransform::Uppercase),
             "lowercase" if case.is_none() => case = Some(TextTransform::Lowercase),
@@ -626,6 +752,22 @@ pub(super) fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<WhiteSpace
     }
 }
 
+/// Parses one `white-space-collapse` keyword (CSS Text 4:
+/// <https://www.w3.org/TR/css-text-4/#propdef-white-space-collapse>).
+/// Property identifiers are matched ASCII case-insensitively.
+pub(super) fn parse_white_space_collapse(input: &mut Parser<'_, '_>) -> Option<WhiteSpaceCollapse> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "collapse" => Some(WhiteSpaceCollapse::Collapse),
+        "discard" => Some(WhiteSpaceCollapse::Discard),
+        "preserve" => Some(WhiteSpaceCollapse::Preserve),
+        "preserve-breaks" => Some(WhiteSpaceCollapse::PreserveBreaks),
+        "preserve-spaces" => Some(WhiteSpaceCollapse::PreserveSpaces),
+        "break-spaces" => Some(WhiteSpaceCollapse::BreakSpaces),
+        _ => None,
+    }
+}
+
 /// `hyphens: <ident>` を parse する (CSS Text 3 §5.3
 /// <https://www.w3.org/TR/css-text-3/#hyphens-property>)。
 ///
@@ -635,7 +777,7 @@ pub(super) fn parse_white_space(input: &mut Parser<'_, '_>) -> Option<WhiteSpace
 /// handoff」節 — 両者の扱いの一致は downstream consumer 側の実装判断であり、
 /// この parser の責務ではない)。ASCII case-insensitive で ident を比較する
 /// (sibling `parse_word_break` と同 flavor)。
-/// Parses `text-wrap: wrap | nowrap` (subset, CSS Text 4 §5).
+/// Parses the `text-wrap-mode: wrap | nowrap` longhand (CSS Text 4 §5.1).
 pub(super) fn parse_text_wrap_mode(input: &mut Parser<'_, '_>) -> Option<TextWrapMode> {
     let ident = input.expect_ident().ok()?.clone();
     match ident.to_ascii_lowercase().as_str() {
@@ -643,6 +785,133 @@ pub(super) fn parse_text_wrap_mode(input: &mut Parser<'_, '_>) -> Option<TextWra
         "nowrap" => Some(TextWrapMode::Nowrap),
         _ => None,
     }
+}
+
+pub(super) fn parse_text_wrap_shorthand(input: &mut Parser<'_, '_>) -> Option<TextWrapShorthand> {
+    let mut mode = None;
+    let mut style = None;
+    let mut seen_component = false;
+
+    while !input.is_exhausted() {
+        seen_component = true;
+        let ident = input.expect_ident().ok()?.clone();
+        match ident.to_ascii_lowercase().as_str() {
+            "wrap" if mode.is_none() => mode = Some(TextWrapMode::Wrap),
+            "nowrap" if mode.is_none() => mode = Some(TextWrapMode::Nowrap),
+            "auto" if style.is_none() => style = Some(TextWrapStyle::Auto),
+            "balance" if style.is_none() => style = Some(TextWrapStyle::Balance),
+            "pretty" if style.is_none() => style = Some(TextWrapStyle::Pretty),
+            "stable" if style.is_none() => style = Some(TextWrapStyle::Stable),
+            _ => return None,
+        }
+    }
+
+    seen_component.then_some(TextWrapShorthand {
+        mode: mode.unwrap_or(TextWrapMode::Wrap),
+        style: style.unwrap_or(TextWrapStyle::Auto),
+    })
+}
+
+pub(super) fn parse_text_wrap_style(input: &mut Parser<'_, '_>) -> Option<TextWrapStyle> {
+    let ident = input.expect_ident().ok()?.clone();
+    match ident.to_ascii_lowercase().as_str() {
+        "auto" => Some(TextWrapStyle::Auto),
+        "balance" => Some(TextWrapStyle::Balance),
+        "pretty" => Some(TextWrapStyle::Pretty),
+        "stable" => Some(TextWrapStyle::Stable),
+        _ => None,
+    }
+}
+
+/// Parse CSS Text 4 `text-spacing` and expand its aliases to the two longhands.
+/// This carries computed-value data only; spacing behavior remains out of scope.
+pub(super) fn parse_text_spacing_shorthand(
+    input: &mut Parser<'_, '_>,
+) -> Option<TextSpacingShorthand> {
+    let mut components = Vec::new();
+    while !input.is_exhausted() {
+        components.push(input.expect_ident().ok()?.to_ascii_lowercase());
+    }
+
+    let normal = TextSpacingShorthand {
+        trim: TextSpacingTrim::Normal,
+        autospace: TextAutospace::Normal,
+    };
+    if components.len() == 1 {
+        match components[0].as_str() {
+            // CSS-wide `initial` resets both longhands to their initial values.
+            "initial" | "normal" => return Some(normal),
+            // CSS Text 4 shorthand-only aliases.
+            "none" => {
+                return Some(TextSpacingShorthand {
+                    trim: TextSpacingTrim::SpaceAll,
+                    autospace: TextAutospace::NoAutospace,
+                });
+            }
+            "auto" => {
+                return Some(TextSpacingShorthand {
+                    trim: TextSpacingTrim::Auto,
+                    autospace: TextAutospace::Auto,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    // A lone `<autospace>` component leaves `text-spacing-trim` at its
+    // initial value. Reuse the longhand parser so its full token grammar is
+    // accepted here as well.
+    if let Some(autospace) = parse_text_autospace_components(&components) {
+        return Some(TextSpacingShorthand {
+            trim: TextSpacingTrim::Normal,
+            autospace,
+        });
+    }
+
+    // `||` permits either component order. Try each possible trim component;
+    // the remaining tokens must form one complete `<autospace>` value. This
+    // also resolves `normal`/`auto` by the other component when present.
+    for trim_index in 0..components.len() {
+        let Some(trim) = parse_text_spacing_trim_component(&components[trim_index]) else {
+            continue;
+        };
+        let remaining: Vec<_> = components
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != trim_index)
+            .map(|(_, component)| component.clone())
+            .collect();
+        let Some(autospace) = (if remaining.is_empty() {
+            Some(TextAutospace::Normal)
+        } else {
+            parse_text_autospace_components(&remaining)
+        }) else {
+            continue;
+        };
+        return Some(TextSpacingShorthand { trim, autospace });
+    }
+
+    None
+}
+
+fn parse_text_spacing_trim_component(component: &str) -> Option<TextSpacingTrim> {
+    let mut input = ParserInput::new(component);
+    let mut parser = Parser::new(&mut input);
+    let trim = parse_text_spacing_trim(&mut parser)?;
+    parser.expect_exhausted().ok()?;
+    Some(trim)
+}
+
+fn parse_text_autospace_components(components: &[String]) -> Option<TextAutospace> {
+    if components.is_empty() {
+        return None;
+    }
+    let source = components.join(" ");
+    let mut input = ParserInput::new(&source);
+    let mut parser = Parser::new(&mut input);
+    let autospace = parse_text_autospace(&mut parser)?;
+    parser.expect_exhausted().ok()?;
+    Some(autospace)
 }
 
 pub(super) fn parse_hyphens(input: &mut Parser<'_, '_>) -> Option<Hyphens> {
@@ -653,6 +922,95 @@ pub(super) fn parse_hyphens(input: &mut Parser<'_, '_>) -> Option<Hyphens> {
         "auto" => Some(Hyphens::Auto),
         _ => None,
     }
+}
+
+/// Parse `hyphenate-character: auto | <string>` without applying hyphenation.
+pub(super) fn parse_hyphenate_character(input: &mut Parser<'_, '_>) -> Option<HyphenateCharacter> {
+    if let Ok(ident) = input.try_parse(|input| input.expect_ident_cloned()) {
+        return ident
+            .as_ref()
+            .eq_ignore_ascii_case("auto")
+            .then_some(HyphenateCharacter::Auto);
+    }
+
+    let value = input.expect_string().ok()?;
+    Some(HyphenateCharacter::String(SmolStr::new(value.as_ref())))
+}
+
+/// Parse CSS Text 4's one-to-three component `hyphenate-limit-chars` value.
+/// The returned model always has three computed components.
+pub(super) fn parse_hyphenate_limit_chars(
+    input: &mut Parser<'_, '_>,
+) -> Option<HyphenateLimitChars> {
+    use HyphenateLimitCharsValue::Auto;
+
+    let total = parse_hyphenate_limit_component(input)?;
+    let mut before = Auto;
+    let mut after = Auto;
+    if !input.is_exhausted() {
+        before = parse_hyphenate_limit_component(input)?;
+        after = before;
+        if !input.is_exhausted() {
+            after = parse_hyphenate_limit_component(input)?;
+            if !input.is_exhausted() {
+                return None;
+            }
+        }
+    }
+    Some(HyphenateLimitChars {
+        total,
+        before,
+        after,
+    })
+}
+
+fn parse_hyphenate_limit_component(input: &mut Parser<'_, '_>) -> Option<HyphenateLimitCharsValue> {
+    use HyphenateLimitCharsValue::{Auto, Integer};
+
+    if let Ok(ident) = input.try_parse(|input| input.expect_ident_cloned()) {
+        return ident.as_ref().eq_ignore_ascii_case("auto").then_some(Auto);
+    }
+
+    let start = input.position();
+    match input.next().ok()?.clone() {
+        Token::Number {
+            int_value: Some(value),
+            ..
+        } => u32::try_from(value).ok().map(Integer),
+        Token::Function(name)
+            if ["calc", "min", "max", "clamp"]
+                .iter()
+                .any(|function| name.eq_ignore_ascii_case(function)) =>
+        {
+            input
+                .parse_nested_block(|nested| {
+                    while nested.next().is_ok() {}
+                    Ok::<_, ParseError<'_, ()>>(())
+                })
+                .ok()?;
+            let source = input.slice(start..input.position());
+            let simplified = crate::cascade::simplify_math_functions(source)?;
+            parse_hyphenate_limit_math_integer(simplified.as_ref()).map(Integer)
+        }
+        _ => None,
+    }
+}
+
+/// Integer-typed CSS math values round to nearest, with exact ties toward
+/// positive infinity. Apply the property's non-negative range after rounding.
+fn parse_hyphenate_limit_math_integer(source: &str) -> Option<u32> {
+    let mut parser_input = cssparser::ParserInput::new(source);
+    let mut parser = Parser::new(&mut parser_input);
+    let value = match parser.next().ok()?.clone() {
+        Token::Number { value, .. } if value.is_finite() => f64::from(value),
+        _ => return None,
+    };
+    parser.expect_exhausted().ok()?;
+    let rounded = (value + 0.5).floor();
+    if !(0.0..=f64::from(u32::MAX)).contains(&rounded) {
+        return None;
+    }
+    Some(rounded as u32)
 }
 
 pub(super) fn parse_line_break(input: &mut Parser<'_, '_>) -> Option<LineBreak> {
@@ -726,6 +1084,46 @@ pub(super) fn parse_text_autospace(input: &mut Parser<'_, '_>) -> Option<TextAut
         ideograph_numeric,
         punctuation,
         mode,
+    })
+}
+
+/// Parse CSS Text 4's `word-space-transform` keyword combination.
+///
+/// The `&&` grammar permits either order for `auto-phrase` and the space
+/// transform; canonical serialization puts the transform first.
+pub(super) fn parse_word_space_transform(input: &mut Parser<'_, '_>) -> Option<WordSpaceTransform> {
+    let first = input.expect_ident().ok()?.clone();
+    let first = first.to_ascii_lowercase();
+    if first == "none" {
+        return input.is_exhausted().then_some(WordSpaceTransform::None);
+    }
+
+    let mut ideographic_space = None;
+    let mut auto_phrase = false;
+    let mut consume = |ident: &str| -> Option<()> {
+        match ident {
+            "space" if ideographic_space.is_none() => ideographic_space = Some(false),
+            "ideographic-space" if ideographic_space.is_none() => ideographic_space = Some(true),
+            "auto-phrase" if !auto_phrase => auto_phrase = true,
+            _ => return None,
+        }
+        Some(())
+    };
+    consume(first.as_str())?;
+
+    loop {
+        match input.next() {
+            Ok(Token::Ident(ident)) => consume(ident.to_ascii_lowercase().as_str())?,
+            Ok(_) => return None,
+            Err(_) => break,
+        }
+    }
+
+    Some(match (ideographic_space?, auto_phrase) {
+        (false, false) => WordSpaceTransform::Space,
+        (true, false) => WordSpaceTransform::IdeographicSpace,
+        (false, true) => WordSpaceTransform::SpaceAutoPhrase,
+        (true, true) => WordSpaceTransform::IdeographicSpaceAutoPhrase,
     })
 }
 
@@ -1233,11 +1631,19 @@ pub(super) fn parse_text_decoration_thickness(
 /// CSS Text Decoration 4 §2.8 defines the non-`auto` form as a
 /// `<length-percentage>`. Percentages stay relative in computed style and are
 /// resolved against the decorating element's font size at paint time.
-pub(super) fn parse_text_underline_offset(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
+pub(super) fn parse_text_underline_offset(
+    input: &mut Parser<'_, '_>,
+) -> Option<TextUnderlineOffset> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
-        return Some(LengthOrAuto::Auto);
+        return Some(TextUnderlineOffset::Auto);
     }
-    parse_length_value(input, true).map(LengthOrAuto::Length)
+    if let Some(value) = parse_text_indent_calc(input) {
+        return Some(match value {
+            TextIndentLength::Length(length) => TextUnderlineOffset::Length(length),
+            TextIndentLength::Calc(calc) => TextUnderlineOffset::Calc(calc),
+        });
+    }
+    parse_length_value(input, true).map(TextUnderlineOffset::Length)
 }
 
 /// `text-decoration-inset: <length>{1,2} | auto` を parse する
@@ -1313,6 +1719,104 @@ pub(super) fn parse_text_emphasis_position(
     })
 }
 
+/// Parse the tested `text-emphasis-style` shape/fill/string forms.
+/// Shape and fill keywords may appear in either order; omitted components use
+/// the CSS initial shape (`circle`) and fill (`filled`).
+pub(super) fn parse_text_emphasis_style(input: &mut Parser<'_, '_>) -> Option<TextEmphasisStyle> {
+    if let Ok(value) = input.try_parse(|i| i.expect_string().cloned()) {
+        return Some(TextEmphasisStyle::String(SmolStr::new(value.as_ref())));
+    }
+
+    let start = input.state();
+    let first = input.expect_ident().ok()?.clone();
+    let first = first.to_ascii_lowercase();
+    if first == "none" {
+        return Some(TextEmphasisStyle::None);
+    }
+
+    let mut fill = None;
+    let mut shape = None;
+    let mut consume_ident = |ident: &str| -> bool {
+        match ident {
+            "filled" if fill.is_none() => fill = Some(TextEmphasisFill::Filled),
+            "open" if fill.is_none() => fill = Some(TextEmphasisFill::Open),
+            "dot" if shape.is_none() => shape = Some(TextEmphasisShape::Dot),
+            "circle" if shape.is_none() => shape = Some(TextEmphasisShape::Circle),
+            "double-circle" if shape.is_none() => shape = Some(TextEmphasisShape::DoubleCircle),
+            "triangle" if shape.is_none() => shape = Some(TextEmphasisShape::Triangle),
+            "sesame" if shape.is_none() => shape = Some(TextEmphasisShape::Sesame),
+            _ => return false,
+        }
+        true
+    };
+    if !consume_ident(first.as_str()) {
+        input.reset(&start);
+        return None;
+    }
+
+    // Stop before a non-style component so the `text-emphasis` shorthand can
+    // parse a following color. A longhand declaration still rejects leftover
+    // tokens through the caller's exhaustive-consumption check.
+    loop {
+        let state = input.state();
+        let ident = match input.next() {
+            Ok(Token::Ident(ident)) => ident.clone(),
+            _ => {
+                input.reset(&state);
+                break;
+            }
+        };
+        if !consume_ident(ident.to_ascii_lowercase().as_str()) {
+            input.reset(&state);
+            break;
+        }
+    }
+
+    let fill = fill.unwrap_or(TextEmphasisFill::Filled);
+    Some(match shape {
+        Some(shape) => TextEmphasisStyle::Shape { fill, shape },
+        None => TextEmphasisStyle::DefaultShape { fill },
+    })
+}
+
+/// Parse the tested `text-emphasis` shorthand components. Either style or
+/// color may be omitted; omitted values use their longhand initials.
+pub(super) fn parse_text_emphasis_shorthand(
+    input: &mut Parser<'_, '_>,
+) -> Option<TextEmphasisShorthand> {
+    let mut style = None;
+    let mut color = None;
+    loop {
+        if style.is_none()
+            && let Ok(value) =
+                input.try_parse(|i| -> Result<TextEmphasisStyle, ParseError<'_, ()>> {
+                    parse_text_emphasis_style(i).ok_or_else(|| i.new_custom_error(()))
+                })
+        {
+            style = Some(value);
+            continue;
+        }
+        if color.is_none()
+            && let Ok(value) =
+                input.try_parse(|i| -> Result<TextDecorationColor, ParseError<'_, ()>> {
+                    parse_text_decoration_color(i).ok_or_else(|| i.new_custom_error(()))
+                })
+        {
+            color = Some(value);
+            continue;
+        }
+        break;
+    }
+
+    if style.is_none() && color.is_none() {
+        return None;
+    }
+    Some(TextEmphasisShorthand {
+        style: style.unwrap_or(TextEmphasisStyle::None),
+        color: color.unwrap_or(TextDecorationColor::CurrentColor),
+    })
+}
+
 /// `text-underline-position: auto | [ from-font | under ] || [ left | right ]` を parse する
 /// (ED §2.7 <https://drafts.csswg.org/css-text-decor-4/#text-underline-position-property>)。
 /// 3 slot (`from-font` / `under` / horizontal) の `||` loop +
@@ -1376,7 +1880,7 @@ pub(super) fn parse_text_underline_position(
 /// / [`parse_text_decoration_style`] と同 flavor)。ident 側を先に
 /// `try_parse` で試し、ident token でなければ (= dimension/number token
 /// の可能性があれば) `<length>` として再挑戦する — [`parse_flex_basis`](super::layout::parse_flex_basis)
-/// / [`parse_letter_or_word_spacing`] と同じ「keyword 群 → length
+/// / [`parse_letter_spacing`] と同じ「keyword 群 → length
 /// フォールバック」構造。
 ///
 /// # Scope carving ([`VerticalAlign`] doc-comment に詳述)
@@ -1391,7 +1895,7 @@ pub(super) fn parse_text_underline_position(
 ///   `<percentage>` grammar に合わない token は silent drop = `None`。
 /// - `<length>` / `<percentage>` に non-negative filter は掛けない — spec が
 ///   "Raise (positive value) or lower (negative value)" と明示的に負値を
-///   許容する ([`parse_letter_or_word_spacing`] と同じ判断、
+///   許容する ([`parse_letter_spacing`] と同じ判断、
 ///   `padding`/`border-width` の non-negative constraint とは対照的)。
 ///   percentage の解決は [`crate::resolve::resolve_vertical_align`] が
 ///   `used_line_height_length` 基準で行い、`normal` 時は `0px` fallback
@@ -1430,36 +1934,94 @@ pub(super) fn parse_text_shadow_color(input: &mut Parser<'_, '_>) -> Option<Text
     parse_color(input).map(TextShadowColor::Resolved)
 }
 
-/// `<length>{2,3}` の contiguous run (offset-x offset-y blur-radius?) を 1
-/// unit として parse する — [`TextShadowItem`] doc の「Non-negative
-/// blur-radius」節参照。
-///
-/// offset-x/offset-y は [`parse_shadow_length_reject_nan`] 経由 — 同関数の
-/// doc が説明する `!is_nan()` guard を通す (sign 制限が無いため
-/// blur-radius 側の `>= 0.0` incidental filter が効かない)。
-///
-/// blur-radius は [`parse_non_negative_length`] で non-negative を
-/// enforce、省略時は `Length::Px(0.0)` (同 doc の「各成分の初期値埋め」節)。
-/// caller ([`parse_text_shadow_item`]) が本関数全体を `try_parse` で包む
-/// ことで、offset-x の parse 失敗 (= 最初の token が `<color>` 等) 時に
-/// x/y いずれの消費も正しく rewind される
-/// ([`parse_length_value`] は token を unconditional に消費するため、
-/// [`parse_margin_side`](super::box_model::parse_margin_side) doc の「Order of alternative」節と同じ理由で
-/// checkpoint 経由の rewind が要る)。
+/// Parse one `calc()` into the linear `<length>` terms accepted by
+/// `text-shadow`. Percentages are rejected even when their coefficients cancel.
+fn parse_text_shadow_calc(input: &mut Parser<'_, '_>) -> Option<TextShadowLength> {
+    input
+        .try_parse(|i| -> Result<TextShadowLength, ParseError<'_, ()>> {
+            let start = i.position();
+            let parsed = parse_text_indent_calc(i).ok_or_else(|| i.new_custom_error(()))?;
+            if math_source_has_percentage(i.slice(start..i.position())) {
+                return Err(i.new_custom_error(()));
+            }
+            let calc = match parsed {
+                TextIndentLength::Length(Length::Px(px)) => LengthPercentageCalc {
+                    percent: 0.0,
+                    px,
+                    em: 0.0,
+                },
+                TextIndentLength::Length(Length::Em(em)) => LengthPercentageCalc {
+                    percent: 0.0,
+                    px: 0.0,
+                    em,
+                },
+                TextIndentLength::Calc(calc) => calc,
+                TextIndentLength::Length(_) => return Err(i.new_custom_error(())),
+            };
+            if calc.percent != 0.0 {
+                return Err(i.new_custom_error(()));
+            }
+            Ok(TextShadowLength::Calc {
+                px: calc.px,
+                em: calc.em,
+            })
+        })
+        .ok()
+}
+
+/// Parse a `<length>{2,3}` run for `drop-shadow()`, whose shared parser keeps
+/// the existing plain-length behavior. The text-shadow property uses the
+/// calc-aware sibling below.
 pub(crate) fn parse_text_shadow_lengths<'i>(
     input: &mut Parser<'i, '_>,
-) -> Result<(Length, Length, Length), ParseError<'i, ()>> {
-    let x = parse_shadow_length_reject_nan_res(input)?;
-    let y = parse_shadow_length_reject_nan_res(input)?;
+) -> Result<(TextShadowLength, TextShadowLength, TextShadowLength), ParseError<'i, ()>> {
+    parse_text_shadow_lengths_with_mode(input, false)
+}
+
+fn parse_text_shadow_lengths_with_calc<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<(TextShadowLength, TextShadowLength, TextShadowLength), ParseError<'i, ()>> {
+    parse_text_shadow_lengths_with_mode(input, true)
+}
+
+fn parse_text_shadow_lengths_with_mode<'i>(
+    input: &mut Parser<'i, '_>,
+    allow_calc: bool,
+) -> Result<(TextShadowLength, TextShadowLength, TextShadowLength), ParseError<'i, ()>> {
+    let x = if allow_calc {
+        if let Some(calc) = parse_text_shadow_calc(input) {
+            calc
+        } else {
+            TextShadowLength::Length(parse_shadow_length_reject_nan_res(input)?)
+        }
+    } else {
+        TextShadowLength::Length(parse_shadow_length_reject_nan_res(input)?)
+    };
+    let y = if allow_calc {
+        if let Some(calc) = parse_text_shadow_calc(input) {
+            calc
+        } else {
+            TextShadowLength::Length(parse_shadow_length_reject_nan_res(input)?)
+        }
+    } else {
+        TextShadowLength::Length(parse_shadow_length_reject_nan_res(input)?)
+    };
     let blur = input
-        .try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
-            parse_non_negative_length(i).ok_or_else(|| i.new_custom_error(()))
+        .try_parse(|i| -> Result<TextShadowLength, ParseError<'_, ()>> {
+            if allow_calc && let Some(calc) = parse_text_shadow_calc(i) {
+                return Ok(calc);
+            }
+            parse_non_negative_length(i)
+                .map(TextShadowLength::Length)
+                .ok_or_else(|| i.new_custom_error(()))
         })
-        .unwrap_or(Length::Px(0.0));
+        .unwrap_or(TextShadowLength::Length(Length::Px(0.0)));
     Ok((x, y, blur))
 }
 
 /// `text-shadow` の 1 shadow entry — `<color>? && <length>{2,3}`。
+/// This calc-aware parser is separate from `parse_drop_shadow_item`, which
+/// preserves the filter parser's existing plain-length behavior.
 ///
 /// # `&&` (both-required, any-order) grammar semantics
 ///
@@ -1471,7 +2033,7 @@ pub(crate) fn parse_text_shadow_lengths<'i>(
 /// - `<color>` はその自身の `?` multiplier により 0 or 1 回
 /// - 両者の順序は自由 (`1px 1px red` / `red 1px 1px` 全て valid)、ただし
 ///   length run 自体は contiguous (`1px red 1px` のように間へ `<color>` を
-///   挟むことはできない — [`parse_text_shadow_lengths`] が 1 unit として
+///   挟むことはできない — [`parse_text_shadow_lengths_with_calc`] が 1 unit として
 ///   parse する)
 ///
 /// # Loop 実装
@@ -1481,7 +2043,19 @@ pub(crate) fn parse_text_shadow_lengths<'i>(
 /// 試す。length run を先に試すのは任意の順序選択 (どちらを先に試しても
 /// 結果は変わらない、`try_parse` が失敗時に必ず rewind するため)。
 pub(super) fn parse_text_shadow_item(input: &mut Parser<'_, '_>) -> Option<TextShadowItem> {
-    let mut lengths: Option<(Length, Length, Length)> = None;
+    parse_text_shadow_item_with_mode(input, true)
+}
+
+/// Plain-length `TextShadowItem` parser used by `filter: drop-shadow()`.
+pub(super) fn parse_drop_shadow_item(input: &mut Parser<'_, '_>) -> Option<TextShadowItem> {
+    parse_text_shadow_item_with_mode(input, false)
+}
+
+fn parse_text_shadow_item_with_mode(
+    input: &mut Parser<'_, '_>,
+    allow_calc: bool,
+) -> Option<TextShadowItem> {
+    let mut lengths: Option<(TextShadowLength, TextShadowLength, TextShadowLength)> = None;
     let mut color: Option<TextShadowColor> = None;
 
     loop {
@@ -1489,7 +2063,13 @@ pub(super) fn parse_text_shadow_item(input: &mut Parser<'_, '_>) -> Option<TextS
             break;
         }
         if lengths.is_none()
-            && let Ok(triple) = input.try_parse(parse_text_shadow_lengths)
+            && let Ok(triple) = input.try_parse(|i| {
+                if allow_calc {
+                    parse_text_shadow_lengths_with_calc(i)
+                } else {
+                    parse_text_shadow_lengths(i)
+                }
+            })
         {
             lengths = Some(triple);
             continue;
@@ -1505,10 +2085,6 @@ pub(super) fn parse_text_shadow_item(input: &mut Parser<'_, '_>) -> Option<TextS
         break;
     }
 
-    // length run は必須 (spec grammar 上 `<length>{2,3}` に `?` が無い) —
-    // 0 slot でも `<color>` だけが埋まる可能性は無いが、`parse_border_shorthand`
-    // の「at least 1 component 必須」とは違い、本 grammar では length run
-    // 単独でも valid (`<color>` は完全に optional)。
     let (offset_x, offset_y, blur_radius) = lengths?;
     Some(TextShadowItem {
         offset_x,
@@ -1527,10 +2103,7 @@ pub(super) fn parse_text_shadow_item(input: &mut Parser<'_, '_>) -> Option<TextS
 /// [`parse_counter_property`](super::content::parse_counter_property) と同じ shape。comma-separated list は
 /// `cssparser::Parser::parse_comma_separated` に委譲 (各 item の未消費
 /// leftover token は同メソッドの `parse_until_before` → `parse_entirely`
-/// が自動検知して declaration ごと drop する — [`TextShadowItem`] doc の
-/// 「Non-negative blur-radius」節が挙げる `text-shadow: 1px 1px -1px`
-/// (負の blur-radius は unconsumed のまま残る) のような入力はこの経路で
-/// reject される)。
+/// が自動検知して declaration ごと drop する)。
 pub(super) fn parse_text_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<TextShadowItem>> {
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
         return Some(Vec::new());

@@ -527,3 +527,716 @@ fn static_and_dynamic_i18n_fixtures_report_assertion_outcomes() {
         // are returned without promoting them to a DOM-binding pass gate.
     }
 }
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn white_space_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/white-space-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 6);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn white_space_collapse_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/white-space-collapse-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 4);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn line_break_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/line-break-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 5);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn hyphens_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/hyphens-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 3);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn overflow_wrap_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/overflow-wrap-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 3);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn word_break_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/word-break-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 5);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_transform_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/text-transform-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 10);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_align_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/text-align-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 7);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_justify_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/text-justify-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 4);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_justify_computed_legacy_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/text-justify-computed-legacy.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 1);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_indent_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/text-indent-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 10);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_align_last_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/text-align-last-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 8);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_wrap_mode_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/text-wrap-mode-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 2);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_autospace_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/text-autospace-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 32);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_wrap_style_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/text-wrap-style-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 3);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_wrap_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/text-wrap-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 17);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn hyphenate_character_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/hyphenate-character-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 5);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn hyphenate_limit_chars_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/hyphenate-limit-chars-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 11);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_spacing_trim_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/text-spacing-trim-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 7);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn letter_spacing_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/letter-spacing-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 9);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn word_spacing_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/word-spacing-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 9);
+    let passed = result
+        .outcomes
+        .iter()
+        .filter(|outcome| outcome.passed)
+        .count();
+    assert_eq!(passed, 8, "{:?}", result.outcomes);
+    let failures: Vec<_> = result
+        .outcomes
+        .iter()
+        .filter(|outcome| !outcome.passed)
+        .collect();
+    assert_eq!(failures.len(), 1, "{:?}", result.outcomes);
+    assert_eq!(
+        failures[0].name,
+        "Property word-spacing value 'calc(10px - (5% + 10%)'"
+    );
+    assert_eq!(
+        failures[0].message,
+        "Error: assert_equals: expected calc(-15% + 10px), got 0px"
+    );
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_shadow_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file =
+        wpt_root.join("css/css-text-decor/text-shadow/parsing/text-shadow-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 7);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn letter_spacing_inherited_computed_wpt_case_uses_live_computed_style() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/letter-spacing-inherited-computed.html");
+    let result = run_testharness_file(&test_file, &wpt_root);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 3);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn word_space_transform_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/word-space-transform-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 5);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_decoration_skip_ink_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file =
+        wpt_root.join("css/css-text-decor/parsing/text-decoration-skip-ink-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 3);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_decoration_skip_spaces_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file =
+        wpt_root.join("css/css-text-decor/parsing/text-decoration-skip-spaces-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 5);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_decoration_style_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text-decor/parsing/text-decoration-style-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 5);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_decoration_line_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text-decor/parsing/text-decoration-line-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 18);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_decoration_color_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text-decor/parsing/text-decoration-color-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 3);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_decoration_inset_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text-decor/parsing/text-decoration-inset-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 10);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_decoration_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text-decor/parsing/text-decoration-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 14);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_underline_offset_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text-decor/text-underline-offset-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 15);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn writing_mode_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-writing-modes/parsing/writing-mode-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 3);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn direction_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-writing-modes/parsing/direction-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 2);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn unicode_bidi_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-writing-modes/parsing/unicode-bidi-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 6);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_combine_upright_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file =
+        wpt_root.join("css/css-writing-modes/parsing/text-combine-upright-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 2);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_orientation_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-writing-modes/parsing/text-orientation-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 3);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_underline_position_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file =
+        wpt_root.join("css/css-text-decor/parsing/text-underline-position-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 7);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_emphasis_position_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file =
+        wpt_root.join("css/css-text-decor/parsing/text-emphasis-position-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 7);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_emphasis_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text-decor/parsing/text-emphasis-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 7);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_emphasis_style_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text-decor/parsing/text-emphasis-style-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 9);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_emphasis_style_computed_vertical_lr_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file =
+        wpt_root.join("css/css-text-decor/parsing/text-emphasis-style-computed-vertical-lr.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 9);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn tab_size_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/tab-size-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 10);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+// cov:ignore: this fetched-WPT fixture test runs in the gate's explicit --ignored pass, not the coverage pass.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn word_wrap_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/word-wrap-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 3);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_spacing_computed_wpt_case_uses_the_pinned_computed_helper() {
+    let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test_file = wpt_root.join("css/css-text/parsing/text-spacing-computed.html");
+    let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
+        .expect("read the pinned WPT computed-testcommon.js helper");
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
+
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.total(), 16);
+    assert!(result.all_passed(), "{:?}", result.outcomes);
+}

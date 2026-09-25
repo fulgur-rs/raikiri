@@ -52,6 +52,19 @@ if (typeof String.prototype.substr !== "function") {
     };
 }
 document.fonts = {
+    load: function (_font, _text) {
+        return {
+            then: function (callback) {
+                if (typeof callback !== "function") {
+                    throw new TypeError("document.fonts.load(...).then expects a function");
+                }
+                __raikiri_font_callbacks.push(function () {
+                    callback([]);
+                });
+                return this;
+            }
+        };
+    },
     ready: {
         then: function (callback) {
             if (typeof callback !== "function") {

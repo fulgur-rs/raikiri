@@ -1,7 +1,8 @@
 use super::*;
 use crate::property::{
-    BorderRadius, BorderStyle, BoxShadowItem, CalcLengthPercentage, CssColor, Outline,
-    OutlineColor, OutlineStyle, Sides, TextShadowColor,
+    BorderRadius, BorderStyle, BoxShadowItem, CalcLengthPercentage, CssColor, Length,
+    LengthPercentageCalc, LetterSpacingValue, Outline, OutlineColor, OutlineStyle, Sides,
+    TextDecorationThickness, TextShadowColor, TextUnderlineOffset,
 };
 use crate::specified::SpecifiedValues;
 
@@ -329,6 +330,92 @@ fn length_or_normal_with_ch_retains_authored_factor() {
         resolve_length_or_normal_with_ch(LengthOrNormal::Normal, ComputedLength(20.0), None, &CTX);
     assert_eq!(normal.value, ComputedLength::ZERO);
     assert_eq!(normal.ch_factor, None);
+}
+
+#[test]
+fn letter_spacing_computed_value_preserves_percentages_and_calcs() {
+    let font_size = ComputedLength(40.0);
+    assert_eq!(
+        resolve_letter_spacing(LetterSpacingValue::Normal, font_size, None, &CTX),
+        ComputedLetterSpacing::Px(0.0),
+    );
+    assert_eq!(
+        resolve_letter_spacing(
+            LetterSpacingValue::Length(Length::Percent(110.0)),
+            font_size,
+            None,
+            &CTX,
+        ),
+        ComputedLetterSpacing::Percent(110.0),
+    );
+    assert_eq!(
+        resolve_letter_spacing(
+            LetterSpacingValue::Calc(LengthPercentageCalc {
+                percent: 0.0,
+                px: 10.0,
+                em: -0.5,
+            }),
+            font_size,
+            None,
+            &CTX,
+        ),
+        ComputedLetterSpacing::Px(-10.0),
+    );
+    assert_eq!(
+        resolve_letter_spacing(
+            LetterSpacingValue::Calc(LengthPercentageCalc {
+                percent: -15.0,
+                px: 10.0,
+                em: 0.0,
+            }),
+            font_size,
+            None,
+            &CTX,
+        ),
+        ComputedLetterSpacing::Calc(CalcLengthPercentage {
+            percent: -15.0,
+            px: 10.0,
+        }),
+    );
+}
+
+#[test]
+fn letter_spacing_layout_fallback_remains_zero_for_deferred_values() {
+    let font_size = ComputedLength(40.0);
+    for specified in [
+        LetterSpacingValue::Length(Length::Percent(110.0)),
+        LetterSpacingValue::Calc(LengthPercentageCalc {
+            percent: -15.0,
+            px: 10.0,
+            em: 0.0,
+        }),
+    ] {
+        assert_eq!(
+            resolve_letter_spacing_with_ch(specified, font_size, None, &CTX).value,
+            ComputedLength::ZERO,
+        );
+    }
+}
+
+#[test]
+fn letter_spacing_lift_preserves_computed_form() {
+    let computed = ComputedLetterSpacing::Calc(CalcLengthPercentage {
+        percent: -15.0,
+        px: 10.0,
+    });
+    let lifted = lift_letter_spacing(computed);
+    assert_eq!(
+        lifted,
+        LetterSpacingValue::Calc(LengthPercentageCalc {
+            percent: -15.0,
+            px: 10.0,
+            em: 0.0,
+        }),
+    );
+    assert_eq!(
+        resolve_letter_spacing(lifted, ComputedLength(12.0), None, &CTX),
+        computed,
+    );
 }
 
 #[test]
@@ -1127,28 +1214,67 @@ fn lift_line_height_number_and_normal_pass_through() {
 }
 
 // -----------------------------------------------------------------
-// lift_length_percentage (text-indent inheritance seed)
+// text-indent computed-value resolution and inheritance
 // -----------------------------------------------------------------
 
 #[test]
-fn lift_length_percentage_px_is_fixed_point_under_absolutization() {
-    let lifted = lift_length_percentage(ComputedLengthPercentage::Px(40.0));
-    assert_eq!(lifted, Length::Px(40.0));
+fn lift_length_percentage_px_is_a_fixed_point() {
     assert_eq!(
-        resolve_length_percentage(lifted, ComputedLength(10.0), None, &CTX),
-        ComputedLengthPercentage::Px(40.0),
+        lift_length_percentage(ComputedLengthPercentage::Px(40.0)),
+        Length::Px(40.0),
     );
 }
 
-/// `%` は containing block 依存の used value 層まで再解決しない —
-/// lift → 絶対化の round trip でも `%` のまま運ばれることを pin。
 #[test]
-fn lift_length_percentage_percent_does_not_resolve_against_child_font_size() {
-    let lifted = lift_length_percentage(ComputedLengthPercentage::Percent(10.0));
-    assert_eq!(lifted, Length::Percent(10.0));
+fn lift_length_percentage_percent_remains_unresolved() {
     assert_eq!(
-        resolve_length_percentage(lifted, ComputedLength(10.0), None, &CTX),
-        ComputedLengthPercentage::Percent(10.0),
+        lift_length_percentage(ComputedLengthPercentage::Percent(10.0)),
+        Length::Percent(10.0),
+    );
+}
+
+#[test]
+fn lift_text_indent_calc_does_not_reapply_parent_em_in_child() {
+    let lifted = lift_text_indent(ComputedTextIndent::Calc(CalcLengthPercentage {
+        percent: 50.0,
+        px: 60.0,
+    }));
+    assert_eq!(
+        lifted,
+        TextIndentLength::Calc(LengthPercentageCalc {
+            percent: 50.0,
+            px: 60.0,
+            em: 0.0,
+        }),
+    );
+}
+
+#[test]
+fn resolve_text_indent_calc_collapses_pure_length_and_preserves_mixed_calc() {
+    assert_eq!(
+        resolve_text_indent_calc(
+            LengthPercentageCalc {
+                percent: 0.0,
+                px: 10.0,
+                em: 0.5
+            },
+            ComputedLength(40.0),
+        ),
+        ComputedTextIndent::Px(30.0),
+    );
+    assert_eq!(
+        resolve_text_indent_calc(
+            LengthPercentageCalc {
+                percent: 50.0,
+                px: 60.0,
+                em: 0.0
+            },
+            ComputedLength(40.0),
+        ),
+        ComputedTextIndent::Calc(CalcLengthPercentage {
+            percent: 50.0,
+            px: 60.0,
+        }),
     );
 }
 
@@ -1371,9 +1497,12 @@ fn initial_length_fields_absolutize_to_spec_initials() {
         resolve_length_percentage(initial.padding.top, fs, None, &CTX),
         ComputedLengthPercentage::Px(0.0),
     );
-    assert_eq!(initial.text_indent, Length::Px(0.0));
     assert_eq!(
-        resolve_length_percentage(initial.text_indent, fs, None, &CTX),
+        initial.text_indent,
+        TextIndentLength::Length(Length::Px(0.0)),
+    );
+    assert_eq!(
+        resolve_length_percentage(Length::Px(0.0), fs, None, &CTX),
         ComputedLengthPercentage::Px(0.0),
     );
     assert_eq!(
@@ -1412,11 +1541,103 @@ fn text_underline_offset_percentage_stays_relative() {
     // the declaring element's font size must not be baked in.
     assert_eq!(
         resolve_text_underline_offset(
-            LengthOrAuto::Length(Length::Percent(25.0)),
+            TextUnderlineOffset::Length(Length::Percent(25.0)),
             ComputedLength(20.0),
             Some(ComputedLength(40.0)),
             &CTX,
         ),
         ComputedTextUnderlineOffset::Percent(25.0),
+    );
+}
+
+#[test]
+fn text_underline_offset_calc_resolves_em_and_retains_mixed_percentages() {
+    let font_size = ComputedLength(16.0);
+    let cases = [
+        (
+            LengthPercentageCalc {
+                percent: 0.0,
+                px: -8.0,
+                em: 2.0,
+            },
+            ComputedTextUnderlineOffset::Length(ComputedLength(24.0)),
+        ),
+        (
+            LengthPercentageCalc {
+                percent: -50.0,
+                px: 0.0,
+                em: 2.0,
+            },
+            ComputedTextUnderlineOffset::Calc(CalcLengthPercentage {
+                percent: -50.0,
+                px: 32.0,
+            }),
+        ),
+        (
+            LengthPercentageCalc {
+                percent: 200.0,
+                px: -8.0,
+                em: 0.0,
+            },
+            ComputedTextUnderlineOffset::Calc(CalcLengthPercentage {
+                percent: 200.0,
+                px: -8.0,
+            }),
+        ),
+        (
+            LengthPercentageCalc {
+                percent: 200.0,
+                px: 0.0,
+                em: -0.5,
+            },
+            ComputedTextUnderlineOffset::Calc(CalcLengthPercentage {
+                percent: 200.0,
+                px: -8.0,
+            }),
+        ),
+    ];
+    for (specified, expected) in cases {
+        assert_eq!(
+            resolve_text_underline_offset(
+                TextUnderlineOffset::Calc(specified),
+                font_size,
+                None,
+                &CTX,
+            ),
+            expected,
+        );
+    }
+}
+
+#[test]
+fn text_decoration_thickness_preserves_keywords_and_resolves_lengths() {
+    assert_eq!(
+        resolve_text_decoration_thickness(
+            TextDecorationThickness::Auto,
+            ComputedLength(20.0),
+            None,
+            &CTX,
+        ),
+        ComputedTextDecorationThickness::Auto,
+    );
+    assert_eq!(
+        resolve_text_decoration_thickness(
+            TextDecorationThickness::FromFont,
+            ComputedLength(20.0),
+            None,
+            &CTX,
+        ),
+        ComputedTextDecorationThickness::FromFont,
+    );
+
+    let computed = resolve_text_decoration_thickness(
+        TextDecorationThickness::Length(Length::Em(0.5)),
+        ComputedLength(20.0),
+        None,
+        &CTX,
+    );
+    assert_eq!(
+        computed,
+        ComputedTextDecorationThickness::Length(ComputedLength(10.0))
     );
 }

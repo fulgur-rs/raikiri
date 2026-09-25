@@ -3,8 +3,8 @@ use super::*;
 struct LegacyBackend;
 
 impl DomBackend for LegacyBackend {
-    fn get_element_by_id(&mut self, _id: &str) -> Result<Option<DomNodeId>, String> {
-        Ok(None)
+    fn get_element_by_id(&mut self, id: &str) -> Result<Option<DomNodeId>, String> {
+        Ok((id == "target").then_some(1))
     }
 
     fn query_selector(&mut self, _selector: &str) -> Result<Option<DomNodeId>, String> {
@@ -33,6 +33,14 @@ impl DomBackend for LegacyBackend {
 
     fn style_property(&mut self, _node: DomNodeId, _property: &str) -> Result<String, String> {
         Ok(String::new())
+    }
+
+    fn computed_style_property(
+        &mut self,
+        _node: DomNodeId,
+        property: &str,
+    ) -> Result<Option<String>, String> {
+        Ok((property == "white-space").then(|| "pre".to_owned()))
     }
 
     fn set_style_property(
@@ -66,4 +74,28 @@ fn optional_attribute_methods_keep_legacy_backends_compatible() {
     assert!(backend.has_attribute(1, "id").is_err());
     assert!(backend.set_attribute(1, "id", "value").is_err());
     assert!(backend.remove_attribute(1, "id").is_err());
+}
+
+#[test]
+fn computed_style_and_css_supports_are_available_in_testharness_scripts() {
+    let outcomes = crate::testharness::run_testharness_script(
+        r#"
+        test(function () {
+            var target = document.getElementById("target");
+            var style = getComputedStyle(target);
+            assert_true("white-space" in style);
+            assert_equals(style["white-space"], "pre");
+            assert_equals(style.getPropertyValue("white-space"), "pre");
+            assert_true(CSS.supports("white-space", "break-spaces"));
+            assert_equals(CSS.supports("white-space", "not-a-white-space-value"), false);
+            assert_true(CSS.supports("text-autospace", "initial"));
+            assert_equals(CSS.supports("not-a-property", "initial"), false);
+        }, "computed style values and CSS.supports use the DOM/CSS adapters");
+        "#,
+        LegacyBackend,
+    )
+    .unwrap();
+
+    assert_eq!(outcomes.len(), 1);
+    assert!(outcomes[0].passed, "{}", outcomes[0].message);
 }

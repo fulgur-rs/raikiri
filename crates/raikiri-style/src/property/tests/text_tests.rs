@@ -912,6 +912,13 @@ fn text_autospace_rejects_duplicate_or_mixed_keyword_forms() {
     }
 }
 
+#[test]
+fn supported_property_name_registry_is_case_insensitive() {
+    assert!(is_supported_property_name("text-autospace"));
+    assert!(is_supported_property_name("TEXT-AUTOSPACE"));
+    assert!(!is_supported_property_name("not-a-property"));
+}
+
 #[test] // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
 // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
 fn text_autospace_key_maps_to_property_key() {
@@ -921,10 +928,172 @@ fn text_autospace_key_maps_to_property_key() {
     );
 }
 
+// ── text-spacing-trim (CSS Text 4) ──
+
+#[test] // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+// cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+fn text_spacing_trim_parses_and_serializes_supported_keywords() {
+    let cases = [
+        ("auto", TextSpacingTrim::Auto),
+        ("normal", TextSpacingTrim::Normal),
+        ("space-all", TextSpacingTrim::SpaceAll),
+        ("trim-both", TextSpacingTrim::TrimBoth),
+        ("trim-all", TextSpacingTrim::TrimAll),
+        ("trim-start", TextSpacingTrim::TrimStart),
+        ("space-first", TextSpacingTrim::SpaceFirst),
+    ];
+    for (source, expected) in cases {
+        let value = PropertyValue::TextSpacingTrim(expected);
+        assert_eq!(
+            parse_entire(source, "text-spacing-trim"),
+            Some(value.clone())
+        );
+        assert_eq!(serialize_value(&value).as_deref(), Some(source));
+    }
+    assert_eq!(
+        parse_entire("TRIM-START", "text-spacing-trim"),
+        Some(PropertyValue::TextSpacingTrim(TextSpacingTrim::TrimStart))
+    );
+}
+
+#[test] // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+// cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+fn text_spacing_trim_rejects_unsupported_or_compound_values() {
+    for source in [
+        "",
+        "none",
+        "inherit",
+        "unknown",
+        "trim-start space-first",
+        "normal auto",
+        "space-all 1px",
+    ] {
+        assert_eq!(parse_entire(source, "text-spacing-trim"), None, "{source}");
+    }
+}
+
+#[test] // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+// cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+fn text_spacing_trim_is_registered_and_maps_to_its_property_key() {
+    assert!(is_supported_property_name("text-spacing-trim"));
+    assert!(is_supported_property_name("TEXT-SPACING-TRIM"));
+    assert_eq!(
+        PropertyValue::TextSpacingTrim(TextSpacingTrim::Normal).key(),
+        PropertyKey::TextSpacingTrim
+    );
+}
+
+// ── text-spacing (CSS Text 4) ──
+
+#[test] // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+// cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+fn text_spacing_parses_the_pinned_wpt_values_into_longhands() {
+    let normal = TextSpacingShorthand {
+        trim: TextSpacingTrim::Normal,
+        autospace: TextAutospace::Normal,
+    };
+    let no_autospace = TextSpacingShorthand {
+        trim: TextSpacingTrim::Normal,
+        autospace: TextAutospace::NoAutospace,
+    };
+    let trim_start = TextSpacingShorthand {
+        trim: TextSpacingTrim::TrimStart,
+        autospace: TextAutospace::Normal,
+    };
+    let space_all = TextSpacingShorthand {
+        trim: TextSpacingTrim::SpaceAll,
+        autospace: TextAutospace::Normal,
+    };
+    let none = TextSpacingShorthand {
+        trim: TextSpacingTrim::SpaceAll,
+        autospace: TextAutospace::NoAutospace,
+    };
+    let trim_start_no_autospace = TextSpacingShorthand {
+        trim: TextSpacingTrim::TrimStart,
+        autospace: TextAutospace::NoAutospace,
+    };
+    let auto = TextSpacingShorthand {
+        trim: TextSpacingTrim::Auto,
+        autospace: TextAutospace::Auto,
+    };
+    let cases = [
+        ("initial", normal),
+        ("normal", normal),
+        ("none", none),
+        ("auto", auto),
+        ("no-autospace", no_autospace),
+        ("trim-start", trim_start),
+        ("space-all", space_all),
+        ("normal normal", normal),
+        ("normal trim-start", trim_start),
+        ("no-autospace normal", no_autospace),
+        ("no-autospace space-all", none),
+        ("no-autospace trim-start", trim_start_no_autospace),
+        ("trim-start normal", trim_start),
+        ("normal no-autospace", no_autospace),
+        ("space-all no-autospace", none),
+        ("trim-start no-autospace", trim_start_no_autospace),
+    ];
+    for (source, expected) in cases {
+        assert_eq!(
+            parse_entire(source, "text-spacing"),
+            Some(PropertyValue::TextSpacingShorthand(expected)),
+            "{source}"
+        );
+    }
+}
+
+#[test] // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+// cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+fn text_spacing_reuses_full_autospace_component_grammar_and_rejects_invalid_values() {
+    assert_eq!(
+        parse_entire(
+            "trim-start ideograph-alpha punctuation insert",
+            "text-spacing"
+        ),
+        Some(PropertyValue::TextSpacingShorthand(TextSpacingShorthand {
+            trim: TextSpacingTrim::TrimStart,
+            autospace: TextAutospace::Custom {
+                ideograph_alpha: true,
+                ideograph_numeric: false,
+                punctuation: true,
+                mode: TextAutospaceMode::Insert,
+            },
+        }))
+    );
+    for source in [
+        "",
+        "inherit",
+        "unknown",
+        "none trim-start",
+        "trim-start space-all",
+        "trim-start trim-start",
+        "no-autospace punctuation",
+        "trim-start no-autospace punctuation",
+    ] {
+        assert_eq!(parse_entire(source, "text-spacing"), None, "{source}");
+    }
+}
+
+#[test] // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+// cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+fn text_spacing_is_registered_and_maps_to_its_shorthand_key() {
+    assert!(is_supported_property_name("text-spacing"));
+    assert!(is_supported_property_name("TEXT-SPACING"));
+    assert_eq!(
+        PropertyValue::TextSpacingShorthand(TextSpacingShorthand {
+            trim: TextSpacingTrim::Normal,
+            autospace: TextAutospace::Normal,
+        })
+        .key(),
+        PropertyKey::TextSpacing
+    );
+}
+
 // ── text-indent (CSS Text 3 §8.1) ──
 //
 // Full value grammar: `<length-percentage> && hanging? && each-line?` —
-// this crate implements only the `<length-percentage>` component.
+// this crate preserves both simple values and additive calc terms.
 // Initial: 0 / Applies to: block containers / Inherited: yes /
 // Percentages: refers to block container's own inline-axis inner size /
 // Computed value: computed <length-percentage> value, plus any
@@ -935,7 +1104,7 @@ fn text_indent_parse_px() {
     assert_eq!(
         parse("20px", "text-indent"),
         Some(PropertyValue::TextIndent(TextIndentValue {
-            length: Length::Px(20.0),
+            length: TextIndentLength::Length(Length::Px(20.0)),
             hanging: false,
             each_line: false
         }))
@@ -947,7 +1116,7 @@ fn text_indent_parse_percentage() {
     assert_eq!(
         parse("10%", "text-indent"),
         Some(PropertyValue::TextIndent(TextIndentValue {
-            length: Length::Percent(10.0),
+            length: TextIndentLength::Length(Length::Percent(10.0)),
             hanging: false,
             each_line: false
         }))
@@ -959,7 +1128,7 @@ fn text_indent_parse_em() {
     assert_eq!(
         parse("2em", "text-indent"),
         Some(PropertyValue::TextIndent(TextIndentValue {
-            length: Length::Em(2.0),
+            length: TextIndentLength::Length(Length::Em(2.0)),
             hanging: false,
             each_line: false
         }))
@@ -973,7 +1142,7 @@ fn text_indent_accepts_negative_length() {
     assert_eq!(
         parse("-2em", "text-indent"),
         Some(PropertyValue::TextIndent(TextIndentValue {
-            length: Length::Em(-2.0),
+            length: TextIndentLength::Length(Length::Em(-2.0)),
             hanging: false,
             each_line: false
         }))
@@ -986,7 +1155,7 @@ fn text_indent_accepts_zero() {
     assert_eq!(
         parse("0", "text-indent"),
         Some(PropertyValue::TextIndent(TextIndentValue {
-            length: Length::Px(0.0),
+            length: TextIndentLength::Length(Length::Px(0.0)),
             hanging: false,
             each_line: false
         }))
@@ -999,7 +1168,7 @@ fn text_indent_parse_hanging() {
     assert_eq!(
         parse("2em hanging", "text-indent"),
         Some(PropertyValue::TextIndent(TextIndentValue {
-            length: Length::Em(2.0),
+            length: TextIndentLength::Length(Length::Em(2.0)),
             hanging: true,
             each_line: false,
         }))
@@ -1011,7 +1180,7 @@ fn text_indent_parse_each_line() {
     assert_eq!(
         parse("each-line 2em", "text-indent"),
         Some(PropertyValue::TextIndent(TextIndentValue {
-            length: Length::Em(2.0),
+            length: TextIndentLength::Length(Length::Em(2.0)),
             hanging: false,
             each_line: true,
         }))
@@ -1024,7 +1193,7 @@ fn text_indent_parse_hanging_each_line_combined() {
     assert_eq!(
         parse("hanging each-line 2em", "text-indent"),
         Some(PropertyValue::TextIndent(TextIndentValue {
-            length: Length::Em(2.0),
+            length: TextIndentLength::Length(Length::Em(2.0)),
             hanging: true,
             each_line: true,
         }))
@@ -1035,7 +1204,10 @@ fn text_indent_parse_hanging_each_line_combined() {
 fn text_wrap_parse_nowrap() {
     assert_eq!(
         parse("nowrap", "text-wrap"),
-        Some(PropertyValue::TextWrap(TextWrapMode::Nowrap))
+        Some(PropertyValue::TextWrapShorthand(TextWrapShorthand {
+            mode: TextWrapMode::Nowrap,
+            style: TextWrapStyle::Auto,
+        }))
     );
 }
 
@@ -1043,14 +1215,87 @@ fn text_wrap_parse_nowrap() {
 fn text_wrap_parse_wrap() {
     assert_eq!(
         parse("wrap", "text-wrap"),
-        Some(PropertyValue::TextWrap(TextWrapMode::Wrap))
+        Some(PropertyValue::TextWrapShorthand(TextWrapShorthand {
+            mode: TextWrapMode::Wrap,
+            style: TextWrapStyle::Auto,
+        }))
     );
 }
 
 #[test]
-fn text_wrap_rejects_balance() {
-    // Full shorthand (wrap-style) is deferred — see the TextWrapMode doc.
-    assert_eq!(parse("balance", "text-wrap"), None);
+fn text_wrap_mode_longhand_parses_wrap_and_nowrap() {
+    assert_eq!(
+        parse("wrap", "text-wrap-mode"),
+        Some(PropertyValue::TextWrap(TextWrapMode::Wrap))
+    );
+    assert_eq!(
+        parse("nowrap", "text-wrap-mode"),
+        Some(PropertyValue::TextWrap(TextWrapMode::Nowrap))
+    );
+}
+
+#[test]
+fn text_wrap_style_longhand_parses_all_metadata_keywords() {
+    assert_eq!(
+        parse("auto", "text-wrap-style"),
+        Some(PropertyValue::TextWrapStyle(TextWrapStyle::Auto))
+    );
+    assert_eq!(
+        parse("balance", "text-wrap-style"),
+        Some(PropertyValue::TextWrapStyle(TextWrapStyle::Balance))
+    );
+    assert_eq!(
+        parse("pretty", "text-wrap-style"),
+        Some(PropertyValue::TextWrapStyle(TextWrapStyle::Pretty))
+    );
+    assert_eq!(
+        parse("stable", "text-wrap-style"),
+        Some(PropertyValue::TextWrapStyle(TextWrapStyle::Stable))
+    );
+    assert_eq!(
+        parse("balance", "text-wrap-style").map(|value| value.key()),
+        Some(PropertyKey::TextWrapStyle)
+    );
+}
+
+#[test]
+fn text_wrap_style_rejects_mode_keyword() {
+    assert_eq!(parse("nowrap", "text-wrap-style"), None);
+}
+
+#[test]
+fn text_wrap_style_only_shorthand_defaults_mode_to_wrap() {
+    assert_eq!(
+        parse("balance", "text-wrap"),
+        Some(PropertyValue::TextWrapShorthand(TextWrapShorthand {
+            mode: TextWrapMode::Wrap,
+            style: TextWrapStyle::Balance,
+        }))
+    );
+}
+
+#[test]
+fn text_wrap_shorthand_accepts_mode_and_style_in_either_order() {
+    let expected = PropertyValue::TextWrapShorthand(TextWrapShorthand {
+        mode: TextWrapMode::Nowrap,
+        style: TextWrapStyle::Stable,
+    });
+    assert_eq!(parse("nowrap stable", "text-wrap"), Some(expected.clone()));
+    assert_eq!(parse("stable nowrap", "text-wrap"), Some(expected));
+}
+
+#[test]
+fn text_wrap_shorthand_maps_to_text_wrap_key() {
+    assert_eq!(
+        parse("balance", "text-wrap").map(|value| value.key()),
+        Some(PropertyKey::TextWrap)
+    );
+}
+
+#[test]
+fn text_wrap_shorthand_rejects_duplicate_components() {
+    assert_eq!(parse("wrap nowrap", "text-wrap"), None);
+    assert_eq!(parse("balance stable", "text-wrap"), None);
 }
 
 #[test]
@@ -1076,7 +1321,7 @@ fn text_indent_rejects_auto() {
 #[test]
 fn text_indent_key_maps_to_text_indent_property_key() {
     let v = PropertyValue::TextIndent(TextIndentValue {
-        length: Length::Px(20.0),
+        length: TextIndentLength::Length(Length::Px(20.0)),
         hanging: false,
         each_line: false,
     });
@@ -1470,6 +1715,54 @@ fn text_decoration_line_rejects_non_ident() {
     assert_eq!(parse(r#""underline""#, "text-decoration-line"), None);
 }
 
+#[test]
+fn text_decoration_line_serializes_all_keyword_combinations() {
+    for mask in 0_u8..16 {
+        let value = TextDecorationLine {
+            underline: mask & 1 != 0,
+            overline: mask & 2 != 0,
+            line_through: mask & 4 != 0,
+            blink: mask & 8 != 0,
+            spelling_error: false,
+            grammar_error: false,
+        };
+        let mut components = Vec::new();
+        for (bit, component) in [
+            (1_u8, "underline"),
+            (2_u8, "overline"),
+            (4_u8, "line-through"),
+            (8_u8, "blink"),
+        ] {
+            if mask & bit != 0 {
+                components.push(component);
+            }
+        }
+        let expected = if components.is_empty() {
+            "none".to_owned()
+        } else {
+            components.join(" ")
+        };
+        assert_eq!(
+            serialize_value(&PropertyValue::TextDecorationLine(value)),
+            Some(expected),
+            "mask {mask}"
+        );
+    }
+
+    assert_eq!(
+        serialize_value(&PropertyValue::TextDecorationLine(
+            TextDecorationLine::SPELLING_ERROR
+        )),
+        Some("spelling-error".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::TextDecorationLine(
+            TextDecorationLine::GRAMMAR_ERROR
+        )),
+        Some("grammar-error".to_owned())
+    );
+}
+
 // ── text-decoration-style (CSS Text Decoration Module Level 3 §2.2) ──
 
 #[test]
@@ -1484,6 +1777,10 @@ fn text_decoration_style_parses_all_five_keywords() {
         assert_eq!(
             parse(kw, "text-decoration-style"),
             Some(PropertyValue::TextDecorationStyle(expected))
+        );
+        assert_eq!(
+            serialize_value(&PropertyValue::TextDecorationStyle(expected)),
+            Some(kw.to_owned())
         );
     }
 }
@@ -1726,6 +2023,24 @@ fn text_decoration_skip_ink_parses_all_three_keywords() {
             TextDecorationSkipInk::All
         ))
     );
+    assert_eq!(
+        serialize_value(&PropertyValue::TextDecorationSkipInk(
+            TextDecorationSkipInk::Auto
+        )),
+        Some("auto".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::TextDecorationSkipInk(
+            TextDecorationSkipInk::None
+        )),
+        Some("none".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::TextDecorationSkipInk(
+            TextDecorationSkipInk::All
+        )),
+        Some("all".to_owned())
+    );
     assert_eq!(parse_entire("auto none", "text-decoration-skip-ink"), None);
     assert_eq!(parse_entire("bogus", "text-decoration-skip-ink"), None);
 }
@@ -1786,6 +2101,18 @@ fn text_decoration_skip_spaces_parses_all_forms() {
         None
     );
     assert_eq!(parse_entire("bogus", "text-decoration-skip-spaces"), None);
+    for (value, expected) in [
+        (TextDecorationSkipSpaces::None, "none"),
+        (TextDecorationSkipSpaces::All, "all"),
+        (TextDecorationSkipSpaces::Start, "start"),
+        (TextDecorationSkipSpaces::End, "end"),
+        (TextDecorationSkipSpaces::StartEnd, "start end"),
+    ] {
+        assert_eq!(
+            serialize_value(&PropertyValue::TextDecorationSkipSpaces(value)),
+            Some(expected.to_owned())
+        );
+    }
 }
 
 #[test]
@@ -1931,6 +2258,192 @@ fn text_emphasis_position_key_maps_to_property_key() {
     assert_eq!(v.key(), PropertyKey::TextEmphasisPosition);
 }
 
+// ── text-emphasis-style (CSS Text Decoration 4) ──
+
+#[test]
+fn text_emphasis_style_parses_and_serializes_pinned_computed_values() {
+    let cases = [
+        ("none", "none"),
+        ("dot", "dot"),
+        ("filled circle", "circle"),
+        ("filled", "circle"),
+        ("open", "open circle"),
+        ("double-circle", "double-circle"),
+        ("triangle", "triangle"),
+        ("open sesame", "open sesame"),
+        ("\"*\"", "\"*\""),
+        ("circle filled", "circle"),
+        ("sesame open", "open sesame"),
+    ];
+    for (source, expected) in cases {
+        let value = parse_entire(source, "text-emphasis-style")
+            .unwrap_or_else(|| panic!("text-emphasis-style should parse {source:?}"));
+        assert_eq!(
+            serialize_value(&value).as_deref(),
+            Some(expected),
+            "source: {source:?}",
+        );
+    }
+}
+
+#[test]
+fn text_emphasis_style_preserves_fill_only_default_shape_for_resolution() {
+    assert_eq!(
+        parse_entire("filled", "text-emphasis-style"),
+        Some(PropertyValue::TextEmphasisStyle(
+            TextEmphasisStyle::DefaultShape {
+                fill: TextEmphasisFill::Filled,
+            }
+        )),
+    );
+    assert_eq!(
+        parse_entire("open", "text-emphasis-style"),
+        Some(PropertyValue::TextEmphasisStyle(
+            TextEmphasisStyle::DefaultShape {
+                fill: TextEmphasisFill::Open,
+            }
+        )),
+    );
+}
+
+#[test]
+fn text_emphasis_style_rejects_mixed_or_duplicate_components() {
+    for source in [
+        "none circle",
+        "open filled circle",
+        "dot circle",
+        "\"*\" circle",
+    ] {
+        assert_eq!(
+            parse_entire(source, "text-emphasis-style"),
+            None,
+            "source: {source:?}",
+        );
+    }
+}
+
+#[test]
+fn text_emphasis_style_key_maps_names_and_deferred_values() {
+    let value = parse_entire("dot", "text-emphasis-style").unwrap();
+    assert_eq!(value.key(), PropertyKey::TextEmphasisStyle);
+    assert!(is_supported_property_name("text-emphasis-style"));
+    let deferred = parse_entire("var(--mark)", "text-emphasis-style").unwrap();
+    assert_eq!(deferred.key(), PropertyKey::TextEmphasisStyle);
+}
+
+#[test]
+fn text_emphasis_color_parses_currentcolor_and_named_colors() {
+    assert_eq!(
+        parse_entire("currentColor", "text-emphasis-color"),
+        Some(PropertyValue::TextEmphasisColor(
+            TextDecorationColor::CurrentColor
+        )),
+    );
+    assert_eq!(
+        parse_entire("red", "text-emphasis-color"),
+        Some(PropertyValue::TextEmphasisColor(
+            TextDecorationColor::Resolved(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            })
+        )),
+    );
+    let deferred = parse_entire("var(--mark-color)", "text-emphasis-color").unwrap();
+    assert_eq!(deferred.key(), PropertyKey::TextEmphasisColor);
+}
+
+#[test]
+fn text_emphasis_shorthand_parses_style_and_color_components() {
+    let dot = TextEmphasisStyle::Shape {
+        fill: TextEmphasisFill::Filled,
+        shape: TextEmphasisShape::Dot,
+    };
+    let open_sesame = TextEmphasisStyle::Shape {
+        fill: TextEmphasisFill::Open,
+        shape: TextEmphasisShape::Sesame,
+    };
+    let red = TextDecorationColor::Resolved(CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    });
+    let cases = [
+        (
+            "none",
+            TextEmphasisStyle::None,
+            TextDecorationColor::CurrentColor,
+        ),
+        ("dot", dot.clone(), TextDecorationColor::CurrentColor),
+        (
+            "open sesame",
+            open_sesame,
+            TextDecorationColor::CurrentColor,
+        ),
+        (
+            "\"*\"",
+            TextEmphasisStyle::String(SmolStr::new("*")),
+            TextDecorationColor::CurrentColor,
+        ),
+        (
+            "currentColor",
+            TextEmphasisStyle::None,
+            TextDecorationColor::CurrentColor,
+        ),
+        (
+            "black",
+            TextEmphasisStyle::None,
+            TextDecorationColor::Resolved(CssColor::BLACK),
+        ),
+        ("dot red", dot.clone(), red),
+        ("red dot", dot, red),
+        (
+            "none black",
+            TextEmphasisStyle::None,
+            TextDecorationColor::Resolved(CssColor::BLACK),
+        ),
+    ];
+    for (source, style, color) in cases {
+        assert_eq!(
+            parse_entire(source, "text-emphasis"),
+            Some(PropertyValue::TextEmphasis(TextEmphasisShorthand {
+                style,
+                color
+            })),
+            "source: {source:?}",
+        );
+    }
+}
+
+#[test]
+fn text_emphasis_shorthand_rejects_empty_duplicate_and_mixed_components() {
+    for source in [
+        "",
+        "dot circle",
+        "open filled circle",
+        "none dot",
+        "\"*\" circle",
+        "red blue",
+    ] {
+        assert_eq!(
+            parse_entire(source, "text-emphasis"),
+            None,
+            "source: {source:?}",
+        );
+    }
+}
+
+#[test]
+fn text_emphasis_shorthand_key_maps_names_and_deferred_values() {
+    let value = parse_entire("dot red", "text-emphasis").unwrap();
+    assert_eq!(value.key(), PropertyKey::TextEmphasis);
+    assert!(is_supported_property_name("text-emphasis"));
+    let deferred = parse_entire("var(--emphasis)", "text-emphasis").unwrap();
+    assert_eq!(deferred.key(), PropertyKey::TextEmphasis);
+}
+
 // ── text-underline-position (ED §2.7) ──
 
 #[test]
@@ -1985,19 +2498,61 @@ fn text_underline_position_parses_auto_and_combinations() {
 fn text_underline_offset_parses_lengths_percentages_and_auto() {
     assert_eq!(
         parse("auto", "text-underline-offset"),
-        Some(PropertyValue::TextUnderlineOffset(LengthOrAuto::Auto))
+        Some(PropertyValue::TextUnderlineOffset(
+            TextUnderlineOffset::Auto
+        ))
     );
     assert_eq!(
         parse("11px", "text-underline-offset"),
-        Some(PropertyValue::TextUnderlineOffset(LengthOrAuto::Length(
-            Length::Px(11.0),
-        )))
+        Some(PropertyValue::TextUnderlineOffset(
+            TextUnderlineOffset::Length(Length::Px(11.0),)
+        ))
     );
     assert_eq!(
         parse("10%", "text-underline-offset"),
-        Some(PropertyValue::TextUnderlineOffset(LengthOrAuto::Length(
-            Length::Percent(10.0),
-        )))
+        Some(PropertyValue::TextUnderlineOffset(
+            TextUnderlineOffset::Length(Length::Percent(10.0),)
+        ))
+    );
+    assert_eq!(
+        parse("calc(2em - 8px)", "text-underline-offset"),
+        Some(PropertyValue::TextUnderlineOffset(
+            TextUnderlineOffset::Calc(LengthPercentageCalc {
+                percent: 0.0,
+                px: -8.0,
+                em: 2.0,
+            },)
+        ))
+    );
+    assert_eq!(
+        parse("calc(2em - 50%)", "text-underline-offset"),
+        Some(PropertyValue::TextUnderlineOffset(
+            TextUnderlineOffset::Calc(LengthPercentageCalc {
+                percent: -50.0,
+                px: 0.0,
+                em: 2.0,
+            },)
+        ))
+    );
+    assert_eq!(
+        parse("calc(200% - 8px)", "text-underline-offset"),
+        Some(PropertyValue::TextUnderlineOffset(
+            TextUnderlineOffset::Calc(LengthPercentageCalc {
+                percent: 200.0,
+                px: -8.0,
+                em: 0.0,
+            },)
+        ))
+    );
+    assert_eq!(
+        parse("calc(200% - 0.5em)", "text-underline-offset"),
+        Some(PropertyValue::TextUnderlineOffset(
+            TextUnderlineOffset::Calc(LengthPercentageCalc {
+                percent: 200.0,
+                px: 0.0,
+                em: -0.5,
+            },)
+        ))
     );
     assert_eq!(
         serialize_value(&parse_entire("11px", "text-underline-offset").unwrap()),
@@ -2007,11 +2562,19 @@ fn text_underline_offset_parses_lengths_percentages_and_auto() {
         serialize_value(&parse_entire("10%", "text-underline-offset").unwrap()),
         Some("10%".to_owned())
     );
+    assert_eq!(
+        serialize_value(&parse_entire("calc(2em - 8px)", "text-underline-offset").unwrap()),
+        Some("calc(2em - 8px)".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&parse_entire("calc(200% - 8px)", "text-underline-offset").unwrap()),
+        Some("calc(200% - 8px)".to_owned())
+    );
 }
 
 #[test]
 fn text_underline_offset_key_maps_to_property_key() {
-    let v = PropertyValue::TextUnderlineOffset(LengthOrAuto::Auto);
+    let v = PropertyValue::TextUnderlineOffset(TextUnderlineOffset::Auto);
     assert_eq!(v.key(), PropertyKey::TextUnderlineOffset);
 }
 
@@ -2467,12 +3030,10 @@ fn font_variant_caps_shorthand_name_has_no_dispatch_arm() {
     assert_eq!(parse("small-caps", "font-variant"), None);
 }
 
-// ── text-transform (CSS Text Module Level 3 §2.1) ──
+// ── text-transform (CSS Text Module Level 4) ──
 //
-// Value grammar (§2.1 spec verbatim, full property grammar): `none |
-// [capitalize | uppercase | lowercase] || full-width || full-size-kana`.
-// This crate implements only none / capitalize / uppercase / lowercase
-// (`TextTransform` doc's "Scope carving" section). Initial: none /
+// Value grammar (spec verbatim): `none | [capitalize | uppercase |
+// lowercase] || full-width || full-size-kana | math-auto`. Initial: none /
 // Inherited: yes / Computed value: specified keyword.
 
 #[test]
@@ -2505,6 +3066,31 @@ fn text_transform_is_case_insensitive() {
         parse("Uppercase", "text-transform"),
         Some(PropertyValue::TextTransform(TextTransform::Uppercase))
     );
+}
+
+#[test]
+fn text_transform_parses_math_auto_as_separate_keyword() {
+    assert_eq!(
+        parse_entire("math-auto", "text-transform"),
+        Some(PropertyValue::TextTransform(TextTransform::MathAuto)),
+    );
+    assert_eq!(
+        parse_entire("MATH-AUTO", "text-transform"),
+        Some(PropertyValue::TextTransform(TextTransform::MathAuto)),
+    );
+}
+
+#[test]
+fn text_transform_rejects_math_auto_combinations() {
+    for input in [
+        "math-auto uppercase",
+        "uppercase math-auto",
+        "math-auto full-width",
+        "full-size-kana math-auto",
+        "math-auto none",
+    ] {
+        assert_eq!(parse_entire(input, "text-transform"), None, "{input}");
+    }
 }
 
 #[test]
@@ -2564,6 +3150,8 @@ fn text_transform_key_maps_to_text_transform_property_key() {
     let v = PropertyValue::TextTransform(TextTransform::None);
     assert_eq!(v.key(), PropertyKey::TextTransform);
     let v = PropertyValue::TextTransform(TextTransform::Capitalize);
+    assert_eq!(v.key(), PropertyKey::TextTransform);
+    let v = PropertyValue::TextTransform(TextTransform::MathAuto);
     assert_eq!(v.key(), PropertyKey::TextTransform);
 }
 
@@ -2746,18 +3334,16 @@ fn overflow_wrap_key_maps_to_overflow_wrap_property_key() {
     assert_eq!(v.key(), PropertyKey::OverflowWrap);
 }
 
-// ── letter-spacing / word-spacing (CSS Text 3 §7.2 / §7.1) ──
+// ── letter-spacing / word-spacing computed values ──
 //
-// Value grammar (spec verbatim, identical for both): `normal | <length>`.
-// Initial: `normal`. Inherited: yes. Percentages: N/A. Both share
-// `parse_letter_or_word_spacing` — see that function's doc for the
-// ordering / non-negative / percentage-rejection rationale.
+// Both are inherited and initially `normal`. `word-spacing` uses the same
+// CSS Text 4 length-percentage/calc representation as `letter-spacing`.
 
 #[test]
 fn letter_spacing_parse_normal_keyword() {
     assert_eq!(
         parse("normal", "letter-spacing"),
-        Some(PropertyValue::LetterSpacing(LengthOrNormal::Normal))
+        Some(PropertyValue::LetterSpacing(LetterSpacingValue::Normal))
     );
 }
 
@@ -2765,7 +3351,7 @@ fn letter_spacing_parse_normal_keyword() {
 fn word_spacing_parse_normal_keyword() {
     assert_eq!(
         parse("normal", "word-spacing"),
-        Some(PropertyValue::WordSpacing(LengthOrNormal::Normal))
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Normal))
     );
 }
 
@@ -2773,11 +3359,11 @@ fn word_spacing_parse_normal_keyword() {
 fn letter_spacing_is_case_insensitive_normal() {
     assert_eq!(
         parse("NORMAL", "letter-spacing"),
-        Some(PropertyValue::LetterSpacing(LengthOrNormal::Normal))
+        Some(PropertyValue::LetterSpacing(LetterSpacingValue::Normal))
     );
     assert_eq!(
         parse("Normal", "word-spacing"),
-        Some(PropertyValue::WordSpacing(LengthOrNormal::Normal))
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Normal))
     );
 }
 
@@ -2785,7 +3371,7 @@ fn letter_spacing_is_case_insensitive_normal() {
 fn letter_spacing_parse_length_px() {
     assert_eq!(
         parse("2px", "letter-spacing"),
-        Some(PropertyValue::LetterSpacing(LengthOrNormal::Length(
+        Some(PropertyValue::LetterSpacing(LetterSpacingValue::Length(
             Length::Px(2.0)
         )))
     );
@@ -2795,7 +3381,7 @@ fn letter_spacing_parse_length_px() {
 fn word_spacing_parse_length_px() {
     assert_eq!(
         parse("4px", "word-spacing"),
-        Some(PropertyValue::WordSpacing(LengthOrNormal::Length(
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Length(
             Length::Px(4.0)
         )))
     );
@@ -2805,19 +3391,19 @@ fn word_spacing_parse_length_px() {
 fn letter_spacing_accepts_length_em_rem_pt() {
     assert_eq!(
         parse("0.1em", "letter-spacing"),
-        Some(PropertyValue::LetterSpacing(LengthOrNormal::Length(
+        Some(PropertyValue::LetterSpacing(LetterSpacingValue::Length(
             Length::Em(0.1)
         )))
     );
     assert_eq!(
         parse("1rem", "letter-spacing"),
-        Some(PropertyValue::LetterSpacing(LengthOrNormal::Length(
+        Some(PropertyValue::LetterSpacing(LetterSpacingValue::Length(
             Length::Rem(1.0)
         )))
     );
     assert_eq!(
         parse("2pt", "letter-spacing"),
-        Some(PropertyValue::LetterSpacing(LengthOrNormal::Length(
+        Some(PropertyValue::LetterSpacing(LetterSpacingValue::Length(
             Length::Pt(2.0)
         )))
     );
@@ -2826,19 +3412,19 @@ fn letter_spacing_accepts_length_em_rem_pt() {
 // Spec verbatim (both §7.1 and §7.2): "Values may be negative, but there
 // may be implementation-dependent limits." — unlike `line-height` /
 // `font-size` / `padding` etc., this property does NOT reject negative
-// lengths at parse time (`parse_letter_or_word_spacing` doc's "Negative
-// length は許容" section).
+// lengths at parse time. `letter-spacing` and `word-spacing` use separate
+// parser entry points.
 #[test]
 fn letter_spacing_accepts_negative_length() {
     assert_eq!(
         parse("-2px", "letter-spacing"),
-        Some(PropertyValue::LetterSpacing(LengthOrNormal::Length(
+        Some(PropertyValue::LetterSpacing(LetterSpacingValue::Length(
             Length::Px(-2.0)
         )))
     );
     assert_eq!(
         parse("-0.05em", "letter-spacing"),
-        Some(PropertyValue::LetterSpacing(LengthOrNormal::Length(
+        Some(PropertyValue::LetterSpacing(LetterSpacingValue::Length(
             Length::Em(-0.05)
         )))
     );
@@ -2848,7 +3434,7 @@ fn letter_spacing_accepts_negative_length() {
 fn word_spacing_accepts_negative_length() {
     assert_eq!(
         parse("-1px", "word-spacing"),
-        Some(PropertyValue::WordSpacing(LengthOrNormal::Length(
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Length(
             Length::Px(-1.0)
         )))
     );
@@ -2861,21 +3447,58 @@ fn word_spacing_accepts_negative_length() {
 fn letter_spacing_unitless_zero_is_length_not_normal() {
     assert_eq!(
         parse("0", "letter-spacing"),
-        Some(PropertyValue::LetterSpacing(LengthOrNormal::Length(
+        Some(PropertyValue::LetterSpacing(LetterSpacingValue::Length(
             Length::Px(0.0)
         )))
     );
 }
 
-// Spec verbatim (both §7.1 and §7.2): "Percentages: N/A" / "Percentages:
-// n/a" — percentage is rejected at parse time, unlike `line-height`'s
-// `<length-percentage>`.
+// The pinned computed-value case exercises percentages. Keep the parser's
+// accepted value explicit here, independent of the separate calc tests below.
 #[test]
 fn letter_spacing_accepts_percentage() {
     assert_eq!(
         parse("5%", "letter-spacing"),
-        Some(PropertyValue::LetterSpacing(LengthOrNormal::Length(
+        Some(PropertyValue::LetterSpacing(LetterSpacingValue::Length(
             Length::Percent(5.0)
+        )))
+    );
+}
+
+#[test]
+fn letter_spacing_parses_em_calc_for_computed_resolution() {
+    assert_eq!(
+        parse("calc(10px - 0.5em)", "letter-spacing"),
+        Some(PropertyValue::LetterSpacing(LetterSpacingValue::Calc(
+            LengthPercentageCalc {
+                percent: 0.0,
+                px: 10.0,
+                em: -0.5,
+            }
+        )))
+    );
+}
+
+#[test]
+fn letter_spacing_simplifies_percentage_calc() {
+    assert_eq!(
+        parse("calc(10% - 20%)", "letter-spacing"),
+        Some(PropertyValue::LetterSpacing(LetterSpacingValue::Length(
+            Length::Percent(-10.0)
+        )))
+    );
+}
+
+#[test]
+fn letter_spacing_parses_parenthesized_mixed_calc() {
+    assert_eq!(
+        parse("calc(10px - (5% + 10%))", "letter-spacing"),
+        Some(PropertyValue::LetterSpacing(LetterSpacingValue::Calc(
+            LengthPercentageCalc {
+                percent: -15.0,
+                px: 10.0,
+                em: 0.0,
+            }
         )))
     );
 }
@@ -2884,8 +3507,38 @@ fn letter_spacing_accepts_percentage() {
 fn word_spacing_accepts_percentage() {
     assert_eq!(
         parse("5%", "word-spacing"),
-        Some(PropertyValue::WordSpacing(LengthOrNormal::Length(
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Length(
             Length::Percent(5.0)
+        )))
+    );
+}
+
+#[test]
+fn word_spacing_preserves_mixed_length_percentage_calcs() {
+    assert_eq!(
+        parse("calc(10px - 0.5em)", "word-spacing"),
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Calc(
+            LengthPercentageCalc {
+                percent: 0.0,
+                px: 10.0,
+                em: -0.5,
+            }
+        )))
+    );
+    assert_eq!(
+        parse("calc(10% - 20%)", "word-spacing"),
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Length(
+            Length::Percent(-10.0)
+        )))
+    );
+    assert_eq!(
+        parse("calc(10px - (5% + 10%))", "word-spacing"),
+        Some(PropertyValue::WordSpacing(WordSpacingValue::Calc(
+            LengthPercentageCalc {
+                percent: -15.0,
+                px: 10.0,
+                em: 0.0,
+            }
         )))
     );
 }
@@ -2924,9 +3577,9 @@ fn letter_spacing_rejects_non_length_non_ident() {
 
 #[test]
 fn letter_spacing_key_maps_to_letter_spacing_property_key() {
-    let v = PropertyValue::LetterSpacing(LengthOrNormal::Normal);
+    let v = PropertyValue::LetterSpacing(LetterSpacingValue::Normal);
     assert_eq!(v.key(), PropertyKey::LetterSpacing);
-    let v = PropertyValue::LetterSpacing(LengthOrNormal::Length(Length::Px(2.0)));
+    let v = PropertyValue::LetterSpacing(LetterSpacingValue::Length(Length::Px(2.0)));
     assert_eq!(v.key(), PropertyKey::LetterSpacing);
 }
 
@@ -3064,9 +3717,9 @@ fn tab_size_key_maps_to_tab_size_property_key() {
 
 #[test]
 fn word_spacing_key_maps_to_word_spacing_property_key() {
-    let v = PropertyValue::WordSpacing(LengthOrNormal::Normal);
+    let v = PropertyValue::WordSpacing(WordSpacingValue::Normal);
     assert_eq!(v.key(), PropertyKey::WordSpacing);
-    let v = PropertyValue::WordSpacing(LengthOrNormal::Length(Length::Px(2.0)));
+    let v = PropertyValue::WordSpacing(WordSpacingValue::Length(Length::Px(2.0)));
     assert_eq!(v.key(), PropertyKey::WordSpacing);
 }
 
@@ -3158,6 +3811,59 @@ fn white_space_key_maps_to_white_space_property_key() {
     assert_eq!(v.key(), PropertyKey::WhiteSpace);
     let v = PropertyValue::WhiteSpace(WhiteSpace::PreLine);
     assert_eq!(v.key(), PropertyKey::WhiteSpace);
+}
+
+// ── white-space-collapse (CSS Text 4) ──
+
+#[test]
+fn white_space_collapse_parses_all_six_keywords_and_maps_to_its_key() {
+    let cases = [
+        ("collapse", WhiteSpaceCollapse::Collapse),
+        ("discard", WhiteSpaceCollapse::Discard),
+        ("preserve", WhiteSpaceCollapse::Preserve),
+        ("preserve-breaks", WhiteSpaceCollapse::PreserveBreaks),
+        ("preserve-spaces", WhiteSpaceCollapse::PreserveSpaces),
+        ("break-spaces", WhiteSpaceCollapse::BreakSpaces),
+    ];
+
+    for (input, expected) in cases {
+        let value = parse(input, "white-space-collapse");
+        assert_eq!(
+            value,
+            Some(PropertyValue::WhiteSpaceCollapse(expected)),
+            "{input} must parse as its distinct white-space-collapse keyword",
+        );
+        assert_eq!(
+            value.map(|value| value.key()),
+            Some(PropertyKey::WhiteSpaceCollapse),
+        );
+    }
+}
+
+#[test]
+fn white_space_collapse_is_case_insensitive() {
+    assert_eq!(
+        parse("PRESERVE-BREAKS", "white-space-collapse"),
+        Some(PropertyValue::WhiteSpaceCollapse(
+            WhiteSpaceCollapse::PreserveBreaks
+        )),
+    );
+}
+
+#[test]
+fn white_space_collapse_rejects_invalid_values() {
+    for input in [
+        "bogus",
+        "inherit",
+        "initial",
+        "unset",
+        "revert",
+        "revert-layer",
+    ] {
+        assert_eq!(parse(input, "white-space-collapse"), None, "{input}");
+    }
+    assert_eq!(parse("16px", "white-space-collapse"), None);
+    assert_eq!(parse(r#""preserve""#, "white-space-collapse"), None);
 }
 
 // ── hyphens (CSS Text 3 §5.3) ──
@@ -3388,15 +4094,35 @@ fn text_shadow_parse_none_is_empty_list() {
 }
 
 #[test]
+fn text_shadow_parse_preserves_mixed_em_px_calc() {
+    let calc = crate::property::TextShadowLength::Calc { px: 10.0, em: 0.5 };
+    assert_eq!(
+        text_shadow_items("calc(0.5em + 10px) calc(0.5em + 10px) calc(0.5em + 10px)"),
+        vec![TextShadowItem {
+            offset_x: calc,
+            offset_y: calc,
+            blur_radius: calc,
+            color: TextShadowColor::CurrentColor,
+        }]
+    );
+}
+
+#[test]
+fn text_shadow_parse_rejects_percentage_calc_terms() {
+    assert_eq!(parse_entire("calc(10% - 10%) 1px", "text-shadow"), None);
+    assert_eq!(parse_entire("1px 1px calc(10% + 1px)", "text-shadow"), None);
+}
+
+#[test]
 fn text_shadow_parse_single_offset_only_defaults_blur_and_color() {
     // `<color>` / blur-radius 省略 — `TextShadowItem` doc の「各成分の
     // 初期値埋め」節。
     assert_eq!(
         text_shadow_items("1px 2px"),
         vec![TextShadowItem {
-            offset_x: Length::Px(1.0),
-            offset_y: Length::Px(2.0),
-            blur_radius: Length::Px(0.0),
+            offset_x: crate::property::TextShadowLength::Length(Length::Px(1.0)),
+            offset_y: crate::property::TextShadowLength::Length(Length::Px(2.0)),
+            blur_radius: crate::property::TextShadowLength::Length(Length::Px(0.0)),
             color: TextShadowColor::CurrentColor,
         }]
     );
@@ -3407,9 +4133,9 @@ fn text_shadow_parse_color_after_lengths() {
     assert_eq!(
         text_shadow_items("1px 2px 3px red"),
         vec![TextShadowItem {
-            offset_x: Length::Px(1.0),
-            offset_y: Length::Px(2.0),
-            blur_radius: Length::Px(3.0),
+            offset_x: crate::property::TextShadowLength::Length(Length::Px(1.0)),
+            offset_y: crate::property::TextShadowLength::Length(Length::Px(2.0)),
+            blur_radius: crate::property::TextShadowLength::Length(Length::Px(3.0)),
             color: TextShadowColor::Resolved(CssColor {
                 r: 255,
                 g: 0,
@@ -3436,9 +4162,9 @@ fn text_shadow_parse_explicit_currentcolor_keyword() {
     assert_eq!(
         text_shadow_items("currentcolor 1px 1px"),
         vec![TextShadowItem {
-            offset_x: Length::Px(1.0),
-            offset_y: Length::Px(1.0),
-            blur_radius: Length::Px(0.0),
+            offset_x: crate::property::TextShadowLength::Length(Length::Px(1.0)),
+            offset_y: crate::property::TextShadowLength::Length(Length::Px(1.0)),
+            blur_radius: crate::property::TextShadowLength::Length(Length::Px(0.0)),
             color: TextShadowColor::CurrentColor,
         }]
     );
@@ -3451,9 +4177,9 @@ fn text_shadow_parse_negative_offsets_allowed() {
     assert_eq!(
         text_shadow_items("-1px -2px"),
         vec![TextShadowItem {
-            offset_x: Length::Px(-1.0),
-            offset_y: Length::Px(-2.0),
-            blur_radius: Length::Px(0.0),
+            offset_x: crate::property::TextShadowLength::Length(Length::Px(-1.0)),
+            offset_y: crate::property::TextShadowLength::Length(Length::Px(-2.0)),
+            blur_radius: crate::property::TextShadowLength::Length(Length::Px(0.0)),
             color: TextShadowColor::CurrentColor,
         }]
     );
@@ -3495,18 +4221,18 @@ fn text_shadow_zero_mantissa_huge_exponent_offset_resolves_to_zero_but_preserves
     assert_eq!(
         text_shadow_items("0e999px 1px"),
         vec![TextShadowItem {
-            offset_x: Length::Px(0.0),
-            offset_y: Length::Px(1.0),
-            blur_radius: Length::Px(0.0),
+            offset_x: crate::property::TextShadowLength::Length(Length::Px(0.0)),
+            offset_y: crate::property::TextShadowLength::Length(Length::Px(1.0)),
+            blur_radius: crate::property::TextShadowLength::Length(Length::Px(0.0)),
             color: TextShadowColor::CurrentColor,
         }]
     );
     assert_eq!(
         text_shadow_items("1px 0e999px"),
         vec![TextShadowItem {
-            offset_x: Length::Px(1.0),
-            offset_y: Length::Px(0.0),
-            blur_radius: Length::Px(0.0),
+            offset_x: crate::property::TextShadowLength::Length(Length::Px(1.0)),
+            offset_y: crate::property::TextShadowLength::Length(Length::Px(0.0)),
+            blur_radius: crate::property::TextShadowLength::Length(Length::Px(0.0)),
             color: TextShadowColor::CurrentColor,
         }]
     );
@@ -3521,18 +4247,18 @@ fn text_shadow_zero_mantissa_huge_exponent_offset_resolves_to_zero_but_preserves
     assert_eq!(
         text_shadow_items("1e40px 1px"),
         vec![TextShadowItem {
-            offset_x: Length::Px(f32::INFINITY),
-            offset_y: Length::Px(1.0),
-            blur_radius: Length::Px(0.0),
+            offset_x: crate::property::TextShadowLength::Length(Length::Px(f32::INFINITY)),
+            offset_y: crate::property::TextShadowLength::Length(Length::Px(1.0)),
+            blur_radius: crate::property::TextShadowLength::Length(Length::Px(0.0)),
             color: TextShadowColor::CurrentColor,
         }]
     );
     assert_eq!(
         text_shadow_items("-1e40px 1px"),
         vec![TextShadowItem {
-            offset_x: Length::Px(f32::NEG_INFINITY),
-            offset_y: Length::Px(1.0),
-            blur_radius: Length::Px(0.0),
+            offset_x: crate::property::TextShadowLength::Length(Length::Px(f32::NEG_INFINITY)),
+            offset_y: crate::property::TextShadowLength::Length(Length::Px(1.0)),
+            blur_radius: crate::property::TextShadowLength::Length(Length::Px(0.0)),
             color: TextShadowColor::CurrentColor,
         }]
     );
@@ -3548,9 +4274,9 @@ fn text_shadow_blur_radius_zero_mantissa_huge_exponent_resolves_to_zero() {
     assert_eq!(
         text_shadow_items("1px 1px 0e999px"),
         vec![TextShadowItem {
-            offset_x: Length::Px(1.0),
-            offset_y: Length::Px(1.0),
-            blur_radius: Length::Px(0.0),
+            offset_x: crate::property::TextShadowLength::Length(Length::Px(1.0)),
+            offset_y: crate::property::TextShadowLength::Length(Length::Px(1.0)),
+            blur_radius: crate::property::TextShadowLength::Length(Length::Px(0.0)),
             color: TextShadowColor::CurrentColor,
         }]
     );
@@ -3562,9 +4288,9 @@ fn text_shadow_parse_multiple_comma_separated() {
         text_shadow_items("1px 1px red, 2px 2px 4px blue"),
         vec![
             TextShadowItem {
-                offset_x: Length::Px(1.0),
-                offset_y: Length::Px(1.0),
-                blur_radius: Length::Px(0.0),
+                offset_x: crate::property::TextShadowLength::Length(Length::Px(1.0)),
+                offset_y: crate::property::TextShadowLength::Length(Length::Px(1.0)),
+                blur_radius: crate::property::TextShadowLength::Length(Length::Px(0.0)),
                 color: TextShadowColor::Resolved(CssColor {
                     r: 255,
                     g: 0,
@@ -3573,9 +4299,9 @@ fn text_shadow_parse_multiple_comma_separated() {
                 }),
             },
             TextShadowItem {
-                offset_x: Length::Px(2.0),
-                offset_y: Length::Px(2.0),
-                blur_radius: Length::Px(4.0),
+                offset_x: crate::property::TextShadowLength::Length(Length::Px(2.0)),
+                offset_y: crate::property::TextShadowLength::Length(Length::Px(2.0)),
+                blur_radius: crate::property::TextShadowLength::Length(Length::Px(4.0)),
                 color: TextShadowColor::Resolved(CssColor {
                     r: 0,
                     g: 0,
@@ -3805,4 +4531,119 @@ fn font_shorthand_key_maps_to_font_property_key() {
         family: Arc::new(vec![Atom::from("serif")]),
     });
     assert_eq!(v.key(), PropertyKey::Font);
+}
+
+#[test]
+fn hyphenate_character_parses_auto_case_insensitively() {
+    assert_eq!(
+        parse_entire("AUTO", "hyphenate-character"),
+        Some(PropertyValue::HyphenateCharacter(HyphenateCharacter::Auto)),
+    );
+}
+
+#[test]
+fn hyphenate_character_preserves_nonempty_and_empty_css_strings() {
+    assert_eq!(
+        parse_entire("\"=\"", "hyphenate-character"),
+        Some(PropertyValue::HyphenateCharacter(
+            HyphenateCharacter::String("=".into())
+        )),
+    );
+    assert_eq!(
+        parse_entire("\"\"", "hyphenate-character"),
+        Some(PropertyValue::HyphenateCharacter(
+            HyphenateCharacter::String("".into())
+        )),
+    );
+}
+
+#[test]
+fn hyphenate_character_decodes_escaped_unicode_string() {
+    assert_eq!(
+        parse_entire(r#""\1400""#, "hyphenate-character"),
+        Some(PropertyValue::HyphenateCharacter(
+            HyphenateCharacter::String("᐀".into())
+        )),
+    );
+}
+
+#[test]
+fn hyphenate_character_rejects_unknown_ident_and_non_string_values() {
+    for invalid in ["none", "manual", "unknown", "16px", "inherit"] {
+        assert_eq!(
+            parse_entire(invalid, "hyphenate-character"),
+            None,
+            "{invalid}"
+        );
+    }
+}
+
+#[test]
+fn hyphenate_character_value_maps_to_its_property_key() {
+    assert_eq!(
+        parse_entire("auto", "hyphenate-character")
+            .expect("valid hyphenate-character")
+            .key(),
+        PropertyKey::HyphenateCharacter,
+    );
+}
+
+#[test] // cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+// cov:ignore: cfg(test)-only property tests have no lcov source record on the pinned coverage run.
+fn word_space_transform_preserves_the_five_computed_values() {
+    let cases = [
+        ("none", WordSpaceTransform::None, "none"),
+        ("space", WordSpaceTransform::Space, "space"),
+        (
+            "ideographic-space",
+            WordSpaceTransform::IdeographicSpace,
+            "ideographic-space",
+        ),
+        (
+            "space auto-phrase",
+            WordSpaceTransform::SpaceAutoPhrase,
+            "space auto-phrase",
+        ),
+        (
+            "ideographic-space auto-phrase",
+            WordSpaceTransform::IdeographicSpaceAutoPhrase,
+            "ideographic-space auto-phrase",
+        ),
+        (
+            "AUTO-PHRASE SPACE",
+            WordSpaceTransform::SpaceAutoPhrase,
+            "space auto-phrase",
+        ),
+    ];
+
+    for (authored, expected, serialized) in cases {
+        let parsed = parse_entire(authored, "word-space-transform")
+            .unwrap_or_else(|| panic!("expected valid word-space-transform `{authored}`"));
+        assert_eq!(
+            parsed,
+            PropertyValue::WordSpaceTransform(expected),
+            "{authored}"
+        );
+        assert_eq!(
+            serialize_value(&parsed),
+            Some(serialized.to_owned()),
+            "{authored}"
+        );
+        assert_eq!(parsed.key(), PropertyKey::WordSpaceTransform);
+    }
+
+    for invalid in [
+        "",
+        "auto-phrase",
+        "space ideographic-space",
+        "none space",
+        "space auto-phrase auto-phrase",
+        "space unknown",
+    ] {
+        assert_eq!(
+            parse_entire(invalid, "word-space-transform"),
+            None,
+            "{invalid} should be rejected",
+        );
+    }
 }

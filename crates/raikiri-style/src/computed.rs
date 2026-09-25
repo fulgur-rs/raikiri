@@ -19,13 +19,17 @@ use crate::property::{
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue, EmptyCellsValue,
     FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontStyle, FontVariantCaps,
-    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, HangingPunctuation, Hyphens,
-    Isolation, LineBreak, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit,
-    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
-    RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextAlignLast,
-    TextAutospace, TextDecorationColor, TextDecorationLine, TextDecorationStyle, TextJustify,
-    TextTransform, TextWrapMode, VerticalAlign, Visibility, VisualBox, WhiteSpace, WordBreak,
-    WritingMode, ZIndexValue, empty_content_list, empty_counter_entries, empty_filter_list,
+    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, HangingPunctuation,
+    HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, LineBreak, ListStylePosition,
+    ListStyleType, MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue,
+    OverflowWrap, OverflowXY, PositionValue, RubyPosition, SelfAlignmentValue, Sides,
+    TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
+    TextDecorationColor, TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces,
+    TextDecorationStyle, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisStyle,
+    TextEmphasisVEdge, TextJustify, TextOrientation, TextSpacingTrim, TextTransform,
+    TextUnderlinePosition, TextWrapMode, TextWrapStyle, UnicodeBidi, VerticalAlign, Visibility,
+    VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak, WordSpaceTransform, WritingMode,
+    ZIndexValue, empty_content_list, empty_counter_entries, empty_filter_list,
     empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
@@ -33,10 +37,11 @@ use crate::resolve::{
     ComputedBoxShadowItem, ComputedColumnWidth, ComputedCssPosition, ComputedCssPositionOffset,
     ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackSize, ComputedLength,
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
-    ComputedLineHeight, ComputedOutline, ComputedTabSize, ComputedTextDecorationInset,
+    ComputedLetterSpacing, ComputedLineHeight, ComputedOutline, ComputedTabSize,
+    ComputedTextDecorationInset, ComputedTextDecorationThickness, ComputedTextIndent,
     ComputedTextShadow, ComputedTextUnderlineOffset, ComputedTransformFunction,
-    empty_computed_box_shadow_list, empty_computed_text_shadow_list, empty_computed_transform_list,
-    initial_computed_grid_auto_track_list,
+    ComputedWordSpacing, empty_computed_box_shadow_list, empty_computed_text_shadow_list,
+    empty_computed_transform_list, initial_computed_grid_auto_track_list,
 };
 
 /// CSS spec 上の `font-size` initial value (`medium`) に対応する px 値。
@@ -252,10 +257,10 @@ pub struct ChLengthProvenance {
 }
 
 /// Per-node computed style。現サポート property と inheritance 分類は下記 field
-/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / orphans / widows / list_style_type / list_style_position、
+/// doc を参照 (inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / orphans / widows / list_style_type / list_style_position、
 /// non-inherited: background-color / display / counter-* / content / string-set /
 /// running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing /
-/// overflow / text_decoration / vertical_align / z_index / float / clear)。
+/// overflow / text_decoration / unicode_bidi / vertical_align / z_index / float / clear)。
 ///
 /// # 層
 ///
@@ -487,6 +492,13 @@ pub struct ComputedValues {
     /// `text-autospace` (CSS Text 4)。**inherited**、initial: `normal`。
     /// The keyword/flag set is preserved for the inline text layout consumer.
     pub text_autospace: TextAutospace,
+    /// `word-space-transform` (CSS Text 4). **Inherited**, initial `none`;
+    /// the specified keyword combination is preserved without text transformation.
+    pub word_space_transform: WordSpaceTransform,
+    /// `text-spacing-trim` (CSS Text 4). **Inherited**, initial `normal`;
+    /// computed value is the specified keyword. The value is data-only and
+    /// does not enable text-spacing layout or rendering behavior.
+    pub text_spacing_trim: TextSpacingTrim,
     /// `text-justify` (CSS Text 3 §6.2)。**inherited**、initial: `auto`。
     /// keyword のため computed = specified (by-value copy、`Copy`)。
     /// `distribute` は legacy 値として受理し parley 側では `Justify` と
@@ -531,19 +543,20 @@ pub struct ComputedValues {
     /// 同じ扱いで、raikiri は `writing-mode` も意図的に `@page` context へ
     /// 拡張配線している ([`WritingMode`] doc の同節参照)。
     ///
-    /// **`HorizontalTb` 以外の値がこの field に観測されることは無い** — spec 上の
-    /// computed value は specified keyword をそのまま保持する規定だが、raikiri
-    /// は縦書きレンダリングパイプラインを実装しないため、5 keyword すべてが
-    /// [`crate::property::resolve_writing_mode`] により
-    /// [`WritingMode::HorizontalTb`] に正規化されてからこの field へ
-    /// 書き込まれる ([`WritingMode`] doc の Non-goal 節が canonical rationale)。
-    /// Future work: vertical writing-mode 実装時に本 collapse を
-    /// 削除し、本 doc の「観測されることは無い」記述を撤回すること。
+    /// This renderer-facing field remains [`WritingMode::HorizontalTb`] because
+    /// vertical writing-mode layout is not implemented. The CSS computed keyword
+    /// is preserved separately in [`Self::cssom_writing_mode`]; CSSOM does not
+    /// share this layout fallback. [`crate::property::resolve_writing_mode`]
+    /// performs the normalization. See [`WritingMode`] doc's Non-goal section.
     pub writing_mode: WritingMode,
+    /// CSSOM-facing computed `writing-mode` keyword. **inherited**, initial:
+    /// [`WritingMode::HorizontalTb`] (CSS Writing Modes 4 §3.2). This retains the
+    /// specified keyword while [`Self::writing_mode`] stays renderer-facing.
+    pub cssom_writing_mode: WritingMode,
     /// `ruby-position` — inherited annotation placement.
     pub ruby_position: RubyPosition,
     /// `text-indent` — first-line indentation of a block container.
-    /// **inherited**、initial: [`ComputedLengthPercentage::Px`]`(0.0)` (CSS
+    /// **inherited**、initial: [`ComputedTextIndent::Px`]`(0.0)` (CSS
     /// Text 3 §8.1 "First Line Indentation: the text-indent property"
     /// <https://www.w3.org/TR/css-text-3/#text-indent-property>: "Initial:
     /// 0", "Applies to: block containers", "Inherited: yes", "Percentages:
@@ -557,20 +570,13 @@ pub struct ComputedValues {
     /// crate's scope ([`crate::property::PropertyValue::TextIndent`] doc's
     /// "Scope carving" section).
     ///
-    /// Value shape mirrors [`Self::padding`] (`%` stays a computed
-    /// `<percentage>`, resolved only at the used-value layer — downstream
-    /// (taffy) responsibility, same [`ComputedLengthPercentage`] type) — but
-    /// **not** the reference quantity: `padding`'s `%` resolves against the
-    /// containing block's width (CSS Box 3 §4.1), while `text-indent`'s `%`
-    /// resolves against the block container's own inline-axis inner size
-    /// (the propdef's "Percentages" line above) — a different quantity, not
-    /// merely different terminology for the same one. The other difference
-    /// from `padding` is that this property **is** inherited: a node with no
-    /// `text-indent` declaration of its own gets this value copied from its
-    /// parent's already-absolutized computed value
-    /// ([`crate::specified::SpecifiedValues::inherit_from`]'s
-    /// `lift_length_percentage` seed), not reset to the initial `0`.
-    pub text_indent: ComputedLengthPercentage,
+    /// A dedicated computed representation keeps mixed `calc()` terms for
+    /// CSSOM serialization while leaving the percentage basis for used-value
+    /// layout. `text-indent` percentages use the block container's inline-axis
+    /// inner size, unlike [`Self::padding`]'s containing-block width. This
+    /// property is inherited; [`crate::specified::SpecifiedValues::inherit_from`]
+    /// lifts the parent's computed value with [`crate::resolve::lift_text_indent`].
+    pub text_indent: ComputedTextIndent,
     /// Authored `ch` factor retained for the font-metric-aware layout sink.
     pub text_indent_ch_factor: Option<f32>,
     /// Source font for an inherited `ch` value.
@@ -837,16 +843,50 @@ pub struct ComputedValues {
     /// The paint walker resolves `currentcolor` against the originating
     /// element's computed [`Self::color`] before drawing the line.
     pub text_decoration_color: TextDecorationColor,
+    /// `text-decoration-thickness`. **non-inherited**, initial: `auto` (CSS
+    /// Text Decoration 4, [`crate::property::TextDecorationThickness`]). Computed lengths are
+    /// absolute CSS pixels; `auto` and `from-font` remain keywords. No thickness
+    /// painting behavior is implemented by this field.
+    pub text_decoration_thickness: ComputedTextDecorationThickness,
+    /// `text-decoration-skip-ink` (CSS Text Decoration 4). **Inherited**,
+    /// initial: [`TextDecorationSkipInk::Auto`]. Stored for computed-style output;
+    /// no skip-ink drawing behavior is implemented.
+    pub text_decoration_skip_ink: TextDecorationSkipInk,
+    /// `text-decoration-skip-spaces` (CSS Text Decoration 4). **Inherited**,
+    /// initial: [`TextDecorationSkipSpaces::StartEnd`]. Stored for computed-style
+    /// output; no decoration drawing behavior is implemented.
+    pub text_decoration_skip_spaces: TextDecorationSkipSpaces,
     /// `text-decoration-inset`. **non-inherited**, initial: `0` (CSS Text
     /// Decoration 4 §2.9.1). Lengths are absolute in the computed layer so
     /// paint can trim or extend each decoration segment without re-resolving
     /// against the originating font.
     pub text_decoration_inset: ComputedTextDecorationInset,
+    /// Authored `ch` provenance for the inset's inline-start length.
+    pub text_decoration_inset_start_ch: Option<ChLengthProvenance>,
+    /// Authored `ch` provenance for the inset's inline-end length.
+    pub text_decoration_inset_end_ch: Option<ChLengthProvenance>,
     /// `text-underline-offset`. **inherited**, initial: `auto` (CSS Text
     /// Decoration 4 §2.8). Length values are fixed computed offsets and are
-    /// carried with the decoration origin; percentages stay relative to the
-    /// font size of the element the value is used on.
+    /// carried with the decoration origin; mixed calcs retain that resolved
+    /// length while percentages stay relative to the font size of the element
+    /// the value is used on.
     pub text_underline_offset: ComputedTextUnderlineOffset,
+    /// `text-underline-position`. **inherited**, initial: `auto` (CSS Text
+    /// Decoration 4 §2.7). The keyword set is preserved as the computed value;
+    /// this field does not implement underline placement or painting.
+    pub text_underline_position: TextUnderlinePosition,
+    /// `text-emphasis-position`. **inherited**, initial: `over right` (CSS
+    /// Text Decoration 4 §3.4). The keyword value is preserved; emphasis
+    /// placement and painting are out of scope.
+    pub text_emphasis_position: TextEmphasisPosition,
+    /// `text-emphasis-style`. **inherited**, initial: `none`. Shape/fill and
+    /// string values are retained in computed style; emphasis painting is out
+    /// of scope.
+    pub text_emphasis_style: TextEmphasisStyle,
+    /// `text-emphasis-color`. **inherited**, initial: `currentColor`. The
+    /// current-color sentinel is resolved against [`Self::color`] when a
+    /// computed shorthand string is exposed; no emphasis painting is added.
+    pub text_emphasis_color: TextDecorationColor,
     /// `vertical-align`. **non-inherited**, initial:
     /// [`VerticalAlign::Baseline`] (CSS 2.1 §10.8.1 "Vertical alignment: the
     /// 'vertical-align' property"
@@ -924,15 +964,27 @@ pub struct ComputedValues {
     /// section (the `font-variant` shorthand is not).
     pub font_variant_caps: FontVariantCaps,
     /// `text-transform`. **inherited**, initial: [`TextTransform::None`]
-    /// (CSS Text Module Level 3 §2.1 "Case Transforms: the text-transform
-    /// property" <https://www.w3.org/TR/css-text-3/#text-transform-property>,
+    /// (CSS Text 4 property definition:
+    /// <https://www.w3.org/TR/css-text-4/#propdef-text-transform>,
     /// "Initial: none" / "Inherited: yes"). Computed value = specified
     /// keyword.
     ///
-    /// The optional case, `full-width`, and `full-size-kana` keywords are
-    /// preserved in the computed value; see [`TextTransform`] for the value
-    /// grammar and layout handoff.
+    /// Case and width combinations and standalone `math-auto` are preserved
+    /// as specified keywords; see [`TextTransform`] for the grammar. The
+    /// downstream math-text behavior of `math-auto` is outside this crate.
     pub text_transform: TextTransform,
+    /// `text-combine-upright`. **inherited**, initial: [`TextCombineUpright::None`]
+    /// (CSS Writing Modes 3 §9.1). Computed value = specified keyword; text
+    /// composition is outside this field.
+    pub text_combine_upright: TextCombineUpright,
+    /// `text-orientation`. **inherited**, initial: [`TextOrientation::Mixed`]
+    /// (CSS Writing Modes 3 §5.1, initial mixed and inherited yes). Computed
+    /// value = specified keyword; no writing-mode layout is performed here.
+    pub text_orientation: TextOrientation,
+    /// `unicode-bidi`. **non-inherited**, initial: [`UnicodeBidi::Normal`]
+    /// (CSS Writing Modes 3 §2.2). Computed value = specified value; bidi
+    /// layout behavior is outside this field.
+    pub unicode_bidi: UnicodeBidi,
     /// `visibility`. **inherited**, initial: [`Visibility::Visible`] (CSS
     /// Display Module Level 3 §4 "Invisibility: the visibility property"
     /// <https://www.w3.org/TR/css-display-3/#visibility>, "Initial: visible"
@@ -991,33 +1043,24 @@ pub struct ComputedValues {
     ///
     /// [`PropertyKey::OverflowWrap`]: crate::property::PropertyKey::OverflowWrap
     pub overflow_wrap: OverflowWrap,
-    /// `letter-spacing`. **inherited**, initial: [`ComputedLength::ZERO`]
-    /// (CSS Text Module Level 3 §7.2 "Tracking: the letter-spacing
-    /// property" <https://www.w3.org/TR/css-text-3/#letter-spacing-property>,
-    /// "Initial: normal" / "Inherited: yes"). Computed value: an absolute
-    /// length — the spec's `normal` keyword computes to zero (§7.2 "No
-    /// additional spacing is applied. Computes to zero."), so unlike
-    /// [`Self::line_height`] this field never needs to carry the keyword at
-    /// the computed layer; [`crate::resolve::resolve_length_or_normal`]
-    /// collapses `normal` to `0` before this field is populated.
-    ///
-    /// Values may be negative (§7.2: "Values may be negative, but there may
-    /// be implementation-dependent limits.") — this field does not clamp.
-    ///
-    /// **Non-goal**: §7.2's legacy `getComputedStyle()` resolved-value rule
-    /// ("a computed letter-spacing of zero yields a resolved value of
-    /// `normal`") is a CSSOM serialization detail this crate has no surface
-    /// for.
+    /// Renderer-facing absolute fallback for `letter-spacing`. This preserves
+    /// the existing layout contract; percentage and calc values use zero here
+    /// until text layout consumes [`Self::letter_spacing_computed`].
     pub letter_spacing: ComputedLength,
+    /// Computed `letter-spacing` value retained for inheritance and CSSOM
+    /// serialization. This carries percentages and mixed length-percentage
+    /// calcs separately from the absolute renderer fallback.
+    pub letter_spacing_computed: ComputedLetterSpacing,
     /// Authored `ch` factor for `letter-spacing`, retained so the text-layout
     /// sink can replace the style fallback with the shaping font's `0` advance.
     pub letter_spacing_ch_factor: Option<f32>,
-    /// `word-spacing`. **inherited**, initial: [`ComputedLength::ZERO`] (CSS
-    /// Text Module Level 3 §7.1 "Word Spacing: the word-spacing property"
-    /// <https://www.w3.org/TR/css-text-3/#word-spacing-property>, "Initial:
-    /// normal" / "Inherited: yes"). Same computed-value shape as
-    /// [`Self::letter_spacing`] — see that field's doc.
+    /// Absolute renderer/layout fallback for `word-spacing`. The inherited CSSOM
+    /// computed form, including percentages and mixed calc terms, is retained in
+    /// [`Self::word_spacing_computed`]. Initial fallback: zero.
     pub word_spacing: ComputedLength,
+    /// CSS Text 4 computed `word-spacing` value. Percentages and mixed calc
+    /// terms remain distinct from the absolute renderer/layout fallback.
+    pub word_spacing_computed: ComputedWordSpacing,
     /// Authored `ch` factor for `word-spacing`, when the winning declaration
     /// used that font-metric-relative unit. The factor is retained through
     /// inheritance so the text-layout sink can replace the style-layer
@@ -1133,8 +1176,20 @@ pub struct ComputedValues {
     /// end-of-line occupancy rules for `break-spaces` remain a downstream
     /// line-breaking detail.
     pub white_space: WhiteSpace,
+    /// `white-space-collapse`. **Inherited**, initial:
+    /// [`WhiteSpaceCollapse::Collapse`] (CSS Text 4 property definition:
+    /// <https://www.w3.org/TR/css-text-4/#propdef-white-space-collapse>).
+    /// Computed value = specified keyword.
+    ///
+    /// This field carries the cascaded keyword only. It does not transform
+    /// whitespace or change text-layout behavior.
+    pub white_space_collapse: WhiteSpaceCollapse,
     /// `text-wrap` wrapping component. Inherited, initial `wrap`.
     pub text_wrap: TextWrapMode,
+    /// `text-wrap-style`. **Inherited**, initial [`TextWrapStyle::Auto`]. The
+    /// computed value is the specified keyword; this field does not affect
+    /// line wrapping or text layout.
+    pub text_wrap_style: TextWrapStyle,
     /// `hyphens`. **inherited**, initial: [`Hyphens::Manual`] (CSS Text
     /// Module Level 3 §5.3 "Hyphenation: the hyphens property"
     /// <https://www.w3.org/TR/css-text-3/#hyphens-property>, "Initial:
@@ -1152,6 +1207,14 @@ pub struct ComputedValues {
     /// the collapse (to soft-hyphen-only splitting) is a consumer-side
     /// decision rather than something this field's computed value encodes.
     pub hyphens: Hyphens,
+    /// `hyphenate-character`. Inherited, initial `auto` (CSS Text 4).
+    /// The explicit string remains decoded Unicode text; this field does not
+    /// perform hyphenation or insert characters into lines.
+    pub hyphenate_character: HyphenateCharacter,
+    /// `hyphenate-limit-chars`. **Inherited**, initial [`HyphenateLimitChars::INITIAL`].
+    /// The triple is a computed style value only; this crate does not apply
+    /// hyphenation or line-breaking behavior.
+    pub hyphenate_limit_chars: HyphenateLimitChars,
     /// `flex-direction`. **non-inherited**, initial:
     /// [`FlexDirectionValue::Row`] (CSS Flexible Box Layout Module Level 1
     /// §5.1 <https://www.w3.org/TR/css-flexbox-1/#flex-direction-property>,
@@ -1671,6 +1734,10 @@ impl ComputedValues {
             hanging_punctuation: HangingPunctuation::None,
             // CSS Text 4: text-autospace initial is `normal`.
             text_autospace: TextAutospace::Normal,
+            // CSS Text 4: word-space-transform initial is `none`.
+            word_space_transform: WordSpaceTransform::None,
+            // CSS Text 4: text-spacing-trim initial is `normal`.
+            text_spacing_trim: TextSpacingTrim::Normal,
             // CSS Text 3 §6.2: text-justify initial is `auto`.
             text_justify: TextJustify::Auto,
             // CSS Text 3 §6.1: text-align-last initial is `auto`.
@@ -1681,9 +1748,10 @@ impl ComputedValues {
             // `horizontal-tb` (`WritingMode` doc's Non-goal section — the
             // other 4 keywords never appear in this field regardless).
             writing_mode: WritingMode::HorizontalTb,
+            cssom_writing_mode: WritingMode::HorizontalTb,
             ruby_position: RubyPosition::Over,
             // CSS Text 3 §8.1: text-indent initial is `0`。
-            text_indent: ComputedLengthPercentage::Px(0.0),
+            text_indent: ComputedTextIndent::Px(0.0),
             text_indent_ch_factor: None,
             text_indent_ch_font: None,
             text_indent_ch_inherited: false,
@@ -1754,11 +1822,25 @@ impl ComputedValues {
             text_decoration_line: TextDecorationLine::NONE,
             text_decoration_style: TextDecorationStyle::Solid,
             text_decoration_color: TextDecorationColor::CurrentColor,
+            text_decoration_thickness: ComputedTextDecorationThickness::Auto,
+            // CSS Text Decoration 4: text-decoration-skip-ink initial is `auto`.
+            text_decoration_skip_ink: TextDecorationSkipInk::Auto,
+            // CSS Text Decoration 4: text-decoration-skip-spaces initial is `start end`.
+            text_decoration_skip_spaces: TextDecorationSkipSpaces::StartEnd,
             text_decoration_inset: ComputedTextDecorationInset::Lengths {
                 start: ComputedLength::ZERO,
                 end: ComputedLength::ZERO,
             },
+            text_decoration_inset_start_ch: None,
+            text_decoration_inset_end_ch: None,
             text_underline_offset: ComputedTextUnderlineOffset::Auto,
+            text_underline_position: TextUnderlinePosition::AUTO,
+            text_emphasis_position: TextEmphasisPosition::Position {
+                vertical: TextEmphasisVEdge::Over,
+                horizontal: Some(TextEmphasisHEdge::Right),
+            },
+            text_emphasis_style: TextEmphasisStyle::None,
+            text_emphasis_color: TextDecorationColor::CurrentColor,
             // CSS 2.1 §10.8.1: vertical-align initial は `baseline`。
             vertical_align: VerticalAlign::Baseline,
             // CSS Fonts 4 §2.4: font-style initial は `normal`。
@@ -1768,6 +1850,12 @@ impl ComputedValues {
             font_variant_caps: FontVariantCaps::Normal,
             // CSS Text Module Level 3 §2.1: text-transform initial は `none`。
             text_transform: TextTransform::None,
+            // CSS Writing Modes 3 §9.1: text-combine-upright initial is `none`.
+            text_combine_upright: TextCombineUpright::None,
+            // CSS Writing Modes 3 §5.1: text-orientation initial is `mixed`.
+            text_orientation: TextOrientation::Mixed,
+            // CSS Writing Modes 3 §2.2: unicode-bidi initial is `normal`.
+            unicode_bidi: UnicodeBidi::Normal,
             // CSS Display 3 §4: visibility initial は `visible`。
             visibility: Visibility::Visible,
             // CSS2 §9.9.1: z-index initial は `auto`。
@@ -1781,8 +1869,10 @@ impl ComputedValues {
             // CSS Text 3 §7.2 / §7.1: letter-spacing / word-spacing の
             // initial `normal` は computed 層で `0` (`ComputedLength::ZERO`)。
             letter_spacing: ComputedLength::ZERO,
+            letter_spacing_computed: ComputedLetterSpacing::Px(0.0),
             letter_spacing_ch_factor: None,
             word_spacing: ComputedLength::ZERO,
+            word_spacing_computed: ComputedWordSpacing::Px(0.0),
             word_spacing_ch_factor: None,
             // CSS Text Module Level 3 §4.2: tab-size initial は `8`.
             tab_size: ComputedTabSize::Number(8.0),
@@ -1796,9 +1886,16 @@ impl ComputedValues {
             clear: ClearValue::None,
             // CSS Text 3 §3: white-space initial は `normal`。
             white_space: WhiteSpace::Normal,
+            // CSS Text 4: white-space-collapse initial is `collapse`.
+            white_space_collapse: WhiteSpaceCollapse::Collapse,
             text_wrap: TextWrapMode::Wrap,
+            text_wrap_style: TextWrapStyle::Auto,
             // CSS Text 3 §5.3: hyphens initial は `manual`。
             hyphens: Hyphens::Manual,
+            // CSS Text 4: hyphenate-character initial is `auto`.
+            hyphenate_character: HyphenateCharacter::Auto,
+            // CSS Text 4: hyphenate-limit-chars initial is `auto`.
+            hyphenate_limit_chars: HyphenateLimitChars::INITIAL,
             // CSS Flexible Box Layout Module Level 1 §5.1: flex-direction
             // initial は `row`。
             flex_direction: FlexDirectionValue::Row,
@@ -1953,9 +2050,9 @@ impl ComputedValues {
     ///
     /// 各 property の inherited / non-inherited 分類は [`Self`] 定義の field
     /// doc comment を canonical source として参照する
-    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / line_height / font_style / font_variant_caps / text_transform / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / hyphens / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells、
+    /// (現状 inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells、
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout)。
+    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout)。
     ///
     /// The inherited/non-inherited classification is defined by each field's
     /// documentation. Inherited fields are copied from the parent's computed
@@ -1977,769 +2074,4 @@ impl ComputedValues {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::property::{GeometryBox, Length, TextShadowColor};
-    use crate::resolve::{
-        ComputedGridTrackBreadth, ComputedGridTrackList, ComputedGridTrackListComponent,
-    };
-
-    #[test]
-    fn custom_property_environment_equality_uses_effective_bindings() {
-        let empty = empty_custom_properties();
-        let inherited = CustomPropertyEnvironment::from_local(
-            &empty,
-            HashMap::from([(SmolStr::from("--x"), Some(SmolStr::from("red")))]),
-        );
-        let redeclared = CustomPropertyEnvironment::from_local(
-            &inherited,
-            HashMap::from([(SmolStr::from("--x"), Some(SmolStr::from("red")))]),
-        );
-        assert_eq!(inherited, redeclared);
-
-        // A tombstone removes an inherited binding, just as the old flat map
-        // did; an absent name and a tombstone are therefore equivalent.
-        let tombstone = CustomPropertyEnvironment::from_local(
-            &inherited,
-            HashMap::from([(SmolStr::from("--x"), None)]),
-        );
-        assert_eq!(tombstone, empty);
-        assert_ne!(tombstone, inherited);
-
-        let debug = format!("{inherited:?}");
-        assert!(debug.contains("has_parent: true"));
-    }
-
-    #[test]
-    fn custom_property_environment_drop_is_iterative_for_deep_chain() {
-        const DEPTH: usize = 5_000;
-        let handle = std::thread::Builder::new()
-            .name("custom-property-environment-drop".into())
-            .stack_size(64 * 1024)
-            .spawn(|| {
-                let mut environment = empty_custom_properties();
-                for index in 0..DEPTH {
-                    let local = HashMap::from([(
-                        SmolStr::from(format!("--x{index}")),
-                        Some(SmolStr::from("value")),
-                    )]);
-                    environment = CustomPropertyEnvironment::from_local(&environment, local);
-                }
-                drop(environment);
-            })
-            .unwrap();
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn initial_values_match_spec() {
-        let cv = ComputedValues::initial();
-        assert_eq!(cv.color, CssColor::BLACK);
-        // CSS Backgrounds 3 §2.2: background-color initial は `transparent`
-        // (= rgba(0, 0, 0, 0))
-        assert_eq!(cv.background_color, CssColor::TRANSPARENT);
-        // literal を保持する (`INITIAL_FONT_SIZE_PX` check
-        // と同じ理由 — `initial_font_family()` 参照に書き換えると自己参照になり
-        // 同 helper の誤編集を検出できなくなる)。`*cv.font_family` で
-        // `Arc<Vec<Atom>>` を `Vec<Atom>` に deref してから比較する。
-        assert_eq!(*cv.font_family, vec![Atom::from("serif")]);
-        // CSS Fonts 4 §2.5: font-size initial は `medium` = 本実装では 16px
-        // (<https://www.w3.org/TR/css-fonts-4/#propdef-font-size>)。
-        // **この 16.0 は意図的な literal** — `INITIAL_FONT_SIZE_PX` 参照に
-        // 書き換えると同 const の誤編集を検出できなくなる (同 const の doc も参照)。
-        assert_eq!(cv.font_size, ComputedLength(16.0));
-        assert_eq!(cv.font_weight, 400.0);
-        // CSS Inline 3 §5.1: line-height initial は `normal`
-        assert_eq!(cv.line_height, ComputedLineHeight::Normal);
-        assert_eq!(cv.display, DisplayValue::Inline);
-        assert_eq!(cv.list_style_type, ListStyleType::Disc);
-        assert_eq!(cv.list_style_position, ListStylePosition::Outside);
-        // CSS Lists 3 §4: counter-* の spec initial は `none`、本 impl では
-        // empty list 表現 (<https://www.w3.org/TR/css-lists-3/#auto-numbering>)。
-        assert!(cv.counter_reset.is_empty());
-        assert!(cv.counter_increment.is_empty());
-        assert!(cv.counter_set.is_empty());
-        // CSS Content 3 §1 (content: Initial: normal) + CSS GCPM 3 §1.1.1
-        // (string-set: Initial: none) — どちらも空 list 表現
-        assert!(cv.content.is_empty());
-        assert!(cv.string_set.is_empty());
-        // CSS GCPM 3 §1.2.1: position initial は `static` →
-        // running() seed 無し。
-        assert!(cv.running_templates.is_empty());
-        // CSS Text 3 §6.1: text-align initial は `start`。
-        assert_eq!(cv.text_align, TextAlign::Start);
-        // CSS Writing Modes 4 §2.1: direction initial は `ltr`。
-        assert_eq!(cv.direction, Direction::Ltr);
-        // CSS Fonts 4 §2.4: font-style initial は `normal`。
-        assert_eq!(cv.font_style, FontStyle::Normal);
-        // CSS Fonts Module Level 3 §6.6: font-variant-caps initial は
-        // `normal`。
-        assert_eq!(cv.font_variant_caps, FontVariantCaps::Normal);
-        // CSS Text Module Level 3 §2.1: text-transform initial は `none`。
-        assert_eq!(cv.text_transform, TextTransform::None);
-        // CSS Display 3 §4: visibility initial は `visible`。
-        assert_eq!(cv.visibility, Visibility::Visible);
-        // CSS Text 3 §8.1: text-indent initial は `0`。
-        assert_eq!(cv.text_indent, ComputedLengthPercentage::Px(0.0));
-        // CSS Text 3 §5.1: word-break initial は `normal`。
-        assert_eq!(cv.word_break, WordBreak::Normal);
-        // CSS Text 3 §5.4: overflow-wrap initial は `normal`。
-        assert_eq!(cv.overflow_wrap, OverflowWrap::Normal);
-        // CSS Box 3 §4.1: padding initial = 0 (all 4 sides)。
-        assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
-        // CSS Box 3 §3.1: margin initial は 0 on each side。
-        assert_eq!(
-            cv.margin,
-            Sides::all(ComputedLengthPercentageOrAuto::Px(0.0))
-        );
-        // CSS Backgrounds 3 §3 (currentcolor へ格上げ済み): border initial は
-        // 各 side {style: none, color: `currentcolor` (BorderColor::CurrentColor)}。
-        // hazard case 2 (author `color:red` + border-color 省略 → cascade static
-        // side が initial 直行) の enum coverage — used-value resolution は
-        // paint scope で `color` property に対して確定。
-        //
-        // width は **0px** — specified の initial は `medium` (3px) だが CSS
-        // Backgrounds 3 §3.3 <https://www.w3.org/TR/css-backgrounds-3/#border-width>
-        // の "Computed value: … zero if the border style is `none` or `hidden`"
-        // により computed 層で潰れる。specified 側の
-        // initial は `crate::specified` の
-        // `initial_border_width_is_gated_to_zero_at_computed_layer` が check する。
-        assert_eq!(
-            cv.border,
-            Sides::all(ComputedBorder {
-                width: ComputedLength(0.0),
-                style: BorderStyle::None,
-                color: BorderColor::CurrentColor,
-            })
-        );
-        assert_eq!(
-            cv.border_radius,
-            ComputedBorderRadius::all(ComputedLength::ZERO)
-        );
-        assert!(cv.box_shadow.is_empty());
-        assert_eq!(cv.outline.width(), ComputedLength::ZERO);
-        assert_eq!(cv.outline.style(), OutlineStyle::None);
-        assert_eq!(cv.outline.color, OutlineColor::Invert);
-        // CSS Sizing 3 §3.1.1: width initial は `auto`。
-        assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto);
-        // CSS Sizing 3 §3.1.1: height initial は `auto`。
-        assert_eq!(cv.height, ComputedLengthPercentageOrAuto::Auto);
-        // CSS Sizing 3 §3.3: box-sizing initial は `content-box`。
-        assert_eq!(cv.box_sizing, BoxSizing::ContentBox);
-        // CSS2 §9.9.1: z-index initial は `auto`。
-        assert_eq!(cv.z_index, ZIndexValue::Auto);
-        // CSS Fragmentation Module Level 3 §3.1 / §3.2: break-before /
-        // break-after / break-inside initial は共に `auto`。
-        assert_eq!(cv.break_before, BreakBetween::Auto);
-        assert_eq!(cv.break_after, BreakBetween::Auto);
-        assert_eq!(cv.break_inside, BreakInside::Auto);
-        // CSS2 §9.5.1 / §9.5.2: float / clear の initial は共に `none`。
-        assert_eq!(cv.float, FloatValue::None);
-        assert_eq!(cv.clear, ClearValue::None);
-        // CSS Text 3 §3: white-space initial は `normal`。
-        assert_eq!(cv.white_space, WhiteSpace::Normal);
-        // CSS Text 3 §5.3: hyphens initial は `manual`。
-        assert_eq!(cv.hyphens, Hyphens::Manual);
-    }
-
-    #[test]
-    fn computed_values_is_send_and_clone() {
-        fn assert_send<T: Send>() {}
-        fn assert_clone<T: Clone>() {}
-        assert_send::<ComputedValues>();
-        assert_clone::<ComputedValues>();
-    }
-
-    // ── display initial ─────
-
-    #[test]
-    fn initial_display_is_inline() {
-        // CSS Display 3 §2: display initial は `inline`
-        // (anchor は `ComputedValues::display` field doc 側)。
-        assert_eq!(ComputedValues::initial().display, DisplayValue::Inline);
-    }
-
-    // ── inherit_from (delegation の pin) ──
-
-    /// 全 field が initial から離れた親 fixture。
-    ///
-    /// inherited / non-inherited のどちらの分岐が壊れても検出できるよう、
-    /// **全 field を non-initial 値**にしてある (non-inherited が親から漏れれば
-    /// initial との比較で落ち、inherited が initial に落ちれば親との比較で落ちる)。
-    fn non_initial_parent() -> ComputedValues {
-        ComputedValues {
-            color: CssColor {
-                r: 200,
-                g: 100,
-                b: 50,
-                a: 255,
-            },
-            background_color: CssColor {
-                r: 10,
-                g: 20,
-                b: 30,
-                a: 255,
-            },
-            font_family: Arc::new(vec![Atom::from("sans-serif")]),
-            font_size: ComputedLength(24.0),
-            font_weight: 700.0,
-            line_height: ComputedLineHeight::Length(ComputedLength(30.0)),
-            display: DisplayValue::Block,
-            list_style_type: ListStyleType::Named(SmolStr::new("upper-roman")),
-            list_style_position: ListStylePosition::Inside,
-            list_style_image: BackgroundImage::Url("marker.png".into()),
-            counter_reset: Arc::new(vec![(SmolStr::new("chapter"), 3)]),
-            counter_increment: Arc::new(vec![(SmolStr::new("section"), 2)]),
-            counter_set: Arc::new(vec![(SmolStr::new("page"), 5)]),
-            content: Arc::new(vec![ContentComponent::Literal(SmolStr::new("x"))]),
-            string_set: Arc::new(vec![(SmolStr::new("s"), Vec::new())]),
-            running_templates: vec![RunningTemplate {
-                name: SmolStr::new("hdr"),
-            }],
-            text_align: TextAlign::Center,
-            hanging_punctuation: HangingPunctuation::First,
-            // CSS Text 4: explicit autospace value for inheritance coverage.
-            text_autospace: TextAutospace::NoAutospace,
-            // non-initial 値 (上記 fixture doc の全 field 非 initial 方針)。
-            text_justify: TextJustify::InterWord,
-            text_align_last: TextAlignLast::Justify,
-            // CSS Writing Modes 4 §2.1: `Rtl` — initial (`Ltr`) と異なる値
-            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
-            direction: Direction::Rtl,
-            // CSS Writing Modes 4 §3.2: `VerticalRl` — initial
-            // (`HorizontalTb`) と異なる値。他の field と異なり、これは
-            // **本当は実 cascade から到達不能**な値である
-            // (`WritingMode` doc の Non-goal 節 — `resolve_writing_mode` が
-            // 常に `HorizontalTb` へ正規化するため)。ここで敢えて非 initial
-            // 値を置くのは、`inherit_from` が本 field を「素通しコピー」する
-            // 経路に regression が入っても本 helper の他 field と同じ形で
-            // 検出できるようにするため — 期待される挙動は
-            // `assert_eq!(child.writing_mode, parent.writing_mode)`
-            // **ではない** (下記 `inherit_from_copies_inherited_and_resets_non_inherited`
-            // の該当行 doc comment 参照)。
-            // Future work: vertical writing-mode 実装時に
-            // `VerticalRl` が実 cascade 到達可能になったら、本 fixture の
-            // 到達不能コメントと下記 `HorizontalTb` assertion を `VerticalRl` へ
-            // 戻すこと。
-            writing_mode: WritingMode::VerticalRl,
-            ruby_position: RubyPosition::Under,
-            // CSS Text 3 §8.1: initial (`0`) と異なる値
-            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
-            text_indent: ComputedLengthPercentage::Px(9.0),
-            text_indent_ch_factor: None,
-            text_indent_ch_font: None,
-            text_indent_ch_inherited: false,
-            text_indent_hanging: false,
-            text_indent_each_line: false,
-            padding: Sides::all(ComputedLengthPercentage::Px(7.0)),
-            padding_ch: Sides::all(None),
-            margin: Sides::all(ComputedLengthPercentageOrAuto::Px(12.0)),
-            margin_ch: Sides::all(None),
-            border: Sides::all(ComputedBorder {
-                width: ComputedLength(5.0),
-                style: BorderStyle::Solid,
-                color: BorderColor::Resolved(CssColor::BLACK),
-            }),
-            border_radius: ComputedBorderRadius {
-                top_left: ComputedLengthPercentage::Px(1.0),
-                top_right: ComputedLengthPercentage::Px(2.0),
-                bottom_right: ComputedLengthPercentage::Px(3.0),
-                bottom_left: ComputedLengthPercentage::Px(4.0),
-            },
-            box_shadow: Arc::new(vec![ComputedBoxShadowItem {
-                offset_x: ComputedLength(1.0),
-                offset_y: ComputedLength(2.0),
-                blur_radius: ComputedLength(3.0),
-                spread_radius: ComputedLength(4.0),
-                color: TextShadowColor::Resolved(CssColor::BLACK),
-                inset: false,
-            }]),
-            outline: ComputedOutline {
-                width: ComputedLength(4.0),
-                style: OutlineStyle::Solid,
-                color: OutlineColor::Resolved(CssColor::BLACK),
-            },
-            outline_offset: ComputedLength(5.0),
-            width: ComputedLengthPercentageOrAuto::Px(200.0),
-            width_ch: None,
-            height: ComputedLengthPercentageOrAuto::Px(200.0),
-            height_ch: None,
-            max_width: ComputedLengthPercentageOrAuto::Px(200.0),
-            max_height: ComputedLengthPercentageOrAuto::Px(200.0),
-            min_width: ComputedLengthPercentageOrAuto::Px(200.0),
-            min_height: ComputedLengthPercentageOrAuto::Px(200.0),
-            min_block_size: None,
-            top: ComputedLengthPercentageOrAuto::Px(10.0),
-            right: ComputedLengthPercentageOrAuto::Px(20.0),
-            bottom: ComputedLengthPercentageOrAuto::Px(30.0),
-            left: ComputedLengthPercentageOrAuto::Px(40.0),
-            position: PositionValue::Relative,
-            box_sizing: BoxSizing::BorderBox,
-            // CSS Overflow 3 §3.1: `Hidden`/`Scroll` — non-initial (`visible`)
-            // pair, and one that is also stable under `resolve_overflow`
-            // (neither axis is `visible`/`clip`, so the cross-axis coupling
-            // is a no-op here) so this fixture stays a plain "non-initial
-            // parent", not an accidental probe of the coupling itself.
-            overflow: OverflowXY {
-                x: OverflowValue::Hidden,
-                y: OverflowValue::Scroll,
-            },
-            // 3 field とも initial と異なる値
-            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
-            text_decoration_line: TextDecorationLine::UNDERLINE,
-            text_decoration_style: TextDecorationStyle::Wavy,
-            text_decoration_color: TextDecorationColor::Resolved(CssColor::BLACK),
-            text_decoration_inset: ComputedTextDecorationInset::Lengths {
-                start: ComputedLength(3.0),
-                end: ComputedLength(4.0),
-            },
-            text_underline_offset: ComputedTextUnderlineOffset::Length(ComputedLength(5.0)),
-            // `Sub` — initial (`Baseline`) と異なる値 (non_initial_parent の
-            // 趣旨どおり全 field を非 initial に)。
-            vertical_align: VerticalAlign::Sub,
-            // CSS Fonts 4 §2.4: `Italic` — initial (`Normal`) と異なる値
-            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
-            font_style: FontStyle::Italic,
-            // CSS Fonts Module Level 3 §6.6: `SmallCaps` — initial
-            // (`Normal`) と異なる値 (non_initial_parent の趣旨どおり全
-            // field を非 initial に)。
-            font_variant_caps: FontVariantCaps::SmallCaps,
-            // CSS Text Module Level 3 §2.1: `Uppercase` — initial (`None`)
-            // と異なる値 (non_initial_parent の趣旨どおり全 field を非
-            // initial に)。
-            text_transform: TextTransform::Uppercase,
-            // CSS Display 3 §4: `Hidden` — initial (`Visible`) と異なる値
-            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
-            visibility: Visibility::Hidden,
-            // CSS2 §9.9.1: `Integer(3)` — initial (`Auto`) と異なる値
-            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
-            z_index: ZIndexValue::Integer(3),
-            // CSS Text 3 §5.1: `KeepAll` — initial (`Normal`) と異なる値
-            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
-            word_break: WordBreak::KeepAll,
-            line_break: LineBreak::Auto,
-            // CSS Text 3 §5.4: `Anywhere` — initial (`Normal`) と異なる値
-            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
-            overflow_wrap: OverflowWrap::Anywhere,
-            // CSS Text 3 §7.2 / §7.1: initial (`0`、`normal` の computed
-            // value) と異なる値 (non_initial_parent の趣旨どおり全 field を
-            // 非 initial に)。
-            letter_spacing: ComputedLength(2.0),
-            letter_spacing_ch_factor: None,
-            word_spacing: ComputedLength(4.0),
-            word_spacing_ch_factor: None,
-            // CSS Text Module Level 3 §4.2: initial (`8`) と異なる値
-            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
-            tab_size: ComputedTabSize::Number(3.0),
-            // CSS Fragmentation Module Level 3 §3.1 / §3.2: initial
-            // (`Auto`) と異なる値 (non_initial_parent の趣旨どおり全 field
-            // を非 initial に)。
-            break_before: BreakBetween::Page,
-            break_after: BreakBetween::AvoidPage,
-            break_inside: BreakInside::AvoidPage,
-            // CSS2 §9.5.1 / §9.5.2: `Left`/`Both` — initial (`None`/`None`)
-            // と異なる値 (non_initial_parent の趣旨どおり全 field を非
-            // initial に)。
-            float: FloatValue::Left,
-            clear: ClearValue::Both,
-            // CSS Text 3 §3: `Pre` — initial (`Normal`) と異なる値
-            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
-            white_space: WhiteSpace::Pre,
-            text_wrap: TextWrapMode::Nowrap,
-            // CSS Text 3 §5.3: `None` — initial (`Manual`) と異なる値
-            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
-            hyphens: Hyphens::None,
-            // CSS Flexible Box Layout Module Level 1 §5.1/§5.2: initial
-            // (`Row`/`NoWrap`) と異なる値 (non_initial_parent の趣旨どおり
-            // 全 field を非 initial に)。
-            flex_direction: FlexDirectionValue::Column,
-            flex_wrap: FlexWrapValue::Wrap,
-            // CSS Flexible Box Layout Module Level 1 §7.2.1/§7.2.2: initial
-            // (`0`/`1`) と異なる値。
-            flex_grow: 2.0,
-            flex_shrink: 3.0,
-            // CSS Flexible Box Layout Module Level 1 §7.2.3: initial
-            // (`auto`) と異なる値。
-            flex_basis: ComputedFlexBasis::Px(50.0),
-            // CSS Flexible Box Layout Module Level 1 §4.2: initial (`0`)
-            // と異なる値。
-            order: 5,
-            // CSS Box Alignment Module Level 3 §5.1/§5.1/§7.2: initial
-            // (`normal`) と異なる値。
-            justify_content: ContentAlignmentValue::SpaceBetween,
-            align_content: ContentAlignmentValue::Center,
-            align_items: SelfAlignmentValue::FlexEnd,
-            // CSS Box Alignment Module Level 3 §6.2: initial (`auto`) と
-            // 異なる値。
-            align_self: AlignSelfValue::Value(SelfAlignmentValue::Center),
-            // CSS Box Alignment Module Level 3 §8.1: initial (`normal`) と
-            // 異なる値。
-            row_gap: ComputedLengthPercentageOrNormal::Px(6.0),
-            column_gap: ComputedLengthPercentageOrNormal::Percent(10.0),
-            // CSS Content 3 §2.4.1: `quotes` — initial (空 list) と異なる値
-            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
-            quotes: Arc::new(vec![(SmolStr::new("«"), SmolStr::new("»"))]),
-            quotes_auto: false,
-            // CSS Text Decoration Module Level 3 §4: initial (`none` =
-            // 空 list) と異なる値 (non_initial_parent の趣旨どおり全 field を
-            // 非 initial に)。
-            text_shadow: Arc::new(vec![ComputedTextShadow {
-                offset_x: ComputedLength(1.0),
-                offset_y: ComputedLength(2.0),
-                blur_radius: ComputedLength(3.0),
-                color: TextShadowColor::Resolved(CssColor::BLACK),
-            }]),
-            // CSS Grid Layout Module Level 1 §7.2/§7.3/§7.6/§7.7/§8.3:
-            // initial (`none`/`auto`/`row`) と異なる値。
-            grid_template_columns: ComputedGridTemplateTracks::List(Arc::new(
-                ComputedGridTrackList {
-                    line_names: vec![vec![], vec![]],
-                    components: vec![ComputedGridTrackListComponent::Size(
-                        ComputedGridTrackSize::Breadth(ComputedGridTrackBreadth::Px(100.0)),
-                    )],
-                },
-            )),
-            grid_template_rows: ComputedGridTemplateTracks::List(Arc::new(ComputedGridTrackList {
-                line_names: vec![vec![], vec![]],
-                components: vec![ComputedGridTrackListComponent::Size(
-                    ComputedGridTrackSize::Breadth(ComputedGridTrackBreadth::Percent(50.0)),
-                )],
-            })),
-            grid_template_areas: GridTemplateAreasValue::Areas(Arc::new(
-                crate::property::GridTemplateAreas {
-                    row_strings: vec!["a".into()],
-                    areas: vec![crate::property::GridTemplateAreaEntry {
-                        name: "a".into(),
-                        row_start: 1,
-                        row_end: 2,
-                        column_start: 1,
-                        column_end: 2,
-                    }],
-                    row_count: 1,
-                    column_count: 1,
-                },
-            )),
-            grid_auto_columns: Arc::new(vec![ComputedGridTrackSize::Breadth(
-                ComputedGridTrackBreadth::MinContent,
-            )]),
-            grid_auto_rows: Arc::new(vec![ComputedGridTrackSize::Breadth(
-                ComputedGridTrackBreadth::MaxContent,
-            )]),
-            grid_auto_flow: GridAutoFlowValue::ColumnDense,
-            grid_row_start: GridLineValue::Line(2),
-            grid_row_end: GridLineValue::Span(3),
-            grid_column_start: GridLineValue::Named("foo".into()),
-            grid_column_end: GridLineValue::NamedLine("bar".into(), 2),
-            // CSS Box Alignment Module Level 3 §7.1/§6.1: initial
-            // (`normal`/`auto`) と異なる値。
-            justify_items: SelfAlignmentValue::Center,
-            justify_self: AlignSelfValue::Value(SelfAlignmentValue::End),
-            // CSS Fragmentation Module Level 3 §3.3: initial (`2`) と異なる値
-            // (non_initial_parent の趣旨どおり全 field を非 initial に)。
-            orphans: 5,
-            widows: 7,
-            // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.6/§2.7/§2.8/§2.9: 全て
-            // non-inherited なので、initial と異なる値にしておく
-            // (non_initial_parent の趣旨どおり)。
-            background_repeat: BackgroundRepeat {
-                x: BackgroundRepeatKeyword::Round,
-                y: BackgroundRepeatKeyword::Space,
-            },
-            background_attachment: BackgroundAttachment::Fixed,
-            background_clip: VisualBox::ContentBox,
-            background_origin: VisualBox::ContentBox,
-            background_size: ComputedBackgroundSize::Cover,
-            background_position: ComputedCssPosition {
-                horizontal: ComputedCssPositionOffset::End(ComputedLengthPercentage::Px(5.0)),
-                vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(25.0)),
-            },
-            // CSS Backgrounds and Borders 3 §2.3: non-inherited, initial
-            // (`None`) と異なる値にしておく (non_initial_parent の趣旨どおり)。
-            background_image: BackgroundImage::Url("fixture.png".into()),
-            // CSS Images Module Level 3 §5.1/§5.2: 全て non-inherited なので、
-            // initial (`fill` / `50% 50%`) と異なる値にしておく
-            // (non_initial_parent の趣旨どおり)。
-            object_fit: ObjectFit::Cover,
-            object_position: ComputedCssPosition {
-                horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(3.0)),
-                vertical: ComputedCssPositionOffset::End(ComputedLengthPercentage::Percent(10.0)),
-            },
-            // CSS Color 4 §3.3: non-inherited なので initial (`1`) と異なる
-            // 値にしておく (non_initial_parent の趣旨どおり)。
-            opacity: 0.75,
-            // CSS Compositing and Blending Level 1 §3.4.2/§3.4.1: 両方
-            // non-inherited なので initial (`auto`/`normal`) と異なる値に
-            // しておく (non_initial_parent の趣旨どおり)。
-            isolation: Isolation::Isolate,
-            mix_blend_mode: MixBlendMode::Multiply,
-            // CSS Masking Level 1 §7.1/§5.1: 両方 non-inherited なので
-            // initial (`none`) と異なる値にしておく (non_initial_parent の
-            // 趣旨どおり)。
-            mask_image: MaskImage::Url("mask.svg".to_string()),
-            clip_path: ClipPath::GeometryBox(GeometryBox::PaddingBox),
-            // CSS Transforms Level 1 §4/CSS Filter Effects Level 1 §5:
-            // 両方 non-inherited なので initial (`none` = 空 list) と
-            // 異なる値にしておく (non_initial_parent の趣旨どおり)。
-            transform: Arc::new(vec![ComputedTransformFunction::TranslateX(
-                ComputedLengthPercentage::Px(32.0),
-            )]),
-            filter: Arc::new(vec![FilterFunction::Blur(Length::Px(3.0))]),
-            // CSS Tables 3 §4: table-layout は non-inherited なので initial
-            // (`auto`) と異なる値にしておく (non_initial_parent の趣旨どおり)。
-            table_layout: TableLayoutValue::Fixed,
-            // CSS Tables 3 §6: border-collapse は inherited なので initial
-            // (`separate`) と異なる値にしておく (同上)。
-            border_collapse: BorderCollapseValue::Collapse,
-            // CSS Tables 3 §6.1: border-spacing は inherited なので initial
-            // (両軸 `0px`) と異なる値にしておく (同上)。
-            border_spacing: ComputedBorderSpacing {
-                horizontal: ComputedLength(10.0),
-                vertical: ComputedLength(20.0),
-            },
-            // CSS Tables 3 §7: caption-side は inherited なので initial
-            // (`top`) と異なる値にしておく (同上)。
-            caption_side: CaptionSideValue::Bottom,
-            // CSS Tables 3 §8: empty-cells は inherited なので initial
-            // (`show`) と異なる値にしておく (同上)。
-            empty_cells: EmptyCellsValue::Hide,
-            // CSS Multi-column Layout 1: non-inherited fields use non-initial
-            // values so `inherit_from` assertions exercise the reset.
-            column_count: ColumnCountValue::Count(3),
-            column_width: ComputedColumnWidth::Px(24.0),
-            custom_properties: CustomPropertyEnvironment::from_map(HashMap::from([(
-                SmolStr::new("--fixture"),
-                SmolStr::new("1px"),
-            )])),
-            local_custom_properties: CustomPropertyEnvironment::from_map(HashMap::from([(
-                SmolStr::new("--fixture"),
-                SmolStr::new("1px"),
-            )])),
-        }
-    }
-
-    /// Inherited fields come from the parent; non-inherited fields use their
-    /// initial values.
-    #[test]
-    fn inherit_from_copies_inherited_and_resets_non_inherited() {
-        let parent = non_initial_parent();
-        let child = ComputedValues::inherit_from(&parent);
-        let initial = ComputedValues::initial();
-
-        // inherited — 親からコピー (CSS Cascade 5 §7.2: inheritance が運ぶのは
-        // computed value)。
-        assert_eq!(child.color, parent.color);
-        assert_eq!(child.font_family, parent.font_family);
-        assert_eq!(child.font_size, parent.font_size);
-        assert_eq!(child.font_weight, parent.font_weight);
-        assert_eq!(child.list_style_type, parent.list_style_type);
-        assert_eq!(child.list_style_position, parent.list_style_position);
-        assert_eq!(child.text_align, parent.text_align);
-        // CSS Text 3 §8.2.1: hanging-punctuation は inherited。
-        assert_eq!(child.hanging_punctuation, parent.hanging_punctuation);
-        // CSS Text 4: text-autospace is inherited.
-        assert_eq!(child.text_autospace, parent.text_autospace);
-        // CSS Writing Modes 4 §2.1: direction は inherited。
-        assert_eq!(child.direction, parent.direction);
-        // CSS Writing Modes 4 §3.2: writing-mode は inherited だが、
-        // **`parent.writing_mode` と等しくなることは期待しない** —
-        // `non_initial_parent` はここに実 cascade 到達不能な `VerticalRl` を
-        // 敢えて置いており (同 helper の doc comment 参照)、
-        // `resolve_writing_mode` は inherit 経由でも常に `HorizontalTb` へ
-        // 正規化する (`WritingMode` doc の Non-goal 節参照)。この
-        // assert は「inherit_from が本 field を素通しコピーしていない」こと
-        // 自体が正しい挙動であることを check する。
-        // Future work: vertical writing-mode 実装時に本 collapse を
-        // 削除したら、`HorizontalTb` 期待値を `VerticalRl` へ戻すこと。
-        assert_eq!(child.writing_mode, WritingMode::HorizontalTb);
-        // CSS Fonts 4 §2.4: font-style は inherited。
-        assert_eq!(child.font_style, parent.font_style);
-        // CSS Fonts Module Level 3 §6.6: font-variant-caps は inherited。
-        assert_eq!(child.font_variant_caps, parent.font_variant_caps);
-        // CSS Text Module Level 3 §2.1: text-transform は inherited。
-        assert_eq!(child.text_transform, parent.text_transform);
-        // CSS Display 3 §4: visibility は inherited。
-        assert_eq!(child.visibility, parent.visibility);
-        // CSS Text 3 §8.1: text-indent は inherited。
-        assert_eq!(child.text_indent, parent.text_indent);
-        // CSS Text 3 §5.1: word-break は inherited。
-        assert_eq!(child.word_break, parent.word_break);
-        // CSS Text 3 §5.4: overflow-wrap は inherited。
-        assert_eq!(child.overflow_wrap, parent.overflow_wrap);
-        // CSS Text 3 §7.2 / §7.1: letter-spacing / word-spacing は共に
-        // inherited。
-        assert_eq!(child.letter_spacing, parent.letter_spacing);
-        assert_eq!(child.word_spacing, parent.word_spacing);
-        // CSS Text 3 §3: white-space は inherited。
-        assert_eq!(child.white_space, parent.white_space);
-        // CSS Text 3 §5.3: hyphens は inherited。
-        assert_eq!(child.hyphens, parent.hyphens);
-        // CSS Text Module Level 3 §4.2: tab-size は inherited。
-        assert_eq!(child.tab_size, parent.tab_size);
-        // CSS Text Decoration Module Level 3 §4: text-shadow は inherited。
-        assert_eq!(child.text_shadow, parent.text_shadow);
-        // `line-height` の computed `<length>` は子で **再解決されない**
-        // (CSS Inline 3: percentage は宣言要素で絶対化済)。
-        assert_eq!(child.line_height, parent.line_height);
-        // CSS Content 3 §2.4.1: quotes は inherited。
-        assert_eq!(child.quotes, parent.quotes);
-        assert_eq!(child.quotes_auto, parent.quotes_auto);
-        // CSS Fragmentation Module Level 3 §3.3: orphans / widows は共に
-        // inherited。
-        assert_eq!(child.orphans, parent.orphans);
-        assert_eq!(child.widows, parent.widows);
-        // CSS Tables 3 §6.1: border-spacing は inherited。
-        assert_eq!(child.border_spacing, parent.border_spacing);
-        // CSS Tables 3 §7: caption-side は inherited。
-        assert_eq!(child.caption_side, parent.caption_side);
-        // CSS Tables 3 §8: empty-cells は inherited。
-        assert_eq!(child.empty_cells, parent.empty_cells);
-        assert_eq!(child.custom_properties, parent.custom_properties);
-
-        // non-inherited — initial に戻る。
-        assert_eq!(child.background_color, initial.background_color);
-        assert_eq!(child.display, initial.display);
-        assert!(child.counter_reset.is_empty());
-        assert!(child.counter_increment.is_empty());
-        assert!(child.counter_set.is_empty());
-        assert!(child.content.is_empty());
-        assert!(child.string_set.is_empty());
-        assert!(child.running_templates.is_empty());
-        assert_eq!(child.padding, initial.padding);
-        assert_eq!(child.margin, initial.margin);
-        // specified の initial border-width は `medium` (3px) だが computed 層では
-        // style gating で 0px (CSS Backgrounds 3 §3.3)。delegation が
-        // `resolve_border` を通っている証拠でもある。
-        assert_eq!(child.border, initial.border);
-        assert_eq!(child.border.top.width, ComputedLength::ZERO);
-        assert_eq!(child.border_radius, initial.border_radius);
-        assert_eq!(child.box_shadow, initial.box_shadow);
-        assert_eq!(child.outline, initial.outline);
-        assert_eq!(child.width, initial.width);
-        assert_eq!(child.height, initial.height);
-        // CSS Multi-column Layout 1: both longhands are non-inherited.
-        assert_eq!(child.column_count, initial.column_count);
-        assert_eq!(child.column_width, initial.column_width);
-        assert_eq!(child.box_sizing, initial.box_sizing);
-        // CSS Overflow 3 §3.1: overflow-x/overflow-y は
-        // non-inherited。
-        assert_eq!(child.overflow, initial.overflow);
-        // CSS Text Decoration Module Level 3 §2.1/§2.2/§2.3:
-        // text-decoration-line/-style/-color は non-inherited。
-        assert_eq!(child.text_decoration_line, initial.text_decoration_line);
-        assert_eq!(child.text_decoration_style, initial.text_decoration_style);
-        assert_eq!(child.text_decoration_color, initial.text_decoration_color);
-        assert_eq!(child.text_decoration_inset, initial.text_decoration_inset);
-        // CSS 2.1 §10.8.1: vertical-align は non-inherited。
-        assert_eq!(child.vertical_align, initial.vertical_align);
-        // CSS2 §9.9.1: z-index は non-inherited。
-        assert_eq!(child.z_index, initial.z_index);
-        // CSS Fragmentation Module Level 3 §3.1 / §3.2: break-before /
-        // break-after / break-inside は non-inherited。
-        assert_eq!(child.break_before, initial.break_before);
-        assert_eq!(child.break_after, initial.break_after);
-        assert_eq!(child.break_inside, initial.break_inside);
-        // CSS2 §9.5.1 / §9.5.2: float / clear は共に non-inherited。
-        assert_eq!(child.float, initial.float);
-        assert_eq!(child.clear, initial.clear);
-        // CSS Flexible Box Layout Module Level 1 §5.1/§5.2/§7.2.1/§7.2.2/
-        // §7.2.3: flex-* は non-inherited。
-        assert_eq!(child.flex_direction, initial.flex_direction);
-        assert_eq!(child.flex_wrap, initial.flex_wrap);
-        assert_eq!(child.flex_grow, initial.flex_grow);
-        assert_eq!(child.flex_shrink, initial.flex_shrink);
-        assert_eq!(child.flex_basis, initial.flex_basis);
-        // CSS Box Alignment Module Level 3 §5.1 (justify-content /
-        // align-content) / §7.2 (align-items) / §6.2 (align-self): all
-        // non-inherited。
-        assert_eq!(child.justify_content, initial.justify_content);
-        assert_eq!(child.align_content, initial.align_content);
-        assert_eq!(child.align_items, initial.align_items);
-        assert_eq!(child.align_self, initial.align_self);
-        // CSS Box Alignment Module Level 3 §8.1: row-gap / column-gap は
-        // non-inherited。
-        assert_eq!(child.row_gap, initial.row_gap);
-        assert_eq!(child.column_gap, initial.column_gap);
-        // CSS Grid Layout Module Level 1 §7.2/§7.3/§7.6/§7.7/§8.3: grid-*
-        // は全て non-inherited。
-        assert_eq!(child.grid_template_columns, initial.grid_template_columns);
-        assert_eq!(child.grid_template_rows, initial.grid_template_rows);
-        assert_eq!(child.grid_template_areas, initial.grid_template_areas);
-        assert_eq!(child.grid_auto_columns, initial.grid_auto_columns);
-        assert_eq!(child.grid_auto_rows, initial.grid_auto_rows);
-        assert_eq!(child.grid_auto_flow, initial.grid_auto_flow);
-        assert_eq!(child.grid_row_start, initial.grid_row_start);
-        assert_eq!(child.grid_row_end, initial.grid_row_end);
-        assert_eq!(child.grid_column_start, initial.grid_column_start);
-        assert_eq!(child.grid_column_end, initial.grid_column_end);
-        // CSS Box Alignment Module Level 3 §7.1/§6.1: justify-items /
-        // justify-self は共に non-inherited。
-        assert_eq!(child.justify_items, initial.justify_items);
-        assert_eq!(child.justify_self, initial.justify_self);
-        // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.6/§2.7/§2.8/§2.9: 全て
-        // non-inherited。
-        assert_eq!(child.background_repeat, initial.background_repeat);
-        assert_eq!(child.background_attachment, initial.background_attachment);
-        assert_eq!(child.background_clip, initial.background_clip);
-        assert_eq!(child.background_origin, initial.background_origin);
-        assert_eq!(child.background_size, initial.background_size);
-        assert_eq!(child.background_position, initial.background_position);
-        assert_eq!(child.background_image, initial.background_image);
-        // CSS Images Module Level 3 §5.1/§5.2: 全て non-inherited。
-        assert_eq!(child.object_fit, initial.object_fit);
-        assert_eq!(child.object_position, initial.object_position);
-        // CSS Color 4 §3.3: opacity は non-inherited。
-        assert_eq!(child.opacity, initial.opacity);
-        // CSS Compositing and Blending Level 1 §3.4.1/§3.4.2: 両方
-        // non-inherited。
-        assert_eq!(child.isolation, initial.isolation);
-        assert_eq!(child.mix_blend_mode, initial.mix_blend_mode);
-        // CSS Masking Level 1 §7.1/§5.1: 両方 non-inherited。
-        assert_eq!(child.mask_image, initial.mask_image);
-        assert_eq!(child.clip_path, initial.clip_path);
-        // CSS Transforms Level 1 §4/CSS Filter Effects Level 1 §5: 両方
-        // non-inherited。
-        assert_eq!(child.transform, initial.transform);
-        assert_eq!(child.filter, initial.filter);
-    }
-
-    /// `inherit_from` の結果は `ResolveContext` の中身に依存しない。
-    ///
-    /// `ComputedValues::inherit_from` の doc が主張する invariant の check —
-    /// `SpecifiedValues::inherit_from` の出力に font-relative な値が 1 つも
-    /// 含まれないので、`finalize` は `rem` arm を踏まず context を参照しない。
-    /// 将来 lift 側が `Px` 以外を返すようになったら (= 不動点性が壊れたら)
-    /// ここが落ちて delegation の前提が崩れたことを知らせる。
-    #[test]
-    fn inherit_from_is_independent_of_resolve_context() {
-        use crate::resolve::ResolveContext;
-        use crate::specified::SpecifiedValues;
-
-        let parent = non_initial_parent();
-        let expected = ComputedValues::inherit_from(&parent);
-        for root_font_size in [
-            ComputedLength(1.0),
-            ComputedLength(16.0),
-            ComputedLength(999.0),
-        ] {
-            let mut via_staging = SpecifiedValues::inherit_from(&parent)
-                .finalize(&parent, &ResolveContext::new(root_font_size));
-            // `ComputedValues::inherit_from` also carries the crate-private
-            // custom-property inheritance bridge; mirror it here so this
-            // test continues to compare the same staging path.
-            via_staging.custom_properties = parent.custom_properties.clone();
-            assert_eq!(
-                via_staging, expected,
-                "inherit_from must not depend on the rem basis ({root_font_size:?})"
-            );
-        }
-    }
-
-    /// 親が initial なら child も initial (inheritance chain の terminate)。
-    #[test]
-    fn inherit_from_initial_parent_yields_initial() {
-        assert_eq!(
-            ComputedValues::inherit_from(&ComputedValues::initial()),
-            ComputedValues::initial(),
-        );
-    }
-}
+mod tests;

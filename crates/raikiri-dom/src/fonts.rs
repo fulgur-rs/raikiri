@@ -1747,6 +1747,15 @@ fn remove_unavailable_ch_family(computed: &mut [ComputedValues], family: &str) {
         if let Some(key) = cv.text_indent_ch_font.as_mut() {
             remove_from_key(key, family);
         }
+        for provenance in [
+            cv.text_decoration_inset_start_ch.as_mut(),
+            cv.text_decoration_inset_end_ch.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            remove_from_key(&mut provenance.font, family);
+        }
         if let Some(provenance) = cv.width_ch.as_mut() {
             remove_from_key(&mut provenance.font, family);
         }
@@ -1819,6 +1828,15 @@ fn expand_font_face_alias(computed: &mut [ComputedValues], face: &str, target: &
         }
         if let Some(key) = cv.text_indent_ch_font.as_mut() {
             update_key(key, face, target);
+        }
+        for provenance in [
+            cv.text_decoration_inset_start_ch.as_mut(),
+            cv.text_decoration_inset_end_ch.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            update_key(&mut provenance.font, face, target);
         }
         if let Some(provenance) = cv.width_ch.as_mut() {
             update_key(&mut provenance.font, face, target);
@@ -3517,6 +3535,14 @@ mod tests {
             factor: 1.0,
             font: source_key.clone(),
         });
+        aliased_cv.text_decoration_inset_start_ch = Some(ChLengthProvenance {
+            factor: 1.0,
+            font: source_key.clone(),
+        });
+        aliased_cv.text_decoration_inset_end_ch = Some(ChLengthProvenance {
+            factor: -1.0,
+            font: source_key.clone(),
+        });
         aliased_cv.padding_ch.top = Some(ChLengthProvenance {
             factor: 1.0,
             font: source_key.clone(),
@@ -3584,6 +3610,19 @@ mod tests {
                 "Fallback".to_string()
             ]
         );
+        for provenance in [
+            computed[0].text_decoration_inset_start_ch.as_ref().unwrap(),
+            computed[0].text_decoration_inset_end_ch.as_ref().unwrap(),
+        ] {
+            assert_eq!(
+                key_names(&provenance.font),
+                vec![
+                    "AliasFam".to_string(),
+                    "RealFam".to_string(),
+                    "Fallback".to_string()
+                ]
+            );
+        }
         // Idempotent — a second application must not duplicate.
         let again =
             super::apply_font_faces(&mut fonts, &mut computed, &faces, &MapLoader::refusing());
@@ -3631,6 +3670,8 @@ mod tests {
             font: source_key.clone(),
         };
         cv.text_indent_ch_font = Some(source_key.clone());
+        cv.text_decoration_inset_start_ch = Some(provenance());
+        cv.text_decoration_inset_end_ch = Some(provenance());
         cv.width_ch = Some(provenance());
         cv.height_ch = Some(provenance());
         cv.padding_ch.top = Some(provenance());
@@ -3682,6 +3723,8 @@ mod tests {
             computed[0].margin_ch.right.as_ref().unwrap(),
             computed[0].margin_ch.bottom.as_ref().unwrap(),
             computed[0].margin_ch.left.as_ref().unwrap(),
+            computed[0].text_decoration_inset_start_ch.as_ref().unwrap(),
+            computed[0].text_decoration_inset_end_ch.as_ref().unwrap(),
         ] {
             assert_eq!(
                 provenance_names(&provenance.font),

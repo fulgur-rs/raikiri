@@ -311,11 +311,11 @@ pub(super) fn next_numeric_stable<'i, 't>(
 /// (`font-size` は元は `<length>` 限定だったが後に拡張)。共通 helper 化により
 /// 重複 dimension unit dispatch を回避している。
 ///
-/// `allow_percentage=false` (= `<length>` mode) の caller は
-/// [`parse_border_width_side`](super::box_model::parse_border_width_side) / [`parse_letter_or_word_spacing`](super::text::parse_letter_or_word_spacing) —
-/// 前者は CSS Backgrounds 3 §3.3 の `<line-width>` grammar が `<percentage>`
-/// を含まないため、後者は CSS Text 3 §7.1/§7.2 の `letter-spacing` /
-/// `word-spacing` grammar が共に "Percentages: N/A" と明記するため。
+/// `allow_percentage=false` (= `<length>` mode) の spacing 以外の caller は
+/// [`parse_border_width_side`](super::box_model::parse_border_width_side) — CSS
+/// Backgrounds 3 §3.3 の `<line-width>` grammar が `<percentage>` を含まない。
+/// The text-spacing parsers that accept percentages call this helper with
+/// `allow_percentage=true`.
 ///
 /// # Percentage overflow
 ///
@@ -450,8 +450,8 @@ pub(crate) fn parse_non_negative_length(input: &mut Parser<'_, '_>) -> Option<Le
 /// bleed property" (<https://www.w3.org/TR/css-page-3/#bleed>) grammar is
 /// `auto | <length>` and explicitly permits negative values ("Values may be
 /// negative, but there may be implementation-specific limits") — the same
-/// unrestricted-sign shape [`parse_letter_or_word_spacing`](super::text::parse_letter_or_word_spacing) already uses for
-/// `letter-spacing` / `word-spacing`, unlike this module's sibling
+/// unrestricted-sign behavior as [`parse_letter_spacing`](super::text::parse_letter_spacing)
+/// and [`parse_word_spacing`](super::text::parse_word_spacing), unlike this module's sibling
 /// [`parse_non_negative_length`] (`size`'s `<length>` alternative, which the
 /// spec instead states is `[0,∞]`).
 pub(crate) fn parse_length_allow_negative(input: &mut Parser<'_, '_>) -> Option<Length> {
