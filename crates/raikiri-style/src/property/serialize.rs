@@ -365,12 +365,12 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
 
 /// Serializes a numeric CSS dimension (`10px`, `1.5em`). `unit` is always a
 /// CSS unit name, so it needs no identifier escaping.
-fn serialize_dimension(value: f32, unit: &str) -> String {
+pub(crate) fn serialize_dimension(value: f32, unit: &str) -> String {
     format!("{}{unit}", format_css_number(value))
 }
 
 /// Serializes a percentage from its own number (`12.5` is `12.5%`).
-fn serialize_percentage(value: f32) -> String {
+pub(crate) fn serialize_percentage(value: f32) -> String {
     format!("{}%", format_css_number(value))
 }
 
@@ -403,7 +403,7 @@ pub(crate) fn serialize_length(length: &Length) -> String {
 /// exists in `property.rs`). This keeps the match exhaustive and gives a
 /// spec-plausible `calc()` serialization if that ever changes, rather than
 /// a `match` arm that would need revisiting the moment it does.
-fn serialize_calc_length_percentage(calc: &CalcLengthPercentage) -> String {
+pub(crate) fn serialize_calc_length_percentage(calc: &CalcLengthPercentage) -> String {
     if calc.px == 0.0 {
         return format!("calc({})", serialize_percentage(calc.percent));
     }
@@ -987,71 +987,5 @@ pub(crate) fn serialize_start_end<T: PartialEq>(
         start
     } else {
         format!("{start} {end}")
-    }
-}
-
-// Computed-value serialization for types that exist only after cascade. Rules
-// that belong to one property rather than to the value type (such as
-// `letter-spacing: 0px` serializing as `normal`) stay with the caller.
-
-impl cssparser::ToCss for crate::ComputedLetterSpacing {
-    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
-        match *self {
-            Self::Px(px) => dest.write_str(&serialize_dimension(px, "px")),
-            Self::Percent(percent) => dest.write_str(&serialize_percentage(percent)),
-            Self::Calc(calc) => dest.write_str(&serialize_calc_length_percentage(&calc)),
-        }
-    }
-}
-
-impl cssparser::ToCss for crate::ComputedTextIndent {
-    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
-        match *self {
-            Self::Px(px) => dest.write_str(&serialize_dimension(px, "px")),
-            Self::Percent(percent) => dest.write_str(&serialize_percentage(percent)),
-            Self::Calc(calc) => dest.write_str(&serialize_calc_length_percentage(&calc)),
-        }
-    }
-}
-
-impl cssparser::ToCss for crate::ComputedTextUnderlineOffset {
-    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
-        match *self {
-            Self::Auto => dest.write_str("auto"),
-            Self::Length(length) => length.to_css(dest),
-            Self::Percent(percent) => dest.write_str(&serialize_percentage(percent)),
-            Self::Calc(calc) => dest.write_str(&serialize_calc_length_percentage(&calc)),
-        }
-    }
-}
-
-impl cssparser::ToCss for crate::ComputedTextDecorationThickness {
-    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
-        match *self {
-            Self::Auto => dest.write_str("auto"),
-            Self::FromFont => dest.write_str("from-font"),
-            Self::Length(length) => length.to_css(dest),
-        }
-    }
-}
-
-impl cssparser::ToCss for crate::ComputedTabSize {
-    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
-        match *self {
-            Self::Number(number) => dest.write_str(&serialize_number(number)),
-            Self::Length(length) => length.to_css(dest),
-        }
-    }
-}
-
-impl cssparser::ToCss for crate::ComputedLength {
-    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
-        dest.write_str(&serialize_dimension(self.px(), "px"))
-    }
-}
-
-impl cssparser::ToCss for CssColor {
-    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
-        dest.write_str(&serialize_css_color(self))
     }
 }

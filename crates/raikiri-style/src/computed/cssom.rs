@@ -4,7 +4,14 @@ use cssparser::ToCss as _;
 
 use crate::ChFontKey;
 use crate::computed::ComputedValues;
-use crate::property::{PropertyValue, serialize_value};
+use crate::property::{
+    CssColor, PropertyValue, serialize_calc_length_percentage, serialize_css_color,
+    serialize_dimension, serialize_number, serialize_percentage, serialize_value,
+};
+use crate::resolve::{
+    ComputedLength, ComputedLetterSpacing, ComputedTabSize, ComputedTextDecorationThickness,
+    ComputedTextIndent, ComputedTextUnderlineOffset,
+};
 
 /// A property whose computed value [`ComputedProperty::serialize`] can read
 /// back as CSSOM text.
@@ -373,11 +380,11 @@ impl ComputedProperty {
                             .map_or(end.px(), |provenance| {
                                 provenance.factor * ch_advance(&provenance.font)
                             });
-                        let start = crate::resolve::ComputedLength(start_px).to_css_string();
+                        let start = ComputedLength(start_px).to_css_string();
                         if start_px == end_px {
                             start
                         } else {
-                            let end = crate::resolve::ComputedLength(end_px).to_css_string();
+                            let end = ComputedLength(end_px).to_css_string();
                             format!("{start} {end}")
                         }
                     }
@@ -482,6 +489,72 @@ impl ComputedProperty {
             ComputedProperty::TextTransform => computed.text_transform.as_css_str(),
         };
         Some(value.to_owned())
+    }
+}
+
+// Computed-value serialization for types that exist only after cascade. Rules
+// that belong to one property rather than to the value type (such as
+// `letter-spacing: 0px` serializing as `normal`) stay with the caller.
+
+impl cssparser::ToCss for ComputedLetterSpacing {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        match *self {
+            Self::Px(px) => dest.write_str(&serialize_dimension(px, "px")),
+            Self::Percent(percent) => dest.write_str(&serialize_percentage(percent)),
+            Self::Calc(calc) => dest.write_str(&serialize_calc_length_percentage(&calc)),
+        }
+    }
+}
+
+impl cssparser::ToCss for ComputedTextIndent {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        match *self {
+            Self::Px(px) => dest.write_str(&serialize_dimension(px, "px")),
+            Self::Percent(percent) => dest.write_str(&serialize_percentage(percent)),
+            Self::Calc(calc) => dest.write_str(&serialize_calc_length_percentage(&calc)),
+        }
+    }
+}
+
+impl cssparser::ToCss for ComputedTextUnderlineOffset {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        match *self {
+            Self::Auto => dest.write_str("auto"),
+            Self::Length(length) => length.to_css(dest),
+            Self::Percent(percent) => dest.write_str(&serialize_percentage(percent)),
+            Self::Calc(calc) => dest.write_str(&serialize_calc_length_percentage(&calc)),
+        }
+    }
+}
+
+impl cssparser::ToCss for ComputedTextDecorationThickness {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        match *self {
+            Self::Auto => dest.write_str("auto"),
+            Self::FromFont => dest.write_str("from-font"),
+            Self::Length(length) => length.to_css(dest),
+        }
+    }
+}
+
+impl cssparser::ToCss for ComputedTabSize {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        match *self {
+            Self::Number(number) => dest.write_str(&serialize_number(number)),
+            Self::Length(length) => length.to_css(dest),
+        }
+    }
+}
+
+impl cssparser::ToCss for ComputedLength {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        dest.write_str(&serialize_dimension(self.px(), "px"))
+    }
+}
+
+impl cssparser::ToCss for CssColor {
+    fn to_css<W: std::fmt::Write>(&self, dest: &mut W) -> std::fmt::Result {
+        dest.write_str(&serialize_css_color(self))
     }
 }
 
