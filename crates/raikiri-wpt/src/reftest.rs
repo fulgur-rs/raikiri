@@ -1547,12 +1547,33 @@ fn render_raikiri_pages_inner(
     resource_base: Option<&Path>,
     font_base: Option<&Path>,
 ) -> Result<RenderedDocument, Box<dyn std::error::Error>> {
-    render_raikiri_pages_inner_with_snapshot(
+    render_raikiri_pages_inner_with_font_context(
         html,
         width,
         height,
         resource_base,
         font_base,
+        None,
+    )
+}
+
+fn render_raikiri_pages_inner_with_font_context(
+    html: &str,
+    width: u32,
+    height: u32,
+    resource_base: Option<&Path>,
+    font_base: Option<&Path>,
+    font_context_override: Option<&raikiri::FontContext>,
+) -> Result<RenderedDocument, Box<dyn std::error::Error>> {
+    render_raikiri_pages_inner_with_snapshot(
+        html,
+        width,
+        height,
+        ReftestResourceContext {
+            resource_base,
+            font_base,
+            font_context_override,
+        },
         false,
         true,
     )
@@ -1738,15 +1759,24 @@ pub(crate) fn parse_wpt_inner_html_fragment(
     .map_err(|error| format!("parse innerHTML fragment: {error:?}"))
 }
 
+#[derive(Clone, Copy)]
+struct ReftestResourceContext<'a> {
+    resource_base: Option<&'a Path>,
+    font_base: Option<&'a Path>,
+    font_context_override: Option<&'a raikiri::FontContext>,
+}
+
 fn render_raikiri_pages_inner_with_snapshot(
     html: &str,
     width: u32,
     height: u32,
-    resource_base: Option<&Path>,
-    font_base: Option<&Path>,
+    resources: ReftestResourceContext<'_>,
     capture_snapshot: bool,
     rasterize: bool,
 ) -> Result<(RenderedDocument, DomSnapshot), Box<dyn std::error::Error>> {
+    let resource_base = resources.resource_base;
+    let font_base = resources.font_base;
+    let font_context_override = resources.font_context_override;
     use anyrender::render_to_buffer;
     use anyrender_vello_cpu::VelloCpuImageRenderer;
     use raikiri::ParseOptions;
@@ -1800,7 +1830,9 @@ fn render_raikiri_pages_inner_with_snapshot(
     // into every cascade built below. Without @font-face rules both calls
     // are no-ops (empty registry early-returns).
     let font_face_tree = raikiri::build_rule_tree(&uncascaded);
-    let mut font_ctx = resolve_font_ctx();
+    let mut font_ctx = font_context_override
+        .cloned()
+        .unwrap_or_else(resolve_font_ctx);
     if let Some(loader) = WptFontLoader::discover(font_base.or(resource_base)) {
         raikiri_dom::register_font_face_sources(
             &mut font_ctx,
@@ -2548,7 +2580,7 @@ pub fn compare_documents(
 /// `read_html` indirection exists so unit tests can supply inline strings
 /// without touching the filesystem.
 pub fn run_pair(pair: &ReftestPair, config: ReftestConfig) -> Result<ReftestResult, ReftestError> {
-    run_pair_with_reader(pair, config, false, |p| {
+    run_pair_with_reader(pair, config, false, None, |p| {
         std::fs::read_to_string(p).map_err(|source| ReftestError::Io {
             path: p.to_path_buf(),
             source,
@@ -2566,7 +2598,24 @@ pub fn run_pair_with_images(
     pair: &ReftestPair,
     config: ReftestConfig,
 ) -> Result<ReftestResult, ReftestError> {
-    run_pair_with_reader(pair, config, true, |p| {
+    run_pair_with_reader(pair, config, true, None, |p| {
+        std::fs::read_to_string(p).map_err(|source| ReftestError::Io {
+            path: p.to_path_buf(),
+            source,
+        })
+    })
+}
+
+/// Execute one image-backed pair with an explicit font context for both sides.
+///
+/// This opt-in path is for cases that must use a known bundled-font fallback;
+/// it does not change the default context used by other WPT reftests.
+pub fn run_pair_with_images_and_font_context(
+    pair: &ReftestPair,
+    config: ReftestConfig,
+    font_context: &raikiri::FontContext,
+) -> Result<ReftestResult, ReftestError> {
+    run_pair_with_reader(pair, config, true, Some(font_context), |p| {
         std::fs::read_to_string(p).map_err(|source| ReftestError::Io {
             path: p.to_path_buf(),
             source,
@@ -2578,6 +2627,7 @@ fn run_pair_with_reader<F>(
     pair: &ReftestPair,
     config: ReftestConfig,
     resolve_images: bool,
+    font_context_override: Option<&raikiri::FontContext>,
     read_html: F,
 ) -> Result<ReftestResult, ReftestError>
 where
@@ -2586,7 +2636,7 @@ where
     let test_html = read_html(&pair.test)?;
     let ref_html = read_html(&pair.reference)?;
     let ref_html = mirror_default_page_margin(&test_html, &ref_html);
-    let test_doc = render_raikiri_pages_inner(
+    let test_doc = render_raikiri_pages_inner_with_font_context(
         &test_html,
         config.width,
         config.height,
@@ -2596,9 +2646,10 @@ where
             None
         },
         pair.test.parent(),
+        font_context_override,
     )
     .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
-    let ref_doc = render_raikiri_pages_inner(
+    let ref_doc = render_raikiri_pages_inner_with_font_context(
         &ref_html,
         config.width,
         config.height,
@@ -2608,6 +2659,7 @@ where
             None
         },
         pair.reference.parent(),
+        font_context_override,
     )
     .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
     let (test_selection, reference_selection) =

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use raikiri_wpt::reftest::{
     ReftestConfig, discover_pairs_for_file_with_wpt_root, run_pair, run_pair_with_images,
+    run_pair_with_images_and_font_context,
 };
 use raikiri_wpt::runner::{TestOutcome, Tolerance};
 
@@ -14,10 +15,11 @@ fn line_break_anywhere_is_pixel_exact_at_800x600() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     // First-stage scope: exact static cases verified with WPT resources. The
     // wider survey has 12 unrelated abspos auto-width oracle failures, four
-    // inline-run cases that need shared paragraph layout, and one case blocked
-    // by U+2011 font fallback. `anywhere-003` also needs inline JavaScript, which
-    // this static runner does not execute. Keep these cases visible in the linked
-    // issue; do not mask or baseline them here.
+    // inline-run cases covered by the shared paragraph suite, and a U+2011 case
+    // covered separately with an explicit pinned WPT font context. That focused
+    // test does not change the default resolver. `anywhere-003` needs inline
+    // JavaScript, which this static runner does not execute. Keep unrelated cases
+    // out of this list; do not mask or baseline them here.
     let candidates = [
         "css/css-text/line-break/line-break-anywhere-002.html",
         "css/css-text/line-break/line-break-anywhere-004.html",
@@ -245,5 +247,32 @@ fn line_break_anywhere_fallback_keeps_whitespace_only_inline_separators() {
         matches!(result.outcome, TestOutcome::Pass),
         "fallback shared-layout roots should preserve whitespace-only inline separators: {:?}",
         result.outcome
+    );
+}
+
+/// Check the U+2011 line-break case with the pinned WPT bundled fallback fonts.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn line_break_anywhere_u2011_uses_bundled_fallback_font_exactly() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let relative = "css/css-text/line-break/line-break-anywhere-overrides-uax-behavior-013.html";
+    let test = root.join(relative);
+    let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
+        .unwrap_or_else(|error| panic!("discover {relative}: {error}"));
+    assert_eq!(pairs.len(), 1, "expected one reference pair for {relative}");
+
+    let font_context = raikiri_dom::build_wpt_font_ctx(&root.join("fonts"))
+        .expect("load the pinned WPT fallback fonts");
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+    let result = run_pair_with_images_and_font_context(&pairs[0], config, &font_context)
+        .unwrap_or_else(|error| panic!("run {relative}: {error}"));
+    assert!(
+        matches!(result.outcome, TestOutcome::Pass),
+        "U+2011 should use the pinned WPT fallback glyph and match the real reference: {:?}, {} mismatched pixels",
+        result.outcome,
+        result.mismatched_pixels
     );
 }
