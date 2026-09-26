@@ -106,10 +106,9 @@ fn dom_view_is_total_on_out_of_range_ids() {
     assert_eq!(view.text_content(bad), "");
 }
 
-use crate::{RenderOptions, render_streaming};
 use raikiri_traits::{
     AbortController, ConsumerPropertyEvent, ConsumerPropertyObserver, LayoutConfig, PageDefaults,
-    PageFragment, RenderError, RenderSink, RenderStatus, RenderSummary,
+    RenderError,
 };
 
 const PAGED: &str = "<style>\
@@ -118,18 +117,6 @@ const PAGED: &str = "<style>\
     p { margin: 0; height: 90px }\
     </style><p>aaa bbb ccc</p><p>ddd</p><p>eee fff</p>";
 
-#[derive(Default)]
-struct Collect(Vec<PageFragment>);
-impl RenderSink for Collect {
-    fn accept_page(&mut self, page: PageFragment) -> std::io::Result<()> {
-        self.0.push(page);
-        Ok(())
-    }
-    fn finish_render(&mut self, _: RenderSummary) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
 fn completed(status: LayoutStatus) -> DocumentLayout {
     match status {
         LayoutStatus::Completed(layout) => layout,
@@ -137,50 +124,6 @@ fn completed(status: LayoutStatus) -> DocumentLayout {
             "expected Completed, got {:?}",
             std::mem::discriminant(&other)
         ),
-    }
-}
-
-#[test]
-fn layout_matches_render_streaming_pages_and_items() {
-    let doc = dom(PAGED);
-    let mut sink = Collect::default();
-    let status = render_streaming(
-        &doc,
-        PageDefaults::default(),
-        LayoutConfig::default(),
-        RenderOptions::new(),
-        &mut sink,
-    )
-    .expect("render");
-    assert!(matches!(status, RenderStatus::Completed(_)));
-    let layout = completed(
-        layout(
-            &doc,
-            PageDefaults::default(),
-            LayoutConfig::default(),
-            LayoutOptions::new(),
-        )
-        .expect("layout"),
-    );
-
-    assert!(sink.0.len() >= 2, "fixture must paginate");
-    assert_eq!(layout.page_count() as usize, sink.0.len());
-    for (page, neutral) in layout.pages().zip(sink.0.iter()) {
-        assert_eq!(page.index(), neutral.page_index);
-        assert_eq!(page.name(), neutral.page_name.as_deref());
-        let g = page.geometry();
-        assert_eq!(g.content_box.x, neutral.content_box.x);
-        assert_eq!(g.content_box.y, neutral.content_box.y);
-        assert_eq!(g.page_box.width, neutral.page_box.width);
-        let fragments: Vec<_> = page.fragments().collect();
-        assert_eq!(fragments.len(), neutral.items.len());
-        for (f, item) in fragments.iter().zip(neutral.items.iter()) {
-            assert_eq!(f.node(), item.node_id);
-            let r = f.rect();
-            assert_eq!(r.x - neutral.content_box.x, item.rect.x);
-            assert_eq!(r.y - neutral.content_box.y, item.rect.y);
-            assert_eq!(f.line_range(), item.line_range.map(|l| l.start..l.end));
-        }
     }
 }
 

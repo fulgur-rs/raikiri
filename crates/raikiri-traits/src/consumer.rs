@@ -17,8 +17,8 @@ pub enum ConsumerPropertyValue {
 /// One resolved consumer-property declaration in document order.
 ///
 /// The event contains only neutral data.  `node_id` and `parent_id` can be
-/// joined with a later [`crate::PageFragmentEvent`] without exposing the DOM
-/// arena or renderer-specific objects.  `source_order` is the producer's
+/// joined with fragments by source identity without exposing renderer-specific
+/// objects.  `source_order` is the producer's
 /// preorder index among source nodes and is stable for one parsed document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]

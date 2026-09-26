@@ -1,7 +1,7 @@
 [package]
 name = "raikiri-traits"
 version = "0.2.0"
-description = "Foundation traits and neutral model types for raikiri (RenderSink, ReplacedResolver, NetworkProvider, strategy traits, PageFragment/PageBox/PageContext, etc.)"
+description = "Shared DOM, resource, layout, and target resolution contracts for raikiri"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

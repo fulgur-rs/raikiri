@@ -24,12 +24,12 @@
 pub use raikiri_html::{
     Anchor, AnchorIndex, DEFAULT_MAX_AGGREGATE_RESOURCE_BYTES, DEFAULT_MAX_RESOURCE_BYTES,
     DocumentLayout, DomView, Fragment, FragmentKind, HtmlDocument, LayoutOptions, LayoutStatus,
-    Link, Page, PageGeometry, PageMode, RenderOptions, RenderResources, RepeatKind, ResourceLimits,
+    Link, Page, PageGeometry, PageMode, RenderResources, RepeatKind, ResourceLimits,
     build_cascaded, build_cascaded_for_page, build_cascaded_with_consumer_properties,
     build_cascaded_with_media_context, build_cascaded_with_media_context_for_page,
     build_cascaded_with_media_context_for_page_and_consumer_properties, build_rule_tree,
     build_rule_tree_with_consumer_properties, layout, parse_html, parse_html_with_limits,
-    parse_html_with_resources, plan, render_streaming,
+    parse_html_with_resources,
 };
 
 mod font_context;
@@ -85,7 +85,7 @@ pub use raikiri_traits::{
     Request, ResourceKind, StylesheetKind, WarningKind,
 
     // ── error / status 系 ──
-    RenderStatus, RenderSummary, LimitKind, UnresolvedTarget, UnresolvedReason,
+    RenderSummary, LimitKind, UnresolvedTarget, UnresolvedReason,
     EmittedSlotInfo, TargetSlotId, TargetKind, TargetDiscrepancy, ExhaustionPolicy,
 
     // ── plan mode ──
@@ -94,7 +94,6 @@ pub use raikiri_traits::{
     // ── config ──
     RenderLimits, RenderLimitsBuilder,
     LookaheadConfig, LookaheadConfigBuilder,
-    PlanConfig, PlanConfigBuilder,
     LayoutConfig, LayoutConfigBuilder,
     BatchConfig, BatchConfigBuilder,
 
@@ -106,16 +105,13 @@ pub use raikiri_traits::{
     GcpmDirective, ContentValueItem,
 
     // ── neutral paint payload ──
-    PagePaintKind, PagePaintOperation, PagePaintPayload, PaintBorder, PaintBorderStyle, PaintClip,
-    PaintColor, PaintFill, PaintGlyph, PaintGlyphRun, PaintImage, PaintInsets, PaintRect,
-    PaintResource, PaintResourceBundle, PaintResourceId, PaintResourceKind, PaintShadow,
-    PaintTransform,
-
+    PaintClip,
+    PaintColor, PaintInsets, PaintRect,
     // ── traits (Consumer が implement) ──
-    PageEventObserver, PagePaintSink, RenderSink, ReplacedResolver, ResourcePolicy,
+    ReplacedResolver, ResourcePolicy,
 
     // ── strategy traits ──
-    LookaheadPolicy, TargetResolver, EmissionPolicy, ReflowPolicy,
+    LookaheadPolicy, TargetResolver, ReflowPolicy,
     ReflowAction, ContainerOverflowFallback, DirtyDeadline,
     ProbeContext, TargetRequest, ResolvedTarget,
 

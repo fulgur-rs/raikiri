@@ -33,14 +33,11 @@ fn page_placeholders_default_construct() {
 #[test]
 fn dyn_traits_are_object_safe() {
     fn _assert<T: ?Sized>() {}
-    _assert::<dyn RenderSink>();
-    _assert::<dyn PageEventObserver>();
-    _assert::<dyn PagePaintSink>();
     _assert::<dyn ReplacedResolver>();
     _assert::<dyn ImagePixelSource>();
     _assert::<dyn NetworkProvider>();
     _assert::<dyn ResourcePolicy>();
-    // Strategy traits (LookaheadPolicy / TargetResolver / EmissionPolicy /
+    // Strategy traits (LookaheadPolicy / TargetResolver /
     // ReflowPolicy) は generic param 経由で受ける (§4 `render_with<L,T,E,R>`
     // 設計) ため object-safety は要件外。将来 dyn 化が必要なら判断。
     //
@@ -107,7 +104,6 @@ fn all_configs_default_construct() {
     let _ = RenderLimits::new();
     let _ = LayoutConfig::default();
     let _ = BatchConfig::default();
-    let _ = PlanConfig::default();
 }
 
 #[test]
@@ -204,13 +200,6 @@ fn batch_config_builder_roundtrip() {
     let limits = RenderLimits::builder().max_document_pages(Some(30)).build();
     let cfg = BatchConfig::builder().limits(limits).build();
     assert_eq!(cfg.limits.max_document_pages, Some(30));
-}
-
-#[test]
-fn plan_config_builder_roundtrip() {
-    let lookahead = LookaheadConfig::builder().widow_line_buffer(3).build();
-    let cfg = PlanConfig::builder().lookahead(lookahead).build();
-    assert_eq!(cfg.lookahead.widow_line_buffer, 3);
 }
 
 // ── Plan placeholders ───────────────────────────────────────
@@ -634,23 +623,6 @@ fn render_error_network_policy_nested_source_chain() {
         "PolicyViolation should be the leaf of the chain"
     );
 }
-
-// ── RenderStatus::Aborted contract ─
-
-/// Type-level contract test。`RenderStatus::Aborted` の `partial_pages`
-/// field が Consumer から観測可能で、round-trip することを固定する。
-/// 実 render pipeline 経由での partial_pages 追跡は将来
-/// (`abort-signal-integration` / `renderstatus-aborted-impl`) で verify。
-#[test]
-fn render_status_aborted_carries_partial_pages() {
-    let s = RenderStatus::Aborted { partial_pages: 7 };
-    match s {
-        RenderStatus::Aborted { partial_pages } => assert_eq!(partial_pages, 7),
-        RenderStatus::Completed(_) => panic!("expected Aborted"),
-    }
-}
-
-// ── Element trait extension ──────
 
 #[test]
 fn element_defaults_return_none_or_false() {

@@ -174,7 +174,7 @@ impl ResourceLimits {
 /// Consumer-supplied inputs and resource policy shared by parse and render.
 ///
 /// Use the same value with [`crate::parse_html_with_resources`] and
-/// [`crate::RenderOptions::resources`] so both phases share stylesheet
+/// [`crate::LayoutOptions::resources`] so both phases share stylesheet
 /// sources, base URL, network provider, policy, fonts, resolver, and limits.
 /// CSS background sources fetched during rendering are kept in an image cache
 /// shared by clones, bounded to 128 MiB of decoded raster data.
@@ -1487,7 +1487,7 @@ impl FontFaceLoader for NetworkFontFaceLoader<'_> {
 }
 
 /// Parse HTML using the same renderer-neutral resource configuration later
-/// accepted by [`crate::RenderOptions::resources`].
+/// accepted by [`crate::LayoutOptions::resources`].
 pub fn parse_html_with_resources<R: Read>(
     input: R,
     resources: &RenderResources<'_>,

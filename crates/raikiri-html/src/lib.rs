@@ -8,9 +8,6 @@
 //!   [`build_cascaded`] and friends expose the cascade orchestration.
 //! - Layout layer: [`layout`] returns an owned [`DocumentLayout`] with
 //!   borrowed [`Page`] and [`Fragment`] views for drawing consumers.
-//! - Render layer: [`render_streaming`] is the single page-streaming entry
-//!   point; [`RenderOptions`] combines the consumer resource handoff
-//!   ([`RenderResources`]) with page-event and consumer-property observers.
 
 mod cascade;
 mod document;
@@ -37,7 +34,6 @@ pub use document_layout::{
 };
 pub use document_parse::{parse_html, parse_html_with_limits};
 pub use parse::{effective_document_base_url, parse, parse_fragment, parse_with_sink};
-pub use render::{RenderOptions, plan, render_streaming};
 pub use resources::{
     DEFAULT_MAX_AGGREGATE_RESOURCE_BYTES, DEFAULT_MAX_RESOURCE_BYTES, RenderResources,
     ResourceLimits, parse_html_with_resources,
