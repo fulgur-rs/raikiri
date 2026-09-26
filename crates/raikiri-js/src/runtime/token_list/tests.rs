@@ -99,12 +99,14 @@ fn toggle_with_and_without_force() {
     );
 }
 
-/// `force` has no WebIDL default value: a genuinely missing argument
-/// behaves like the plain (no-force) toggle, but an explicit `undefined`
-/// converts through `ToBoolean` to `false`, which is a real, distinct
-/// value from "not given" in the token-absent branch.
+/// `force` has no WebIDL default value, but WebIDL overload resolution
+/// still maps an explicitly-`undefined` optional argument to "not
+/// present" -- the same as a genuinely missing one -- rather than running
+/// it through `ToBoolean`. So `toggle('p', undefined)` behaves exactly
+/// like `toggle('p')`, in both directions (token absent -> add, token
+/// present -> remove), not like `toggle('p', false)`.
 #[test]
-fn toggle_distinguishes_a_missing_force_from_an_explicit_undefined_one() {
+fn toggle_treats_an_explicit_undefined_force_the_same_as_a_missing_one() {
     let mut rt = rt();
     rt.evaluate("var e = document.createElement('e');").unwrap();
     // Token absent, force missing entirely: adds (plain toggle-on).
@@ -113,8 +115,15 @@ fn toggle_distinguishes_a_missing_force_from_an_explicit_undefined_one() {
         "e.classList.toggle('p') === true && e.classList.contains('p')",
     );
     rt.evaluate("e.classList.remove('p');").unwrap();
-    // Token absent, force explicitly `undefined` (=> ToBoolean false): does
-    // not add, per "not given or true" not being satisfied.
+    // Token absent, force explicitly `undefined`: still adds, the same as
+    // a missing `force` -- not `false` (`ToBoolean(undefined)`), which
+    // would instead leave `p` absent.
+    ok(
+        &mut rt,
+        "e.classList.toggle('p', undefined) === true && e.classList.contains('p')",
+    );
+    // Token present, force explicitly `undefined`: still removes, the
+    // same as a missing `force`.
     ok(
         &mut rt,
         "e.classList.toggle('p', undefined) === false && !e.classList.contains('p')",

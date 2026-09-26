@@ -83,10 +83,11 @@ fn dict_flag(context: &mut Context, options: &JsObject, name: &str) -> JsResult<
 }
 
 /// `options`' `(capture, once, passive)`, from the WebIDL union
-/// `(AddEventListenerOptions or boolean)` (default `{}`): a boolean --or any
-/// other primitive, including `null`-- shorthand sets only `capture`
-/// (`ToBoolean`); an object is read as the dictionary's three fields.
-fn parse_options(context: &mut Context, args: &[JsValue]) -> JsResult<(bool, bool, bool)> {
+/// `(AddEventListenerOptions or boolean)` (default `{}`) `addEventListener`
+/// uses: a boolean --or any other primitive, including `null`-- shorthand
+/// sets only `capture` (`ToBoolean`); an object is read as the
+/// dictionary's three fields.
+fn parse_add_options(context: &mut Context, args: &[JsValue]) -> JsResult<(bool, bool, bool)> {
     match args.get(2) {
         None => Ok((false, false, false)),
         Some(v) if v.is_undefined() || v.is_null() => Ok((false, false, false)),
@@ -97,6 +98,24 @@ fn parse_options(context: &mut Context, args: &[JsValue]) -> JsResult<(bool, boo
                 dict_flag(context, &options, "passive")?,
             )),
             None => Ok((v.to_boolean(), false, false)),
+        },
+    }
+}
+
+/// `options`' `capture`, from the WebIDL union `(EventListenerOptions or
+/// boolean)` (default `{}`) `removeEventListener` uses -- unlike
+/// `addEventListener`'s `AddEventListenerOptions`, `EventListenerOptions`
+/// has no `once`/`passive` members, so an object passed here never has
+/// those properties read (a `once` accessor with a throwing getter is
+/// simply never invoked by `removeEventListener`, only by
+/// `addEventListener`).
+fn capture_from_remove_options(context: &mut Context, args: &[JsValue]) -> JsResult<bool> {
+    match args.get(2) {
+        None => Ok(false),
+        Some(v) if v.is_undefined() || v.is_null() => Ok(false),
+        Some(v) => match v.as_object() {
+            Some(options) => dict_flag(context, &options, "capture"),
+            None => Ok(v.to_boolean()),
         },
     }
 }
@@ -116,7 +135,7 @@ pub(crate) fn add_event_listener(
     let key = this_event_target(this, context)?;
     let kind = dom_string(args, 0, context)?;
     let callback = convert_callback(args, context)?;
-    let (capture, once, passive) = parse_options(context, args)?;
+    let (capture, once, passive) = parse_add_options(context, args)?;
     let Some(callback) = callback else {
         return Ok(JsValue::undefined());
     };
@@ -140,9 +159,10 @@ pub(crate) fn add_event_listener(
 
 /// `EventTarget.removeEventListener` (DOM §2.7 "remove an event listener"):
 /// same argument-conversion-first ordering as [`add_event_listener`]. Only
-/// `type`/`callback`/`capture` identify the entry to remove; `once`/
-/// `passive` are read (per the same options conversion) but ignored, as
-/// spec.
+/// `type`/`callback`/`capture` identify the entry to remove --
+/// `removeEventListener`'s `options` is `(EventListenerOptions or
+/// boolean)`, a dictionary with only a `capture` member, so `once`/
+/// `passive` are never read here at all (not merely read and discarded).
 pub(crate) fn remove_event_listener(
     this: &JsValue,
     args: &[JsValue],
@@ -151,7 +171,7 @@ pub(crate) fn remove_event_listener(
     let key = this_event_target(this, context)?;
     let kind = dom_string(args, 0, context)?;
     let callback = convert_callback(args, context)?;
-    let (capture, _, _) = parse_options(context, args)?;
+    let capture = capture_from_remove_options(context, args)?;
     let Some(callback) = callback else {
         return Ok(JsValue::undefined());
     };

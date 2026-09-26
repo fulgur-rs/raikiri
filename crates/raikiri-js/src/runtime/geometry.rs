@@ -42,10 +42,10 @@ fn with_data<T>(this: &JsValue, f: impl FnOnce(&DomRectData) -> T) -> JsResult<T
 }
 
 /// `unrestricted double` argument conversion with a default (WebIDL
-/// optional-with-default: a genuinely missing trailing argument gets the
-/// default directly; one explicitly passed -- even as `undefined` -- still
-/// runs `ToNumber`, which can produce `NaN`, exactly as `unrestricted`
-/// allows).
+/// optional-with-default: a genuinely missing trailing argument, or one
+/// explicitly passed as `undefined`, takes `default` directly; anything
+/// else runs `ToNumber`, which can produce `NaN`, exactly as
+/// `unrestricted` allows).
 fn arg_or(args: &[JsValue], i: usize, default: f64, context: &mut Context) -> JsResult<f64> {
     match args.get(i) {
         None => Ok(default),

@@ -125,6 +125,32 @@ fn a_non_object_non_boolean_options_value_still_sets_capture_via_to_boolean() {
     assert_eq!(listener_count(&mut rt, Some(body)), 1);
 }
 
+/// `removeEventListener`'s `options` is `(EventListenerOptions or
+/// boolean)`, whose dictionary has only a `capture` member -- an object
+/// with a throwing `once` getter must never have it invoked (unlike
+/// `addEventListener`'s `AddEventListenerOptions`, which does read
+/// `once`).
+#[test]
+fn remove_event_listener_never_reads_once_or_passive_from_its_options() {
+    let mut rt = rt();
+    rt.evaluate(
+        "function f(){} \
+         document.body.addEventListener('x', f, true);",
+    )
+    .unwrap();
+    let body = body_index(&mut rt);
+    assert_eq!(listener_count(&mut rt, Some(body)), 1);
+    rt.evaluate(
+        "document.body.removeEventListener('x', f, { \
+             get capture() { return true; }, \
+             get once() { throw new Error('once must not be read by removeEventListener'); }, \
+             get passive() { throw new Error('passive must not be read by removeEventListener'); }, \
+         });",
+    )
+    .unwrap();
+    assert_eq!(listener_count(&mut rt, Some(body)), 0);
+}
+
 #[test]
 fn bare_unqualified_call_targets_the_window() {
     let mut rt = rt();

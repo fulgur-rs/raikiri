@@ -16,7 +16,7 @@
 
 use boa_engine::object::JsObject;
 use boa_engine::property::PropertyDescriptor;
-use boa_engine::{Context, JsNativeError, JsResult, JsString, JsSymbol, JsValue};
+use boa_engine::{Context, JsNativeError, JsResult, JsSymbol, JsValue};
 use raikiri_dom::Document;
 
 use super::indexed::{IndexedSource, indexed_object, this_indexed};
@@ -202,35 +202,24 @@ pub(crate) const HTML_COLLECTION_MEMBERS: Members = Members {
     ],
 };
 
-/// Install the iteration members WebIDL defines as the `%Array.prototype%`
-/// functions themselves: `NodeList`'s `forEach` / `entries` / `keys` /
-/// `values` (operations: writable, enumerable, configurable) and both
-/// interfaces' `@@iterator` (`%Array.prototype.values%`; writable,
-/// non-enumerable, configurable).
+/// Install `NodeList`'s `iterable<Node>` members (`forEach`/`entries`/
+/// `keys`/`values`/`@@iterator`, via [`super::interfaces::
+/// install_value_iterable`]), plus `HTMLCollection`'s own `@@iterator` --
+/// DOM does not declare `HTMLCollection` `iterable<>`, so it gets only
+/// that one member, not the other four operations.
 pub(crate) fn install_iteration(
     context: &mut Context,
     node_list: &JsObject,
     html_collection: &JsObject,
 ) -> JsResult<()> {
-    let array_prototype = context.intrinsics().constructors().array().prototype();
-    for name in ["forEach", "entries", "keys", "values"] {
-        let function = array_prototype.get(JsString::from(name), context)?;
-        let operation = PropertyDescriptor::builder()
-            .value(function)
-            .writable(true)
-            .enumerable(true)
-            .configurable(true);
-        node_list.define_property_or_throw(JsString::from(name), operation, context)?;
-    }
+    super::interfaces::install_value_iterable(context, node_list)?;
     let values = context.intrinsics().objects().array_prototype_values();
-    for prototype in [node_list, html_collection] {
-        let iterator = PropertyDescriptor::builder()
-            .value(values.clone())
-            .writable(true)
-            .enumerable(false)
-            .configurable(true);
-        prototype.define_property_or_throw(JsSymbol::iterator(), iterator, context)?;
-    }
+    let iterator = PropertyDescriptor::builder()
+        .value(values)
+        .writable(true)
+        .enumerable(false)
+        .configurable(true);
+    html_collection.define_property_or_throw(JsSymbol::iterator(), iterator, context)?;
     Ok(())
 }
 

@@ -6,8 +6,7 @@
 use std::rc::Rc;
 
 use boa_engine::object::JsObject;
-use boa_engine::property::PropertyDescriptor;
-use boa_engine::{Context, JsNativeError, JsResult, JsString, JsSymbol, JsValue};
+use boa_engine::{Context, JsNativeError, JsResult, JsValue};
 
 use super::indexed::{IndexedSource, indexed_object, this_indexed};
 use super::interfaces::{Members, protos};
@@ -186,14 +185,16 @@ fn token_list_toggle(this: &JsValue, args: &[JsValue], context: &mut Context) ->
     let index = this_source(this, context)?.0;
     let token = dom_string(args, 0, context)?;
     validate_token(context, &token)?;
-    // `force` has no default value, so a genuinely missing argument (not
-    // merely one explicitly passed as `undefined`) is what "not given"
-    // means below.
-    let force = if args.len() > 1 {
-        Some(args[1].to_boolean())
-    } else {
-        None
-    };
+    // `force` has no default value, but WebIDL overload resolution still
+    // maps an explicitly-`undefined` optional argument to "not present"
+    // (the same as a genuinely missing one), not to `ToBoolean(undefined)`
+    // == `false` -- that collapsing only fails to apply to arguments that
+    // have an actual default value to take instead (e.g. `DOMRect`'s
+    // `x`/`y`/`width`/`height`, or `DOMException`'s `message`/`name`).
+    let force = args
+        .get(1)
+        .filter(|v| !v.is_undefined())
+        .map(JsValue::to_boolean);
     let mut tokens = token_set(context, index)?;
     let present = tokens.iter().any(|t| t == &token);
     if present {
@@ -312,29 +313,13 @@ pub(crate) const DOM_TOKEN_LIST_MEMBERS: Members = Members {
 };
 
 /// `DOMTokenList`'s `iterable<DOMString>` members (`entries`/`forEach`/
-/// `keys`/`values`/`@@iterator`), built from the same `%Array.prototype%`
-/// functions [`super::collections::install_iteration`] wires onto
-/// `NodeList` -- walking index + length is exactly what those do, and every
-/// value here is already a plain string, never a wrapped `Node`.
+/// `keys`/`values`/`@@iterator`): every value here is already a plain
+/// string, never a wrapped `Node`, so [`super::interfaces::
+/// install_value_iterable`]'s `%Array.prototype%` functions are exactly
+/// the right generated iterable members, the same as they are for
+/// `NodeList` (see that function's own doc for why).
 pub(crate) fn install_iteration(context: &mut Context, prototype: &JsObject) -> JsResult<()> {
-    let array_prototype = context.intrinsics().constructors().array().prototype();
-    for name in ["forEach", "entries", "keys", "values"] {
-        let function = array_prototype.get(JsString::from(name), context)?;
-        let operation = PropertyDescriptor::builder()
-            .value(function)
-            .writable(true)
-            .enumerable(true)
-            .configurable(true);
-        prototype.define_property_or_throw(JsString::from(name), operation, context)?;
-    }
-    let values = context.intrinsics().objects().array_prototype_values();
-    let iterator = PropertyDescriptor::builder()
-        .value(values)
-        .writable(true)
-        .enumerable(false)
-        .configurable(true);
-    prototype.define_property_or_throw(JsSymbol::iterator(), iterator, context)?;
-    Ok(())
+    super::interfaces::install_value_iterable(context, prototype)
 }
 
 #[cfg(test)]

@@ -5,8 +5,8 @@ use boa_engine::object::builtins::JsFunction;
 use boa_engine::object::{ConstructorBuilder, FunctionObjectBuilder, JsObject};
 use boa_engine::property::{Attribute, PropertyDescriptor};
 use boa_engine::{
-    Context, Finalize, JsData, JsNativeError, JsResult, JsString, JsValue, NativeFunction, Trace,
-    js_string,
+    Context, Finalize, JsData, JsNativeError, JsResult, JsString, JsSymbol, JsValue,
+    NativeFunction, Trace, js_string,
 };
 use raikiri_dom::NodeKind;
 
@@ -110,6 +110,41 @@ pub(crate) fn closure_function(
     native: NativeFunction,
 ) -> JsResult<JsFunction> {
     function_with_length(context, name, length, native)
+}
+
+/// Install a WebIDL `iterable<V>` value-iterable's generated members --
+/// `forEach`/`entries`/`keys`/`values` (operations: writable, enumerable,
+/// configurable) and `@@iterator` (writable, non-enumerable, configurable)
+/// -- onto `prototype`, all as the exact `%Array.prototype%` functions
+/// themselves. Walking index + length is exactly what those functions do
+/// regardless of what the values are (a plain string, for `DOMTokenList`;
+/// a wrapped `Node`, for `NodeList`), so reusing them rather than writing
+/// per-interface iterator objects is both less code and behaviorally
+/// identical to what a real per-interface implementation would do for the
+/// single-value shape every caller here needs. Shared by
+/// [`super::token_list::install_iteration`] and
+/// [`super::collections::install_iteration`] (`NodeList`'s share of it --
+/// `HTMLCollection` gets only `@@iterator`, not the four operations, since
+/// DOM does not declare it `iterable<>`).
+pub(crate) fn install_value_iterable(context: &mut Context, prototype: &JsObject) -> JsResult<()> {
+    let array_prototype = context.intrinsics().constructors().array().prototype();
+    for name in ["forEach", "entries", "keys", "values"] {
+        let function = array_prototype.get(JsString::from(name), context)?;
+        let operation = PropertyDescriptor::builder()
+            .value(function)
+            .writable(true)
+            .enumerable(true)
+            .configurable(true);
+        prototype.define_property_or_throw(JsString::from(name), operation, context)?;
+    }
+    let values = context.intrinsics().objects().array_prototype_values();
+    let iterator = PropertyDescriptor::builder()
+        .value(values)
+        .writable(true)
+        .enumerable(false)
+        .configurable(true);
+    prototype.define_property_or_throw(JsSymbol::iterator(), iterator, context)?;
+    Ok(())
 }
 
 /// Members of one interface prototype.
@@ -477,9 +512,11 @@ fn dom_exception_message(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsRe
 /// name's legacy constant identifier. A handful of names don't follow the
 /// obvious "insert an underscore before every capital" mapping (`10 =>
 /// INUSE_ATTRIBUTE_ERR`, not `IN_USE_...`), so both columns are spelled out
-/// rather than derived. Codes 2, 6, and 16 are historical, unused entries
-/// the table skips entirely (no name ever throws them, and nothing reads
-/// them back from `code`).
+/// rather than derived. Codes 2, 6, and 16 have no corresponding error name
+/// (no name ever throws them, and nothing reads them back from `code`), so
+/// they are omitted from this table; their legacy constants are still part
+/// of the `DOMException` IDL block, so they are defined separately, see
+/// [`DOM_EXCEPTION_LEGACY_ONLY_CODES`].
 const DOM_EXCEPTION_CODES: &[(&str, u16, &str)] = &[
     ("IndexSizeError", 1, "INDEX_SIZE_ERR"),
     ("HierarchyRequestError", 3, "HIERARCHY_REQUEST_ERR"),
@@ -507,6 +544,17 @@ const DOM_EXCEPTION_CODES: &[(&str, u16, &str)] = &[
     ("TimeoutError", 23, "TIMEOUT_ERR"),
     ("InvalidNodeTypeError", 24, "INVALID_NODE_TYPE_ERR"),
     ("DataCloneError", 25, "DATA_CLONE_ERR"),
+];
+
+/// WebIDL §2.8.1's three legacy constants with no corresponding error name
+/// (`DOM_EXCEPTION_CODES`'s doc explains why): still part of the
+/// `DOMException` IDL block, so still defined on both the interface object
+/// and its prototype, just never returned by `DOMException.prototype.code`
+/// for any name this runtime throws.
+const DOM_EXCEPTION_LEGACY_ONLY_CODES: &[(u16, &str)] = &[
+    (2, "DOMSTRING_SIZE_ERR"),
+    (6, "NO_DATA_ALLOWED_ERR"),
+    (16, "VALIDATION_ERR"),
 ];
 
 /// Legacy numeric code for `name` (WebIDL §2.8.1 table); `0` for any other
@@ -589,14 +637,20 @@ fn define_legacy_constant(
     Ok(())
 }
 
-/// Define every [`DOM_EXCEPTION_CODES`] entry's legacy constant on both
-/// `DOMException` (the interface object) and `DOMException.prototype`
-/// (WebIDL §3.14: legacy constants live on both).
+/// Define every [`DOM_EXCEPTION_CODES`] and [`DOM_EXCEPTION_LEGACY_ONLY_CODES`]
+/// entry's legacy constant on both `DOMException` (the interface object)
+/// and `DOMException.prototype` (WebIDL §3.14: legacy constants live on
+/// both) -- together, the full set of 25 constants the `DOMException` IDL
+/// block declares.
 fn install_dom_exception_constants(
     context: &mut Context,
     dom_exception: &Interface,
 ) -> JsResult<()> {
     for &(_, code, constant) in DOM_EXCEPTION_CODES {
+        define_legacy_constant(&dom_exception.constructor, constant, code, context)?;
+        define_legacy_constant(&dom_exception.prototype, constant, code, context)?;
+    }
+    for &(code, constant) in DOM_EXCEPTION_LEGACY_ONLY_CODES {
         define_legacy_constant(&dom_exception.constructor, constant, code, context)?;
         define_legacy_constant(&dom_exception.prototype, constant, code, context)?;
     }

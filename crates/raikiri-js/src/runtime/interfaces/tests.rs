@@ -108,6 +108,16 @@ fn dom_exception_full_legacy_code_table_and_constants() {
             return d.enumerable && !d.writable && !d.configurable; \
         })()",
     );
+    // The three legacy constants with no corresponding error name (WebIDL
+    // §2.8.1's `DOMException` IDL block declares 25 constants total, not
+    // just the ones this runtime's own thrown names use) are still defined
+    // on both the interface object and its prototype.
+    ok(
+        &mut rt,
+        "DOMException.DOMSTRING_SIZE_ERR === 2 && DOMException.prototype.DOMSTRING_SIZE_ERR === 2 \
+         && DOMException.NO_DATA_ALLOWED_ERR === 6 && DOMException.prototype.NO_DATA_ALLOWED_ERR === 6 \
+         && DOMException.VALIDATION_ERR === 16 && DOMException.prototype.VALIDATION_ERR === 16",
+    );
 }
 
 #[test]

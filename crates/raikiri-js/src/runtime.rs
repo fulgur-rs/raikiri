@@ -8,6 +8,7 @@ use std::rc::Rc;
 use boa_engine::{Context, JsObject, JsValue, Source};
 
 pub(crate) mod collections;
+pub(crate) mod document;
 pub(crate) mod events;
 pub(crate) mod geometry;
 pub mod host;
