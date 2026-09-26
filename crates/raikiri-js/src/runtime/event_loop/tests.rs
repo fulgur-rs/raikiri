@@ -500,3 +500,44 @@ fn run_jobs_is_a_microtask_checkpoint() {
     rt.context_mut().run_jobs().unwrap();
     ok(&mut rt, "q === 1");
 }
+
+#[test]
+fn run_jobs_reports_a_limit_as_an_error() {
+    let mut rt = runtime_with(Limits {
+        max_tasks: 3,
+        ..Default::default()
+    });
+    rt.context_mut()
+        .eval(Source::from_bytes(
+            "for (var i = 0; i < 5; i++) queueMicrotask(function(){});",
+        ))
+        .unwrap();
+    let err = rt.context_mut().run_jobs().unwrap_err();
+    assert!(err.to_string().contains("task limit"), "{err}");
+    assert_eq!(rt.run_until_idle(), Err(Abort::Tasks));
+}
+
+#[test]
+fn pending_async_jobs_are_dropped_after_one_poll() {
+    let mut rt = rt();
+    rt.context_mut()
+        .enqueue_job(Job::AsyncJob(NativeAsyncJob::new(async |_| {
+            std::future::pending::<()>().await;
+            Ok(JsValue::undefined())
+        })));
+    assert_eq!(rt.run_until_idle(), Ok(()));
+}
+
+#[test]
+fn queued_tasks_order_by_due_time_then_registration() {
+    let queued = |due: f64, seq: u64| super::Queued {
+        due,
+        seq,
+        task: super::Task::AnimationFrame,
+    };
+    assert!(queued(1.0, 0) == queued(1.0, 0));
+    assert!(queued(1.0, 0) != queued(1.0, 1));
+    // Reversed for the max-heap: earlier sorts greater.
+    assert!(queued(1.0, 5) > queued(2.0, 0));
+    assert!(queued(1.0, 0) > queued(1.0, 1));
+}
