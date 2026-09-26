@@ -1272,3 +1272,34 @@ fn ratio_only_auto_background_uses_positioning_area_as_default_size() {
         Some((800.0, 400.0))
     );
 }
+
+#[test]
+fn paint_root_element_border_without_html_is_noop() {
+    let document = Document::new();
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let mut scene = Scene::new();
+    paint_root_element_border(&mut scene, &document, &cascade, PageBox::A4);
+    assert!(scene.commands.is_empty());
+}
+
+#[test]
+fn paint_root_element_border_paints_html_border_sides() {
+    let mut document = Document::new();
+    document.append_element(
+        Some(document.root_index()),
+        "html",
+        Style::default(),
+        Some("border: 5px solid red"),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let mut scene = Scene::new();
+    paint_root_element_border(&mut scene, &document, &cascade, PageBox::A4);
+    let fills = scene
+        .commands
+        .iter()
+        .filter(|command| matches!(command, RenderCommand::Fill(_)))
+        .count();
+    assert_eq!(fills, 4, "one fill strip per border side");
+}
