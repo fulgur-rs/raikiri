@@ -376,6 +376,52 @@ fn document_title_getter_ignores_a_non_html_title_element() {
     ok(&mut rt, "document.title === ''");
 }
 
+/// The setter's "document element exists but is not HTML" no-op branch: a
+/// document whose only child is a foreign-namespace root (standing in for
+/// an SVG document, whose own title handling this runtime does not
+/// implement) never creates or overwrites anything.
+#[test]
+fn document_title_setter_no_ops_when_the_document_element_is_not_html() {
+    let mut document = raikiri_dom::Document::new();
+    let root = document.root_index();
+    let svg = document.create_detached_element("svg").unwrap();
+    document.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
+    document.attach_child(root, svg);
+    document.mark_in_document_flags();
+    let host = StubHost {
+        document,
+        flushes: std::rc::Rc::new(std::cell::Cell::new(0)),
+        geometry: std::collections::HashMap::new(),
+        computed: std::collections::HashMap::new(),
+        fail_flush: false,
+        fail_geometry: false,
+        fail_computed: false,
+    };
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("document.title = 'x';").unwrap();
+    ok(&mut rt, "document.title === ''");
+}
+
+/// [`super::is_xml_name_start`]/[`super::is_xml_name_char`] duplicate
+/// `raikiri_dom`'s own XML `Name` character classes range for range; this
+/// mirrors that crate's own direct-function coverage of the same ranges
+/// (`raikiri-dom`'s `xml_name_validation_accepts_the_non_ascii_name_ranges`)
+/// rather than routing every representative code point through a
+/// `createElementNS` call.
+#[test]
+fn xml_name_character_classes_accept_every_non_ascii_range() {
+    for ch in [
+        'À', 'Ø', 'ø', 'Ͱ', 'Ϳ', '\u{200c}', '⁰', 'Ⰰ', '々', '豈', 'ﷰ', '𐀀',
+    ] {
+        assert!(super::is_xml_name_start(ch), "{ch:?}");
+    }
+    for ch in ['0', '-', '.', '·', '\u{0300}', '\u{203f}'] {
+        assert!(super::is_xml_name_char(ch), "{ch:?}");
+    }
+    assert!(super::is_xml_name("π\u{0300}"));
+    assert!(!super::is_xml_name("0name"));
+}
+
 #[test]
 fn node_name_covers_every_kind() {
     let (mut rt, body) = rt_with_body();

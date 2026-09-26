@@ -221,6 +221,9 @@ fn token_list_toggle(this: &JsValue, args: &[JsValue], context: &mut Context) ->
 /// "c"'s later position (which would give "b a").
 fn replace_within(tokens: &[String], old_token: &str, new_token: &str) -> Vec<String> {
     let Some(index) = tokens.iter().position(|t| t == old_token || t == new_token) else {
+        // cov:ignore: `token_list_replace` (this function's only caller) already
+        // confirmed `old_token` is present before calling it, so `position` always
+        // finds at least one of the two.
         return tokens.to_vec();
     };
     tokens

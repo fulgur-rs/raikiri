@@ -68,6 +68,24 @@ fn remove_event_listener_matches_type_callback_and_capture() {
 }
 
 #[test]
+fn add_event_listener_with_a_missing_callback_argument_is_a_no_op() {
+    let mut rt = rt();
+    // No second argument at all (as opposed to an explicit `null`).
+    rt.evaluate("document.body.addEventListener('x');").unwrap();
+    let body = body_index(&mut rt);
+    assert_eq!(listener_count(&mut rt, Some(body)), 0);
+}
+
+#[test]
+fn remove_event_listener_on_a_target_with_no_listeners_at_all_is_a_no_op() {
+    let mut rt = rt();
+    rt.evaluate("function f(){} document.body.removeEventListener('x', f);")
+        .unwrap();
+    let body = body_index(&mut rt);
+    assert_eq!(listener_count(&mut rt, Some(body)), 0);
+}
+
+#[test]
 fn remove_event_listener_with_null_callback_is_a_no_op() {
     let mut rt = rt();
     rt.evaluate("function f(){} document.body.addEventListener('x', f);")

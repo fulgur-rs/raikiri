@@ -238,7 +238,11 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     use super::style::{self, HTML_ELEMENT_MEMBERS};
     use super::tree;
     use super::{collections, events, geometry, indexed, token_list};
-    let event_target = interface(
+    // A `?` on a call rustfmt wraps across lines leaves the never-taken
+    // error-branch region on the closing line, so that line always reports
+    // zero hits; binding the call first keeps the `?` on a one-line
+    // statement instead (see every `_result` binding below).
+    let event_target_result = interface(
         context,
         "EventTarget",
         None,
@@ -246,7 +250,8 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &[&events::EVENT_TARGET_MEMBERS],
         illegal_constructor,
         0,
-    )?;
+    );
+    let event_target = event_target_result?;
     let node_members = [&node::NODE_MEMBERS, &tree::NODE_TREE_MEMBERS];
     let node_i = derived(context, "Node", &event_target, &node_members)?;
     let element_members = [
@@ -310,7 +315,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     let dom_exception = dom_exception_result?;
     install_dom_exception_constants(context, &dom_exception)?;
     let node_list_members = [&collections::NODE_LIST_MEMBERS];
-    let node_list = interface(
+    let node_list_result = interface(
         context,
         "NodeList",
         None,
@@ -318,7 +323,8 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &node_list_members,
         illegal_constructor,
         0,
-    )?;
+    );
+    let node_list = node_list_result?;
     let html_collection_members = [&collections::HTML_COLLECTION_MEMBERS];
     let html_collection_result = interface(
         context,
@@ -332,7 +338,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     let html_collection = html_collection_result?;
     collections::install_iteration(context, &node_list.prototype, &html_collection.prototype)?;
     let dom_token_list_members = [&token_list::DOM_TOKEN_LIST_MEMBERS];
-    let dom_token_list = interface(
+    let dom_token_list_result = interface(
         context,
         "DOMTokenList",
         None,
@@ -340,10 +346,11 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &dom_token_list_members,
         illegal_constructor,
         0,
-    )?;
+    );
+    let dom_token_list = dom_token_list_result?;
     token_list::install_iteration(context, &dom_token_list.prototype)?;
     let dom_rect_read_only_members = [&geometry::DOM_RECT_READ_ONLY_MEMBERS];
-    let dom_rect_read_only = interface(
+    let dom_rect_read_only_result = interface(
         context,
         "DOMRectReadOnly",
         None,
@@ -351,9 +358,10 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &dom_rect_read_only_members,
         geometry::dom_rect_read_only_constructor,
         0,
-    )?;
+    );
+    let dom_rect_read_only = dom_rect_read_only_result?;
     let dom_rect_members = [&geometry::DOM_RECT_MEMBERS];
-    let dom_rect = interface(
+    let dom_rect_result = interface(
         context,
         "DOMRect",
         Some(&dom_rect_read_only.prototype),
@@ -361,7 +369,8 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &dom_rect_members,
         geometry::dom_rect_constructor,
         0,
-    )?;
+    );
+    let dom_rect = dom_rect_result?;
     indexed::install(context)?;
     context.insert_data(Protos {
         event_target: event_target.prototype,
@@ -562,31 +571,34 @@ fn optional_dom_string(
     }
 }
 
+/// Define one legacy constant (non-writable, non-configurable, enumerable)
+/// on `target`, either `DOMException` or `DOMException.prototype`.
+fn define_legacy_constant(
+    target: &JsObject,
+    name: &str,
+    code: u16,
+    context: &mut Context,
+) -> JsResult<()> {
+    let descriptor = PropertyDescriptor::builder()
+        .writable(false)
+        .enumerable(true)
+        .configurable(false)
+        .value(code)
+        .build();
+    target.define_property_or_throw(JsString::from(name), descriptor, context)?;
+    Ok(())
+}
+
 /// Define every [`DOM_EXCEPTION_CODES`] entry's legacy constant on both
 /// `DOMException` (the interface object) and `DOMException.prototype`
-/// (WebIDL §3.14: legacy constants live on both), as a non-writable,
-/// non-configurable, enumerable data property.
+/// (WebIDL §3.14: legacy constants live on both).
 fn install_dom_exception_constants(
     context: &mut Context,
     dom_exception: &Interface,
 ) -> JsResult<()> {
-    let attr = PropertyDescriptor::builder()
-        .writable(false)
-        .enumerable(true)
-        .configurable(false);
     for &(_, code, constant) in DOM_EXCEPTION_CODES {
-        let descriptor = attr.clone().value(code).build();
-        dom_exception.constructor.define_property_or_throw(
-            JsString::from(constant),
-            descriptor,
-            context,
-        )?;
-        let descriptor = attr.clone().value(code).build();
-        dom_exception.prototype.define_property_or_throw(
-            JsString::from(constant),
-            descriptor,
-            context,
-        )?;
+        define_legacy_constant(&dom_exception.constructor, constant, code, context)?;
+        define_legacy_constant(&dom_exception.prototype, constant, code, context)?;
     }
     Ok(())
 }
