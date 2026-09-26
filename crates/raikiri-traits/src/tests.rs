@@ -105,7 +105,7 @@ fn all_configs_default_construct() {
     let _ = LookaheadConfig::default();
     let _ = RenderLimits::default();
     let _ = RenderLimits::new();
-    let _ = StreamingConfig::default();
+    let _ = LayoutConfig::default();
     let _ = BatchConfig::default();
     let _ = PlanConfig::default();
 }
@@ -191,7 +191,7 @@ fn render_limits_max_parse_warnings_builder_roundtrip() {
 fn streaming_config_builder_roundtrip() {
     let limits = RenderLimits::builder().max_document_pages(Some(50)).build();
     let controller = AbortController::new();
-    let cfg = StreamingConfig::builder()
+    let cfg = LayoutConfig::builder()
         .limits(limits)
         .signal(Some(controller.signal.clone()))
         .build();
@@ -777,4 +777,15 @@ fn stylesheet_kind_is_copy_send_eq() {
     assert_ne!(StylesheetKind::UserAgent, StylesheetKind::Author);
     assert_ne!(StylesheetKind::UserAgent, StylesheetKind::User);
     assert_ne!(StylesheetKind::User, StylesheetKind::Author);
+}
+
+#[test]
+fn layout_config_media_defaults_and_builder() {
+    use raikiri_style::{MediaContext, MediaType};
+    assert_eq!(LayoutConfig::default().media_context, MediaContext::print());
+    let media = MediaContext::with_viewport(MediaType::Print, 261, 161);
+    let config = LayoutConfig::builder().media_context(media).build();
+    assert_eq!(config.media_context, media);
+    assert_eq!(config.media_context.viewport_width(), 261);
+    assert_eq!(config.media_context.viewport_height(), 161);
 }

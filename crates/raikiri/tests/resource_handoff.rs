@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use raikiri::{
     Bytes, DecodedImage, FetchOutcome, FetchedResource, FontContextBuilder, ImagePixelSource,
-    IntrinsicBox, NetworkError, NetworkProvider, PageDefaults, PageFragment, RenderError,
-    RenderOptions, RenderResources, RenderSink, RenderStatus, RenderSummary, ReplacedResolver,
-    Request, ResolveDisposition, ResolvedIntrinsic, ResolverError, ResolverRequest, ResourceKind,
-    ResourceLimits, ResourcePolicy, StreamingConfig, Url, ViolationType, WarningKind,
+    IntrinsicBox, LayoutConfig, NetworkError, NetworkProvider, PageDefaults, PageFragment,
+    RenderError, RenderOptions, RenderResources, RenderSink, RenderStatus, RenderSummary,
+    ReplacedResolver, Request, ResolveDisposition, ResolvedIntrinsic, ResolverError,
+    ResolverRequest, ResourceKind, ResourceLimits, ResourcePolicy, Url, ViolationType, WarningKind,
     parse_html_with_resources, render_streaming,
 };
 
@@ -18,7 +18,7 @@ fn parse_and_render<R: std::io::Read>(
     input: R,
     defaults: PageDefaults,
     resources: &RenderResources<'_>,
-    config: StreamingConfig,
+    config: LayoutConfig,
     sink: &mut dyn RenderSink,
 ) -> Result<RenderStatus, RenderError> {
     let doc = parse_html_with_resources(input, resources)?;
@@ -52,7 +52,7 @@ fn parse_and_collect_pages<R: std::io::Read>(
     input: R,
     defaults: PageDefaults,
     resources: &RenderResources<'_>,
-    config: StreamingConfig,
+    config: LayoutConfig,
 ) -> Result<(Vec<PageFragment>, RenderStatus), RenderError> {
     let mut sink = PageCollector::default();
     let status = parse_and_render(input, defaults, resources, config, &mut sink)?;
@@ -143,7 +143,7 @@ fn bundled_no_network_resources_share_base_resolver_and_summary() {
         &b"<html><body style='font-family: \"Bundled Handoff Test\"'>A<img src='../images/cover.png'></body></html>"[..],
         PageDefaults::default(),
         &resources,
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         &mut sink,
     )
     .expect("resource-aware render succeeds without network access");
@@ -190,7 +190,7 @@ fn bundled_no_network_page_output_is_deterministic_across_runs() {
             &b"<html><body style='font-family: \"Bundled Handoff Test\"'>A<img src='../images/cover.png'></body></html>"[..],
             PageDefaults::default(),
             &resources,
-            StreamingConfig::default(),
+            LayoutConfig::default(),
         )
         .expect("bundled no-network render succeeds");
         let RenderStatus::Completed(summary) = status else {
@@ -217,7 +217,7 @@ fn html_base_element_overrides_configured_fallback_for_replaced_resources() {
         &b"<html><head><base href='/assets/'></head><body><img src='cover.png'></body></html>"[..],
         PageDefaults::default(),
         &resources,
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         &mut sink,
     )
     .expect("document base is valid");
@@ -235,7 +235,7 @@ fn batch_collection_uses_the_resource_aware_page_path() {
         &b"<html><body><div></div></body></html>"[..],
         PageDefaults::default(),
         &resources,
-        StreamingConfig::default(),
+        LayoutConfig::default(),
     )
     .expect("batch collection succeeds");
 
@@ -282,7 +282,7 @@ fn response_limits_are_reported_in_render_summary() {
             [..],
         PageDefaults::default(),
         &resources,
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         &mut sink,
     )
     .expect("an oversized stylesheet is a non-fatal fallback");
@@ -342,7 +342,7 @@ fn aggregate_response_budget_is_shared_by_parse_and_font_loading() {
         &b"<html><head><link rel='stylesheet' href='main.css'></head><body></body></html>"[..],
         PageDefaults::default(),
         &resources,
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         &mut sink,
     )
     .expect("the second resource falls back after aggregate budget exhaustion");
@@ -447,7 +447,7 @@ fn decoded_image_limit_is_reported_and_paint_source_refuses_the_image() {
         &b"<html><body><img src='image.png'></body></html>"[..],
         PageDefaults::default(),
         &resources,
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         &mut sink,
     )
     .expect("oversized decoded pixels fall back");
@@ -493,7 +493,7 @@ fn network_policy_applies_to_stylesheet_font_and_replaced_resource_fetches() {
         &b"<html><head><link rel='stylesheet' href='main.css'></head><body><p>Hi</p><img src='image.png'></body></html>"[..],
         PageDefaults::default(),
         &resources,
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         &mut sink,
     )
     .expect("denied resources fall back without aborting render");
@@ -651,7 +651,7 @@ fn a_redirect_to_a_denied_host_is_never_actually_requested() {
             [..],
         PageDefaults::default(),
         &resources,
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         &mut sink,
     )
     .expect("a denied redirect target falls back without aborting render");
@@ -708,7 +708,7 @@ fn exceeding_max_redirect_hops_stops_before_the_next_hop_is_requested() {
             [..],
         PageDefaults::default(),
         &resources,
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         &mut sink,
     )
     .expect("a redirect chain exceeding the hop cap falls back without aborting render");
@@ -755,7 +755,7 @@ fn allow_redirect_receives_the_real_hop_number_not_a_fixed_one() {
             [..],
         PageDefaults::default(),
         &resources,
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         &mut sink,
     )
     .expect("a fully allowed redirect chain completes without aborting render");

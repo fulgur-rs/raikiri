@@ -464,7 +464,7 @@ impl TargetRegistry {
     ///
     /// **Re-seeded registry caveat**: design §7.4's convergence flow seeds a
     /// re-run with a previously-converged registry
-    /// (`StreamingConfig::initial_registry` / `BatchConfig::initial_registry`
+    /// (`LayoutConfig::initial_registry` / `BatchConfig::initial_registry`
     /// / `PlanConfig::initial_registry`). If that seed registry's
     /// `page_index` already equals the first page's index (typically 0) but
     /// `next_sequence` is *not* 0 (carried over from the prior run), the

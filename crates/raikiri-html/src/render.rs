@@ -16,11 +16,11 @@ use raikiri_dom::{
 use raikiri_style::FontFaceRegistry;
 use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue, DocumentPlan,
-    IntrinsicBox, PageBox, PageDefaults, PageEventObserver, PageFragmentPageGeometry, PlanConfig,
-    PolicyViolation, RenderError, RenderSink, RenderStatus, RenderStatus::Aborted,
+    IntrinsicBox, LayoutConfig, PageBox, PageDefaults, PageEventObserver, PageFragmentPageGeometry,
+    PlanConfig, PolicyViolation, RenderError, RenderSink, RenderStatus, RenderStatus::Aborted,
     RenderStatus::Completed, RenderSummary, RenderWarning, ReplacedResolver, ResolveDisposition,
-    ResolvedIntrinsic, ResolverError, ResolverRequest, ResourceKind, ResourcePolicy,
-    StreamingConfig, ViolationType, WarningKind,
+    ResolvedIntrinsic, ResolverError, ResolverRequest, ResourceKind, ResourcePolicy, ViolationType,
+    WarningKind,
 };
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -573,7 +573,7 @@ pub fn plan(
 /// };
 /// use raikiri_traits::{
 ///     ConsumerPropertyEvent, ConsumerPropertyObserver, PageEventObserver, PageFragment,
-///     PageFragmentEvent, PageDefaults, RenderSink, RenderSummary, StreamingConfig,
+///     PageFragmentEvent, PageDefaults, RenderSink, RenderSummary, LayoutConfig,
 /// };
 ///
 /// #[derive(Default)]
@@ -624,7 +624,7 @@ pub fn plan(
 /// render_streaming(
 ///     &doc,
 ///     PageDefaults::default(),
-///     StreamingConfig::default(),
+///     LayoutConfig::default(),
 ///     options,
 ///     &mut sink,
 /// )
@@ -723,7 +723,7 @@ impl<'r, 'a> RenderOptions<'r, 'a> {
 pub fn render_streaming(
     doc: &HtmlDocument,
     defaults: PageDefaults,
-    config: StreamingConfig,
+    config: LayoutConfig,
     options: RenderOptions<'_, '_>,
     sink: &mut dyn RenderSink,
 ) -> Result<RenderStatus, RenderError> {
@@ -833,7 +833,7 @@ pub(crate) struct PipelineInputs<'r, 'a> {
 pub(crate) fn run_pipeline(
     doc: &HtmlDocument,
     defaults: PageDefaults,
-    config: &StreamingConfig,
+    config: &LayoutConfig,
     inputs: PipelineInputs<'_, '_>,
 ) -> Result<PipelineRun, RenderError> {
     let consumer_properties = inputs.consumer_properties;

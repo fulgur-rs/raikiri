@@ -108,8 +108,8 @@ fn dom_view_is_total_on_out_of_range_ids() {
 
 use crate::{RenderOptions, render_streaming};
 use raikiri_traits::{
-    AbortController, ConsumerPropertyEvent, ConsumerPropertyObserver, PageDefaults, PageFragment,
-    RenderError, RenderSink, RenderStatus, RenderSummary, StreamingConfig,
+    AbortController, ConsumerPropertyEvent, ConsumerPropertyObserver, LayoutConfig, PageDefaults,
+    PageFragment, RenderError, RenderSink, RenderStatus, RenderSummary,
 };
 
 const PAGED: &str = "<style>\
@@ -147,7 +147,7 @@ fn layout_matches_render_streaming_pages_and_items() {
     let status = render_streaming(
         &doc,
         PageDefaults::default(),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new(),
         &mut sink,
     )
@@ -157,7 +157,7 @@ fn layout_matches_render_streaming_pages_and_items() {
         layout(
             &doc,
             PageDefaults::default(),
-            StreamingConfig::default(),
+            LayoutConfig::default(),
             LayoutOptions::new(),
         )
         .expect("layout"),
@@ -191,7 +191,7 @@ fn layout_exposes_the_cascade_used_for_layout_and_page_styles() {
         layout(
             &doc,
             PageDefaults::default(),
-            StreamingConfig::default(),
+            LayoutConfig::default(),
             LayoutOptions::new(),
         )
         .expect("layout"),
@@ -212,7 +212,7 @@ fn layout_aborts_before_layout_without_partial_result() {
     let doc = dom(PAGED);
     let controller = AbortController::new();
     controller.abort();
-    let config = StreamingConfig::builder()
+    let config = LayoutConfig::builder()
         .signal(Some(controller.signal.clone()))
         .build();
     let status = layout(&doc, PageDefaults::default(), config, LayoutOptions::new()).expect("ok");
@@ -245,7 +245,7 @@ fn layout_delivers_consumer_properties_before_returning() {
     let status = layout(
         &doc,
         PageDefaults::default(),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         LayoutOptions::new().consumer_properties(&registrations, &mut observer),
     )
     .expect("layout");
@@ -263,7 +263,7 @@ fn layout_returns_observer_errors() {
     let err = layout(
         &doc,
         PageDefaults::default(),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         LayoutOptions::new().consumer_properties(&registrations, &mut observer),
     )
     .err()
@@ -278,7 +278,7 @@ fn layout_keeps_the_input_document_usable() {
         layout(
             &doc,
             PageDefaults::default(),
-            StreamingConfig::default(),
+            LayoutConfig::default(),
             LayoutOptions::new(),
         )
         .expect("layout"),
@@ -287,7 +287,7 @@ fn layout_keeps_the_input_document_usable() {
         layout(
             &doc,
             PageDefaults::default(),
-            StreamingConfig::default(),
+            LayoutConfig::default(),
             LayoutOptions::new(),
         )
         .expect("layout"),
@@ -305,7 +305,7 @@ fn laid_out(html: &str) -> DocumentLayout {
         layout(
             &dom(html),
             PageDefaults::default(),
-            StreamingConfig::default(),
+            LayoutConfig::default(),
             LayoutOptions::new(),
         )
         .expect("layout"),

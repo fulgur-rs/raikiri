@@ -13,7 +13,7 @@ pub use page::{Page, PageGeometry, PageMode};
 use crate::render::{PipelineInputs, PipelineOutput, PipelineRun, run_pipeline};
 use crate::{ConsumerPropertyRegistration, HtmlDocument, RenderResources};
 use raikiri_traits::{
-    ConsumerPropertyObserver, PageDefaults, RenderError, RenderWarning, StreamingConfig,
+    ConsumerPropertyObserver, LayoutConfig, PageDefaults, RenderError, RenderWarning,
 };
 
 /// Result of [`layout`].
@@ -83,14 +83,14 @@ impl<'r, 'a> LayoutOptions<'r, 'a> {
 ///
 /// ```
 /// use raikiri_html::{
-///     LayoutOptions, LayoutStatus, PageDefaults, RenderResources, StreamingConfig,
+///     LayoutOptions, LayoutStatus, PageDefaults, RenderResources, LayoutConfig,
 ///     layout, parse_html_with_resources,
 /// };
 /// let document = parse_html_with_resources(
 ///     "<p>Hello</p>".as_bytes(), &RenderResources::new(),
 /// )?;
 /// if let LayoutStatus::Completed(result) = layout(
-///     &document, PageDefaults::default(), StreamingConfig::default(), LayoutOptions::new(),
+///     &document, PageDefaults::default(), LayoutConfig::default(), LayoutOptions::new(),
 /// )? {
 ///     for page in result.pages() {
 ///         for fragment in page.fragments() {
@@ -103,7 +103,7 @@ impl<'r, 'a> LayoutOptions<'r, 'a> {
 pub fn layout(
     doc: &HtmlDocument,
     defaults: PageDefaults,
-    config: StreamingConfig,
+    config: LayoutConfig,
     options: LayoutOptions<'_, '_>,
 ) -> Result<LayoutStatus, RenderError> {
     let LayoutOptions {

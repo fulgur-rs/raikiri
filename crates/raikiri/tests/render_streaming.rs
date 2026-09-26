@@ -1,10 +1,10 @@
 //! Focused tests for neutral page emission and completion semantics.
 
 use raikiri::{
-    AbortController, IntrinsicBox, PageBox, PageDefaults, PageEventObserver, PageFragment,
-    PageFragmentEvent, RenderOptions, RenderResources, RenderSink, RenderStatus, RenderSummary,
-    ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError, ResolverRequest,
-    StreamingConfig, parse_html, render_streaming,
+    AbortController, IntrinsicBox, LayoutConfig, PageBox, PageDefaults, PageEventObserver,
+    PageFragment, PageFragmentEvent, RenderOptions, RenderResources, RenderSink, RenderStatus,
+    RenderSummary, ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError,
+    ResolverRequest, parse_html, render_streaming,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -85,7 +85,7 @@ fn forced_break_pages_are_emitted_in_order_and_finished() {
     let status = render_streaming(
         &doc,
         defaults(100.0, 50.0),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new().resources(&resources),
         &mut sink,
     )
@@ -123,7 +123,7 @@ fn sink_failure_stops_before_completion() {
     let err = render_streaming(
         &doc,
         defaults(100.0, 50.0),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new().resources(&resources),
         &mut sink,
     )
@@ -145,7 +145,7 @@ fn midstream_abort_reports_partial_pages_without_completion() {
     )
     .expect("parse");
     let controller = AbortController::new();
-    let config = StreamingConfig::builder()
+    let config = LayoutConfig::builder()
         .signal(Some(controller.signal.clone()))
         .build();
     let mut sink = RecordingSink {
@@ -200,7 +200,7 @@ fn observer_receives_page_local_link_events_after_page_emission() {
     let status = render_streaming(
         &doc,
         defaults(100.0, 50.0),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new()
             .resources(&resources)
             .page_observer(&mut observer),
@@ -246,7 +246,7 @@ fn observer_failure_is_a_structural_sink_error_and_skips_completion() {
     let err = render_streaming(
         &doc,
         defaults(100.0, 50.0),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new()
             .resources(&resources)
             .page_observer(&mut observer),
@@ -283,7 +283,7 @@ fn render_streaming_resolves_page_geometry_from_page_contexts() {
     render_streaming(
         &doc,
         defaults(100.0, 100.0),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new().resources(&resources),
         &mut sink,
     )
@@ -339,7 +339,7 @@ fn render_streaming_resolves_named_first_page_before_layout() {
     render_streaming(
         &doc,
         defaults(100.0, 100.0),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new().resources(&resources),
         &mut sink,
     )
@@ -373,7 +373,7 @@ fn render_streaming_resolves_nested_grid_page_before_layout() {
     render_streaming(
         &doc,
         defaults(100.0, 100.0),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new().resources(&resources),
         &mut sink,
     )
@@ -427,7 +427,7 @@ fn render_streaming_preflight_uses_resolved_image_size_for_grid_page_selection()
     render_streaming(
         &doc,
         defaults(100.0, 100.0),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new().resources(&small_resources),
         &mut small_sink,
     )
@@ -444,7 +444,7 @@ fn render_streaming_preflight_uses_resolved_image_size_for_grid_page_selection()
     render_streaming(
         &doc,
         defaults(100.0, 100.0),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new().resources(&large_resources),
         &mut large_sink,
     )
@@ -488,7 +488,7 @@ fn render_streaming_relayouts_until_page_geometry_converges() {
     let status = render_streaming(
         &doc,
         defaults(100.0, 100.0),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new().resources(&resources),
         &mut sink,
     )
