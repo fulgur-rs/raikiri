@@ -2023,7 +2023,8 @@ pub fn resolve_word_spacing_with_ch(
 /// へそのまま delegate する ([`TabSize`] は percentage を持たないため、
 /// [`resolve_length_percentage`] ではなく percentage 非対応の
 /// [`resolve_length`] が正しい delegate 先 — [`resolve_length_or_normal`]
-/// と同型)。
+/// と同型)。[`TabSize::Calc`] 側は `px` + `em * font-size` を解決し、
+/// derived 負値を `0` に clamp する (CSS Values 4 §10.7、arm 内 comment 参照)。
 pub fn resolve_tab_size(
     specified: TabSize,
     font_size: ComputedLength,
@@ -2034,6 +2035,16 @@ pub fn resolve_tab_size(
         TabSize::Number(n) => ComputedTabSize::Number(n),
         TabSize::Length(l) => {
             ComputedTabSize::Length(resolve_length(l, font_size, own_line_height, ctx))
+        }
+        TabSize::Calc(calc) => {
+            // percentage 項は parse 時に reject 済み ("Percentages: N/A") の
+            // ため `px` + `em` のみ解決する。derived 負値は CSS Values 4
+            // §10.7 ("negative lengths are illegal" な property では computed
+            // が負にならない) により `0` に clamp する — WPT
+            // `tab-size-computed.html` の `"calc(10px - 0.5em)"`
+            // (font-size 40px → `-10px`) → `"0px"` case が check する。
+            let px = calc.px + calc.em * font_size.px();
+            ComputedTabSize::Length(ComputedLength(px.max(0.0)))
         }
     }
 }

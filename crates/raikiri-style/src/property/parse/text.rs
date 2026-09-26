@@ -471,15 +471,51 @@ pub(super) fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight
 /// すると `tab-size: -1 20px` が `20px` として silently accept されてしまう
 /// (spec-invalid CSS を通す correctness bug)。
 ///
+/// # `calc()` の扱い
+///
+/// `<length>` alternative の additive `calc()` (`calc(10px + 0.5em)` 等) は
+/// [`parse_word_spacing`] / [`parse_letter_spacing`] と同じ
+/// `parse_text_indent_calc` 経路で受理し、[`TabSize::Calc`] に保持する
+/// (percentage 項は spec propdef "Percentages: N/A" により reject、
+/// [`TabSize::Length`] doc 参照)。`sign()` / container-relative unit
+/// (`cqw` 等) を含む calc は同 helper が受理しないため drop のまま
+/// (general math + container query 対応待ち)。
+///
 /// # Non-goals
 ///
 /// - **(b) 非対応**: CSS-wide keyword は未実装 (将来対応)、silent drop
 ///   (5 keyword の一覧・理由は [`PropertyValue`] doc の「CSS-wide keyword」節
 ///   が canonical)。
-/// - **(b) 非対応**: `calc()` / `var()` は未実装、silent drop。
+/// - **(b) 非対応**: `var()` は未実装、silent drop。`calc()` は上記「`calc()`
+///   の扱い」節の additive `px` + `em` subset のみ対応し、`sign()` /
+///   container-relative unit を含む形は未対応のまま drop する。
 /// - **(a) spec-invalid → drop**: `<number>` / `<length>` の負値、`auto` 等
 ///   spec-invalid keyword、percentage は spec grammar 違反、drop。
 pub(super) fn parse_tab_size(input: &mut Parser<'_, '_>) -> Option<TabSize> {
+    // 0. additive `<length>` calc — `parse_word_spacing` と同じ helper。
+    //    percentage 項は "Percentages: N/A" により reject (drop)。
+    //    collapsed single length (例: `calc(10px)`) は Length branch と
+    //    同じ non-negative filter に通す。mixed calc の derived 負値は
+    //    通過させ、computed 時の clamp (`resolve_tab_size`)
+    //    に委ねる (CSS Values 4 §10.7)。
+    if let Some(parsed) = parse_text_indent_calc(input) {
+        return match parsed {
+            TextIndentLength::Length(l) => {
+                if matches!(l, Length::Percent(_)) {
+                    None
+                } else {
+                    (l.payload() >= 0.0).then_some(TabSize::Length(l))
+                }
+            }
+            TextIndentLength::Calc(calc) => {
+                if calc.percent != 0.0 {
+                    None
+                } else {
+                    Some(TabSize::Calc(calc))
+                }
+            }
+        };
+    }
     // 1. bare `<number [0,∞]>` — Token::Number (unit なし)。Dimension
     //    (`4px`) に対しては `expect_number` が Err を返し `try_parse` が
     //    rewind するため、Length branch へフォールスルー。

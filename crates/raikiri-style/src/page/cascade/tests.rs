@@ -4198,6 +4198,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
         match ts {
             TabSize::Number(_) => None,
             TabSize::Length(l) => length(l),
+            TabSize::Calc(_) => Some("TabSize::Calc"),
         }
     }
     fn line_height(lh: LineHeight) -> Option<&'static str> {
