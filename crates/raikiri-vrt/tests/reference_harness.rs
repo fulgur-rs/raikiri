@@ -453,3 +453,75 @@ fn test_run_and_compare_page_count_mismatch() {
         diff_dir.display()
     );
 }
+
+#[test]
+fn test_compare_png_tier2_allows_single_delta() {
+    // One pixel differs by 1 in a single channel: EXACT must fail, TIER2 must pass.
+    let mut rgba_a = solid([255, 0, 0, 255], 10, 10);
+    let rgba_b = solid([255, 0, 0, 255], 10, 10);
+    let idx = (4 * 10 + 3) * 4;
+    rgba_a[idx] = 254;
+    let png_a = encode_png(&rgba_a, 10, 10);
+    let png_b = encode_png(&rgba_b, 10, 10);
+    compare_png(&png_a, &png_b, Tolerance::EXACT).expect_err("delta 1 must fail EXACT");
+    assert!(compare_png(&png_a, &png_b, Tolerance::TIER2).is_ok());
+}
+
+#[test]
+fn test_compare_png_tier3_fraction_between_tier2_and_tier3() {
+    // 20x50 = 1000 pixels; 3 pixels differ by 2 (0.3%).
+    // TIER2 allows 0.1% -> must fail; TIER3 allows 0.5% -> must pass.
+    let (w, h) = (20, 50);
+    let mut rgba_a = solid([10, 20, 30, 255], w, h);
+    let rgba_b = solid([10, 20, 30, 255], w, h);
+    for n in 0..3 {
+        let idx = (n * 4) as usize;
+        rgba_a[idx] = 12;
+    }
+    let png_a = encode_png(&rgba_a, w, h);
+    let png_b = encode_png(&rgba_b, w, h);
+    compare_png(&png_a, &png_b, Tolerance::EXACT).expect_err("delta 2 must fail EXACT");
+    compare_png(&png_a, &png_b, Tolerance::TIER2).expect_err("0.3% must fail TIER2");
+    assert!(compare_png(&png_a, &png_b, Tolerance::TIER3).is_ok());
+}
+
+#[test]
+fn test_compare_png_tier2_rejects_large_fraction() {
+    // 10x10 = 100 pixels; 2 pixels differ by 1 (2% > TIER2 0.1% and TIER3 0.5%).
+    let mut rgba_a = solid([200, 100, 50, 255], 10, 10);
+    let rgba_b = solid([200, 100, 50, 255], 10, 10);
+    for (x, y) in [(1, 1), (8, 8)] {
+        let idx = ((y * 10 + x) as usize) * 4;
+        rgba_a[idx] = 203;
+    }
+    let png_a = encode_png(&rgba_a, 10, 10);
+    let png_b = encode_png(&rgba_b, 10, 10);
+    let err = compare_png(&png_a, &png_b, Tolerance::TIER2).expect_err("2% must fail TIER2");
+    assert_eq!(err.mismatched_pixel_count, 2);
+    compare_png(&png_a, &png_b, Tolerance::TIER3).expect_err("2% must fail TIER3");
+}
+
+#[test]
+fn test_compare_png_diff_report_display_pins_shape() {
+    let mut rgba_a = solid([255, 0, 0, 255], 10, 10);
+    let rgba_b = solid([255, 0, 0, 255], 10, 10);
+    let idx = (4 * 10 + 3) * 4;
+    rgba_a[idx..idx + 4].copy_from_slice(&[0, 255, 0, 255]);
+    let png_a = encode_png(&rgba_a, 10, 10);
+    let png_b = encode_png(&rgba_b, 10, 10);
+    let err = compare_png(&png_a, &png_b, Tolerance::EXACT).expect_err("diff expected");
+    let msg = format!("{err}");
+    assert!(msg.contains("page 0"), "display pins page index: {msg}");
+    assert!(msg.contains("10x10"), "display pins dimensions: {msg}");
+    assert!(msg.contains("(3, 4)"), "display pins first mismatch: {msg}");
+}
+
+#[test]
+#[should_panic(expected = "failed to decode")]
+fn test_compare_png_corrupt_bytes_panic_documents_invariant() {
+    let rgba = solid([1, 2, 3, 255], 4, 4);
+    let png = encode_png(&rgba, 4, 4);
+    let mut corrupt = png.clone();
+    corrupt.truncate(corrupt.len() / 2);
+    let _ = compare_png(&corrupt, &png, Tolerance::EXACT);
+}
