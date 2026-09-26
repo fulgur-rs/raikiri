@@ -233,7 +233,7 @@ impl EventLoop {
         });
     }
 
-    /// HTML §8.6 timer initialization steps from step 5 on: nesting level,
+    /// HTML §8.6 timer initialization steps from the nesting level on:
     /// the negative-to-zero and nesting clamps, and queueing the task.
     fn schedule_timer(&mut self, id: i32, timeout: i32) {
         let nesting = self.current_nesting.unwrap_or(0);
@@ -314,7 +314,12 @@ impl JobExecutor for RaikiriJobExecutor {
                 Job::AsyncJob(job) => event_loop.microtasks.push_back(Microtask::Async(job)),
                 Job::TimeoutJob(job) => {
                     let delay = job.timeout().as_millis() as f64;
-                    let native = NativeJob::new(move |context| job.call(context));
+                    let native = NativeJob::new(move |context| {
+                        if job.cancelled() {
+                            return Ok(JsValue::undefined());
+                        }
+                        job.call(context)
+                    });
                     event_loop.queue_task(delay, Task::Native(native));
                 }
                 Job::IntervalJob(job) => {
@@ -330,7 +335,7 @@ impl JobExecutor for RaikiriJobExecutor {
                     event_loop.queue_task(delay, Task::Native(native));
                 }
                 // Finalization registry cleanup is optional (ECMA-262
-                // §9.13 `HostEnqueueFinalizationRegistryCleanupJob`); this
+                // `HostEnqueueFinalizationRegistryCleanupJob`); this
                 // runtime never runs it. Any other future job kind is
                 // dropped the same way.
                 _ => {}
@@ -462,6 +467,9 @@ fn run_timer(context: &mut Context, id: i32, nesting: u32) -> Result<(), Abort> 
         Handler::Code(code) => context.eval(Source::from_bytes(&code)),
     };
     settle(context, result)?;
+    // "Clean up after running script": the checkpoint belongs to the timer
+    // task, so timers its microtasks set inherit the task's nesting level.
+    microtask_checkpoint(context)?;
     let _ = with_state(context, |state| {
         let event_loop = &mut state.event_loop;
         match event_loop.timers.get(&id) {
@@ -505,6 +513,8 @@ fn run_animation_frame(context: &mut Context) -> Result<(), Abort> {
         };
         let result = callback.call(&JsValue::undefined(), &[JsValue::from(timestamp)], context);
         settle(context, result)?;
+        // Each callback is its own "clean up after running script".
+        microtask_checkpoint(context)?;
     }
 }
 
@@ -561,7 +571,7 @@ fn clear_timer(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult
     Ok(JsValue::undefined())
 }
 
-/// HTML §8.10.1 `requestAnimationFrame`: frames fall on 16ms boundaries of
+/// HTML `requestAnimationFrame`: frames fall on 16ms boundaries of
 /// the virtual clock.
 fn request_animation_frame(
     _: &JsValue,
@@ -596,7 +606,7 @@ fn cancel_animation_frame(
     Ok(JsValue::undefined())
 }
 
-/// HTML §8.7 `queueMicrotask`.
+/// HTML `queueMicrotask`.
 fn queue_microtask(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let callback = callable_arg(args, "queueMicrotask callback")?;
     with_state(context, |state| {
@@ -608,7 +618,7 @@ fn queue_microtask(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
     Ok(JsValue::undefined())
 }
 
-/// `performance.now()` (High Resolution Time §4): the virtual clock.
+/// `performance.now()` (High Resolution Time): the virtual clock.
 fn performance_now(_: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     with_state(context, |state| JsValue::from(state.event_loop.now))
 }

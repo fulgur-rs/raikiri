@@ -541,3 +541,50 @@ fn queued_tasks_order_by_due_time_then_registration() {
     assert!(queued(1.0, 5) > queued(2.0, 0));
     assert!(queued(1.0, 0) > queued(1.0, 1));
 }
+
+#[test]
+fn microtasks_run_after_each_animation_frame_callback() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log = []; \
+         requestAnimationFrame(()=>{ Promise.resolve().then(()=>log.push('m')); }); \
+         requestAnimationFrame(()=>log.push('b')); true",
+    );
+    rt.run_until_idle().unwrap();
+    ok(&mut rt, "log.join() === 'm,b'");
+}
+
+#[test]
+fn microtasks_after_a_timer_callback_keep_its_nesting_level() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var ts = []; \
+         function f(){ ts.push(performance.now()); \
+                       if (ts.length < 8) Promise.resolve().then(()=>setTimeout(f, 0)); } \
+         setTimeout(f, 0); true",
+    );
+    rt.run_until_idle().unwrap();
+    ok(&mut rt, "ts.join() === '0,0,0,0,0,0,4,8'");
+}
+
+#[test]
+fn cancelled_boa_timeout_jobs_do_not_run() {
+    let mut rt = rt();
+    let ran = std::rc::Rc::new(std::cell::Cell::new(false));
+    let flag = ran.clone();
+    let job = TimeoutJob::new(
+        NativeJob::new(move |_| {
+            flag.set(true);
+            Ok(JsValue::undefined())
+        }),
+        5,
+    );
+    let token = job.cancellation_token().clone();
+    let context = rt.context_mut();
+    context.enqueue_job(Job::TimeoutJob(job));
+    token.cancel(context);
+    rt.run_until_idle().unwrap();
+    assert!(!ran.get());
+}
