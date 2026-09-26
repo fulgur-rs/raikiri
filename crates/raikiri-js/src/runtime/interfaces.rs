@@ -219,6 +219,7 @@ fn derived(
 /// Register every interface, then `window` / `self` / `document`.
 pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     use super::node;
+    use super::query;
     use super::style::{self, HTML_ELEMENT_MEMBERS};
     use super::tree;
     let event_target = interface(context, "EventTarget", None, None, &[&NO_MEMBERS])?;
@@ -229,6 +230,8 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &tree::PARENT_NODE_MEMBERS,
         &tree::CHILD_NODE_MEMBERS,
         &tree::NON_DOCUMENT_TYPE_CHILD_NODE_MEMBERS,
+        &query::PARENT_NODE_QUERY_MEMBERS,
+        &query::ELEMENT_QUERY_MEMBERS,
     ];
     let element = derived(context, "Element", &node_i, &element_members)?;
     let character_data_members = [
@@ -241,9 +244,16 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &node::DOCUMENT_MEMBERS,
         &tree::PARENT_NODE_MEMBERS,
         &tree::DOCUMENT_CREATE_MEMBERS,
+        &query::NON_ELEMENT_PARENT_NODE_MEMBERS,
+        &query::PARENT_NODE_QUERY_MEMBERS,
+        &query::DOCUMENT_QUERY_MEMBERS,
     ];
     let document = derived(context, "Document", &node_i, &document_members)?;
-    let fragment_members = [&tree::PARENT_NODE_MEMBERS];
+    let fragment_members = [
+        &tree::PARENT_NODE_MEMBERS,
+        &query::NON_ELEMENT_PARENT_NODE_MEMBERS,
+        &query::PARENT_NODE_QUERY_MEMBERS,
+    ];
     let document_fragment = derived(context, "DocumentFragment", &node_i, &fragment_members)?;
     let html_element = derived(context, "HTMLElement", &element, &[&HTML_ELEMENT_MEMBERS])?;
     let text = derived(context, "Text", &character_data, &[&NO_MEMBERS])?;

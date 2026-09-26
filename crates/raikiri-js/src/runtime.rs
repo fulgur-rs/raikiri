@@ -10,6 +10,7 @@ use boa_engine::{Context, JsObject, JsValue, Source};
 pub mod host;
 pub(crate) mod interfaces;
 pub(crate) mod node;
+pub(crate) mod query;
 pub(crate) mod style;
 pub(crate) mod tree;
 pub(crate) mod webidl;

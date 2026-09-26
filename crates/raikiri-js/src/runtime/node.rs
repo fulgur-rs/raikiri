@@ -3,7 +3,6 @@
 use boa_engine::object::JsObject;
 use boa_engine::{Context, JsResult, JsString, JsValue, NativeFunction};
 use raikiri_dom::NodeKind;
-use raikiri_style::{SelectorQuery, StyleNodeId};
 
 use super::host::HostError;
 use super::interfaces::{Members, closure_function, wrap, wrap_optional};
@@ -94,8 +93,10 @@ fn parent_element(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsRes
 /// descendant's data, concatenated in tree order. [`raikiri_dom::Document::
 /// element_text_content`] computes the same thing for an Element root but
 /// requires an Element index, so a DocumentFragment root needs its own
-/// walk; done with an explicit stack (the same shape as
-/// [`find_in_tree`]'s), not recursion.
+/// walk; done with an explicit stack, not recursion, the same as every
+/// other tree walk in this runtime (a script can build an arbitrarily deep
+/// tree, and a native stack overflow there would abort the process rather
+/// than raise a catchable error).
 fn fragment_text_content(doc: &raikiri_dom::Document, root: usize) -> String {
     let mut out = String::new();
     let Some(root_node) = doc.get_node(root) else {
@@ -221,20 +222,17 @@ fn local_name(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
     Ok(name.map_or_else(JsValue::null, |n| js_str(&n)))
 }
 
-fn attribute(context: &mut Context, index: usize, name: &str) -> JsResult<Option<String>> {
+pub(crate) fn attribute(
+    context: &mut Context,
+    index: usize,
+    name: &str,
+) -> JsResult<Option<String>> {
     with_state(context, |s| {
         s.host
             .document()
             .element_attribute(index, name)
             .map(str::to_owned)
     })
-}
-
-fn id(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let index = this_element(this, context)?;
-    Ok(js_str(
-        &attribute(context, index, "id")?.unwrap_or_default(),
-    ))
 }
 
 fn get_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
@@ -514,89 +512,6 @@ fn body(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValu
     html_child(this, context, "body")
 }
 
-/// Pre-order walk of `root`'s descendants, calling `visit` on every
-/// **element**, with that element's ancestor **element** chain (root side
-/// first, excluding `root` itself when it is not an element — in
-/// particular the Document node is never pushed). Stops at the first
-/// `Some`. This is the same ancestor shape
-/// [`raikiri_style::SelectorQuery::matches`] expects, and what `:root`
-/// (`ancestors.is_empty()`) relies on.
-///
-/// Iterative, with an explicit `(node, ancestor depth)` stack rather than
-/// the native call stack: a script can build an arbitrarily deep chain
-/// (there is no other bound on tree depth before it reaches raikiri-dom),
-/// and a stack overflow there would abort the process rather than raise a
-/// catchable error. `ancestors` is truncated to each entry's recorded depth
-/// before that entry runs, the same "truncate on pop" shape
-/// `raikiri_style::cascade::selector_match`'s own explicit-stack walks use
-/// for the same reason.
-fn find_in_tree<T>(
-    doc: &raikiri_dom::Document,
-    root: usize,
-    mut visit: impl FnMut(usize, &[StyleNodeId]) -> Option<T>,
-) -> Option<T> {
-    let mut ancestors: Vec<StyleNodeId> = Vec::new();
-    let mut stack: Vec<(usize, usize)> = vec![(root, 0)];
-    while let Some((node, depth)) = stack.pop() {
-        ancestors.truncate(depth);
-        // `stack` only ever holds `root` or an entry from a resolved node's
-        // own `children`, both always resolvable in the same arena.
-        let Some(n) = doc.get_node(node) else {
-            continue; // cov:ignore: every stack entry comes from `root` or a node's own children, always valid in the same arena
-        };
-        let child_depth = if n.kind() == NodeKind::Element {
-            if let Some(found) = visit(node, &ancestors) {
-                return Some(found);
-            }
-            ancestors.push(StyleNodeId(node as u64));
-            depth + 1
-        } else {
-            depth
-        };
-        // Push in reverse so the LIFO stack pops children back in document order.
-        stack.extend(n.children.iter().rev().map(|&c| (c, child_depth)));
-    }
-    None
-}
-
-fn get_element_by_id(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let index = this_document(this, context)?;
-    let id = dom_string(args, 0, context)?;
-    if id.is_empty() {
-        return Ok(JsValue::null());
-    }
-    let found = with_state(context, |s| {
-        let doc = s.host.document();
-        find_in_tree(doc, index, |e, _| {
-            (doc.element_attribute(e, "id") == Some(id.as_str())).then_some(e)
-        })
-    })?;
-    wrap_optional(context, found)
-}
-
-fn query_selector(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let index = this_document(this, context)?;
-    let source = dom_string(args, 0, context)?;
-    let query = match SelectorQuery::parse(&source) {
-        Ok(query) => query,
-        Err(message) => return Err(throw_dom_exception(context, "SyntaxError", &message)),
-    };
-    let found = with_state(context, |s| {
-        // JS mutations leave `IS_IN_DOCUMENT` stale; the cascade matcher
-        // consults it for sibling combinators and structural pseudo-classes,
-        // so refresh it before walking (dirty-gated: a no-op when nothing
-        // changed since the last refresh).
-        s.host.document_mut().mark_in_document_flags();
-        let doc = s.host.document();
-        find_in_tree(doc, index, |e, ancestors| {
-            query
-                .matches(doc, StyleNodeId(e as u64), ancestors)
-                .then_some(e)
-        })
-    })?;
-    wrap_optional(context, found)
-}
-
 /// `Document.createElement` (DOM §4.5). Every element it creates is in the
 /// HTML namespace (there is no `createElementNS` binding yet), so a
 /// `<template>` always needs the same template-contents fragment root the
@@ -643,7 +558,6 @@ pub(crate) const ELEMENT_MEMBERS: Members = Members {
     getters: &[
         ("tagName", tag_name),
         ("localName", local_name),
-        ("id", id),
         ("classList", class_list),
     ],
     accessors: &[("innerHTML", inner_html, set_inner_html)],
@@ -667,11 +581,7 @@ pub(crate) const DOCUMENT_MEMBERS: Members = Members {
         ("body", body),
     ],
     accessors: &[],
-    methods: &[
-        ("getElementById", 1, get_element_by_id),
-        ("querySelector", 1, query_selector),
-        ("createElement", 1, create_element),
-    ],
+    methods: &[("createElement", 1, create_element)],
 };
 
 #[cfg(test)]

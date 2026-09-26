@@ -182,72 +182,6 @@ fn class_list_function_lengths_reflect_webidl_arity() {
 }
 
 #[test]
-fn query_selector_uses_full_selectors_in_tree_order() {
-    let mut rt = rt();
-    rt.evaluate(
-        "var a = document.createElement('div'); a.setAttribute('class', 'c');
-         var b = document.createElement('span'); a.appendChild(b);
-         document.body.appendChild(a);",
-    )
-    .unwrap();
-    ok(&mut rt, "document.querySelector('div.c > span') === b");
-    ok(&mut rt, "document.querySelector('.c') === a");
-    ok(&mut rt, "document.querySelector('p') === null");
-    ok(
-        &mut rt,
-        "try { document.querySelector('p['); false } catch (e) { e instanceof DOMException && e.name === 'SyntaxError' && e.code === 12 }",
-    );
-}
-
-#[test]
-fn query_selector_returns_the_first_match_in_document_order() {
-    let mut rt = rt();
-    rt.evaluate(
-        "var first = document.createElement('p'); document.body.appendChild(first);
-         var second = document.createElement('p'); document.body.appendChild(second);",
-    )
-    .unwrap();
-    ok(&mut rt, "document.querySelector('p') === first");
-}
-
-#[test]
-fn query_selector_root_matches_document_element() {
-    let mut rt = rt();
-    ok(
-        &mut rt,
-        "document.querySelector(':root') === document.documentElement",
-    );
-}
-
-/// Models what a real embedder does: its layout pass refreshes
-/// `IS_IN_DOCUMENT` on entry (independently of any `querySelector` call),
-/// and script then mutates the tree afterward. Here that refresh is done
-/// directly against the document while `i` is still detached, so its bit
-/// is correctly cleared; script then attaches `i` as `b`'s previous
-/// sibling, and nothing else recomputes the bit on its own. A sibling
-/// combinator's candidate lookup consults the bit directly (unlike
-/// child/descendant combinators, which walk this binding's own
-/// always-accurate ancestor list), so without a fresh refresh right before
-/// `querySelector`'s own walk, `i`'s bit would still say "not in document"
-/// and `i + b` would wrongly fail to match `b`, a plain later sibling.
-#[test]
-fn query_selector_uses_fresh_in_document_flags() {
-    let mut rt = rt();
-    rt.evaluate("var i = document.createElement('i');").unwrap();
-    with_state(rt.context_mut(), |s| {
-        s.host.document_mut().mark_in_document_flags();
-    })
-    .unwrap();
-    rt.evaluate(
-        "document.body.appendChild(i);
-         var b = document.createElement('b');
-         document.body.appendChild(b);",
-    )
-    .unwrap();
-    ok(&mut rt, "document.querySelector('i + b') === b");
-}
-
-#[test]
 fn hierarchy_and_name_errors_are_dom_exceptions() {
     let mut rt = rt();
     ok(
@@ -349,32 +283,6 @@ fn mutations_mark_the_host_dirty_once_per_read() {
     rt.evaluate("document.body.setAttribute('class', 'q');")
         .unwrap();
     assert_eq!(flushes.get(), 0, "mutations alone never flush");
-}
-
-/// `find_in_tree`'s walk must not use the native call stack: a script can
-/// build an arbitrarily deep chain, and there is no other bound on it
-/// before it reaches raikiri-dom. Built directly against `Document` with
-/// `create_detached_element` + `attach_child` (both O(1)) rather than
-/// through JS `appendChild`, whose cycle check does an O(N) `parent_of`
-/// scan per call and would make building this chain quadratic.
-#[test]
-fn find_in_tree_walks_a_very_deep_chain_without_overflowing_the_stack() {
-    let (mut rt, body) = rt_with_body();
-    let deep = with_state(rt.context_mut(), |s| {
-        let doc = s.host.document_mut();
-        let mut parent = body;
-        for _ in 0..100_000 {
-            let child = doc.create_detached_element("div").unwrap();
-            doc.attach_child(parent, child);
-            parent = child;
-        }
-        doc.set_element_attribute(parent, "id", "deep").unwrap();
-        parent
-    })
-    .unwrap();
-    expose(&mut rt, "deep", deep);
-    ok(&mut rt, "document.getElementById('deep') === deep");
-    ok(&mut rt, "document.querySelector('#deep') === deep");
 }
 
 fn is_dirty(rt: &mut DomRuntime) -> bool {

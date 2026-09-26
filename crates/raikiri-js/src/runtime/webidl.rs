@@ -72,6 +72,19 @@ pub(crate) fn this_parent_node(this: &JsValue, context: &mut Context) -> JsResul
     }
 }
 
+/// Brand check for the `NonElementParentNode` mixin (Document,
+/// DocumentFragment; notably not Element).
+pub(crate) fn this_non_element_parent_node(
+    this: &JsValue,
+    context: &mut Context,
+) -> JsResult<usize> {
+    let index = this_node(this, context)?;
+    match kind_of(context, index)? {
+        NodeKind::Document | NodeKind::DocumentFragment => Ok(index),
+        _ => Err(type_error("'this' does not implement NonElementParentNode")),
+    }
+}
+
 /// Brand check for the `ChildNode` / `NonDocumentTypeChildNode` mixins
 /// (Element, and every `CharacterData` interface: Text, Comment,
 /// ProcessingInstruction).
