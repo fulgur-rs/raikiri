@@ -9,6 +9,7 @@ use boa_engine::{Context, JsResult, js_string};
 
 use crate::TestOutcome;
 use crate::dom::{DomBackend, JsRuntime, ScriptError};
+use crate::runtime::{DocumentHost, DomRuntime, RuntimeError};
 
 /// Why a testharness script could not produce a trustworthy result.
 #[derive(Debug)]
@@ -149,7 +150,7 @@ impl HarnessRuntime for JsRuntime {
     }
 }
 
-impl HarnessRuntime for crate::runtime::DomRuntime {
+impl HarnessRuntime for DomRuntime {
     fn evaluate_for_harness(&mut self, source: &str) -> Result<(), TestHarnessError> {
         self.evaluate(source).map(|_| ()).map_err(map_runtime_error)
     }
@@ -220,9 +221,9 @@ pub fn run_testharness_on_host<H>(
     host: H,
 ) -> Result<Vec<TestOutcome>, TestHarnessError>
 where
-    H: crate::runtime::DocumentHost,
+    H: DocumentHost,
 {
-    let mut runtime = crate::runtime::DomRuntime::new(host).map_err(map_runtime_error)?;
+    let mut runtime = DomRuntime::new(host).map_err(map_runtime_error)?;
     drive_testharness(&mut runtime, inline_script)
 }
 
@@ -233,10 +234,10 @@ fn map_script_error(error: ScriptError) -> TestHarnessError {
     }
 }
 
-fn map_runtime_error(error: crate::runtime::RuntimeError) -> TestHarnessError {
+fn map_runtime_error(error: RuntimeError) -> TestHarnessError {
     match error {
-        crate::runtime::RuntimeError::JavaScript(message) => TestHarnessError::JavaScript(message),
-        crate::runtime::RuntimeError::Host(message) => TestHarnessError::Dom(message),
+        RuntimeError::JavaScript(message) => TestHarnessError::JavaScript(message),
+        RuntimeError::Host(message) => TestHarnessError::Dom(message),
     }
 }
 
