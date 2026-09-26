@@ -139,12 +139,23 @@ impl DomRuntime {
 
 /// A readable message for an uncaught exception. Native errors (including
 /// ones already thrown into script as `TypeError` objects and so on) render
-/// as `Name: message`; other thrown values use their string form.
+/// as `Name: message`. A thrown object that Boa does not recognize as one of
+/// its own native errors -- notably a `DOMException`, whose name/message
+/// live in Rust-side object data rather than in Boa's error representation --
+/// runs `Error.prototype.toString` instead, which resolves the same
+/// `Name: message` form through its `name`/`message` accessors; anything
+/// else falls back to its own string form.
 fn error_message(error: &boa_engine::JsError, context: &mut Context) -> String {
-    error
-        .try_native(context)
-        .map(|native| native.to_string())
-        .unwrap_or_else(|_| error.to_string())
+    if let Ok(native) = error.try_native(context) {
+        return native.to_string();
+    }
+    if let Some(value) = error.as_opaque()
+        && value.is_object()
+        && let Ok(message) = value.to_string(context)
+    {
+        return message.to_std_string_escaped();
+    }
+    error.to_string()
 }
 
 #[cfg(test)]

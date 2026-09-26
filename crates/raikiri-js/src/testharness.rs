@@ -5,7 +5,7 @@
 //! test-specific assertion/reporting shim.
 
 use boa_engine::object::builtins::JsArray;
-use boa_engine::{Context, JsResult, js_string};
+use boa_engine::{Context, JsNativeError, JsResult, js_string};
 
 use crate::TestOutcome;
 use crate::runtime::{DocumentHost, DomRuntime, RuntimeError};
@@ -196,7 +196,12 @@ fn has_pending_font_callbacks(context: &mut Context) -> JsResult<bool> {
     let value = context
         .global_object()
         .get(js_string!("__raikiri_font_callbacks"), context)?;
-    let object = value.as_object().expect("font callback queue is an array");
+    // A script can reassign this shim global to any value
+    // (`__raikiri_font_callbacks = 1`); a non-object value must surface as an
+    // ordinary script error, not panic the process.
+    let object = value.as_object().ok_or_else(|| {
+        JsNativeError::typ().with_message("__raikiri_font_callbacks is not an object")
+    })?;
     let array = JsArray::from_object(object.clone())?;
     Ok(array.length(context)? > 0)
 }
@@ -205,13 +210,21 @@ fn read_results(context: &mut Context) -> JsResult<Vec<TestOutcome>> {
     let value = context
         .global_object()
         .get(js_string!("__raikiri_results"), context)?;
-    let object = value.as_object().expect("test results are an array");
+    // Same reassignment hazard as `has_pending_font_callbacks`, for
+    // `__raikiri_results` itself.
+    let object = value
+        .as_object()
+        .ok_or_else(|| JsNativeError::typ().with_message("__raikiri_results is not an object"))?;
     let array = JsArray::from_object(object.clone())?;
     let len = array.length(context)?;
     let mut outcomes = Vec::with_capacity(len as usize);
     for index in 0..len {
         let entry = array.get(index, context)?;
-        let object = entry.as_object().expect("test result is an object");
+        // A script can also push a non-object entry directly
+        // (`__raikiri_results.push(1)`), bypassing the shim's own `test()`.
+        let object = entry
+            .as_object()
+            .ok_or_else(|| JsNativeError::typ().with_message("test result is not an object"))?;
         outcomes.push(TestOutcome {
             name: object
                 .get(js_string!("name"), context)?

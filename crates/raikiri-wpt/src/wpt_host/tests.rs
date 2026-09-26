@@ -87,6 +87,29 @@ fn style_inner_html_replaces_sheet_and_template_inner_html_adds_none() {
     );
 }
 
+/// A `<template>` created by script, not parsed from source, must still get
+/// a template-contents fragment root: without one, `innerHTML` on it writes
+/// directly to the template element's own children, and a `<style>` in
+/// there would be walked by the live-document stylesheet resync and wrongly
+/// become an active author stylesheet once the template is connected.
+#[test]
+fn script_created_template_inner_html_adds_no_stylesheet() {
+    let (_dir, mut rt) = runtime("<div id=t></div>");
+    assert_eq!(
+        num(&mut rt, "document.getElementById('t').offsetHeight"),
+        0.0
+    );
+    rt.evaluate(
+        "var tp = document.createElement('template'); document.body.appendChild(tp); \
+         tp.innerHTML = '<style>#t { height: 99px }</style>';",
+    )
+    .unwrap();
+    assert_eq!(
+        num(&mut rt, "document.getElementById('t').offsetHeight"),
+        0.0
+    );
+}
+
 #[test]
 fn detached_style_applies_only_after_connection() {
     let (_dir, mut rt) = runtime("<div id=t></div>");

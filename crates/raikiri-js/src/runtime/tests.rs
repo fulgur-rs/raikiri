@@ -320,6 +320,21 @@ fn dom_exceptions_are_errors_with_name_message_and_code() {
     );
 }
 
+/// An uncaught `DOMException` is an opaque object (its data lives in Rust
+/// state, not in Boa's own error representation), so `try_native` fails for
+/// it; the reported message must still run `Error.prototype.toString`
+/// (`Name: message`) rather than falling back to an opaque object dump.
+#[test]
+fn uncaught_dom_exception_message_reports_name_and_message() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    let err = rt.evaluate("document.body.appendChild(document);");
+    assert!(
+        matches!(err, Err(RuntimeError::JavaScript(ref m)) if m.contains("HierarchyRequestError")),
+        "{err:?}"
+    );
+}
+
 #[test]
 fn host_failures_take_precedence_over_script_results() {
     let (host, ..) = StubHost::page();

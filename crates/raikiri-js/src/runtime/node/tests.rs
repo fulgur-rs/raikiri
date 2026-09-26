@@ -399,6 +399,20 @@ fn inner_html_serializes_and_replaces_children_through_the_host_parser() {
     ok(&mut rt, "p.textContent === 'xyz'");
 }
 
+/// `document.createElement('template')` must allocate a template-contents
+/// fragment root the same way the HTML parser does, so `innerHTML` writes
+/// end up in that fragment rather than as the template element's own
+/// children: a script-created `<template>` has no visible `textContent`.
+#[test]
+fn create_element_wires_a_template_contents_fragment_for_script_created_templates() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var t = document.createElement('template'); document.body.appendChild(t); t.innerHTML = 'x';",
+    )
+    .unwrap();
+    ok(&mut rt, "t.textContent === ''");
+}
+
 /// `[LegacyNullToEmptyString]` (the `innerHTML` attribute's WebIDL type):
 /// `null` sets the empty string, not the string `"null"` that plain
 /// `ToString` conversion would otherwise produce.
@@ -435,6 +449,42 @@ fn inner_html_getter_reports_an_invalid_attribute_name_as_a_host_error() {
         matches!(err, Err(RuntimeError::Host(ref m)) if m.contains("invalid attribute name")),
         "{err:?}"
     );
+}
+
+/// The arena index in raikiri-dom's own error message (`... on innerHTML
+/// node {id}`) must never reach script: a script that catches the getter's
+/// exception should see a fixed message with no digits from that index,
+/// even though the harness-facing host failure above still records the
+/// original, more detailed message.
+#[test]
+fn inner_html_getter_js_visible_message_hides_the_node_index() {
+    let (mut rt, body) = rt_with_body();
+    with_state(rt.context_mut(), |s| {
+        let doc = s.host.document_mut();
+        let child = doc.create_detached_element("div").unwrap();
+        doc.append_child(body, child).unwrap();
+        doc.set_element_attributes(child, vec![("1bad".into(), "x".into())]);
+    })
+    .unwrap();
+    // The overall `evaluate` call still reports a host failure (the recorded
+    // detail, not the caught exception's message), so the JS-visible message
+    // is stashed into a global for a second, unrelated `evaluate` call to
+    // read back.
+    let _ = rt.evaluate(
+        "var caughtMessage = ''; \
+         try { document.body.innerHTML; } catch (e) { caughtMessage = e.message; }",
+    );
+    let message = rt
+        .evaluate("caughtMessage")
+        .unwrap()
+        .to_string(rt.context_mut())
+        .unwrap()
+        .to_std_string_escaped();
+    assert!(
+        !message.chars().any(|c| c.is_ascii_digit()),
+        "node index leaked into the JS-visible message: {message:?}"
+    );
+    assert!(message.contains("innerHTML"), "{message:?}");
 }
 
 #[test]

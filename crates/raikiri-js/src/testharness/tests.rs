@@ -220,3 +220,40 @@ fn run_testharness_on_host_maps_uncaught_js_errors_to_javascript_errors() {
         "{result:?}"
     );
 }
+
+/// A script that reassigns the font-callback-queue shim global to a
+/// non-object must not panic the process; it should surface as an ordinary
+/// harness error instead.
+#[test]
+fn reassigning_the_font_callback_queue_is_a_javascript_error_not_a_panic() {
+    let (host, ..) = StubHost::page();
+    let result = run_testharness_on_host("__raikiri_font_callbacks = 1;", host);
+    assert!(
+        matches!(result, Err(TestHarnessError::JavaScript(_))),
+        "{result:?}"
+    );
+}
+
+/// Same as above, but for a non-object entry pushed into the results queue
+/// (the queue itself is still a well-formed array).
+#[test]
+fn pushing_a_non_object_test_result_is_a_javascript_error_not_a_panic() {
+    let (host, ..) = StubHost::page();
+    let result = run_testharness_on_host("__raikiri_results.push(1);", host);
+    assert!(
+        matches!(result, Err(TestHarnessError::JavaScript(_))),
+        "{result:?}"
+    );
+}
+
+/// Same as above, but the results queue global itself is reassigned to a
+/// non-object.
+#[test]
+fn reassigning_the_results_queue_is_a_javascript_error_not_a_panic() {
+    let (host, ..) = StubHost::page();
+    let result = run_testharness_on_host("__raikiri_results = 5;", host);
+    assert!(
+        matches!(result, Err(TestHarnessError::JavaScript(_))),
+        "{result:?}"
+    );
+}

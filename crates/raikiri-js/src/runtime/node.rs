@@ -8,8 +8,8 @@ use raikiri_style::{SelectorQuery, StyleNodeId};
 use super::host::HostError;
 use super::interfaces::{Members, closure_function, wrap, wrap_optional};
 use super::webidl::{
-    arg_node, dom_string, host_failure, this_document, this_element, this_node,
-    throw_dom_exception, with_state,
+    arg_node, dom_string, host_failure, host_failure_with_message, this_document, this_element,
+    this_node, throw_dom_exception, with_state,
 };
 
 /// Record that the DOM changed so the next layout-dependent read flushes.
@@ -95,6 +95,11 @@ fn text_content(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResul
     let text = with_state(context, |s| {
         let doc = s.host.document();
         match doc.get_node(index).map(|n| n.kind()) {
+            // `element_text_content` only computes descendant text for an
+            // Element node; a DocumentFragment shares this arm just to reach
+            // that same call, which then returns `None` for it, so a
+            // fragment's `textContent` is always `null` here rather than its
+            // DOM-specified descendant text.
             Some(NodeKind::Element | NodeKind::DocumentFragment) => doc.element_text_content(index),
             Some(NodeKind::Text) => doc
                 .get_node(index)
@@ -381,12 +386,21 @@ fn class_list(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
 /// real HTML fragment parser can legitimately produce a name this fails on.
 /// Treated as a host failure, the same as the setter's own fragment-parse
 /// failure, until raikiri-dom's serializer stops applying that check here.
+/// `Document::serialize_inner_html`'s own message names the offending arena
+/// index; that index is an implementation detail and must never be
+/// observable from script, so the exception thrown into script carries a
+/// fixed message instead, while the harness-facing host failure keeps the
+/// original, more specific one.
 fn inner_html(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     let result = with_state(context, |s| s.host.document().serialize_inner_html(index))?;
     match result {
         Ok(html) => Ok(js_str(&html)),
-        Err(message) => Err(host_failure(context, HostError(message))),
+        Err(message) => Err(host_failure_with_message(
+            context,
+            HostError(message),
+            "innerHTML serialization failed: invalid attribute name",
+        )),
     }
 }
 
@@ -555,6 +569,13 @@ fn query_selector(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     wrap_optional(context, found)
 }
 
+/// `Document.createElement` (DOM §4.5). Every element it creates is in the
+/// HTML namespace (there is no `createElementNS` binding yet), so a
+/// `<template>` always needs the same template-contents fragment root the
+/// HTML parser wires for a parsed `<template>`
+/// ([`raikiri_dom::Document::allocate_template_fragment_root`]); without it,
+/// a later `innerHTML` write would land directly on the template element's
+/// own children instead of its (isolated, inert) contents.
 fn create_element(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     this_document(this, context)?;
     let name = dom_string(args, 0, context)?.to_ascii_lowercase();
@@ -563,6 +584,11 @@ fn create_element(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     })?;
     match result {
         Ok(index) => {
+            if name == "template" {
+                with_state(context, |s| {
+                    s.host.document_mut().allocate_template_fragment_root(index);
+                })?;
+            }
             mark_dirty(context)?;
             Ok(wrap(context, index)?.into())
         }

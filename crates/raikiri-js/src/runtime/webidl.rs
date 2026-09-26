@@ -81,8 +81,24 @@ pub(crate) fn throw_dom_exception(context: &mut Context, name: &str, message: &s
 
 /// Record a host failure for the harness, then surface it as an `Error`.
 pub(crate) fn host_failure(context: &mut Context, error: HostError) -> JsError {
+    let visible_message = error.0.clone();
+    host_failure_with_message(context, error, visible_message)
+}
+
+/// Record a host failure for the harness (the same as [`host_failure`]), but
+/// surface a caller-supplied message to script instead of the failure's own
+/// text. Some host failure messages carry an internal detail -- such as a
+/// raikiri-dom arena node index -- that must never be observable from
+/// script; the harness-facing recorded failure keeps the original message.
+pub(crate) fn host_failure_with_message(
+    context: &mut Context,
+    error: HostError,
+    visible_message: impl Into<String>,
+) -> JsError {
     record_failure(context, &error.0);
-    JsNativeError::error().with_message(error.0).into()
+    JsNativeError::error()
+        .with_message(visible_message.into())
+        .into()
 }
 
 /// Remember `message` as the evaluation's host failure unless one is

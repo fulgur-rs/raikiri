@@ -1,5 +1,7 @@
-//! [`DocumentHost`] over a prepared WPT document: one screen viewport,
-//! style and layout rebuilt lazily after DOM mutations.
+//! [`DocumentHost`] over a prepared WPT document: one screen viewport. Style
+//! and layout are rebuilt from scratch on every `flush` call; it is the
+//! runtime that only calls `flush` when a DOM mutation happened since the
+//! last one, right before a layout-dependent read.
 
 use std::path::{Path, PathBuf};
 

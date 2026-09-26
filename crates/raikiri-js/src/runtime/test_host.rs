@@ -49,7 +49,6 @@ impl StubHost {
         )
     }
 
-    #[allow(dead_code, reason = "used by geometry tests")]
     pub fn rect(height: f64) -> BoxGeometry {
         BoxGeometry {
             border_box: DomRect {
