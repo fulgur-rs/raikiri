@@ -9,6 +9,7 @@ use boa_engine::{Context, JsObject, JsValue, Source};
 
 pub(crate) mod collections;
 pub(crate) mod document;
+pub(crate) mod event_loop;
 pub(crate) mod events;
 pub(crate) mod geometry;
 pub mod host;
@@ -24,6 +25,7 @@ pub(crate) mod webidl;
 #[cfg(test)]
 pub(crate) mod test_host;
 
+pub use event_loop::{Abort, Limits, RunOptions};
 pub use host::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
 
 /// Mutable runtime state shared by every native binding.
@@ -52,6 +54,8 @@ pub(crate) struct State {
     /// Dispatch is out of scope for this runtime -- only registration state
     /// is kept.
     pub listeners: HashMap<Option<usize>, Vec<events::Listener>>,
+    /// Task and microtask queues, timers, and the virtual clock.
+    pub event_loop: event_loop::EventLoop,
 }
 
 /// Shared handle to [`State`], stored in the Boa context's host data.
@@ -74,6 +78,9 @@ pub enum RuntimeError {
     /// The embedder failed (layout, stylesheet, fragment parse) while the
     /// script ran. Reported instead of any exception it caused.
     Host(String),
+    /// A resource limit was reached, now or by an earlier run. The runtime
+    /// runs nothing else once this happens.
+    Aborted(Abort),
 }
 
 impl std::fmt::Display for RuntimeError {
@@ -81,6 +88,7 @@ impl std::fmt::Display for RuntimeError {
         match self {
             Self::JavaScript(m) => write!(f, "JavaScript error: {m}"),
             Self::Host(m) => write!(f, "host error: {m}"),
+            Self::Aborted(reason) => write!(f, "aborted: {reason}"),
         }
     }
 }
@@ -94,8 +102,17 @@ pub struct DomRuntime {
 
 impl DomRuntime {
     /// Create a realm, register DOM interfaces, and expose `window`,
-    /// `self`, and `document`.
+    /// `self`, and `document`, with the default [`RunOptions`].
     pub fn new<H: DocumentHost>(host: H) -> Result<Self, RuntimeError> {
+        Self::with_options(host, RunOptions::default())
+    }
+
+    /// [`DomRuntime::new`] with explicit resource limits.
+    pub fn with_options<H: DocumentHost>(
+        host: H,
+        options: RunOptions,
+    ) -> Result<Self, RuntimeError> {
+        let limits = options.limits;
         let node_count = host.document().node_count();
         let state = State {
             host: Box::new(host),
@@ -108,8 +125,20 @@ impl DomRuntime {
             child_node_lists: HashMap::new(),
             children_collections: HashMap::new(),
             listeners: HashMap::new(),
+            event_loop: event_loop::EventLoop::new(limits.clone()),
         };
-        let mut context = Context::default();
+        let executor = Rc::new(event_loop::RaikiriJobExecutor);
+        let built = Context::builder().job_executor(executor).build();
+        // cov:ignore: building fails only for a context that can block while
+        // another context is active, and this builder never asks to block.
+        let Ok(mut context) = built else {
+            return Err(RuntimeError::JavaScript(
+                "could not create a realm".to_owned(),
+            ));
+        };
+        let runtime_limits = context.runtime_limits_mut();
+        runtime_limits.set_loop_iteration_limit(limits.max_loop_iterations);
+        runtime_limits.set_recursion_limit(limits.max_recursion);
         context.insert_data(Shared(Rc::new(RefCell::new(state))));
         // cov:ignore: install only defines properties on a fresh realm's global
         // object and the interface prototypes it just created, which Boa never rejects.
@@ -127,18 +156,53 @@ impl DomRuntime {
     /// An uncaught exception is [`RuntimeError::JavaScript`]. If a host
     /// failure was recorded while the script ran, [`RuntimeError::Host`] is
     /// returned instead, whether or not the script caught the exception.
+    ///
+    /// A microtask checkpoint follows the script, as after any script in a
+    /// page, so promise reactions it queued have run on return. A resource
+    /// limit reached by the script or the checkpoint is
+    /// [`RuntimeError::Aborted`], which script cannot catch; after that the
+    /// runtime refuses to evaluate anything else.
     pub fn evaluate(&mut self, source: &str) -> Result<JsValue, RuntimeError> {
+        if let Some(reason) = event_loop::aborted(&mut self.context) {
+            return Err(RuntimeError::Aborted(reason));
+        }
         let result = self.context.eval(Source::from_bytes(source));
+        let checkpoint = match &result {
+            Err(error) => match event_loop::abort_for(error) {
+                Some(reason) => Err(event_loop::abort(&mut self.context, reason)),
+                None => event_loop::microtask_checkpoint(&mut self.context),
+            },
+            Ok(_) => event_loop::microtask_checkpoint(&mut self.context),
+        };
         let deferred = self
             .context
             .remove_data::<webidl::DeferredHostFailure>()
             .map(|f| f.0);
         let recorded = shared(&self.context).0.borrow_mut().host_failure.take();
         let failure = recorded.or(deferred);
+        if let Err(reason) = checkpoint {
+            return Err(RuntimeError::Aborted(reason));
+        }
         if let Some(message) = failure {
             return Err(RuntimeError::Host(message));
         }
         result.map_err(|error| RuntimeError::JavaScript(error_message(&error, &mut self.context)))
+    }
+
+    /// Run tasks and microtasks until both queues are empty or a limit is hit.
+    ///
+    /// Each turn takes the task due earliest (registration order breaks
+    /// ties), advances the virtual clock to its due time, runs it, and then
+    /// performs a microtask checkpoint. Reaching a limit discards every
+    /// queue; the runtime then refuses to run anything else, and later
+    /// calls return the same [`Abort`].
+    pub fn run_until_idle(&mut self) -> Result<(), Abort> {
+        event_loop::run_until_idle(&mut self.context)
+    }
+
+    /// The virtual clock, in milliseconds since the runtime was created.
+    pub fn now(&self) -> f64 {
+        shared(&self.context).0.borrow().event_loop.now
     }
 
     /// The underlying Boa context, for harness adapters.
@@ -169,7 +233,7 @@ impl DomRuntime {
 /// runs `Error.prototype.toString` instead, which resolves the same
 /// `Name: message` form through its `name`/`message` accessors; anything
 /// else falls back to its own string form.
-fn error_message(error: &boa_engine::JsError, context: &mut Context) -> String {
+pub(crate) fn error_message(error: &boa_engine::JsError, context: &mut Context) -> String {
     if let Ok(native) = error.try_native(context) {
         return native.to_string();
     }

@@ -208,6 +208,7 @@ fn map_runtime_error(error: RuntimeError) -> TestHarnessError {
     match error {
         RuntimeError::JavaScript(message) => TestHarnessError::JavaScript(message),
         RuntimeError::Host(message) => TestHarnessError::Dom(message),
+        RuntimeError::Aborted(reason) => TestHarnessError::JavaScript(reason.to_string()),
     }
 }
 
