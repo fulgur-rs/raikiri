@@ -80,3 +80,6 @@ fn collect_urls<'i, 't>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

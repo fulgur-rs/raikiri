@@ -7,6 +7,33 @@ use std::thread;
 use ureq::unversioned::resolver::{DefaultResolver, ResolvedSocketAddrs, Resolver};
 use ureq::unversioned::transport::{DefaultConnector, NextTimeout};
 
+#[test]
+fn default_system_provider_fetches_loopback_without_ssrf_filtering() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        serve_one_response_capturing_request(stream)
+    });
+    let url = Url::parse(&format!("http://{address}/browser-resource")).unwrap();
+    let resource = SystemHttpProvider::default()
+        .fetch(Request {
+            url: url.clone(),
+            method: RaikiriMethod::Get,
+            content_type: None,
+            headers: vec![("X-Browser".into(), "native".into())],
+            body: Body::Empty,
+            signal: None,
+            kind: ResourceKind::Other,
+        })
+        .unwrap();
+    let captured = server.join().unwrap();
+    assert_eq!(resource.bytes.as_ref(), b"ok");
+    assert_eq!(resource.final_url, url);
+    assert!(captured.request_line.starts_with("GET /browser-resource "));
+    assert!(captured.has_header("x-browser", "native"));
+}
+
 fn test_url() -> Url {
     Url::parse("https://example.test/x.png").unwrap()
 }

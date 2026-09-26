@@ -4,6 +4,22 @@ use std::collections::HashMap;
 
 use crate::test_http_server::TestServer;
 
+#[test]
+fn invalid_utf8_document_reports_url_and_declared_encoding() {
+    let server = TestServer::start(HashMap::from([(
+        "/invalid.html",
+        ("text/html; charset=utf-8", vec![0xff, 0xfe]),
+    )]));
+    let url = server.url("invalid.html");
+    let error = render_screen_url(&SystemHttpProvider::new(), url.clone(), 32, 32)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("HTML parse failed"));
+    assert!(error.contains(url.as_str()));
+    assert!(error.contains("declared encoding: utf-8"));
+    assert_eq!(server.finish(), ["/invalid.html"]);
+}
+
 fn red_png() -> Vec<u8> {
     let mut output = Vec::new();
     let mut encoder = png::Encoder::new(&mut output, 2, 2);

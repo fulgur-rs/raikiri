@@ -6,6 +6,68 @@ use super::render_print_url;
 use crate::reftest::RenderedImage;
 use crate::test_http_server::{TestResponse, TestServer};
 
+#[test]
+fn rejects_zero_fallback_dimensions_before_fetching() {
+    let server = TestServer::start(HashMap::<&str, TestResponse>::new());
+    let provider = SystemHttpProvider::new();
+    for (width, height) in [(0, 32), (32, 0), (0, 0)] {
+        let error = render_print_url(&provider, server.url("index.html"), width, height)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("dimensions must be positive"));
+    }
+    assert!(server.finish().is_empty());
+}
+
+#[test]
+fn invalid_utf8_document_reports_base_parse_error_and_url() {
+    let server = TestServer::start(HashMap::from([(
+        "/invalid.html",
+        ("text/html", vec![0xff, 0xfe]),
+    )]));
+    let url = server.url("invalid.html");
+    let error = render_print_url(&SystemHttpProvider::new(), url.clone(), 32, 32)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("HTML base URL parse failed"));
+    assert!(error.contains(url.as_str()));
+    assert_eq!(server.finish(), ["/invalid.html"]);
+}
+
+#[test]
+fn prepares_background_resources_for_the_resolved_first_named_page() {
+    let server = TestServer::start(HashMap::from([
+        (
+            "/pages/index.html",
+            TestResponse::ok(
+                "text/html",
+                br#"<!doctype html><style>
+                    @page wide {size:48px 48px;margin:0}
+                    @page narrow {size:32px 32px;margin:0;background-image:url(red.png)}
+                    body {display:grid;grid-template-columns:100%;grid-template-rows:auto auto;margin:0}
+                </style><body>
+                    <div style="grid-row:2;order:0;page:wide;height:8px">wide</div>
+                    <div style="grid-row:1;order:1;page:narrow;height:8px">narrow</div>
+                </body>"#.to_vec(),
+            ),
+        ),
+        ("/pages/red.png", TestResponse::ok("image/png", red_png())),
+    ]));
+    let document = render_print_url(
+        &SystemHttpProvider::new(),
+        server.url("pages/index.html"),
+        64,
+        64,
+    )
+    .unwrap();
+    assert_eq!(
+        (document.pages[0].width, document.pages[0].height),
+        (32, 32)
+    );
+    assert!(contains_red_pixel(&document.pages[0]));
+    assert!(server.finish().iter().any(|path| path == "/pages/red.png"));
+}
+
 fn red_png() -> Vec<u8> {
     let mut output = Vec::new();
     let mut encoder = png::Encoder::new(&mut output, 2, 2);

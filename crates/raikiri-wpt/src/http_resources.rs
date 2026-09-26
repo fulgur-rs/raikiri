@@ -116,3 +116,6 @@ pub(crate) fn prepare_cascade_images(
         .page
         .for_each_background_image_mut(|image| prepare_background_image(image, base_url, resolver));
 }
+
+#[cfg(test)]
+mod tests;
