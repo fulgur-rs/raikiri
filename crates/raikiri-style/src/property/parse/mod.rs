@@ -101,6 +101,20 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                     return Some(PropertyValue::WordSpacing(parsed));
                 }
             }
+            // `tab-size` keeps its simple additive length calc instead of
+            // reducing it through the generic deferred-value path
+            // (`parse_tab_size` の「`calc()` の扱い」節 — percentage は
+            // Percentages: N/A により reject、`sign()` /
+            // container-relative unit を含む形は drop のまま)。
+            if normalized_name == "tab-size" {
+                let mut reparsed_input = ParserInput::new(value.as_ref());
+                let mut reparsed = Parser::new(&mut reparsed_input);
+                if let Some(parsed) = parse_tab_size(&mut reparsed)
+                    && reparsed.expect_exhausted().is_ok()
+                {
+                    return Some(PropertyValue::TabSize(parsed));
+                }
+            }
             if normalized_name == "text-underline-offset" {
                 let mut reparsed_input = ParserInput::new(value.as_ref());
                 let mut reparsed = Parser::new(&mut reparsed_input);

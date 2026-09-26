@@ -1,7 +1,7 @@
 use super::*;
 use crate::property::{
     BorderRadius, BorderStyle, BoxShadowItem, CalcLengthPercentage, CssColor, Length,
-    LengthPercentageCalc, LetterSpacingValue, Outline, OutlineColor, OutlineStyle, Sides,
+    LengthPercentageCalc, LetterSpacingValue, Outline, OutlineColor, OutlineStyle, Sides, TabSize,
     TextDecorationThickness, TextShadowColor, TextUnderlineOffset,
 };
 use crate::specified::SpecifiedValues;
@@ -415,6 +415,45 @@ fn letter_spacing_lift_preserves_computed_form() {
     assert_eq!(
         resolve_letter_spacing(lifted, ComputedLength(12.0), None, &CTX),
         computed,
+    );
+}
+
+#[test]
+fn tab_size_calc_resolves_em_against_font_size() {
+    // Generic `em` math (not fixture-specific): `px` + `em * font-size`.
+    let font_size = ComputedLength(20.0);
+    assert_eq!(
+        resolve_tab_size(
+            TabSize::Calc(LengthPercentageCalc {
+                percent: 0.0,
+                px: 10.0,
+                em: 0.5,
+            }),
+            font_size,
+            None,
+            &CTX,
+        ),
+        ComputedTabSize::Length(ComputedLength(20.0)),
+    );
+}
+
+#[test]
+fn tab_size_calc_clamps_negative_derived_to_zero() {
+    // CSS Values 4 §10.7: derived negative lengths clamp to `0`
+    // (spec `[0,∞]` — authored negatives are still parse-rejected).
+    let font_size = ComputedLength(20.0);
+    assert_eq!(
+        resolve_tab_size(
+            TabSize::Calc(LengthPercentageCalc {
+                percent: 0.0,
+                px: 10.0,
+                em: -1.0,
+            }),
+            font_size,
+            None,
+            &CTX,
+        ),
+        ComputedTabSize::Length(ComputedLength(0.0)),
     );
 }
 

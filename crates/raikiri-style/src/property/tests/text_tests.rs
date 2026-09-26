@@ -4293,6 +4293,51 @@ fn tab_size_rejects_percentage() {
 }
 
 #[test]
+fn tab_size_parses_additive_length_calc() {
+    // Same additive `px` + `em` path as `letter-spacing` /
+    // `word-spacing` (`letter_spacing_parses_em_calc_for_computed_resolution`
+    // sibling) — deferred until computed font-size resolution.
+    assert_eq!(
+        parse("calc(10px + 0.5em)", "tab-size"),
+        Some(PropertyValue::TabSize(TabSize::Calc(
+            LengthPercentageCalc {
+                percent: 0.0,
+                px: 10.0,
+                em: 0.5,
+            }
+        )))
+    );
+    assert_eq!(
+        parse("calc(10px - 0.5em)", "tab-size"),
+        Some(PropertyValue::TabSize(TabSize::Calc(
+            LengthPercentageCalc {
+                percent: 0.0,
+                px: 10.0,
+                em: -0.5,
+            }
+        )))
+    );
+}
+
+#[test]
+fn tab_size_collapses_single_value_calc_to_length() {
+    // `parse_text_indent_calc_terms` folds a pure-`px` sum to `Length`,
+    // so it takes the same non-negative filter as a plain length.
+    assert_eq!(
+        parse("calc(10px)", "tab-size"),
+        Some(PropertyValue::TabSize(TabSize::Length(Length::Px(10.0))))
+    );
+}
+
+#[test]
+fn tab_size_rejects_percentage_calc_terms() {
+    // spec propdef "Percentages: N/A" — percentage inside `calc()` is
+    // also invalid (same guard as the `parse_value` deferred path).
+    assert_eq!(parse("calc(10px + 5%)", "tab-size"), None);
+    assert_eq!(parse("calc(50%)", "tab-size"), None);
+}
+
+#[test]
 fn tab_size_rejects_unknown_keyword() {
     assert_eq!(parse("bogus", "tab-size"), None);
     assert_eq!(parse("auto", "tab-size"), None);

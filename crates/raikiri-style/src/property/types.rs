@@ -5705,6 +5705,10 @@ impl HyphenateLimitChars {
 /// - [`Length`](Self::Length) — `<length [0,∞]>`。percentage を持たない点が
 ///   [`LineHeight::Length`] (`<length-percentage>`) と異なる — spec propdef
 ///   の "Percentages: N/A" が根拠。
+/// - [`Calc`](Self::Calc) — `<length>` alternative の `calc()` 形
+///   (`calc(10px + 0.5em)` 等)。percentage 項は parse 時に reject
+///   (同 "Percentages: N/A") し、`sign()` / container-relative unit
+///   (`cqw` 等) を含む calc は未対応のまま drop する。
 ///
 /// # Non-negative constraint
 ///
@@ -5731,6 +5735,12 @@ pub enum TabSize {
     /// `<length [0,∞]>` — absolute tab size。percentage は持たない (type doc
     /// の "Percentages: N/A" 節参照)。
     Length(Length),
+    /// additive `calc()` 由来の deferred length — [`LetterSpacingValue::Calc`]
+    /// と同じ [`LengthPercentageCalc`] 表現 (`px` + `em`) を保持し、
+    /// [`crate::resolve::resolve_tab_size`] が自要素の computed font-size で
+    /// 解決する。percentage は `parse_tab_size` が reject 済み
+    /// (spec propdef "Percentages: N/A") のため到達不能。
+    Calc(LengthPercentageCalc),
 }
 
 /// `line-break` property の value (CSS Text 3 §5.2).
