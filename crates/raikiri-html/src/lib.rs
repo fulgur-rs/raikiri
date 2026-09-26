@@ -6,12 +6,15 @@
 //! - Document layer: [`parse_html`] / [`parse_html_with_limits`] /
 //!   [`parse_html_with_resources`] assemble a cascaded [`HtmlDocument`];
 //!   [`build_cascaded`] and friends expose the cascade orchestration.
+//! - Layout layer: [`layout`] returns an owned [`DocumentLayout`] with
+//!   borrowed [`Page`] and [`Fragment`] views for drawing consumers.
 //! - Render layer: [`render_streaming`] is the single page-streaming entry
 //!   point; [`RenderOptions`] combines the consumer resource handoff
 //!   ([`RenderResources`]) with page-event and consumer-property observers.
 
 mod cascade;
 mod document;
+mod document_layout;
 mod document_parse;
 mod import;
 mod parse;
@@ -28,6 +31,10 @@ pub use cascade::{
     build_rule_tree_with_consumer_properties,
 };
 pub use document::HtmlDocument;
+pub use document_layout::{
+    Anchor, AnchorIndex, DocumentLayout, DomView, Fragment, FragmentKind, LayoutOptions,
+    LayoutStatus, Link, Page, PageGeometry, PageMode, RepeatKind, layout,
+};
 pub use document_parse::{parse_html, parse_html_with_limits};
 pub use parse::{effective_document_base_url, parse, parse_fragment, parse_with_sink};
 pub use render::{RenderOptions, plan, render_streaming};
@@ -44,8 +51,13 @@ pub use ua::MINIMAL_UA_CSS;
 // them without depending on the style or text-layout implementation crates.
 pub use parley::FontContext;
 pub use raikiri_style::{
-    CascadeResult, ConsumerPropertyGrammar, ConsumerPropertyRegistration, MediaContext,
-    PageContextQuery,
+    CascadeResult, ComputedValues, ConsumerPropertyGrammar, ConsumerPropertyRegistration,
+    MediaContext, PageCascadeResult, PageContextQuery,
+};
+
+pub use raikiri_traits::{
+    ConsumerPropertyEvent, ConsumerPropertyObserver, NodeId, NodeKind, PageDefaults, PaintInsets,
+    PaintRect, RenderError, RenderWarning, StreamingConfig,
 };
 
 #[cfg(test)]
