@@ -11,8 +11,13 @@ use boa_engine::{Context, JsNativeError, JsResult, JsValue, js_string};
 use super::interfaces::{Members, function};
 use super::webidl::{dom_string, node_index, with_state};
 
-/// One registered listener (DOM §2.7's "an event listener" struct, minus
-/// the touch-target-list/removed fields no algorithm here needs).
+/// One registered listener (DOM §2.7's "an event listener" struct, minus the
+/// touch-target-list field no algorithm here needs). There is no stored
+/// `removed` field: a listener removed by an earlier listener's own
+/// callback, during the same dispatch, is instead detected by
+/// `dispatch::invoke` re-checking that an identical
+/// `(type, callback, capture)` entry is still present in the target's list
+/// right before calling it, rather than flagging entries in place.
 #[derive(Clone)]
 pub(crate) struct Listener {
     pub kind: String,
@@ -124,7 +129,11 @@ fn capture_from_remove_options(context: &mut Context, args: &[JsValue]) -> JsRes
 /// an `options` dictionary member's own getter throwing both take priority
 /// over the "callback is null" no-op. A duplicate `(type, callback,
 /// capture)` registration is ignored, whether or not `once`/`passive`
-/// match.
+/// match -- except against the one listener slot an event handler IDL
+/// attribute (`onclick`, ...) manages: that slot's internal callback is
+/// never the same identity as one supplied to `addEventListener`, even when
+/// both happen to be the very same JS function, so it is never treated as
+/// a duplicate of it (nor removable by `removeEventListener`, see below).
 pub(crate) fn add_event_listener(
     this: &JsValue,
     args: &[JsValue],
@@ -140,7 +149,10 @@ pub(crate) fn add_event_listener(
     with_state(context, |s| {
         let list = s.listeners.entry(key).or_default();
         let duplicate = list.iter().any(|l| {
-            l.kind == kind && JsObject::equals(&l.callback, &callback) && l.capture == capture
+            !l.is_handler
+                && l.kind == kind
+                && JsObject::equals(&l.callback, &callback)
+                && l.capture == capture
         });
         if !duplicate {
             list.push(Listener {
@@ -162,6 +174,9 @@ pub(crate) fn add_event_listener(
 /// `removeEventListener`'s `options` is `(EventListenerOptions or
 /// boolean)`, a dictionary with only a `capture` member, so `once`/
 /// `passive` are never read here at all (not merely read and discarded).
+/// An event handler IDL attribute's own listener slot is never removed
+/// this way, matching [`add_event_listener`]'s own note on why the two
+/// never collide.
 pub(crate) fn remove_event_listener(
     this: &JsValue,
     args: &[JsValue],
@@ -177,9 +192,10 @@ pub(crate) fn remove_event_listener(
     with_state(context, |s| {
         if let Some(list) = s.listeners.get_mut(&key) {
             list.retain(|l| {
-                !(l.kind == kind
-                    && JsObject::equals(&l.callback, &callback)
-                    && l.capture == capture)
+                l.is_handler
+                    || !(l.kind == kind
+                        && JsObject::equals(&l.callback, &callback)
+                        && l.capture == capture)
             });
         }
     })?;

@@ -48,8 +48,12 @@ pub(crate) struct EventData {
     cancelable: bool,
     #[unsafe_ignore_trace]
     composed: bool,
+    /// Reset to `false` by the exposed `dispatchEvent()` on every call
+    /// (DOM §2.9), even for an event whose `isTrusted` was `true` -- so it
+    /// needs interior mutability, unlike `Event`'s other construction-time
+    /// fields.
     #[unsafe_ignore_trace]
-    is_trusted: bool,
+    is_trusted: Cell<bool>,
     #[unsafe_ignore_trace]
     time_stamp: f64,
     #[unsafe_ignore_trace]
@@ -104,7 +108,7 @@ fn new_event_data(
         bubbles,
         cancelable,
         composed,
-        is_trusted,
+        is_trusted: Cell::new(is_trusted),
         time_stamp,
         target: Cell::new(None),
         current_target: Cell::new(None),
@@ -152,7 +156,7 @@ fn target_key_to_js(context: &mut Context, key: Option<Option<usize>>) -> JsResu
 /// The `EventInit`/`CustomEventInit`/`ErrorEventInit` dictionary argument:
 /// `undefined`/absent/`null` all mean "every member at its default"; any
 /// other non-object value cannot convert to a dictionary type.
-fn dict_arg(args: &[JsValue], i: usize, _context: &mut Context) -> JsResult<Option<JsObject>> {
+fn dict_arg(args: &[JsValue], i: usize) -> JsResult<Option<JsObject>> {
     match args.get(i) {
         None => Ok(None),
         Some(v) if v.is_undefined() || v.is_null() => Ok(None),
@@ -227,7 +231,7 @@ pub(crate) fn event_constructor(
 ) -> JsResult<JsValue> {
     require_new(this)?;
     let kind = required_dom_string(args, 0, context)?;
-    let dict = dict_arg(args, 1, context)?;
+    let dict = dict_arg(args, 1)?;
     let (bubbles, cancelable, composed) = event_init(context, dict.as_ref())?;
     let time_stamp = now(context)?;
     let data = new_event_data(kind, bubbles, cancelable, composed, false, time_stamp);
@@ -244,7 +248,7 @@ pub(crate) fn custom_event_constructor(
 ) -> JsResult<JsValue> {
     require_new(this)?;
     let kind = required_dom_string(args, 0, context)?;
-    let dict = dict_arg(args, 1, context)?;
+    let dict = dict_arg(args, 1)?;
     let (bubbles, cancelable, composed) = event_init(context, dict.as_ref())?;
     let detail = match &dict {
         Some(d) => dict_any(context, d, "detail")?,
@@ -266,7 +270,7 @@ pub(crate) fn error_event_constructor(
 ) -> JsResult<JsValue> {
     require_new(this)?;
     let kind = required_dom_string(args, 0, context)?;
-    let dict = dict_arg(args, 1, context)?;
+    let dict = dict_arg(args, 1)?;
     let (bubbles, cancelable, composed) = event_init(context, dict.as_ref())?;
     let (message, filename, lineno, colno, error) = match &dict {
         Some(d) => (
@@ -326,7 +330,7 @@ fn get_default_prevented(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsRe
 }
 
 fn get_is_trusted(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    with_event(this, |d| JsValue::from(d.is_trusted))
+    with_event(this, |d| JsValue::from(d.is_trusted.get()))
 }
 
 fn get_time_stamp(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
@@ -371,11 +375,7 @@ fn stop_immediate_propagation(this: &JsValue, _: &[JsValue], _: &mut Context) ->
 }
 
 fn prevent_default(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    with_event(this, |d| {
-        if d.cancelable && !d.in_passive_listener.get() {
-            d.default_prevented.set(true);
-        }
-    })?;
+    with_event(this, cancel_if_appropriate)?;
     Ok(JsValue::undefined())
 }
 
@@ -460,8 +460,17 @@ const BUBBLING_PHASE: u16 = 3;
 /// ancestors (`Document::parent_of`), then, only if that walk actually
 /// reaches the document node, one final hop to the window. A detached
 /// subtree's topmost node is never the document, so its path never reaches
-/// the window, matching real DOM behavior.
-fn build_path(context: &mut Context, target: Option<usize>) -> JsResult<Vec<Option<usize>>> {
+/// the window, matching real DOM behavior. A `load` event never gets that
+/// last hop either, even when the walk does reach the document: a
+/// `Document`'s "get the parent" is specifically `null` for `load` (a load
+/// event bubbled from, say, an `<img>` up through the document must not
+/// also reach the window -- `window`'s own `load` event is a distinct event
+/// the runtime fires directly at the window, never by bubbling one there).
+fn build_path(
+    context: &mut Context,
+    target: Option<usize>,
+    kind: &str,
+) -> JsResult<Vec<Option<usize>>> {
     let Some(start) = target else {
         return Ok(vec![None]);
     };
@@ -480,7 +489,7 @@ fn build_path(context: &mut Context, target: Option<usize>) -> JsResult<Vec<Opti
     let reaches_document = with_state(context, |s| {
         s.host.document().get_node(current).map(|n| n.kind()) == Some(NodeKind::Document)
     })?;
-    if reaches_document {
+    if reaches_document && kind != "load" {
         path.push(None);
     }
     Ok(path)
@@ -512,13 +521,35 @@ fn target_this_value(context: &mut Context, node: Option<usize>) -> JsResult<JsV
     }
 }
 
+/// Whether `event`'s prototype is `ErrorEvent.prototype`. `EventData` is
+/// shared by `Event`/`CustomEvent`/`ErrorEvent` (see its own doc comment),
+/// so telling them apart needs this rather than a native-data check.
+fn is_error_event(context: &mut Context, event: &JsObject) -> bool {
+    let error_event_proto = protos(context).error_event.clone();
+    event
+        .prototype()
+        .is_some_and(|proto| JsObject::equals(&proto, &error_event_proto))
+}
+
+/// Set `default_prevented` if cancelable and not currently inside a passive
+/// listener -- `Event.prototype.preventDefault()`'s own steps, shared with
+/// the two other ways a listener can cancel an event (`window.onerror`
+/// returning `true`, any other event handler IDL attribute's listener
+/// returning exactly `false`).
+fn cancel_if_appropriate(d: &EventData) {
+    if d.cancelable && !d.in_passive_listener.get() {
+        d.default_prevented.set(true);
+    }
+}
+
 /// Call `listener`'s callback (DOM §2.9's "call a user object's
-/// operation"): a callable value is called directly with `this_value`; an
-/// object that is not itself callable falls back to its own `handleEvent`
-/// method, called with the listener object itself as `this`. Neither form
-/// exists (a plain, non-callable object with no callable `handleEvent`) is
-/// a silent no-op, matching how a non-callable `EventHandler` value is
-/// simply never invoked.
+/// operation", WebIDL's single-operation-callback-interface form): a
+/// callable value is called directly with `this_value`; otherwise its own
+/// `handleEvent` property is read and, if callable, called with the
+/// listener object itself as `this`. A `handleEvent` that is not itself
+/// callable -- including simply absent -- is a `TypeError`, exactly like
+/// any other exception a listener callback raises: [`invoke`] routes it to
+/// [`report_exception`] rather than aborting dispatch over it.
 fn call_callback(
     context: &mut Context,
     callback: &JsObject,
@@ -532,16 +563,20 @@ fn call_callback(
     let handle_event = callback.get(JsString::from("handleEvent"), context)?;
     match handle_event.as_callable() {
         Some(handler) => handler.call(&JsValue::from(callback.clone()), &[event_value], context),
-        None => Ok(JsValue::undefined()),
+        None => Err(type_error("handleEvent is not a function")),
     }
 }
 
 /// HTML's special "event handler processing algorithm" for `window`'s
-/// `onerror` handler: called with `(message, filename, lineno, colno,
-/// error)` instead of the `Event`, and a return value that
+/// `onerror` handler, used only when `event` is genuinely an `ErrorEvent`
+/// (see [`is_error_event`]): called with `(message, filename, lineno,
+/// colno, error)` instead of the `Event`, and a return value that
 /// [`boa_engine::JsValue::to_boolean`]s to `true` cancels the event (as if
 /// the handler had called `preventDefault()`), rather than requiring the
-/// handler to call `preventDefault()` itself.
+/// handler to call `preventDefault()` itself. `onerror` given a plain
+/// `Event` (or any other non-`ErrorEvent`) instead uses the ordinary
+/// [`call_callback`] path and the ordinary
+/// [`handle_generic_handler_return_value`] convention.
 fn call_window_on_error(
     context: &mut Context,
     callback: &JsObject,
@@ -568,21 +603,55 @@ fn call_window_on_error(
     ];
     let result = callback.call(&this_value, &args, context)?;
     if result.to_boolean() {
-        let _ = event_data(event, |d| {
-            if d.cancelable && !d.in_passive_listener.get() {
-                d.default_prevented.set(true);
-            }
-        });
+        let _ = event_data(event, cancel_if_appropriate);
     }
     Ok(result)
 }
 
+/// The HTML event handler processing algorithm's generic (non-`onerror`)
+/// rule: a return value that is *exactly* the boolean `false` (not merely
+/// falsy -- `0`, `""`, `null`, and `undefined` all leave the event alone)
+/// cancels the event, the same as calling `preventDefault()`. Only applies
+/// to an event handler IDL attribute's own listener slot, never to an
+/// ordinary `addEventListener` registration.
+fn handle_generic_handler_return_value(event: &JsObject, result: &JsResult<JsValue>) {
+    if let Ok(value) = result
+        && value.as_boolean() == Some(false)
+    {
+        let _ = event_data(event, cancel_if_appropriate);
+    }
+}
+
+/// Whether an identical `(type, callback, capture)` entry is still present
+/// in `node`'s listener list right now -- DOM §2.9 inner invoke's "listener
+/// whose removed is false" check, applied to a listener a prior one (at the
+/// same node, in the same [`invoke`] call) may have removed via
+/// `removeEventListener` in the meantime. There is no stored `removed`
+/// flag; this re-derives it against the live list instead (see
+/// [`events::Listener`]'s own doc comment).
+fn still_registered(
+    context: &mut Context,
+    node: Option<usize>,
+    listener: &Listener,
+) -> JsResult<bool> {
+    with_state(context, |s| {
+        s.listeners.get(&node).is_some_and(|list| {
+            list.iter().any(|l| {
+                l.kind == listener.kind
+                    && JsObject::equals(&l.callback, &listener.callback)
+                    && l.capture == listener.capture
+            })
+        })
+    })
+}
+
 /// Invoke every listener in `node`'s snapshot whose type matches and whose
-/// capture flag passes `capture_filter` (`Some(true)`: capturing phase,
-/// ancestors only; `Some(false)`: bubbling phase, ancestors only; `None`:
-/// the target phase, every listener regardless of capture). Returns `Err`
-/// only for an engine abort (a resource limit hit inside a listener), which
-/// must stop dispatch outright rather than being reported and continued.
+/// capture flag passes `capture_filter` (`Some(true)`: capturing phase;
+/// `Some(false)`: the forward pass -- target and bubbling ancestors --
+/// non-capture only). Returns `Err` only for an engine abort (a resource
+/// limit hit inside a listener, or while reporting one of its ordinary
+/// exceptions), which must stop dispatch outright rather than being
+/// reported and continued.
 fn invoke(
     context: &mut Context,
     event: &JsObject,
@@ -603,26 +672,41 @@ fn invoke(
             Some(false) if listener.capture => continue,
             _ => {}
         }
+        if !still_registered(context, node, &listener)? {
+            continue;
+        }
         if listener.once {
-            // `node`'s entry necessarily already exists (`listener` itself
-            // came from a snapshot of it), but `entry(...).or_default()`
-            // -- rather than a defensive `get_mut` -- keeps that invariant
-            // from needing its own untestable "what if it doesn't" branch.
+            // `node`'s entry necessarily already exists (the check just
+            // above confirmed it), but `entry(...).or_default()` -- rather
+            // than a defensive `get_mut` -- keeps that invariant from
+            // needing its own untestable "what if it doesn't" branch. A
+            // handler slot is never `once` (`event_handler_set` never sets
+            // it), but `!l.is_handler` keeps this removal from ever
+            // touching one regardless.
             let _ = with_state(context, |s| {
                 s.listeners.entry(node).or_default().retain(|l| {
-                    !(l.kind == listener.kind
-                        && JsObject::equals(&l.callback, &listener.callback)
-                        && l.capture == listener.capture)
+                    l.is_handler
+                        || !(l.kind == listener.kind
+                            && JsObject::equals(&l.callback, &listener.callback)
+                            && l.capture == listener.capture)
                 });
             });
         }
         if listener.passive {
             let _ = event_data(event, |d| d.in_passive_listener.set(true));
         }
-        let result = if listener.is_handler && node.is_none() && kind == "error" {
+        let result = if listener.is_handler
+            && node.is_none()
+            && kind == "error"
+            && is_error_event(context, event)
+        {
             call_window_on_error(context, &listener.callback, event)
         } else {
-            call_callback(context, &listener.callback, event, &this_value)
+            let result = call_callback(context, &listener.callback, event, &this_value);
+            if listener.is_handler {
+                handle_generic_handler_return_value(event, &result);
+            }
+            result
         };
         if listener.passive {
             let _ = event_data(event, |d| d.in_passive_listener.set(false));
@@ -632,7 +716,7 @@ fn invoke(
                 let _ = event_loop::abort(context, reason);
                 return Err(error);
             }
-            report_exception(context, &error, None);
+            report_exception(context, &error, None)?;
         }
         if immediate_stopped(event) {
             break;
@@ -641,17 +725,32 @@ fn invoke(
     Ok(())
 }
 
+/// DOM §2.9's phases, current spec: the capturing pass walks the whole path
+/// in reverse (root to target), capture-flagged listeners only, and *does*
+/// include the target itself (`eventPhase` reads `AT_TARGET` there, not
+/// `CAPTURING_PHASE`); the forward pass then starts back at the target
+/// (non-capture listeners only, still `AT_TARGET`) and continues out
+/// through the bubbling ancestors (non-capture only) if `bubbles`. So at
+/// the target, every capture-flagged listener runs before any non-capture
+/// one, regardless of registration order between the two groups, and
+/// `stopPropagation()` called by a target *capture* listener suppresses
+/// the target's own non-capture listeners too (it stops the whole
+/// remainder of dispatch, the same as calling it anywhere else).
 fn run_dispatch(context: &mut Context, event: &JsObject, path: &[Option<usize>]) -> JsResult<()> {
-    for &node in path[1..].iter().rev() {
-        set_current_target(event, node, CAPTURING_PHASE);
+    for (index, &node) in path.iter().enumerate().rev() {
+        let phase = if index == 0 {
+            AT_TARGET
+        } else {
+            CAPTURING_PHASE
+        };
+        set_current_target(event, node, phase);
         invoke(context, event, node, Some(true))?;
         if stopped(event) {
             return Ok(());
         }
     }
-    let target_node = path[0];
-    set_current_target(event, target_node, AT_TARGET);
-    invoke(context, event, target_node, None)?;
+    set_current_target(event, path[0], AT_TARGET);
+    invoke(context, event, path[0], Some(false))?;
     let bubbles = event_data(event, |d| d.bubbles).unwrap_or(false);
     if !bubbles || stopped(event) {
         return Ok(());
@@ -666,10 +765,22 @@ fn run_dispatch(context: &mut Context, event: &JsObject, path: &[Option<usize>])
     Ok(())
 }
 
+/// Bounds *recursive* `dispatch` calls (a listener that, directly or
+/// through another listener, synchronously dispatches back into a target
+/// still being dispatched -- see the repro this guards in
+/// `tests::recursive_dispatch_event_aborts_before_the_native_stack_overflows`).
+/// Each level consumes native Rust stack, well before Boa's own
+/// `Limits::max_recursion` (JS call frames) would trip, so this needs its
+/// own, much smaller bound.
+const MAX_DISPATCH_DEPTH: u32 = 32;
+
 /// DOM §2.9 "to dispatch an event": build the event path, run the
-/// capturing/target/bubbling phases, and reset `target`/`eventPhase` at the
-/// end. Returns `!defaultPrevented`. `Err` is either an `InvalidStateError`
-/// (re-entrant dispatch of the same event) or a propagated engine abort.
+/// capturing/target/bubbling phases, and reset `target`/`eventPhase`/the
+/// `composedPath()` snapshot at the end. Returns `!defaultPrevented`. `Err`
+/// is an `InvalidStateError` (re-entrant dispatch of the same event), the
+/// dispatch-nesting `Abort::Recursion` ([`MAX_DISPATCH_DEPTH`]), or a
+/// propagated engine abort from a listener (or from reporting one of its
+/// exceptions).
 pub(crate) fn dispatch(
     context: &mut Context,
     event: &JsObject,
@@ -685,7 +796,19 @@ pub(crate) fn dispatch(
             "the event is already being dispatched",
         ));
     }
-    let path = build_path(context, target)?;
+    let depth = with_state(context, |s| {
+        s.dispatch_depth += 1;
+        s.dispatch_depth
+    })?;
+    if depth > MAX_DISPATCH_DEPTH {
+        let _ = with_state(context, |s| s.dispatch_depth -= 1);
+        return Err(event_loop::abort_error(event_loop::abort(
+            context,
+            event_loop::Abort::Recursion,
+        )));
+    }
+    let kind = event_data(event, |d| d.kind.clone()).unwrap_or_default();
+    let path = build_path(context, target, &kind)?;
     let _ = event_data(event, |d| {
         d.dispatched.set(true);
         d.target.set(Some(target));
@@ -694,16 +817,22 @@ pub(crate) fn dispatch(
         *d.path.borrow_mut() = path.clone();
     });
     let result = run_dispatch(context, event, &path);
+    let _ = with_state(context, |s| s.dispatch_depth -= 1);
     let _ = event_data(event, |d| {
         d.dispatched.set(false);
         d.current_target.set(None);
         d.event_phase.set(NONE_PHASE);
+        d.path.borrow_mut().clear();
     });
     result?;
     Ok(!default_prevented(event))
 }
 
-/// `EventTarget.prototype.dispatchEvent`/`window.dispatchEvent`.
+/// `EventTarget.prototype.dispatchEvent`/`window.dispatchEvent`: unlike
+/// [`fire_event`] (which builds its own trusted event and calls [`dispatch`]
+/// directly), every event reaching script's `dispatchEvent()` has its
+/// `isTrusted` reset to `false` first (DOM §2.9), even one a previous
+/// [`fire_event`]/[`report_exception`] call marked trusted.
 pub(crate) fn dispatch_event(
     this: &JsValue,
     args: &[JsValue],
@@ -715,6 +844,7 @@ pub(crate) fn dispatch_event(
         .and_then(JsValue::as_object)
         .filter(|o| o.is::<EventData>())
         .ok_or_else(|| type_error("parameter 1 is not of type 'Event'"))?;
+    let _ = event_data(&event, |d| d.is_trusted.set(false));
     let result = dispatch(context, &event, key)?;
     Ok(JsValue::from(result))
 }
@@ -753,19 +883,36 @@ pub(crate) fn fire_event(
 /// script's location, when known (a future caller's concern; nothing in
 /// this runtime yet threads one through).
 ///
-/// A guard prevents unbounded recursion: an exception thrown by a listener
-/// while *this* `ErrorEvent` is itself being reported (most commonly the
-/// `window.onerror` handler throwing) is recorded directly rather than
-/// re-entering this algorithm.
-pub(crate) fn report_exception(context: &mut Context, error: &JsError, source: Option<&str>) {
-    let message = super::error_message(error, context);
+/// `Err` is only ever a propagated engine abort -- from formatting `error`'s
+/// own message ([`super::error_message`], whose own doc comment explains
+/// how that can happen), or from one of *this* `ErrorEvent`'s own listeners
+/// (typically `window.onerror`) -- and it is the caller's job to keep
+/// propagating it the same way [`invoke`] does for any other listener's
+/// abort.
+///
+/// A guard prevents unbounded recursion: an ordinary (non-abort) exception
+/// thrown by a listener while *this* `ErrorEvent` is itself being reported
+/// is recorded directly rather than re-entering this algorithm and
+/// dispatching a second one. That guard is a single runtime-wide flag,
+/// [`super::State::reporting_exception`], not one scoped to this specific
+/// exception; see its own doc comment for the (documented, not fixed)
+/// limitation that follows from that.
+pub(crate) fn report_exception(
+    context: &mut Context,
+    error: &JsError,
+    source: Option<&str>,
+) -> JsResult<()> {
+    let message = match super::error_message(error, context) {
+        Ok(message) => message,
+        Err(reason) => return Err(event_loop::abort_error(reason)),
+    };
     let already_reporting = with_state(context, |s| {
         std::mem::replace(&mut s.reporting_exception, true)
     })
     .unwrap_or(true);
     if already_reporting {
         let _ = with_state(context, |s| s.event_loop.uncaught_errors.push(message));
-        return;
+        return Ok(());
     }
     let error_value = error
         .clone()
@@ -778,11 +925,13 @@ pub(crate) fn report_exception(context: &mut Context, error: &JsError, source: O
     data.error = error_value;
     let proto = protos(context).error_event.clone();
     let event = JsObject::from_proto_and_data(Some(proto), data);
-    let handled = dispatch(context, &event, None);
+    let outcome = dispatch(context, &event, None);
     let _ = with_state(context, |s| s.reporting_exception = false);
-    if matches!(handled, Ok(true)) {
+    let not_prevented = outcome?;
+    if not_prevented {
         let _ = with_state(context, |s| s.event_loop.uncaught_errors.push(message));
     }
+    Ok(())
 }
 
 // ---- Event handler IDL attributes ---------------------------------------

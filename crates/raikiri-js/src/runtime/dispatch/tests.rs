@@ -30,6 +30,11 @@ fn uncaught(rt: &mut DomRuntime) -> Vec<String> {
 
 #[test]
 fn capture_then_target_registration_order_then_bubble() {
+    // Current DOM §2.9: at the target, every capture-flagged listener runs
+    // (during the capturing pass) before any non-capture one (the forward
+    // pass), regardless of registration order between the two groups --
+    // `ptc` (capture, registered 2nd) before `pt` (non-capture, registered
+    // 1st).
     let mut rt = rt();
     ok(
         &mut rt,
@@ -38,7 +43,19 @@ fn capture_then_target_registration_order_then_bubble() {
   b.addEventListener('x', e=>log.push('bc'), true); p.addEventListener('x', e=>log.push('pt'));
   p.addEventListener('x', e=>log.push('ptc'), true); b.addEventListener('x', e=>log.push('bb'));
   window.addEventListener('x', e=>log.push('wb'));
-  p.dispatchEvent(new Event('x', {bubbles:true})) && log.join() === 'wc,dc,bc,pt,ptc,bb,wb'",
+  p.dispatchEvent(new Event('x', {bubbles:true})) && log.join() === 'wc,dc,bc,ptc,pt,bb,wb'",
+    );
+}
+
+#[test]
+fn stop_propagation_in_a_target_capture_listener_suppresses_the_targets_non_capture_listeners() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; var p=document.createElement('p'); document.body.appendChild(p);
+  p.addEventListener('tc', ()=>log.push('pt'));
+  p.addEventListener('tc', e=>{ log.push('ptc'); e.stopPropagation(); }, true);
+  p.dispatchEvent(new Event('tc')); log.join() === 'ptc'",
     );
 }
 
@@ -408,7 +425,7 @@ fn report_exception_carries_the_source_hint_into_the_error_event_filename() {
         "var fn=null; window.addEventListener('error', e=>{ fn = e.filename; }); true",
     );
     let error = JsError::from_opaque(JsValue::from(JsString::from("boom")));
-    dispatch::report_exception(rt.context_mut(), &error, Some("script.js"));
+    dispatch::report_exception(rt.context_mut(), &error, Some("script.js")).unwrap();
     ok(&mut rt, "fn === 'script.js'");
 }
 
@@ -455,13 +472,32 @@ fn event_time_stamp_is_the_virtual_clock_value_at_construction() {
 }
 
 #[test]
-fn a_listener_without_a_call_or_handleevent_method_is_a_silent_no_op() {
+fn a_listener_without_a_callable_handleevent_is_a_typeerror_reported_not_thrown() {
     let mut rt = rt();
     ok(
         &mut rt,
+        // Dispatch itself does not throw or abort -- the TypeError goes to
+        // `report_exception` like any other listener exception -- but it is
+        // recorded as uncaught (nothing prevented it).
         "var h={}; document.body.addEventListener('t', h); \
-         document.body.dispatchEvent(new Event('t')); true",
+         document.body.dispatchEvent(new Event('t')) === true",
     );
+    let errors = uncaught(&mut rt);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("TypeError"), "{errors:?}");
+}
+
+#[test]
+fn a_handleevent_property_that_is_not_callable_is_also_a_typeerror() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var h={handleEvent: 5}; document.body.addEventListener('t', h); \
+         document.body.dispatchEvent(new Event('t')) === true",
+    );
+    let errors = uncaught(&mut rt);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("TypeError"), "{errors:?}");
 }
 
 #[test]
@@ -530,4 +566,220 @@ fn dispatch_and_call_window_on_error_on_a_non_event_object_are_defensive_no_ops(
     assert!(err.is_err());
     let result = dispatch::call_window_on_error(context, &callback, &body).unwrap();
     assert!(result.is_undefined());
+}
+
+// ---- fix round 1 (Fable review) -------------------------------------------
+
+#[test]
+fn recursive_dispatch_event_aborts_before_the_native_stack_overflows() {
+    let mut rt = rt();
+    let result = rt.evaluate(
+        "document.body.addEventListener('x', function(){ document.body.dispatchEvent(new Event('x')); }); \
+         document.body.dispatchEvent(new Event('x'))",
+    );
+    assert_eq!(result, Err(RuntimeError::Aborted(Abort::Recursion)));
+    assert_eq!(rt.run_until_idle(), Err(Abort::Recursion));
+}
+
+#[test]
+fn recursive_dispatch_event_through_a_handleevent_listener_also_aborts() {
+    let mut rt = rt();
+    let result = rt.evaluate(
+        "var h = { handleEvent(){ document.body.dispatchEvent(new Event('x')); } }; \
+         document.body.addEventListener('x', h); \
+         document.body.dispatchEvent(new Event('x'))",
+    );
+    assert_eq!(result, Err(RuntimeError::Aborted(Abort::Recursion)));
+}
+
+#[test]
+fn a_listener_removed_by_an_earlier_listener_is_not_invoked() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; function second(){ log.push('second'); } \
+         document.body.addEventListener('rm', function first(){ \
+           log.push('first'); document.body.removeEventListener('rm', second); \
+         }); \
+         document.body.addEventListener('rm', second); \
+         document.body.dispatchEvent(new Event('rm')); log.join() === 'first'",
+    );
+}
+
+#[test]
+fn a_resource_limit_hit_while_reporting_an_exception_propagates_from_dispatch_event() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::with_options(
+        host,
+        RunOptions {
+            limits: Limits {
+                max_loop_iterations: 10,
+                ..Default::default()
+            },
+        },
+    )
+    .unwrap();
+    let result = rt.evaluate(
+        "window.onerror = function(){ while (true) {} }; \
+         document.body.addEventListener('boom', ()=>{ throw new Error('boom'); }); \
+         try { document.body.dispatchEvent(new Event('boom')); 'not aborted' } catch (e) { 'caught' }",
+    );
+    assert_eq!(result, Err(RuntimeError::Aborted(Abort::LoopIterations)));
+    assert_eq!(rt.run_until_idle(), Err(Abort::LoopIterations));
+}
+
+#[test]
+fn a_resource_limit_hit_formatting_a_reported_exceptions_own_message_propagates() {
+    // Distinct from the test above: here the abort comes from
+    // `report_exception`'s own call to `error_message` (the *reported*
+    // exception's `toString`), not from a `window.onerror` handler.
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::with_options(
+        host,
+        RunOptions {
+            limits: Limits {
+                max_loop_iterations: 10,
+                ..Default::default()
+            },
+        },
+    )
+    .unwrap();
+    let result = rt.evaluate(
+        "document.body.addEventListener('boom', ()=>{ throw { toString(){ while (true) {} } }; }); \
+         document.body.dispatchEvent(new Event('boom'))",
+    );
+    assert_eq!(result, Err(RuntimeError::Aborted(Abort::LoopIterations)));
+    assert_eq!(rt.run_until_idle(), Err(Abort::LoopIterations));
+}
+
+#[test]
+fn a_resource_limit_hit_while_reporting_a_timer_exception_propagates_from_run_until_idle() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::with_options(
+        host,
+        RunOptions {
+            limits: Limits {
+                max_loop_iterations: 10,
+                ..Default::default()
+            },
+        },
+    )
+    .unwrap();
+    rt.evaluate(
+        "window.onerror = function(){ while (true) {} }; \
+         setTimeout(()=>{ throw new Error('timer-boom'); }, 0); true",
+    )
+    .unwrap();
+    assert_eq!(rt.run_until_idle(), Err(Abort::LoopIterations));
+}
+
+#[test]
+fn error_message_abort_from_a_thrown_objects_tostring_is_surfaced_not_swallowed() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::with_options(
+        host,
+        RunOptions {
+            limits: Limits {
+                max_loop_iterations: 10,
+                ..Default::default()
+            },
+        },
+    )
+    .unwrap();
+    let result = rt.evaluate("throw { toString(){ while (true) {} } }");
+    assert_eq!(result, Err(RuntimeError::Aborted(Abort::LoopIterations)));
+    assert_eq!(rt.run_until_idle(), Err(Abort::LoopIterations));
+}
+
+#[test]
+fn error_message_falls_through_to_the_outer_display_form_when_tostring_throws_ordinarily() {
+    let mut rt = rt();
+    let result = rt.evaluate("throw { toString(){ throw new Error('nested'); } }");
+    assert!(
+        matches!(result, Err(RuntimeError::JavaScript(_))),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn a_generic_handler_returning_exactly_false_cancels_a_cancelable_event() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "document.body.onclick = () => false; \
+         document.body.dispatchEvent(new Event('click', {cancelable:true})) === false",
+    );
+}
+
+#[test]
+fn a_generic_handler_returning_a_merely_falsy_non_false_value_does_not_cancel() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "document.body.onclick = () => 0; \
+         document.body.dispatchEvent(new Event('click', {cancelable:true})) === true",
+    );
+}
+
+#[test]
+fn a_handler_slot_and_an_addeventlistener_registration_of_the_same_function_are_distinct() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; function f(){ log.push('f'); } \
+         document.body.onclick = f; document.body.addEventListener('click', f); \
+         document.body.dispatchEvent(new Event('click')); log.join() === 'f,f'",
+    );
+}
+
+#[test]
+fn remove_event_listener_never_removes_a_handler_slot() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var calls=0; function g(){ calls++; } \
+         document.body.onclick = g; document.body.removeEventListener('click', g); \
+         document.body.dispatchEvent(new Event('click')); \
+         calls === 1 && document.body.onclick === g",
+    );
+}
+
+#[test]
+fn script_dispatch_event_resets_is_trusted_to_false_even_for_a_previously_trusted_event() {
+    let mut rt = rt();
+    let body = body_index(&mut rt);
+    ok(
+        &mut rt,
+        "var captured=null; document.body.addEventListener('ft', e=>{ captured = e; }); true",
+    );
+    let handled = dispatch::fire_event(rt.context_mut(), Some(body), "ft", false, false).unwrap();
+    assert!(handled);
+    ok(&mut rt, "captured.isTrusted === true");
+    ok(
+        &mut rt,
+        "document.body.dispatchEvent(captured); captured.isTrusted === false",
+    );
+}
+
+#[test]
+fn a_load_event_bubbling_from_an_element_reaches_document_but_not_window() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; var p=document.createElement('p'); document.body.appendChild(p);
+  document.addEventListener('load', ()=>log.push('doc'));
+  window.addEventListener('load', ()=>log.push('win'));
+  p.dispatchEvent(new Event('load', {bubbles:true})); log.join() === 'doc'",
+    );
+}
+
+#[test]
+fn window_on_error_uses_the_ordinary_calling_convention_for_a_plain_event() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var got=null; window.onerror = function(e){ got = e; }; \
+         window.dispatchEvent(new Event('error')); \
+         got instanceof Event && !(got instanceof ErrorEvent)",
+    );
 }

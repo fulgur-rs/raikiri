@@ -61,7 +61,26 @@ pub(crate) struct State {
     /// `ErrorEvent`, so that an exception thrown by one of *that* event's
     /// listeners (typically `window.onerror`) is recorded directly instead
     /// of re-entering `report_exception` and dispatching another one.
+    ///
+    /// This guard is a single, runtime-wide flag rather than one scoped to
+    /// the specific exception being reported: a listener that dispatches a
+    /// *different*, unrelated event while an outer `report_exception` call
+    /// is still on the Rust call stack (for example, from inside a
+    /// `window.onerror` handler) has any exception of its own recorded
+    /// directly too, rather than getting its own `ErrorEvent`. Distinguishing
+    /// "nested because of the report we are already handling" from "nested
+    /// because of an unrelated dispatch that happens to be in progress"
+    /// would need a per-chain guard (a counter or a stack keyed by the
+    /// reporting call), not a single flag; this runtime does not implement
+    /// that finer distinction.
     pub reporting_exception: bool,
+    /// How many nested [`dispatch::dispatch`] calls are on the Rust call
+    /// stack right now (a listener that synchronously dispatches another
+    /// event, directly or through another listener, back into a target
+    /// still being dispatched). Each level consumes native Rust stack
+    /// *before* Boa's own [`Limits::max_recursion`] (JS call frames) would
+    /// ever trip, so `dispatch` enforces its own, much smaller bound.
+    pub dispatch_depth: u32,
 }
 
 /// Shared handle to [`State`], stored in the Boa context's host data.
@@ -133,6 +152,7 @@ impl DomRuntime {
             listeners: HashMap::new(),
             event_loop: event_loop::EventLoop::new(limits.clone()),
             reporting_exception: false,
+            dispatch_depth: 0,
         };
         let executor = Rc::new(event_loop::RaikiriJobExecutor);
         let built = Context::builder().job_executor(executor).build();
@@ -150,10 +170,13 @@ impl DomRuntime {
         // cov:ignore: install only defines properties on a fresh realm's global
         // object and the interface prototypes it just created, which Boa never rejects.
         if let Err(error) = interfaces::install(&mut context) {
-            return Err(RuntimeError::JavaScript(error_message(
-                &error,
-                &mut context,
-            )));
+            return Err(match error_message(&error, &mut context) {
+                Ok(message) => RuntimeError::JavaScript(message),
+                // cov:ignore: `install` throws no thrown object with a
+                // `toString` that could abort; unreachable at construction
+                // time, before any user script or thrown value exists.
+                Err(reason) => RuntimeError::Aborted(reason),
+            });
         }
         Ok(Self { context })
     }
@@ -196,7 +219,10 @@ impl DomRuntime {
         if let Some(message) = failure {
             return Err(RuntimeError::Host(message));
         }
-        result.map_err(|error| RuntimeError::JavaScript(error_message(&error, &mut self.context)))
+        result.map_err(|error| match error_message(&error, &mut self.context) {
+            Ok(message) => RuntimeError::JavaScript(message),
+            Err(reason) => RuntimeError::Aborted(reason),
+        })
     }
 
     /// Run tasks and microtasks until both queues are empty or a limit is hit.
@@ -249,17 +275,38 @@ impl DomRuntime {
 /// runs `Error.prototype.toString` instead, which resolves the same
 /// `Name: message` form through its `name`/`message` accessors; anything
 /// else falls back to its own string form.
-pub(crate) fn error_message(error: &boa_engine::JsError, context: &mut Context) -> String {
+///
+/// Running that `toString` can itself run arbitrary script (a user-defined
+/// `toString` method, e.g. `throw { toString(){ while (true) {} } }`), which
+/// can hit a resource limit. That case is `Err`, and the abort is already
+/// recorded (sticky) by the time this returns; a limit hit by the *original*
+/// exception's own construction was already caught before that exception
+/// ever reached here (see [`event_loop::abort_for`] at every call site that
+/// produced it).
+pub(crate) fn error_message(
+    error: &boa_engine::JsError,
+    context: &mut Context,
+) -> Result<String, Abort> {
     if let Ok(native) = error.try_native(context) {
-        return native.to_string();
+        return Ok(native.to_string());
     }
     if let Some(value) = error.as_opaque()
         && value.is_object()
-        && let Ok(message) = value.to_string(context)
     {
-        return message.to_std_string_escaped();
+        let to_string_result = value.to_string(context);
+        if let Ok(message) = &to_string_result {
+            return Ok(message.to_std_string_escaped());
+        }
+        if let Err(to_string_error) = &to_string_result
+            && let Some(reason) = event_loop::abort_for(to_string_error)
+        {
+            return Err(event_loop::abort(context, reason));
+        }
+        // An ordinary (non-abort) exception from `toString` itself: fall
+        // through to the outer error's own `Display` form below, same as
+        // when the thrown value isn't an object at all.
     }
-    error.to_string()
+    Ok(error.to_string())
 }
 
 #[cfg(test)]

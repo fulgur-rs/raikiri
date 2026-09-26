@@ -125,6 +125,25 @@ pub(crate) fn abort_for(error: &JsError) -> Option<Abort> {
     }
 }
 
+/// A genuine engine-shaped `JsError` for `reason`: for a resource limit
+/// *this* runtime enforces itself (dispatch nesting -- native Rust stack
+/// depth, not a Boa call frame count -- or a `toString` call
+/// [`super::error_message`] re-enters while formatting an uncaught
+/// exception) rather than one Boa's own VM raised, so there is no existing
+/// engine error object lying around to reuse. Constructing one this way
+/// keeps it exactly as uncatchable by script's `try`/`catch` as a limit Boa
+/// itself detects: [`JsError::is_catchable`] only inspects the error's own
+/// kind, never how it was produced, and [`abort_for`] recognizes the result
+/// the same way it recognizes a genuine Boa limit.
+pub(crate) fn abort_error(reason: Abort) -> JsError {
+    JsError::from(match reason {
+        Abort::LoopIterations => RuntimeLimitError::LoopIteration,
+        Abort::Recursion | Abort::VirtualTime | Abort::Tasks | Abort::Nodes => {
+            RuntimeLimitError::Recursion
+        }
+    })
+}
+
 /// A timer's handler: a callback, or source text stringified when the timer
 /// was set (HTML §8.6 timer initialization steps, `TimerHandler`).
 enum Handler {
@@ -394,7 +413,10 @@ pub(crate) fn abort(context: &mut Context, reason: Abort) -> Abort {
 /// Handle an error from a callback the loop invoked: a limit aborts the
 /// run; anything else goes to the HTML "report an exception" algorithm
 /// (dispatched at `window` before being recorded as uncaught), the same as
-/// a listener's own exception during event dispatch.
+/// a listener's own exception during event dispatch. Reporting the
+/// exception can itself hit a limit (formatting its message, or a
+/// `window.onerror` handler that does), which must abort the run too rather
+/// than being silently absorbed.
 fn settle(context: &mut Context, result: JsResult<JsValue>) -> Result<(), Abort> {
     let Err(error) = result else {
         return Ok(());
@@ -402,8 +424,15 @@ fn settle(context: &mut Context, result: JsResult<JsValue>) -> Result<(), Abort>
     if let Some(reason) = abort_for(&error) {
         return Err(abort(context, reason));
     }
-    super::dispatch::report_exception(context, &error, None);
-    Ok(())
+    match super::dispatch::report_exception(context, &error, None) {
+        Ok(()) => Ok(()),
+        Err(report_error) => Err(abort(
+            context,
+            // cov:ignore: `report_exception` only ever returns `Err` for a
+            // propagated engine abort, which `abort_for` always recognizes.
+            abort_for(&report_error).unwrap_or(Abort::Recursion),
+        )),
+    }
 }
 
 /// HTML "perform a microtask checkpoint": run microtasks until the queue is
