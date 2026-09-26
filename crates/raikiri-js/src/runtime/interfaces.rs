@@ -222,57 +222,38 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     use super::style::{self, HTML_ELEMENT_MEMBERS};
     use super::tree;
     let event_target = interface(context, "EventTarget", None, None, &[&NO_MEMBERS])?;
-    let node_i = derived(
-        context,
-        "Node",
-        &event_target,
-        &[&node::NODE_MEMBERS, &tree::NODE_TREE_MEMBERS],
-    )?;
-    let element = derived(
-        context,
-        "Element",
-        &node_i,
-        &[
-            &node::ELEMENT_MEMBERS,
-            &tree::PARENT_NODE_MEMBERS,
-            &tree::CHILD_NODE_MEMBERS,
-            &tree::NON_DOCUMENT_TYPE_CHILD_NODE_MEMBERS,
-        ],
-    )?;
-    let character_data = derived(
-        context,
-        "CharacterData",
-        &node_i,
-        &[
-            &tree::CHARACTER_DATA_MEMBERS,
-            &tree::CHILD_NODE_MEMBERS,
-            &tree::NON_DOCUMENT_TYPE_CHILD_NODE_MEMBERS,
-        ],
-    )?;
-    let document = derived(
-        context,
-        "Document",
-        &node_i,
-        &[
-            &node::DOCUMENT_MEMBERS,
-            &tree::PARENT_NODE_MEMBERS,
-            &tree::DOCUMENT_CREATE_MEMBERS,
-        ],
-    )?;
-    let document_fragment = derived(
-        context,
-        "DocumentFragment",
-        &node_i,
-        &[&tree::PARENT_NODE_MEMBERS],
-    )?;
+    let node_members = [&node::NODE_MEMBERS, &tree::NODE_TREE_MEMBERS];
+    let node_i = derived(context, "Node", &event_target, &node_members)?;
+    let element_members = [
+        &node::ELEMENT_MEMBERS,
+        &tree::PARENT_NODE_MEMBERS,
+        &tree::CHILD_NODE_MEMBERS,
+        &tree::NON_DOCUMENT_TYPE_CHILD_NODE_MEMBERS,
+    ];
+    let element = derived(context, "Element", &node_i, &element_members)?;
+    let character_data_members = [
+        &tree::CHARACTER_DATA_MEMBERS,
+        &tree::CHILD_NODE_MEMBERS,
+        &tree::NON_DOCUMENT_TYPE_CHILD_NODE_MEMBERS,
+    ];
+    let character_data = derived(context, "CharacterData", &node_i, &character_data_members)?;
+    let document_members = [
+        &node::DOCUMENT_MEMBERS,
+        &tree::PARENT_NODE_MEMBERS,
+        &tree::DOCUMENT_CREATE_MEMBERS,
+    ];
+    let document = derived(context, "Document", &node_i, &document_members)?;
+    let fragment_members = [&tree::PARENT_NODE_MEMBERS];
+    let document_fragment = derived(context, "DocumentFragment", &node_i, &fragment_members)?;
     let html_element = derived(context, "HTMLElement", &element, &[&HTML_ELEMENT_MEMBERS])?;
     let text = derived(context, "Text", &character_data, &[&NO_MEMBERS])?;
     let comment = derived(context, "Comment", &character_data, &[&NO_MEMBERS])?;
-    let processing_instruction = derived(
+    let pi_members = [&tree::PROCESSING_INSTRUCTION_MEMBERS];
+    let pi = derived(
         context,
         "ProcessingInstruction",
         &character_data,
-        &[&tree::PROCESSING_INSTRUCTION_MEMBERS],
+        &pi_members,
     )?;
     // DOMException.prototype inherits Error.prototype (WebIDL §3.14.1), but
     // the interface object itself is an ordinary function.
@@ -292,7 +273,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         character_data: character_data.prototype,
         text: text.prototype,
         comment: comment.prototype,
-        processing_instruction: processing_instruction.prototype,
+        processing_instruction: pi.prototype,
         document: document.prototype,
         document_fragment: document_fragment.prototype,
         dom_exception: dom_exception.prototype,

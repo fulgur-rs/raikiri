@@ -99,12 +99,12 @@ fn parent_element(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsRes
 fn fragment_text_content(doc: &raikiri_dom::Document, root: usize) -> String {
     let mut out = String::new();
     let Some(root_node) = doc.get_node(root) else {
-        return out;
+        return out; // cov:ignore: callers only ever pass an index already resolved to this DocumentFragment's own kind, so it is always present
     };
     let mut stack: Vec<usize> = root_node.children.iter().rev().copied().collect();
     while let Some(index) = stack.pop() {
         let Some(node) = doc.get_node(index) else {
-            continue;
+            continue; // cov:ignore: every stack entry comes from `root` or a node's own children, always valid in the same arena
         };
         if let Some(text) = node.text_content() {
             out.push_str(text);
