@@ -319,11 +319,10 @@ fn string_key(key: &JsValue) -> Option<String> {
 /// already has — one of the methods `style_object` defined, or one inherited
 /// from `Object.prototype` (`toString`, `valueOf`, `hasOwnProperty`, ...) —
 /// wins; otherwise the key is read as a camelCase or dashed style property
-/// name. Checking the whole prototype chain (not just own properties, which
-/// the legacy facade's plain-object `style`/computed-style views never had
-/// to distinguish either — `dom.rs:272`, `:288`) is what lets `String(el.style)`,
-/// `'' + el.style`, and `el.style.hasOwnProperty(...)` work like a normal
-/// object instead of throwing `TypeError` on a non-callable `""`.
+/// name. Checking the whole prototype chain, not just own properties, is
+/// what lets `String(el.style)`, `'' + el.style`, and
+/// `el.style.hasOwnProperty(...)` work like a normal object instead of
+/// throwing `TypeError` on a non-callable `""`.
 fn style_get_trap(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let target_value = args.first().cloned().unwrap_or_default();
     let (target, index, computed) = style_target(&target_value)?;
