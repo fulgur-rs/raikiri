@@ -25,7 +25,7 @@ fn unimplemented_display_includes_feature_and_hint() {
 fn unimplemented_source_is_none() {
     use std::error::Error;
     let err = RenderError::Unimplemented {
-        feature: "render_streaming",
+        feature: "future feature",
         migration_hint: "hint",
     };
     assert!(err.source().is_none(), "Unimplemented has no inner cause");

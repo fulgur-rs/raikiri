@@ -2,9 +2,8 @@
 
 use raikiri::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyRegistration,
-    ConsumerPropertyValue, LayoutConfig, PageBox, PageDefaults, PageFragment, RenderOptions,
-    RenderResources, RenderSink, RenderStatus, RenderSummary, ReplacedResolver, ResolverError,
-    ResolverRequest, parse_html, render_streaming,
+    ConsumerPropertyValue, LayoutConfig, LayoutOptions, LayoutStatus, PageBox, PageDefaults,
+    RenderResources, ReplacedResolver, ResolverError, ResolverRequest, layout, parse_html,
 };
 
 struct NoopResolver;
@@ -15,24 +14,6 @@ impl ReplacedResolver for NoopResolver {
         _request: ResolverRequest<'_>,
     ) -> Result<raikiri::ResolvedIntrinsic, ResolverError> {
         unreachable!("test document contains no replaced element")
-    }
-}
-
-#[derive(Default)]
-struct Sink {
-    pages: Vec<PageFragment>,
-    summary: Option<RenderSummary>,
-}
-
-impl RenderSink for Sink {
-    fn accept_page(&mut self, page: PageFragment) -> Result<(), std::io::Error> {
-        self.pages.push(page);
-        Ok(())
-    }
-
-    fn finish_render(&mut self, summary: RenderSummary) -> Result<(), std::io::Error> {
-        self.summary = Some(summary);
-        Ok(())
     }
 }
 
@@ -88,22 +69,19 @@ fn resolved_consumer_properties_are_neutral_and_document_ordered() {
         ConsumerPropertyRegistration::integer("bookmark-level"),
         ConsumerPropertyRegistration::text("bookmark-label"),
     ];
-    let mut sink = Sink::default();
     let mut observer = Observer::default();
     let resources = RenderResources::new().replaced_resolver(&NoopResolver);
-    let status = render_streaming(
+    let status = layout(
         &doc,
         defaults(),
         LayoutConfig::default(),
-        RenderOptions::new()
+        LayoutOptions::new()
             .resources(&resources)
             .consumer_properties(&registrations, &mut observer),
-        &mut sink,
     )
     .expect("render");
 
-    assert!(matches!(status, RenderStatus::Completed(_)));
-    assert!(sink.summary.is_some());
+    assert!(matches!(status, LayoutStatus::Completed(_)));
     assert_eq!(observer.events.len(), 6);
     assert_eq!(
         observer
@@ -145,15 +123,17 @@ fn resolved_consumer_properties_are_neutral_and_document_ordered() {
         ConsumerPropertyValue::Text("Second".to_owned())
     );
     assert!(
-        sink.pages
-            .iter()
-            .flat_map(|page| page.items.iter())
-            .any(|item| {
-                observer
-                    .events
-                    .iter()
-                    .any(|event| event.node_id == item.node_id)
-            })
+        match status {
+            LayoutStatus::Completed(ref result) => result,
+            _ => panic!("expected layout"),
+        }
+        .pages()
+        .any(|page| page.fragments().any(|item| {
+            observer
+                .events
+                .iter()
+                .any(|event| event.node_id == item.node())
+        }))
     );
 }
 
@@ -167,37 +147,32 @@ fn explicit_none_is_a_neutral_value_and_observer_errors_are_structured() {
     let registrations = [ConsumerPropertyRegistration::integer_or_none(
         "bookmark-level",
     )];
-    let mut sink = Sink::default();
     let mut observer = Observer {
         fail: true,
         ..Observer::default()
     };
     let resources = RenderResources::new().replaced_resolver(&NoopResolver);
-    let error = render_streaming(
+    let error = layout(
         &doc,
         defaults(),
         LayoutConfig::default(),
-        RenderOptions::new()
+        LayoutOptions::new()
             .resources(&resources)
             .consumer_properties(&registrations, &mut observer),
-        &mut sink,
     )
-    .expect_err("observer failure must stop the render");
+    .err()
+    .expect("observer failure must stop the layout");
     assert!(matches!(error, raikiri::RenderError::Observer(_)));
-    assert!(sink.pages.is_empty());
-    assert!(sink.summary.is_none());
 
-    let mut sink = Sink::default();
     let mut observer = Observer::default();
     let resources = RenderResources::new().replaced_resolver(&NoopResolver);
-    render_streaming(
+    layout(
         &doc,
         defaults(),
         LayoutConfig::default(),
-        RenderOptions::new()
+        LayoutOptions::new()
             .resources(&resources)
             .consumer_properties(&registrations, &mut observer),
-        &mut sink,
     )
     .expect("none render");
     assert_eq!(observer.events.len(), 1);
@@ -229,17 +204,15 @@ fn registrations_use_var_resolution_media_and_explicit_inheritance() {
         ConsumerPropertyRegistration::integer("bookmark-level"),
         ConsumerPropertyRegistration::text("bookmark-label").inherited(),
     ];
-    let mut sink = Sink::default();
     let mut observer = Observer::default();
     let resources = RenderResources::new().replaced_resolver(&NoopResolver);
-    render_streaming(
+    layout(
         &doc,
         defaults(),
         LayoutConfig::default(),
-        RenderOptions::new()
+        LayoutOptions::new()
             .resources(&resources)
             .consumer_properties(&registrations, &mut observer),
-        &mut sink,
     )
     .expect("render");
 
@@ -285,17 +258,15 @@ fn content_text_ignores_non_rendered_subtrees() {
     )
     .expect("parse");
     let registrations = [ConsumerPropertyRegistration::text("bookmark-label")];
-    let mut sink = Sink::default();
     let mut observer = Observer::default();
     let resources = RenderResources::new().replaced_resolver(&NoopResolver);
-    render_streaming(
+    layout(
         &doc,
         defaults(),
         LayoutConfig::default(),
-        RenderOptions::new()
+        LayoutOptions::new()
             .resources(&resources)
             .consumer_properties(&registrations, &mut observer),
-        &mut sink,
     )
     .expect("render");
 
@@ -324,21 +295,19 @@ fn consumer_property_edge_values_and_closure_observer() {
         ConsumerPropertyRegistration::text("bookmark-label"),
     ];
     assert!(!registrations[0].inherits());
-    let mut sink = Sink::default();
     let mut events = Vec::new();
     let mut observer = |event: ConsumerPropertyEvent| {
         events.push(event);
         Ok::<_, std::io::Error>(())
     };
     let resources = RenderResources::new().replaced_resolver(&NoopResolver);
-    render_streaming(
+    layout(
         &doc,
         defaults(),
         LayoutConfig::default(),
-        RenderOptions::new()
+        LayoutOptions::new()
             .resources(&resources)
             .consumer_properties(&registrations, &mut observer),
-        &mut sink,
     )
     .expect("render");
 
@@ -368,21 +337,18 @@ fn empty_consumer_registration_keeps_rendering_compatible() {
     )
     .expect("parse");
     let registrations: [ConsumerPropertyRegistration; 0] = [];
-    let mut sink = Sink::default();
     let mut observer = Observer::default();
     let resources = RenderResources::new().replaced_resolver(&NoopResolver);
-    let status = render_streaming(
+    let status = layout(
         &doc,
         defaults(),
         LayoutConfig::default(),
-        RenderOptions::new()
+        LayoutOptions::new()
             .resources(&resources)
             .consumer_properties(&registrations, &mut observer),
-        &mut sink,
     )
     .expect("render");
 
-    assert!(matches!(status, RenderStatus::Completed(_)));
+    assert!(matches!(status, LayoutStatus::Completed(_)));
     assert!(observer.events.is_empty());
-    assert!(sink.summary.is_some());
 }

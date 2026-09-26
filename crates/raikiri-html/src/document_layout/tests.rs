@@ -1,56 +1,5 @@
 use super::*;
-use raikiri_traits::{
-    NodeId, NodeKind, PageFragmentItem, PageFragmentKind, PageFragmentLineRange, PageFragmentRect,
-};
-
-fn rect(x: f32, y: f32, w: f32, h: f32) -> PageFragmentRect {
-    let mut r = PageFragmentRect::default();
-    r.x = x;
-    r.y = y;
-    r.width = w;
-    r.height = h;
-    r
-}
-
-#[test]
-fn fragment_rect_is_moved_to_the_page_box_origin() {
-    let item = PageFragmentItem::new(
-        NodeId(7),
-        rect(5.0, 8.0, 20.0, 10.0),
-        PageFragmentKind::Text,
-        0,
-        2,
-        false,
-    )
-    .with_page_index(0)
-    .with_line_range(PageFragmentLineRange::new(0, 3));
-    let f = Fragment::new(&item, rect(30.0, 40.0, 100.0, 100.0));
-    let r = f.rect();
-    assert_eq!((r.x, r.y, r.width, r.height), (35.0, 48.0, 20.0, 10.0));
-    assert_eq!(f.node(), NodeId(7));
-    assert_eq!(f.kind(), FragmentKind::Text);
-    assert_eq!(f.line_range(), Some(0..3));
-    assert_eq!(f.is_first_fragment(), Some(true));
-    assert_eq!(f.is_last_fragment(), Some(false));
-    assert_eq!(f.repeat(), None);
-    assert!(!f.continuation());
-}
-
-#[test]
-fn repeated_fragment_reports_every_page() {
-    let item = PageFragmentItem::new(
-        NodeId(3),
-        rect(0.0, 0.0, 1.0, 1.0),
-        PageFragmentKind::Box,
-        1,
-        2,
-        true,
-    );
-    let item = item.with_page_index(1);
-    let f = Fragment::new(&item, rect(0.0, 0.0, 10.0, 10.0));
-    assert_eq!(f.repeat(), Some(RepeatKind::EveryPage));
-    assert_eq!(f.is_last_fragment(), Some(true));
-}
+use raikiri_traits::{NodeId, NodeKind};
 
 fn dom(html: &str) -> crate::HtmlDocument {
     crate::parse_html_with_resources(html.as_bytes(), &crate::RenderResources::new())
@@ -106,10 +55,9 @@ fn dom_view_is_total_on_out_of_range_ids() {
     assert_eq!(view.text_content(bad), "");
 }
 
-use crate::{RenderOptions, render_streaming};
 use raikiri_traits::{
     AbortController, ConsumerPropertyEvent, ConsumerPropertyObserver, LayoutConfig, PageDefaults,
-    PageFragment, RenderError, RenderSink, RenderStatus, RenderSummary,
+    RenderError,
 };
 
 const PAGED: &str = "<style>\
@@ -118,18 +66,6 @@ const PAGED: &str = "<style>\
     p { margin: 0; height: 90px }\
     </style><p>aaa bbb ccc</p><p>ddd</p><p>eee fff</p>";
 
-#[derive(Default)]
-struct Collect(Vec<PageFragment>);
-impl RenderSink for Collect {
-    fn accept_page(&mut self, page: PageFragment) -> std::io::Result<()> {
-        self.0.push(page);
-        Ok(())
-    }
-    fn finish_render(&mut self, _: RenderSummary) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
 fn completed(status: LayoutStatus) -> DocumentLayout {
     match status {
         LayoutStatus::Completed(layout) => layout,
@@ -137,50 +73,6 @@ fn completed(status: LayoutStatus) -> DocumentLayout {
             "expected Completed, got {:?}",
             std::mem::discriminant(&other)
         ),
-    }
-}
-
-#[test]
-fn layout_matches_render_streaming_pages_and_items() {
-    let doc = dom(PAGED);
-    let mut sink = Collect::default();
-    let status = render_streaming(
-        &doc,
-        PageDefaults::default(),
-        LayoutConfig::default(),
-        RenderOptions::new(),
-        &mut sink,
-    )
-    .expect("render");
-    assert!(matches!(status, RenderStatus::Completed(_)));
-    let layout = completed(
-        layout(
-            &doc,
-            PageDefaults::default(),
-            LayoutConfig::default(),
-            LayoutOptions::new(),
-        )
-        .expect("layout"),
-    );
-
-    assert!(sink.0.len() >= 2, "fixture must paginate");
-    assert_eq!(layout.page_count() as usize, sink.0.len());
-    for (page, neutral) in layout.pages().zip(sink.0.iter()) {
-        assert_eq!(page.index(), neutral.page_index);
-        assert_eq!(page.name(), neutral.page_name.as_deref());
-        let g = page.geometry();
-        assert_eq!(g.content_box.x, neutral.content_box.x);
-        assert_eq!(g.content_box.y, neutral.content_box.y);
-        assert_eq!(g.page_box.width, neutral.page_box.width);
-        let fragments: Vec<_> = page.fragments().collect();
-        assert_eq!(fragments.len(), neutral.items.len());
-        for (f, item) in fragments.iter().zip(neutral.items.iter()) {
-            assert_eq!(f.node(), item.node_id);
-            let r = f.rect();
-            assert_eq!(r.x - neutral.content_box.x, item.rect.x);
-            assert_eq!(r.y - neutral.content_box.y, item.rect.y);
-            assert_eq!(f.line_range(), item.line_range.map(|l| l.start..l.end));
-        }
     }
 }
 
@@ -381,4 +273,78 @@ fn dom_and_computed_reject_large_node_ids() {
         assert!(page.computed(bad).is_none());
         assert!(!result.is_rendered(bad));
     }
+}
+
+// Losing the abort check after consumer delivery would return a partial result.
+#[test]
+fn layout_aborts_when_property_observer_aborts() {
+    let doc = dom("<h1 style='bookmark-level:1'>x</h1>");
+    let registrations = [crate::ConsumerPropertyRegistration::integer(
+        "bookmark-level",
+    )];
+    let controller = AbortController::new();
+    let mut count = 0;
+    let mut observer = |_: ConsumerPropertyEvent| {
+        count += 1;
+        controller.abort();
+        Ok::<_, std::io::Error>(())
+    };
+    let status = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::builder()
+            .signal(Some(controller.signal.clone()))
+            .build(),
+        LayoutOptions::new().consumer_properties(&registrations, &mut observer),
+    )
+    .unwrap();
+    assert!(matches!(status, LayoutStatus::Aborted));
+    assert_eq!(count, 1);
+    assert!(matches!(
+        layout(
+            &doc,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new()
+        )
+        .unwrap(),
+        LayoutStatus::Completed(_)
+    ));
+}
+
+// A second origin offset would move placements and clickable areas off the page.
+#[test]
+fn layout_page_origin_is_applied_once_to_fragments_and_links() {
+    let doc = dom(
+        "<style>body{margin:0} @page{size:100px 100px;margin:20px;padding:5px} div{width:10px;height:10px}</style><div><a href=' /go '>x</a></div>",
+    );
+    let result = completed(
+        layout(
+            &doc,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    let page = result.page(0).unwrap();
+    let rect = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("div"))
+        .unwrap()
+        .rect();
+    assert_eq!(rect, raikiri_traits::PaintRect::new(25.0, 25.0, 10.0, 10.0));
+    assert_eq!(
+        page.geometry().content_box,
+        raikiri_traits::PaintRect::new(25.0, 25.0, 60.0, 50.0)
+    );
+    let text = page
+        .fragments()
+        .find(|f| f.kind() == FragmentKind::Text)
+        .unwrap()
+        .rect();
+    let links: Vec<_> = page.links().collect();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target, "/go");
+    assert_eq!(links[0].quads, &[text]);
 }

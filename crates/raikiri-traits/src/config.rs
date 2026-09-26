@@ -1,13 +1,8 @@
-//! Render entry point config (Finding #5 対応: raikiri 内 iteration 廃止)。
-//!
-//! `plan()` / `render_streaming()` / `render_batch()` の 3 entry point が
-//! それぞれ config を受け取り、resource / cost limit を強制。round 4 review #1
-//! 対応で `RenderLimits` に昇格 (旧 BatchConfig 限定 から plan / Streaming にも
-//! 統一)。
+//! Resource limits and layout configuration.
 
 use crate::page::TargetRegistry;
 
-/// 全 entry point (plan / render_streaming / render_batch) が受け取る
+/// Layout and parse entry points share these
 /// resource / cost 上限 (Finding #5 + round 4 review #1)。
 ///
 /// 妥当な defaults は fulgur 想定: pages=10_000, nodes=1M, slots=100k,
@@ -289,68 +284,6 @@ impl LookaheadConfigBuilder {
             allow_cross_size_lookahead: self
                 .allow_cross_size_lookahead
                 .unwrap_or(d.allow_cross_size_lookahead),
-        }
-    }
-}
-
-/// `plan()` 用 config (round 4 review #1, #2 対応)。
-#[non_exhaustive]
-#[derive(Debug, Default, Clone)]
-pub struct PlanConfig {
-    /// lookahead 設定。
-    pub lookahead: LookaheadConfig,
-    /// resource / cost 上限 (round 4 review #1)。
-    pub limits: RenderLimits,
-    /// 反復 chain 用の hint registry (round 4 review #2)。
-    pub initial_registry: Option<TargetRegistry>,
-}
-
-impl PlanConfig {
-    /// Default 相当の shortcut。
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Fluent builder を返す。
-    pub fn builder() -> PlanConfigBuilder {
-        PlanConfigBuilder::default()
-    }
-}
-
-/// `PlanConfig` の fluent builder。
-#[derive(Debug, Default, Clone)]
-pub struct PlanConfigBuilder {
-    lookahead: Option<LookaheadConfig>,
-    limits: Option<RenderLimits>,
-    initial_registry: Option<Option<TargetRegistry>>,
-}
-
-impl PlanConfigBuilder {
-    /// `lookahead` を設定。
-    pub fn lookahead(mut self, v: LookaheadConfig) -> Self {
-        self.lookahead = Some(v);
-        self
-    }
-
-    /// `limits` を設定。
-    pub fn limits(mut self, v: RenderLimits) -> Self {
-        self.limits = Some(v);
-        self
-    }
-
-    /// `initial_registry` を設定。
-    pub fn initial_registry(mut self, v: Option<TargetRegistry>) -> Self {
-        self.initial_registry = Some(v);
-        self
-    }
-
-    /// Build。未設定 field は Default 値。
-    pub fn build(self) -> PlanConfig {
-        let d = PlanConfig::default();
-        PlanConfig {
-            lookahead: self.lookahead.unwrap_or(d.lookahead),
-            limits: self.limits.unwrap_or(d.limits),
-            initial_registry: self.initial_registry.unwrap_or(d.initial_registry),
         }
     }
 }

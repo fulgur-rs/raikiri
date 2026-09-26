@@ -2323,21 +2323,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "raikiri-blitz-compat"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "cursor-icon",
- "http",
- "raikiri",
- "raikiri-dom",
- "raikiri-html",
- "raikiri-traits",
- "smol_str",
- "url",
-]
-
-[[package]]
 name = "raikiri-dom"
 version = "0.1.0"
 dependencies = [

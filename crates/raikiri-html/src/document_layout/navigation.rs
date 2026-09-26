@@ -1,5 +1,5 @@
 use super::DomView;
-use raikiri_traits::{NodeId, NodeKind, PageFragment, PageFragmentEvent, PaintRect};
+use raikiri_traits::{NodeId, NodeKind, PaintRect};
 use std::collections::{HashMap, HashSet};
 
 /// Destination of an in-document link.
@@ -49,67 +49,35 @@ pub struct Link<'a> {
     pub quads: &'a [PaintRect],
 }
 
-pub(crate) struct PageLinks {
-    pub(crate) entries: Vec<(NodeId, String, Vec<PaintRect>)>,
-}
-
-pub(crate) fn build_links(pages: &[PageFragment], events: &[PageFragmentEvent]) -> Vec<PageLinks> {
-    let mut per_page: Vec<PageLinks> = pages
+pub(crate) fn build_rendered(
+    document: &raikiri_dom::Document,
+    slices: &[raikiri_dom::PageSlice],
+) -> HashSet<NodeId> {
+    slices
         .iter()
-        .map(|_| PageLinks {
-            entries: Vec::new(),
+        .flat_map(|slice| {
+            document
+                .page_fragments(slice.page_index)
+                .map(|fragment| fragment.node())
         })
-        .collect();
-    for event in events {
-        let PageFragmentEvent::Link(link) = event else {
-            continue;
-        };
-        let target = link.link.href.trim();
-        if target.is_empty() {
-            continue;
-        }
-        let Some(page) = pages.iter().position(|p| p.page_index == link.page_index) else {
-            continue;
-        };
-        let content_box = pages[page].content_box;
-        let quad = PaintRect::new(
-            link.rect.x + content_box.x,
-            link.rect.y + content_box.y,
-            link.rect.width,
-            link.rect.height,
-        );
-        let entries = &mut per_page[page].entries;
-        match entries
-            .iter_mut()
-            .find(|(owner, t, _)| *owner == link.anchor_node_id && t == target)
-        {
-            Some((_, _, quads)) => quads.push(quad),
-            None => entries.push((link.anchor_node_id, target.to_owned(), vec![quad])),
-        }
-    }
-    per_page
-}
-
-pub(crate) fn build_rendered(pages: &[PageFragment]) -> HashSet<NodeId> {
-    pages
-        .iter()
-        .flat_map(|p| p.items.iter().map(|item| item.node_id))
         .collect()
 }
 
-pub(crate) fn build_anchors(dom: DomView<'_>, pages: &[PageFragment]) -> AnchorIndex {
+pub(crate) fn build_anchors(
+    dom: DomView<'_>,
+    document: &raikiri_dom::Document,
+    slices: &[raikiri_dom::PageSlice],
+) -> AnchorIndex {
     let mut first_fragment: HashMap<NodeId, Anchor> = HashMap::new();
-    for page in pages {
-        for item in &page.items {
-            first_fragment
-                .entry(item.node_id)
-                .or_insert_with(|| Anchor {
-                    page_index: page.page_index,
-                    point: (
-                        item.rect.x + page.content_box.x,
-                        item.rect.y + page.content_box.y,
-                    ),
-                });
+    for slice in slices {
+        for fragment in document.page_fragments(slice.page_index) {
+            first_fragment.entry(fragment.node()).or_insert_with(|| {
+                let rect = fragment.rect();
+                Anchor {
+                    page_index: slice.page_index,
+                    point: (rect.x, rect.y),
+                }
+            });
         }
     }
     let mut index = AnchorIndex::default();

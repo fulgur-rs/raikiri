@@ -1,16 +1,9 @@
-//! Public page-fragment API reachability tests.
+//! Page projection contracts.
 
+use super::super::super::*;
 use parley::FontContext;
-use raikiri_dom::{
-    Document, PageFragmentEvent, PageFragmentItem, PageFragmentKind, PageFragmentRect, PageSlice,
-    layout_page_fragments, page_fragment_events_from_pages, page_fragment_geometry_table,
-    page_fragments_from_slices_with_page_geometry,
-};
-use raikiri_html::{ParseOptions, parse};
 use raikiri_style::{Origin, build_rule_tree, cascade};
-use raikiri_traits::{
-    NodeId, PageBox, PageFragmentInsets, PageFragmentOrientation, PageFragmentPageGeometry,
-};
+use raikiri_traits::{NodeId, PageBox};
 use smol_str::SmolStr;
 use taffy::Style;
 
@@ -209,9 +202,7 @@ fn page_fragment_link_events_preserve_anchor_and_placement_geometry() {
     let events = page_fragment_events_from_pages(&document, &pages);
 
     assert_eq!(events.len(), 1, "one leaf placement should yield one event");
-    let PageFragmentEvent::Link(event) = &events[0] else {
-        panic!("expected link event");
-    };
+    let PageFragmentEvent::Link(event) = &events[0];
     assert_eq!(event.anchor_node_id, NodeId::new(anchor as u64));
     assert_eq!(event.placement_node_id, NodeId::new(text as u64));
     assert_eq!(event.page_index, 0);
@@ -274,9 +265,7 @@ fn page_fragment_link_events_keep_empty_href_and_skip_non_links_and_hidden_nodes
     let events = page_fragment_events_from_pages(&document, &pages);
 
     assert_eq!(events.len(), 1);
-    let PageFragmentEvent::Link(event) = &events[0] else {
-        panic!("expected link event");
-    };
+    let PageFragmentEvent::Link(event) = &events[0];
     assert_eq!(event.anchor_node_id, NodeId::new(empty as u64));
     assert_eq!(event.link.href, "");
 }
@@ -308,7 +297,6 @@ fn page_fragment_link_event_order_is_page_and_node_deterministic() {
         .iter()
         .map(|event| match event {
             PageFragmentEvent::Link(event) => event.anchor_node_id,
-            _ => unreachable!("only link events are currently emitted"),
         })
         .collect();
     assert!(anchors.windows(2).all(|ids| ids[0] <= ids[1]));
@@ -317,7 +305,7 @@ fn page_fragment_link_event_order_is_page_and_node_deterministic() {
 #[test]
 fn page_fragment_link_events_skip_documents_without_a_body() {
     let document = Document::new();
-    let pages = [raikiri_traits::PageFragment::default()];
+    let pages = [PageFragment::default()];
     assert!(page_fragment_events_from_pages(&document, &pages).is_empty());
 }
 
@@ -336,40 +324,41 @@ fn page_fragment_link_events_prefer_leaf_placements_and_keep_box_fallbacks() {
     document.append_text(span, "nested");
 
     let rect = PageFragmentRect::new(0.0, 0.0, 10.0, 5.0);
-    let mut page = raikiri_traits::PageFragment::default();
-    page.items = vec![
-        PageFragmentItem::new(
-            NodeId::new(anchor as u64),
-            rect,
-            PageFragmentKind::Box,
-            0,
-            1,
-            false,
-        ),
-        PageFragmentItem::new(
-            NodeId::new(span as u64),
-            rect,
-            PageFragmentKind::Box,
-            0,
-            1,
-            false,
-        ),
-        PageFragmentItem::new(
-            NodeId::new(direct_text as u64),
-            rect,
-            PageFragmentKind::Text,
-            0,
-            1,
-            false,
-        ),
-    ];
+    let page = PageFragment {
+        items: vec![
+            PageFragmentItem::new(
+                NodeId::new(anchor as u64),
+                rect,
+                PageFragmentKind::Box,
+                0,
+                1,
+                false,
+            ),
+            PageFragmentItem::new(
+                NodeId::new(span as u64),
+                rect,
+                PageFragmentKind::Box,
+                0,
+                1,
+                false,
+            ),
+            PageFragmentItem::new(
+                NodeId::new(direct_text as u64),
+                rect,
+                PageFragmentKind::Text,
+                0,
+                1,
+                false,
+            ),
+        ],
+        ..Default::default()
+    };
 
     let events = page_fragment_events_from_pages(&document, &[page]);
     let placements: Vec<_> = events
         .iter()
         .map(|event| match event {
             PageFragmentEvent::Link(event) => event.placement_node_id,
-            _ => unreachable!("only link events are currently emitted"),
         })
         .collect();
     assert!(!placements.contains(&NodeId::new(anchor as u64)));
@@ -495,28 +484,23 @@ fn page_fragment_projection_keeps_distinct_resolved_geometry_per_page() {
 }
 #[test]
 fn named_page_propagation_skips_out_of_flow_children() {
-    let html = br#"<!doctype html>
-        <html><body>
-          <div style="page: named">
-            <div style="position:absolute;top:0">out of flow</div>
-            <div>in flow</div>
-          </div>
-        </body></html>"#;
-    let options = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
-    let mut parsed = parse(&html[..], &options).expect("parse named-page fixture");
-    let rules = build_rule_tree(&parsed.dom);
-    let cascade = cascade(&parsed.dom, &rules).expect("cascade named-page fixture");
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let named = document.append_element(Some(body), "div", Style::default(), Some("page:named"));
+    let out = document.append_element(
+        Some(named),
+        "div",
+        Style::default(),
+        Some("position:absolute;top:0"),
+    );
+    document.append_text(out, "out of flow");
+    let flow = document.append_element(Some(named), "div", Style::default(), None::<&str>);
+    document.append_text(flow, "in flow");
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade named-page fixture");
 
-    let pages = raikiri_dom::layout_page_fragments(
-        &mut parsed.dom,
-        &cascade,
-        PageBox::A4,
-        FontContext::new(),
-    )
-    .expect("layout named-page fixture");
+    let pages = layout_page_fragments(&mut document, &cascade, PageBox::A4, FontContext::new())
+        .expect("layout named-page fixture");
     assert!(!pages.is_empty());
 }

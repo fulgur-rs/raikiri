@@ -6,11 +6,10 @@ use std::time::Duration;
 
 use raikiri::{
     Bytes, DecodedImage, FetchOutcome, FetchedResource, FontContextBuilder, ImagePixelSource,
-    IntrinsicBox, LayoutConfig, NetworkError, NetworkProvider, PageDefaults, PageFragment,
-    RenderError, RenderOptions, RenderResources, RenderSink, RenderStatus, RenderSummary,
-    ReplacedResolver, Request, ResolveDisposition, ResolvedIntrinsic, ResolverError,
-    ResolverRequest, ResourceKind, ResourceLimits, ResourcePolicy, Url, ViolationType, WarningKind,
-    parse_html_with_resources, render_streaming,
+    IntrinsicBox, LayoutConfig, LayoutOptions, LayoutStatus, NetworkError, NetworkProvider,
+    PageDefaults, RenderError, RenderResources, ReplacedResolver, Request, ResolveDisposition,
+    ResolvedIntrinsic, ResolverError, ResolverRequest, ResourceKind, ResourceLimits,
+    ResourcePolicy, Url, ViolationType, WarningKind, layout, parse_html_with_resources,
 };
 
 /// Parse with `resources`, then render with the same resource handoff.
@@ -19,44 +18,14 @@ fn parse_and_render<R: std::io::Read>(
     defaults: PageDefaults,
     resources: &RenderResources<'_>,
     config: LayoutConfig,
-    sink: &mut dyn RenderSink,
-) -> Result<RenderStatus, RenderError> {
+) -> Result<LayoutStatus, RenderError> {
     let doc = parse_html_with_resources(input, resources)?;
-    render_streaming(
+    layout(
         &doc,
         defaults,
         config,
-        RenderOptions::new().resources(resources),
-        sink,
+        LayoutOptions::new().resources(resources),
     )
-}
-
-#[derive(Default)]
-struct PageCollector {
-    pages: Vec<PageFragment>,
-}
-
-impl RenderSink for PageCollector {
-    fn accept_page(&mut self, page: PageFragment) -> std::io::Result<()> {
-        self.pages.push(page);
-        Ok(())
-    }
-
-    fn finish_render(&mut self, _summary: RenderSummary) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-/// [`parse_and_render`] into a collector that retains every emitted page.
-fn parse_and_collect_pages<R: std::io::Read>(
-    input: R,
-    defaults: PageDefaults,
-    resources: &RenderResources<'_>,
-    config: LayoutConfig,
-) -> Result<(Vec<PageFragment>, RenderStatus), RenderError> {
-    let mut sink = PageCollector::default();
-    let status = parse_and_render(input, defaults, resources, config, &mut sink)?;
-    Ok((sink.pages, status))
 }
 
 #[derive(Default)]
@@ -98,24 +67,6 @@ impl ImagePixelSource for FixedResolver {
     }
 }
 
-#[derive(Default)]
-struct CapturingSink {
-    pages: usize,
-    summary: Option<RenderSummary>,
-}
-
-impl RenderSink for CapturingSink {
-    fn accept_page(&mut self, _page: raikiri::PageFragment) -> std::io::Result<()> {
-        self.pages += 1;
-        Ok(())
-    }
-
-    fn finish_render(&mut self, summary: RenderSummary) -> std::io::Result<()> {
-        self.summary = Some(summary);
-        Ok(())
-    }
-}
-
 fn bundled_test_font() -> raikiri::FontContext {
     // This render fixture has no text; it verifies the bundled-context handoff.
     FontContextBuilder::new()
@@ -128,7 +79,7 @@ fn bundled_test_font() -> raikiri::FontContext {
 }
 
 #[test]
-fn bundled_no_network_resources_share_base_resolver_and_summary() {
+fn bundled_no_network_resources_share_base_resolver_and_layout() {
     let network = CountingNetwork::default();
     let resolver = FixedResolver::default();
     let base_url = Url::parse("https://example.test/books/chapter.html").unwrap();
@@ -137,22 +88,19 @@ fn bundled_no_network_resources_share_base_resolver_and_summary() {
         .network_provider(&network)
         .font_context(bundled_test_font())
         .replaced_resource_provider(&resolver);
-    let mut sink = CapturingSink::default();
 
     let status = parse_and_render(
         &b"<html><body style='font-family: \"Bundled Handoff Test\"'>A<img src='../images/cover.png'></body></html>"[..],
         PageDefaults::default(),
         &resources,
         LayoutConfig::default(),
-        &mut sink,
     )
     .expect("resource-aware render succeeds without network access");
 
-    let RenderStatus::Completed(summary) = status else {
+    let LayoutStatus::Completed(summary) = status else {
         panic!("expected a complete render");
     };
-    assert_eq!(sink.pages, 1);
-    assert_eq!(summary.total_pages, 1);
+    assert_eq!(summary.page_count(), 1);
     assert_eq!(network.calls.load(Ordering::SeqCst), 0);
     assert_eq!(
         resolver.seen.lock().unwrap().as_slice(),
@@ -165,7 +113,7 @@ fn bundled_no_network_resources_share_base_resolver_and_summary() {
             .get_decoded(&Url::parse("https://example.test/images/cover.png").unwrap())
             .is_some()
     );
-    assert!(summary.warnings.iter().any(|warning| matches!(
+    assert!(summary.warnings().iter().any(|warning| matches!(
         &warning.kind,
         WarningKind::ResourceFallback {
             kind: ResourceKind::Image,
@@ -186,18 +134,41 @@ fn bundled_no_network_page_output_is_deterministic_across_runs() {
     let mut outputs = Vec::new();
 
     for _ in 0..3 {
-        let (pages, status) = parse_and_collect_pages(
+        let status = parse_and_render(
             &b"<html><body style='font-family: \"Bundled Handoff Test\"'>A<img src='../images/cover.png'></body></html>"[..],
             PageDefaults::default(),
             &resources,
             LayoutConfig::default(),
         )
         .expect("bundled no-network render succeeds");
-        let RenderStatus::Completed(summary) = status else {
+        let LayoutStatus::Completed(summary) = status else {
             panic!("expected a complete render");
         };
-        assert_eq!(summary.total_pages, 1);
-        outputs.push(pages);
+        assert_eq!(summary.page_count(), 1);
+        outputs.push(
+            summary
+                .pages()
+                .map(|page| {
+                    (
+                        page.index(),
+                        page.name().map(str::to_owned),
+                        page.geometry(),
+                        page.fragments()
+                            .map(|f| {
+                                (
+                                    f.node(),
+                                    f.kind(),
+                                    f.rect(),
+                                    f.line_range(),
+                                    f.repeat(),
+                                    f.fragment_index(),
+                                )
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
     }
 
     assert_eq!(outputs[0], outputs[1]);
@@ -211,14 +182,12 @@ fn html_base_element_overrides_configured_fallback_for_replaced_resources() {
     let resources = RenderResources::new()
         .base_url(Url::parse("https://example.test/books/chapter.html").unwrap())
         .replaced_resource_provider(&resolver);
-    let mut sink = CapturingSink::default();
 
     parse_and_render(
         &b"<html><head><base href='/assets/'></head><body><img src='cover.png'></body></html>"[..],
         PageDefaults::default(),
         &resources,
         LayoutConfig::default(),
-        &mut sink,
     )
     .expect("document base is valid");
 
@@ -229,9 +198,9 @@ fn html_base_element_overrides_configured_fallback_for_replaced_resources() {
 }
 
 #[test]
-fn batch_collection_uses_the_resource_aware_page_path() {
+fn layout_uses_the_resource_aware_page_path() {
     let resources = RenderResources::new();
-    let (pages, status) = parse_and_collect_pages(
+    let status = parse_and_render(
         &b"<html><body><div></div></body></html>"[..],
         PageDefaults::default(),
         &resources,
@@ -239,11 +208,10 @@ fn batch_collection_uses_the_resource_aware_page_path() {
     )
     .expect("batch collection succeeds");
 
-    assert_eq!(pages.len(), 1);
-    let RenderStatus::Completed(summary) = status else {
+    let LayoutStatus::Completed(summary) = status else {
         panic!("expected a complete render");
     };
-    assert_eq!(summary.total_pages, 1);
+    assert_eq!(summary.page_count(), 1);
 }
 
 struct OversizedStylesheetProvider {
@@ -263,7 +231,7 @@ impl NetworkProvider for OversizedStylesheetProvider {
 }
 
 #[test]
-fn response_limits_are_reported_in_render_summary() {
+fn response_limits_are_reported_in_layout_warnings() {
     let network = OversizedStylesheetProvider {
         requests: Mutex::new(Vec::new()),
     };
@@ -275,7 +243,6 @@ fn response_limits_are_reported_in_render_summary() {
                 .max_resource_bytes(Some(4))
                 .max_aggregate_resource_bytes(Some(16)),
         );
-    let mut sink = CapturingSink::default();
 
     let status = parse_and_render(
         &b"<html><head><link rel='stylesheet' href='main.css'></head><body><p>Hi</p></body></html>"
@@ -283,10 +250,9 @@ fn response_limits_are_reported_in_render_summary() {
         PageDefaults::default(),
         &resources,
         LayoutConfig::default(),
-        &mut sink,
     )
     .expect("an oversized stylesheet is a non-fatal fallback");
-    let RenderStatus::Completed(summary) = status else {
+    let LayoutStatus::Completed(summary) = status else {
         panic!("expected a complete render");
     };
 
@@ -296,7 +262,7 @@ fn response_limits_are_reported_in_render_summary() {
         requests[0].url.as_str(),
         "https://example.test/docs/main.css"
     );
-    assert!(summary.warnings.iter().any(|warning| matches!(
+    assert!(summary.warnings().iter().any(|warning| matches!(
         warning.kind,
         WarningKind::ResourceLimitExceeded {
             kind: ResourceKind::ExternalStylesheet,
@@ -336,17 +302,15 @@ fn aggregate_response_budget_is_shared_by_parse_and_font_loading() {
                 .max_resource_bytes(Some(4))
                 .max_aggregate_resource_bytes(Some(1)),
         );
-    let mut sink = CapturingSink::default();
 
     let status = parse_and_render(
         &b"<html><head><link rel='stylesheet' href='main.css'></head><body></body></html>"[..],
         PageDefaults::default(),
         &resources,
         LayoutConfig::default(),
-        &mut sink,
     )
     .expect("the second resource falls back after aggregate budget exhaustion");
-    let RenderStatus::Completed(summary) = status else {
+    let LayoutStatus::Completed(summary) = status else {
         panic!("expected a complete render");
     };
 
@@ -354,7 +318,7 @@ fn aggregate_response_budget_is_shared_by_parse_and_font_loading() {
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0].kind, ResourceKind::ExternalStylesheet);
     assert_eq!(requests[1].kind, ResourceKind::Font);
-    assert!(summary.warnings.iter().any(|warning| matches!(
+    assert!(summary.warnings().iter().any(|warning| matches!(
         warning.kind,
         WarningKind::ResourceLimitExceeded {
             kind: ResourceKind::Font,
@@ -441,21 +405,19 @@ fn decoded_image_limit_is_reported_and_paint_source_refuses_the_image() {
         .base_url(Url::parse("https://example.test/book/page.html").unwrap())
         .network_policy(&policy)
         .replaced_resource_provider(&provider);
-    let mut sink = CapturingSink::default();
 
     let status = parse_and_render(
         &b"<html><body><img src='image.png'></body></html>"[..],
         PageDefaults::default(),
         &resources,
         LayoutConfig::default(),
-        &mut sink,
     )
     .expect("oversized decoded pixels fall back");
-    let RenderStatus::Completed(summary) = status else {
+    let LayoutStatus::Completed(summary) = status else {
         panic!("expected a complete render");
     };
 
-    assert!(summary.warnings.iter().any(|warning| matches!(
+    assert!(summary.warnings().iter().any(|warning| matches!(
         warning.kind,
         WarningKind::ResourceLimitExceeded {
             kind: ResourceKind::Image,
@@ -487,17 +449,15 @@ fn network_policy_applies_to_stylesheet_font_and_replaced_resource_fetches() {
             decoded_image_limit: None,
         })
         .replaced_resource_provider(&resolver);
-    let mut sink = CapturingSink::default();
 
     let status = parse_and_render(
         &b"<html><head><link rel='stylesheet' href='main.css'></head><body><p>Hi</p><img src='image.png'></body></html>"[..],
         PageDefaults::default(),
         &resources,
         LayoutConfig::default(),
-        &mut sink,
     )
     .expect("denied resources fall back without aborting render");
-    let RenderStatus::Completed(summary) = status else {
+    let LayoutStatus::Completed(summary) = status else {
         panic!("expected a complete render");
     };
 
@@ -512,24 +472,24 @@ fn network_policy_applies_to_stylesheet_font_and_replaced_resource_fetches() {
     );
     assert!(
         summary
-            .warnings
+            .warnings()
             .iter()
             .any(|warning| matches!(warning.kind, WarningKind::PolicyWarning { .. }))
     );
-    assert!(summary.warnings.iter().any(|warning| matches!(
+    assert!(summary.warnings().iter().any(|warning| matches!(
         &warning.kind,
         WarningKind::PolicyWarning { violation }
             if violation.kind == ResourceKind::Image
                 && violation.url.as_str() == "https://blocked.test/book/image.png"
     )));
-    assert!(summary.warnings.iter().any(|warning| matches!(
+    assert!(summary.warnings().iter().any(|warning| matches!(
         &warning.kind,
         WarningKind::PolicyWarning { violation }
             if violation.kind == ResourceKind::StylesheetImport
                 && violation.url.as_str() == "https://blocked.test/book/reset.css"
     )));
     let denied_font = summary
-        .warnings
+        .warnings()
         .iter()
         .find_map(|warning| match &warning.kind {
             WarningKind::PolicyWarning { violation } if violation.kind == ResourceKind::Font => {
@@ -542,7 +502,7 @@ fn network_policy_applies_to_stylesheet_font_and_replaced_resource_fetches() {
         denied_font.url.as_str(),
         "https://blocked.test/book/font.ttf"
     );
-    assert!(summary.warnings.iter().any(|warning| matches!(
+    assert!(summary.warnings().iter().any(|warning| matches!(
         warning.kind,
         WarningKind::ResourceFallback {
             kind: ResourceKind::Font,
@@ -644,7 +604,6 @@ fn a_redirect_to_a_denied_host_is_never_actually_requested() {
         .base_url(Url::parse("https://allowed.test/book/page.html").unwrap())
         .network_provider(&network)
         .network_policy(&policy);
-    let mut sink = CapturingSink::default();
 
     let status = parse_and_render(
         &b"<html><head><link rel='stylesheet' href='main.css'></head><body><p>Hi</p></body></html>"
@@ -652,10 +611,9 @@ fn a_redirect_to_a_denied_host_is_never_actually_requested() {
         PageDefaults::default(),
         &resources,
         LayoutConfig::default(),
-        &mut sink,
     )
     .expect("a denied redirect target falls back without aborting render");
-    let RenderStatus::Completed(summary) = status else {
+    let LayoutStatus::Completed(summary) = status else {
         panic!("expected a complete render");
     };
 
@@ -668,7 +626,7 @@ fn a_redirect_to_a_denied_host_is_never_actually_requested() {
         vec!["https://allowed.test/book/main.css".to_owned()],
         "the denied redirect target must never actually be requested"
     );
-    assert!(summary.warnings.iter().any(|warning| matches!(
+    assert!(summary.warnings().iter().any(|warning| matches!(
         &warning.kind,
         WarningKind::PolicyWarning { violation }
             if matches!(violation.violation_type, ViolationType::HostNotAllowed)
@@ -701,7 +659,6 @@ fn exceeding_max_redirect_hops_stops_before_the_next_hop_is_requested() {
         .base_url(Url::parse("https://allowed.test/book/page.html").unwrap())
         .network_provider(&network)
         .network_policy(&policy);
-    let mut sink = CapturingSink::default();
 
     parse_and_render(
         &b"<html><head><link rel='stylesheet' href='main.css'></head><body><p>Hi</p></body></html>"
@@ -709,7 +666,6 @@ fn exceeding_max_redirect_hops_stops_before_the_next_hop_is_requested() {
         PageDefaults::default(),
         &resources,
         LayoutConfig::default(),
-        &mut sink,
     )
     .expect("a redirect chain exceeding the hop cap falls back without aborting render");
 
@@ -748,7 +704,6 @@ fn allow_redirect_receives_the_real_hop_number_not_a_fixed_one() {
         .base_url(Url::parse("https://allowed.test/book/page.html").unwrap())
         .network_provider(&network)
         .network_policy(&policy);
-    let mut sink = CapturingSink::default();
 
     parse_and_render(
         &b"<html><head><link rel='stylesheet' href='main.css'></head><body><p>Hi</p></body></html>"
@@ -756,7 +711,6 @@ fn allow_redirect_receives_the_real_hop_number_not_a_fixed_one() {
         PageDefaults::default(),
         &resources,
         LayoutConfig::default(),
-        &mut sink,
     )
     .expect("a fully allowed redirect chain completes without aborting render");
 

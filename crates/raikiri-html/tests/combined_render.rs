@@ -1,83 +1,23 @@
-//! External-consumer test for the single render entry point.
-//!
-//! Uses only `raikiri-html` and `raikiri-traits`, the crates an external
-//! consumer depends on, and checks that page-event observation, consumer
-//! properties, and the resource handoff work together in one render with the
-//! documented delivery order.
+//! External-consumer coverage for layout, links, properties, and shared resources.
 
 use std::sync::{Arc, Mutex};
 
 use raikiri_html::{
-    ConsumerPropertyRegistration, RenderOptions, RenderResources, parse_html_with_resources,
-    render_streaming,
+    ConsumerPropertyRegistration, FragmentKind, LayoutOptions, LayoutStatus, RenderResources,
+    layout, parse_html_with_resources,
 };
 use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue, LayoutConfig,
-    PageDefaults, PageEventObserver, PageFragment, PageFragmentEvent, PageFragmentKind, RenderSink,
-    RenderStatus, RenderSummary, ResourceKind, WarningKind,
+    PageDefaults, ResourceKind, WarningKind,
 };
-
-#[derive(Debug, Clone, PartialEq)]
-enum Delivery {
-    Property(String, ConsumerPropertyValue),
-    Page(u32),
-    Link { page_index: u32, href: String },
-    Finish,
-}
-
-type Log = Arc<Mutex<Vec<Delivery>>>;
-
-struct Sink(Log);
-
-impl RenderSink for Sink {
-    fn accept_page(&mut self, page: PageFragment) -> std::io::Result<()> {
-        self.0.lock().unwrap().push(Delivery::Page(page.page_index));
-        Ok(())
-    }
-
-    fn finish_render(&mut self, _summary: RenderSummary) -> std::io::Result<()> {
-        self.0.lock().unwrap().push(Delivery::Finish);
-        Ok(())
-    }
-}
-
-type PageLog = Arc<Mutex<Vec<PageFragment>>>;
-
-struct GeometrySink(PageLog);
-
-impl RenderSink for GeometrySink {
-    fn accept_page(&mut self, page: PageFragment) -> std::io::Result<()> {
-        self.0.lock().unwrap().push(page);
-        Ok(())
-    }
-
-    fn finish_render(&mut self, _summary: RenderSummary) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-struct Links(Log);
-
-impl PageEventObserver for Links {
-    fn observe_event(&mut self, event: PageFragmentEvent) -> std::io::Result<()> {
-        if let PageFragmentEvent::Link(link) = event {
-            self.0.lock().unwrap().push(Delivery::Link {
-                page_index: link.page_index,
-                href: link.link.href,
-            });
-        }
-        Ok(())
-    }
-}
-
+type Log = Arc<Mutex<Vec<(String, ConsumerPropertyValue)>>>;
 struct Properties(Log);
-
 impl ConsumerPropertyObserver for Properties {
     fn observe_event(&mut self, event: ConsumerPropertyEvent) -> std::io::Result<()> {
         self.0
             .lock()
             .unwrap()
-            .push(Delivery::Property(event.property_name, event.value));
+            .push((event.property_name, event.value));
         Ok(())
     }
 }
@@ -107,27 +47,23 @@ fn one_render_combines_links_consumer_properties_and_resource_warnings() {
 
     let log: Log = Arc::default();
     let registrations = [ConsumerPropertyRegistration::integer("bookmark-level")];
-    let mut links = Links(Arc::clone(&log));
     let mut properties = Properties(Arc::clone(&log));
-    let mut sink = Sink(Arc::clone(&log));
-    let status = render_streaming(
+    let status = layout(
         &doc,
         defaults(200.0, 100.0),
         LayoutConfig::default(),
-        RenderOptions::new()
+        LayoutOptions::new()
             .resources(&resources)
-            .page_observer(&mut links)
             .consumer_properties(&registrations, &mut properties),
-        &mut sink,
     )
     .expect("render");
 
-    let RenderStatus::Completed(summary) = status else {
+    let LayoutStatus::Completed(summary) = status else {
         panic!("expected a complete render");
     };
-    assert_eq!(summary.total_pages, 2);
+    assert_eq!(summary.page_count(), 2);
     assert!(
-        summary.warnings.iter().any(|warning| matches!(
+        summary.warnings().iter().any(|warning| matches!(
             &warning.kind,
             WarningKind::ResourceFallback {
                 kind: ResourceKind::Image,
@@ -135,30 +71,33 @@ fn one_render_combines_links_consumer_properties_and_resource_warnings() {
             } if url.as_str() == "https://example.com/missing.png"
         )),
         "the unresolved image is reported in the same render: {:?}",
-        summary.warnings
+        summary.warnings()
     );
 
-    let log = log.lock().unwrap().clone();
     assert_eq!(
-        log,
+        *log.lock().unwrap(),
+        vec![(
+            "bookmark-level".to_owned(),
+            ConsumerPropertyValue::Integer(1)
+        )]
+    );
+    let links = summary
+        .pages()
+        .map(|page| {
+            (
+                page.index(),
+                page.links()
+                    .map(|link| link.target.to_owned())
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        links,
         vec![
-            Delivery::Property(
-                "bookmark-level".to_owned(),
-                ConsumerPropertyValue::Integer(1)
-            ),
-            Delivery::Page(0),
-            Delivery::Link {
-                page_index: 0,
-                href: "https://example.com/first".to_owned(),
-            },
-            Delivery::Page(1),
-            Delivery::Link {
-                page_index: 1,
-                href: "https://example.com/second".to_owned(),
-            },
-            Delivery::Finish,
-        ],
-        "consumer properties precede the first page; each page's links follow that page"
+            (0, vec!["https://example.com/first".to_owned()]),
+            (1, vec!["https://example.com/second".to_owned()])
+        ]
     );
 }
 
@@ -175,36 +114,33 @@ fn first_ordered_grid_item_selects_initial_named_page_geometry() {
         </body>"#;
     let resources = RenderResources::new();
     let doc = parse_html_with_resources(&html[..], &resources).expect("parse");
-    let pages: PageLog = Arc::default();
-    let mut sink = GeometrySink(Arc::clone(&pages));
 
-    let status = render_streaming(
+    let status = layout(
         &doc,
         defaults(400.0, 400.0),
         LayoutConfig::default(),
-        RenderOptions::new().resources(&resources),
-        &mut sink,
+        LayoutOptions::new().resources(&resources),
     )
     .expect("render");
-    let RenderStatus::Completed(_) = status else {
+    let LayoutStatus::Completed(result) = status else {
         panic!("expected a complete render");
     };
 
-    let pages = pages.lock().unwrap();
+    let pages: Vec<_> = result.pages().collect();
     assert_eq!(pages.len(), 2);
     let first = pages.first().expect("the render emits a first page");
-    assert_eq!(first.page_name.as_deref(), Some("narrow"));
-    assert_eq!(first.page_box.width, 120.0);
-    assert_eq!(first.page_box.height, 180.0);
-    assert_eq!(first.margins.left, 12.0);
-    assert_eq!(first.margins.right, 12.0);
-    assert_eq!(first.margins.top, 12.0);
-    assert_eq!(first.margins.bottom, 12.0);
+    assert_eq!(first.name(), Some("narrow"));
+    assert_eq!(first.geometry().page_box.width, 120.0);
+    assert_eq!(first.geometry().page_box.height, 180.0);
+    assert_eq!(first.geometry().margins.left, 12.0);
+    assert_eq!(first.geometry().margins.right, 12.0);
+    assert_eq!(first.geometry().margins.top, 12.0);
+    assert_eq!(first.geometry().margins.bottom, 12.0);
 
     let second = &pages[1];
-    assert_eq!(second.page_name.as_deref(), Some("wide"));
-    assert_eq!(second.page_box.width, 200.0);
-    assert_eq!(second.page_box.height, 300.0);
+    assert_eq!(second.name(), Some("wide"));
+    assert_eq!(second.geometry().page_box.width, 200.0);
+    assert_eq!(second.geometry().page_box.height, 300.0);
 }
 
 #[test]
@@ -220,30 +156,27 @@ fn explicit_grid_row_ends_select_initial_page_from_resolved_grid_placement() {
         </body>"#;
     let resources = RenderResources::new();
     let doc = parse_html_with_resources(&html[..], &resources).expect("parse");
-    let pages: PageLog = Arc::default();
-    let mut sink = GeometrySink(Arc::clone(&pages));
 
-    let status = render_streaming(
+    let status = layout(
         &doc,
         defaults(400.0, 400.0),
         LayoutConfig::default(),
-        RenderOptions::new().resources(&resources),
-        &mut sink,
+        LayoutOptions::new().resources(&resources),
     )
     .expect("render");
-    let RenderStatus::Completed(_) = status else {
+    let LayoutStatus::Completed(result) = status else {
         panic!("expected a complete render");
     };
 
-    let pages = pages.lock().unwrap();
+    let pages: Vec<_> = result.pages().collect();
     let first = pages.first().expect("the render emits a first page");
-    assert_eq!(first.page_name.as_deref(), Some("wide"));
-    assert_eq!(first.page_box.width, 200.0);
-    assert_eq!(first.page_box.height, 300.0);
-    assert_eq!(first.margins.left, 5.0);
-    assert_eq!(first.margins.right, 5.0);
-    assert_eq!(first.margins.top, 5.0);
-    assert_eq!(first.margins.bottom, 5.0);
+    assert_eq!(first.name(), Some("wide"));
+    assert_eq!(first.geometry().page_box.width, 200.0);
+    assert_eq!(first.geometry().page_box.height, 300.0);
+    assert_eq!(first.geometry().margins.left, 5.0);
+    assert_eq!(first.geometry().margins.right, 5.0);
+    assert_eq!(first.geometry().margins.top, 5.0);
+    assert_eq!(first.geometry().margins.bottom, 5.0);
 }
 
 #[test]
@@ -259,33 +192,29 @@ fn explicit_grid_rows_resolve_first_page_before_sizing_and_wrapping() {
         </body>"#;
     let resources = RenderResources::new();
     let doc = parse_html_with_resources(&html[..], &resources).expect("parse");
-    let pages: PageLog = Arc::default();
-    let mut sink = GeometrySink(Arc::clone(&pages));
 
-    let status = render_streaming(
+    let status = layout(
         &doc,
         defaults(400.0, 400.0),
         LayoutConfig::default(),
-        RenderOptions::new().resources(&resources),
-        &mut sink,
+        LayoutOptions::new().resources(&resources),
     )
     .expect("render");
-    let RenderStatus::Completed(_) = status else {
+    let LayoutStatus::Completed(result) = status else {
         panic!("expected a complete render");
     };
 
-    let pages = pages.lock().unwrap();
+    let pages: Vec<_> = result.pages().collect();
     let first = pages.first().expect("the render emits a first page");
-    assert_eq!(first.page_name.as_deref(), Some("narrow"));
-    assert_eq!(first.page_box.width, 120.0);
-    assert_eq!(first.page_box.height, 180.0);
-    assert_eq!(first.margins.left, 12.0);
-    assert!((first.content_box.width - 96.0).abs() < 0.5);
+    assert_eq!(first.name(), Some("narrow"));
+    assert_eq!(first.geometry().page_box.width, 120.0);
+    assert_eq!(first.geometry().page_box.height, 180.0);
+    assert_eq!(first.geometry().margins.left, 12.0);
+    assert!((first.geometry().content_box.width - 96.0).abs() < 0.5);
     let text_lines = first
-        .items
-        .iter()
-        .filter(|item| item.kind == PageFragmentKind::Text)
-        .filter_map(|item| item.line_range)
+        .fragments()
+        .filter(|item| item.kind() == FragmentKind::Text)
+        .filter_map(|item| item.line_range())
         .map(|range| range.end - range.start)
         .max()
         .expect("the named grid item emits text lines");
@@ -305,26 +234,23 @@ fn multi_column_grid_order_selects_initial_named_page_geometry() {
         </body>"#;
     let resources = RenderResources::new();
     let doc = parse_html_with_resources(&html[..], &resources).expect("parse");
-    let pages: PageLog = Arc::default();
-    let mut sink = GeometrySink(Arc::clone(&pages));
 
-    let status = render_streaming(
+    let status = layout(
         &doc,
         defaults(400.0, 400.0),
         LayoutConfig::default(),
-        RenderOptions::new().resources(&resources),
-        &mut sink,
+        LayoutOptions::new().resources(&resources),
     )
     .expect("render");
-    let RenderStatus::Completed(_) = status else {
+    let LayoutStatus::Completed(result) = status else {
         panic!("expected a complete render");
     };
 
-    let pages = pages.lock().unwrap();
+    let pages: Vec<_> = result.pages().collect();
     let first = pages.first().expect("the render emits a first page");
-    assert_eq!(first.page_name.as_deref(), Some("narrow"));
-    assert_eq!(first.page_box.width, 120.0);
-    assert_eq!(first.page_box.height, 180.0);
-    assert_eq!(first.margins.left, 12.0);
-    assert_eq!(first.margins.right, 12.0);
+    assert_eq!(first.name(), Some("narrow"));
+    assert_eq!(first.geometry().page_box.width, 120.0);
+    assert_eq!(first.geometry().page_box.height, 180.0);
+    assert_eq!(first.geometry().margins.left, 12.0);
+    assert_eq!(first.geometry().margins.right, 12.0);
 }

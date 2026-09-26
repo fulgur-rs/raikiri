@@ -9,7 +9,6 @@ members = [
     "crates/raikiri-html",
     "crates/raikiri-paint",
     "crates/raikiri",
-    "crates/raikiri-blitz-compat",
     "crates/raikiri-wpt",
     "crates/raikiri-vrt",
     "crates/raikiri-bench",
@@ -32,7 +31,6 @@ raikiri-dom          = { version = "0.1.0", path = "./crates/raikiri-dom" }
 raikiri-html         = { version = "0.1.0", path = "./crates/raikiri-html" }
 raikiri-paint        = { version = "0.1.0", path = "./crates/raikiri-paint" }
 raikiri              = { version = "0.1.0", path = "./crates/raikiri" }
-raikiri-blitz-compat = { version = "0.1.0", path = "./crates/raikiri-blitz-compat" }
 raikiri-wpt          = { version = "0.1.0", path = "./crates/raikiri-wpt" }
 raikiri-vrt          = { version = "0.1.0", path = "./crates/raikiri-vrt" }
 raikiri-js           = { version = "0.1.0", path = "./crates/raikiri-js" }

@@ -1,4 +1,5 @@
-use raikiri_traits::{NodeId, PageFragmentItem, PageFragmentKind, PageFragmentRect, PaintRect};
+use super::records::{PageFragmentItem, PageFragmentKind, PageFragmentRect};
+use raikiri_traits::{NodeId, PaintRect};
 
 /// What a fragment places on the page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,7 +48,7 @@ impl<'a> Fragment<'a> {
         match self.item.kind {
             PageFragmentKind::Text => FragmentKind::Text,
             PageFragmentKind::Replaced => FragmentKind::Replaced,
-            _ => FragmentKind::Box,
+            PageFragmentKind::Box => FragmentKind::Box,
         }
     }
 
@@ -103,3 +104,6 @@ impl<'a> Fragment<'a> {
         false
     }
 }
+
+#[cfg(test)]
+mod tests;

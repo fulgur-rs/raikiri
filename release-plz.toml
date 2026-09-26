@@ -38,9 +38,5 @@ name = "raikiri"
 release = true
 
 [[package]]
-name = "raikiri-blitz-compat"
-release = true
-
-[[package]]
 name = "raikiri-js"
 release = true

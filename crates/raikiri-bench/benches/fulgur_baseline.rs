@@ -55,7 +55,7 @@
 //!
 //! 1. **No page-stream benchmark yet.** `raikiri::plan` remains an explicit
 //!    stub, and this benchmark does not call the now-implemented neutral
-//!    `raikiri_html::render_streaming` bridge. The only rendering path measured here
+//!    `raikiri_html::layout` bridge. The only rendering path measured here
 //!    is [`raikiri::html_to_png`] /
 //!    [`raikiri::html_to_png_with_fonts`]
 //!    (`parse_html` → `layout_single_page` → `build_page_scene` →
@@ -77,7 +77,7 @@
 //!    fulgur's page axis is **not represented in this file at all**; only
 //!    the table-count axis is measured, at single-page granularity. A future
 //!    benchmark that wants a page-count axis should call the neutral
-//!    `render_streaming` bridge directly rather than infer pages from this
+//!    `layout` bridge directly rather than infer pages from this
 //!    single-page PNG workload.
 //!
 //! 2. **No `<table>` layout.** `crates/raikiri-style/src/property.rs`'s own
