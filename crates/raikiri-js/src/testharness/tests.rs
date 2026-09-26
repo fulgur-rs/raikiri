@@ -257,3 +257,40 @@ fn reassigning_the_results_queue_is_a_javascript_error_not_a_panic() {
         "{result:?}"
     );
 }
+
+/// Each script is evaluated as its own source, so a `'use strict'`
+/// directive at the top of one (as WPT helper files have) does not make a
+/// later sloppy-mode script strict.
+#[test]
+fn scripts_are_evaluated_as_separate_sources() {
+    let (host, ..) = StubHost::page();
+    let outcomes = run_testharness_scripts_on_host(
+        &[
+            "'use strict'; function helper(v) { return v + 1; }",
+            "undeclaredGlobal = helper(1);
+             test(function () { assert_equals(undeclaredGlobal, 2); }, 'sloppy');",
+        ],
+        host,
+    )
+    .unwrap();
+    assert_eq!(outcomes.len(), 1);
+    assert!(outcomes[0].passed, "{:?}", outcomes[0]);
+}
+
+/// An uncaught error in an earlier script stops the run before later
+/// scripts, surfacing as a JavaScript error rather than partial results.
+#[test]
+fn an_uncaught_error_in_an_earlier_script_is_a_javascript_error() {
+    let (host, ..) = StubHost::page();
+    let result = run_testharness_scripts_on_host(
+        &[
+            "throw new Error('first script failed');",
+            "test(function () {}, 'never runs');",
+        ],
+        host,
+    );
+    assert!(
+        matches!(result, Err(TestHarnessError::JavaScript(ref m)) if m.contains("first script failed")),
+        "{result:?}"
+    );
+}

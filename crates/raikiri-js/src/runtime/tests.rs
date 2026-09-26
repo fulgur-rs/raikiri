@@ -43,6 +43,34 @@ fn interface_objects_form_the_dom_prototype_chain() {
     ));
 }
 
+/// WebIDL §3.6.3: every interface prototype carries its own
+/// `Symbol.toStringTag`, set once inside `interfaces::interface` rather
+/// than per call site, so `Object.prototype.toString.call(x)` reads the
+/// interface's identifier for any wrapped node, not the engine's generic
+/// `[object Object]` default.
+#[test]
+fn every_interface_prototype_carries_its_own_to_string_tag() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    assert!(eval_bool(
+        &mut rt,
+        "Object.prototype.toString.call(document.body) === '[object HTMLElement]'"
+    ));
+    assert!(eval_bool(
+        &mut rt,
+        "Object.prototype.toString.call(document) === '[object Document]'"
+    ));
+    assert!(eval_bool(
+        &mut rt,
+        "Object.prototype.toString.call(document.body.childNodes) === '[object NodeList]'"
+    ));
+    assert!(eval_bool(
+        &mut rt,
+        "String(document.body.classList) !== '[object Object]' && \
+         Object.prototype.toString.call(document.body.classList) === '[object DOMTokenList]'"
+    ));
+}
+
 #[test]
 fn interface_constructors_are_illegal() {
     let (host, ..) = StubHost::page();
@@ -109,7 +137,7 @@ use super::host::{DocumentHost, HostError};
 use super::interfaces::{NodeHandle, protos, wrap, wrap_optional};
 use super::webidl::{
     arg_node, dom_string, host_failure, this_document, this_element, this_node,
-    throw_dom_exception, with_state,
+    throw_dom_exception, unreachable_mutation_error, with_state,
 };
 use super::{BoxGeometry, shared};
 
@@ -198,7 +226,7 @@ fn wrappers_pick_the_interface_of_their_node_kind() {
     ));
     assert!(eval_bool(
         &mut rt,
-        "Object.getPrototypeOf(pi) === Node.prototype && pi.nodeType === 7"
+        "pi instanceof ProcessingInstruction && pi instanceof CharacterData && pi.nodeType === 7"
     ));
     assert!(eval_bool(
         &mut rt,
@@ -320,6 +348,22 @@ fn dom_exceptions_are_errors_with_name_message_and_code() {
     );
 }
 
+/// `unreachable_mutation_error` always reports the same fixed message,
+/// regardless of what it is called about, and that message carries no
+/// digit that could be an arena index.
+#[test]
+fn unreachable_mutation_error_hides_any_underlying_detail() {
+    let message = unreachable_mutation_error().to_string();
+    assert!(
+        !message.chars().any(|c| c.is_ascii_digit()),
+        "message leaked something index-shaped: {message:?}"
+    );
+    assert!(
+        message.contains("internal DOM operation failed"),
+        "{message:?}"
+    );
+}
+
 /// An uncaught `DOMException` is an opaque object (its data lives in Rust
 /// state, not in Boa's own error representation), so `try_native` fails for
 /// it; the reported message must still run `Error.prototype.toString`
@@ -403,6 +447,18 @@ fn stub_host_reports_configured_values() {
                 width: 10.0,
                 height: 5.0,
             },
+            padding_box: super::DomRect {
+                left: 1.0,
+                top: 2.0,
+                right: 11.0,
+                bottom: 7.0,
+                width: 10.0,
+                height: 5.0,
+            },
+            scroll_width: 10.0,
+            scroll_height: 5.0,
+            position: super::PositionKind::Static,
+            is_inline: false,
         }))
     );
     assert_eq!(host.box_geometry(0), Ok(None));

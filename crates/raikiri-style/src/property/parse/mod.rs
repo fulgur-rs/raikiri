@@ -20,9 +20,14 @@ pub(crate) use layout::*;
 pub use text::*;
 pub use visual::*;
 
-/// Returns whether `name` is registered as a supported CSS property.
+/// Returns whether `name` (ASCII case-insensitively) is registered as a
+/// supported CSS property: any name in [`super::supported_property_names`],
+/// including shorthands that fully expand during parsing and so have no
+/// `PropertyKey`. Custom properties (`--*`) are not included.
 pub fn is_supported_property_name(name: &str) -> bool {
-    property_key_for_name(name).is_some()
+    super::supported_property_names()
+        .binary_search(&name.to_ascii_lowercase().as_str())
+        .is_ok()
 }
 
 /// Property name + Parser から `PropertyValue` を produce。

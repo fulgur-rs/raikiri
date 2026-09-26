@@ -5,7 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
-use raikiri_js::runtime::{BoxGeometry, DocumentHost, DomRect, HostError};
+use raikiri_js::runtime::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
+use raikiri_style::property::DisplayValue;
 
 use crate::reftest::{
     LiveWptSetup, live_wpt_stylesheet_sources_in_subtree, parse_wpt_inner_html_fragment,
@@ -124,28 +125,31 @@ impl DocumentHost for WptDocumentHost {
             .page_scene
             .as_ref()
             .ok_or_else(|| HostError("geometry read before flush".into()))?;
-        let node_id = raikiri_traits::NodeId::new(node as u64);
-        let Some(fragment) = scene.fragments.get(&node_id).and_then(|f| f.first()) else {
+        let Some(border_box) = border_box_of(scene, node) else {
             return Ok(None);
         };
-        let (width, height) = scene
-            .drawables
-            .block_styles
-            .get(&node_id)
-            .and_then(|entry| entry.layout_size)
-            .unwrap_or((fragment.width, fragment.height));
-        let left = f64::from(fragment.x + scene.body_offset_pt.0);
-        let top = f64::from(fragment.y + scene.body_offset_pt.1);
-        let (width, height) = (f64::from(width), f64::from(height));
+        let computed = self
+            .computed_styles
+            .as_ref()
+            .and_then(|styles| styles.get(node));
+        let border = |side: fn(&raikiri_style::ComputedValues) -> f32| {
+            computed.map_or(0.0, |c| f64::from(side(c)))
+        };
+        let padding_box = rect(
+            border_box.left + border(|c| c.border.left.width().px()),
+            border_box.top + border(|c| c.border.top.width().px()),
+            border_box.right - border(|c| c.border.right.width().px()),
+            border_box.bottom - border(|c| c.border.bottom.width().px()),
+        );
+        let (scroll_width, scroll_height) =
+            scroll_extent(scene, &self.setup.uncascaded.dom, node, &padding_box);
         Ok(Some(BoxGeometry {
-            border_box: DomRect {
-                left,
-                top,
-                right: left + width,
-                bottom: top + height,
-                width,
-                height,
-            },
+            border_box,
+            padding_box,
+            scroll_width,
+            scroll_height,
+            position: computed.map_or(PositionKind::Static, |c| position_kind(&c.position)),
+            is_inline: computed.is_some_and(|c| c.display == DisplayValue::Inline),
         }))
     }
 
@@ -183,6 +187,97 @@ impl DocumentHost for WptDocumentHost {
         )
         .map_err(HostError)?; // cov:ignore: UTF-8 markup is parsed from memory; its reader and parser recover without I/O/encoding errors.
         Ok(fragment.dom)
+    }
+}
+
+/// A `DomRect` from its four edges.
+fn rect(left: f64, top: f64, right: f64, bottom: f64) -> DomRect {
+    DomRect {
+        left,
+        top,
+        right,
+        bottom,
+        width: right - left,
+        height: bottom - top,
+    }
+}
+
+/// The border box of `node`'s first page-scene fragment, in CSS px relative
+/// to the initial containing block, or `None` when it has no fragment.
+fn border_box_of(scene: &raikiri::PageScene, node: usize) -> Option<DomRect> {
+    let node_id = raikiri_traits::NodeId::new(node as u64);
+    let fragment = scene.fragments.get(&node_id)?.first()?;
+    let (width, height) = scene
+        .drawables
+        .block_styles
+        .get(&node_id)
+        .and_then(|entry| entry.layout_size)
+        .unwrap_or((fragment.width, fragment.height));
+    let left = f64::from(fragment.x + scene.body_offset_pt.0);
+    let top = f64::from(fragment.y + scene.body_offset_pt.1);
+    Some(rect(
+        left,
+        top,
+        left + f64::from(width),
+        top + f64::from(height),
+    ))
+}
+
+/// The scrolling area size of `node` (CSSOM View §6 "scrolling area"),
+/// approximated as the union of its padding box with the border boxes of
+/// every descendant that has a fragment, extended by the box's own
+/// end-side padding after that content (CSS Overflow 3 §3.3 "Scrollable
+/// Overflow"; this layout only produces in-flow descendants), measured from
+/// the padding box origin. It is never smaller than the padding box.
+/// Descendants extending above or left of the padding box do not add to it
+/// (they are not reachable by scrolling).
+///
+/// The page scene only has fragments for nodes that intersect the page, so
+/// descendants laid out entirely off the page are not counted.
+///
+/// The end-side padding is the used value from the node's layout (so a
+/// percentage is already resolved against its containing block).
+fn scroll_extent(
+    scene: &raikiri::PageScene,
+    document: &raikiri_dom::Document,
+    node: usize,
+    padding_box: &DomRect,
+) -> (f64, f64) {
+    let (mut content_right, mut content_bottom) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    let (mut pending, padding) = document
+        .get_node(node)
+        .map(|n| (n.children.to_vec(), n.unrounded_layout.padding))
+        .unwrap_or_default();
+    while let Some(index) = pending.pop() {
+        if let Some(descendant) = border_box_of(scene, index) {
+            content_right = content_right.max(descendant.right);
+            content_bottom = content_bottom.max(descendant.bottom);
+        }
+        if let Some(n) = document.get_node(index) {
+            pending.extend(n.children.iter().copied());
+        }
+    }
+    let right = padding_box
+        .right
+        .max(content_right + f64::from(padding.right));
+    let bottom = padding_box
+        .bottom
+        .max(content_bottom + f64::from(padding.bottom));
+    (right - padding_box.left, bottom - padding_box.top)
+}
+
+/// The runtime's view of computed `position`. `static`, a running element
+/// (`position: running(...)`, taken out of the flow into a page margin box),
+/// and any value this crate does not know yet (the enum is
+/// `#[non_exhaustive]`) all read as `static`.
+fn position_kind(value: &raikiri_style::property::PositionValue) -> PositionKind {
+    use raikiri_style::property::PositionValue as P;
+    match value {
+        P::Relative => PositionKind::Relative,
+        P::Absolute => PositionKind::Absolute,
+        P::Fixed => PositionKind::Fixed,
+        P::Sticky => PositionKind::Sticky,
+        _ => PositionKind::Static,
     }
 }
 

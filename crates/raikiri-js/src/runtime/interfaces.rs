@@ -5,14 +5,14 @@ use boa_engine::object::builtins::JsFunction;
 use boa_engine::object::{ConstructorBuilder, FunctionObjectBuilder, JsObject};
 use boa_engine::property::{Attribute, PropertyDescriptor};
 use boa_engine::{
-    Context, Finalize, JsData, JsNativeError, JsResult, JsString, JsValue, NativeFunction, Trace,
-    js_string,
+    Context, Finalize, JsData, JsNativeError, JsResult, JsString, JsSymbol, JsValue,
+    NativeFunction, Trace, js_string,
 };
 use raikiri_dom::NodeKind;
 
-use super::webidl::with_state;
+use super::webidl::{dom_string, with_state};
 
-const HTML_NS: &str = "http://www.w3.org/1999/xhtml";
+pub(crate) const HTML_NS: &str = "http://www.w3.org/1999/xhtml";
 
 /// Native data of every node wrapper. The index is never exposed to scripts.
 #[derive(Debug, Trace, Finalize, JsData)]
@@ -43,9 +43,16 @@ pub(crate) struct Protos {
     pub character_data: JsObject,
     pub text: JsObject,
     pub comment: JsObject,
+    pub processing_instruction: JsObject,
     pub document: JsObject,
     pub document_fragment: JsObject,
     pub dom_exception: JsObject,
+    pub node_list: JsObject,
+    pub html_collection: JsObject,
+    pub dom_token_list: JsObject,
+    pub dom_rect_read_only: JsObject,
+    pub dom_rect: JsObject,
+    pub css_style_declaration: JsObject,
 }
 
 /// The prototypes registered by [`install`].
@@ -66,8 +73,9 @@ fn illegal_constructor(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<
 /// configurable), built from `native`.
 ///
 /// Shared by [`function`] (interface members, a plain function pointer) and
-/// [`closure_function`] (bindings that capture state, such as a `classList`
-/// method closing over its element's arena index).
+/// [`closure_function`] (bindings that capture state, such as a
+/// `CSSStyleDeclaration` per-property getter/setter closing over the CSS
+/// property name it reads/writes).
 fn function_with_length(
     context: &mut Context,
     name: &str,
@@ -106,6 +114,41 @@ pub(crate) fn closure_function(
     function_with_length(context, name, length, native)
 }
 
+/// Install a WebIDL `iterable<V>` value-iterable's generated members --
+/// `forEach`/`entries`/`keys`/`values` (operations: writable, enumerable,
+/// configurable) and `@@iterator` (writable, non-enumerable, configurable)
+/// -- onto `prototype`, all as the exact `%Array.prototype%` functions
+/// themselves. Walking index + length is exactly what those functions do
+/// regardless of what the values are (a plain string, for `DOMTokenList`;
+/// a wrapped `Node`, for `NodeList`), so reusing them rather than writing
+/// per-interface iterator objects is both less code and behaviorally
+/// identical to what a real per-interface implementation would do for the
+/// single-value shape every caller here needs. Shared by
+/// [`super::token_list::install_iteration`] and
+/// [`super::collections::install_iteration`] (`NodeList`'s share of it --
+/// `HTMLCollection` gets only `@@iterator`, not the four operations, since
+/// DOM does not declare it `iterable<>`).
+pub(crate) fn install_value_iterable(context: &mut Context, prototype: &JsObject) -> JsResult<()> {
+    let array_prototype = context.intrinsics().constructors().array().prototype();
+    for name in ["forEach", "entries", "keys", "values"] {
+        let function = array_prototype.get(JsString::from(name), context)?;
+        let operation = PropertyDescriptor::builder()
+            .value(function)
+            .writable(true)
+            .enumerable(true)
+            .configurable(true);
+        prototype.define_property_or_throw(JsString::from(name), operation, context)?;
+    }
+    let values = context.intrinsics().objects().array_prototype_values();
+    let iterator = PropertyDescriptor::builder()
+        .value(values)
+        .writable(true)
+        .enumerable(false)
+        .configurable(true);
+    prototype.define_property_or_throw(JsSymbol::iterator(), iterator, context)?;
+    Ok(())
+}
+
 /// Members of one interface prototype.
 pub(crate) struct Members {
     /// Read-only attributes: `(name, getter)`.
@@ -132,24 +175,37 @@ struct Interface {
 /// Build interface `name`, define its members, and expose the interface
 /// object on the global object.
 ///
+/// `members` is a list rather than a single [`Members`] so that an
+/// interface combining its own members with one or more WebIDL mixins
+/// (e.g. `Element` = its own members + `ParentNode` + `ChildNode` +
+/// `NonDocumentTypeChildNode`) can install each `Members` table in turn
+/// instead of duplicating them into one combined constant.
+///
 /// `parent_prototype` becomes the `[[Prototype]]` of the new prototype object
 /// and `parent_constructor` the `[[Prototype]]` of the interface object
 /// (WebIDL §3.7.1, §3.7.3); either defaults to the ordinary intrinsic.
+///
+/// `ctor`/`ctor_length` are the interface object's own `[[Call]]`/
+/// `[[Construct]]` behavior and WebIDL `length`; every interface without a
+/// constructor operation of its own passes [`illegal_constructor`] and `0`
+/// (see [`derived`], which always does).
 fn interface(
     context: &mut Context,
     name: &str,
     parent_prototype: Option<&JsObject>,
     parent_constructor: Option<&JsObject>,
-    members: &Members,
+    members: &[&Members],
+    ctor: NativeFunctionPointer,
+    ctor_length: usize,
 ) -> JsResult<Interface> {
     let getters: Vec<_> = members
-        .getters
         .iter()
+        .flat_map(|m| m.getters.iter())
         .map(|&(n, f)| Ok((n, function(context, &format!("get {n}"), 0, f)?)))
         .collect::<JsResult<_>>()?;
     let accessors: Vec<_> = members
-        .accessors
         .iter()
+        .flat_map(|m| m.accessors.iter())
         .map(|&(n, g, s)| {
             let getter = function(context, &format!("get {n}"), 0, g)?;
             let setter = function(context, &format!("set {n}"), 1, s)?;
@@ -159,13 +215,12 @@ fn interface(
     // WebIDL §3.7.6: operations are writable, enumerable, configurable data
     // properties on the interface prototype.
     let operations: Vec<_> = members
-        .methods
         .iter()
+        .flat_map(|m| m.methods.iter())
         .map(|&(n, length, f)| Ok((n, function(context, n, length, f)?)))
         .collect::<JsResult<_>>()?;
-    let mut builder =
-        ConstructorBuilder::new(context, NativeFunction::from_fn_ptr(illegal_constructor));
-    builder.name(name).length(0).constructor(true);
+    let mut builder = ConstructorBuilder::new(context, NativeFunction::from_fn_ptr(ctor));
+    builder.name(name).length(ctor_length).constructor(true);
     if let Some(proto) = parent_prototype {
         builder.inherit(proto.clone());
     }
@@ -185,20 +240,36 @@ fn interface(
     }
     let standard = builder.build();
     let constructor = standard.constructor();
+    let prototype = standard.prototype();
+    // WebIDL §3.6.3: every interface's prototype carries a non-writable,
+    // non-enumerable, configurable `Symbol.toStringTag` whose value is the
+    // interface's own identifier, so `Object.prototype.toString.call(x)`
+    // reads `[object <name>]` instead of the engine's generic default. Set
+    // here, once, so every interface built through this function gets it
+    // without repeating the definition at each call site.
+    let to_string_tag = PropertyDescriptor::builder()
+        .value(JsString::from(name))
+        .writable(false)
+        .enumerable(false)
+        .configurable(true)
+        .build();
+    prototype.define_property_or_throw(JsSymbol::to_string_tag(), to_string_tag, context)?;
     let exposed = Attribute::WRITABLE | Attribute::CONFIGURABLE;
     context.register_global_property(JsString::from(name), constructor.clone(), exposed)?;
     Ok(Interface {
-        prototype: standard.prototype(),
+        prototype,
         constructor,
     })
 }
 
-/// Build interface `name` inheriting from interface `parent`.
+/// Build interface `name` inheriting from interface `parent`. Every derived
+/// interface here has an illegal constructor -- one with a real constructor
+/// operation calls [`interface`] directly instead.
 fn derived(
     context: &mut Context,
     name: &str,
     parent: &Interface,
-    members: &Members,
+    members: &[&Members],
 ) -> JsResult<Interface> {
     interface(
         context,
@@ -206,26 +277,169 @@ fn derived(
         Some(&parent.prototype),
         Some(&parent.constructor),
         members,
+        illegal_constructor,
+        0,
     )
 }
 
 /// Register every interface, then `window` / `self` / `document`.
 pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     use super::node;
+    use super::query;
     use super::style::{self, HTML_ELEMENT_MEMBERS};
-    let event_target = interface(context, "EventTarget", None, None, &NO_MEMBERS)?;
-    let node_i = derived(context, "Node", &event_target, &node::NODE_MEMBERS)?;
-    let element = derived(context, "Element", &node_i, &node::ELEMENT_MEMBERS)?;
-    let character_data = derived(context, "CharacterData", &node_i, &NO_MEMBERS)?;
-    let document = derived(context, "Document", &node_i, &node::DOCUMENT_MEMBERS)?;
-    let document_fragment = derived(context, "DocumentFragment", &node_i, &NO_MEMBERS)?;
-    let html_element = derived(context, "HTMLElement", &element, &HTML_ELEMENT_MEMBERS)?;
-    let text = derived(context, "Text", &character_data, &NO_MEMBERS)?;
-    let comment = derived(context, "Comment", &character_data, &NO_MEMBERS)?;
+    use super::tree;
+    use super::{collections, events, geometry, indexed, token_list};
+    // A `?` on a call rustfmt wraps across lines leaves the never-taken
+    // error-branch region on the closing line, so that line always reports
+    // zero hits; binding the call first keeps the `?` on a one-line
+    // statement instead (see every `_result` binding below).
+    let event_target_result = interface(
+        context,
+        "EventTarget",
+        None,
+        None,
+        &[&events::EVENT_TARGET_MEMBERS],
+        illegal_constructor,
+        0,
+    );
+    let event_target = event_target_result?;
+    let node_members = [&node::NODE_MEMBERS, &tree::NODE_TREE_MEMBERS];
+    let node_i = derived(context, "Node", &event_target, &node_members)?;
+    let element_members = [
+        &node::ELEMENT_MEMBERS,
+        &tree::PARENT_NODE_MEMBERS,
+        &tree::CHILD_NODE_MEMBERS,
+        &tree::NON_DOCUMENT_TYPE_CHILD_NODE_MEMBERS,
+        &query::PARENT_NODE_QUERY_MEMBERS,
+        &query::ELEMENT_QUERY_MEMBERS,
+        &geometry::ELEMENT_METRICS_MEMBERS,
+    ];
+    let element = derived(context, "Element", &node_i, &element_members)?;
+    let character_data_members = [
+        &tree::CHARACTER_DATA_MEMBERS,
+        &tree::CHILD_NODE_MEMBERS,
+        &tree::NON_DOCUMENT_TYPE_CHILD_NODE_MEMBERS,
+    ];
+    let character_data = derived(context, "CharacterData", &node_i, &character_data_members)?;
+    let document_members = [
+        &node::DOCUMENT_MEMBERS,
+        &tree::PARENT_NODE_MEMBERS,
+        &tree::DOCUMENT_CREATE_MEMBERS,
+        &query::NON_ELEMENT_PARENT_NODE_MEMBERS,
+        &query::PARENT_NODE_QUERY_MEMBERS,
+        &query::DOCUMENT_QUERY_MEMBERS,
+    ];
+    let document = derived(context, "Document", &node_i, &document_members)?;
+    let fragment_members = [
+        &tree::PARENT_NODE_MEMBERS,
+        &query::NON_ELEMENT_PARENT_NODE_MEMBERS,
+        &query::PARENT_NODE_QUERY_MEMBERS,
+    ];
+    let document_fragment = derived(context, "DocumentFragment", &node_i, &fragment_members)?;
+    let html_element_members = [
+        &HTML_ELEMENT_MEMBERS,
+        &geometry::HTML_ELEMENT_OFFSET_MEMBERS,
+    ];
+    let html_element = derived(context, "HTMLElement", &element, &html_element_members)?;
+    let text = derived(context, "Text", &character_data, &[&NO_MEMBERS])?;
+    let comment = derived(context, "Comment", &character_data, &[&NO_MEMBERS])?;
+    let pi_members = [&tree::PROCESSING_INSTRUCTION_MEMBERS];
+    // A `?` on a call rustfmt wraps across lines leaves the never-taken
+    // error-branch region on the closing line, so that line always reports
+    // zero hits; binding the call first keeps the `?` on a one-line
+    // statement instead.
+    let pi_result = derived(
+        context,
+        "ProcessingInstruction",
+        &character_data,
+        &pi_members,
+    );
+    let pi = pi_result?;
     // DOMException.prototype inherits Error.prototype (WebIDL §3.14.1), but
-    // the interface object itself is an ordinary function.
+    // the interface object itself is an ordinary function with a real
+    // constructor operation.
     let error = context.intrinsics().constructors().error().prototype();
-    let dom_exception = interface(context, "DOMException", Some(&error), None, &DOM_EXCEPTION)?;
+    let dom_exception_result = interface(
+        context,
+        "DOMException",
+        Some(&error),
+        None,
+        &[&DOM_EXCEPTION],
+        dom_exception_constructor,
+        0,
+    );
+    let dom_exception = dom_exception_result?;
+    install_dom_exception_constants(context, &dom_exception)?;
+    let node_list_members = [&collections::NODE_LIST_MEMBERS];
+    let node_list_result = interface(
+        context,
+        "NodeList",
+        None,
+        None,
+        &node_list_members,
+        illegal_constructor,
+        0,
+    );
+    let node_list = node_list_result?;
+    let html_collection_members = [&collections::HTML_COLLECTION_MEMBERS];
+    let html_collection_result = interface(
+        context,
+        "HTMLCollection",
+        None,
+        None,
+        &html_collection_members,
+        illegal_constructor,
+        0,
+    );
+    let html_collection = html_collection_result?;
+    collections::install_iteration(context, &node_list.prototype, &html_collection.prototype)?;
+    let dom_token_list_members = [&token_list::DOM_TOKEN_LIST_MEMBERS];
+    let dom_token_list_result = interface(
+        context,
+        "DOMTokenList",
+        None,
+        None,
+        &dom_token_list_members,
+        illegal_constructor,
+        0,
+    );
+    let dom_token_list = dom_token_list_result?;
+    token_list::install_iteration(context, &dom_token_list.prototype)?;
+    let dom_rect_read_only_members = [&geometry::DOM_RECT_READ_ONLY_MEMBERS];
+    let dom_rect_read_only_result = interface(
+        context,
+        "DOMRectReadOnly",
+        None,
+        None,
+        &dom_rect_read_only_members,
+        geometry::dom_rect_read_only_constructor,
+        0,
+    );
+    let dom_rect_read_only = dom_rect_read_only_result?;
+    let dom_rect_members = [&geometry::DOM_RECT_MEMBERS];
+    let dom_rect_result = interface(
+        context,
+        "DOMRect",
+        Some(&dom_rect_read_only.prototype),
+        Some(&dom_rect_read_only.constructor),
+        &dom_rect_members,
+        geometry::dom_rect_constructor,
+        0,
+    );
+    let dom_rect = dom_rect_result?;
+    let css_style_declaration_members = [&style::CSS_STYLE_DECLARATION_MEMBERS];
+    let css_style_declaration_result = interface(
+        context,
+        "CSSStyleDeclaration",
+        None,
+        None,
+        &css_style_declaration_members,
+        illegal_constructor,
+        0,
+    );
+    let css_style_declaration = css_style_declaration_result?;
+    style::install_property_accessors(context, &css_style_declaration.prototype)?;
+    indexed::install(context)?;
     context.insert_data(Protos {
         event_target: event_target.prototype,
         node: node_i.prototype,
@@ -234,9 +448,16 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         character_data: character_data.prototype,
         text: text.prototype,
         comment: comment.prototype,
+        processing_instruction: pi.prototype,
         document: document.prototype,
         document_fragment: document_fragment.prototype,
         dom_exception: dom_exception.prototype,
+        node_list: node_list.prototype,
+        html_collection: html_collection.prototype,
+        dom_token_list: dom_token_list.prototype,
+        dom_rect_read_only: dom_rect_read_only.prototype,
+        dom_rect: dom_rect.prototype,
+        css_style_declaration: css_style_declaration.prototype,
     });
 
     let global = context.global_object();
@@ -247,6 +468,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     let document = wrap(context, root)?;
     context.register_global_property(js_string!("document"), document, attr)?;
     style::install_globals(context)?;
+    events::install_globals(context)?;
     Ok(())
 }
 
@@ -264,8 +486,11 @@ fn prototype_for(context: &mut Context, index: usize) -> JsResult<JsObject> {
         Some(NodeKind::Element) => p.element.clone(),
         Some(NodeKind::Text) => p.text.clone(),
         Some(NodeKind::Comment) => p.comment.clone(),
+        Some(NodeKind::ProcessingInstruction) => p.processing_instruction.clone(),
         Some(NodeKind::Document) => p.document.clone(),
         Some(NodeKind::DocumentFragment) => p.document_fragment.clone(),
+        // cov:ignore: `NodeKind` is `#[non_exhaustive]`; every variant it currently
+        // defines already has its own arm above, so this only guards a future one.
         Some(_) => p.node.clone(),
         None => {
             return Err(JsNativeError::typ()
@@ -317,16 +542,66 @@ fn dom_exception_message(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsRe
     exception_data(this, |d| JsValue::from(JsString::from(d.message.as_str())))
 }
 
-/// Legacy numeric code for the names this runtime throws (WebIDL §2.8.1 table).
+/// WebIDL §2.8.1's legacy error name -> numeric code table, plus each
+/// name's legacy constant identifier. A handful of names don't follow the
+/// obvious "insert an underscore before every capital" mapping (`10 =>
+/// INUSE_ATTRIBUTE_ERR`, not `IN_USE_...`), so both columns are spelled out
+/// rather than derived. Codes 2, 6, and 16 have no corresponding error name
+/// (no name ever throws them, and nothing reads them back from `code`), so
+/// they are omitted from this table; their legacy constants are still part
+/// of the `DOMException` IDL block, so they are defined separately, see
+/// [`DOM_EXCEPTION_LEGACY_ONLY_CODES`].
+const DOM_EXCEPTION_CODES: &[(&str, u16, &str)] = &[
+    ("IndexSizeError", 1, "INDEX_SIZE_ERR"),
+    ("HierarchyRequestError", 3, "HIERARCHY_REQUEST_ERR"),
+    ("WrongDocumentError", 4, "WRONG_DOCUMENT_ERR"),
+    ("InvalidCharacterError", 5, "INVALID_CHARACTER_ERR"),
+    (
+        "NoModificationAllowedError",
+        7,
+        "NO_MODIFICATION_ALLOWED_ERR",
+    ),
+    ("NotFoundError", 8, "NOT_FOUND_ERR"),
+    ("NotSupportedError", 9, "NOT_SUPPORTED_ERR"),
+    ("InUseAttributeError", 10, "INUSE_ATTRIBUTE_ERR"),
+    ("InvalidStateError", 11, "INVALID_STATE_ERR"),
+    ("SyntaxError", 12, "SYNTAX_ERR"),
+    ("InvalidModificationError", 13, "INVALID_MODIFICATION_ERR"),
+    ("NamespaceError", 14, "NAMESPACE_ERR"),
+    ("InvalidAccessError", 15, "INVALID_ACCESS_ERR"),
+    ("TypeMismatchError", 17, "TYPE_MISMATCH_ERR"),
+    ("SecurityError", 18, "SECURITY_ERR"),
+    ("NetworkError", 19, "NETWORK_ERR"),
+    ("AbortError", 20, "ABORT_ERR"),
+    ("URLMismatchError", 21, "URL_MISMATCH_ERR"),
+    ("QuotaExceededError", 22, "QUOTA_EXCEEDED_ERR"),
+    ("TimeoutError", 23, "TIMEOUT_ERR"),
+    ("InvalidNodeTypeError", 24, "INVALID_NODE_TYPE_ERR"),
+    ("DataCloneError", 25, "DATA_CLONE_ERR"),
+];
+
+/// WebIDL §2.8.1's three legacy constants with no corresponding error name
+/// (`DOM_EXCEPTION_CODES`'s doc explains why): still part of the
+/// `DOMException` IDL block, so still defined on both the interface object
+/// and its prototype, just never returned by `DOMException.prototype.code`
+/// for any name this runtime throws.
+const DOM_EXCEPTION_LEGACY_ONLY_CODES: &[(u16, &str)] = &[
+    (2, "DOMSTRING_SIZE_ERR"),
+    (6, "NO_DATA_ALLOWED_ERR"),
+    (16, "VALIDATION_ERR"),
+];
+
+/// Legacy numeric code for `name` (WebIDL §2.8.1 table); `0` for any other
+/// name, including `"Error"` (the `name` default) and every name not in
+/// [`DOM_EXCEPTION_CODES`].
 fn dom_exception_code(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
     exception_data(this, |d| {
-        JsValue::from(match d.name.as_str() {
-            "HierarchyRequestError" => 3,
-            "InvalidCharacterError" => 5,
-            "NotFoundError" => 8,
-            "SyntaxError" => 12,
-            _ => 0,
-        })
+        JsValue::from(
+            DOM_EXCEPTION_CODES
+                .iter()
+                .find(|&&(name, ..)| name == d.name)
+                .map_or(0, |&(_, code, _)| code),
+        )
     })
 }
 
@@ -339,6 +614,82 @@ const DOM_EXCEPTION: Members = Members {
     accessors: &[],
     methods: &[],
 };
+
+/// `new DOMException(message = "", name = "Error")` (WebIDL §2.8.1).
+/// Every constructor built through [`interface`] receives `new.target` as
+/// `this` under `[[Construct]]`, or `undefined` under a plain `[[Call]]`
+/// (no `new`) -- so `this.is_undefined()` below is exactly WebIDL's "If
+/// NewTarget is undefined, throw a TypeError" constructor check.
+fn dom_exception_constructor(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    if this.is_undefined() {
+        return Err(JsNativeError::typ()
+            .with_message("Constructor DOMException requires 'new'")
+            .into());
+    }
+    let message = optional_dom_string(args, 0, "", context)?;
+    let name = optional_dom_string(args, 1, "Error", context)?;
+    let proto = protos(context).dom_exception.clone();
+    Ok(JsObject::from_proto_and_data(Some(proto), DomExceptionData { name, message }).into())
+}
+
+/// `DOMString` conversion for a WebIDL `optional DOMString = default`
+/// argument: a genuinely missing trailing argument (or one explicitly
+/// passed as `undefined`) takes `default` directly; anything else runs
+/// `ToString` as usual, the same as [`super::webidl::dom_string`].
+fn optional_dom_string(
+    args: &[JsValue],
+    i: usize,
+    default: &str,
+    context: &mut Context,
+) -> JsResult<String> {
+    match args.get(i) {
+        None => Ok(default.to_owned()),
+        Some(v) if v.is_undefined() => Ok(default.to_owned()),
+        Some(_) => dom_string(args, i, context),
+    }
+}
+
+/// Define one legacy constant (non-writable, non-configurable, enumerable)
+/// on `target`, either `DOMException` or `DOMException.prototype`.
+fn define_legacy_constant(
+    target: &JsObject,
+    name: &str,
+    code: u16,
+    context: &mut Context,
+) -> JsResult<()> {
+    let descriptor = PropertyDescriptor::builder()
+        .writable(false)
+        .enumerable(true)
+        .configurable(false)
+        .value(code)
+        .build();
+    target.define_property_or_throw(JsString::from(name), descriptor, context)?;
+    Ok(())
+}
+
+/// Define every [`DOM_EXCEPTION_CODES`] and [`DOM_EXCEPTION_LEGACY_ONLY_CODES`]
+/// entry's legacy constant on both `DOMException` (the interface object)
+/// and `DOMException.prototype` (WebIDL §3.14: legacy constants live on
+/// both) -- together, the full set of 25 constants the `DOMException` IDL
+/// block declares.
+fn install_dom_exception_constants(
+    context: &mut Context,
+    dom_exception: &Interface,
+) -> JsResult<()> {
+    for &(_, code, constant) in DOM_EXCEPTION_CODES {
+        define_legacy_constant(&dom_exception.constructor, constant, code, context)?;
+        define_legacy_constant(&dom_exception.prototype, constant, code, context)?;
+    }
+    for &(code, constant) in DOM_EXCEPTION_LEGACY_ONLY_CODES {
+        define_legacy_constant(&dom_exception.constructor, constant, code, context)?;
+        define_legacy_constant(&dom_exception.prototype, constant, code, context)?;
+    }
+    Ok(())
+}
 
 #[cfg(test)]
 mod tests;

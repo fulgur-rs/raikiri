@@ -24,11 +24,40 @@ pub struct DomRect {
     pub height: f64,
 }
 
+/// Computed value of the `position` property (CSS Positioned Layout 3 §2).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PositionKind {
+    /// `static`.
+    #[default]
+    Static,
+    /// `relative`.
+    Relative,
+    /// `absolute`.
+    Absolute,
+    /// `fixed`.
+    Fixed,
+    /// `sticky`.
+    Sticky,
+}
+
 /// Layout geometry of one element's principal box.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct BoxGeometry {
     /// The border box.
     pub border_box: DomRect,
+    /// The padding box (border box minus border widths).
+    pub padding_box: DomRect,
+    /// Scrollable overflow width measured from the padding box origin
+    /// (at least the padding box width).
+    pub scroll_width: f64,
+    /// Scrollable overflow height measured from the padding box origin
+    /// (at least the padding box height).
+    pub scroll_height: f64,
+    /// Computed `position`.
+    pub position: PositionKind,
+    /// Whether the box is a non-atomic inline box (`display: inline`),
+    /// whose `client*` metrics are zero (CSSOM View §6).
+    pub is_inline: bool,
 }
 
 /// A failure inside the embedder (layout, stylesheet loading, fragment

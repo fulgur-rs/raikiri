@@ -1,15 +1,13 @@
 //! `Node`, `Element`, and `Document` members.
 
-use boa_engine::object::JsObject;
-use boa_engine::{Context, JsNativeError, JsResult, JsString, JsValue, NativeFunction};
+use boa_engine::{Context, JsResult, JsString, JsValue};
 use raikiri_dom::NodeKind;
-use raikiri_style::{SelectorQuery, StyleNodeId};
 
 use super::host::HostError;
-use super::interfaces::{Members, closure_function, wrap, wrap_optional};
+use super::interfaces::{Members, wrap, wrap_optional};
 use super::webidl::{
-    arg_node, dom_string, host_failure, host_failure_with_message, this_document, this_element,
-    this_node, throw_dom_exception, with_state,
+    dom_string, host_failure, host_failure_with_message, this_document, this_element, this_node,
+    throw_dom_exception, unreachable_mutation_error, with_state,
 };
 
 /// Record that the DOM changed so the next layout-dependent read flushes.
@@ -17,7 +15,7 @@ pub(crate) fn mark_dirty(context: &mut Context) -> JsResult<()> {
     with_state(context, |s| s.dirty = true)
 }
 
-fn js_str(s: &str) -> JsValue {
+pub(crate) fn js_str(s: &str) -> JsValue {
     JsValue::from(JsString::from(s))
 }
 
@@ -43,9 +41,8 @@ fn node_type(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<J
     }))
 }
 
-/// `Node.nodeName` (DOM §4.4). Processing instructions report an empty
-/// string rather than their target; a dedicated `ProcessingInstruction`
-/// interface with its own `target` member would carry that value instead.
+/// `Node.nodeName` (DOM §4.4). A `ProcessingInstruction`'s `nodeName` is its
+/// target, not a fixed string.
 fn node_name(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_node(this, context)?;
     let name = with_state(context, |s| {
@@ -55,6 +52,7 @@ fn node_name(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<J
             NodeKind::Element => html_uppercased_name(doc, index, node.tag_name()?),
             NodeKind::Text => "#text".to_owned(),
             NodeKind::Comment => "#comment".to_owned(),
+            NodeKind::ProcessingInstruction => doc.processing_instruction_target(index)?.to_owned(),
             NodeKind::Document => "#document".to_owned(),
             NodeKind::DocumentFragment => "#document-fragment".to_owned(),
             _ => String::new(),
@@ -65,7 +63,7 @@ fn node_name(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<J
 
 /// DOM §4.9 "HTML-uppercased qualified name" for HTML-namespace elements.
 fn html_uppercased_name(doc: &raikiri_dom::Document, index: usize, tag: &str) -> String {
-    if doc.element_namespace_uri(index) == Some("http://www.w3.org/1999/xhtml") {
+    if doc.element_namespace_uri(index) == Some(super::interfaces::HTML_NS) {
         tag.to_ascii_uppercase()
     } else {
         tag.to_owned()
@@ -90,82 +88,112 @@ fn parent_element(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsRes
     wrap_optional(context, parent)
 }
 
+/// DOM §4.4 "descendant text content" for a DocumentFragment: every Text
+/// descendant's data, concatenated in tree order. [`raikiri_dom::Document::
+/// element_text_content`] computes the same thing for an Element root but
+/// requires an Element index, so a DocumentFragment root needs its own
+/// walk; done with an explicit stack, not recursion, the same as every
+/// other tree walk in this runtime (a script can build an arbitrarily deep
+/// tree, and a native stack overflow there would abort the process rather
+/// than raise a catchable error).
+fn fragment_text_content(doc: &raikiri_dom::Document, root: usize) -> String {
+    let mut out = String::new();
+    let Some(root_node) = doc.get_node(root) else {
+        return out; // cov:ignore: callers only ever pass an index already resolved to this DocumentFragment's own kind, so it is always present
+    };
+    let mut stack: Vec<usize> = root_node.children.iter().rev().copied().collect();
+    while let Some(index) = stack.pop() {
+        let Some(node) = doc.get_node(index) else {
+            continue; // cov:ignore: every stack entry comes from `root` or a node's own children, always valid in the same arena
+        };
+        if let Some(text) = node.text_content() {
+            out.push_str(text);
+        }
+        stack.extend(node.children.iter().rev().copied());
+    }
+    out
+}
+
 fn text_content(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_node(this, context)?;
     let text = with_state(context, |s| {
         let doc = s.host.document();
         match doc.get_node(index).map(|n| n.kind()) {
-            // `element_text_content` only computes descendant text for an
-            // Element node; a DocumentFragment shares this arm just to reach
-            // that same call, which then returns `None` for it, so a
-            // fragment's `textContent` is always `null` here rather than its
-            // DOM-specified descendant text.
-            Some(NodeKind::Element | NodeKind::DocumentFragment) => doc.element_text_content(index),
-            Some(NodeKind::Text) => doc
-                .get_node(index)
-                .and_then(|n| n.text_content())
-                .map(str::to_owned),
+            Some(NodeKind::Element) => doc.element_text_content(index),
+            Some(NodeKind::DocumentFragment) => Some(fragment_text_content(doc, index)),
+            Some(NodeKind::Text | NodeKind::Comment | NodeKind::ProcessingInstruction) => {
+                doc.character_data(index).map(str::to_owned)
+            }
             _ => None,
         }
     })?;
     Ok(text.map_or_else(JsValue::null, |t| js_str(&t)))
 }
 
+/// `textContent` is typed `DOMString?` (nullable): WebIDL's ES-value
+/// conversion for a nullable `DOMString?` maps both `null` and `undefined`
+/// to the IDL null value, so either one clears the node the same way,
+/// unlike plain `ToString` (which would otherwise stringify `undefined` to
+/// `"undefined"`).
 fn set_text_content(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_node(this, context)?;
-    // `LegacyNullToEmptyString`-like: null clears the node.
     let value = match args.first() {
-        Some(v) if v.is_null() => String::new(),
+        Some(v) if v.is_null() || v.is_undefined() => String::new(),
         _ => dom_string(args, 0, context)?,
     };
-    let result = with_state(context, |s| {
-        match s.host.document().get_node(index).map(|n| n.kind()) {
-            Some(NodeKind::Element) => s
-                .host
-                .document_mut()
-                .set_element_text_content(index, &value)
-                .map(|_| true),
-            // Text/Comment data writes and fragment textContent arrive with the CharacterData work.
-            _ => Ok(false),
-        }
+    let target_kind = with_state(context, |s| {
+        s.host.document().get_node(index).map(|n| n.kind())
     })?;
-    match result {
-        Ok(true) => mark_dirty(context)?,
-        Ok(false) => {}
-        // `set_element_text_content` only rejects an out-of-range or non-Element index; the
-        // match above already restricts this call to a resolved Element index.
-        Err(message) => return Err(JsNativeError::error().with_message(message).into()), // cov:ignore: set_element_text_content never errors for an Element index resolved above
+    match target_kind {
+        Some(NodeKind::Element) => {
+            // DOM §4.4 textContent setter, DocumentFragment/Element branch:
+            // "replace all" within this with a single new Text node, or with
+            // nothing for an empty string. Realized here through raikiri-dom's
+            // own `set_element_text_content` (clear-then-push-if-nonempty in a
+            // single call) rather than through `tree::replace_all` below --
+            // both implement the same "replace all" semantics.
+            let result = with_state(context, |s| {
+                s.host
+                    .document_mut()
+                    .set_element_text_content(index, &value)
+            })?;
+            if result.is_err() {
+                // cov:ignore: `set_element_text_content` only rejects an out-of-range or
+                // non-Element index; `target_kind` above already resolved this index to Element.
+                return Err(unreachable_mutation_error());
+            }
+            mark_dirty(context)?;
+        }
+        Some(NodeKind::DocumentFragment) => {
+            // DOM §4.4 textContent setter, DocumentFragment/Element branch:
+            // "replace all" within this with a single new Text node, or with
+            // nothing for an empty string.
+            let text_node = if value.is_empty() {
+                None
+            } else {
+                Some(with_state(context, |s| {
+                    s.host.document_mut().create_detached_text(&value)
+                })?)
+            };
+            super::tree::replace_all(context, index, text_node)?;
+            mark_dirty(context)?;
+        }
+        Some(NodeKind::Text | NodeKind::Comment | NodeKind::ProcessingInstruction) => {
+            // DOM §4.4 textContent setter, CharacterData branch: replace data outright.
+            let result = with_state(context, |s| {
+                s.host.document_mut().set_character_data(index, &value)
+            })?;
+            if result.is_err() {
+                // cov:ignore: `target_kind` above already resolved this index to a
+                // Text, Comment, or ProcessingInstruction node.
+                return Err(unreachable_mutation_error());
+            }
+            mark_dirty(context)?;
+        }
+        // Document and any other kind: DOM §4.4 "Otherwise: do nothing."
+        _ => {}
     }
     Ok(JsValue::undefined())
-}
-
-fn append_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let parent = this_node(this, context)?;
-    let child = arg_node(args, 0, context)?;
-    let parent_ok = matches!(
-        kind(context, parent)?,
-        Some(NodeKind::Element | NodeKind::Document | NodeKind::DocumentFragment)
-    );
-    let child_is_document = kind(context, child)? == Some(NodeKind::Document);
-    if !parent_ok || child_is_document {
-        return Err(throw_dom_exception(
-            context,
-            "HierarchyRequestError",
-            "node cannot be inserted here",
-        ));
-    }
-    let result = with_state(context, |s| {
-        s.host.document_mut().append_child(parent, child)
-    })?;
-    if let Err(message) = result {
-        return Err(throw_dom_exception(
-            context,
-            "HierarchyRequestError",
-            &message,
-        ));
-    }
-    mark_dirty(context)?;
-    Ok(args[0].clone())
 }
 
 // ---- Element -----------------------------------------------------------
@@ -193,20 +221,17 @@ fn local_name(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
     Ok(name.map_or_else(JsValue::null, |n| js_str(&n)))
 }
 
-fn attribute(context: &mut Context, index: usize, name: &str) -> JsResult<Option<String>> {
+pub(crate) fn attribute(
+    context: &mut Context,
+    index: usize,
+    name: &str,
+) -> JsResult<Option<String>> {
     with_state(context, |s| {
         s.host
             .document()
             .element_attribute(index, name)
             .map(str::to_owned)
     })
-}
-
-fn id(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let index = this_element(this, context)?;
-    Ok(js_str(
-        &attribute(context, index, "id")?.unwrap_or_default(),
-    ))
 }
 
 fn get_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
@@ -273,104 +298,35 @@ fn remove_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
     Ok(JsValue::undefined())
 }
 
-fn class_tokens(context: &mut Context, index: usize) -> JsResult<Vec<String>> {
-    Ok(attribute(context, index, "class")?
-        .unwrap_or_default()
-        .split_ascii_whitespace()
-        .map(str::to_owned)
-        .collect())
-}
-
-/// A `DOMTokenList` token (DOM §7.1): non-empty, no ASCII whitespace.
-fn validate_token(context: &mut Context, token: &str) -> JsResult<()> {
-    if token.is_empty() {
-        return Err(throw_dom_exception(
-            context,
-            "SyntaxError",
-            "token is empty",
-        ));
-    }
-    if token
-        .chars()
-        .any(|c| matches!(c, ' ' | '\t' | '\n' | '\x0C' | '\r'))
-    {
-        return Err(throw_dom_exception(
-            context,
-            "InvalidCharacterError",
-            "token contains whitespace",
-        ));
-    }
-    Ok(())
-}
-
-/// `Element.classList`: a live-ish `DOMTokenList` backed by the `class`
-/// attribute, cached per element so repeated reads return the same object.
-/// `add`/`remove`/`contains`/`toggle` cover the surface the CSS Text i18n
-/// corpus needs; the rest of `DOMTokenList` (`length`, indexing, `value`,
-/// `replace`, iteration) is future work.
+/// `Element.classList`: a `DOMTokenList` backed by the `class` attribute
+/// (see `super::token_list`), cached per element so repeated reads return
+/// the same object.
 fn class_list(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     if let Some(existing) = with_state(context, |s| s.class_lists.get(&index).cloned())? {
         return Ok(existing.into());
     }
-    let object = JsObject::with_object_proto(context.intrinsics());
-    let add = NativeFunction::from_copy_closure(move |_, args, ctx| {
-        let mut tokens = class_tokens(ctx, index)?;
-        for i in 0..args.len() {
-            let token = dom_string(args, i, ctx)?;
-            validate_token(ctx, &token)?;
-            if !tokens.contains(&token) {
-                tokens.push(token);
-            }
-        }
-        write_attribute(ctx, index, "class", &tokens.join(" "))?;
-        Ok(JsValue::undefined())
-    });
-    let remove = NativeFunction::from_copy_closure(move |_, args, ctx| {
-        let mut tokens = class_tokens(ctx, index)?;
-        for i in 0..args.len() {
-            let token = dom_string(args, i, ctx)?;
-            validate_token(ctx, &token)?;
-            tokens.retain(|t| t != &token);
-        }
-        write_attribute(ctx, index, "class", &tokens.join(" "))?;
-        Ok(JsValue::undefined())
-    });
-    let contains = NativeFunction::from_copy_closure(move |_, args, ctx| {
-        let token = dom_string(args, 0, ctx)?;
-        Ok(JsValue::from(class_tokens(ctx, index)?.contains(&token)))
-    });
-    let toggle = NativeFunction::from_copy_closure(move |_, args, ctx| {
-        let token = dom_string(args, 0, ctx)?;
-        validate_token(ctx, &token)?;
-        let mut tokens = class_tokens(ctx, index)?;
-        let present = tokens.contains(&token);
-        let force = args
-            .get(1)
-            .filter(|v| !v.is_undefined())
-            .map(JsValue::to_boolean);
-        let want = force.unwrap_or(!present);
-        if want && !present {
-            tokens.push(token);
-        } else if !want && present {
-            tokens.retain(|t| t != &token);
-        } else {
-            return Ok(JsValue::from(want));
-        }
-        write_attribute(ctx, index, "class", &tokens.join(" "))?;
-        Ok(JsValue::from(want))
-    });
-    for (name, f, length) in [
-        ("add", add, 0),
-        ("remove", remove, 0),
-        ("contains", contains, 1),
-        ("toggle", toggle, 1),
-    ] {
-        let function = closure_function(context, name, length, f)?;
-        object.set(JsString::from(name), function, true, context)?;
-    }
+    let object = super::token_list::token_list(context, index)?;
     with_state(context, |s| s.class_lists.insert(index, object.clone()))?;
     Ok(object.into())
+}
+
+/// `Element.namespaceURI` (DOM §4.9): `null` for an element created with a
+/// genuinely null namespace (`createElementNS(null, ...)`, represented
+/// internally as the empty string, never conflated with `raikiri_dom`'s own
+/// `None` == "HTML default" convention).
+fn namespace_uri(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_element(this, context)?;
+    let ns = with_state(context, |s| {
+        s.host
+            .document()
+            .element_namespace_uri(index)
+            .map(str::to_owned)
+    })?;
+    Ok(match ns.as_deref() {
+        None | Some("") => JsValue::null(),
+        Some(uri) => js_str(uri),
+    })
 }
 
 /// `Element.innerHTML` getter (HTML Standard §8.5.4 "The innerHTML
@@ -428,7 +384,7 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
             .to_owned();
         let ns = doc
             .element_namespace_uri(index)
-            .unwrap_or("http://www.w3.org/1999/xhtml")
+            .unwrap_or(super::interfaces::HTML_NS)
             .to_owned();
         s.host.parse_fragment(&tag, &ns, &markup)
     })?;
@@ -448,7 +404,11 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
 
 // ---- Document ------------------------------------------------------------
 
-fn first_element_child(
+/// The first child of `parent` named `tag`, or the first child element at
+/// all when `tag` is `None`. `pub(crate)` for [`super::document`]'s own
+/// `head`/document-element lookups (`createElementNS`'s namespace check,
+/// `Document.title`'s setter).
+pub(crate) fn first_element_child(
     doc: &raikiri_dom::Document,
     parent: usize,
     tag: Option<&str>,
@@ -486,96 +446,13 @@ fn body(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValu
     html_child(this, context, "body")
 }
 
-/// Pre-order walk of `root`'s descendants, calling `visit` on every
-/// **element**, with that element's ancestor **element** chain (root side
-/// first, excluding `root` itself when it is not an element — in
-/// particular the Document node is never pushed). Stops at the first
-/// `Some`. This is the same ancestor shape
-/// [`raikiri_style::SelectorQuery::matches`] expects, and what `:root`
-/// (`ancestors.is_empty()`) relies on.
-///
-/// Iterative, with an explicit `(node, ancestor depth)` stack rather than
-/// the native call stack: a script can build an arbitrarily deep chain
-/// (there is no other bound on tree depth before it reaches raikiri-dom),
-/// and a stack overflow there would abort the process rather than raise a
-/// catchable error. `ancestors` is truncated to each entry's recorded depth
-/// before that entry runs, the same "truncate on pop" shape
-/// `raikiri_style::cascade::selector_match`'s own explicit-stack walks use
-/// for the same reason.
-fn find_in_tree<T>(
-    doc: &raikiri_dom::Document,
-    root: usize,
-    mut visit: impl FnMut(usize, &[StyleNodeId]) -> Option<T>,
-) -> Option<T> {
-    let mut ancestors: Vec<StyleNodeId> = Vec::new();
-    let mut stack: Vec<(usize, usize)> = vec![(root, 0)];
-    while let Some((node, depth)) = stack.pop() {
-        ancestors.truncate(depth);
-        // `stack` only ever holds `root` or an entry from a resolved node's
-        // own `children`, both always resolvable in the same arena.
-        let Some(n) = doc.get_node(node) else {
-            continue; // cov:ignore: every stack entry comes from `root` or a node's own children, always valid in the same arena
-        };
-        let child_depth = if n.kind() == NodeKind::Element {
-            if let Some(found) = visit(node, &ancestors) {
-                return Some(found);
-            }
-            ancestors.push(StyleNodeId(node as u64));
-            depth + 1
-        } else {
-            depth
-        };
-        // Push in reverse so the LIFO stack pops children back in document order.
-        stack.extend(n.children.iter().rev().map(|&c| (c, child_depth)));
-    }
-    None
-}
-
-fn get_element_by_id(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let index = this_document(this, context)?;
-    let id = dom_string(args, 0, context)?;
-    if id.is_empty() {
-        return Ok(JsValue::null());
-    }
-    let found = with_state(context, |s| {
-        let doc = s.host.document();
-        find_in_tree(doc, index, |e, _| {
-            (doc.element_attribute(e, "id") == Some(id.as_str())).then_some(e)
-        })
-    })?;
-    wrap_optional(context, found)
-}
-
-fn query_selector(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let index = this_document(this, context)?;
-    let source = dom_string(args, 0, context)?;
-    let query = match SelectorQuery::parse(&source) {
-        Ok(query) => query,
-        Err(message) => return Err(throw_dom_exception(context, "SyntaxError", &message)),
-    };
-    let found = with_state(context, |s| {
-        // JS mutations leave `IS_IN_DOCUMENT` stale; the cascade matcher
-        // consults it for sibling combinators and structural pseudo-classes,
-        // so refresh it before walking (dirty-gated: a no-op when nothing
-        // changed since the last refresh).
-        s.host.document_mut().mark_in_document_flags();
-        let doc = s.host.document();
-        find_in_tree(doc, index, |e, ancestors| {
-            query
-                .matches(doc, StyleNodeId(e as u64), ancestors)
-                .then_some(e)
-        })
-    })?;
-    wrap_optional(context, found)
-}
-
 /// `Document.createElement` (DOM §4.5). Every element it creates is in the
-/// HTML namespace (there is no `createElementNS` binding yet), so a
-/// `<template>` always needs the same template-contents fragment root the
-/// HTML parser wires for a parsed `<template>`
-/// ([`raikiri_dom::Document::allocate_template_fragment_root`]); without it,
-/// a later `innerHTML` write would land directly on the template element's
-/// own children instead of its (isolated, inert) contents.
+/// HTML namespace, so a `<template>` always needs the same
+/// template-contents fragment root the HTML parser wires for a parsed
+/// `<template>` ([`raikiri_dom::Document::allocate_template_fragment_root`]);
+/// without it, a later `innerHTML` write would land directly on the
+/// template element's own children instead of its (isolated, inert)
+/// contents.
 fn create_element(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     this_document(this, context)?;
     let name = dom_string(args, 0, context)?.to_ascii_lowercase();
@@ -608,15 +485,15 @@ pub(crate) const NODE_MEMBERS: Members = Members {
         ("parentElement", parent_element),
     ],
     accessors: &[("textContent", text_content, set_text_content)],
-    methods: &[("appendChild", 1, append_child)],
+    methods: &[],
 };
 
 pub(crate) const ELEMENT_MEMBERS: Members = Members {
     getters: &[
         ("tagName", tag_name),
         ("localName", local_name),
-        ("id", id),
         ("classList", class_list),
+        ("namespaceURI", namespace_uri),
     ],
     accessors: &[("innerHTML", inner_html, set_inner_html)],
     methods: &[
@@ -638,11 +515,10 @@ pub(crate) const DOCUMENT_MEMBERS: Members = Members {
         ("head", head),
         ("body", body),
     ],
-    accessors: &[],
+    accessors: &[("title", super::document::title, super::document::set_title)],
     methods: &[
-        ("getElementById", 1, get_element_by_id),
-        ("querySelector", 1, query_selector),
         ("createElement", 1, create_element),
+        ("createElementNS", 2, super::document::create_element_ns),
     ],
 };
 

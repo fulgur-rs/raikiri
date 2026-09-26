@@ -1,19 +1,23 @@
 //! Inline style, computed style, `CSS.supports`, and geometry members.
 
-use boa_engine::object::builtins::JsProxyBuilder;
+use std::rc::Rc;
+
+use boa_engine::object::builtins::JsFunction;
 use boa_engine::object::{JsObject, ObjectInitializer};
-use boa_engine::property::Attribute;
+use boa_engine::property::{Attribute, PropertyDescriptor};
 use boa_engine::{
-    Context, Finalize, JsData, JsError, JsNativeError, JsResult, JsString, JsValue, NativeFunction,
-    Trace, js_string,
+    Context, JsError, JsNativeError, JsResult, JsString, JsValue, NativeFunction, js_string,
 };
 use cssparser::{Parser, ParserInput};
 use raikiri_dom::NodeKind;
 
-use super::host::DomRect;
-use super::interfaces::{Members, closure_function, function};
+use super::indexed::{IndexedSource, indexed_object, this_indexed};
+use super::interfaces::{Members, closure_function, function, protos};
 use super::node::mark_dirty;
-use super::webidl::{arg_node, dom_string, host_failure, this_element, with_state};
+use super::webidl::{
+    arg_node, arg_unsigned_long, dom_string, host_failure, host_failure_with_message, this_element,
+    throw_dom_exception, with_state,
+};
 
 // ---- inline style text ---------------------------------------------------
 
@@ -99,6 +103,19 @@ pub(crate) fn inline_style_value(style_attr: Option<&str>, property: &str) -> St
         .unwrap_or_default()
 }
 
+/// Serializes `declarations` back to `style` attribute text (`"prop:
+/// value;"` per declaration, space-joined) -- the inverse of
+/// [`parse_inline_style`], and CSSOM's "serialize a CSS declaration
+/// block". Shared by [`with_inline_style_property`]'s "replace one
+/// declaration" and the `cssText` getter's "serialize them all unchanged".
+fn serialize_declarations(declarations: &[(String, String)]) -> String {
+    declarations
+        .iter()
+        .map(|(n, v)| format!("{n}: {v};"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// A `style` attribute with `property` replaced by `value` (removed when blank).
 pub(crate) fn with_inline_style_property(
     style_attr: Option<&str>,
@@ -108,36 +125,45 @@ pub(crate) fn with_inline_style_property(
     let property = property.trim();
     let mut declarations = style_attr.map(parse_inline_style).unwrap_or_default();
     if property.is_empty() {
-        return declarations
-            .into_iter()
-            .map(|(n, v)| format!("{n}: {v};"))
-            .collect::<Vec<_>>()
-            .join(" ");
+        return serialize_declarations(&declarations);
     }
     declarations.retain(|(name, _)| !same_property(name, property));
     if !value.trim().is_empty() {
         declarations.push((property.to_owned(), value.to_owned()));
     }
-    declarations
-        .into_iter()
-        .map(|(n, v)| format!("{n}: {v};"))
-        .collect::<Vec<_>>()
-        .join(" ")
+    serialize_declarations(&declarations)
 }
 
-/// CSSOM "camel-cased attribute" -> CSS property name (CSSOM §7.3): every
-/// ASCII uppercase letter becomes a `-` followed by its lowercase form.
-fn css_name(property: &str) -> String {
-    let mut out = String::with_capacity(property.len() + 4);
-    for c in property.chars() {
-        if c.is_ascii_uppercase() {
-            out.push('-');
-            out.push(c.to_ascii_lowercase());
-        } else {
-            out.push(c);
+/// The last declared value of `property` in `style_attr`, `!important`
+/// (and any surrounding whitespace) included -- `None` when `property` is
+/// not declared at all. Used by [`property_priority`] to check for a
+/// trailing `!important` without also stripping it off, unlike
+/// [`inline_style_value`] (which strips it, since it backs
+/// `getPropertyValue`).
+fn declared_value(style_attr: Option<&str>, property: &str) -> Option<String> {
+    let style = style_attr?;
+    parse_inline_style(style)
+        .into_iter()
+        .rev()
+        .find(|(name, _)| same_property(name, property))
+        .map(|(_, value)| value)
+}
+
+/// `getPropertyPriority`'s return value (CSSOM): `"important"` when the
+/// last declared value for `property` ends with `!important`, otherwise
+/// `""` -- including when `property` is not declared at all.
+fn property_priority(style_attr: Option<&str>, property: &str) -> &'static str {
+    match declared_value(style_attr, property) {
+        Some(value) => {
+            let trimmed = value.trim_end();
+            if strip_important(trimmed) == trimmed {
+                ""
+            } else {
+                "important"
+            }
         }
+        None => "",
     }
-    out
 }
 
 // ---- flush and geometry ---------------------------------------------------
@@ -157,79 +183,88 @@ pub(crate) fn ensure_flushed(context: &mut Context) -> JsResult<()> {
     result.map_err(|error| host_failure(context, error))
 }
 
-fn border_box(context: &mut Context, index: usize) -> JsResult<DomRect> {
-    ensure_flushed(context)?;
-    let geometry = with_state(context, |s| s.host.box_geometry(index))?;
-    match geometry {
-        Ok(geometry) => Ok(geometry.map(|g| g.border_box).unwrap_or_default()),
-        Err(error) => Err(host_failure(context, error)),
-    }
-}
-
-fn offset_height(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let index = this_element(this, context)?;
-    Ok(JsValue::from(border_box(context, index)?.height.round()))
-}
-
-fn offset_width(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let index = this_element(this, context)?;
-    Ok(JsValue::from(border_box(context, index)?.width.round()))
-}
-
 /// `Element.getBoundingClientRect` (CSSOM View §5): the border box, in the
 /// coordinate space this runtime uses (relative to the initial containing
-/// block; there is no scroll or transform to account for yet).
+/// block; there is no scroll or transform to account for yet), as a real
+/// `DOMRect`.
 pub(crate) fn get_bounding_client_rect(
     this: &JsValue,
     _: &[JsValue],
     context: &mut Context,
 ) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
-    let r = border_box(context, index)?;
-    Ok(ObjectInitializer::new(context)
-        .property(js_string!("x"), r.left, Attribute::all())
-        .property(js_string!("left"), r.left, Attribute::all())
-        .property(js_string!("y"), r.top, Attribute::all())
-        .property(js_string!("top"), r.top, Attribute::all())
-        .property(js_string!("right"), r.right, Attribute::all())
-        .property(js_string!("bottom"), r.bottom, Attribute::all())
-        .property(js_string!("width"), r.width, Attribute::all())
-        .property(js_string!("height"), r.height, Attribute::all())
-        .build()
-        .into())
+    let geometry = super::geometry::box_geometry(context, index)?;
+    let r = geometry.map(|g| g.border_box).unwrap_or_default();
+    Ok(super::geometry::new_dom_rect(context, r)?.into())
 }
 
-// ---- inline `style` object ------------------------------------------------
+// ---- CSSStyleDeclaration ---------------------------------------------------
 
-/// Proxy target of an element's `style` object: the arena index it reads and
-/// writes, and whether it is a read-only computed-style view.
-#[derive(Debug, Trace, Finalize, JsData)]
-struct StyleTarget {
-    #[unsafe_ignore_trace]
+/// Native data behind one `CSSStyleDeclaration` instance: the arena index
+/// of the element it reads/writes, and whether it is `getComputedStyle`'s
+/// read-only view or an element's own (writable) inline `style`.
+struct StyleSource {
     index: usize,
-    #[unsafe_ignore_trace]
     computed: bool,
 }
 
-// cov:ignore: a proxy's traps are internal (never exposed to script) and
-// `style_object` always builds a `StyleTarget`, so no test can reach this;
-// it exists only so a future proxy misuse throws instead of panicking.
-fn proxy_target_error() -> JsError {
-    JsNativeError::typ()
-        .with_message("style proxy called on an unexpected target")
-        .into()
+impl StyleSource {
+    /// The declared property name at `index`, in declaration order -- the
+    /// WebIDL "supported property indices" this object exposes (CSSOM
+    /// §6.7's `item()` and indexed access).
+    ///
+    /// A computed declaration enumerates every name
+    /// [`raikiri_style::property::supported_property_names`] recognizes,
+    /// in the sorted order that function already returns, rather than the
+    /// specific set CSSOM defines (every longhand with a resolved value):
+    /// this runtime does not classify longhand vs. shorthand, and every one
+    /// of these names already accepts `getPropertyValue`/its matching
+    /// accessor, so the simplification costs no reachable behavior. This
+    /// also means a computed read here never has to flush the host, unlike
+    /// [`read_property_value`]'s per-name lookup.
+    fn declared_name_at(&self, index: usize, context: &mut Context) -> JsResult<Option<String>> {
+        if self.computed {
+            return Ok(raikiri_style::property::supported_property_names()
+                .get(index)
+                .map(|name| (*name).to_owned()));
+        }
+        let index_ = self.index;
+        with_state(context, |s| {
+            let style_attr = s.host.document().element_attribute(index_, "style");
+            parse_inline_style(style_attr.unwrap_or_default())
+                .into_iter()
+                .nth(index)
+                .map(|(name, _)| name)
+        })
+    }
+
+    fn declared_len(&self, context: &mut Context) -> JsResult<usize> {
+        if self.computed {
+            return Ok(raikiri_style::property::supported_property_names().len());
+        }
+        let index_ = self.index;
+        with_state(context, |s| {
+            let style_attr = s.host.document().element_attribute(index_, "style");
+            parse_inline_style(style_attr.unwrap_or_default()).len()
+        })
+    }
 }
 
-/// The target object plus the `(index, computed)` pair it carries, or a
-/// `TypeError` when `value` is not one (a trap should never see this, but a
-/// binding must never panic on an unexpected argument).
-fn style_target(value: &JsValue) -> JsResult<(JsObject, usize, bool)> {
-    let object = value.as_object().ok_or_else(proxy_target_error)?;
-    let (index, computed) = object
-        .downcast_ref::<StyleTarget>()
-        .map(|t| (t.index, t.computed))
-        .ok_or_else(proxy_target_error)?;
-    Ok((object.clone(), index, computed))
+impl IndexedSource for StyleSource {
+    fn length(&self, context: &mut Context) -> JsResult<usize> {
+        self.declared_len(context)
+    }
+
+    fn item(&self, index: usize, context: &mut Context) -> JsResult<Option<JsValue>> {
+        Ok(self
+            .declared_name_at(index, context)?
+            .map(|name| JsValue::from(JsString::from(name))))
+    }
+}
+
+/// Brand check for `CSSStyleDeclaration` members.
+fn this_style(this: &JsValue, context: &mut Context) -> JsResult<Rc<StyleSource>> {
+    this_indexed::<StyleSource>(this, context, "CSSStyleDeclaration")
 }
 
 fn read_inline(context: &mut Context, index: usize, property: &str) -> JsResult<String> {
@@ -239,6 +274,94 @@ fn read_inline(context: &mut Context, index: usize, property: &str) -> JsResult<
             property,
         )
     })
+}
+
+/// `value` parsed as `property` with the same grammar the cascade uses, or
+/// `None` when it does not parse.
+fn parse_property_value(
+    property: &str,
+    value: &str,
+) -> Option<raikiri_style::property::PropertyValue> {
+    let mut input = ParserInput::new(value);
+    let mut parser = Parser::new(&mut input);
+    parser
+        .parse_entirely(
+            |input| -> Result<raikiri_style::property::PropertyValue, cssparser::ParseError<'_, ()>> {
+                raikiri_style::property::parse_value(property, input)
+                    .ok_or_else(|| input.new_custom_error(()))
+            },
+        )
+        .ok()
+}
+
+/// CSSOM `setProperty`/`removeProperty`/`getPropertyPriority` step 2.1: a
+/// non-custom `property` name is used ASCII-lowercased; a custom property
+/// name (`--`-prefixed) is used exactly as given.
+fn ascii_lowercase_property_name(property: String) -> String {
+    if property.starts_with("--") {
+        property
+    } else {
+        property.to_ascii_lowercase()
+    }
+}
+
+fn is_css_wide_keyword(value: &str) -> bool {
+    ["inherit", "initial", "unset", "revert", "revert-layer"]
+        .iter()
+        .any(|keyword| value.trim().eq_ignore_ascii_case(keyword))
+}
+
+/// CSSOM `setProperty` steps 5-6 ("parse a CSS value"): the text to store
+/// for a non-empty `value` of `property`, or `None` when the value does
+/// not parse and the declaration must be left untouched.
+///
+/// A parsed value is stored in its canonical serialization where
+/// `raikiri_style` can produce one, and as given otherwise. A name outside
+/// [`raikiri_style::property::supported_property_names`] (only reachable
+/// through `setProperty`, since the attribute accessors are generated from
+/// that list) is stored as given: there is no grammar to check it against.
+fn declaration_value(property: &str, value: &str) -> Option<String> {
+    let is_custom = property.starts_with("--");
+    if !is_custom && !raikiri_style::property::is_supported_property_name(property) {
+        return Some(value.to_owned());
+    }
+    if !is_custom && is_css_wide_keyword(value) {
+        return Some(value.trim().to_owned());
+    }
+    let parsed = parse_property_value(property, value)?;
+    Some(
+        raikiri_style::property::serialize_value(&parsed)
+            .or_else(|| {
+                raikiri_style::property::serialize_color_value(
+                    &property.to_ascii_lowercase(),
+                    value,
+                )
+            })
+            .unwrap_or_else(|| value.trim().to_owned()),
+    )
+}
+
+/// Set (or, for an empty `value`, remove) one inline declaration, dropping
+/// a non-empty `value` that does not parse for `property`.
+fn set_declaration(
+    context: &mut Context,
+    index: usize,
+    property: &str,
+    value: &str,
+    important: bool,
+) -> JsResult<()> {
+    if value.is_empty() {
+        return write_inline(context, index, property, "");
+    }
+    let Some(stored) = declaration_value(property.trim(), value) else {
+        return Ok(());
+    };
+    let stored = if important {
+        format!("{stored} !important")
+    } else {
+        stored
+    };
+    write_inline(context, index, property, &stored)
 }
 
 fn write_inline(context: &mut Context, index: usize, property: &str, value: &str) -> JsResult<()> {
@@ -259,131 +382,370 @@ fn write_inline(context: &mut Context, index: usize, property: &str, value: &str
 }
 
 /// The computed value of `property`, or `None` for an unsupported property
-/// name (checked before any flush, so an unsupported name never triggers one).
+/// name (checked before any flush, so an unsupported name never triggers
+/// one). A host's own `computed_value` failure message can name the arena
+/// index it failed on -- an implementation detail that must never be
+/// observable from script -- so the exception thrown into script carries a
+/// fixed message instead, while the harness-facing host failure keeps the
+/// original, more specific one (the same shape `node.rs`'s `inner_html`
+/// getter uses for its own host-failure path).
 fn read_computed(context: &mut Context, index: usize, property: &str) -> JsResult<Option<String>> {
     if raikiri_style::ComputedProperty::from_name(property).is_none() {
         return Ok(None);
     }
     ensure_flushed(context)?;
     let value = with_state(context, |s| s.host.computed_value(index, property))?;
-    value.map_err(|error| host_failure(context, error))
+    value.map_err(|error| host_failure_with_message(context, error, "computed style lookup failed"))
 }
 
-fn style_object(context: &mut Context, index: usize, computed: bool) -> JsResult<JsObject> {
-    let target = JsObject::from_proto_and_data(
-        Some(context.intrinsics().constructors().object().prototype()),
-        StyleTarget { index, computed },
-    );
-    let get_value = NativeFunction::from_copy_closure(move |_, args, ctx| {
-        let name = dom_string(args, 0, ctx)?;
-        let value = if computed {
-            read_computed(ctx, index, &name)?.unwrap_or_default()
-        } else {
-            read_inline(ctx, index, &name)?
-        };
-        Ok(JsValue::from(JsString::from(value)))
-    });
-    let get_value = closure_function(context, "getPropertyValue", 1, get_value)?;
-    target.set(js_string!("getPropertyValue"), get_value, true, context)?;
-    if !computed {
-        let set_value = NativeFunction::from_copy_closure(move |_, args, ctx| {
-            let name = dom_string(args, 0, ctx)?;
-            let value = dom_string(args, 1, ctx)?;
-            write_inline(ctx, index, &name, &value)?;
-            Ok(JsValue::undefined())
-        });
-        let set_value = closure_function(context, "setProperty", 2, set_value)?;
-        let remove_value = NativeFunction::from_copy_closure(move |_, args, ctx| {
-            let name = dom_string(args, 0, ctx)?;
-            let previous = read_inline(ctx, index, &name)?;
-            write_inline(ctx, index, &name, "")?;
-            Ok(JsValue::from(JsString::from(previous)))
-        });
-        let remove_value = closure_function(context, "removeProperty", 1, remove_value)?;
-        target.set(js_string!("setProperty"), set_value, true, context)?;
-        target.set(js_string!("removeProperty"), remove_value, true, context)?;
-    }
-    let proxy = JsProxyBuilder::new(target)
-        .get(style_get_trap)
-        .set(style_set_trap)
-        .has(style_has_trap)
-        .build(context)?;
-    Ok(proxy.into())
-}
-
-fn string_key(key: &JsValue) -> Option<String> {
-    key.as_string().map(|s| s.to_std_string_escaped())
-}
-
-/// Proxy `[[Get]]` trap (`« target, key, receiver »`): a property the target
-/// already has — one of the methods `style_object` defined, or one inherited
-/// from `Object.prototype` (`toString`, `valueOf`, `hasOwnProperty`, ...) —
-/// wins; otherwise the key is read as a camelCase or dashed style property
-/// name. Checking the whole prototype chain, not just own properties, is
-/// what lets `String(el.style)`, `'' + el.style`, and
-/// `el.style.hasOwnProperty(...)` work like a normal object instead of
-/// throwing `TypeError` on a non-callable `""`.
-fn style_get_trap(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let target_value = args.first().cloned().unwrap_or_default();
-    let (target, index, computed) = style_target(&target_value)?;
-    let key = args.get(1).cloned().unwrap_or_default();
-    let property_key = key.to_property_key(context)?;
-    if target.has_property(property_key.clone(), context)? {
-        return target.get(property_key, context);
-    }
-    let Some(name) = string_key(&key) else {
-        return Ok(JsValue::undefined());
-    };
-    let property = css_name(&name);
-    let value = if computed {
-        read_computed(context, index, &property)?.unwrap_or_default()
+/// `getPropertyValue`/an attribute accessor's shared read: the raw declared
+/// value for an inline declaration, or the resolved value (`""` when
+/// unsupported) for a computed one.
+fn read_property_value(
+    context: &mut Context,
+    source: &StyleSource,
+    name: &str,
+) -> JsResult<String> {
+    if source.computed {
+        Ok(read_computed(context, source.index, name)?.unwrap_or_default())
     } else {
-        read_inline(context, index, &property)?
-    };
+        read_inline(context, source.index, name)
+    }
+}
+
+/// `NoModificationAllowedError` for a write attempted on a computed
+/// (read-only) `CSSStyleDeclaration` (CSSOM's "readonly flag").
+fn no_modification_allowed(context: &mut Context) -> JsError {
+    throw_dom_exception(
+        context,
+        "NoModificationAllowedError",
+        "computed style is read-only",
+    )
+}
+
+/// `DOMString` conversion of an *optional* argument that defaults to `""`:
+/// a genuinely missing trailing argument, or one explicitly passed as
+/// `undefined` or `null` (`setProperty`'s `priority` is
+/// `[LegacyNullToEmptyString]`), takes `""` directly; anything else runs
+/// `ToString` as usual.
+fn optional_string(args: &[JsValue], i: usize, context: &mut Context) -> JsResult<String> {
+    match args.get(i) {
+        None => Ok(String::new()),
+        Some(v) if v.is_undefined() || v.is_null() => Ok(String::new()),
+        Some(_) => dom_string(args, i, context),
+    }
+}
+
+/// `DOMString` conversion of a `[LegacyNullToEmptyString]` argument (CSSOM:
+/// `setProperty`'s `value`, `cssFloat`, and every generated camel/dashed/
+/// webkit-cased attribute setter): an explicit `null` converts to `""`
+/// directly; anything else -- including a missing argument or an explicit
+/// `undefined` -- runs the ordinary `ToString` conversion via
+/// [`dom_string`] as usual. Unlike [`optional_string`] (an *optional*
+/// argument with a default), a required `[LegacyNullToEmptyString]`
+/// argument does not also treat `undefined` as `""`: only `null` gets the
+/// special conversion; `s.color = undefined` stores the literal string
+/// `"undefined"`, the same as any other required `DOMString` argument.
+fn legacy_null_to_empty_string(
+    args: &[JsValue],
+    i: usize,
+    context: &mut Context,
+) -> JsResult<String> {
+    match args.get(i) {
+        Some(v) if v.is_null() => Ok(String::new()),
+        _ => dom_string(args, i, context),
+    }
+}
+
+fn style_length(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let source = this_style(this, context)?;
+    Ok(JsValue::from(source.length(context)? as u32))
+}
+
+fn style_item(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let source = this_style(this, context)?;
+    let index = arg_unsigned_long(args, 0, context)?;
+    let name = source.declared_name_at(index, context)?.unwrap_or_default();
+    Ok(JsValue::from(JsString::from(name)))
+}
+
+/// `parentRule` always reads `null`: this runtime has no `CSSRule` surface.
+fn style_parent_rule(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let _ = this_style(this, context)?;
+    Ok(JsValue::null())
+}
+
+fn style_get_property_value(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let source = this_style(this, context)?;
+    let name = dom_string(args, 0, context)?;
+    let value = read_property_value(context, &source, &name)?;
     Ok(JsValue::from(JsString::from(value)))
 }
 
-/// Proxy `[[Set]]` trap (`« target, key, value, receiver »`): a property
-/// write updates the inline `style` attribute; computed style is read-only.
-fn style_set_trap(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let target_value = args.first().cloned().unwrap_or_default();
-    let (_, index, computed) = style_target(&target_value)?;
-    if computed {
-        return Ok(JsValue::from(false));
-    }
-    let Some(name) = args.get(1).and_then(string_key) else {
-        return Ok(JsValue::from(false));
+fn style_get_property_priority(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let source = this_style(this, context)?;
+    let name = ascii_lowercase_property_name(dom_string(args, 0, context)?);
+    let priority = if source.computed {
+        ""
+    } else {
+        let index = source.index;
+        with_state(context, |s| {
+            property_priority(s.host.document().element_attribute(index, "style"), &name)
+        })?
     };
-    let value = args
-        .get(2)
-        .cloned()
-        .unwrap_or_default()
-        .to_string(context)?
-        .to_std_string_escaped();
-    write_inline(context, index, &css_name(&name), &value)?;
-    Ok(JsValue::from(true))
+    Ok(JsValue::from(JsString::from(priority)))
 }
 
-/// Proxy `[[HasProperty]]` trap (`« target, key »`): an own property of the
-/// target wins; a computed style otherwise reports a supported property name
-/// as present, matching a real `CSSStyleDeclaration`'s indexed-property view.
-fn style_has_trap(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let target_value = args.first().cloned().unwrap_or_default();
-    let (target, index, computed) = style_target(&target_value)?;
-    let key = args.get(1).cloned().unwrap_or_default();
-    let property_key = key.to_property_key(context)?;
-    if target.has_property(property_key, context)? {
-        return Ok(JsValue::from(true));
+/// `setProperty(property, value, priority = "")` (CSSOM). `value` and
+/// `priority` are both converted before either is inspected (WebIDL
+/// converts every argument before an operation's own algorithm runs, so a
+/// `priority` whose conversion throws must abort the call even when
+/// `value` is empty) -- but the empty-`value` check itself still runs
+/// *before* validating `priority`, so `setProperty(name, "", "important")`
+/// removes the declaration rather than storing a lone `" !important"`. A
+/// `priority` that is neither `""` nor an ASCII case-insensitive match for
+/// `"important"` is spec-silent (return, no error, no write) rather than
+/// rejected as an argument error.
+///
+/// This runtime does not reject a `property` outside
+/// [`raikiri_style::property::supported_property_names`] the way real
+/// CSSOM's `setProperty` does (silently returning for an unsupported,
+/// non-custom name): this operation stores any name given to it
+/// (ASCII-lowercased per step 2.1, the same as every recognized name), and
+/// no caller here relies on rejecting an unrecognized one -- only the
+/// per-property accessors (`s.marginTop = …`) are scoped to the supported
+/// list, becoming ordinary expandos otherwise.
+fn style_set_property(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let source = this_style(this, context)?;
+    if source.computed {
+        return Err(no_modification_allowed(context));
     }
-    if !computed {
-        return Ok(JsValue::from(false));
+    let name = ascii_lowercase_property_name(dom_string(args, 0, context)?);
+    let value = legacy_null_to_empty_string(args, 1, context)?;
+    let priority = optional_string(args, 2, context)?;
+    if !value.is_empty() && !priority.is_empty() && !priority.eq_ignore_ascii_case("important") {
+        return Ok(JsValue::undefined());
     }
-    let Some(name) = string_key(&key) else {
-        return Ok(JsValue::from(false));
-    };
-    Ok(JsValue::from(
-        read_computed(context, index, &css_name(&name))?.is_some(),
-    ))
+    set_declaration(context, source.index, &name, &value, !priority.is_empty())?;
+    Ok(JsValue::undefined())
+}
+
+fn style_remove_property(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let source = this_style(this, context)?;
+    if source.computed {
+        return Err(no_modification_allowed(context));
+    }
+    let name = ascii_lowercase_property_name(dom_string(args, 0, context)?);
+    let previous = read_inline(context, source.index, &name)?;
+    write_inline(context, source.index, &name, "")?;
+    Ok(JsValue::from(JsString::from(previous)))
+}
+
+/// `cssText`, on getting: `""` for a computed declaration (CSSOM); the
+/// serialized inline declarations otherwise.
+fn style_css_text_get(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let source = this_style(this, context)?;
+    if source.computed {
+        return Ok(JsValue::from(JsString::from("")));
+    }
+    let index = source.index;
+    let text = with_state(context, |s| {
+        let style_attr = s.host.document().element_attribute(index, "style");
+        serialize_declarations(&style_attr.map(parse_inline_style).unwrap_or_default())
+    })?;
+    Ok(JsValue::from(JsString::from(text)))
+}
+
+/// `cssText`, on setting: replaces the whole inline `style` attribute with
+/// the given text verbatim (matching `setAttribute("style", …)`; this
+/// runtime re-parses declarations lazily on every read rather than
+/// validating them up front).
+fn style_css_text_set(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let source = this_style(this, context)?;
+    if source.computed {
+        return Err(no_modification_allowed(context));
+    }
+    let text = dom_string(args, 0, context)?;
+    with_state(context, |s| {
+        s.host
+            .document_mut()
+            .set_element_inline_style(source.index, Some(text.into()));
+    })?;
+    mark_dirty(context)?;
+    Ok(JsValue::undefined())
+}
+
+/// `cssFloat` (CSSOM `CSSStyleProperties`): a fixed alias for the `float`
+/// property, kept separate from the generated per-property accessors
+/// because `float` is a JavaScript reserved word in older engines --
+/// `getPropertyValue`/`setProperty` with `"float"` as the property name
+/// still works.
+fn style_css_float_get(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let source = this_style(this, context)?;
+    let value = read_property_value(context, &source, "float")?;
+    Ok(JsValue::from(JsString::from(value)))
+}
+
+fn style_css_float_set(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let source = this_style(this, context)?;
+    if source.computed {
+        return Err(no_modification_allowed(context));
+    }
+    let value = legacy_null_to_empty_string(args, 0, context)?;
+    set_declaration(context, source.index, "float", &value, false)?;
+    Ok(JsValue::undefined())
+}
+
+pub(crate) const CSS_STYLE_DECLARATION_MEMBERS: Members = Members {
+    getters: &[("length", style_length), ("parentRule", style_parent_rule)],
+    accessors: &[
+        ("cssText", style_css_text_get, style_css_text_set),
+        ("cssFloat", style_css_float_get, style_css_float_set),
+    ],
+    methods: &[
+        ("item", 1, style_item),
+        ("getPropertyValue", 1, style_get_property_value),
+        ("getPropertyPriority", 1, style_get_property_priority),
+        ("setProperty", 2, style_set_property),
+        ("removeProperty", 1, style_remove_property),
+    ],
+};
+
+/// CSSOM §6.7.1 "CSS property to IDL attribute": every `-` (U+002D)
+/// triggers uppercasing the character right after it. `lowercase_first`
+/// additionally drops `property`'s own first character before that loop
+/// runs -- used only for the `-webkit-` prefix's lowercase-`w`
+/// "webkit-cased attribute" (its ordinary, non-dropped camel-cased form
+/// already yields the capital-`W` form, "Webkit...", for the same reason:
+/// the leading `-` itself triggers uppercasing the `w` right after it).
+fn css_property_to_idl_attribute(property: &str, lowercase_first: bool) -> String {
+    let mut chars = property.chars();
+    if lowercase_first {
+        chars.next();
+    }
+    let mut output = String::with_capacity(property.len());
+    let mut uppercase_next = false;
+    for c in chars {
+        if c == '-' {
+            uppercase_next = true;
+        } else if uppercase_next {
+            output.push(c.to_ascii_uppercase());
+            uppercase_next = false;
+        } else {
+            output.push(c);
+        }
+    }
+    output
+}
+
+/// The CSSOM §6.7.1 attribute names generated for `property`: its dashed
+/// form (`property` itself) always; its camel-cased form, only when that
+/// differs from the dashed form (a property with no `-` camel-cases to
+/// itself, so CSSOM does not generate a second, redundant attribute for
+/// it); and, only when `property` begins with `-webkit-`, its
+/// webkit-cased form too (the matching capital-`W` "Webkit..." form is
+/// already produced by the camel-cased step above, applied to the leading
+/// `-` itself).
+fn attribute_names(property: &str) -> Vec<String> {
+    let mut names = vec![property.to_owned()];
+    let camel = css_property_to_idl_attribute(property, false);
+    if camel != property {
+        names.push(camel);
+    }
+    if property.starts_with("-webkit-") {
+        names.push(css_property_to_idl_attribute(property, true));
+    }
+    names
+}
+
+/// One `property` attribute's getter/setter pair, named after `key` (the
+/// attribute spelling it is about to be installed under).
+fn property_accessor_pair(
+    context: &mut Context,
+    property: &'static str,
+    key: &str,
+) -> JsResult<(JsFunction, JsFunction)> {
+    let getter = NativeFunction::from_copy_closure(move |this, _args, ctx| {
+        let source = this_style(this, ctx)?;
+        let value = read_property_value(ctx, &source, property)?;
+        Ok(JsValue::from(JsString::from(value)))
+    });
+    let getter = closure_function(context, &format!("get {key}"), 0, getter)?;
+    let setter = NativeFunction::from_copy_closure(move |this, args, ctx| {
+        let source = this_style(this, ctx)?;
+        if source.computed {
+            return Err(no_modification_allowed(ctx));
+        }
+        let value = legacy_null_to_empty_string(args, 0, ctx)?;
+        set_declaration(ctx, source.index, property, &value, false)?;
+        Ok(JsValue::undefined())
+    });
+    let setter = closure_function(context, &format!("set {key}"), 1, setter)?;
+    Ok((getter, setter))
+}
+
+fn define_accessor(
+    prototype: &JsObject,
+    key: &str,
+    getter: JsFunction,
+    setter: JsFunction,
+    context: &mut Context,
+) -> JsResult<()> {
+    let descriptor = PropertyDescriptor::builder()
+        .get(getter)
+        .set(setter)
+        .enumerable(true)
+        .configurable(true)
+        .build();
+    prototype.define_property_or_throw(JsString::from(key), descriptor, context)?;
+    Ok(())
+}
+
+/// Define, on `prototype`, every dashed / camelCase / (for `-webkit-`
+/// names) webkit-cased attribute CSSOM §6.7.1 generates for each of
+/// [`raikiri_style::property::supported_property_names`]. `cssFloat` is
+/// not generated by that algorithm -- it is its own fixed member, defined
+/// through [`CSS_STYLE_DECLARATION_MEMBERS`] instead.
+pub(crate) fn install_property_accessors(
+    context: &mut Context,
+    prototype: &JsObject,
+) -> JsResult<()> {
+    for &property in raikiri_style::property::supported_property_names() {
+        for key in attribute_names(property) {
+            let (getter, setter) = property_accessor_pair(context, property, &key)?;
+            define_accessor(prototype, &key, getter, setter, context)?;
+        }
+    }
+    Ok(())
+}
+
+fn style_object(context: &mut Context, index: usize, computed: bool) -> JsResult<JsObject> {
+    let prototype = protos(context).css_style_declaration.clone();
+    indexed_object(context, prototype, StyleSource { index, computed })
 }
 
 fn style(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
@@ -406,40 +768,29 @@ fn get_computed_style(_: &JsValue, args: &[JsValue], context: &mut Context) -> J
             .with_message("argument is not an Element")
             .into());
     }
-    Ok(style_object(context, index, true)?.into())
+    if let Some(existing) = with_state(context, |s| s.computed_style_objects.get(&index).cloned())?
+    {
+        return Ok(existing.into());
+    }
+    let object = style_object(context, index, true)?;
+    with_state(context, |s| {
+        s.computed_style_objects.insert(index, object.clone())
+    })?;
+    Ok(object.into())
 }
 
 fn css_supports(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let property = dom_string(args, 0, context)?;
     let value = dom_string(args, 1, context)?;
-    let mut input = ParserInput::new(&value);
-    let mut parser = Parser::new(&mut input);
-    let parsed =
-        parser
-            .parse_entirely(
-                |input| -> Result<
-                    raikiri_style::property::PropertyValue,
-                    cssparser::ParseError<'_, ()>,
-                > {
-                    raikiri_style::property::parse_value(&property, input)
-                        .ok_or_else(|| input.new_custom_error(()))
-                },
-            )
-            .is_ok();
-    let wide = ["inherit", "initial", "unset", "revert", "revert-layer"]
-        .iter()
-        .any(|k| value.trim().eq_ignore_ascii_case(k));
+    let parsed = parse_property_value(&property, &value).is_some();
+    let wide = is_css_wide_keyword(&value);
     Ok(JsValue::from(
         parsed || (wide && raikiri_style::property::is_supported_property_name(&property)),
     ))
 }
 
 pub(crate) const HTML_ELEMENT_MEMBERS: Members = Members {
-    getters: &[
-        ("style", style),
-        ("offsetHeight", offset_height),
-        ("offsetWidth", offset_width),
-    ],
+    getters: &[("style", style)],
     accessors: &[],
     methods: &[],
 };

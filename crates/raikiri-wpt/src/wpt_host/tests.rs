@@ -260,3 +260,90 @@ fn box_geometry_returns_none_for_an_element_with_no_box() {
     host.flush().unwrap();
     assert_eq!(host.box_geometry(hidden).unwrap(), None);
 }
+
+/// CSSOM View metrics over a real layout, checked against CSS 2.1 box-model
+/// arithmetic:
+///
+/// - `o`'s border box is 3 + 5 + 100 + 5 + 3 = 116 wide and
+///   3 + 5 + 50 + 5 + 3 = 66 tall; its padding box is 110 x 60 and its
+///   border widths (`clientTop`/`clientLeft`) are 3.
+/// - `o` is `position: relative`, so it is `i`'s offsetParent. `o`'s
+///   border and padding keep `i`'s 7px top margin from collapsing through
+///   it (CSS 2.1 §8.3.1), so `i`'s border edge sits 5 + 7 = 12 below `o`'s
+///   top padding edge and 5 (the left padding) right of its left one.
+/// - `o.offsetTop`/`o.offsetLeft` are both 10, `o`'s own margin, because
+///   its offsetParent is the body and the result is relative to the
+///   initial containing block. CSS 2.1 with the UA stylesheet's
+///   `body { margin: 8px }` gives 10 at the top only through margin
+///   collapsing (max(8, 10)) and 8 + 10 = 18 at the left, but this layout
+///   places the body box at the origin with the viewport's full size, so
+///   the body's margins never reach the geometry (a lone `margin: 5px`
+///   block sits at 5, not 8). The measured values are pinned so a layout
+///   change there is noticed.
+/// - `i` (100 x 200) fits horizontally inside `o`'s 110px padding box, so
+///   `scrollWidth` is the padding box width. Vertically, `i`'s border box
+///   ends 5 + 7 + 200 = 212 below `o`'s top padding edge, and scrollable
+///   overflow also includes the box's own end-side padding after that
+///   content (CSS Overflow 3 §3.3 "Scrollable Overflow"), so
+///   `scrollHeight` is 212 + 5 = 217.
+/// - `s` is a non-atomic inline box, so its `client*` metrics are all 0
+///   (CSSOM View §6) while its border box still has a size.
+#[test]
+fn cssom_view_metrics_follow_the_css_box_model() {
+    let (_dir, mut rt) = runtime(
+        "<div id=o style='position:relative; margin:10px; border:3px solid; padding:5px; \
+         width:100px; height:50px'><div id=i style='margin-top:7px; height:200px'></div></div>\
+         <div><span id=s style='border:2px solid; padding:1px'>x</span></div>",
+    );
+    rt.evaluate("var o = document.getElementById('o'), i = document.getElementById('i');")
+        .unwrap();
+    for (src, expected) in [
+        ("i.offsetTop", 12.0),
+        ("i.offsetLeft", 5.0),
+        ("o.offsetTop", 10.0),
+        ("o.offsetLeft", 10.0),
+        ("o.offsetWidth", 116.0),
+        ("o.offsetHeight", 66.0),
+        ("o.clientTop", 3.0),
+        ("o.clientLeft", 3.0),
+        ("o.clientWidth", 110.0),
+        ("o.clientHeight", 60.0),
+        ("o.scrollWidth", 110.0),
+        ("o.scrollHeight", 217.0),
+        ("document.getElementById('s').clientTop", 0.0),
+        ("document.getElementById('s').clientLeft", 0.0),
+        ("document.getElementById('s').clientWidth", 0.0),
+        ("document.getElementById('s').clientHeight", 0.0),
+        ("i.scrollHeight", 200.0),
+    ] {
+        assert_eq!(num(&mut rt, src), expected, "{src}");
+    }
+    assert_eq!(
+        rt.evaluate(
+            "i.offsetParent === o && o.offsetParent === document.body \
+             && document.getElementById('s').offsetWidth > 0"
+        )
+        .unwrap()
+        .as_boolean(),
+        Some(true)
+    );
+}
+
+/// Every computed `position` keyword the host maps, including the ones
+/// (`absolute`, `fixed`, `sticky`) whose layout is not implemented yet: the
+/// metrics only need the computed value.
+#[test]
+fn position_kind_maps_each_computed_position() {
+    use raikiri_js::runtime::PositionKind;
+    use raikiri_style::property::PositionValue as P;
+    for (value, expected) in [
+        (P::Static, PositionKind::Static),
+        (P::Running("header".into()), PositionKind::Static),
+        (P::Relative, PositionKind::Relative),
+        (P::Absolute, PositionKind::Absolute),
+        (P::Fixed, PositionKind::Fixed),
+        (P::Sticky, PositionKind::Sticky),
+    ] {
+        assert_eq!(super::position_kind(&value), expected, "{value:?}");
+    }
+}

@@ -1,21 +1,45 @@
-//! Runs a WPT CSS parsing test file's `test_invalid_value` assertions
-//! through `raikiri_js`, aggregating per-file PASS/FAIL counts.
+//! Runs a WPT CSS parsing test file's `test_invalid_value`/`test_valid_value`
+//! assertions, aggregating per-file PASS/FAIL counts.
 //!
-//! Scope: `test_invalid_value` only (see `raikiri_js`'s crate doc for why
-//! `test_valid_value`/`test_valid_selector`/`test_valid_rule` are out of
-//! scope for now).
+//! The real `css/support/parsing-testcommon.js` and the file's inline script
+//! run on the native DOM runtime against a live Raikiri document built from
+//! the test page, so `document.getElementById('target')` and element style
+//! declarations behave as they do for any other testharness page.
 
 use std::fs;
 use std::path::Path;
 
-/// One `css/*/parsing/*.html` file's `test_invalid_value` outcomes.
+use raikiri_js::TestOutcome;
+use raikiri_js::testharness::{TestHarnessError, run_testharness_scripts_on_host};
+
+use crate::reftest::{DEFAULT_REFTTEST_HEIGHT, DEFAULT_REFTTEST_WIDTH, prepare_wpt_live_document};
+use crate::wpt_host::WptDocumentHost;
+
+/// Known-valid, property-agnostic sanity check run before the helper and the
+/// test script: `color: red` must round-trip through an element's inline
+/// style. It catches an inert style binding (a setter that silently no-ops,
+/// or a getter that always reads back empty) that would otherwise make every
+/// `test_invalid_value` assertion pass for the wrong reason. A failure throws,
+/// so the whole file is reported as an error instead of a result.
+const POSITIVE_CONTROL_JS: &str = r#"
+(function () {
+    var div = document.createElement("div");
+    div.style["color"] = "red";
+    var got = div.style.getPropertyValue("color");
+    if (got !== "red") {
+        throw new Error("positive control failed: color round-trip got " + JSON.stringify(got));
+    }
+})();
+"#;
+
+/// One `css/*/parsing/*.html` file's outcomes.
 #[derive(Debug)]
 pub struct ParsingFileOutcome {
     /// The file's path relative to the WPT root, forward-slash separated.
     pub test_id: String,
-    /// One entry per `test_invalid_value` assertion the file declares, in
-    /// source order.
-    pub outcomes: Vec<raikiri_js::TestOutcome>,
+    /// One entry per `test()` call the file's scripts registered, in
+    /// registration order.
+    pub outcomes: Vec<TestOutcome>,
 }
 
 impl ParsingFileOutcome {
@@ -38,25 +62,28 @@ impl ParsingFileOutcome {
 /// Why [`run_parsing_invalid_file`] could not produce an outcome.
 #[derive(Debug)]
 pub enum ParsingFileError {
-    /// The file's inline script has no `test_invalid_value(` call, so
-    /// there is nothing for this harness to run.
-    NoInvalidValueCalls,
+    /// The file's inline script has neither a `test_invalid_value(` nor a
+    /// `test_valid_value(` call, so there is nothing for this runner to run.
+    NoParsingTestCalls,
     /// Reading the test file or `parsing-testcommon.js` failed.
     Io(String),
-    /// The JS harness itself reported an error.
-    Harness(raikiri_js::HarnessError),
+    /// Building the live document for the test page failed.
+    Document(String),
+    /// The native testharness run reported an error.
+    Harness(TestHarnessError),
 }
 
 impl std::fmt::Display for ParsingFileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ParsingFileError::NoInvalidValueCalls => {
+            ParsingFileError::NoParsingTestCalls => {
                 write!(
                     f,
-                    "no test_invalid_value( calls in this file's inline script"
+                    "no test_invalid_value( or test_valid_value( calls in this file's inline script"
                 )
             }
             ParsingFileError::Io(msg) => write!(f, "I/O error: {msg}"),
+            ParsingFileError::Document(msg) => write!(f, "live document: {msg}"),
             ParsingFileError::Harness(e) => write!(f, "{e}"),
         }
     }
@@ -71,8 +98,7 @@ impl std::error::Error for ParsingFileError {}
 /// A manual scan rather than full HTML tokenization: WPT parsing test
 /// fixtures are simple enough (no nested `<script>`-like text inside
 /// string literals containing the literal substring `</script>`) that this
-/// is reliable, and it avoids depending on `raikiri-html`'s DOM-building
-/// pipeline just to pull out inline script text.
+/// is reliable.
 pub fn inline_scripts(html: &str) -> String {
     let mut out = String::new();
     let mut search = 0usize;
@@ -98,7 +124,7 @@ pub fn inline_scripts(html: &str) -> String {
     out
 }
 
-/// Run one `css/*/parsing/*.html` file's `test_invalid_value` assertions.
+/// Run one `css/*/parsing/*.html` file on the native DOM runtime.
 ///
 /// `wpt_root` is the fetched WPT checkout root (`target/wpt` by
 /// convention; see `scripts/wpt/fetch.sh`); `relative_path` is the file's
@@ -108,17 +134,29 @@ pub fn run_parsing_invalid_file(
     wpt_root: &Path,
     relative_path: &Path,
 ) -> Result<ParsingFileOutcome, ParsingFileError> {
-    let html = fs::read_to_string(wpt_root.join(relative_path))
-        .map_err(|e| ParsingFileError::Io(e.to_string()))?;
+    let page_path = wpt_root.join(relative_path);
+    let html = fs::read_to_string(&page_path).map_err(|e| ParsingFileError::Io(e.to_string()))?;
     let script = inline_scripts(&html);
     if !script.contains("test_invalid_value(") && !script.contains("test_valid_value(") {
-        return Err(ParsingFileError::NoInvalidValueCalls);
+        return Err(ParsingFileError::NoParsingTestCalls);
     }
     let parsing_testcommon = fs::read_to_string(wpt_root.join("css/support/parsing-testcommon.js"))
         .map_err(|e| ParsingFileError::Io(e.to_string()))?;
 
-    let outcomes = raikiri_js::run_invalid_value_script(&parsing_testcommon, &script)
-        .map_err(ParsingFileError::Harness)?;
+    let page_base = page_path.parent().unwrap_or(wpt_root);
+    let setup = prepare_wpt_live_document(
+        &html,
+        DEFAULT_REFTTEST_WIDTH,
+        DEFAULT_REFTTEST_HEIGHT,
+        page_base,
+        wpt_root,
+    )
+    .map_err(ParsingFileError::Document)?;
+    let outcomes = run_testharness_scripts_on_host(
+        &[POSITIVE_CONTROL_JS, &parsing_testcommon, &script],
+        WptDocumentHost::new(setup, wpt_root),
+    )
+    .map_err(ParsingFileError::Harness)?;
 
     Ok(ParsingFileOutcome {
         test_id: path_to_test_id(relative_path),
@@ -131,88 +169,4 @@ fn path_to_test_id(path: &Path) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn inline_scripts_skips_src_tags_and_keeps_bare_ones() {
-        let html = r#"<script src="/resources/testharness.js"></script>
-<script src="/css/support/parsing-testcommon.js"></script>
-<script>
-test_invalid_value("box-sizing", "margin-box");
-</script>"#;
-        let extracted = inline_scripts(html);
-        assert!(extracted.contains("test_invalid_value(\"box-sizing\", \"margin-box\")"));
-        assert!(!extracted.contains("testharness.js"));
-    }
-
-    #[test]
-    fn inline_scripts_concatenates_multiple_bare_tags() {
-        let html = "<script>a();</script><script>b();</script>";
-        let extracted = inline_scripts(html);
-        assert!(extracted.contains("a();"));
-        assert!(extracted.contains("b();"));
-    }
-
-    #[test]
-    fn inline_scripts_returns_empty_for_no_scripts() {
-        assert_eq!(inline_scripts("<html><body>hi</body></html>"), "");
-    }
-
-    #[test]
-    fn run_parsing_invalid_file_reports_no_invalid_value_calls() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("css/some-cat/parsing")).unwrap();
-        fs::write(
-            // A file whose only assertion helper is test_valid_selector(
-            // (out of scope, needs a CSSStyleSheet/CSSRule surface this
-            // harness doesn't implement) has neither test_invalid_value(
-            // nor test_valid_value( — the case this error variant exists
-            // for, now that Task 5 widened detection to catch both.
-            dir.path().join("css/some-cat/parsing/only-valid.html"),
-            "<script>test_valid_selector(\"div\");</script>",
-        )
-        .unwrap();
-        let result = run_parsing_invalid_file(
-            dir.path(),
-            Path::new("css/some-cat/parsing/only-valid.html"),
-        );
-        assert!(matches!(result, Err(ParsingFileError::NoInvalidValueCalls)));
-    }
-
-    #[test]
-    #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-    fn run_parsing_invalid_file_on_real_fixture_is_seven_of_seven() {
-        let wpt_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
-        let outcome = run_parsing_invalid_file(
-            &wpt_root,
-            Path::new("css/css-sizing/parsing/box-sizing-invalid.html"),
-        )
-        .unwrap();
-        assert_eq!(
-            outcome.test_id,
-            "css/css-sizing/parsing/box-sizing-invalid.html"
-        );
-        assert_eq!(outcome.total(), 7);
-        assert!(outcome.all_passed(), "{:?}", outcome.outcomes);
-    }
-
-    #[test]
-    fn run_parsing_invalid_file_accepts_files_with_only_test_valid_value_calls() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("css/some-cat/parsing")).unwrap();
-        fs::write(
-            dir.path().join("css/some-cat/parsing/only-valid.html"),
-            "<script>test_valid_value(\"padding-top\", \"10px\");</script>",
-        )
-        .unwrap();
-        let result = run_parsing_invalid_file(
-            dir.path(),
-            Path::new("css/some-cat/parsing/only-valid.html"),
-        );
-        assert!(
-            !matches!(result, Err(ParsingFileError::NoInvalidValueCalls)),
-            "a file with only test_valid_value( calls should not be treated as having no assertions"
-        );
-    }
-}
+mod tests;

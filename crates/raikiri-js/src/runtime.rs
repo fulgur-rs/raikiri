@@ -7,16 +7,24 @@ use std::rc::Rc;
 
 use boa_engine::{Context, JsObject, JsValue, Source};
 
+pub(crate) mod collections;
+pub(crate) mod document;
+pub(crate) mod events;
+pub(crate) mod geometry;
 pub mod host;
+pub(crate) mod indexed;
 pub(crate) mod interfaces;
 pub(crate) mod node;
+pub(crate) mod query;
 pub(crate) mod style;
+pub(crate) mod token_list;
+pub(crate) mod tree;
 pub(crate) mod webidl;
 
 #[cfg(test)]
 pub(crate) mod test_host;
 
-pub use host::{BoxGeometry, DocumentHost, DomRect, HostError};
+pub use host::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
 
 /// Mutable runtime state shared by every native binding.
 pub(crate) struct State {
@@ -30,8 +38,20 @@ pub(crate) struct State {
     pub host_failure: Option<String>,
     /// Per-element `style` objects so `el.style === el.style`.
     pub style_objects: HashMap<usize, JsObject>,
+    /// Per-element `getComputedStyle` objects so
+    /// `getComputedStyle(el) === getComputedStyle(el)`.
+    pub computed_style_objects: HashMap<usize, JsObject>,
     /// Per-element `classList` objects so `el.classList === el.classList`.
     pub class_lists: HashMap<usize, JsObject>,
+    /// Per-node `childNodes` lists so `n.childNodes === n.childNodes`.
+    pub child_node_lists: HashMap<usize, JsObject>,
+    /// Per-node `children` collections so `n.children === n.children`.
+    pub children_collections: HashMap<usize, JsObject>,
+    /// Registered `EventTarget` listeners, keyed by node arena index; `None`
+    /// is the window/global object, which has no arena index of its own.
+    /// Dispatch is out of scope for this runtime -- only registration state
+    /// is kept.
+    pub listeners: HashMap<Option<usize>, Vec<events::Listener>>,
 }
 
 /// Shared handle to [`State`], stored in the Boa context's host data.
@@ -83,7 +103,11 @@ impl DomRuntime {
             dirty: true,
             host_failure: None,
             style_objects: HashMap::new(),
+            computed_style_objects: HashMap::new(),
             class_lists: HashMap::new(),
+            child_node_lists: HashMap::new(),
+            children_collections: HashMap::new(),
+            listeners: HashMap::new(),
         };
         let mut context = Context::default();
         context.insert_data(Shared(Rc::new(RefCell::new(state))));

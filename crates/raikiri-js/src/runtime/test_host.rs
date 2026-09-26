@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use raikiri_dom::Document;
 
-use super::host::{BoxGeometry, DocumentHost, DomRect, HostError};
+use super::host::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
 
 pub(crate) struct StubHost {
     pub document: Document,
@@ -25,8 +25,11 @@ impl StubHost {
         let mut document = Document::new();
         let root = document.root_index();
         let html = document.create_detached_element("html").unwrap();
-        // `append_child` only accepts Element parents; the document root
-        // takes its element child through the parser-level attach.
+        // The document root takes its element child through the
+        // parser-level attach, mirroring how a real HTML parse wires the
+        // root `<html>` element (`append_child` would also accept a
+        // Document parent now, but this stub predates that and there is no
+        // move-from-elsewhere semantics to exercise here).
         document.attach_child(root, html);
         let head = document.create_detached_element("head").unwrap();
         document.append_child(html, head).unwrap();
@@ -49,16 +52,36 @@ impl StubHost {
         )
     }
 
+    /// A 10px-wide static box at (1, 2) with the given height and no
+    /// borders: its padding box is its border box, and nothing overflows it.
     pub fn rect(height: f64) -> BoxGeometry {
+        let border = Self::dom_rect(1.0, 2.0, 10.0, height);
+        Self::boxed(border, border, PositionKind::Static)
+    }
+
+    /// A `DomRect` from its origin and size.
+    pub fn dom_rect(left: f64, top: f64, width: f64, height: f64) -> DomRect {
+        DomRect {
+            left,
+            top,
+            right: left + width,
+            bottom: top + height,
+            width,
+            height,
+        }
+    }
+
+    /// Geometry of a non-inline box with explicit border and padding boxes
+    /// and `position`; the scroll extent is the padding box size (no
+    /// overflow). Tests adjust the returned fields for anything else.
+    pub fn boxed(border: DomRect, padding: DomRect, position: PositionKind) -> BoxGeometry {
         BoxGeometry {
-            border_box: DomRect {
-                left: 1.0,
-                top: 2.0,
-                right: 11.0,
-                bottom: 2.0 + height,
-                width: 10.0,
-                height,
-            },
+            border_box: border,
+            padding_box: padding,
+            scroll_width: padding.width,
+            scroll_height: padding.height,
+            position,
+            is_inline: false,
         }
     }
 }

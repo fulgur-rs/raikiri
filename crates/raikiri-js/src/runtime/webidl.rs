@@ -17,8 +17,24 @@ pub(crate) fn dom_string(args: &[JsValue], i: usize, context: &mut Context) -> J
         .to_std_string_escaped())
 }
 
-/// The arena index behind a node wrapper, if `value` is one.
-fn brand(value: &JsValue) -> Option<usize> {
+/// WebIDL `unsigned long` conversion (ToUint32, no `[EnforceRange]`) of
+/// required argument `i`; a missing argument is a `TypeError`.
+pub(crate) fn arg_unsigned_long(
+    args: &[JsValue],
+    i: usize,
+    context: &mut Context,
+) -> JsResult<usize> {
+    let value = args
+        .get(i)
+        .ok_or_else(|| type_error("a required argument is missing"))?;
+    Ok(value.to_u32(context)? as usize)
+}
+
+/// The arena index behind a node wrapper, if `value` is one. Not an error
+/// by itself -- callers that accept a mix of `Node` and non-`Node`
+/// arguments (DOM §4.2.6 "convert nodes into a node") use this to tell them
+/// apart before deciding how to convert each one.
+pub(crate) fn node_index(value: &JsValue) -> Option<usize> {
     value
         .as_object()?
         .downcast_ref::<NodeHandle>()
@@ -38,7 +54,7 @@ fn kind_of(context: &mut Context, index: usize) -> JsResult<NodeKind> {
 
 /// Brand check for `Node` members.
 pub(crate) fn this_node(this: &JsValue, _context: &mut Context) -> JsResult<usize> {
-    brand(this).ok_or_else(|| type_error("'this' is not a Node"))
+    node_index(this).ok_or_else(|| type_error("'this' is not a Node"))
 }
 
 /// Brand check for `Element` members.
@@ -59,11 +75,121 @@ pub(crate) fn this_document(this: &JsValue, context: &mut Context) -> JsResult<u
     }
 }
 
+/// Brand check for the `ParentNode` mixin (Document, DocumentFragment,
+/// Element).
+pub(crate) fn this_parent_node(this: &JsValue, context: &mut Context) -> JsResult<usize> {
+    let index = this_node(this, context)?;
+    match kind_of(context, index)? {
+        NodeKind::Document | NodeKind::DocumentFragment | NodeKind::Element => Ok(index),
+        _ => Err(type_error("'this' does not implement ParentNode")),
+    }
+}
+
+/// Brand check for the `NonElementParentNode` mixin (Document,
+/// DocumentFragment; notably not Element).
+pub(crate) fn this_non_element_parent_node(
+    this: &JsValue,
+    context: &mut Context,
+) -> JsResult<usize> {
+    let index = this_node(this, context)?;
+    match kind_of(context, index)? {
+        NodeKind::Document | NodeKind::DocumentFragment => Ok(index),
+        _ => Err(type_error("'this' does not implement NonElementParentNode")),
+    }
+}
+
+/// Brand check for the `ChildNode` / `NonDocumentTypeChildNode` mixins
+/// (Element, and every `CharacterData` interface: Text, Comment,
+/// ProcessingInstruction).
+pub(crate) fn this_child_node(this: &JsValue, context: &mut Context) -> JsResult<usize> {
+    let index = this_node(this, context)?;
+    match kind_of(context, index)? {
+        NodeKind::Element
+        | NodeKind::Text
+        | NodeKind::Comment
+        | NodeKind::ProcessingInstruction => Ok(index),
+        _ => Err(type_error("'this' does not implement ChildNode")),
+    }
+}
+
+/// Brand check for `CharacterData` members (Text, Comment,
+/// ProcessingInstruction).
+pub(crate) fn this_character_data(this: &JsValue, context: &mut Context) -> JsResult<usize> {
+    let index = this_node(this, context)?;
+    match kind_of(context, index)? {
+        NodeKind::Text | NodeKind::Comment | NodeKind::ProcessingInstruction => Ok(index),
+        _ => Err(type_error("'this' is not a CharacterData node")),
+    }
+}
+
+/// Brand check for `ProcessingInstruction` members.
+pub(crate) fn this_processing_instruction(
+    this: &JsValue,
+    context: &mut Context,
+) -> JsResult<usize> {
+    let index = this_node(this, context)?;
+    match kind_of(context, index)? {
+        NodeKind::ProcessingInstruction => Ok(index),
+        _ => Err(type_error("'this' is not a ProcessingInstruction")),
+    }
+}
+
 /// A `Node` argument (WebIDL interface-type conversion).
 pub(crate) fn arg_node(args: &[JsValue], i: usize, _context: &mut Context) -> JsResult<usize> {
     args.get(i)
-        .and_then(brand)
+        .and_then(node_index)
         .ok_or_else(|| type_error("argument is not a Node"))
+}
+
+/// A nullable `Node` argument (`Node?`) that is itself *optional* (has an
+/// implied `null` default, e.g. `Node.contains`'s `other`): a missing
+/// argument, `null`, and `undefined` all convert to `None`; anything else
+/// must be a `Node` wrapper or this throws `TypeError`, the same as
+/// [`arg_node`].
+pub(crate) fn arg_node_or_null(
+    args: &[JsValue],
+    i: usize,
+    _context: &mut Context,
+) -> JsResult<Option<usize>> {
+    match args.get(i) {
+        None => Ok(None),
+        Some(v) if v.is_null() || v.is_undefined() => Ok(None),
+        Some(v) => node_index(v)
+            .map(Some)
+            .ok_or_else(|| type_error("argument is not a Node")),
+    }
+}
+
+/// A nullable `Node` argument (`Node?`) that is *required* (no default,
+/// e.g. `Node.insertBefore`'s `child`): WebIDL's operation-arity check for a
+/// non-optional parameter runs before any per-argument conversion, so a call
+/// that omits it outright is a `TypeError` regardless of the parameter's own
+/// nullable type -- distinct from an explicit `null`/`undefined` in that
+/// same position, which still converts to `None`, the same as
+/// [`arg_node_or_null`].
+pub(crate) fn arg_required_node_or_null(
+    args: &[JsValue],
+    i: usize,
+    context: &mut Context,
+) -> JsResult<Option<usize>> {
+    if args.len() <= i {
+        return Err(type_error("a required argument is missing"));
+    }
+    arg_node_or_null(args, i, context)
+}
+
+/// A fixed-message `Error` for a raikiri-dom mutation `Result<_, String>`
+/// failure that a preceding brand/kind check has already made unreachable
+/// in practice (every call site is `cov:ignore`d for exactly that reason).
+/// Takes no argument on purpose: raikiri-dom's own message text can embed
+/// an arena index (e.g. "target index 3 is out of range"), which must
+/// never reach script, and there is no reachable path here to describe
+/// more specifically anyway, so the caller's `String` is simply dropped
+/// rather than threaded through and ignored.
+pub(crate) fn unreachable_mutation_error() -> JsError {
+    JsNativeError::error()
+        .with_message("an internal DOM operation failed unexpectedly")
+        .into()
 }
 
 /// Create a `DOMException` with the given name and return it as a JS error.
