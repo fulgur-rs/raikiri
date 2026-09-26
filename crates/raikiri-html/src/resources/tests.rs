@@ -118,3 +118,91 @@ fn data_svg_background_is_available_from_the_combined_source_without_network() {
 
     assert_eq!(&image.rgba, &[255, 0, 0, 255]);
 }
+
+struct AllowAllPolicy;
+
+impl raikiri_traits::ResourcePolicy for AllowAllPolicy {
+    fn is_scheme_allowed(&self, _scheme: &str, _kind: ResourceKind) -> bool {
+        true
+    }
+    fn is_host_allowed(&self, _host: &str, _kind: ResourceKind) -> bool {
+        true
+    }
+    fn allow_redirect(&self, _from: &Url, _to: &Url, _hop: u32) -> bool {
+        true
+    }
+    fn max_redirect_hops(&self, _kind: ResourceKind) -> u32 {
+        10
+    }
+    fn max_fetch_bytes(&self, _kind: ResourceKind) -> Option<u64> {
+        None
+    }
+    fn max_decoded_bytes(&self, _kind: ResourceKind) -> Option<u64> {
+        None
+    }
+    fn fetch_timeout(&self, _kind: ResourceKind) -> std::time::Duration {
+        std::time::Duration::from_secs(10)
+    }
+    fn decode_timeout(&self, _kind: ResourceKind) -> std::time::Duration {
+        std::time::Duration::from_secs(10)
+    }
+    fn allowed_mime_types(&self, _kind: ResourceKind) -> Vec<String> {
+        Vec::new()
+    }
+    fn max_import_depth(&self) -> u32 {
+        10
+    }
+    fn max_svg_recursion_depth(&self) -> u32 {
+        10
+    }
+}
+
+#[test]
+fn resource_limits_builders_pin_defaults_and_opt_out() {
+    let defaults = ResourceLimits::new();
+    assert_eq!(defaults, ResourceLimits::default());
+    assert!(defaults.max_resource_bytes.is_some());
+    assert!(defaults.max_aggregate_resource_bytes.is_some());
+
+    let disabled = ResourceLimits::new()
+        .max_resource_bytes(None)
+        .max_aggregate_resource_bytes(None);
+    assert_eq!(disabled.max_resource_bytes, None);
+    assert_eq!(disabled.max_aggregate_resource_bytes, None);
+
+    let custom = ResourceLimits::new()
+        .max_resource_bytes(Some(1024))
+        .max_aggregate_resource_bytes(Some(4096));
+    assert_eq!(custom.max_resource_bytes, Some(1024));
+    assert_eq!(custom.max_aggregate_resource_bytes, Some(4096));
+}
+
+#[test]
+fn render_resources_builder_chain_surfaces_in_debug() {
+    let provider = SvgNetworkProvider::default();
+    let policy = AllowAllPolicy;
+    let resources = RenderResources::new()
+        .stylesheet("p { color: red; }")
+        .stylesheet("div { color: blue; }")
+        .network_provider(&provider)
+        .network_policy(&policy)
+        .base_url(Url::parse("https://example.com/base/").unwrap())
+        .render_limits(
+            raikiri_traits::RenderLimitsBuilder::default()
+                .max_document_pages(Some(5))
+                .build(),
+        )
+        .resource_limits(ResourceLimits::new().max_resource_bytes(Some(1024)));
+    let debug = format!("{resources:?}");
+    assert!(debug.contains("extra_stylesheet_count: 2"), "{debug}");
+    assert!(debug.contains("has_network_provider: true"), "{debug}");
+    assert!(debug.contains("has_network_policy: true"), "{debug}");
+    assert!(debug.contains("example.com"), "{debug}");
+}
+
+#[test]
+fn render_resources_default_matches_new() {
+    let debug_new = format!("{:?}", RenderResources::new());
+    let debug_default = format!("{:?}", RenderResources::default());
+    assert_eq!(debug_new, debug_default);
+}
