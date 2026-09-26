@@ -262,10 +262,11 @@ impl DomRuntime {
         event_loop::run_until_idle(&mut self.context)
     }
 
-    /// Run the document end to end (HTML §2's script processing model, run
-    /// as a single batch after parsing rather than interleaved with it --
-    /// see [`raikiri_traits::ScriptExecutor`]'s own doc comment): collect
-    /// every classic `<script>` element in tree order and run it, fire
+    /// Run the document end to end (HTML's script processing model,
+    /// <https://html.spec.whatwg.org/multipage/scripting.html>, run as a
+    /// single batch after parsing rather than interleaved with it -- see
+    /// [`raikiri_traits::ScriptExecutor`]'s own doc comment): collect every
+    /// classic `<script>` element in tree order and run it, fire
     /// `DOMContentLoaded`, drain the event loop, fire `load`, and drain it
     /// again. Idempotent: a second call does nothing and returns the same
     /// [`RunReport`] as the first.
@@ -273,7 +274,9 @@ impl DomRuntime {
     /// `async`/`defer` are not distinguished: every classic script runs in
     /// tree order as if neither attribute were present. This is an
     /// approximation of the real scheduling those attributes specify, not a
-    /// full implementation of it.
+    /// full implementation of it. A `<script>` element inserted by an
+    /// earlier script while this run is already in progress is not picked
+    /// up by it either: the script list is collected once, up front.
     pub fn run_document(&mut self) -> RunReport {
         if let Some(report) = &self.report {
             return report.clone();

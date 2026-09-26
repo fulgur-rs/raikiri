@@ -120,6 +120,9 @@ fn classic_scripts_run_in_document_order_with_currentscript_and_lifecycle() {
          });\
          window.addEventListener('load', function () { \
              log.push('load:' + document.readyState); \
+         });\
+         s3.addEventListener('load', function () { \
+             log.push('s3-load-currentscript-null:' + (document.currentScript === null)); \
          });",
     );
     let s2 = append_script(
@@ -145,7 +148,8 @@ fn classic_scripts_run_in_document_order_with_currentscript_and_lifecycle() {
     let log = eval_string(&mut rt, "log.join('|')");
     assert_eq!(
         log,
-        "s1:true:loading|s2:true:loading|s3:true:loading|dcl:interactive|load:complete"
+        "s1:true:loading|s2:true:loading|s3:true:loading|\
+         s3-load-currentscript-null:true|dcl:interactive|load:complete"
     );
 }
 
@@ -180,11 +184,13 @@ fn type_attribute_gates_classic_script_execution() {
     let mut rt = DomRuntime::new(host).unwrap();
     let report = rt.run_document();
 
-    assert_eq!(report.scripts_run, 2, "{report:?}");
-    assert_eq!(
-        eval_string(&mut rt, "ran.join(',')"),
-        "no-type,classic-with-params"
-    );
+    // HTML's "JavaScript MIME type essence match" is a whole-string, ASCII
+    // case-insensitive match against the classic-script list, not an
+    // operation that strips `;`-delimited parameters from the attribute
+    // value first: `text/javascript; charset=utf-8` is therefore not
+    // recognized and does not run, exactly like `module`/`text/plain`.
+    assert_eq!(report.scripts_run, 1, "{report:?}");
+    assert_eq!(eval_string(&mut rt, "ran.join(',')"), "no-type");
 }
 
 #[test]
@@ -201,9 +207,12 @@ fn external_script_fetch_failures_are_recorded_and_do_not_stop_the_run() {
     rt.evaluate(
         "var events = []; \
          missing.addEventListener('error', function (e) { \
-             events.push('missing-error:' + e.bubbles + ':' + e.cancelable + ':' + e.isTrusted); \
+             events.push('missing-error:' + e.bubbles + ':' + e.cancelable + ':' + \
+                 e.isTrusted + ':' + (document.currentScript === null)); \
          }); \
-         empty_src.addEventListener('error', function (e) { events.push('empty-error'); });",
+         empty_src.addEventListener('error', function (e) { \
+             events.push('empty-error:' + (document.currentScript === null)); \
+         });",
     )
     .unwrap();
 
@@ -216,13 +225,13 @@ fn external_script_fetch_failures_are_recorded_and_do_not_stop_the_run() {
             "https://example.test/missing.js: no script registered for \
              https://example.test/missing.js"
                 .to_owned(),
-            ": the src attribute is empty".to_owned(),
+            "<empty src>: the src attribute is empty".to_owned(),
         ],
         "{report:?}"
     );
     assert_eq!(
         eval_string(&mut rt, "events.join('|')"),
-        "missing-error:false:false:true|empty-error|after"
+        "missing-error:false:false:true:true|empty-error:true|after"
     );
 }
 
@@ -336,6 +345,23 @@ fn set_timeout_side_effects_are_visible_after_run_document() {
 }
 
 #[test]
+fn document_title_can_be_cleared_after_being_set() {
+    let (mut host, _, _, body) = StubHost::page();
+    append_script(
+        &mut host.document,
+        body,
+        &[],
+        "document.title = 'x'; document.title = '';",
+    );
+
+    let mut rt = DomRuntime::new(host).unwrap();
+    let report = rt.run_document();
+
+    assert_eq!(report.aborted, None, "{report:?}");
+    assert!(eval_bool(&mut rt, "document.title === ''"));
+}
+
+#[test]
 fn console_methods_are_collected_with_their_level() {
     let (mut host, _, _, body) = StubHost::page();
     append_script(
@@ -362,6 +388,21 @@ fn console_methods_are_collected_with_their_level() {
 }
 
 #[test]
+fn console_output_from_before_run_document_is_excluded() {
+    let (mut host, _, _, body) = StubHost::page();
+    append_script(&mut host.document, body, &[], "console.log('during');");
+
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("console.log('pre')").unwrap();
+    let report = rt.run_document();
+
+    assert_eq!(
+        report.console,
+        vec![("log".to_owned(), "during".to_owned())]
+    );
+}
+
+#[test]
 fn run_document_is_idempotent() {
     let (mut host, _, _, body) = StubHost::page();
     append_script(
@@ -381,6 +422,32 @@ fn run_document_is_idempotent() {
 }
 
 // ---- resource limits -------------------------------------------------------
+
+#[test]
+fn run_document_on_an_already_aborted_runtime_reports_the_existing_abort() {
+    let (mut host, _, _, body) = StubHost::page();
+    // Never reached: the runtime is aborted (by the `evaluate` call below)
+    // before `run_document` ever looks at the document's own scripts.
+    append_script(&mut host.document, body, &[], "ran = true;");
+
+    let mut rt = runtime_with(
+        Limits {
+            max_loop_iterations: 10_000,
+            ..Default::default()
+        },
+        host,
+    );
+    let _ = rt.evaluate("while (true) {}");
+    assert!(
+        rt.evaluate("1").is_err(),
+        "runtime should already be aborted"
+    );
+
+    let report = rt.run_document();
+
+    assert_eq!(report.aborted, Some(Abort::LoopIterations), "{report:?}");
+    assert_eq!(report.scripts_run, 0, "{report:?}");
+}
 
 #[test]
 fn infinite_loop_script_aborts_and_keeps_earlier_dom_changes() {
@@ -437,6 +504,51 @@ fn node_budget_limit_aborts_element_creation_and_keeps_earlier_ones() {
     assert_eq!(report.aborted, Some(Abort::Nodes));
     let node_count = with_state(rt.context_mut(), |s| s.host.document().node_count()).unwrap();
     assert_eq!(node_count, before + 2);
+}
+
+/// Run `loop_body` (a script whose whole body is expected to loop forever,
+/// each iteration creating at least one node) with `max_nodes` set 2 past
+/// the page's own starting node count, and assert it aborts on the node
+/// budget rather than running forever.
+fn assert_node_budget_aborts(loop_body: &str) {
+    let (mut host, _, _, body) = StubHost::page();
+    append_script(&mut host.document, body, &[], loop_body);
+    let before = host.document.node_count();
+
+    let mut rt = runtime_with(
+        Limits {
+            max_nodes: before + 2,
+            ..Default::default()
+        },
+        host,
+    );
+    let report = rt.run_document();
+
+    assert_eq!(report.aborted, Some(Abort::Nodes), "{report:?}");
+}
+
+#[test]
+fn node_budget_limit_covers_the_textcontent_setter() {
+    assert_node_budget_aborts("for (;;) { document.body.textContent = 'x'; }");
+}
+
+#[test]
+fn node_budget_limit_covers_document_title() {
+    assert_node_budget_aborts("for (;;) { document.title = 'x'; }");
+}
+
+#[test]
+fn node_budget_limit_covers_append_with_a_string_argument() {
+    assert_node_budget_aborts("for (;;) { document.body.append('x'); }");
+}
+
+#[test]
+fn node_budget_limit_covers_append_with_no_arguments() {
+    // `append()` with zero arguments still allocates an (empty, immediately
+    // orphaned) `DocumentFragment` node every call -- this is what
+    // `nodes_into_a_node`'s own `items.len() != 1` guard condition (as
+    // opposed to `> 1`) exists to catch.
+    assert_node_budget_aborts("for (;;) { document.body.append(); }");
 }
 
 #[test]
@@ -500,6 +612,11 @@ fn host_failure_during_a_script_is_recorded_and_does_not_stop_the_run() {
     assert_eq!(report.aborted, None, "{report:?}");
     assert_eq!(report.host_failures.len(), 1, "{report:?}");
     assert!(report.host_failures[0].contains("stub flush failure"));
+    // The same failure also surfaces to script as an ordinary thrown `Error`
+    // (see `RunReport::host_failures`'s own doc comment): uncaught here, it
+    // is recorded in both fields at once, not just one.
+    assert_eq!(report.uncaught_errors.len(), 1, "{report:?}");
+    assert!(report.uncaught_errors[0].contains("stub flush failure"));
 }
 
 // ---- ScriptExecutor / RunReport plumbing -----------------------------------
@@ -566,6 +683,14 @@ fn resolve_script_url_handles_absolute_relative_and_missing_base() {
         resolve_script_url(Some("https://example.test"), "ext.js"),
         Some("https://example.test/ext.js".to_owned())
     );
+    assert_eq!(
+        resolve_script_url(Some(base), "//cdn.example/abs.js"),
+        Some("https://cdn.example/abs.js".to_owned())
+    );
+    assert_eq!(
+        resolve_script_url(Some(base), "/resources/testharness.js"),
+        Some("https://example.test/resources/testharness.js".to_owned())
+    );
     assert_eq!(resolve_script_url(None, "ext.js"), None);
     assert_eq!(resolve_script_url(Some("not a url"), "ext.js"), None);
 }
@@ -576,9 +701,14 @@ fn is_classic_script_type_matches_the_javascript_mime_essence_list() {
     assert!(is_classic_script_type(Some("")));
     assert!(is_classic_script_type(Some("  ")));
     assert!(is_classic_script_type(Some("text/javascript")));
-    assert!(is_classic_script_type(Some(
-        "TEXT/JAVASCRIPT;charset=utf-8"
-    )));
+    assert!(is_classic_script_type(Some("TEXT/JAVASCRIPT")));
     assert!(!is_classic_script_type(Some("module")));
     assert!(!is_classic_script_type(Some("text/plain")));
+    // The essence-match is against the fixed list of essence strings, not an
+    // operation that first strips parameters from the attribute value: a
+    // parameter makes the whole string not match at all, rather than being
+    // stripped and ignored.
+    assert!(!is_classic_script_type(Some(
+        "text/javascript;charset=utf-8"
+    )));
 }

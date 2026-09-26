@@ -239,8 +239,8 @@ pub(crate) fn event_constructor(
     Ok(JsObject::from_proto_and_data(Some(proto), data).into())
 }
 
-/// `new CustomEvent(type, eventInitDict = {})` (DOM §2.3); `initCustomEvent`
-/// is not implemented (out of scope, see the task brief).
+/// `new CustomEvent(type, eventInitDict = {})` (DOM §2.3); the legacy
+/// `initCustomEvent()` method is not implemented.
 pub(crate) fn custom_event_constructor(
     this: &JsValue,
     args: &[JsValue],

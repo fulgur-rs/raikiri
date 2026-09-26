@@ -152,6 +152,9 @@ fn set_text_content(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
             // own `set_element_text_content` (clear-then-push-if-nonempty in a
             // single call) rather than through `tree::replace_all` below --
             // both implement the same "replace all" semantics.
+            if !value.is_empty() {
+                guard_node_budget(context)?;
+            }
             let result = with_state(context, |s| {
                 s.host
                     .document_mut()
@@ -171,6 +174,7 @@ fn set_text_content(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
             let text_node = if value.is_empty() {
                 None
             } else {
+                guard_node_budget(context)?;
                 Some(with_state(context, |s| {
                     s.host.document_mut().create_detached_text(&value)
                 })?)

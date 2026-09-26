@@ -317,6 +317,9 @@ pub(crate) fn set_title(
             new_title
         }
     };
+    if !value.is_empty() {
+        guard_node_budget(context)?;
+    }
     let result = with_state(context, |s| {
         s.host
             .document_mut()

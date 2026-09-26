@@ -1,4 +1,5 @@
-//! `DomRuntime::run_document`: HTML §2's script processing model, run as a
+//! `DomRuntime::run_document`: HTML's script processing model
+//! (<https://html.spec.whatwg.org/multipage/scripting.html>), run as a
 //! single batch after the whole document has already been parsed (a
 //! streaming parser's own, mid-parse use of the same seam is out of scope
 //! here -- see [`raikiri_traits::ScriptExecutor`]'s own doc comment).
@@ -11,7 +12,10 @@
 //!
 //! `async` and `defer` are not distinguished: every classic script runs in
 //! tree order regardless of either attribute, an approximation of their real
-//! scheduling rather than a full implementation of it.
+//! scheduling rather than a full implementation of it. A `<script>` element
+//! inserted into the document while a run is already in progress (by an
+//! earlier script in the same run) is not picked up by that run: the script
+//! list is collected once, up front, not re-scanned as the document changes.
 
 use boa_engine::{Context, Source};
 use raikiri_dom::NodeKind;
@@ -50,7 +54,12 @@ pub struct RunReport {
     /// Embedder (host) failures recorded during the run -- layout, a
     /// stylesheet, or fragment parsing failing underneath a script's own DOM
     /// mutation -- in the order they happened. Distinct from a resource
-    /// limit: a host failure does not stop the run.
+    /// limit: a host failure does not stop the run. A host failure also
+    /// surfaces to script as an ordinary thrown `Error` (this runtime's
+    /// existing convention throughout, not specific to script running: the
+    /// same failure a binding records here is also what it throws), so an
+    /// uncaught one can appear in both this field and [`Self::
+    /// uncaught_errors`] at once.
     pub host_failures: Vec<String>,
     /// `console.*` calls made during the run, `(level, message)`, in call
     /// order (`level` is one of `"log"`/`"error"`/`"warn"`/`"info"`/
@@ -58,13 +67,18 @@ pub struct RunReport {
     pub console: Vec<(String, String)>,
 }
 
-/// The JavaScript MIME type essences a `<script>`'s `type` attribute must
-/// match (case-insensitively, ignoring any `;`-delimited parameters) to run
-/// as a classic script (HTML's "MIME type essence match" list for
-/// `text/javascript`); anything else -- `module`, `text/plain`, an unknown
-/// string -- is not executed. A missing or empty `type` attribute is also a
-/// classic script (checked separately in [`is_classic_script_type`], not
-/// part of this list).
+/// The JavaScript MIME type essence strings a `<script>`'s trimmed `type`
+/// attribute must be an ASCII case-insensitive match for -- as the whole
+/// string, exactly as given -- to be "a JavaScript MIME type essence match"
+/// and so run as a classic script. This is a match against these fixed
+/// essence strings themselves, not an operation that first reduces the
+/// attribute value to its own essence by stripping any `;`-delimited
+/// parameters: `text/javascript; charset=utf-8` is therefore not a match (it
+/// is not equal, as a whole string, to any entry below), unlike plain
+/// `text/javascript`. Anything that is not a match -- `module`, `text/
+/// plain`, `text/javascript; charset=utf-8` -- is not executed. A missing or
+/// empty `type` attribute is also a classic script (checked separately in
+/// [`is_classic_script_type`], not part of this list).
 const JAVASCRIPT_MIME_ESSENCES: &[&str] = &[
     "application/ecmascript",
     "application/javascript",
@@ -87,42 +101,53 @@ const JAVASCRIPT_MIME_ESSENCES: &[&str] = &[
 /// Whether a `<script type="...">` value (already read from the attribute,
 /// `None` when the attribute is absent) marks the element as a classic
 /// script: absent, empty (after trimming ASCII whitespace), or a JavaScript
-/// MIME type essence. `nomodule` and `language` are both ignored by every
-/// caller of this function -- this runtime has no module support, so a
-/// `nomodule` script still runs as classic, and `language` has been
-/// obsolete since HTML4.
+/// MIME type essence match (see [`JAVASCRIPT_MIME_ESSENCES`]'s own doc
+/// comment for exactly what that requires). `nomodule` and `language` are
+/// both ignored by every caller of this function -- this runtime has no
+/// module support, so a `nomodule` script still runs as classic, and
+/// `language` has been obsolete since HTML4.
 fn is_classic_script_type(type_value: Option<&str>) -> bool {
     let trimmed = type_value.unwrap_or("").trim();
     if trimmed.is_empty() {
         return true;
     }
-    let essence = trimmed.split(';').next().unwrap_or("").trim();
     JAVASCRIPT_MIME_ESSENCES
         .iter()
-        .any(|candidate| candidate.eq_ignore_ascii_case(essence))
+        .any(|candidate| candidate.eq_ignore_ascii_case(trimmed))
 }
 
 /// A minimal absolute/relative merge for a script's `src`, narrow enough for
 /// this runtime's own needs rather than a general URL parser (the same
 /// scope tradeoff as `window::LocationParts::parse`, and for the same
 /// reason: neither `url` nor any other new dependency is available to this
-/// crate to do it properly). An absolute `src` (containing `://`) is used
-/// as-is; a relative one is merged with `base`'s own directory (everything
-/// up to and including its last `/`, ignoring any query or fragment, or `/`
-/// itself when its path has none). Returns `None` when `src` is relative and
-/// there is no `base` to resolve it against, or `base` is not of the
-/// `scheme://host[/path]` shape this function understands -- both treated
-/// by the caller as a fetch failure, the same as a resolvable URL that
-/// simply fails to fetch.
+/// crate to do it properly). Four `src` shapes: a scheme-absolute one
+/// (containing `://`) is used as-is; a scheme-relative one (`//host/path`)
+/// reuses `base`'s scheme; an absolute-path one (`/path`) reuses `base`'s
+/// scheme and authority, replacing its path outright; anything else is
+/// merged with `base`'s own directory (everything up to and including its
+/// last `/`, ignoring any query or fragment, or `/` itself when its path has
+/// none). Returns `None` when `src` is relative (in any of the last three
+/// senses) and there is no `base` to resolve it against, or `base` is not of
+/// the `scheme://authority[/path]` shape this function understands -- both
+/// treated by the caller as a fetch failure, the same as a resolvable URL
+/// that simply fails to fetch.
 fn resolve_script_url(base: Option<&str>, src: &str) -> Option<String> {
     if src.contains("://") {
         return Some(src.to_owned());
     }
     let base = base?;
     let scheme_end = base.find("://")?;
+    let scheme = &base[..scheme_end];
     let authority_start = scheme_end + 3;
     let rest = &base[authority_start..];
     let path_start = authority_start + rest.find('/').unwrap_or(rest.len());
+    if src.starts_with("//") {
+        return Some(format!("{scheme}:{src}"));
+    }
+    if src.starts_with('/') {
+        let authority = &base[authority_start..path_start];
+        return Some(format!("{scheme}://{authority}{src}"));
+    }
     let prefix = &base[..path_start];
     let path = base[path_start..].split(['?', '#']).next().unwrap_or("");
     let dir = match path.rfind('/') {
@@ -231,11 +256,13 @@ fn fire_lifecycle_event(
     bubbles: bool,
 ) {
     if event_loop::aborted(context).is_some() {
-        // cov:ignore: every current call site (each gated on
-        // `report.aborted.is_none()`, or reached only after
-        // `evaluate_script` returned `Ok`, which the same guard already
-        // implies) already refuses to call this once aborted; kept so this
-        // function stays correct on its own if a future call site does not.
+        // cov:ignore: `run`'s own `report.aborted` is seeded from this same
+        // `event_loop::aborted` read at entry (see its own comment), and
+        // every call site here is gated on `report.aborted.is_none()` (or
+        // reached only after `evaluate_script` returned `Ok`, which the
+        // same guard already implies transitively); so this can no longer
+        // be true at any current call site. Kept so this function stays
+        // correct on its own if a future call site does not check first.
         return;
     }
     if let Err(error) = dispatch::fire_event(context, target, kind, bubbles, false) {
@@ -246,7 +273,7 @@ fn fire_lifecycle_event(
 }
 
 /// Runs one script element at a time, in the context of one [`RunReport`]
-/// under construction. The brief's own [`ScriptExecutor`] boundary: a future
+/// under construction. Implements the [`ScriptExecutor`] boundary: a future
 /// streaming parser would hold one of these across a whole parse instead of
 /// just the loop in [`run`].
 struct Executor<'a> {
@@ -263,6 +290,17 @@ impl<'a> Executor<'a> {
     /// ([`ScriptExecutor::execute_script`] checked it); this runs it end to
     /// end: `currentScript`, inline vs. external, the evaluation itself, and
     /// the script's own `load`/`error` event.
+    ///
+    /// `currentScript` is set only around the evaluation itself (HTML
+    /// "execute the script element" sets it back to its old value
+    /// immediately after running the script, *before* the load event that
+    /// follows a successful external fetch): [`Self::run_inline`] and
+    /// [`Self::run_external`] each set and clear it themselves, tightly
+    /// around their own [`evaluate_script`] call, rather than this function
+    /// doing it once around the whole dispatch -- a script that never
+    /// reaches evaluation at all (an empty `src`, an unresolvable one, or a
+    /// fetch failure) never has `currentScript` set for it in the first
+    /// place, matching that a fetch failure never reaches "execute" either.
     fn run_one(&mut self, index: usize) {
         let base_url = with_state(self.context, |s| s.host.document_url())
             .ok()
@@ -276,12 +314,10 @@ impl<'a> Executor<'a> {
         .ok()
         .flatten();
 
-        let _ = with_state(self.context, |s| s.current_script = Some(index));
         match src {
             Some(src) => self.run_external(index, &src, base_url.as_deref()),
             None => self.run_inline(index, base_url.as_deref()),
         }
-        let _ = with_state(self.context, |s| s.current_script = None);
         drain_host_failure_into(self.context, self.report);
     }
 
@@ -291,14 +327,17 @@ impl<'a> Executor<'a> {
         })
         .unwrap_or_default();
         self.report.scripts_run += 1;
-        if let Err(reason) = evaluate_script(self.context, &code, base_url) {
+        let _ = with_state(self.context, |s| s.current_script = Some(index));
+        let result = evaluate_script(self.context, &code, base_url);
+        let _ = with_state(self.context, |s| s.current_script = None);
+        if let Err(reason) = result {
             self.report.aborted = Some(reason);
         }
     }
 
     fn run_external(&mut self, index: usize, src: &str, base_url: Option<&str>) {
         if src.is_empty() {
-            self.fetch_failed(index, src, "the src attribute is empty");
+            self.fetch_failed(index, "<empty src>", "the src attribute is empty");
             return;
         }
         let Some(url) = resolve_script_url(base_url, src) else {
@@ -311,7 +350,10 @@ impl<'a> Executor<'a> {
         match fetched {
             Ok(code) => {
                 self.report.scripts_run += 1;
-                if let Err(reason) = evaluate_script(self.context, &code, Some(&url)) {
+                let _ = with_state(self.context, |s| s.current_script = Some(index));
+                let result = evaluate_script(self.context, &code, Some(&url));
+                let _ = with_state(self.context, |s| s.current_script = None);
+                if let Err(reason) = result {
                     self.report.aborted = Some(reason);
                     return;
                 }
@@ -360,17 +402,25 @@ impl ScriptExecutor for Executor<'_> {
 /// own concern, via its cached [`RunReport`]): mark the document's flags,
 /// collect and run every classic script in tree order, then drive
 /// `readyState` through `Interactive`/`Complete`, firing `DOMContentLoaded`
-/// and `load` and draining the event loop in between, per this runtime's
-/// design (spec §2's `run_document()` flow).
+/// and `load` and draining the event loop in between, per HTML's script
+/// processing model (<https://html.spec.whatwg.org/multipage/scripting.html>).
 pub(crate) fn run(runtime: &mut DomRuntime) -> RunReport {
     let mut report = RunReport::default();
     let context = runtime.context_mut();
+
+    // Seed from the runtime's own abort state before anything else: a
+    // runtime that was already aborted (by an earlier, unrelated `evaluate`
+    // call) before `run_document` was ever called must not read back as
+    // `aborted: None` just because the script loop below happens to find no
+    // (or no *reachable*) script of its own to blame it on.
+    report.aborted = event_loop::aborted(context);
 
     let _ = with_state(context, |s| {
         s.host.document_mut().mark_in_document_flags();
         s.ready_state = ReadyState::Loading;
     });
     let uncaught_before = with_state(context, |s| s.event_loop.uncaught_errors.len()).unwrap_or(0);
+    let console_before = with_state(context, |s| s.console.len()).unwrap_or(0);
 
     let elements = collect_script_elements(context);
     {
@@ -413,7 +463,7 @@ pub(crate) fn run(runtime: &mut DomRuntime) -> RunReport {
     })
     .unwrap_or_default();
     report.console = with_state(context, |s| {
-        s.console
+        s.console[console_before..]
             .iter()
             .map(|m| (m.level.as_str().to_owned(), m.message.clone()))
             .collect()
