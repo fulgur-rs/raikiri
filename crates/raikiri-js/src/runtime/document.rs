@@ -9,7 +9,8 @@ use raikiri_dom::NodeKind;
 use super::interfaces::{HTML_NS, wrap, wrap_optional};
 use super::node::{first_element_child, js_str, mark_dirty};
 use super::webidl::{
-    dom_string, this_document, throw_dom_exception, unreachable_mutation_error, with_state,
+    dom_string, guard_node_budget, this_document, throw_dom_exception, unreachable_mutation_error,
+    with_state,
 };
 
 // ---- createElementNS ("validate and extract", DOM §4.5) ------------------
@@ -146,6 +147,7 @@ pub(crate) fn create_element_ns(
     };
     let qualified_name = dom_string(args, 1, context)?;
     let (namespace, local_name) = validate_and_extract(context, namespace, &qualified_name)?;
+    guard_node_budget(context)?;
     let result = with_state(context, |s| {
         s.host.document_mut().create_detached_element(&local_name)
     })?;
@@ -226,8 +228,10 @@ fn head_index(doc: &raikiri_dom::Document, document_index: usize) -> Option<usiz
 /// element_text_content`]'s deep descendant walk, which `document.title`
 /// does not want (a `<title>` normally only ever has `Text` children
 /// anyway, but the algorithm is specified this way, not as a descendant
-/// walk).
-fn child_text_content(doc: &raikiri_dom::Document, node: usize) -> String {
+/// walk). Also used by [`super::scripts`] for a classic script element's own
+/// inline source text, the same "child text content" concept HTML's script
+/// processing model itself specifies.
+pub(crate) fn child_text_content(doc: &raikiri_dom::Document, node: usize) -> String {
     let mut out = String::new();
     let Some(node) = doc.get_node(node) else {
         return out; // cov:ignore: every caller resolves `node` from the document immediately before this call
@@ -294,6 +298,7 @@ pub(crate) fn set_title(
         None => return Ok(JsValue::undefined()),
         Some(Ok(title)) => title,
         Some(Err(head)) => {
+            guard_node_budget(context)?;
             let created = with_state(context, |s| {
                 s.host.document_mut().create_detached_element("title")
             })?;
@@ -328,17 +333,16 @@ pub(crate) fn set_title(
 
 // ---- readyState / currentScript / URL / documentURI -----------------------
 
-/// HTML "current document readiness".
+/// HTML "current document readiness". [`super::scripts::run`] is the only
+/// driver of `Loading`/`Interactive` in this crate; everything else only
+/// ever reads the default `Complete`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[allow(
-    dead_code,
-    reason = "Loading/Interactive are constructed only by whatever drives a document's \
-              parse-and-run pipeline end to end; this crate has no such driver of its own, \
-              so only this runtime's own tests construct them directly"
-)]
 pub(crate) enum ReadyState {
+    /// `"loading"`.
     Loading,
+    /// `"interactive"`.
     Interactive,
+    /// `"complete"`.
     #[default]
     Complete,
 }

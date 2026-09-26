@@ -18,6 +18,7 @@ pub(crate) mod indexed;
 pub(crate) mod interfaces;
 pub(crate) mod node;
 pub(crate) mod query;
+pub(crate) mod scripts;
 pub(crate) mod style;
 pub(crate) mod token_list;
 pub(crate) mod tree;
@@ -29,6 +30,7 @@ pub(crate) mod test_host;
 
 pub use event_loop::{Abort, Limits, RunOptions};
 pub use host::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
+pub use scripts::RunReport;
 
 /// Mutable runtime state shared by every native binding.
 pub(crate) struct State {
@@ -83,9 +85,10 @@ pub(crate) struct State {
     /// ever trip, so `dispatch` enforces its own, much smaller bound.
     pub dispatch_depth: u32,
     /// `document.readyState`, defaulting to `Complete` (HTML "current
-    /// document readiness"). Nothing in this crate advances it through
-    /// `Loading`/`Interactive` on its own; whatever drives a document's
-    /// parse-and-run pipeline end to end is expected to set it directly.
+    /// document readiness"). [`DomRuntime::run_document`] drives it through
+    /// `Loading`/`Interactive` before returning; a runtime whose caller never
+    /// calls `run_document` (evaluating scripts directly through
+    /// [`DomRuntime::evaluate`] instead) simply keeps reading `"complete"`.
     pub ready_state: document::ReadyState,
     /// `document.currentScript`: the arena index of the `<script>` element
     /// currently executing, or `None` when no script is (HTML "current
@@ -135,6 +138,10 @@ impl std::error::Error for RuntimeError {}
 /// A JavaScript realm with DOM bindings over one [`DocumentHost`].
 pub struct DomRuntime {
     context: Context,
+    /// [`DomRuntime::run_document`]'s cached result, once it has been
+    /// called: `run_document` is idempotent, so a second call returns this
+    /// instead of running the document again.
+    report: Option<RunReport>,
 }
 
 impl DomRuntime {
@@ -193,7 +200,10 @@ impl DomRuntime {
                 Err(reason) => RuntimeError::Aborted(reason),
             });
         }
-        Ok(Self { context })
+        Ok(Self {
+            context,
+            report: None,
+        })
     }
 
     /// Evaluate a classic script in the global scope.
@@ -222,12 +232,7 @@ impl DomRuntime {
             },
             Ok(_) => event_loop::microtask_checkpoint(&mut self.context),
         };
-        let deferred = self
-            .context
-            .remove_data::<webidl::DeferredHostFailure>()
-            .map(|f| f.0);
-        let recorded = shared(&self.context).0.borrow_mut().host_failure.take();
-        let failure = recorded.or(deferred);
+        let failure = webidl::take_host_failure(&mut self.context);
         if let Err(reason) = checkpoint {
             return Err(RuntimeError::Aborted(reason));
         }
@@ -255,6 +260,27 @@ impl DomRuntime {
     /// Untrusted content needs an external watchdog as well.
     pub fn run_until_idle(&mut self) -> Result<(), Abort> {
         event_loop::run_until_idle(&mut self.context)
+    }
+
+    /// Run the document end to end (HTML §2's script processing model, run
+    /// as a single batch after parsing rather than interleaved with it --
+    /// see [`raikiri_traits::ScriptExecutor`]'s own doc comment): collect
+    /// every classic `<script>` element in tree order and run it, fire
+    /// `DOMContentLoaded`, drain the event loop, fire `load`, and drain it
+    /// again. Idempotent: a second call does nothing and returns the same
+    /// [`RunReport`] as the first.
+    ///
+    /// `async`/`defer` are not distinguished: every classic script runs in
+    /// tree order as if neither attribute were present. This is an
+    /// approximation of the real scheduling those attributes specify, not a
+    /// full implementation of it.
+    pub fn run_document(&mut self) -> RunReport {
+        if let Some(report) = &self.report {
+            return report.clone();
+        }
+        let report = scripts::run(self);
+        self.report = Some(report.clone());
+        report
     }
 
     /// The virtual clock, in milliseconds since the runtime was created.

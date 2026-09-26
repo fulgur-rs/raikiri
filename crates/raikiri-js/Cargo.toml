@@ -7,9 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-raikiri-dom   = { workspace = true }
-raikiri-style = { workspace = true }
-cssparser     = { workspace = true }
+raikiri-dom    = { workspace = true }
+raikiri-style  = { workspace = true }
+raikiri-traits = { workspace = true }
+cssparser      = { workspace = true }
 # default-features = false drops boa_engine's `temporal`/`intl` machinery
 # (ICU, timezone data) this crate has no use for; `default-features = true`
 # would also work but pulls in dependencies purely for API surface this

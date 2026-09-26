@@ -883,11 +883,9 @@ pub(crate) fn dispatch_event(
 }
 
 /// Fire a trusted event of `type` at `target` (`None` = window). Returns
-/// `!defaultPrevented`.
-#[allow(
-    dead_code,
-    reason = "produced now for a future document-lifecycle caller (DOMContentLoaded, load, script load/error) that fires trusted events; exercised directly by this module's own tests until that caller exists"
-)]
+/// `!defaultPrevented`. [`super::scripts::run`] is this function's own
+/// document-lifecycle caller (`DOMContentLoaded`, `load`, and a script
+/// element's own `load`/`error`).
 pub(crate) fn fire_event(
     context: &mut Context,
     target: Option<usize>,
@@ -913,8 +911,10 @@ pub(crate) fn fire_event(
 /// at `window`. If nothing cancels it (no `onerror` handler returned a
 /// truthy value), `error`'s message is recorded in
 /// [`super::event_loop::EventLoop::uncaught_errors`]. `source` is the
-/// script's location, when known (a future caller's concern; nothing in
-/// this runtime yet threads one through).
+/// script's location, when known -- [`super::scripts::run`] passes a
+/// script's resolved `src` (or its document's URL, for an inline script);
+/// every other caller (a timer, a listener's own exception) has no such
+/// location and passes `None`.
 ///
 /// `Err` is only ever a propagated engine abort -- from formatting `error`'s
 /// own message ([`super::error_message`], whose own doc comment explains

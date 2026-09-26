@@ -28,6 +28,7 @@ fn rt_over(document: raikiri_dom::Document) -> DomRuntime {
         fail_geometry: false,
         fail_computed: false,
         document_url: None,
+        scripts: std::collections::HashMap::new(),
     };
     DomRuntime::new(host).unwrap()
 }

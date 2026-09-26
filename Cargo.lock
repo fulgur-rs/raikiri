@@ -2387,6 +2387,7 @@ dependencies = [
  "cssparser",
  "raikiri-dom",
  "raikiri-style",
+ "raikiri-traits",
 ]
 
 [[package]]

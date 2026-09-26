@@ -17,8 +17,8 @@ use super::collections::{CollectionSource, html_collection, node_list};
 use super::interfaces::{Members, wrap, wrap_optional};
 use super::node::{js_str, mark_dirty};
 use super::webidl::{
-    arg_node, arg_node_or_null, arg_required_node_or_null, dom_string, node_index,
-    this_character_data, this_child_node, this_document, this_node, this_parent_node,
+    arg_node, arg_node_or_null, arg_required_node_or_null, dom_string, guard_node_budget,
+    node_index, this_character_data, this_child_node, this_document, this_node, this_parent_node,
     this_processing_instruction, throw_dom_exception, unreachable_mutation_error, with_state,
 };
 
@@ -801,6 +801,7 @@ pub(crate) const PROCESSING_INSTRUCTION_MEMBERS: Members = Members {
 fn create_text_node(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     this_document(this, context)?;
     let data = dom_string(args, 0, context)?;
+    guard_node_budget(context)?;
     let index = with_state(context, |s| {
         s.host.document_mut().create_detached_text(&data)
     })?;
@@ -811,6 +812,7 @@ fn create_text_node(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
 fn create_comment(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     this_document(this, context)?;
     let data = dom_string(args, 0, context)?;
+    guard_node_budget(context)?;
     let index = with_state(context, |s| {
         s.host.document_mut().create_detached_comment(&data)
     })?;
@@ -824,6 +826,7 @@ fn create_document_fragment(
     context: &mut Context,
 ) -> JsResult<JsValue> {
     this_document(this, context)?;
+    guard_node_budget(context)?;
     let index = with_state(context, |s| {
         s.host.document_mut().create_detached_fragment()
     })?;

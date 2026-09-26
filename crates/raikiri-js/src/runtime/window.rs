@@ -274,15 +274,26 @@ pub(crate) enum ConsoleLevel {
     Debug,
 }
 
+impl ConsoleLevel {
+    /// The method name this level came from, lowercase -- what
+    /// [`super::scripts::RunReport::console`] reports each entry's level as.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Log => "log",
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+        }
+    }
+}
+
 /// One `console.*` call, recorded in call order. `State` is `pub(crate)`
 /// with no accessor of its own, so nothing outside this crate can read
-/// `State.console` back yet; only this runtime's own tests do, directly via
-/// `with_state`.
+/// `State.console` back directly; [`super::scripts::RunReport::console`] is
+/// the copy other callers see, and this runtime's own tests still read the
+/// field directly via `with_state`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "level/message are only read back by this runtime's own tests so far, via with_state"
-)]
 pub(crate) struct ConsoleMessage {
     pub level: ConsoleLevel,
     pub message: String,

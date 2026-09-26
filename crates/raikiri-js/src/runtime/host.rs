@@ -115,4 +115,12 @@ pub trait DocumentHost: 'static {
     fn document_url(&self) -> Option<String> {
         None
     }
+    /// Fetch a classic script's source from its resolved `src` URL. The
+    /// default implementation always fails, matching a host with no script
+    /// loading of its own (an embedder that only ever runs inline scripts
+    /// through [`super::DomRuntime::evaluate`] never needs to override
+    /// this).
+    fn fetch_script(&mut self, _url: &str) -> Result<String, HostError> {
+        Err(HostError("script fetching is not supported".into()))
+    }
 }

@@ -324,14 +324,22 @@ impl EventLoop {
         Ok(self.microtasks.pop_front())
     }
 
-    /// Discard every queue and remember why.
+    /// Discard every queue and remember why, unless a reason is already
+    /// recorded -- the first one wins. Several distinct limits (a
+    /// dispatch-nesting bound, the node-count budget) are deliberately
+    /// thrown into script as the same uncatchable engine-error shape as
+    /// Boa's own recursion limit (see [`abort_error`]'s own doc comment), so
+    /// that shape reaching back here through the generic engine-limit
+    /// handling every call site shares (via [`abort_for`]) must not clobber
+    /// a more specific reason this method already recorded for the very same
+    /// abort.
     fn abort(&mut self, reason: Abort) {
         self.tasks.clear();
         self.microtasks.clear();
         self.timers.clear();
         self.frame_callbacks.clear();
         self.frame_scheduled = false;
-        self.aborted = Some(reason);
+        self.aborted.get_or_insert(reason);
     }
 }
 
@@ -404,10 +412,19 @@ pub(crate) fn aborted(context: &mut Context) -> Option<Abort> {
         .flatten()
 }
 
-/// Discard every queue and record `reason`.
+/// Discard every queue and record `reason`, unless the runtime was already
+/// aborted for a different (necessarily earlier) one, per
+/// [`EventLoop::abort`]'s own first-reason-wins rule -- so the return value
+/// is the reason now on record, which is `reason` itself only the first time
+/// this is called.
 pub(crate) fn abort(context: &mut Context, reason: Abort) -> Abort {
-    let _ = with_state(context, |state| state.event_loop.abort(reason.clone()));
-    reason
+    with_state(context, |state| {
+        state.event_loop.abort(reason.clone());
+        state.event_loop.aborted.clone()
+    })
+    .ok()
+    .flatten()
+    .unwrap_or(reason)
 }
 
 /// Handle an error from a callback the loop invoked: a limit aborts the

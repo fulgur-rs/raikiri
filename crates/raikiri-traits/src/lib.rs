@@ -1,8 +1,8 @@
 //! raikiri-traits — foundation traits and neutral model types.
 //!
 //! 設計仕様書 §4 に定義された全 trait / 中立モデル型を集約する。実装は持たず、
-//! raikiri-html / raikiri-style / raikiri-dom / raikiri-paint / raikiri-net が
-//! 参照する共通型層。
+//! raikiri-html / raikiri-style / raikiri-dom / raikiri-paint / raikiri-net /
+//! raikiri-js が参照する共通型層。
 //!
 //! ## Module tour
 //!
@@ -12,6 +12,7 @@
 //! - [`policy`]   — ResourcePolicy trait + violation types
 //! - [`net`]      — NetworkProvider trait + Request / FetchedResource types
 //! - [`resolver`] — ReplacedResolver trait + intrinsic size types
+//! - [`script`]   — ScriptExecutor trait + ScriptExecution outcome
 //! - [`error`]    — RenderError taxonomy + status / summary types
 //! - [`sink`]     — RenderSink and PagePaintSink traits
 //! - [`strategy`] — Strategy traits (LookaheadPolicy, TargetResolver, EmissionPolicy, ReflowPolicy)
@@ -36,6 +37,7 @@ pub mod paint;
 pub mod plan;
 pub mod policy;
 pub mod resolver;
+pub mod script;
 pub mod sink;
 pub mod strategy;
 
@@ -78,6 +80,7 @@ pub use resolver::{
     IntrinsicBox, ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError,
     ResolverRequest,
 };
+pub use script::{ScriptExecution, ScriptExecutor};
 pub use sink::{PageEventObserver, PagePaintSink, RenderSink};
 pub use strategy::{
     ContainerOverflowFallback, DirtyDeadline, EmissionPolicy, LookaheadPolicy, ProbeContext,

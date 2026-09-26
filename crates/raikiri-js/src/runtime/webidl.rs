@@ -3,6 +3,7 @@
 use boa_engine::{Context, JsError, JsNativeError, JsResult, JsValue};
 use raikiri_dom::NodeKind;
 
+use super::event_loop;
 use super::host::HostError;
 use super::interfaces::{DomExceptionData, NodeHandle, protos};
 use super::{State, shared};
@@ -247,6 +248,22 @@ fn record_failure(context: &mut Context, message: &str) {
 /// state was already borrowed.
 pub(crate) struct DeferredHostFailure(pub String);
 
+/// Take the first host failure recorded since the last call to this
+/// function: either [`State::host_failure`] directly, or a
+/// [`DeferredHostFailure`] parked because a binding recorded one while the
+/// state was already borrowed elsewhere. [`DomRuntime::evaluate`] and
+/// [`super::scripts::run`] both drain failures this way, once per script (or
+/// per evaluation).
+///
+/// [`DomRuntime::evaluate`]: super::DomRuntime::evaluate
+pub(crate) fn take_host_failure(context: &mut Context) -> Option<String> {
+    let deferred = context.remove_data::<DeferredHostFailure>().map(|f| f.0);
+    let recorded = with_state(context, |s| s.host_failure.take())
+        .ok()
+        .flatten();
+    recorded.or(deferred)
+}
+
 /// Run `f` with the shared state borrowed. A re-entrant borrow (a binding
 /// called while another holds the state) is recorded as a host failure and
 /// thrown as an `Error` rather than panicking.
@@ -258,4 +275,25 @@ pub(crate) fn with_state<T>(context: &mut Context, f: impl FnOnce(&mut State) ->
         return Err(JsNativeError::error().with_message(MESSAGE).into());
     };
     Ok(f(&mut state))
+}
+
+/// The shared guard every node-creation binding
+/// (`document.createElement`/`createElementNS`/`createTextNode`/
+/// `createComment`/`createDocumentFragment`, and `document.title`'s setter
+/// when it creates a fallback `<title>`) checks before calling into
+/// raikiri-dom's own `Document::create_detached_*`: once the document
+/// already holds [`event_loop::Limits::max_nodes`] nodes, refuse to create
+/// another one. Marks the runtime aborted the same way any other resource
+/// limit does (uncatchable by script -- see [`event_loop::abort_error`]) and
+/// returns the error the binding should propagate in place of creating the
+/// node.
+pub(crate) fn guard_node_budget(context: &mut Context) -> JsResult<()> {
+    let over_budget = with_state(context, |s| {
+        s.host.document().node_count() >= s.event_loop.limits.max_nodes
+    })?;
+    if over_budget {
+        let reason = event_loop::abort(context, event_loop::Abort::Nodes);
+        return Err(event_loop::abort_error(reason));
+    }
+    Ok(())
 }
