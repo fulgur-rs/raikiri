@@ -460,21 +460,29 @@ fn resolve_page_geometries(
     defaults: &PageDefaults,
     slices: &[PageSlice],
     consumer_properties: &[ConsumerPropertyRegistration],
-) -> Vec<PageFragmentPageGeometry> {
-    slices
-        .iter()
-        .map(|slice| {
-            let query = page_query_for_slice(slice);
-            let cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
-                &doc.uncascaded,
-                &MediaContext::default(),
-                &query,
-                consumer_properties,
-            );
-            let page_box = page_box_for_cascade(&cascade, defaults);
-            resolve_page_fragment_geometry(&cascade, page_box, slice.page_index)
-        })
-        .collect()
+) -> (
+    Vec<PageFragmentPageGeometry>,
+    Vec<raikiri_style::PageCascadeResult>,
+) {
+    let mut geometries = Vec::with_capacity(slices.len());
+    let mut styles = Vec::with_capacity(slices.len());
+    for slice in slices {
+        let query = page_query_for_slice(slice);
+        let cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
+            &doc.uncascaded,
+            &MediaContext::default(),
+            &query,
+            consumer_properties,
+        );
+        let page_box = page_box_for_cascade(&cascade, defaults);
+        geometries.push(resolve_page_fragment_geometry(
+            &cascade,
+            page_box,
+            slice.page_index,
+        ));
+        styles.push(cascade.page);
+    }
+    (geometries, styles)
 }
 
 fn preload_page_background_images(
@@ -721,12 +729,117 @@ pub fn render_streaming(
 ) -> Result<RenderStatus, RenderError> {
     let RenderOptions {
         resources,
-        page_observer,
+        mut page_observer,
         consumer_properties,
         property_observer,
     } = options;
+    let signal = config.signal.clone();
+    let is_aborted = || signal.as_ref().is_some_and(|signal| signal.is_aborted());
+    let out = match run_pipeline(
+        doc,
+        defaults,
+        &config,
+        PipelineInputs {
+            resources,
+            consumer_properties,
+            property_observer,
+            preload_background_images: true,
+        },
+    )? {
+        PipelineRun::Completed(out) => out,
+        PipelineRun::Aborted => return Ok(Aborted { partial_pages: 0 }),
+    };
+
+    let mut events_by_page = BTreeMap::new();
+    if page_observer.is_some() {
+        for event in out.link_events {
+            let page_index = match &event {
+                raikiri_traits::PageFragmentEvent::Link(event) => event.page_index,
+                _ => continue, // cov:ignore: future non-exhaustive event variant cannot be constructed here
+            };
+            events_by_page
+                .entry(page_index)
+                .or_insert_with(Vec::new)
+                .push(event);
+        }
+    }
+
+    let mut emitted_pages = 0_u32;
+    for page in out.pages {
+        if is_aborted() {
+            return Ok(Aborted {
+                partial_pages: emitted_pages,
+            });
+        }
+        let page_index = page.page_index;
+        sink.accept_page(page).map_err(RenderError::Sink)?;
+        if let (Some(observer), Some(events)) = (
+            page_observer.as_deref_mut(),
+            events_by_page.remove(&page_index),
+        ) {
+            for event in events {
+                observer.observe_event(event).map_err(RenderError::Sink)?;
+            }
+        }
+        emitted_pages = emitted_pages.saturating_add(1);
+    }
+    if is_aborted() {
+        return Ok(Aborted {
+            partial_pages: emitted_pages,
+        });
+    }
+    let summary = RenderSummary {
+        total_pages: emitted_pages,
+        target_registry: config.initial_registry.unwrap_or_default(),
+        unresolved_targets: Vec::new(),
+        emitted_target_slots: Vec::new(),
+        target_discrepancies: Vec::new(),
+        warnings: out.warnings,
+    };
+    sink.finish_render(summary.clone())
+        .map_err(RenderError::Sink)?;
+    Ok(Completed(summary))
+}
+
+fn map_initial_page_context_error(error: InitialPageContextError) -> RenderError {
+    match error {
+        InitialPageContextError::Layout(error) => RenderError::from(error),
+        InitialPageContextError::PageGeometryDidNotConverge { iterations } => {
+            RenderError::PageGeometryDidNotConverge { iterations }
+        }
+    }
+}
+
+pub(crate) struct PipelineOutput {
+    pub(crate) document: raikiri_dom::Document,
+    pub(crate) cascade: raikiri_style::CascadeResult,
+    pub(crate) pages: Vec<raikiri_traits::PageFragment>,
+    pub(crate) page_styles: Vec<raikiri_style::PageCascadeResult>,
+    pub(crate) link_events: Vec<raikiri_traits::PageFragmentEvent>,
+    pub(crate) warnings: Vec<RenderWarning>,
+    pub(crate) base_url: Option<url::Url>,
+}
+pub(crate) enum PipelineRun {
+    Completed(PipelineOutput),
+    Aborted,
+}
+pub(crate) struct PipelineInputs<'r, 'a> {
+    pub(crate) resources: Option<&'r RenderResources<'a>>,
+    pub(crate) consumer_properties: &'r [ConsumerPropertyRegistration],
+    pub(crate) property_observer: Option<&'r mut dyn ConsumerPropertyObserver>,
+    pub(crate) preload_background_images: bool,
+}
+
+pub(crate) fn run_pipeline(
+    doc: &HtmlDocument,
+    defaults: PageDefaults,
+    config: &StreamingConfig,
+    inputs: PipelineInputs<'_, '_>,
+) -> Result<PipelineRun, RenderError> {
+    let consumer_properties = inputs.consumer_properties;
+    let property_observer = inputs.property_observer;
     let default_resources;
-    let resources = match resources {
+    let resources = match inputs.resources {
         Some(resources) => resources,
         None => {
             default_resources = RenderResources::new();
@@ -761,46 +874,10 @@ pub fn render_streaming(
         warnings,
         seen: Mutex::new(HashSet::new()),
     };
-    render_streaming_inner(
-        doc,
-        defaults,
-        &resolver,
-        config,
-        sink,
-        page_observer,
-        property_observer,
-        consumer_properties,
-        runtime,
-        resources,
-    )
-}
-
-fn map_initial_page_context_error(error: InitialPageContextError) -> RenderError {
-    match error {
-        InitialPageContextError::Layout(error) => RenderError::from(error),
-        InitialPageContextError::PageGeometryDidNotConverge { iterations } => {
-            RenderError::PageGeometryDidNotConverge { iterations }
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn render_streaming_inner(
-    doc: &HtmlDocument,
-    defaults: PageDefaults,
-    resolver: &dyn ReplacedResolver,
-    config: StreamingConfig,
-    sink: &mut dyn RenderSink,
-    mut page_observer: Option<&mut dyn PageEventObserver>,
-    property_observer: Option<&mut dyn ConsumerPropertyObserver>,
-    consumer_properties: &[ConsumerPropertyRegistration],
-    runtime: RenderExecutionResources<'_>,
-    resources: &RenderResources<'_>,
-) -> Result<RenderStatus, RenderError> {
     let signal = config.signal.clone();
     let is_aborted = || signal.as_ref().is_some_and(|signal| signal.is_aborted());
     if is_aborted() {
-        return Ok(Aborted { partial_pages: 0 });
+        return Ok(PipelineRun::Aborted);
     }
 
     // Resolve the first page context before layout so `:first` and the first
@@ -841,7 +918,7 @@ fn render_streaming_inner(
         first_cascade,
         page_box,
         font_context,
-        InitialPageProbeResources::new(Some(resolver), runtime.effective_base_url),
+        InitialPageProbeResources::new(Some(&resolver), runtime.effective_base_url),
         |page_name| {
             first_query.page_name = page_name.map(Atom::from);
             let mut cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
@@ -887,12 +964,13 @@ fn render_streaming_inner(
         &first_cascade,
         page_box,
         font_context.clone(),
-        resolver,
+        &resolver,
         runtime.effective_base_url,
     )
     .map_err(RenderError::from)?;
     const MAX_PAGE_GEOMETRY_PASSES: u32 = 3;
-    let mut page_geometries = resolve_page_geometries(doc, &defaults, &slices, consumer_properties);
+    let mut page_geometries =
+        resolve_page_geometries(doc, &defaults, &slices, consumer_properties).0;
     let mut geometry_converged = true;
     for pass in 0..MAX_PAGE_GEOMETRY_PASSES {
         let Some(first_geometry) = page_geometries.first().copied() else {
@@ -918,14 +996,14 @@ fn render_streaming_inner(
             font_context.clone(),
             &schedule.page_steps,
             &schedule.page_widths,
-            resolver,
+            &resolver,
             runtime.effective_base_url,
         )
         .map_err(RenderError::from)?;
         // A scheduled pass can change both page count and page selectors. Re-
         // resolve before the next iteration so the following schedule is
         // derived from the slices it will actually replace.
-        page_geometries = resolve_page_geometries(doc, &defaults, &slices, consumer_properties);
+        page_geometries = resolve_page_geometries(doc, &defaults, &slices, consumer_properties).0;
         let refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
         if refreshed_schedule == schedule {
             break;
@@ -947,17 +1025,21 @@ fn render_streaming_inner(
 
     // Resolve once more after the final bounded schedule pass so metadata and
     // page names always describe the slices that will actually be emitted.
-    page_geometries = resolve_page_geometries(doc, &defaults, &slices, consumer_properties);
+    let (final_geometries, page_styles) =
+        resolve_page_geometries(doc, &defaults, &slices, consumer_properties);
+    page_geometries = final_geometries;
 
     // Fetch CSS background sources only after the final page schedule is known.
     // Paint remains read-only and consumes the cache through ImagePixelSource.
-    preload_page_background_images(
-        doc,
-        &slices,
-        consumer_properties,
-        resources,
-        &runtime.warnings,
-    );
+    if inputs.preload_background_images {
+        preload_page_background_images(
+            doc,
+            &slices,
+            consumer_properties,
+            resources,
+            &runtime.warnings,
+        );
+    }
 
     let pages = page_fragments_from_slices_with_page_geometry(
         &document,
@@ -982,7 +1064,7 @@ fn render_streaming_inner(
 
     if let Some(property_observer) = property_observer {
         if is_aborted() {
-            return Ok(Aborted { partial_pages: 0 }); // cov:ignore: cancellation can race after layout and before observer delivery
+            return Ok(PipelineRun::Aborted); // cov:ignore: cancellation can race after layout and before observer delivery
         }
         for event in
             resolved_consumer_property_events(&document, &first_cascade, consumer_properties)
@@ -993,45 +1075,7 @@ fn render_streaming_inner(
         }
     }
 
-    let mut events_by_page = BTreeMap::new();
-    if page_observer.is_some() {
-        for event in page_fragment_events_from_pages(&document, &pages) {
-            let page_index = match &event {
-                raikiri_traits::PageFragmentEvent::Link(event) => event.page_index,
-                _ => continue, // cov:ignore: future non-exhaustive event variant cannot be constructed here
-            };
-            events_by_page
-                .entry(page_index)
-                .or_insert_with(Vec::new)
-                .push(event);
-        }
-    }
-
-    let mut emitted_pages = 0_u32;
-    for page in pages {
-        if is_aborted() {
-            return Ok(Aborted {
-                partial_pages: emitted_pages,
-            });
-        }
-        let page_index = page.page_index;
-        sink.accept_page(page).map_err(RenderError::Sink)?;
-        if let (Some(observer), Some(events)) = (
-            page_observer.as_deref_mut(),
-            events_by_page.remove(&page_index),
-        ) {
-            for event in events {
-                observer.observe_event(event).map_err(RenderError::Sink)?;
-            }
-        }
-        emitted_pages = emitted_pages.saturating_add(1);
-    }
-    if is_aborted() {
-        return Ok(Aborted {
-            partial_pages: emitted_pages,
-        });
-    }
-
+    let link_events = page_fragment_events_from_pages(&document, &pages);
     let mut warnings = doc.uncascaded.warnings.clone();
     warnings.extend(
         runtime
@@ -1041,36 +1085,18 @@ fn render_streaming_inner(
             .iter()
             .cloned(),
     );
-    let summary = RenderSummary {
-        total_pages: emitted_pages,
-        target_registry: config.initial_registry.unwrap_or_default(),
-        unresolved_targets: Vec::new(),
-        emitted_target_slots: Vec::new(),
-        target_discrepancies: Vec::new(),
+    drop(runtime);
+    drop(resolver);
+    Ok(PipelineRun::Completed(PipelineOutput {
+        document,
+        cascade: first_cascade,
+        pages,
+        page_styles,
+        link_events,
         warnings,
-    };
-    sink.finish_render(summary.clone())
-        .map_err(RenderError::Sink)?;
-    Ok(Completed(summary))
+        base_url: effective_base_url,
+    }))
 }
 
 #[cfg(test)]
-mod initial_page_context_error_tests {
-    use super::*;
-
-    #[test]
-    fn initial_page_context_errors_map_to_render_errors() {
-        let layout_error = map_initial_page_context_error(InitialPageContextError::Layout(
-            raikiri_traits::LayoutError::Internal {
-                message: "test".to_owned(),
-            },
-        ));
-        assert!(matches!(layout_error, RenderError::Layout(_)));
-        assert!(matches!(
-            map_initial_page_context_error(InitialPageContextError::PageGeometryDidNotConverge {
-                iterations: 3
-            }),
-            RenderError::PageGeometryDidNotConverge { iterations: 3 }
-        ));
-    }
-}
+mod tests;
