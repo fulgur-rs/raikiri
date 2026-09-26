@@ -100,7 +100,7 @@ fn run() -> Result<(), String> {
                     }
                 }
             }
-            Err(ParsingFileError::NoInvalidValueCalls) => continue,
+            Err(ParsingFileError::NoParsingTestCalls) => continue,
             Err(e) => {
                 total_files += 1;
                 println!("ERROR {test_id}: {e}");

@@ -75,7 +75,7 @@ fn run_parsing_invalid_file_reports_no_invalid_value_calls() {
     // nor test_valid_value(.
     let dir = fixture("<script>test_valid_selector(\"div\");</script>");
     let result = run_parsing_invalid_file(dir.path(), Path::new(FIXTURE_PATH));
-    assert!(matches!(result, Err(ParsingFileError::NoInvalidValueCalls)));
+    assert!(matches!(result, Err(ParsingFileError::NoParsingTestCalls)));
 }
 
 #[test]
@@ -185,7 +185,7 @@ fn display_names_each_error_kind() {
         "live document: boom"
     );
     assert_eq!(
-        ParsingFileError::NoInvalidValueCalls.to_string(),
+        ParsingFileError::NoParsingTestCalls.to_string(),
         "no test_invalid_value( calls in this file's inline script"
     );
 }

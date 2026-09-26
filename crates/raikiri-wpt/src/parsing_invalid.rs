@@ -64,7 +64,7 @@ impl ParsingFileOutcome {
 pub enum ParsingFileError {
     /// The file's inline script has neither a `test_invalid_value(` nor a
     /// `test_valid_value(` call, so there is nothing for this runner to run.
-    NoInvalidValueCalls,
+    NoParsingTestCalls,
     /// Reading the test file or `parsing-testcommon.js` failed.
     Io(String),
     /// Building the live document for the test page failed.
@@ -76,7 +76,7 @@ pub enum ParsingFileError {
 impl std::fmt::Display for ParsingFileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ParsingFileError::NoInvalidValueCalls => {
+            ParsingFileError::NoParsingTestCalls => {
                 write!(
                     f,
                     "no test_invalid_value( calls in this file's inline script"
@@ -138,7 +138,7 @@ pub fn run_parsing_invalid_file(
     let html = fs::read_to_string(&page_path).map_err(|e| ParsingFileError::Io(e.to_string()))?;
     let script = inline_scripts(&html);
     if !script.contains("test_invalid_value(") && !script.contains("test_valid_value(") {
-        return Err(ParsingFileError::NoInvalidValueCalls);
+        return Err(ParsingFileError::NoParsingTestCalls);
     }
     let parsing_testcommon = fs::read_to_string(wpt_root.join("css/support/parsing-testcommon.js"))
         .map_err(|e| ParsingFileError::Io(e.to_string()))?;
