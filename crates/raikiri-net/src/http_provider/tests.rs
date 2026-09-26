@@ -1063,3 +1063,65 @@ fn post_with_form_body_is_rejected_before_any_network_activity() {
         .expect_err("Body::Form must be rejected");
     assert!(matches!(err, NetworkError::Other(_)));
 }
+
+#[test]
+fn redirect_without_location_is_a_protocol_error() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+    let live_addr = listener.local_addr().unwrap();
+    thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept conn");
+        serve_one_response(
+            stream,
+            "HTTP/1.1 302 Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+    });
+
+    let provider = provider_with(FixedAddrsResolver(vec![live_addr]));
+    let request = Request {
+        url: Url::parse("http://location-missing.invalid/").unwrap(),
+        method: RaikiriMethod::Get,
+        content_type: None,
+        headers: Vec::new(),
+        body: Body::Empty,
+        signal: None,
+        kind: ResourceKind::Image,
+    };
+    let err = provider
+        .fetch(request)
+        .expect_err("a redirect without Location must fail");
+    assert!(
+        matches!(&err, NetworkError::Other(message) if message.contains("no usable Location")),
+        "expected a missing-Location protocol error, got {err:?}"
+    );
+}
+
+#[test]
+fn redirect_with_unresolvable_location_is_a_protocol_error() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+    let live_addr = listener.local_addr().unwrap();
+    thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("accept conn");
+        serve_one_response(
+            stream,
+            "HTTP/1.1 302 Found\r\nLocation: http://[invalid\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+    });
+
+    let provider = provider_with(FixedAddrsResolver(vec![live_addr]));
+    let request = Request {
+        url: Url::parse("http://bad-location.invalid/").unwrap(),
+        method: RaikiriMethod::Get,
+        content_type: None,
+        headers: Vec::new(),
+        body: Body::Empty,
+        signal: None,
+        kind: ResourceKind::Image,
+    };
+    let err = provider
+        .fetch(request)
+        .expect_err("a redirect with an unresolvable Location must fail");
+    assert!(
+        matches!(&err, NetworkError::Other(message) if message.contains("invalid redirect Location")),
+        "expected an invalid-Location protocol error, got {err:?}"
+    );
+}
