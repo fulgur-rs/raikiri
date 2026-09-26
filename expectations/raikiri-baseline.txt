@@ -1559,3 +1559,14 @@ css/css-break/widows-orphans-014.html
 css/css-break/widows-orphans-015.html
 css/css-break/widows-orphans-016.html
 css/css-break/widows-orphans-018.html
+# --- css-page fixedpos PASS-now (exact, 800x600, 2026-09-26) ---
+# WPT rev 97ea26e26a2aac3eec7e770650b25e7049ed4a4e
+css/css-page/fixedpos-001-print.html
+css/css-page/fixedpos-002-print.html
+css/css-page/fixedpos-003-print.html
+css/css-page/fixedpos-004-print.html
+css/css-page/fixedpos-005-print.html
+css/css-page/fixedpos-006-print.html
+css/css-page/fixedpos-007-print.html
+css/css-page/fixedpos-008-print.html
+css/css-page/fixedpos-009-print.html

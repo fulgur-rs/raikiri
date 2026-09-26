@@ -239,3 +239,29 @@ fn page_name_propagated_pairs_are_pixel_exact_at_800x600() {
         run_exact_pair(&root, "css/css-page", name, config);
     }
 }
+
+/// Fixed-position repetition: position:fixed repeats on every printed page
+/// (001-009; 010/011 excluded as separate follow-up).
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn fixedpos_pairs_are_pixel_exact_at_800x600() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+
+    for name in [
+        "fixedpos-001-print.html",
+        "fixedpos-002-print.html",
+        "fixedpos-003-print.html",
+        "fixedpos-004-print.html",
+        "fixedpos-005-print.html",
+        "fixedpos-006-print.html",
+        "fixedpos-007-print.html",
+        "fixedpos-008-print.html",
+        "fixedpos-009-print.html",
+    ] {
+        run_exact_pair(&root, "css/css-page", name, config);
+    }
+}
