@@ -28,6 +28,19 @@ use super::webidl::with_state;
 /// Resource limits for one runtime. Reaching any of them aborts the run:
 /// the running script stops, every queue is discarded, and the runtime
 /// refuses to run anything afterwards.
+///
+/// # What these limits do not bound
+///
+/// - CPU time. Boa counts loop iterations per call frame, and native
+///   builtins loop without counting, so native loops over huge array-likes
+///   (`Array.prototype.forEach.call({length: 1e15}, f)`,
+///   `Array.from({length: 1e9})`, `fill`), regular-expression backtracking,
+///   and loop-free recursive call trees run unbounded. An embedder that
+///   must bound CPU for untrusted content needs an external watchdog.
+/// - Parser depth. Deeply nested source (hundreds of nested brackets) can
+///   overflow the native stack inside Boa's parser before any limit here
+///   applies.
+/// - Memory. There is no heap bound.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Limits {
     /// The latest virtual time, in milliseconds, a task may be due at.
@@ -73,7 +86,7 @@ pub enum Abort {
     /// More than [`Limits::max_tasks`] tasks and microtasks.
     Tasks,
     /// Boa's loop iteration limit ([`Limits::max_loop_iterations`]).
-    LoopIteration,
+    LoopIterations,
     /// Boa's recursion or stack size limit ([`Limits::max_recursion`]).
     Recursion,
     /// More than [`Limits::max_nodes`] DOM nodes.
@@ -85,7 +98,7 @@ impl std::fmt::Display for Abort {
         f.write_str(match self {
             Self::VirtualTime => "virtual time limit reached",
             Self::Tasks => "task limit reached",
-            Self::LoopIteration => "loop iteration limit reached",
+            Self::LoopIterations => "loop iteration limit reached",
             Self::Recursion => "recursion limit reached",
             Self::Nodes => "node limit reached",
         })
@@ -97,9 +110,15 @@ impl std::fmt::Display for Abort {
 /// and promise rejection handlers never observe: the VM unwinds straight to
 /// the embedder. Every place this runtime would otherwise record an error
 /// and carry on checks this first.
+///
+/// Boa's recursion and stack size limits both map to [`Abort::Recursion`].
+/// So does an internal engine panic ([`EngineError::Panic`]), which is not
+/// a resource limit at all: it is uncatchable in the same way, and stopping
+/// the run is the only safe response, so it reuses that variant rather than
+/// adding one for a condition script cannot provoke by design.
 pub(crate) fn abort_for(error: &JsError) -> Option<Abort> {
     match error.as_engine()? {
-        EngineError::RuntimeLimit(RuntimeLimitError::LoopIteration) => Some(Abort::LoopIteration),
+        EngineError::RuntimeLimit(RuntimeLimitError::LoopIteration) => Some(Abort::LoopIterations),
         // The recursion and stack size limits both stop runaway recursion.
         // Any other engine error (an internal engine panic) cannot be
         // caught by script either, so it stops the run the same way.
@@ -306,6 +325,11 @@ pub(crate) struct RaikiriJobExecutor;
 
 impl JobExecutor for RaikiriJobExecutor {
     fn enqueue_job(self: Rc<Self>, job: Job, context: &mut Context) {
+        // Boa enqueues jobs while script runs (promise resolution), never
+        // while a binding holds the `State` borrow: bindings do not call into
+        // the engine inside `with_state`. If that ever broke, `with_state`
+        // would record a re-entrancy host failure and the job would be
+        // dropped, rather than panicking.
         let _ = with_state(context, |state| {
             let event_loop = &mut state.event_loop;
             match job {
@@ -343,6 +367,9 @@ impl JobExecutor for RaikiriJobExecutor {
         });
     }
 
+    /// Only Rust callers reach this (`Context::run_jobs`); script cannot.
+    /// A limit reached here is returned as a plain error for the caller, and
+    /// the abort is already recorded, so later runs keep refusing.
     fn run_jobs(self: Rc<Self>, context: &mut Context) -> JsResult<()> {
         microtask_checkpoint(context).map_err(|abort| {
             JsNativeError::error()
@@ -528,7 +555,12 @@ fn callable_arg(args: &[JsValue], what: &str) -> JsResult<JsObject> {
 
 /// HTML §8.6 timer initialization steps for a new timer.
 fn set_timer(args: &[JsValue], repeat: bool, context: &mut Context) -> JsResult<JsValue> {
-    let handler_arg = args.first().cloned().unwrap_or_default();
+    // `handler` is a required WebIDL argument.
+    let Some(handler_arg) = args.first().cloned() else {
+        return Err(JsNativeError::typ()
+            .with_message("a timer handler is required")
+            .into());
+    };
     let handler = match handler_arg.as_callable() {
         Some(callback) => Handler::Callback(callback.clone()),
         None => Handler::Code(handler_arg.to_string(context)?.to_std_string_escaped()),

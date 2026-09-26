@@ -344,10 +344,10 @@ fn loop_limit_is_not_catchable_by_script() {
         let result = rt.evaluate(src);
         assert_eq!(
             result,
-            Err(RuntimeError::Aborted(Abort::LoopIteration)),
+            Err(RuntimeError::Aborted(Abort::LoopIterations)),
             "{src}"
         );
-        assert_eq!(rt.run_until_idle(), Err(Abort::LoopIteration), "{src}");
+        assert_eq!(rt.run_until_idle(), Err(Abort::LoopIterations), "{src}");
     }
 }
 
@@ -375,7 +375,7 @@ fn limits_inside_callbacks_abort_the_loop() {
             "var later = false; setTimeout(()=>{{ later = true; }}, 100); {src}"
         ))
         .unwrap();
-        assert_eq!(rt.run_until_idle(), Err(Abort::LoopIteration), "{src}");
+        assert_eq!(rt.run_until_idle(), Err(Abort::LoopIterations), "{src}");
         assert!(uncaught(&mut rt).is_empty(), "{src}");
         // The queue was discarded: the later timer never ran.
         let later = with_state(rt.context_mut(), |s| s.event_loop.tasks.len()).unwrap();
@@ -402,7 +402,7 @@ fn engine_errors_map_to_aborts() {
     let stack = JsError::from(RuntimeLimitError::StackSize);
     let native = JsError::from(JsNativeError::typ());
     let opaque = JsError::from_opaque(JsValue::from(1));
-    assert_eq!(abort_for(&loop_error), Some(Abort::LoopIteration));
+    assert_eq!(abort_for(&loop_error), Some(Abort::LoopIterations));
     assert_eq!(abort_for(&recursion), Some(Abort::Recursion));
     assert_eq!(abort_for(&stack), Some(Abort::Recursion));
     assert_eq!(abort_for(&native), None);
@@ -414,7 +414,7 @@ fn abort_display() {
     for (abort, text) in [
         (Abort::VirtualTime, "virtual time limit"),
         (Abort::Tasks, "task limit"),
-        (Abort::LoopIteration, "loop iteration limit"),
+        (Abort::LoopIterations, "loop iteration limit"),
         (Abort::Recursion, "recursion limit"),
         (Abort::Nodes, "node limit"),
     ] {
@@ -587,4 +587,39 @@ fn cancelled_boa_timeout_jobs_do_not_run() {
     token.cancel(context);
     rt.run_until_idle().unwrap();
     assert!(!ran.get());
+}
+
+#[test]
+fn timers_without_a_handler_are_type_errors() {
+    let mut rt = rt();
+    for src in ["setTimeout()", "setInterval()"] {
+        let err = rt.evaluate(src);
+        assert!(
+            matches!(err, Err(RuntimeError::JavaScript(ref m)) if m.contains("TypeError")),
+            "{src}: {err:?}"
+        );
+    }
+    assert_eq!(rt.run_until_idle(), Ok(()));
+    assert_eq!(rt.now(), 0.0);
+}
+
+#[test]
+fn into_host_after_an_abort_returns_the_document() {
+    let mut rt = runtime_with(Limits {
+        max_tasks: 5,
+        ..Default::default()
+    });
+    rt.evaluate(
+        "document.body.appendChild(document.createElement('p')); \
+         setInterval(function(){}, 0);",
+    )
+    .unwrap();
+    assert_eq!(rt.run_until_idle(), Err(Abort::Tasks));
+    let host = rt.into_host();
+    let document = host.document();
+    let p = (0..document.node_count())
+        .filter_map(|i| document.get_node(i))
+        .filter(|n| n.kind() == raikiri_dom::NodeKind::Element)
+        .count();
+    assert_eq!(p, 4, "html, head, body, p");
 }

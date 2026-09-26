@@ -154,8 +154,11 @@ impl DomRuntime {
     /// Evaluate a classic script in the global scope.
     ///
     /// An uncaught exception is [`RuntimeError::JavaScript`]. If a host
-    /// failure was recorded while the script ran, [`RuntimeError::Host`] is
-    /// returned instead, whether or not the script caught the exception.
+    /// failure was recorded since the previous `evaluate` -- while this
+    /// script or its microtasks ran, or earlier by a callback that
+    /// [`DomRuntime::run_until_idle`] invoked, such as a timer --
+    /// [`RuntimeError::Host`] is returned instead, whether or not the script
+    /// caught the exception.
     ///
     /// A microtask checkpoint follows the script, as after any script in a
     /// page, so promise reactions it queued have run on return. A resource
@@ -196,6 +199,12 @@ impl DomRuntime {
     /// performs a microtask checkpoint. Reaching a limit discards every
     /// queue; the runtime then refuses to run anything else, and later
     /// calls return the same [`Abort`].
+    ///
+    /// [`Limits`] does not bound everything: native builtin loops,
+    /// regular-expression backtracking, and loop-free recursive call trees
+    /// can use unbounded CPU, deeply nested source can overflow the native
+    /// stack in Boa's parser, and there is no heap bound (see [`Limits`]).
+    /// Untrusted content needs an external watchdog as well.
     pub fn run_until_idle(&mut self) -> Result<(), Abort> {
         event_loop::run_until_idle(&mut self.context)
     }
