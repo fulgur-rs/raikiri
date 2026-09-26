@@ -212,6 +212,28 @@ fn get_elements_by_tag_name_is_case_sensitive_outside_the_html_namespace() {
     );
 }
 
+/// DOM §4.4 `getElementsByClassName`: CSS Selectors L4's quirks-mode
+/// class-selector ASCII-case-insensitivity (the same rule
+/// `raikiri_style::cascade::selector_match`'s `Component::Class` arm
+/// applies to a `.foo` selector) applies to this method's own token-set
+/// matching too.
+#[test]
+fn get_elements_by_class_name_folds_case_in_quirks_mode() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var d = document.createElement('div'); d.className = 'a'; document.body.appendChild(d);",
+    )
+    .unwrap();
+    ok(&mut rt, "document.getElementsByClassName('A').length === 0");
+    with_state(rt.context_mut(), |s| {
+        s.host
+            .document_mut()
+            .set_quirks_mode(raikiri_dom::QuirksMode::Quirks);
+    })
+    .unwrap();
+    ok(&mut rt, "document.getElementsByClassName('A').length === 1");
+}
+
 #[test]
 fn id_class_name_and_attribute_names() {
     let mut rt = rt();

@@ -9,8 +9,7 @@
 //! - <https://dom.spec.whatwg.org/#interface-parentnode>
 //! - <https://dom.spec.whatwg.org/#interface-element>
 //!
-//! # Known limitation: sibling combinators/structural pseudo-classes on a
-//! # disconnected tree
+//! # Known limitation: sibling combinators/structural pseudo-classes on a disconnected tree
 //!
 //! Every selector-matching entry point here (`querySelector`/
 //! `querySelectorAll`/`matches`/`closest`) ultimately calls
@@ -296,13 +295,6 @@ fn class_name_matches(doc: &Document, node: usize, tokens: &[String], quirks: bo
     let class_tokens: Vec<&str> = class_attr.split_ascii_whitespace().collect();
     tokens.iter().all(|t| {
         if quirks {
-            // cov:ignore: exercising this arm needs a quirks-mode Document
-            // (`raikiri_dom::Document::set_quirks_mode` with a `Quirks`
-            // value), but that value's type is declared by a crate this
-            // one does not depend on and must not start depending on --
-            // this crate's own dependency set is raikiri-dom and
-            // raikiri-style only, and that type is not re-exported by
-            // either.
             class_tokens.iter().any(|c| c.eq_ignore_ascii_case(t))
         } else {
             class_tokens.contains(&t.as_str())
