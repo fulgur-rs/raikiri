@@ -71,13 +71,14 @@ fn illegal_constructor(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<
         .into())
 }
 
-/// Define `object`'s `Symbol.toStringTag` (WebIDL §3.6.3 / §3.9: non-writable,
-/// non-enumerable, configurable, its value the interface's or namespace's
-/// own identifier), so `Object.prototype.toString.call(x)` reads
-/// `[object <tag>]` instead of the engine's generic default. Shared by
-/// [`interface`] (every interface prototype gets one) and [`super::window`]'s
-/// plain singleton objects (`location`, `navigator`, `console`), which have
-/// no interface prototype of their own to hang it on.
+/// Define `object`'s `Symbol.toStringTag` (WebIDL §3.6.3: non-writable,
+/// non-enumerable, configurable, its value the interface's -- or, for a
+/// WebIDL namespace object, the namespace's -- own identifier), so
+/// `Object.prototype.toString.call(x)` reads `[object <tag>]` instead of the
+/// engine's generic default. Shared by [`interface`] (every interface
+/// prototype gets one) and [`super::window`]'s plain singleton objects
+/// (`location`, `navigator`, `console`), which have no interface prototype
+/// of their own to hang it on.
 pub(crate) fn set_to_string_tag(
     object: &JsObject,
     tag: &str,

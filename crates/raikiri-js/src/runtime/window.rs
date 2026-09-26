@@ -77,9 +77,13 @@ impl LocationParts {
         };
         let protocol = format!("{}:", &before_search[..scheme_end]);
         let rest = &before_search[scheme_end + 3..];
-        let path_start = rest.find('/').unwrap_or(rest.len());
-        let host = rest[..path_start].to_owned();
-        let pathname = rest[path_start..].to_owned();
+        let (host, pathname) = match rest.find('/') {
+            Some(path_start) => (rest[..path_start].to_owned(), rest[path_start..].to_owned()),
+            // No path segment at all (`"https://example.test"`): the
+            // WHATWG URL Standard's own serialization still writes one
+            // slash for a special scheme's empty path.
+            None => (rest.to_owned(), "/".to_owned()),
+        };
         let (hostname, port) = match host.split_once(':') {
             Some((h, p)) => (h.to_owned(), p.to_owned()),
             None => (host.clone(), String::new()),
@@ -179,10 +183,13 @@ const LOCATION_METHODS: &[(&str, usize, NativeFunctionPointer)] = &[
 ];
 
 fn location_object(context: &mut Context) -> JsResult<JsObject> {
-    let no_op_setter = function(context, "set location", 1, location_no_op)?;
     let accessors: Vec<_> = LOCATION_ACCESSORS
         .iter()
-        .map(|&(n, f)| Ok((n, function(context, &format!("get {n}"), 0, f)?)))
+        .map(|&(n, f)| {
+            let getter = function(context, &format!("get {n}"), 0, f)?;
+            let setter = function(context, &format!("set {n}"), 1, location_no_op)?;
+            Ok((n, getter, setter))
+        })
         .collect::<JsResult<_>>()?;
     let origin_getter = function(context, "get origin", 0, location_origin)?;
     let methods: Vec<_> = LOCATION_METHODS
@@ -193,13 +200,8 @@ fn location_object(context: &mut Context) -> JsResult<JsObject> {
     let attribute_attr = Attribute::ENUMERABLE | Attribute::CONFIGURABLE;
     let method_attr = Attribute::WRITABLE | Attribute::CONFIGURABLE;
     let mut builder = ObjectInitializer::new(context);
-    for (name, getter) in accessors {
-        builder.accessor(
-            js_string!(name),
-            Some(getter),
-            Some(no_op_setter.clone()),
-            attribute_attr,
-        );
+    for (name, getter, setter) in accessors {
+        builder.accessor(js_string!(name), Some(getter), Some(setter), attribute_attr);
     }
     builder.accessor(
         js_string!("origin"),
@@ -235,11 +237,6 @@ fn navigator_object(context: &mut Context) -> JsResult<JsObject> {
 /// The `console.*` method a recorded message came from (Console Standard
 /// `Console` namespace, "logging" section).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(
-    dead_code,
-    reason = "every level is produced by the matching console method; nothing outside this \
-              runtime's own tests reads the recorded level back yet"
-)]
 pub(crate) enum ConsoleLevel {
     Log,
     Error,
@@ -252,8 +249,8 @@ pub(crate) enum ConsoleLevel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(
     dead_code,
-    reason = "recorded for the embedder to report; nothing outside this runtime's own tests \
-              reads a recorded message back yet"
+    reason = "recorded for the embedder to read back and report; only this runtime's own \
+              tests read a recorded message back directly"
 )]
 pub(crate) struct ConsoleMessage {
     pub level: ConsoleLevel,

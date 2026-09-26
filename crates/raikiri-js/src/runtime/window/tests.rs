@@ -1,4 +1,7 @@
+use raikiri_dom::Document;
+
 use crate::runtime::DomRuntime;
+use crate::runtime::host::{BoxGeometry, DocumentHost, HostError};
 use crate::runtime::test_host::StubHost;
 use crate::runtime::webidl::with_state;
 
@@ -11,6 +14,48 @@ fn rt_with_url(url: &str) -> DomRuntime {
     let (mut host, ..) = StubHost::page();
     host.document_url = Some(url.to_owned());
     DomRuntime::new(host).unwrap()
+}
+
+/// A [`DocumentHost`] that delegates everything to a [`StubHost`] except
+/// `document_url`, which it leaves at the trait's own default (`None`):
+/// `StubHost` overrides that method (so tests can set a URL), which means
+/// nothing else in this crate ever exercises the default body itself.
+struct DefaultUrlHost(StubHost);
+
+impl DocumentHost for DefaultUrlHost {
+    fn document(&self) -> &Document {
+        self.0.document()
+    }
+    fn document_mut(&mut self) -> &mut Document {
+        self.0.document_mut()
+    }
+    fn flush(&mut self) -> Result<(), HostError> {
+        self.0.flush()
+    }
+    fn box_geometry(&mut self, node: usize) -> Result<Option<BoxGeometry>, HostError> {
+        self.0.box_geometry(node)
+    }
+    fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {
+        self.0.computed_value(node, property)
+    }
+    fn parse_fragment(
+        &mut self,
+        context_tag: &str,
+        context_ns: &str,
+        markup: &str,
+    ) -> Result<Document, HostError> {
+        self.0.parse_fragment(context_tag, context_ns, markup)
+    }
+}
+
+#[test]
+fn document_url_default_trait_body_is_none() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(DefaultUrlHost(host)).unwrap();
+    ok(
+        &mut rt,
+        "location.href === 'about:blank' && document.URL === 'about:blank'",
+    );
 }
 
 fn ok(rt: &mut DomRuntime, src: &str) {
@@ -201,7 +246,7 @@ fn location_parts_parses_a_url_with_no_port_query_fragment_or_path() {
     assert_eq!(parts.host, "example.test");
     assert_eq!(parts.hostname, "example.test");
     assert_eq!(parts.port, "");
-    assert_eq!(parts.pathname, "");
+    assert_eq!(parts.pathname, "/");
     assert_eq!(parts.search, "");
     assert_eq!(parts.hash, "");
     assert_eq!(parts.origin, "https://example.test");

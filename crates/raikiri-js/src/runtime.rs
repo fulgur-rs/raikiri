@@ -82,10 +82,10 @@ pub(crate) struct State {
     /// *before* Boa's own [`Limits::max_recursion`] (JS call frames) would
     /// ever trip, so `dispatch` enforces its own, much smaller bound.
     pub dispatch_depth: u32,
-    /// `document.readyState`. Production code always leaves this at its
-    /// default (`Complete`): nothing in this crate today drives document
-    /// parsing and script execution end-to-end, so only this runtime's own
-    /// tests ever set it to `Loading`/`Interactive`.
+    /// `document.readyState`, defaulting to `Complete` (HTML "current
+    /// document readiness"). Nothing in this crate advances it through
+    /// `Loading`/`Interactive` on its own; whatever drives a document's
+    /// parse-and-run pipeline end to end is expected to set it directly.
     pub ready_state: document::ReadyState,
     /// `document.currentScript`: the arena index of the `<script>` element
     /// currently executing, or `None` when no script is (HTML "current

@@ -332,8 +332,9 @@ pub(crate) fn set_title(
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[allow(
     dead_code,
-    reason = "Loading/Interactive are produced by a parse-and-run pipeline this crate does not \
-              drive yet; only this runtime's own tests construct them today"
+    reason = "Loading/Interactive are constructed only by whatever drives a document's \
+              parse-and-run pipeline end to end; this crate has no such driver of its own, \
+              so only this runtime's own tests construct them directly"
 )]
 pub(crate) enum ReadyState {
     Loading,
