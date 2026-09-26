@@ -238,6 +238,34 @@ fn nullable_node_argument_conversion() {
     );
 }
 
+/// `insertBefore`'s `child` argument, unlike `contains`'s `other`, is a
+/// required (non-optional) `Node?` parameter: WebIDL's operation-arity check
+/// runs before any per-argument conversion, so a call missing it outright is
+/// a `TypeError` regardless of the argument's own nullable type -- distinct
+/// from an explicit `null`/`undefined` in that same position, which still
+/// converts to "no reference node" (append) exactly as `arg_node_or_null`
+/// converts any other nullable `Node?` argument.
+#[test]
+fn insert_before_requires_its_second_argument() {
+    let mut rt = rt();
+    rt.evaluate("var b = document.body; var a = document.createElement('a');")
+        .unwrap();
+    ok(
+        &mut rt,
+        "try { b.insertBefore(a); false } catch (e) { e instanceof TypeError }",
+    );
+    ok(&mut rt, "b.firstChild !== a");
+    ok(
+        &mut rt,
+        "b.insertBefore(a, null) === a && b.lastChild === a",
+    );
+    let child = "document.createElement('e')";
+    ok(
+        &mut rt,
+        &format!("var e = {child}; b.insertBefore(e, undefined) === e && b.lastChild === e"),
+    );
+}
+
 /// `ChildNode.before` / `after` / `replaceWith` / `remove` are all no-ops on
 /// a detached node (DOM §4.2.6: "if parent is null, then return").
 #[test]

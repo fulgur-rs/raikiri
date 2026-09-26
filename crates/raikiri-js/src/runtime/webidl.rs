@@ -141,9 +141,11 @@ pub(crate) fn arg_node(args: &[JsValue], i: usize, _context: &mut Context) -> Js
         .ok_or_else(|| type_error("argument is not a Node"))
 }
 
-/// A nullable `Node` argument (`Node?`): a missing argument, `null`, and
-/// `undefined` all convert to `None`; anything else must be a `Node`
-/// wrapper or this throws `TypeError`, the same as [`arg_node`].
+/// A nullable `Node` argument (`Node?`) that is itself *optional* (has an
+/// implied `null` default, e.g. `Node.contains`'s `other`): a missing
+/// argument, `null`, and `undefined` all convert to `None`; anything else
+/// must be a `Node` wrapper or this throws `TypeError`, the same as
+/// [`arg_node`].
 pub(crate) fn arg_node_or_null(
     args: &[JsValue],
     i: usize,
@@ -156,6 +158,24 @@ pub(crate) fn arg_node_or_null(
             .map(Some)
             .ok_or_else(|| type_error("argument is not a Node")),
     }
+}
+
+/// A nullable `Node` argument (`Node?`) that is *required* (no default,
+/// e.g. `Node.insertBefore`'s `child`): WebIDL's operation-arity check for a
+/// non-optional parameter runs before any per-argument conversion, so a call
+/// that omits it outright is a `TypeError` regardless of the parameter's own
+/// nullable type -- distinct from an explicit `null`/`undefined` in that
+/// same position, which still converts to `None`, the same as
+/// [`arg_node_or_null`].
+pub(crate) fn arg_required_node_or_null(
+    args: &[JsValue],
+    i: usize,
+    context: &mut Context,
+) -> JsResult<Option<usize>> {
+    if args.len() <= i {
+        return Err(type_error("a required argument is missing"));
+    }
+    arg_node_or_null(args, i, context)
 }
 
 /// A fixed-message `Error` for a raikiri-dom mutation `Result<_, String>`

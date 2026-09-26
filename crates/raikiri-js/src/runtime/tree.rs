@@ -17,9 +17,9 @@ use super::collections::{CollectionSource, html_collection, node_list};
 use super::interfaces::{Members, wrap, wrap_optional};
 use super::node::{js_str, mark_dirty};
 use super::webidl::{
-    arg_node, arg_node_or_null, dom_string, node_index, this_character_data, this_child_node,
-    this_document, this_node, this_parent_node, this_processing_instruction, throw_dom_exception,
-    unreachable_mutation_error, with_state,
+    arg_node, arg_node_or_null, arg_required_node_or_null, dom_string, node_index,
+    this_character_data, this_child_node, this_document, this_node, this_parent_node,
+    this_processing_instruction, throw_dom_exception, unreachable_mutation_error, with_state,
 };
 
 /// Map a raikiri-dom mutation-validity failure to the `DOMException` it
@@ -313,7 +313,7 @@ fn set_node_value(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
 fn insert_before(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let parent = this_node(this, context)?;
     let node = arg_node(args, 0, context)?;
-    let before = arg_node_or_null(args, 1, context)?;
+    let before = arg_required_node_or_null(args, 1, context)?;
     let result = with_state(context, |s| {
         s.host.document_mut().pre_insert(parent, node, before)
     })?;
