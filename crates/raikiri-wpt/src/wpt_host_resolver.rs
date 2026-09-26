@@ -104,3 +104,6 @@ impl fmt::Display for WptHostResolverError {
 }
 
 impl std::error::Error for WptHostResolverError {}
+
+#[cfg(test)]
+mod tests;

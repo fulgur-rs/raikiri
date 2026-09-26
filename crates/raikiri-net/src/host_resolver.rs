@@ -92,3 +92,6 @@ impl<R: Resolver> Resolver for OverrideResolver<R> {
         Ok(resolved)
     }
 }
+
+#[cfg(test)]
+mod tests;

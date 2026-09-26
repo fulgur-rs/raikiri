@@ -714,7 +714,8 @@ fn a_trickling_tls_handshake_still_times_out_at_the_connect_timeout() {
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
     let port = listener.local_addr().unwrap().port();
-    thread::spawn(move || {
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let server = thread::spawn(move || {
         let Ok((mut stream, _)) = listener.accept() else {
             return;
         };
@@ -732,11 +733,18 @@ fn a_trickling_tls_handshake_still_times_out_at_the_connect_timeout() {
         if stream.write_all(&[0x16, 0x03, 0x03, 0x3E, 0x80]).is_err() {
             return;
         }
-        for _ in 0..200 {
+        // Keep trickling beyond the entire fetch budget. Closing after 200
+        // 50ms intervals races the client's 10s connect deadline and can
+        // produce ConnectionReset instead of exercising the timeout.
+        let deadline = Instant::now() + FETCH_TIMEOUT + CONNECT_TIMEOUT;
+        while Instant::now() < deadline {
             if stream.write_all(&[0u8]).is_err() {
                 return;
             }
-            thread::sleep(std::time::Duration::from_millis(50));
+            match done_rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                _ => return,
+            }
         }
     });
 
@@ -773,6 +781,9 @@ fn a_trickling_tls_handshake_still_times_out_at_the_connect_timeout() {
         .fetch(request)
         .expect_err("a trickling TLS server must still time out");
     let elapsed = start.elapsed();
+
+    let _ = done_tx.send(());
+    server.join().expect("trickling server thread");
 
     assert!(
         matches!(&err, NetworkError::Io(e) if e.kind() == std::io::ErrorKind::TimedOut),
