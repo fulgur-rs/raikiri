@@ -8,6 +8,15 @@ WPT_ROOT="$REPO_ROOT/target/wpt"
 WPT_VENV="$REPO_ROOT/target/wpt-venv"
 BROWSER_BINARY="$REPO_ROOT/target/debug/raikiri-wpt-browser"
 PYTHON_VERSION="3.14.7"
+RAIKIRI_WPT_TEST_TYPE="${RAIKIRI_WPT_TEST_TYPE:-reftest}"
+
+case "$RAIKIRI_WPT_TEST_TYPE" in
+  reftest | print-reftest) ;;
+  *)
+    echo "unsupported RAIKIRI_WPT_TEST_TYPE: $RAIKIRI_WPT_TEST_TYPE" >&2
+    exit 2
+    ;;
+esac
 
 cd "$REPO_ROOT"
 "$SCRIPT_DIR/fetch.sh"
@@ -40,4 +49,4 @@ exec "$WPT_VENV/bin/python" ./wpt \
   --binary "$BROWSER_BINARY" \
   --ssl-type none \
   "$@" \
-  --test-types reftest
+  --test-types "$RAIKIRI_WPT_TEST_TYPE"

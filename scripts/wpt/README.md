@@ -59,15 +59,21 @@ disabled:
 
 ```sh
 mise run wpt:reftest -- css/css-color/background-color-rgb-001.html
+mise run wpt:print-reftest -- css/css-page/page-box-001-print.html
 ```
+
+The print runner renders every paginated result to contiguous
+`page-0001.png`, `page-0002.png`, ... files, then returns the ordered page set
+to upstream wptrunner for page-count and per-page comparison. The temporary
+PNGs are removed after each comparison.
 
 The virtualenv is disposable build output under `target/`. uv selects the
 pinned Python 3.14.7 interpreter and downloads it when the host does not
 already provide that version. Updating the Python version requires changing
 `PYTHON_VERSION` in `run-raikiri.sh`.
 
-This prototype supports static HTTP screen reftests. It does not yet support
-HTTPS, print reftests, `reftest-wait`, or testharness tests.
+This prototype supports static HTTP screen and print reftests. It does not yet
+support HTTPS, `reftest-wait`, or testharness tests.
 
 ## Updating the pin
 
