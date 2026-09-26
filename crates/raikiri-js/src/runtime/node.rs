@@ -368,13 +368,14 @@ fn class_list(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
     Ok(object.into())
 }
 
-/// `Element.innerHTML` getter (DOM parsing and serialization §3.2): a live
-/// serialization of the element's children, computed fresh on every read
-/// from the current arena state rather than a retained source string. An
-/// error is only a corrupted document arena (an out-of-range or malformed
-/// template-fragment index) that a brand-checked `Element` index should
-/// never expose in practice, so it is treated as a host failure, the same
-/// as the setter's fragment-parse failure below.
+/// `Element.innerHTML` getter (HTML Standard §the innerHTML mixin: getter
+/// steps run the fragment serializing algorithm): a live serialization of
+/// the element's children, computed fresh on every read from the current
+/// arena state rather than a retained source string. An error is only a
+/// corrupted document arena (an out-of-range or malformed template-fragment
+/// index) that a brand-checked `Element` index should never expose in
+/// practice, so it is treated as a host failure, the same as the setter's
+/// fragment-parse failure below.
 fn inner_html(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     let result = with_state(context, |s| s.host.document().serialize_inner_html(index))?;
@@ -384,12 +385,12 @@ fn inner_html(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
     }
 }
 
-/// `Element.innerHTML` setter (DOM parsing and serialization §3.2): parses
-/// `value` as an HTML fragment through the host (context element's tag name
-/// and namespace, per the fragment parsing algorithm), then replaces the
-/// element's children with the parsed result. Targeting a `<template>`
-/// replaces its template contents instead of its direct children
-/// (`Document::replace_children_from`).
+/// `Element.innerHTML` setter (HTML Standard §the innerHTML mixin: setter
+/// steps run the fragment parsing algorithm with `this` as the context
+/// element): parses `value` as an HTML fragment through the host (context
+/// element's tag name and namespace), then replaces the element's children
+/// with the parsed result. Targeting a `<template>` replaces its template
+/// contents instead of its direct children (`Document::replace_children_from`).
 fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     let markup = dom_string(args, 0, context)?;
