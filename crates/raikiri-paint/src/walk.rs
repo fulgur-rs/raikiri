@@ -3854,7 +3854,11 @@ fn paint_document_impl(
                                 .get(node_id)
                                 .copied()
                                 .unwrap_or(false),
-                            cv.background_color.a != 0,
+                            cascade
+                                .background_color_specified
+                                .get(node_id)
+                                .copied()
+                                .unwrap_or(false),
                             cv.visibility != Visibility::Hidden,
                             warnings,
                         )
@@ -4532,7 +4536,7 @@ fn paint_inline_svg(
     inherited_color: [u8; 4],
     opacity: f32,
     host_opacity_is_specified: bool,
-    host_paints_root_background: bool,
+    host_controls_root_background: bool,
     visible: bool,
     warnings: &mut Vec<RenderWarning>,
 ) -> bool {
@@ -4566,7 +4570,7 @@ fn paint_inline_svg(
                     // paint group applies it with backgrounds and borders.
                     opacity,
                     neutralize_root_opacity: host_opacity_is_specified,
-                    host_paints_root_background,
+                    host_controls_root_background,
                     visible,
                 },
                 None,

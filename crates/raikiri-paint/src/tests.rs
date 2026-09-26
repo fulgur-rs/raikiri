@@ -2001,6 +2001,45 @@ fn html_inline_svg_root_background_stays_inside_the_opacity_group() {
     )));
 }
 
+#[test]
+fn html_inline_svg_host_transparent_background_suppresses_source_background() {
+    use raikiri_html::{ParseOptions, parse};
+
+    let html = br#"<html><head><style>svg { background-color: transparent !important }</style></head><body><svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><style>svg { background-color: blue }</style></svg></body></html>"#;
+    let options = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
+    let cascade = raikiri_html::build_cascaded(&uncascaded);
+    let mut doc = uncascaded.dom;
+    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new())
+        .expect("layout succeeds");
+
+    let mut scene = Scene::new();
+    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4);
+    let image = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::Fill(fill) => match &fill.brush {
+                anyrender::types::Paint::Image(brush) => Some(&brush.image),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("inline SVG produces an image fill");
+
+    assert!(
+        image
+            .data
+            .as_ref()
+            .chunks_exact(4)
+            .all(|rgba| rgba == [0, 0, 0, 0])
+    );
+}
+
 fn paint_inline_svg_with_external_image(style: &str) -> Vec<raikiri_traits::RenderWarning> {
     use raikiri_traits::{DecodedImage, ImagePixelSource};
     use std::sync::Arc;

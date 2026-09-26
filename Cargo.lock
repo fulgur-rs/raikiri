@@ -2444,6 +2444,7 @@ dependencies = [
  "raikiri-traits",
  "resvg",
  "roxmltree 0.21.1",
+ "simplecss",
  "usvg",
 ]
 

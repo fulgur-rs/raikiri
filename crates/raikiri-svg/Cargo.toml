@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 cssparser = { workspace = true }
+simplecss = { workspace = true }
 raikiri-traits = { workspace = true }
 resvg = { workspace = true }
 roxmltree = { workspace = true }

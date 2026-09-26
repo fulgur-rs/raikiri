@@ -9,6 +9,7 @@ use std::ops::Range;
 const DEFAULT_MAX_OUTPUT_BYTES: u64 = 32 * 1024 * 1024;
 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
 const XLINK_NAMESPACE: &str = "http://www.w3.org/1999/xlink";
+const XML_NAMESPACE: &str = "http://www.w3.org/XML/1998/namespace";
 
 /// Natural dimensions and ratio declared by an SVG source.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -42,9 +43,9 @@ pub struct SvgRootStyle {
     /// Neutralize the source root opacity when the caller composites the
     /// computed opacity around the SVG and its box decorations as one group.
     pub neutralize_root_opacity: bool,
-    /// The host paints the SVG root's `background-color` with its box, so omit
-    /// that background from the SVG viewport raster.
-    pub host_paints_root_background: bool,
+    /// The host controls the SVG root's `background-color`, including when it
+    /// computes to transparent, so omit the source background from the raster.
+    pub host_controls_root_background: bool,
     /// Whether the host computed visibility permits painting.
     pub visible: bool,
 }
@@ -55,7 +56,7 @@ impl Default for SvgRootStyle {
             inherited_color: [0, 0, 0, 255],
             opacity: 1.0,
             neutralize_root_opacity: false,
-            host_paints_root_background: false,
+            host_controls_root_background: false,
             visible: true,
         }
     }
@@ -204,13 +205,18 @@ impl SvgDocument {
             } else {
                 with_root_viewport_size(&self.source, width, height)?
             };
+            let source = if root_style.neutralize_root_opacity {
+                normalize_svg_opacity_cascade(&source)?
+            } else {
+                source
+            };
             let source =
-                if root_style.neutralize_root_opacity || root_style.host_paints_root_background {
+                if root_style.neutralize_root_opacity || root_style.host_controls_root_background {
                     with_root_style_overrides(
                         &source,
                         root_style.opacity,
                         root_style.neutralize_root_opacity,
-                        root_style.host_paints_root_background,
+                        root_style.host_controls_root_background,
                     )?
                 } else {
                     source
@@ -633,7 +639,7 @@ fn with_root_style_overrides(
     source: &str,
     inherited_root_opacity: f32,
     neutralize_root_opacity: bool,
-    host_paints_root_background: bool,
+    host_controls_root_background: bool,
 ) -> Result<String, SvgError> {
     let xml = roxmltree::Document::parse(source)
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
@@ -645,9 +651,8 @@ fn with_root_style_overrides(
     let mut stylesheet_properties = Vec::new();
     if neutralize_root_opacity {
         root_style_properties.push("opacity");
-        stylesheet_properties.push("opacity");
     }
-    if host_paints_root_background {
+    if host_controls_root_background {
         root_style_properties.extend(["background-color", "background"]);
         stylesheet_properties.extend(["background-color", "background"]);
         for attribute in root.attributes().filter(|attribute| {
@@ -753,6 +758,231 @@ fn with_root_style_overrides(
     Ok(result)
 }
 
+struct OpacityDeclaration {
+    value: String,
+    important: bool,
+    inline_style: bool,
+    specificity: [u8; 3],
+    source_order: usize,
+}
+
+fn normalize_svg_opacity_cascade(source: &str) -> Result<String, SvgError> {
+    // usvg resolves `inherit` while it builds its tree and copies the parent's
+    // `!important` bit with the inherited value. Materialize each element's
+    // winning declaration first, while keeping the literal `inherit` so it
+    // still resolves in each `<use>` clone.
+    let xml = roxmltree::Document::parse(source)
+        .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
+    let root = xml.root_element();
+    let stylesheets = xml
+        .descendants()
+        .filter(|node| node.has_tag_name("style"))
+        .filter_map(|node| {
+            if node
+                .attribute("type")
+                .is_some_and(|style_type| style_type != "text/css")
+            {
+                return None;
+            }
+            // Match usvg's stylesheet loader, which reads only `node.text()`.
+            let text = node.text()?.to_owned();
+            (!text.is_empty()).then_some((node, text))
+        })
+        .collect::<Vec<_>>();
+
+    let mut stylesheet = simplecss::StyleSheet::new();
+    for (_, text) in &stylesheets {
+        stylesheet.parse_more(text);
+    }
+
+    let mut edits = Vec::<(Range<usize>, String)>::new();
+    for node in root.descendants().filter(|node| {
+        node.is_element()
+            && node.tag_name().name() != "style"
+            && node
+                .tag_name()
+                .namespace()
+                .is_none_or(|namespace| namespace == SVG_NAMESPACE)
+    }) {
+        let winner = opacity_winner(node, &stylesheet);
+        for attribute in node.attributes().filter(|attribute| {
+            attribute.name() == "opacity"
+                && matches!(
+                    attribute.namespace(),
+                    None | Some(SVG_NAMESPACE) | Some(XLINK_NAMESPACE) | Some(XML_NAMESPACE)
+                )
+        }) {
+            edits.push((attribute.range(), String::new()));
+        }
+
+        let Some(winner) = winner else {
+            continue;
+        };
+        let existing_style = node.attribute("style");
+        let retained = existing_style.map_or_else(String::new, |style| {
+            strip_inline_style_properties(style, &["opacity"])
+        });
+        let style_value =
+            append_inline_declarations(&retained, &format!("opacity:{}", winner.value));
+        if let Some(attribute) = node
+            .attributes()
+            .find(|attribute| attribute.name() == "style")
+        {
+            edits.push((
+                attribute.range(),
+                format!("style=\"{}\"", escape_xml_attribute(&style_value)),
+            ));
+        } else {
+            let start = node.range().start;
+            let end = root_start_tag_end(source, start).ok_or_else(|| {
+                SvgError::InvalidDocument("unterminated SVG element tag".to_owned())
+            })?;
+            let insertion = if end > start && source.as_bytes()[end - 1] == b'/' {
+                end - 1
+            } else {
+                end
+            };
+            edits.push((
+                insertion..insertion,
+                format!(" style=\"{}\"", escape_xml_attribute(&style_value)),
+            ));
+        }
+    }
+
+    for (node, text) in &stylesheets {
+        let Some(rewritten) = strip_stylesheet_properties(text, &["opacity"]) else {
+            continue;
+        };
+        let range = xml_element_content_range(source, *node).ok_or_else(|| {
+            SvgError::InvalidDocument("unterminated SVG style element".to_owned())
+        })?;
+        edits.push((range, escape_xml_text(&rewritten)));
+    }
+
+    edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
+    let mut result = source.to_owned();
+    for (range, replacement) in edits {
+        result.replace_range(range, &replacement);
+    }
+    Ok(result)
+}
+
+fn opacity_winner(
+    node: roxmltree::Node<'_, '_>,
+    stylesheet: &simplecss::StyleSheet<'_>,
+) -> Option<OpacityDeclaration> {
+    let mut winner: Option<OpacityDeclaration> = None;
+
+    let mut consider = |value: &str,
+                        important: bool,
+                        inline_style: bool,
+                        specificity: [u8; 3],
+                        source_order: usize| {
+        let candidate = OpacityDeclaration {
+            value: value.to_owned(),
+            important,
+            inline_style,
+            specificity,
+            source_order,
+        };
+        let cascade_key = |declaration: &OpacityDeclaration| {
+            (
+                declaration.important,
+                declaration.inline_style,
+                declaration.specificity,
+                declaration.source_order,
+            )
+        };
+        if winner
+            .as_ref()
+            .is_none_or(|current| cascade_key(&candidate) > cascade_key(current))
+        {
+            winner = Some(candidate);
+        }
+    };
+
+    let mut source_order = 0;
+    for attribute in node.attributes().filter(|attribute| {
+        attribute.name() == "opacity"
+            && matches!(
+                attribute.namespace(),
+                None | Some(SVG_NAMESPACE) | Some(XLINK_NAMESPACE) | Some(XML_NAMESPACE)
+            )
+    }) {
+        consider(attribute.value(), false, false, [0, 0, 0], source_order);
+        source_order += 1;
+    }
+
+    let element = SvgCssElement(node);
+    // simplecss sorts by specificity and preserves source order for ties.
+    for rule in &stylesheet.rules {
+        let specificity = rule.selector.specificity();
+        let matches = rule.selector.matches(&element);
+        for declaration in &rule.declarations {
+            if matches && declaration.name == "opacity" {
+                consider(
+                    declaration.value,
+                    declaration.important,
+                    false,
+                    specificity,
+                    source_order,
+                );
+            }
+            source_order += 1;
+        }
+    }
+
+    if let Some(style) = node.attribute("style") {
+        for declaration in simplecss::DeclarationTokenizer::from(style) {
+            if declaration.name == "opacity" {
+                consider(
+                    declaration.value,
+                    declaration.important,
+                    true,
+                    [0, 0, 0],
+                    source_order,
+                );
+            }
+            source_order += 1;
+        }
+    }
+
+    winner
+}
+
+struct SvgCssElement<'a, 'input: 'a>(roxmltree::Node<'a, 'input>);
+
+impl simplecss::Element for SvgCssElement<'_, '_> {
+    fn parent_element(&self) -> Option<Self> {
+        self.0.parent_element().map(SvgCssElement)
+    }
+
+    fn prev_sibling_element(&self) -> Option<Self> {
+        self.0.prev_sibling_element().map(SvgCssElement)
+    }
+
+    fn has_local_name(&self, local_name: &str) -> bool {
+        self.0.tag_name().name() == local_name
+    }
+
+    fn attribute_matches(
+        &self,
+        local_name: &str,
+        operator: simplecss::AttributeOperator<'_>,
+    ) -> bool {
+        self.0
+            .attribute(local_name)
+            .is_some_and(|value| operator.matches(value))
+    }
+
+    fn pseudo_class_matches(&self, class: simplecss::PseudoClass<'_>) -> bool {
+        match class {
+            simplecss::PseudoClass::FirstChild => self.prev_sibling_element().is_none(),
+            _ => false,
+        }
+    }
+}
+
 struct ParsedCssDeclaration {
     name: String,
     raw: String,
@@ -761,7 +991,7 @@ struct ParsedCssDeclaration {
 
 struct ScopedStylesheetParser<'a> {
     source: &'a str,
-    scope_attribute: &'a str,
+    scope_attribute: Option<&'a str>,
     properties: &'a [&'a str],
     removals: Vec<Range<usize>>,
     scoped_rules: Vec<String>,
@@ -899,15 +1129,17 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedStylesheetParser<'_> {
             .iter()
             .map(|declaration| declaration.raw.clone())
             .collect::<Vec<_>>();
-        for selector in split_css_selector_list(&selector_list) {
-            let selector = selector.trim();
-            if selector.is_empty() {
-                continue;
-            }
-            if let Some(rule) =
-                scoped_property_rule(selector, self.scope_attribute, &raw_declarations)
-            {
-                self.scoped_rules.push(rule);
+        if let Some(scope_attribute) = self.scope_attribute {
+            for selector in split_css_selector_list(&selector_list) {
+                let selector = selector.trim();
+                if selector.is_empty() {
+                    continue;
+                }
+                if let Some(rule) =
+                    scoped_property_rule(selector, scope_attribute, &raw_declarations)
+                {
+                    self.scoped_rules.push(rule);
+                }
             }
         }
         Ok(())
@@ -944,6 +1176,18 @@ fn scope_stylesheet_properties(
     scope_attribute: &str,
     properties: &[&str],
 ) -> Option<String> {
+    rewrite_stylesheet_properties(source, Some(scope_attribute), properties)
+}
+
+fn strip_stylesheet_properties(source: &str, properties: &[&str]) -> Option<String> {
+    rewrite_stylesheet_properties(source, None, properties)
+}
+
+fn rewrite_stylesheet_properties(
+    source: &str,
+    scope_attribute: Option<&str>,
+    properties: &[&str],
+) -> Option<String> {
     let mut parser_state = ScopedStylesheetParser {
         source,
         scope_attribute,
@@ -956,7 +1200,9 @@ fn scope_stylesheet_properties(
     for _ in cssparser::StyleSheetParser::new(&mut parser, &mut parser_state).filter_map(Result::ok)
     {
     }
-    if parser_state.scoped_rules.is_empty() {
+    if parser_state.removals.is_empty()
+        || (scope_attribute.is_some() && parser_state.scoped_rules.is_empty())
+    {
         return None;
     }
 

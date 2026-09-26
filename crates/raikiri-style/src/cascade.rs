@@ -60,6 +60,10 @@ pub struct CascadeResult {
     /// `opacity` declaration for that node. Inline SVG painting uses this to
     /// decide whether source-root opacity belongs in the host paint group.
     pub opacity_specified: Vec<bool>,
+    /// Per-node flags indicating whether the cascade had an explicit
+    /// `background-color` declaration. Inline SVG painting uses this to omit
+    /// a source-root background when the host declaration computes transparent.
+    pub background_color_specified: Vec<bool>,
     /// Per-node flags identifying margin sides whose winning declaration came
     /// from an origin other than the user-agent stylesheet.  The paged DOM
     /// adapter uses this to distinguish an authored `margin: 8px` from the
@@ -229,6 +233,17 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
                 })
         })
         .collect::<Vec<_>>();
+    let background_color_specified = (0..dom.node_count())
+        .map(|index| {
+            cascaded
+                .candidates(StyleNodeId::new(index as u64))
+                .is_some_and(|candidates| {
+                    candidates
+                        .iter()
+                        .any(|(value, ..)| value.key() == PropertyKey::BackgroundColor)
+                })
+        })
+        .collect::<Vec<_>>();
 
     // Phase 2: inheritance walk。
     //
@@ -277,6 +292,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
         generation: NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed),
         computed,
         opacity_specified,
+        background_color_specified,
         non_ua_margin_sides,
         authored_writing_modes,
         page,
