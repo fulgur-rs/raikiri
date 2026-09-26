@@ -13,3 +13,6 @@ impl DevtoolSettings {
         self.highlight_hover = !self.highlight_hover;
     }
 }
+
+#[cfg(test)]
+mod tests;

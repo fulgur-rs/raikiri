@@ -123,3 +123,6 @@ pub struct FileDialogFilter {
     pub name: String,
     pub extensions: Vec<String>,
 }
+
+#[cfg(test)]
+mod tests;
