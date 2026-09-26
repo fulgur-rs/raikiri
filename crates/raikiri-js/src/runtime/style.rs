@@ -178,7 +178,8 @@ fn offset_width(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResul
 
 /// `Element.getBoundingClientRect` (CSSOM View §5): the border box, in the
 /// coordinate space this runtime uses (relative to the initial containing
-/// block; there is no scroll or transform to account for yet).
+/// block; there is no scroll or transform to account for yet), as a real
+/// `DOMRect`.
 pub(crate) fn get_bounding_client_rect(
     this: &JsValue,
     _: &[JsValue],
@@ -186,17 +187,7 @@ pub(crate) fn get_bounding_client_rect(
 ) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     let r = border_box(context, index)?;
-    Ok(ObjectInitializer::new(context)
-        .property(js_string!("x"), r.left, Attribute::all())
-        .property(js_string!("left"), r.left, Attribute::all())
-        .property(js_string!("y"), r.top, Attribute::all())
-        .property(js_string!("top"), r.top, Attribute::all())
-        .property(js_string!("right"), r.right, Attribute::all())
-        .property(js_string!("bottom"), r.bottom, Attribute::all())
-        .property(js_string!("width"), r.width, Attribute::all())
-        .property(js_string!("height"), r.height, Attribute::all())
-        .build()
-        .into())
+    Ok(super::geometry::new_dom_rect(context, r)?.into())
 }
 
 // ---- inline `style` object ------------------------------------------------

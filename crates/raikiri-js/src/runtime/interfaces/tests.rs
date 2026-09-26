@@ -2,7 +2,7 @@ use boa_engine::{Context, JsResult, JsValue};
 
 use super::super::DomRuntime;
 use super::super::test_host::StubHost;
-use super::{Members, interface};
+use super::{Members, illegal_constructor, interface};
 
 fn probe_get(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
     Ok(JsValue::from(1))
@@ -26,7 +26,16 @@ const PROBE: Members = Members {
 fn interface_members_become_prototype_accessors_and_operations() {
     let (host, ..) = StubHost::page();
     let mut rt = DomRuntime::new(host).unwrap();
-    interface(rt.context_mut(), "Probe", None, None, &[&PROBE]).unwrap();
+    interface(
+        rt.context_mut(),
+        "Probe",
+        None,
+        None,
+        &[&PROBE],
+        illegal_constructor,
+        0,
+    )
+    .unwrap();
     let check = "(() => { \
         const d = Object.getOwnPropertyDescriptor(Probe.prototype, 'value'); \
         const m = Probe.prototype.count; \
@@ -44,4 +53,69 @@ fn interface_members_become_prototype_accessors_and_operations() {
             && l.value === 2 && !l.writable && !l.enumerable && l.configurable; \
     })()";
     assert!(rt.evaluate(operation).unwrap().to_boolean());
+}
+
+fn ok(rt: &mut DomRuntime, src: &str) {
+    assert!(
+        rt.evaluate(src).unwrap().to_boolean(),
+        "expected true: {src}"
+    );
+}
+
+#[test]
+fn dom_exception_constructor_takes_message_and_name_with_defaults() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var x = new DOMException('m', 'NotFoundError'); \
+         x.name === 'NotFoundError' && x.message === 'm' && x.code === 8 && x instanceof Error",
+    );
+    ok(
+        &mut rt,
+        "new DOMException().name === 'Error' && new DOMException().message === '' \
+         && new DOMException().code === 0",
+    );
+    // Explicit `undefined` for either optional argument takes the same
+    // default as a genuinely missing one, per WebIDL optional-with-default
+    // conversion (not a plain `ToString(undefined)` = `"undefined"`).
+    ok(
+        &mut rt,
+        "var y = new DOMException(undefined, undefined); y.message === '' && y.name === 'Error'",
+    );
+}
+
+#[test]
+fn dom_exception_full_legacy_code_table_and_constants() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "new DOMException('', 'IndexSizeError').code === 1 \
+         && new DOMException('', 'InvalidStateError').code === 11 \
+         && new DOMException('', 'DataCloneError').code === 25 \
+         && new DOMException('', 'NoSuchNameError').code === 0",
+    );
+    ok(
+        &mut rt,
+        "DOMException.NOT_FOUND_ERR === 8 && DOMException.prototype.SYNTAX_ERR === 12 \
+         && DOMException.INUSE_ATTRIBUTE_ERR === 10 && DOMException.prototype.DATA_CLONE_ERR === 25",
+    );
+    ok(
+        &mut rt,
+        "(() => { \
+            const d = Object.getOwnPropertyDescriptor(DOMException, 'NOT_FOUND_ERR'); \
+            return d.enumerable && !d.writable && !d.configurable; \
+        })()",
+    );
+}
+
+#[test]
+fn dom_exception_requires_new() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "try { DOMException('m', 'Error'); false } catch (e) { e instanceof TypeError }",
+    );
 }

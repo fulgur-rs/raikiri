@@ -8,12 +8,15 @@ use std::rc::Rc;
 use boa_engine::{Context, JsObject, JsValue, Source};
 
 pub(crate) mod collections;
+pub(crate) mod events;
+pub(crate) mod geometry;
 pub mod host;
 pub(crate) mod indexed;
 pub(crate) mod interfaces;
 pub(crate) mod node;
 pub(crate) mod query;
 pub(crate) mod style;
+pub(crate) mod token_list;
 pub(crate) mod tree;
 pub(crate) mod webidl;
 
@@ -40,6 +43,11 @@ pub(crate) struct State {
     pub child_node_lists: HashMap<usize, JsObject>,
     /// Per-node `children` collections so `n.children === n.children`.
     pub children_collections: HashMap<usize, JsObject>,
+    /// Registered `EventTarget` listeners, keyed by node arena index; `None`
+    /// is the window/global object, which has no arena index of its own.
+    /// Dispatch is out of scope for this runtime -- only registration state
+    /// is kept.
+    pub listeners: HashMap<Option<usize>, Vec<events::Listener>>,
 }
 
 /// Shared handle to [`State`], stored in the Boa context's host data.
@@ -94,6 +102,7 @@ impl DomRuntime {
             class_lists: HashMap::new(),
             child_node_lists: HashMap::new(),
             children_collections: HashMap::new(),
+            listeners: HashMap::new(),
         };
         let mut context = Context::default();
         context.insert_data(Shared(Rc::new(RefCell::new(state))));

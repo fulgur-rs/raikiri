@@ -257,6 +257,126 @@ fn document_head_and_body_parent_element() {
 }
 
 #[test]
+fn create_element_ns_builds_a_foreign_element_and_reports_its_namespace() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); \
+         s.namespaceURI === 'http://www.w3.org/2000/svg' && s.localName === 'svg' \
+         && s.tagName === 'svg' && !(s instanceof HTMLElement) && s instanceof Element",
+    );
+}
+
+#[test]
+fn create_element_ns_with_the_html_namespace_matches_create_element() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "document.createElementNS('http://www.w3.org/1999/xhtml', 'div') instanceof HTMLElement",
+    );
+    // The HTML-namespace path allocates a template-contents fragment root,
+    // the same as `createElement('template')`.
+    ok(
+        &mut rt,
+        "var t = document.createElementNS('http://www.w3.org/1999/xhtml', 'template'); \
+         document.body.appendChild(t); t.innerHTML = 'x'; t.textContent === ''",
+    );
+}
+
+#[test]
+fn create_element_ns_rejects_an_invalid_qualified_name() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "try { document.createElementNS(null, '1x'); false } \
+         catch (e) { e.name === 'InvalidCharacterError' }",
+    );
+    ok(
+        &mut rt,
+        "try { document.createElementNS('urn:x', 'a:b:c'); false } \
+         catch (e) { e.name === 'InvalidCharacterError' }",
+    );
+}
+
+#[test]
+fn create_element_ns_null_namespace_element_is_not_html() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var n = document.createElementNS(null, 'thing'); \
+         n.namespaceURI === null && !(n instanceof HTMLElement) && n instanceof Element",
+    );
+    // An empty-string namespace normalizes to `null`, per "validate and
+    // extract"'s own first step.
+    ok(
+        &mut rt,
+        "document.createElementNS('', 'thing').namespaceURI === null",
+    );
+}
+
+#[test]
+fn create_element_ns_enforces_prefix_namespace_combinations() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "try { document.createElementNS(null, 'a:b'); false } \
+         catch (e) { e.name === 'NamespaceError' }",
+    );
+    ok(
+        &mut rt,
+        "try { document.createElementNS('urn:x', 'xml:b'); false } \
+         catch (e) { e.name === 'NamespaceError' }",
+    );
+    ok(
+        &mut rt,
+        "try { document.createElementNS('urn:x', 'xmlns:b'); false } \
+         catch (e) { e.name === 'NamespaceError' }",
+    );
+    ok(
+        &mut rt,
+        "try { document.createElementNS('http://www.w3.org/2000/xmlns/', 'b'); false } \
+         catch (e) { e.name === 'NamespaceError' }",
+    );
+    ok(
+        &mut rt,
+        "document.createElementNS('http://www.w3.org/XML/1998/namespace', 'xml:b') instanceof Element",
+    );
+}
+
+#[test]
+fn document_title_getter_normalizes_and_setter_creates_or_replaces() {
+    let mut rt = rt();
+    ok(&mut rt, "document.title === ''");
+    rt.evaluate("document.title = '  a   b ';").unwrap();
+    ok(
+        &mut rt,
+        "document.title === 'a b' && document.head.querySelector('title').textContent === '  a   b '",
+    );
+    // A second write replaces the same title element's text rather than
+    // creating another one.
+    rt.evaluate("document.title = 'c';").unwrap();
+    ok(
+        &mut rt,
+        "document.title === 'c' \
+         && document.head.querySelectorAll('title').length === 1",
+    );
+}
+
+#[test]
+fn document_title_getter_ignores_a_non_html_title_element() {
+    let (mut rt, body) = rt_with_body();
+    with_state(rt.context_mut(), |s| {
+        let doc = s.host.document_mut();
+        let svg_title = doc.create_detached_element("title").unwrap();
+        doc.set_element_namespace(svg_title, Some("http://www.w3.org/2000/svg".into()));
+        doc.append_child(body, svg_title).unwrap();
+        doc.append_text(svg_title, "not html");
+    })
+    .unwrap();
+    ok(&mut rt, "document.title === ''");
+}
+
+#[test]
 fn node_name_covers_every_kind() {
     let (mut rt, body) = rt_with_body();
     let k = other_kinds(&mut rt, body);
