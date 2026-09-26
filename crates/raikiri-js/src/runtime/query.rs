@@ -33,7 +33,8 @@ use boa_engine::{Context, JsResult, JsValue};
 use raikiri_dom::{Document, NodeKind};
 use raikiri_style::{SelectorQuery, StyleDom, StyleNodeId, StyleQuirksMode};
 
-use super::interfaces::{HTML_NS, Members, wrap, wrap_optional};
+use super::collections::{CollectionSource, html_collection, node_list};
+use super::interfaces::{HTML_NS, Members, wrap_optional};
 use super::node::{attribute, js_str, write_attribute};
 use super::webidl::{
     dom_string, this_document, this_element, this_non_element_parent_node, this_parent_node,
@@ -121,9 +122,7 @@ fn find_in_tree<T>(
 
 /// Every descendant element of `root` (in the same "never `root` itself"
 /// sense as [`find_in_tree`]) for which `pred` returns `true`, in tree
-/// order. The collections this runtime returns today are plain, static
-/// arrays snapshotted at call time; live collection objects that stay in
-/// sync with later mutations are not implemented.
+/// order. Live collections call this again on every access.
 pub(crate) fn descendants_matching(
     doc: &Document,
     root: usize,
@@ -137,24 +136,6 @@ pub(crate) fn descendants_matching(
         None
     });
     out
-}
-
-/// A static Array of node wrappers, in the given tree order. Named
-/// distinctly from [`element_collection`] (both build the same kind of
-/// value today) so that a later, live collection type can replace either
-/// one independently at this single call site.
-fn static_node_list(context: &mut Context, indices: Vec<usize>) -> JsResult<JsValue> {
-    let mut items = Vec::with_capacity(indices.len());
-    for index in indices {
-        items.push(wrap(context, index)?.into());
-    }
-    Ok(JsArray::from_iter(items, context).into())
-}
-
-/// A static Array of node wrappers for a `getElementsBy*` result. See
-/// [`static_node_list`].
-fn element_collection(context: &mut Context, indices: Vec<usize>) -> JsResult<JsValue> {
-    static_node_list(context, indices)
 }
 
 /// A parsed selector list, or a thrown `SyntaxError` `DOMException` (DOM
@@ -237,7 +218,7 @@ fn query_selector_all(
             query.matches_scoped(doc, StyleNodeId(e as u64), ancestors, scope)
         })
     })?;
-    static_node_list(context, found)
+    Ok(node_list(context, CollectionSource::Static(found))?.into())
 }
 
 pub(crate) const PARENT_NODE_QUERY_MEMBERS: Members = Members {
@@ -273,7 +254,7 @@ fn tag_name_matches(doc: &Document, node: usize, query: &str, query_lower: &str)
         })
 }
 
-fn elements_by_tag_name(doc: &Document, root: usize, query: &str) -> Vec<usize> {
+pub(crate) fn elements_by_tag_name(doc: &Document, root: usize, query: &str) -> Vec<usize> {
     if query == "*" {
         return descendants_matching(doc, root, |_, _| true);
     }
@@ -306,8 +287,18 @@ fn attribute_str<'a>(doc: &'a Document, node: usize, name: &str) -> &'a str {
     doc.element_attribute(node, name).unwrap_or("")
 }
 
-fn elements_by_class_name(doc: &Document, root: usize, query: &str) -> Vec<usize> {
-    let tokens: Vec<String> = query.split_ascii_whitespace().map(str::to_owned).collect();
+/// The class tokens of a `getElementsByClassName` argument.
+fn class_tokens(query: &str) -> Vec<String> {
+    query.split_ascii_whitespace().map(str::to_owned).collect()
+}
+
+/// Descendant elements of `root` carrying every one of `tokens`; an empty
+/// token list matches nothing.
+pub(crate) fn elements_with_class_tokens(
+    doc: &Document,
+    root: usize,
+    tokens: &[String],
+) -> Vec<usize> {
     if tokens.is_empty() {
         return Vec::new();
     }
@@ -319,7 +310,7 @@ fn elements_by_class_name(doc: &Document, root: usize, query: &str) -> Vec<usize
     // named explicitly here to reach the value this comparison needs.
     let quirks = StyleDom::quirks_mode(doc) == StyleQuirksMode::Quirks;
     descendants_matching(doc, root, |node, _| {
-        class_name_matches(doc, node, &tokens, quirks)
+        class_name_matches(doc, node, tokens, quirks)
     })
 }
 
@@ -329,10 +320,8 @@ fn get_elements_by_tag_name_from(
     args: &[JsValue],
 ) -> JsResult<JsValue> {
     let query = dom_string(args, 0, context)?;
-    let found = with_state(context, |s| {
-        elements_by_tag_name(s.host.document(), index, &query)
-    })?;
-    element_collection(context, found)
+    let collection = html_collection(context, CollectionSource::TagName(index, query))?;
+    Ok(collection.into())
 }
 
 fn get_elements_by_class_name_from(
@@ -340,11 +329,9 @@ fn get_elements_by_class_name_from(
     index: usize,
     args: &[JsValue],
 ) -> JsResult<JsValue> {
-    let query = dom_string(args, 0, context)?;
-    let found = with_state(context, |s| {
-        elements_by_class_name(s.host.document(), index, &query)
-    })?;
-    element_collection(context, found)
+    let tokens = class_tokens(&dom_string(args, 0, context)?);
+    let collection = html_collection(context, CollectionSource::ClassNames(index, tokens))?;
+    Ok(collection.into())
 }
 
 fn document_get_elements_by_tag_name(

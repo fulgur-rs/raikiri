@@ -10,7 +10,7 @@
 //! - <https://dom.spec.whatwg.org/#interface-processinginstruction>
 //! - <https://dom.spec.whatwg.org/#converting-nodes-into-a-node>
 
-use boa_engine::object::builtins::JsArray;
+use super::collections::{CollectionSource, html_collection, node_list};
 use boa_engine::{Context, JsError, JsResult, JsValue};
 use raikiri_dom::{DomMutationError, NodeKind};
 
@@ -149,20 +149,16 @@ pub(crate) fn replace_all(
 
 // ---- Node: tree navigation and mutation --------------------------------
 
+/// `childNodes`: one live `NodeList` per node, so that
+/// `node.childNodes === node.childNodes`.
 fn child_nodes(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_node(this, context)?;
-    let children = with_state(context, |s| {
-        s.host
-            .document()
-            .get_node(index)
-            .map(|n| n.children.clone())
-            .unwrap_or_default()
-    })?;
-    let mut items = Vec::with_capacity(children.len());
-    for child in children {
-        items.push(wrap(context, child)?.into());
+    if let Some(existing) = with_state(context, |s| s.child_node_lists.get(&index).cloned())? {
+        return Ok(existing.into());
     }
-    Ok(JsArray::from_iter(items, context).into())
+    let list = node_list(context, CollectionSource::ChildNodes(index))?;
+    with_state(context, |s| s.child_node_lists.insert(index, list.clone()))?;
+    Ok(list.into())
 }
 
 fn first_child(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
@@ -406,7 +402,7 @@ pub(crate) const NODE_TREE_MEMBERS: Members = Members {
 // ---- ParentNode mixin (Document, DocumentFragment, Element) -----------
 
 /// The Element children of `parent`, in document order.
-fn element_children_of(doc: &raikiri_dom::Document, parent: usize) -> Vec<usize> {
+pub(crate) fn element_children_of(doc: &raikiri_dom::Document, parent: usize) -> Vec<usize> {
     doc.get_node(parent)
         .map(|n| {
             n.children
@@ -421,14 +417,18 @@ fn element_children_of(doc: &raikiri_dom::Document, parent: usize) -> Vec<usize>
         .unwrap_or_default()
 }
 
+/// `children`: one live `HTMLCollection` per node, so that
+/// `node.children === node.children`.
 fn children(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_parent_node(this, context)?;
-    let elements = with_state(context, |s| element_children_of(s.host.document(), index))?;
-    let mut items = Vec::with_capacity(elements.len());
-    for element in elements {
-        items.push(wrap(context, element)?.into());
+    if let Some(existing) = with_state(context, |s| s.children_collections.get(&index).cloned())? {
+        return Ok(existing.into());
     }
-    Ok(JsArray::from_iter(items, context).into())
+    let collection = html_collection(context, CollectionSource::Children(index))?;
+    with_state(context, |s| {
+        s.children_collections.insert(index, collection.clone())
+    })?;
+    Ok(collection.into())
 }
 
 fn first_element_child(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {

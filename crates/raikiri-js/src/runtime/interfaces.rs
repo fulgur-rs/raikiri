@@ -47,6 +47,8 @@ pub(crate) struct Protos {
     pub document: JsObject,
     pub document_fragment: JsObject,
     pub dom_exception: JsObject,
+    pub node_list: JsObject,
+    pub html_collection: JsObject,
 }
 
 /// The prototypes registered by [`install`].
@@ -222,6 +224,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     use super::query;
     use super::style::{self, HTML_ELEMENT_MEMBERS};
     use super::tree;
+    use super::{collections, indexed};
     let event_target = interface(context, "EventTarget", None, None, &[&NO_MEMBERS])?;
     let node_members = [&node::NODE_MEMBERS, &tree::NODE_TREE_MEMBERS];
     let node_i = derived(context, "Node", &event_target, &node_members)?;
@@ -281,6 +284,21 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &[&DOM_EXCEPTION],
     );
     let dom_exception = dom_exception_result?;
+    let node_list_members = [&collections::NODE_LIST_MEMBERS];
+    let node_list = interface(context, "NodeList", None, None, &node_list_members)?;
+    let html_collection_members = [&collections::HTML_COLLECTION_MEMBERS];
+    let html_collection_result = interface(
+        context,
+        "HTMLCollection",
+        None,
+        None,
+        &html_collection_members,
+    );
+    let html_collection = html_collection_result?;
+    let (node_list_proto, html_collection_proto) =
+        (&node_list.prototype, &html_collection.prototype);
+    collections::install_iteration(context, node_list_proto, html_collection_proto)?;
+    indexed::install(context)?;
     context.insert_data(Protos {
         event_target: event_target.prototype,
         node: node_i.prototype,
@@ -293,6 +311,8 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         document: document.prototype,
         document_fragment: document_fragment.prototype,
         dom_exception: dom_exception.prototype,
+        node_list: node_list.prototype,
+        html_collection: html_collection.prototype,
     });
 
     let global = context.global_object();
