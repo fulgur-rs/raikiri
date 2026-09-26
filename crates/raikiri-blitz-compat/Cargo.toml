@@ -1,6 +1,6 @@
 [package]
 name = "raikiri-blitz-compat"
-version = "0.1.0"
+version = "0.1.1"
 description = "blitz-compatible type shape layer for raikiri consumers (blitz_html::HtmlDocument / blitz_dom::Node compat を実装予定)"
 edition.workspace = true
 rust-version.workspace = true

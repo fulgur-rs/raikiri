@@ -1,6 +1,6 @@
 [package]
 name = "raikiri"
-version = "0.1.0"
+version = "0.1.1"
 description = "Umbrella crate for raikiri: in-repo dogfooding APIs (html_to_png / PageScene / PageDrawables) and re-exports of all sub-crates"
 edition.workspace = true
 rust-version.workspace = true

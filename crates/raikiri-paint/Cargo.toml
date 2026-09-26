@@ -1,6 +1,6 @@
 [package]
 name = "raikiri-paint"
-version = "0.1.0"
+version = "0.1.1"
 description = "PageFragment → anyrender::PaintScene walker for raikiri (VRT and debug output)"
 edition.workspace = true
 rust-version.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "raikiri-html"
-version = "0.1.0"
+version = "0.1.1"
 description = "HTML document entry points for raikiri: html5ever parsing, cascade assembly, resource handoff, and the page-streaming render entry point"
 edition.workspace = true
 rust-version.workspace = true
