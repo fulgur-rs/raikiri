@@ -43,6 +43,7 @@ pub(crate) struct Protos {
     pub character_data: JsObject,
     pub text: JsObject,
     pub comment: JsObject,
+    pub processing_instruction: JsObject,
     pub document: JsObject,
     pub document_fragment: JsObject,
     pub dom_exception: JsObject,
@@ -132,6 +133,12 @@ struct Interface {
 /// Build interface `name`, define its members, and expose the interface
 /// object on the global object.
 ///
+/// `members` is a list rather than a single [`Members`] so that an
+/// interface combining its own members with one or more WebIDL mixins
+/// (e.g. `Element` = its own members + `ParentNode` + `ChildNode` +
+/// `NonDocumentTypeChildNode`) can install each `Members` table in turn
+/// instead of duplicating them into one combined constant.
+///
 /// `parent_prototype` becomes the `[[Prototype]]` of the new prototype object
 /// and `parent_constructor` the `[[Prototype]]` of the interface object
 /// (WebIDL §3.7.1, §3.7.3); either defaults to the ordinary intrinsic.
@@ -140,16 +147,16 @@ fn interface(
     name: &str,
     parent_prototype: Option<&JsObject>,
     parent_constructor: Option<&JsObject>,
-    members: &Members,
+    members: &[&Members],
 ) -> JsResult<Interface> {
     let getters: Vec<_> = members
-        .getters
         .iter()
+        .flat_map(|m| m.getters.iter())
         .map(|&(n, f)| Ok((n, function(context, &format!("get {n}"), 0, f)?)))
         .collect::<JsResult<_>>()?;
     let accessors: Vec<_> = members
-        .accessors
         .iter()
+        .flat_map(|m| m.accessors.iter())
         .map(|&(n, g, s)| {
             let getter = function(context, &format!("get {n}"), 0, g)?;
             let setter = function(context, &format!("set {n}"), 1, s)?;
@@ -159,8 +166,8 @@ fn interface(
     // WebIDL §3.7.6: operations are writable, enumerable, configurable data
     // properties on the interface prototype.
     let operations: Vec<_> = members
-        .methods
         .iter()
+        .flat_map(|m| m.methods.iter())
         .map(|&(n, length, f)| Ok((n, function(context, n, length, f)?)))
         .collect::<JsResult<_>>()?;
     let mut builder =
@@ -198,7 +205,7 @@ fn derived(
     context: &mut Context,
     name: &str,
     parent: &Interface,
-    members: &Members,
+    members: &[&Members],
 ) -> JsResult<Interface> {
     interface(
         context,
@@ -213,19 +220,70 @@ fn derived(
 pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     use super::node;
     use super::style::{self, HTML_ELEMENT_MEMBERS};
-    let event_target = interface(context, "EventTarget", None, None, &NO_MEMBERS)?;
-    let node_i = derived(context, "Node", &event_target, &node::NODE_MEMBERS)?;
-    let element = derived(context, "Element", &node_i, &node::ELEMENT_MEMBERS)?;
-    let character_data = derived(context, "CharacterData", &node_i, &NO_MEMBERS)?;
-    let document = derived(context, "Document", &node_i, &node::DOCUMENT_MEMBERS)?;
-    let document_fragment = derived(context, "DocumentFragment", &node_i, &NO_MEMBERS)?;
-    let html_element = derived(context, "HTMLElement", &element, &HTML_ELEMENT_MEMBERS)?;
-    let text = derived(context, "Text", &character_data, &NO_MEMBERS)?;
-    let comment = derived(context, "Comment", &character_data, &NO_MEMBERS)?;
+    use super::tree;
+    let event_target = interface(context, "EventTarget", None, None, &[&NO_MEMBERS])?;
+    let node_i = derived(
+        context,
+        "Node",
+        &event_target,
+        &[&node::NODE_MEMBERS, &tree::NODE_TREE_MEMBERS],
+    )?;
+    let element = derived(
+        context,
+        "Element",
+        &node_i,
+        &[
+            &node::ELEMENT_MEMBERS,
+            &tree::PARENT_NODE_MEMBERS,
+            &tree::CHILD_NODE_MEMBERS,
+            &tree::NON_DOCUMENT_TYPE_CHILD_NODE_MEMBERS,
+        ],
+    )?;
+    let character_data = derived(
+        context,
+        "CharacterData",
+        &node_i,
+        &[
+            &tree::CHARACTER_DATA_MEMBERS,
+            &tree::CHILD_NODE_MEMBERS,
+            &tree::NON_DOCUMENT_TYPE_CHILD_NODE_MEMBERS,
+        ],
+    )?;
+    let document = derived(
+        context,
+        "Document",
+        &node_i,
+        &[
+            &node::DOCUMENT_MEMBERS,
+            &tree::PARENT_NODE_MEMBERS,
+            &tree::DOCUMENT_CREATE_MEMBERS,
+        ],
+    )?;
+    let document_fragment = derived(
+        context,
+        "DocumentFragment",
+        &node_i,
+        &[&tree::PARENT_NODE_MEMBERS],
+    )?;
+    let html_element = derived(context, "HTMLElement", &element, &[&HTML_ELEMENT_MEMBERS])?;
+    let text = derived(context, "Text", &character_data, &[&NO_MEMBERS])?;
+    let comment = derived(context, "Comment", &character_data, &[&NO_MEMBERS])?;
+    let processing_instruction = derived(
+        context,
+        "ProcessingInstruction",
+        &character_data,
+        &[&tree::PROCESSING_INSTRUCTION_MEMBERS],
+    )?;
     // DOMException.prototype inherits Error.prototype (WebIDL §3.14.1), but
     // the interface object itself is an ordinary function.
     let error = context.intrinsics().constructors().error().prototype();
-    let dom_exception = interface(context, "DOMException", Some(&error), None, &DOM_EXCEPTION)?;
+    let dom_exception = interface(
+        context,
+        "DOMException",
+        Some(&error),
+        None,
+        &[&DOM_EXCEPTION],
+    )?;
     context.insert_data(Protos {
         event_target: event_target.prototype,
         node: node_i.prototype,
@@ -234,6 +292,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         character_data: character_data.prototype,
         text: text.prototype,
         comment: comment.prototype,
+        processing_instruction: processing_instruction.prototype,
         document: document.prototype,
         document_fragment: document_fragment.prototype,
         dom_exception: dom_exception.prototype,
@@ -264,6 +323,7 @@ fn prototype_for(context: &mut Context, index: usize) -> JsResult<JsObject> {
         Some(NodeKind::Element) => p.element.clone(),
         Some(NodeKind::Text) => p.text.clone(),
         Some(NodeKind::Comment) => p.comment.clone(),
+        Some(NodeKind::ProcessingInstruction) => p.processing_instruction.clone(),
         Some(NodeKind::Document) => p.document.clone(),
         Some(NodeKind::DocumentFragment) => p.document_fragment.clone(),
         Some(_) => p.node.clone(),

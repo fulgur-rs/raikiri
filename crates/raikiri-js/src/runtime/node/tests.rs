@@ -334,9 +334,8 @@ fn node_name_covers_every_kind() {
     ok(&mut rt, "document.nodeName === '#document'");
     ok(&mut rt, "text.nodeName === '#text'");
     ok(&mut rt, "comment.nodeName === '#comment'");
-    // No dedicated `ProcessingInstruction` interface (and its `target`
-    // member) exists yet; the generic `Node.nodeName` fallback is `''`.
-    ok(&mut rt, "pi.nodeName === ''");
+    // A ProcessingInstruction's `nodeName` is its target, not a fixed string.
+    ok(&mut rt, "pi.nodeName === 'target'");
     ok(&mut rt, "fragment.nodeName === '#document-fragment'");
     // A non-HTML-namespace element's tag name is not uppercased.
     ok(&mut rt, "svg.nodeName === 'svg'");

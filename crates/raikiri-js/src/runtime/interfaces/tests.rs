@@ -26,7 +26,7 @@ const PROBE: Members = Members {
 fn interface_members_become_prototype_accessors_and_operations() {
     let (host, ..) = StubHost::page();
     let mut rt = DomRuntime::new(host).unwrap();
-    interface(rt.context_mut(), "Probe", None, None, &PROBE).unwrap();
+    interface(rt.context_mut(), "Probe", None, None, &[&PROBE]).unwrap();
     let check = "(() => { \
         const d = Object.getOwnPropertyDescriptor(Probe.prototype, 'value'); \
         const m = Probe.prototype.count; \

@@ -198,7 +198,7 @@ fn wrappers_pick_the_interface_of_their_node_kind() {
     ));
     assert!(eval_bool(
         &mut rt,
-        "Object.getPrototypeOf(pi) === Node.prototype && pi.nodeType === 7"
+        "pi instanceof ProcessingInstruction && pi instanceof CharacterData && pi.nodeType === 7"
     ));
     assert!(eval_bool(
         &mut rt,

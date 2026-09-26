@@ -11,6 +11,7 @@ pub mod host;
 pub(crate) mod interfaces;
 pub(crate) mod node;
 pub(crate) mod style;
+pub(crate) mod tree;
 pub(crate) mod webidl;
 
 #[cfg(test)]

@@ -17,8 +17,11 @@ pub(crate) fn dom_string(args: &[JsValue], i: usize, context: &mut Context) -> J
         .to_std_string_escaped())
 }
 
-/// The arena index behind a node wrapper, if `value` is one.
-fn brand(value: &JsValue) -> Option<usize> {
+/// The arena index behind a node wrapper, if `value` is one. Not an error
+/// by itself -- callers that accept a mix of `Node` and non-`Node`
+/// arguments (DOM §4.2.6 "convert nodes into a node") use this to tell them
+/// apart before deciding how to convert each one.
+pub(crate) fn node_index(value: &JsValue) -> Option<usize> {
     value
         .as_object()?
         .downcast_ref::<NodeHandle>()
@@ -38,7 +41,7 @@ fn kind_of(context: &mut Context, index: usize) -> JsResult<NodeKind> {
 
 /// Brand check for `Node` members.
 pub(crate) fn this_node(this: &JsValue, _context: &mut Context) -> JsResult<usize> {
-    brand(this).ok_or_else(|| type_error("'this' is not a Node"))
+    node_index(this).ok_or_else(|| type_error("'this' is not a Node"))
 }
 
 /// Brand check for `Element` members.
@@ -59,11 +62,74 @@ pub(crate) fn this_document(this: &JsValue, context: &mut Context) -> JsResult<u
     }
 }
 
+/// Brand check for the `ParentNode` mixin (Document, DocumentFragment,
+/// Element).
+pub(crate) fn this_parent_node(this: &JsValue, context: &mut Context) -> JsResult<usize> {
+    let index = this_node(this, context)?;
+    match kind_of(context, index)? {
+        NodeKind::Document | NodeKind::DocumentFragment | NodeKind::Element => Ok(index),
+        _ => Err(type_error("'this' does not implement ParentNode")),
+    }
+}
+
+/// Brand check for the `ChildNode` / `NonDocumentTypeChildNode` mixins
+/// (Element, and every `CharacterData` interface: Text, Comment,
+/// ProcessingInstruction).
+pub(crate) fn this_child_node(this: &JsValue, context: &mut Context) -> JsResult<usize> {
+    let index = this_node(this, context)?;
+    match kind_of(context, index)? {
+        NodeKind::Element
+        | NodeKind::Text
+        | NodeKind::Comment
+        | NodeKind::ProcessingInstruction => Ok(index),
+        _ => Err(type_error("'this' does not implement ChildNode")),
+    }
+}
+
+/// Brand check for `CharacterData` members (Text, Comment,
+/// ProcessingInstruction).
+pub(crate) fn this_character_data(this: &JsValue, context: &mut Context) -> JsResult<usize> {
+    let index = this_node(this, context)?;
+    match kind_of(context, index)? {
+        NodeKind::Text | NodeKind::Comment | NodeKind::ProcessingInstruction => Ok(index),
+        _ => Err(type_error("'this' is not a CharacterData node")),
+    }
+}
+
+/// Brand check for `ProcessingInstruction` members.
+pub(crate) fn this_processing_instruction(
+    this: &JsValue,
+    context: &mut Context,
+) -> JsResult<usize> {
+    let index = this_node(this, context)?;
+    match kind_of(context, index)? {
+        NodeKind::ProcessingInstruction => Ok(index),
+        _ => Err(type_error("'this' is not a ProcessingInstruction")),
+    }
+}
+
 /// A `Node` argument (WebIDL interface-type conversion).
 pub(crate) fn arg_node(args: &[JsValue], i: usize, _context: &mut Context) -> JsResult<usize> {
     args.get(i)
-        .and_then(brand)
+        .and_then(node_index)
         .ok_or_else(|| type_error("argument is not a Node"))
+}
+
+/// A nullable `Node` argument (`Node?`): a missing argument, `null`, and
+/// `undefined` all convert to `None`; anything else must be a `Node`
+/// wrapper or this throws `TypeError`, the same as [`arg_node`].
+pub(crate) fn arg_node_or_null(
+    args: &[JsValue],
+    i: usize,
+    _context: &mut Context,
+) -> JsResult<Option<usize>> {
+    match args.get(i) {
+        None => Ok(None),
+        Some(v) if v.is_null() || v.is_undefined() => Ok(None),
+        Some(v) => node_index(v)
+            .map(Some)
+            .ok_or_else(|| type_error("argument is not a Node")),
+    }
 }
 
 /// Create a `DOMException` with the given name and return it as a JS error.
