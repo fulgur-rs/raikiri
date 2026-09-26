@@ -128,7 +128,7 @@ fn sink_failure_stops_before_completion() {
         &mut sink,
     )
     .expect_err("sink failure should be terminal");
-    assert!(matches!(err, raikiri::RenderError::Sink(_)));
+    assert!(matches!(err, raikiri::RenderError::Observer(_)));
     assert!(sink.summary.is_none());
 }
 
@@ -254,7 +254,7 @@ fn observer_failure_is_a_structural_sink_error_and_skips_completion() {
     )
     .expect_err("observer failure should be terminal");
 
-    assert!(matches!(err, raikiri::RenderError::Sink(_)));
+    assert!(matches!(err, raikiri::RenderError::Observer(_)));
     assert_eq!(sink.pages.len(), 1, "page is accepted before its events");
     assert!(sink.summary.is_none());
 }

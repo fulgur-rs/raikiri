@@ -718,8 +718,8 @@ impl<'r, 'a> RenderOptions<'r, 'a> {
 /// layout, before every page, and before completion. Aborted renders return
 /// without calling [`RenderSink::finish_render`]. If the bounded page-geometry
 /// schedule does not converge, [`RenderError::PageGeometryDidNotConverge`]
-/// is returned before any page is emitted. Observer I/O failures are returned
-/// as [`RenderError::Sink`]; a page may already have been accepted and
+/// is returned before any page is emitted. Sink and observer I/O failures are returned
+/// as [`RenderError::Observer`]; a page may already have been accepted and
 /// `finish_render` is skipped. Successful renders call
 /// [`RenderSink::finish_render`] exactly once.
 pub fn render_streaming(
@@ -774,13 +774,15 @@ pub fn render_streaming(
             });
         }
         let page_index = page.page_index;
-        sink.accept_page(page).map_err(RenderError::Sink)?;
+        sink.accept_page(page).map_err(RenderError::Observer)?;
         if let (Some(observer), Some(events)) = (
             page_observer.as_deref_mut(),
             events_by_page.remove(&page_index),
         ) {
             for event in events {
-                observer.observe_event(event).map_err(RenderError::Sink)?;
+                observer
+                    .observe_event(event)
+                    .map_err(RenderError::Observer)?;
             }
         }
         emitted_pages = emitted_pages.saturating_add(1);
@@ -799,7 +801,7 @@ pub fn render_streaming(
         warnings: out.warnings,
     };
     sink.finish_render(summary.clone())
-        .map_err(RenderError::Sink)?;
+        .map_err(RenderError::Observer)?;
     Ok(Completed(summary))
 }
 
@@ -1076,7 +1078,7 @@ pub(crate) fn run_pipeline(
         {
             property_observer
                 .observe_event(event)
-                .map_err(RenderError::Sink)?;
+                .map_err(RenderError::Observer)?;
         }
     }
 

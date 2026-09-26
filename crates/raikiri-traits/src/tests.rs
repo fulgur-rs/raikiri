@@ -789,3 +789,11 @@ fn layout_config_media_defaults_and_builder() {
     assert_eq!(config.media_context.viewport_width(), 261);
     assert_eq!(config.media_context.viewport_height(), 161);
 }
+
+#[test]
+fn observer_error_preserves_source() {
+    use std::error::Error;
+    let error = RenderError::Observer(std::io::Error::other("observer failed"));
+    assert_eq!(error.source().unwrap().to_string(), "observer failed");
+    assert!(error.to_string().contains("Observer"));
+}

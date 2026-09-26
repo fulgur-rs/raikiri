@@ -268,7 +268,7 @@ fn layout_returns_observer_errors() {
     )
     .err()
     .expect("observer error");
-    assert!(matches!(err, RenderError::Sink(_)));
+    assert!(matches!(err, RenderError::Observer(_)));
 }
 
 #[test]

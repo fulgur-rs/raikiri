@@ -183,7 +183,7 @@ fn explicit_none_is_a_neutral_value_and_observer_errors_are_structured() {
         &mut sink,
     )
     .expect_err("observer failure must stop the render");
-    assert!(matches!(error, raikiri::RenderError::Sink(_)));
+    assert!(matches!(error, raikiri::RenderError::Observer(_)));
     assert!(sink.pages.is_empty());
     assert!(sink.summary.is_none());
 

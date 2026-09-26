@@ -52,8 +52,10 @@ pub enum RenderError {
         /// 観測された実 value。
         actual: u64,
     },
-    /// Consumer の sink method (accept_page / finish_render) が Err を返した。
-    Sink(std::io::Error),
+    /// A consumer property observer returned an IO error.
+    /// The page-streaming entry point also uses this variant for sink and
+    /// page-event observer errors.
+    Observer(std::io::Error),
     /// Config 不整合 (BatchConfig.initial_registry が不正 等)。
     Configuration(String),
     /// target-* が `max_target_iterations` 内に収束しなかった (round 6 review #5
@@ -104,7 +106,7 @@ impl std::fmt::Display for RenderError {
                     "Render limit exceeded: {kind:?} (limit={limit}, actual={actual})"
                 )
             }
-            Self::Sink(_) => write!(f, "Sink returned I/O error"),
+            Self::Observer(_) => write!(f, "Observer returned I/O error"),
             Self::Configuration(msg) => write!(f, "Configuration error: {msg}"),
             Self::TargetDidNotConverge { iterations } => {
                 write!(f, "target-* did not converge in {iterations} iterations")
@@ -138,7 +140,7 @@ impl std::error::Error for RenderError {
             Self::Resolver(e) => Some(e),
             Self::Network(e) => Some(e),
             Self::Policy(v) => Some(&**v),
-            Self::Sink(e) | Self::Io(e) => Some(e),
+            Self::Observer(e) | Self::Io(e) => Some(e),
             Self::LimitExceeded { .. }
             | Self::Configuration(_)
             | Self::TargetDidNotConverge { .. }
@@ -492,57 +494,4 @@ impl std::fmt::Display for LayoutError {
 impl std::error::Error for LayoutError {}
 
 #[cfg(test)]
-mod unimplemented_variant_tests {
-    use super::*;
-
-    #[test]
-    fn unimplemented_display_includes_feature_and_hint() {
-        let err = RenderError::Unimplemented {
-            feature: "plan",
-            migration_hint: "pagination 実装後に populate予定",
-        };
-        let s = format!("{err}");
-        assert!(
-            s.contains("plan"),
-            "display must include feature: got {s:?}"
-        );
-        assert!(
-            s.contains("pagination"),
-            "display must include hint: got {s:?}"
-        );
-        assert!(
-            s.contains("not implemented"),
-            "display must include 'not implemented': got {s:?}"
-        );
-    }
-
-    #[test]
-    fn unimplemented_source_is_none() {
-        use std::error::Error;
-        let err = RenderError::Unimplemented {
-            feature: "render_streaming",
-            migration_hint: "hint",
-        };
-        assert!(err.source().is_none(), "Unimplemented has no inner cause");
-    }
-
-    #[test]
-    fn page_geometry_nonconvergence_is_structured_and_terminal() {
-        use std::error::Error;
-
-        let err = RenderError::PageGeometryDidNotConverge { iterations: 3 };
-        assert_eq!(
-            err.to_string(),
-            "page geometry did not converge in 3 iterations"
-        );
-        assert!(err.source().is_none());
-    }
-
-    #[test]
-    fn layout_error_resolver_variant_converts_to_render_error_resolver() {
-        let re = ResolverError::Decode("bad PNG".into());
-        let le = LayoutError::Resolver(re);
-        let render_err: RenderError = le.into();
-        assert!(matches!(render_err, RenderError::Resolver(_)));
-    }
-}
+mod tests;
