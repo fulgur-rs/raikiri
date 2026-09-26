@@ -397,11 +397,16 @@ pub(crate) fn install(
         .enumerable(true)
         .configurable(true)
         .build();
-    context.global_object().define_property_or_throw(
+    // A `?` on a call rustfmt wraps across lines leaves the never-taken
+    // error-branch region on the closing line, so that line always reports
+    // zero hits; binding the call first keeps the `?` on a one-line
+    // statement instead (see `interfaces.rs`'s own `_result` bindings).
+    let location_property_result = context.global_object().define_property_or_throw(
         js_string!("location"),
         location_descriptor,
         context,
-    )?;
+    );
+    location_property_result?;
 
     // `navigator`/`console`/`parent`/`frames`: `[Replaceable]` in the real
     // spec (reading returns the live value; writing defines an ordinary,
