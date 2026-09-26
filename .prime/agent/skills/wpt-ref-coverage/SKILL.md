@@ -81,7 +81,8 @@ Use this workflow only for visual WPT reftests with `rel=match` or
 
 1. Create the dedicated worktree under `.worktrees/`. Confirm its status is
    clean before editing. Do not change `scripts/wpt/subset.txt` for a theme:
-   `acid/`, `css/`, `fonts/`, and `images/` are stable shared roots. `fetch.sh` validates
+   `acid/`, `css/`, `fonts/`, `images/`, and the top-level `resources/` are stable shared
+   roots. `fetch.sh` validates
    them and locks the shared sparse file. A stale branch's old fetch script
    fails instead of hiding tests; update the worktree from current main before
    retrying. If a selected test needs files outside those roots, stop and request
