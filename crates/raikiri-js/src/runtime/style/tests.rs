@@ -73,8 +73,8 @@ fn style_object_reads_and_writes_camel_and_dashed_names() {
     );
 }
 
-/// Task 6's replacement for the Plan 1 named-property `Proxy`: dashed and
-/// camelCase keys are real accessors on `CSSStyleDeclaration.prototype`, so
+/// Dashed and camelCase keys are real accessors on
+/// `CSSStyleDeclaration.prototype` (not a named-property `Proxy`), so
 /// `s instanceof CSSStyleDeclaration` and `in` work through ordinary
 /// prototype-chain lookup, and an unsupported name becomes a plain expando
 /// rather than a style write.
@@ -296,8 +296,8 @@ fn style_objects_behave_like_ordinary_objects_for_inherited_members() {
         "'' + document.body.style === '[object CSSStyleDeclaration]'",
     );
     // `getPropertyValue` now lives on `CSSStyleDeclaration.prototype`
-    // rather than being an own property of every instance (Plan 1's
-    // per-instance Proxy target defined it directly on the target); the
+    // rather than being an own property of every instance (the earlier
+    // per-instance Proxy defined it directly on each target); the
     // inherited member is still callable without throwing.
     ok(
         &mut rt,
@@ -475,6 +475,77 @@ fn computed_value_failure_is_a_host_error() {
     );
 }
 
+/// A real host's `computed_value` failure message can embed a raikiri-dom
+/// arena index (the same concern `Element.innerHTML`'s own host-failure path
+/// documents, see `node.rs`'s `inner_html`); that index is an implementation
+/// detail and must never be observable from script. Modeled here with a host
+/// whose failure message names the node id directly, since the stub host's
+/// own `fail_computed` message carries no index.
+#[test]
+fn get_computed_style_js_visible_message_hides_the_node_index() {
+    use super::super::host::{BoxGeometry, DocumentHost, HostError};
+
+    struct FailingComputed(StubHost);
+    impl DocumentHost for FailingComputed {
+        fn document(&self) -> &raikiri_dom::Document {
+            self.0.document()
+        }
+        fn document_mut(&mut self) -> &mut raikiri_dom::Document {
+            self.0.document_mut()
+        }
+        fn flush(&mut self) -> Result<(), HostError> {
+            self.0.flush()
+        }
+        fn box_geometry(&mut self, node: usize) -> Result<Option<BoxGeometry>, HostError> {
+            self.0.box_geometry(node)
+        }
+        fn computed_value(
+            &mut self,
+            node: usize,
+            _property: &str,
+        ) -> Result<Option<String>, HostError> {
+            Err(HostError(format!("no computed value for node {node}")))
+        }
+        fn parse_fragment(
+            &mut self,
+            tag: &str,
+            ns: &str,
+            markup: &str,
+        ) -> Result<raikiri_dom::Document, HostError> {
+            self.0.parse_fragment(tag, ns, markup)
+        }
+    }
+
+    let (host, _, _, body) = StubHost::page();
+    let mut rt = DomRuntime::new(FailingComputed(host)).unwrap();
+    // The overall `evaluate` call still reports a host failure (the recorded
+    // detail, which really does name the node), so the JS-visible message is
+    // stashed into a global for a second, unrelated `evaluate` call to read
+    // back.
+    let _ = rt.evaluate(
+        "var caughtMessage = ''; \
+         try { getComputedStyle(document.body).getPropertyValue('white-space'); } \
+         catch (e) { caughtMessage = e.message; }",
+    );
+    let message = rt
+        .evaluate("caughtMessage")
+        .unwrap()
+        .to_string(rt.context_mut())
+        .unwrap()
+        .to_std_string_escaped();
+    assert!(
+        !message.chars().any(|c| c.is_ascii_digit()),
+        "node index leaked into the JS-visible message: {message:?}"
+    );
+    let err = rt.evaluate("getComputedStyle(document.body).getPropertyValue('white-space')");
+    assert_eq!(
+        err,
+        Err(RuntimeError::Host(format!(
+            "no computed value for node {body}"
+        )))
+    );
+}
+
 #[test]
 fn flush_failure_is_a_host_error() {
     let (mut host, ..) = StubHost::page();
@@ -578,6 +649,61 @@ fn setters_store_the_canonical_serialization_of_a_parsed_value() {
         &mut rt,
         "s.setProperty('not-a-property', 'whatever'); \
          s.getPropertyValue('not-a-property') === 'whatever'",
+    );
+}
+
+/// CSSOM `setProperty` step 2.1: a non-custom `property` name is used ASCII
+/// -lowercased, so the name that ends up stored (and later shows up in
+/// `item()`/`cssText`) is lowercase even when the caller passed a
+/// differently-cased name. This is purely a *name* normalization: the value
+/// itself was already parsed and serialized case-insensitively before this
+/// fix (`raikiri_style::property::parse_value` resolves the property by its
+/// own lowercased copy of the name), so the stored value is unaffected.
+#[test]
+fn set_property_lowercases_a_non_custom_property_name_before_storing_it() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var s = document.createElement('div').style; s.setProperty('COLOR', '#234');")
+        .unwrap();
+    ok(
+        &mut rt,
+        "s.item(0) === 'color' && s.cssText === 'color: rgb(34, 51, 68);'",
+    );
+}
+
+/// The same step explicitly excludes custom property names (`--`-prefixed):
+/// `setProperty`/`removeProperty`/`getPropertyPriority` must use those
+/// exactly as given, never lowercased.
+#[test]
+fn set_property_does_not_lowercase_a_custom_property_name() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var s = document.createElement('div').style; s.setProperty('--Foo', '1px');")
+        .unwrap();
+    ok(
+        &mut rt,
+        "s.item(0) === '--Foo' && \
+         s.getPropertyValue('--Foo') === '1px' && \
+         s.getPropertyValue('--foo') === ''",
+    );
+}
+
+/// `removeProperty` already removed a declaration regardless of the input
+/// name's case (`same_property`'s existing ASCII case-insensitive compare),
+/// so the removal itself is not new behavior here -- what step 2.1 changes
+/// is that the name `setProperty` stored, and so what `item()` reports right
+/// up until the removal, is lowercase rather than whatever case the caller
+/// used.
+#[test]
+fn remove_property_finds_a_differently_cased_stored_name() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var s = document.createElement('div').style; s.setProperty('MARGIN-TOP', '1px');")
+        .unwrap();
+    ok(&mut rt, "s.item(0) === 'margin-top'");
+    ok(
+        &mut rt,
+        "s.removeProperty('margin-TOP') === '1px' && s.cssText === ''",
     );
 }
 

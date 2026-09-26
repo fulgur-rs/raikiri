@@ -15,8 +15,8 @@ use super::indexed::{IndexedSource, indexed_object, this_indexed};
 use super::interfaces::{Members, closure_function, function, protos};
 use super::node::mark_dirty;
 use super::webidl::{
-    arg_node, arg_unsigned_long, dom_string, host_failure, this_element, throw_dom_exception,
-    with_state,
+    arg_node, arg_unsigned_long, dom_string, host_failure, host_failure_with_message, this_element,
+    throw_dom_exception, with_state,
 };
 
 // ---- inline style text ---------------------------------------------------
@@ -294,6 +294,17 @@ fn parse_property_value(
         .ok()
 }
 
+/// CSSOM `setProperty`/`removeProperty`/`getPropertyPriority` step 2.1: a
+/// non-custom `property` name is used ASCII-lowercased; a custom property
+/// name (`--`-prefixed) is used exactly as given.
+fn ascii_lowercase_property_name(property: String) -> String {
+    if property.starts_with("--") {
+        property
+    } else {
+        property.to_ascii_lowercase()
+    }
+}
+
 fn is_css_wide_keyword(value: &str) -> bool {
     ["inherit", "initial", "unset", "revert", "revert-layer"]
         .iter()
@@ -371,14 +382,20 @@ fn write_inline(context: &mut Context, index: usize, property: &str, value: &str
 }
 
 /// The computed value of `property`, or `None` for an unsupported property
-/// name (checked before any flush, so an unsupported name never triggers one).
+/// name (checked before any flush, so an unsupported name never triggers
+/// one). A host's own `computed_value` failure message can name the arena
+/// index it failed on -- an implementation detail that must never be
+/// observable from script -- so the exception thrown into script carries a
+/// fixed message instead, while the harness-facing host failure keeps the
+/// original, more specific one (the same shape `node.rs`'s `inner_html`
+/// getter uses for its own host-failure path).
 fn read_computed(context: &mut Context, index: usize, property: &str) -> JsResult<Option<String>> {
     if raikiri_style::ComputedProperty::from_name(property).is_none() {
         return Ok(None);
     }
     ensure_flushed(context)?;
     let value = with_state(context, |s| s.host.computed_value(index, property))?;
-    value.map_err(|error| host_failure(context, error))
+    value.map_err(|error| host_failure_with_message(context, error, "computed style lookup failed"))
 }
 
 /// `getPropertyValue`/an attribute accessor's shared read: the raw declared
@@ -475,7 +492,7 @@ fn style_get_property_priority(
     context: &mut Context,
 ) -> JsResult<JsValue> {
     let source = this_style(this, context)?;
-    let name = dom_string(args, 0, context)?;
+    let name = ascii_lowercase_property_name(dom_string(args, 0, context)?);
     let priority = if source.computed {
         ""
     } else {
@@ -501,10 +518,11 @@ fn style_get_property_priority(
 /// This runtime does not reject a `property` outside
 /// [`raikiri_style::property::supported_property_names`] the way real
 /// CSSOM's `setProperty` does (silently returning for an unsupported,
-/// non-custom name): `setProperty` predates this task and already stored
-/// any literal name given to it, and no caller here relies on rejecting an
-/// unrecognized one -- only the per-property accessors (`s.marginTop = …`)
-/// are scoped to the supported list, becoming ordinary expandos otherwise.
+/// non-custom name): this operation has always stored any name given to it
+/// (ASCII-lowercased per step 2.1, the same as every recognized name), and
+/// no caller here relies on rejecting an unrecognized one -- only the
+/// per-property accessors (`s.marginTop = …`) are scoped to the supported
+/// list, becoming ordinary expandos otherwise.
 fn style_set_property(
     this: &JsValue,
     args: &[JsValue],
@@ -514,7 +532,7 @@ fn style_set_property(
     if source.computed {
         return Err(no_modification_allowed(context));
     }
-    let name = dom_string(args, 0, context)?;
+    let name = ascii_lowercase_property_name(dom_string(args, 0, context)?);
     let value = legacy_null_to_empty_string(args, 1, context)?;
     let priority = optional_string(args, 2, context)?;
     if !value.is_empty() && !priority.is_empty() && !priority.eq_ignore_ascii_case("important") {
@@ -533,7 +551,7 @@ fn style_remove_property(
     if source.computed {
         return Err(no_modification_allowed(context));
     }
-    let name = dom_string(args, 0, context)?;
+    let name = ascii_lowercase_property_name(dom_string(args, 0, context)?);
     let previous = read_inline(context, source.index, &name)?;
     write_inline(context, source.index, &name, "")?;
     Ok(JsValue::from(JsString::from(previous)))
