@@ -38,7 +38,7 @@ raikiri-vrt          = { version = "0.1.0", path = "./crates/raikiri-vrt" }
 raikiri-js           = { version = "0.1.0", path = "./crates/raikiri-js" }
 
 # ── Servo (cssparser + selectors) ──────────────────────────────────────
-cssparser = "0.37"
+cssparser = "0.38"
 selectors = "0.40"
 simplecss = "=0.2.2"
 
