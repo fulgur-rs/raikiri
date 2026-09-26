@@ -276,6 +276,86 @@ fn read_inline(context: &mut Context, index: usize, property: &str) -> JsResult<
     })
 }
 
+/// `value` parsed as `property` with the same grammar the cascade uses, or
+/// `None` when it does not parse.
+fn parse_property_value(
+    property: &str,
+    value: &str,
+) -> Option<raikiri_style::property::PropertyValue> {
+    let mut input = ParserInput::new(value);
+    let mut parser = Parser::new(&mut input);
+    parser
+        .parse_entirely(
+            |input| -> Result<raikiri_style::property::PropertyValue, cssparser::ParseError<'_, ()>> {
+                raikiri_style::property::parse_value(property, input)
+                    .ok_or_else(|| input.new_custom_error(()))
+            },
+        )
+        .ok()
+}
+
+fn is_css_wide_keyword(value: &str) -> bool {
+    ["inherit", "initial", "unset", "revert", "revert-layer"]
+        .iter()
+        .any(|keyword| value.trim().eq_ignore_ascii_case(keyword))
+}
+
+/// CSSOM `setProperty` steps 5-6 ("parse a CSS value"): the text to store
+/// for a non-empty `value` of `property`, or `None` when the value does
+/// not parse and the declaration must be left untouched.
+///
+/// A parsed value is stored in its canonical serialization where
+/// `raikiri_style` can produce one, and as given otherwise. A name outside
+/// [`raikiri_style::property::supported_property_names`] (only reachable
+/// through `setProperty`, since the attribute accessors are generated from
+/// that list) is stored as given: there is no grammar to check it against.
+fn declaration_value(property: &str, value: &str) -> Option<String> {
+    let is_custom = property.starts_with("--");
+    let is_supported = raikiri_style::property::supported_property_names()
+        .binary_search(&property.to_ascii_lowercase().as_str())
+        .is_ok();
+    if !is_custom && !is_supported {
+        return Some(value.to_owned());
+    }
+    if !is_custom && is_css_wide_keyword(value) {
+        return Some(value.trim().to_owned());
+    }
+    let parsed = parse_property_value(property, value)?;
+    Some(
+        raikiri_style::property::serialize_value(&parsed)
+            .or_else(|| {
+                raikiri_style::property::serialize_color_value(
+                    &property.to_ascii_lowercase(),
+                    value,
+                )
+            })
+            .unwrap_or_else(|| value.trim().to_owned()),
+    )
+}
+
+/// Set (or, for an empty `value`, remove) one inline declaration, dropping
+/// a non-empty `value` that does not parse for `property`.
+fn set_declaration(
+    context: &mut Context,
+    index: usize,
+    property: &str,
+    value: &str,
+    important: bool,
+) -> JsResult<()> {
+    if value.is_empty() {
+        return write_inline(context, index, property, "");
+    }
+    let Some(stored) = declaration_value(property.trim(), value) else {
+        return Ok(());
+    };
+    let stored = if important {
+        format!("{stored} !important")
+    } else {
+        stored
+    };
+    write_inline(context, index, property, &stored)
+}
+
 fn write_inline(context: &mut Context, index: usize, property: &str, value: &str) -> JsResult<()> {
     if property.trim().is_empty() {
         return Ok(());
@@ -440,19 +520,10 @@ fn style_set_property(
     let name = dom_string(args, 0, context)?;
     let value = legacy_null_to_empty_string(args, 1, context)?;
     let priority = optional_string(args, 2, context)?;
-    if value.is_empty() {
-        write_inline(context, source.index, &name, "")?;
+    if !value.is_empty() && !priority.is_empty() && !priority.eq_ignore_ascii_case("important") {
         return Ok(JsValue::undefined());
     }
-    if !priority.is_empty() && !priority.eq_ignore_ascii_case("important") {
-        return Ok(JsValue::undefined());
-    }
-    let full_value = if priority.is_empty() {
-        value
-    } else {
-        format!("{value} !important")
-    };
-    write_inline(context, source.index, &name, &full_value)?;
+    set_declaration(context, source.index, &name, &value, !priority.is_empty())?;
     Ok(JsValue::undefined())
 }
 
@@ -530,7 +601,7 @@ fn style_css_float_set(
         return Err(no_modification_allowed(context));
     }
     let value = legacy_null_to_empty_string(args, 0, context)?;
-    write_inline(context, source.index, "float", &value)?;
+    set_declaration(context, source.index, "float", &value, false)?;
     Ok(JsValue::undefined())
 }
 
@@ -615,7 +686,7 @@ fn property_accessor_pair(
             return Err(no_modification_allowed(ctx));
         }
         let value = legacy_null_to_empty_string(args, 0, ctx)?;
-        write_inline(ctx, source.index, property, &value)?;
+        set_declaration(ctx, source.index, property, &value, false)?;
         Ok(JsValue::undefined())
     });
     let setter = closure_function(context, &format!("set {key}"), 1, setter)?;
@@ -696,23 +767,8 @@ fn get_computed_style(_: &JsValue, args: &[JsValue], context: &mut Context) -> J
 fn css_supports(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let property = dom_string(args, 0, context)?;
     let value = dom_string(args, 1, context)?;
-    let mut input = ParserInput::new(&value);
-    let mut parser = Parser::new(&mut input);
-    let parsed =
-        parser
-            .parse_entirely(
-                |input| -> Result<
-                    raikiri_style::property::PropertyValue,
-                    cssparser::ParseError<'_, ()>,
-                > {
-                    raikiri_style::property::parse_value(&property, input)
-                        .ok_or_else(|| input.new_custom_error(()))
-                },
-            )
-            .is_ok();
-    let wide = ["inherit", "initial", "unset", "revert", "revert-layer"]
-        .iter()
-        .any(|k| value.trim().eq_ignore_ascii_case(k));
+    let parsed = parse_property_value(&property, &value).is_some();
+    let wide = is_css_wide_keyword(&value);
     Ok(JsValue::from(
         parsed || (wide && raikiri_style::property::is_supported_property_name(&property)),
     ))

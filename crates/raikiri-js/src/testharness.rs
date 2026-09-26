@@ -129,17 +129,19 @@ function __raikiri_run_font_callbacks(limit) {
 const FONT_CALLBACKS_PER_TURN: usize = 64;
 const MAX_FONT_CALLBACK_TURNS: usize = 16;
 
-/// Load the testharness shim, run `inline_script`, then drain deferred font
-/// callbacks (see [`TESTHARNESS_SHIM`]) until the shim's `test()` calls have
-/// all recorded an outcome.
+/// Load the testharness shim, run each of `scripts` in order as its own
+/// source, then drain deferred font callbacks (see [`TESTHARNESS_SHIM`])
+/// until the shim's `test()` calls have all recorded an outcome.
 fn drive_testharness(
     runtime: &mut DomRuntime,
-    inline_script: &str,
+    scripts: &[&str],
 ) -> Result<Vec<TestOutcome>, TestHarnessError> {
     runtime
         .evaluate(TESTHARNESS_SHIM)
         .map_err(map_runtime_error)?;
-    runtime.evaluate(inline_script).map_err(map_runtime_error)?;
+    for script in scripts {
+        runtime.evaluate(script).map_err(map_runtime_error)?;
+    }
 
     for _ in 0..MAX_FONT_CALLBACK_TURNS {
         if has_pending_font_callbacks(runtime.context_mut())
@@ -181,8 +183,25 @@ pub fn run_testharness_on_host<H>(
 where
     H: DocumentHost,
 {
+    run_testharness_scripts_on_host(&[inline_script], host)
+}
+
+/// Like [`run_testharness_on_host`], but runs several scripts in order, each
+/// evaluated as a separate source in the same realm.
+///
+/// Separate evaluation keeps a directive prologue such as `'use strict'` at
+/// the top of a WPT helper file (for example `parsing-testcommon.js`) scoped
+/// to that file, as it is when a page loads it through its own `<script>`
+/// element. An uncaught error in any script aborts the run.
+pub fn run_testharness_scripts_on_host<H>(
+    scripts: &[&str],
+    host: H,
+) -> Result<Vec<TestOutcome>, TestHarnessError>
+where
+    H: DocumentHost,
+{
     let mut runtime = DomRuntime::new(host).map_err(map_runtime_error)?;
-    drive_testharness(&mut runtime, inline_script)
+    drive_testharness(&mut runtime, scripts)
 }
 
 fn map_runtime_error(error: RuntimeError) -> TestHarnessError {

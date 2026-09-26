@@ -86,6 +86,22 @@ fn replace_checks_emptiness_of_both_tokens_before_whitespace_of_either() {
     );
 }
 
+/// DOM §7.1 `replace`: with both tokens non-empty, ASCII whitespace in
+/// either one throws `InvalidCharacterError`.
+#[test]
+fn replace_rejects_a_token_containing_whitespace() {
+    let mut rt = rt();
+    rt.evaluate("var e = document.createElement('e'); e.setAttribute('class', 'a b');")
+        .unwrap();
+    ok(
+        &mut rt,
+        "(function () { \
+           try { e.classList.replace('a b', 'c'); return false; } \
+           catch (t) { return t.name === 'InvalidCharacterError' && e.className === 'a b'; } \
+         })()",
+    );
+}
+
 #[test]
 fn toggle_with_and_without_force() {
     let mut rt = rt();

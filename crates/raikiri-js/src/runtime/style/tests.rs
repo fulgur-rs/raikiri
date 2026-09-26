@@ -525,3 +525,66 @@ fn css_supports_uses_the_value_parser() {
     );
     ok(&mut rt, "!CSS.supports('no-such-property', 'inherit')");
 }
+
+/// CSSOM `setProperty` (and every attribute setter, which calls it): a
+/// value that does not parse for a supported property is dropped without
+/// touching the existing declaration.
+#[test]
+fn setters_ignore_values_that_do_not_parse_for_the_property() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var e = document.createElement('div'); var s = e.style;")
+        .unwrap();
+    ok(
+        &mut rt,
+        "s['box-sizing'] = 'border-box'; s['box-sizing'] = 'margin-box'; \
+         s.boxSizing = 'bogus'; s.setProperty('box-sizing', 'nope', 'important'); \
+         s.cssFloat = 'sideways'; \
+         s.getPropertyValue('box-sizing') === 'border-box' \
+         && e.getAttribute('style') === 'box-sizing: border-box;'",
+    );
+    ok(&mut rt, "s.color = 'red !important'; s.color === ''");
+}
+
+/// A value that does parse is stored in its canonical serialization, and
+/// CSS-wide keywords, custom properties, and names outside the supported
+/// set are stored as given.
+#[test]
+fn setters_store_the_canonical_serialization_of_a_parsed_value() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var s = document.createElement('div').style;")
+        .unwrap();
+    ok(&mut rt, "s.paddingTop = '010.0px'; s.paddingTop === '10px'");
+    ok(
+        &mut rt,
+        "s.setProperty('COLOR', '#234'); s.color === 'rgb(34, 51, 68)'",
+    );
+    ok(&mut rt, "s.color = 'lab(0 0 0)'; s.color === 'lab(0 0 0)'");
+    ok(&mut rt, "s.color = 'inherit'; s.color === 'inherit'");
+    ok(
+        &mut rt,
+        "s.setProperty('--x', ' anything { } '); s.getPropertyValue('--x') !== ''",
+    );
+    ok(
+        &mut rt,
+        "s.setProperty('not-a-property', 'whatever'); \
+         s.getPropertyValue('not-a-property') === 'whatever'",
+    );
+}
+
+/// Shorthands that expand entirely into other properties (and so have no
+/// value type of their own) are still validated against their grammar.
+#[test]
+fn setters_validate_expanding_shorthands_too() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var s = document.createElement('div').style;")
+        .unwrap();
+    ok(
+        &mut rt,
+        "s.borderRadius = '-1px'; s.gridGap = 'auto'; s.setProperty('GRID', 'none none'); \
+         s.borderRadius === '' && s.gridGap === '' && s.grid === ''",
+    );
+    ok(&mut rt, "s.borderRadius = '1px'; s.borderRadius !== ''");
+}
