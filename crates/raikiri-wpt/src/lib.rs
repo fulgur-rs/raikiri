@@ -14,6 +14,7 @@ pub mod screen;
 pub mod text_css_i18n;
 pub(crate) mod wpt_host;
 pub mod wpt_host_resolver;
+pub mod wptrunner_browser;
 
 pub use screen::{ScreenRenderError, render_screen_url};
 pub use wpt_host_resolver::{WptHostResolver, WptHostResolverError};
