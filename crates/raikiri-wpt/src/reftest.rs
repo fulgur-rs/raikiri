@@ -2193,7 +2193,7 @@ impl raikiri_dom::FontFaceLoader for WptFontLoader {
     }
 }
 
-fn resolve_font_ctx() -> raikiri::FontContext {
+pub(crate) fn resolve_font_ctx() -> raikiri::FontContext {
     // Try WPT bundled fonts: `<workspace>/wpt/fonts` or `<workspace>/../wpt/fonts`
     // Fallback to system fonts.
     let candidates = [

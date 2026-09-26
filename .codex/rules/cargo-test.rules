@@ -1,0 +1,31 @@
+# These two suites use loopback listeners. Run only these command shapes
+# outside the network-restricted sandbox so a local bind is not a test failure.
+prefix_rule(
+    pattern = ["cargo", "test", "--locked", "-p", "raikiri-net", "--features", "http-ureq"],
+    decision = "allow",
+    justification = "raikiri-net HTTP tests require loopback socket access",
+    match = [
+        "cargo test --locked -p raikiri-net --features http-ureq",
+        "cargo test --locked -p raikiri-net --features http-ureq http_provider::tests",
+    ],
+    not_match = [
+        "cargo test --workspace",
+        "cargo test --locked -p raikiri-wpt",
+        "cargo check --workspace",
+    ],
+)
+
+prefix_rule(
+    pattern = ["cargo", "test", "--locked", "-p", "raikiri-wpt"],
+    decision = "allow",
+    justification = "raikiri-wpt browser tests require loopback socket access",
+    match = [
+        "cargo test --locked -p raikiri-wpt",
+        "cargo test --locked -p raikiri-wpt screen::tests -- --nocapture",
+    ],
+    not_match = [
+        "cargo test --workspace",
+        "cargo test --locked -p raikiri-net --features http-ureq",
+        "cargo check --workspace",
+    ],
+)

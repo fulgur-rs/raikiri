@@ -13,3 +13,8 @@ images
 # testharness.js, testharnessreport.js, check-layout-th.js, and
 # testdriver*.js so JS-driven WPT pages can load their scripts from files.
 /resources
+# Upstream wptrunner, wptserve, and the root CLI used by run-raikiri.sh.
+/tools
+/wpt
+# The root CLI eagerly reads every command registry, including docs/commands.json.
+/docs/commands.json

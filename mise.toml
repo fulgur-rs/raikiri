@@ -1,2 +1,7 @@
 [tools]
 rust = "1.91.0"
+uv = "0.12.5"
+
+[tasks."wpt:reftest"]
+description = "Run upstream WPT reftests with the Raikiri product"
+run = "scripts/wpt/run-raikiri.sh"

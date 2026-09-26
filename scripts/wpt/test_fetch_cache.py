@@ -54,6 +54,9 @@ class FetchCacheTests(unittest.TestCase):
         self._write(self.wpt_source, "fonts/ahem.txt", "font root\n")
         self._write(self.wpt_source, "images/ref.txt", "image root\n")
         self._write(self.wpt_source, "resources/testharness.js", "resources root\n")
+        self._write(self.wpt_source, "tools/wptrunner/README.rst", "wptrunner root\n")
+        self._write(self.wpt_source, "wpt", "wpt CLI\n")
+        self._write(self.wpt_source, "docs/commands.json", "{}\n")
         self._write(self.wpt_source, "outside/not-sparse.txt", "outside roots\n")
         self._write(
             self.wpt_source, "html/dom/resources/nested.js", "nested per-test resources\n"
@@ -112,7 +115,7 @@ class FetchCacheTests(unittest.TestCase):
         self.assertEqual(first.returncode, 0, first.stderr)
         self.assertEqual(self.cache.resolve(), self.cache)
         self.assertEqual((self.cache / ".git" / "info" / "sparse-checkout").read_text(),
-                         "acid\ncss\nfonts\nimages\n/resources\n")
+                         "acid\ncss\nfonts\nimages\n/resources\n/tools\n/wpt\n/docs/commands.json\n")
         self.assertEqual(
             (self.cache / ".git" / "info" / "sparse-checkout").stat().st_mode & 0o222,
             0,
@@ -120,6 +123,9 @@ class FetchCacheTests(unittest.TestCase):
         self.assertEqual(self._git(self.cache, "rev-parse", "HEAD"), self.pin)
         self.assertFalse((self.cache / "outside/not-sparse.txt").exists())
         self.assertTrue((self.cache / "resources/testharness.js").exists())
+        self.assertTrue((self.cache / "tools/wptrunner/README.rst").exists())
+        self.assertTrue((self.cache / "wpt").exists())
+        self.assertTrue((self.cache / "docs/commands.json").exists())
         self.assertFalse((self.cache / "html/dom/resources/nested.js").exists())
         main_link = self.project / "target/wpt"
         self.assertTrue(main_link.is_symlink())
@@ -155,6 +161,26 @@ class FetchCacheTests(unittest.TestCase):
         repaired = self._run_cache_link_helper(self.linked)
         self.assertEqual(repaired.returncode, 0, repaired.stderr)
         self.assertEqual(linked_link.resolve(), self.cache)
+
+    def test_fetch_migrates_the_locked_legacy_sparse_root_set(self) -> None:
+        first = self._fetch(self.project)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        sparse_file = self.cache / ".git" / "info" / "sparse-checkout"
+        sparse_file.chmod(0o644)
+        sparse_file.write_text(
+            "acid\ncss\nfonts\nimages\n/resources\n",
+            encoding="utf-8",
+        )
+        sparse_file.chmod(0o444)
+
+        migrated = self._fetch(self.project)
+
+        self.assertEqual(migrated.returncode, 0, migrated.stderr)
+        self.assertEqual(
+            sparse_file.read_text(encoding="utf-8"),
+            "acid\ncss\nfonts\nimages\n/resources\n/tools\n/wpt\n/docs/commands.json\n",
+        )
+        self.assertEqual(sparse_file.stat().st_mode & 0o222, 0)
 
     def test_fetch_refuses_legacy_physical_checkout_without_creating_duplicate(self) -> None:
         legacy_git = self.project / "target/wpt/.git"

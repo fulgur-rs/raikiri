@@ -22,10 +22,11 @@ raikiri-dom         = { workspace = true }
 raikiri-traits      = { workspace = true }
 raikiri-style       = { workspace = true }
 raikiri-paint       = { workspace = true }
-raikiri-net         = { workspace = true }
+raikiri-net         = { workspace = true, features = ["http-ureq"] }
 raikiri-js          = { workspace = true }
 time                = { workspace = true }
 png                 = { workspace = true }
+cssparser           = { workspace = true }
 
 [dev-dependencies]
 insta               = { workspace = true }
@@ -54,3 +55,7 @@ path = "src/bin/run-parsing-invalid.rs"
 [[bin]]
 name = "run-css-text-i18n"
 path = "src/bin/run-css-text-i18n.rs"
+
+[[bin]]
+name = "raikiri-wpt-browser"
+path = "src/bin/raikiri-wpt-browser.rs"

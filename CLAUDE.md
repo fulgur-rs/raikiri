@@ -64,6 +64,15 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 - If a required sync or push is blocked, stop and report the exact command and error.
 <!-- END BEADS INTEGRATION -->
 
+## loopback を使う Rust test は sandbox 外で実行する
+
+`raikiri-net` の `http-ureq` suite と `raikiri-wpt` の browser test は loopback
+listener を bind する。network 制限付き sandbox 内では `PermissionDenied` になり、
+実装とは無関係な false failure になるため、この2つの `cargo test` は最初から sandbox
+外で実行すること。Codex向けの command-specific な許可は
+`.codex/rules/cargo-test.rules` に定義している。testをskipしたり
+`PermissionDenied`を成功扱いにしたりしない。
+
 ## 使い捨て worktree は `.worktrees/` 配下に作る (`/tmp` に作らない)
 
 一時的な目的 (baseline 比較、使い捨て実験など) で切る throwaway/scratch な
