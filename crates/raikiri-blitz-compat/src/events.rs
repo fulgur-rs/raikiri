@@ -63,3 +63,6 @@ pub enum DomEventData {
     KeyDown(String),
     Other(SmolStr),
 }
+
+#[cfg(test)]
+mod tests;

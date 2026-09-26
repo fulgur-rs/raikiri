@@ -53,3 +53,6 @@ impl NavigationOptions {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
