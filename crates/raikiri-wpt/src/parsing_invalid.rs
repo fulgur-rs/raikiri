@@ -79,7 +79,7 @@ impl std::fmt::Display for ParsingFileError {
             ParsingFileError::NoParsingTestCalls => {
                 write!(
                     f,
-                    "no test_invalid_value( calls in this file's inline script"
+                    "no test_invalid_value( or test_valid_value( calls in this file's inline script"
                 )
             }
             ParsingFileError::Io(msg) => write!(f, "I/O error: {msg}"),

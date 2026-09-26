@@ -69,7 +69,7 @@ fn inline_scripts_stops_at_an_unterminated_tag_or_body() {
 }
 
 #[test]
-fn run_parsing_invalid_file_reports_no_invalid_value_calls() {
+fn run_parsing_invalid_file_reports_no_parsing_test_calls() {
     // A file whose only assertion helper is test_valid_selector( (which
     // needs a CSSStyleSheet/CSSRule surface) has neither test_invalid_value(
     // nor test_valid_value(.
@@ -186,7 +186,7 @@ fn display_names_each_error_kind() {
     );
     assert_eq!(
         ParsingFileError::NoParsingTestCalls.to_string(),
-        "no test_invalid_value( calls in this file's inline script"
+        "no test_invalid_value( or test_valid_value( calls in this file's inline script"
     );
 }
 #[test]
