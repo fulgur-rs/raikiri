@@ -418,8 +418,10 @@ fn xml_name_character_classes_accept_every_non_ascii_range() {
     for ch in ['0', '-', '.', '·', '\u{0300}', '\u{203f}'] {
         assert!(super::is_xml_name_char(ch), "{ch:?}");
     }
+    assert!(!super::is_xml_name_char('#'));
     assert!(super::is_xml_name("π\u{0300}"));
     assert!(!super::is_xml_name("0name"));
+    assert!(!super::is_xml_name("ab#"));
 }
 
 #[test]
