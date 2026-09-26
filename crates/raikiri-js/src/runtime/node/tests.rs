@@ -410,7 +410,10 @@ fn create_element_wires_a_template_contents_fragment_for_script_created_template
         "var t = document.createElement('template'); document.body.appendChild(t); t.innerHTML = 'x';",
     )
     .unwrap();
-    ok(&mut rt, "t.textContent === ''");
+    // The markup did land somewhere (in the template's contents fragment,
+    // per `Document::serialize_inner_html`'s own template handling) --
+    // `textContent` being empty is not just `innerHTML` silently dropping it.
+    ok(&mut rt, "t.innerHTML === 'x' && t.textContent === ''");
 }
 
 /// `[LegacyNullToEmptyString]` (the `innerHTML` attribute's WebIDL type):
