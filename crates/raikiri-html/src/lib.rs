@@ -12,6 +12,7 @@
 
 mod cascade;
 mod document;
+mod document_layout;
 mod document_parse;
 mod import;
 mod parse;
@@ -28,6 +29,7 @@ pub use cascade::{
     build_rule_tree_with_consumer_properties,
 };
 pub use document::HtmlDocument;
+pub use document_layout::{DomView, Fragment, FragmentKind, RepeatKind};
 pub use document_parse::{parse_html, parse_html_with_limits};
 pub use parse::{effective_document_base_url, parse, parse_fragment, parse_with_sink};
 pub use render::{RenderOptions, plan, render_streaming};
