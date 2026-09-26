@@ -372,13 +372,15 @@ fn class_list(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
 /// property": getter steps run the fragment serializing algorithm): a live
 /// serialization of the element's children, computed fresh on every read
 /// from the current arena state rather than a retained source string. An
-/// error means some element under `index` carries an attribute name the
-/// serializer rejects (`Document::serialize_inner_html`'s own validation);
-/// `replace_children_from` (used by the setter below) copies a parsed
-/// fragment's attribute names without that validation, so a host whose
-/// fragment parser hands back a non-XML-name attribute can make this
-/// reachable. Treated as a host failure, the same as the setter's own
-/// fragment-parse failure.
+/// error means some element under `index` carries an attribute name
+/// `Document::serialize_inner_html` rejects as not a valid XML `Name`.
+/// The HTML fragment serialization algorithm itself never re-validates
+/// attribute names that way (that check is specific to `Element.setAttribute`,
+/// DOM §4.9); an HTML-parsed attribute name only needs to avoid a handful of
+/// forbidden characters, a much larger set than valid XML `Name`s, so a
+/// real HTML fragment parser can legitimately produce a name this fails on.
+/// Treated as a host failure, the same as the setter's own fragment-parse
+/// failure, until raikiri-dom's serializer stops applying that check here.
 fn inner_html(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     let result = with_state(context, |s| s.host.document().serialize_inner_html(index))?;

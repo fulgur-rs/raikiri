@@ -412,13 +412,14 @@ fn inner_html_setter_treats_null_as_the_empty_string() {
     ok(&mut rt, "p.textContent === ''");
 }
 
-/// `Document::replace_children_from` (used by the setter) copies a parsed
-/// fragment's attribute names without the validation
-/// `Document::set_element_attribute` (used by `setAttribute`) performs, so
-/// a non-XML-name attribute planted directly on the document (modeling what
-/// a permissive host fragment parser could hand back) makes
-/// `serialize_inner_html`'s own validation error reachable from the
-/// `innerHTML` getter.
+/// `serialize_inner_html` rejects an attribute name that is not a valid XML
+/// `Name`, a check specific to `Element.setAttribute` (DOM §4.9), not to
+/// HTML fragment serialization. A real HTML parser can legitimately produce
+/// such a name (e.g. one starting with an ASCII digit); `1bad` is planted
+/// directly (bypassing `setAttribute`'s own XML `Name` validation, since
+/// `Document::set_element_attributes` -- the plural form
+/// `replace_children_from` uses -- performs none) to model that, without
+/// depending on a fragment-parsing host implementation.
 #[test]
 fn inner_html_getter_reports_an_invalid_attribute_name_as_a_host_error() {
     let (mut rt, body) = rt_with_body();
