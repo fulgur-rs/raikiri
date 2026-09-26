@@ -524,6 +524,10 @@ fn css_supports_uses_the_value_parser() {
         "CSS.supports('color', 'red') && !CSS.supports('color', '12px') && CSS.supports('color', 'inherit')",
     );
     ok(&mut rt, "!CSS.supports('no-such-property', 'inherit')");
+    // Shorthands that expand into other properties during parsing are
+    // still supported names for the CSS-wide-keyword branch.
+    ok(&mut rt, "CSS.supports('border-radius', 'inherit') === true");
+    ok(&mut rt, "CSS.supports('grid-area', 'initial') === true");
 }
 
 /// CSSOM `setProperty` (and every attribute setter, which calls it): a
@@ -547,8 +551,12 @@ fn setters_ignore_values_that_do_not_parse_for_the_property() {
 }
 
 /// A value that does parse is stored in its canonical serialization, and
-/// CSS-wide keywords, custom properties, and names outside the supported
-/// set are stored as given.
+/// CSS-wide keywords and custom properties are stored as given (trimmed).
+///
+/// The last assertion pins a documented deviation from CSSOM `setProperty`
+/// step 3, which silently ignores a name that is neither a supported
+/// property nor a custom property: this runtime's `setProperty` has always
+/// stored such a name's value verbatim, and still does.
 #[test]
 fn setters_store_the_canonical_serialization_of_a_parsed_value() {
     let (host, ..) = StubHost::page();
@@ -564,7 +572,7 @@ fn setters_store_the_canonical_serialization_of_a_parsed_value() {
     ok(&mut rt, "s.color = 'inherit'; s.color === 'inherit'");
     ok(
         &mut rt,
-        "s.setProperty('--x', ' anything { } '); s.getPropertyValue('--x') !== ''",
+        "s.setProperty('--x', ' anything { } '); s.getPropertyValue('--x') === 'anything { }'",
     );
     ok(
         &mut rt,
@@ -583,7 +591,7 @@ fn setters_validate_expanding_shorthands_too() {
         .unwrap();
     ok(
         &mut rt,
-        "s.borderRadius = '-1px'; s.gridGap = 'auto'; s.setProperty('GRID', 'none none'); \
+        "s.borderRadius = '-1px'; s.gridGap = 'auto'; s.setProperty('grid', 'none none'); \
          s.borderRadius === '' && s.gridGap === '' && s.grid === ''",
     );
     ok(&mut rt, "s.borderRadius = '1px'; s.borderRadius !== ''");

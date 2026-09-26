@@ -233,3 +233,26 @@ fn supported_property_names_is_sorted_lowercase_and_excludes_custom_properties()
         );
     }
 }
+
+/// `is_supported_property_name` covers the whole supported list, including
+/// shorthands that fully expand during parsing and have no `PropertyKey`.
+#[test]
+fn is_supported_property_name_covers_expanding_shorthands() {
+    for name in [
+        "border-radius",
+        "border-top-left-radius",
+        "grid",
+        "grid-area",
+        "grid-gap",
+        "grid-column-gap",
+        "grid-row-gap",
+        "GRID-AREA",
+    ] {
+        assert!(is_supported_property_name(name), "{name}");
+    }
+    assert!(!is_supported_property_name("--custom"));
+    assert!(!is_supported_property_name("not-a-property"));
+    for name in supported_property_names() {
+        assert!(is_supported_property_name(name), "{name}");
+    }
+}

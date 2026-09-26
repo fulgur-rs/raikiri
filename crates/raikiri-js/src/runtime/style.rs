@@ -311,10 +311,7 @@ fn is_css_wide_keyword(value: &str) -> bool {
 /// that list) is stored as given: there is no grammar to check it against.
 fn declaration_value(property: &str, value: &str) -> Option<String> {
     let is_custom = property.starts_with("--");
-    let is_supported = raikiri_style::property::supported_property_names()
-        .binary_search(&property.to_ascii_lowercase().as_str())
-        .is_ok();
-    if !is_custom && !is_supported {
+    if !is_custom && !raikiri_style::property::is_supported_property_name(property) {
         return Some(value.to_owned());
     }
     if !is_custom && is_css_wide_keyword(value) {
