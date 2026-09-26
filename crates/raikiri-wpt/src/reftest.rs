@@ -87,6 +87,15 @@ pub struct RenderedDocument {
     pub pages: Vec<RenderedImage>,
 }
 
+pub(crate) struct PrintRenderResources<'a> {
+    pub(crate) network: Option<&'a dyn raikiri_traits::NetworkProvider>,
+    pub(crate) base_url: Option<&'a raikiri::Url>,
+    pub(crate) replaced_resolver: Option<&'a dyn raikiri_traits::ReplacedResolver>,
+    pub(crate) image_pixel_source: Option<&'a dyn raikiri_traits::ImagePixelSource>,
+    pub(crate) font_loader: Option<&'a dyn raikiri_dom::FontFaceLoader>,
+    pub(crate) prepare_cascade_images: Option<&'a dyn Fn(&mut raikiri_style::CascadeResult)>,
+}
+
 /// One inclusive, one-based page range from `reftest-pages` metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PageRange {
@@ -1725,18 +1734,6 @@ fn render_raikiri_pages_inner(
     resource_base: Option<&Path>,
     font_base: Option<&Path>,
 ) -> Result<RenderedDocument, Box<dyn std::error::Error>> {
-    use anyrender::render_to_buffer;
-    use anyrender_vello_cpu::VelloCpuImageRenderer;
-    use raikiri::ParseOptions;
-    use raikiri::{
-        Atom, MediaContext, PageBox, PageContextQuery, build_cascaded_with_media_context_for_page,
-    };
-    use raikiri_dom::{
-        layout_pages, layout_pages_with_page_geometry, page_content_insets, page_margins,
-        relayout_text_for_width,
-    };
-    use raikiri_html::parse;
-
     // URL construction requires an absolute directory. Normalize caller
     // paths here so resource and stylesheet loading work for relative test
     // paths as well as the absolute paths used by the WPT runner.
@@ -1750,23 +1747,69 @@ fn render_raikiri_pages_inner(
     let stylesheet_network = resource_base.map(|_| raikiri_net::FileNetworkProvider);
     let stylesheet_base =
         resource_base.and_then(|path| raikiri::Url::from_directory_path(path).ok());
+    let font_loader = WptFontLoader::discover(font_base.or(resource_base));
+    let html = absolutize_wpt_resource_urls(html, resource_base);
+    if let Some(resolver) = image_resolver.as_ref() {
+        prime_image_resolver(resolver, &html);
+    }
+    render_raikiri_pages_with_resources(
+        &html,
+        width,
+        height,
+        PrintRenderResources {
+            network: stylesheet_network
+                .as_ref()
+                .map(|provider| provider as &dyn raikiri_traits::NetworkProvider),
+            base_url: stylesheet_base.as_ref(),
+            replaced_resolver: image_resolver
+                .as_ref()
+                .map(|resolver| resolver as &dyn raikiri_traits::ReplacedResolver),
+            image_pixel_source: image_resolver
+                .as_ref()
+                .map(|resolver| resolver as &dyn raikiri_traits::ImagePixelSource),
+            font_loader: font_loader
+                .as_ref()
+                .map(|loader| loader as &dyn raikiri_dom::FontFaceLoader),
+            prepare_cascade_images: None,
+        },
+    )
+}
+
+pub(crate) fn render_raikiri_pages_with_resources(
+    html: &str,
+    width: u32,
+    height: u32,
+    resources: PrintRenderResources<'_>,
+) -> Result<RenderedDocument, Box<dyn std::error::Error>> {
+    use anyrender::render_to_buffer;
+    use anyrender_vello_cpu::VelloCpuImageRenderer;
+    use raikiri::ParseOptions;
+    use raikiri::{
+        Atom, MediaContext, PageBox, PageContextQuery, build_cascaded_with_media_context_for_page,
+    };
+    use raikiri_dom::{
+        layout_pages, layout_pages_with_page_geometry,
+        layout_pages_with_page_geometry_and_resolver_and_base_url,
+        layout_pages_with_resolver_and_base_url, page_content_insets, page_margins,
+        relayout_text_for_width,
+    };
+    use raikiri_html::parse;
+
+    let image_resolver = resources.replaced_resolver;
+    let image_pixel_source = resources.image_pixel_source;
+    let base_url = resources.base_url;
+    let prepare_cascade_images = resources.prepare_cascade_images;
     let opts = ParseOptions {
         extra_stylesheets: &[],
-        network: stylesheet_network
-            .as_ref()
-            .map(|provider| provider as &dyn raikiri_traits::NetworkProvider),
-        base_url: stylesheet_base,
+        network: resources.network,
+        base_url: base_url.cloned(),
     };
     let media_context = MediaContext::print();
     // WPT's print UA supplies a 0.5in default page margin when an authored
     // `@page` rule omits all page-margin declarations.  Add that UA value
     // before resolving viewport units so both the content box and `vh` use the
     // same print viewport as the reference renderer.
-    let html = absolutize_wpt_resource_urls(html, resource_base);
-    if let Some(resolver) = image_resolver.as_ref() {
-        prime_image_resolver(resolver, &html);
-    }
-    let html = inject_default_page_margin(&html);
+    let html = inject_default_page_margin(html);
     let (viewport_width, viewport_height) =
         authored_page_viewport(&html, width as f32, height as f32);
     let html = expand_viewport_units(&html, viewport_width, viewport_height);
@@ -1777,12 +1820,8 @@ fn render_raikiri_pages_inner(
     // are no-ops (empty registry early-returns).
     let font_face_tree = raikiri::build_rule_tree(&uncascaded);
     let mut font_ctx = resolve_font_ctx();
-    if let Some(loader) = WptFontLoader::discover(font_base.or(resource_base)) {
-        raikiri_dom::register_font_face_sources(
-            &mut font_ctx,
-            font_face_tree.font_faces(),
-            &loader,
-        );
+    if let Some(loader) = resources.font_loader {
+        raikiri_dom::register_font_face_sources(&mut font_ctx, font_face_tree.font_faces(), loader);
     }
     let mut first_query = PageContextQuery::default();
     first_query.is_first = true;
@@ -1790,6 +1829,9 @@ fn render_raikiri_pages_inner(
     first_query.is_left = false;
     let mut default_cascade =
         build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &first_query);
+    if let Some(prepare) = prepare_cascade_images {
+        prepare(&mut default_cascade);
+    }
     raikiri_dom::expand_font_face_aliases(
         &mut default_cascade.computed,
         font_face_tree.font_faces(),
@@ -1839,6 +1881,9 @@ fn render_raikiri_pages_inner(
     // margins whenever the two selectors differ.
     let mut first_cascade =
         build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &first_query);
+    if let Some(prepare) = prepare_cascade_images {
+        prepare(&mut first_cascade);
+    }
     raikiri_dom::expand_font_face_aliases(
         &mut first_cascade.computed,
         font_face_tree.font_faces(),
@@ -1858,12 +1903,7 @@ fn render_raikiri_pages_inner(
         first_cascade,
         first_page_box,
         font_ctx.clone(),
-        raikiri_dom::InitialPageProbeResources::new(
-            image_resolver
-                .as_ref()
-                .map(|resolver| resolver as &dyn raikiri_traits::ReplacedResolver),
-            None,
-        ),
+        raikiri_dom::InitialPageProbeResources::new(image_resolver, base_url),
         |page_name| {
             first_query.page_name = page_name.map(Atom::from);
             let mut cascade = build_cascaded_with_media_context_for_page(
@@ -1871,6 +1911,9 @@ fn render_raikiri_pages_inner(
                 &media_context,
                 &first_query,
             );
+            if let Some(prepare) = prepare_cascade_images {
+                prepare(&mut cascade);
+            }
             let mut recascade_font_ctx = font_ctx.clone();
             raikiri_dom::expand_font_face_aliases(
                 &mut cascade.computed,
@@ -1893,13 +1936,14 @@ fn render_raikiri_pages_inner(
     // expansion, relayout), so the layout passes get clones — cheaper than
     // the fresh `resolve_font_ctx()` builds these replaced (no file re-read,
     // no re-registration).
-    let provisional_slices = if let Some(resolver) = image_resolver.as_ref() {
-        raikiri_dom::layout_pages_with_resolver(
+    let provisional_slices = if let Some(resolver) = image_resolver {
+        layout_pages_with_resolver_and_base_url(
             &mut uncascaded.dom,
             &first_cascade,
             first_page_box,
             font_ctx.clone(),
             resolver,
+            base_url,
         )
     } else {
         layout_pages(
@@ -1935,8 +1979,11 @@ fn render_raikiri_pages_inner(
             page_index % 2 == 1
         };
         query.is_right = !query.is_left;
-        let page_cascade =
+        let mut page_cascade =
             build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &query);
+        if let Some(prepare) = prepare_cascade_images {
+            prepare(&mut page_cascade);
+        }
         let page_box = if page_has_explicit_dimensions(&page_cascade) {
             page_box_from_cascade(&page_cascade, fallback_page_box)
         } else {
@@ -1967,15 +2014,18 @@ fn render_raikiri_pages_inner(
         let mut fresh = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
         let mut fresh_cascade =
             build_cascaded_with_media_context_for_page(&fresh, &media_context, &first_query);
+        if let Some(prepare) = prepare_cascade_images {
+            prepare(&mut fresh_cascade);
+        }
         raikiri_dom::expand_font_face_aliases(
             &mut fresh_cascade.computed,
             font_face_tree.font_faces(),
             &mut font_ctx,
         );
-        let fresh_slices = if let Some(resolver) = image_resolver.as_ref() {
+        let fresh_slices = if let Some(resolver) = image_resolver {
             // The geometry-varying path reparses the source, so the image
             // intrinsic pre-pass must run on the fresh DOM as well.
-            raikiri_dom::layout_pages_with_page_geometry_and_resolver(
+            layout_pages_with_page_geometry_and_resolver_and_base_url(
                 &mut fresh.dom,
                 &fresh_cascade,
                 first_page_box,
@@ -1983,6 +2033,7 @@ fn render_raikiri_pages_inner(
                 &page_steps,
                 &page_widths,
                 resolver,
+                base_url,
             )? // cov:ignore: rustc maps this standalone success/error propagation token only to the unreachable resolver-error edge
         } else {
             layout_pages_with_page_geometry(
@@ -2016,6 +2067,9 @@ fn render_raikiri_pages_inner(
         query.is_right = !query.is_left;
         let mut cascade =
             build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &query);
+        if let Some(prepare) = prepare_cascade_images {
+            prepare(&mut cascade);
+        }
         raikiri_dom::expand_font_face_aliases(
             &mut cascade.computed,
             font_face_tree.font_faces(),
@@ -2026,11 +2080,14 @@ fn render_raikiri_pages_inner(
             paired_query.is_first = false;
             paired_query.is_left = true;
             paired_query.is_right = false;
-            let paired = build_cascaded_with_media_context_for_page(
+            let mut paired = build_cascaded_with_media_context_for_page(
                 &uncascaded,
                 &media_context,
                 &paired_query,
             );
+            if let Some(prepare) = prepare_cascade_images {
+                prepare(&mut paired);
+            }
             match paired
                 .page
                 .declarations()
@@ -2069,7 +2126,7 @@ fn render_raikiri_pages_inner(
         let page_height = page_box.height.ceil() as u32;
         let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
             |painter| {
-                if let Some(resolver) = image_resolver.as_ref() {
+                if let Some(pixel_source) = image_pixel_source {
                     raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_images(
                         painter,
                         &uncascaded.dom,
@@ -2082,7 +2139,7 @@ fn render_raikiri_pages_inner(
                         paired_page_increment,
                         active_page_name.as_deref(),
                         fixed_page_width,
-                        resolver,
+                        pixel_source,
                     );
                 } else {
                     raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(

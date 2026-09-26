@@ -5,123 +5,16 @@ use std::fmt;
 use anyrender::render_to_buffer;
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use raikiri::{
-    Body, FetchOutcome, MediaContext, Method, NetworkError, NetworkProvider, PageBox,
-    PageContextQuery, ParseOptions, Request, ResourceKind, Url,
-    build_cascaded_with_media_context_for_page,
+    Body, MediaContext, Method, NetworkProvider, PageBox, PageContextQuery, ParseOptions, Request,
+    ResourceKind, Url, build_cascaded_with_media_context_for_page,
 };
 use raikiri_html::effective_document_base_url;
 use raikiri_net::{ImageResolver, SystemHttpProvider};
-use raikiri_style::property::BackgroundImage;
-use raikiri_traits::{ReplacedResolver, ResolverRequest};
 
+use crate::http_resources::{
+    NetworkFontLoader, StylesheetUrlProvider, absolutize_img_sources, prepare_cascade_images,
+};
 use crate::reftest::{RenderedImage, resolve_font_ctx};
-
-mod css_urls;
-
-struct StylesheetUrlProvider<'a> {
-    provider: &'a SystemHttpProvider,
-}
-
-impl NetworkProvider for StylesheetUrlProvider<'_> {
-    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
-        let rewrite_urls = matches!(
-            request.kind,
-            ResourceKind::ExternalStylesheet | ResourceKind::StylesheetImport
-        );
-        let outcome = self.provider.fetch_one_hop(request)?;
-        match outcome {
-            FetchOutcome::Body(mut resource) if rewrite_urls => {
-                let source = String::from_utf8_lossy(&resource.bytes);
-                let rewritten = css_urls::absolutize_stylesheet_urls(&source, &resource.final_url);
-                resource.bytes = rewritten.into();
-                Ok(FetchOutcome::Body(resource))
-            }
-            other => Ok(other),
-        }
-    }
-
-    fn max_import_depth(&self) -> Option<u32> {
-        self.provider.max_import_depth()
-    }
-}
-
-struct NetworkFontLoader<'a> {
-    provider: &'a SystemHttpProvider,
-    base_url: &'a Url,
-}
-
-impl raikiri_dom::FontFaceLoader for NetworkFontLoader<'_> {
-    fn load(&self, source: &str) -> Option<Vec<u8>> {
-        let url = Url::parse(source)
-            .ok()
-            .or_else(|| self.base_url.join(source).ok())?;
-        self.provider
-            .fetch(Request {
-                url,
-                method: Method::Get,
-                content_type: None,
-                headers: Vec::new(),
-                body: Body::Empty,
-                signal: None,
-                kind: ResourceKind::Font,
-            })
-            .ok()
-            .map(|resource| resource.bytes.to_vec())
-    }
-}
-
-fn absolutize_img_sources(document: &mut raikiri_dom::Document, base_url: &Url) {
-    let updates: Vec<_> = (0..document.node_count())
-        .filter_map(|node_id| {
-            let node = document.get_node(node_id)?;
-            if node.tag_name() != Some("img") {
-                return None;
-            }
-            let source = document.element_attribute(node_id, "src")?;
-            if Url::parse(source).is_ok() {
-                return None;
-            }
-            base_url
-                .join(source)
-                .ok()
-                .map(|absolute| (node_id, absolute.to_string()))
-        })
-        .collect();
-    for (node_id, source) in updates {
-        document
-            .set_element_attribute(node_id, "src", source)
-            .expect("src is a valid HTML attribute name");
-    }
-}
-
-fn prepare_background_image(
-    image: &mut BackgroundImage,
-    base_url: &Url,
-    resolver: &ImageResolver<SystemHttpProvider>,
-) {
-    let BackgroundImage::Url(source) = image else {
-        return;
-    };
-    let Some(absolute) = Url::parse(source)
-        .ok()
-        .or_else(|| base_url.join(source).ok())
-    else {
-        return;
-    };
-    *source = absolute.to_string();
-    let _ = resolver.resolve(ResolverRequest::new(&absolute));
-}
-
-fn prepare_cascade_images(
-    cascade: &mut raikiri_style::CascadeResult,
-    base_url: &Url,
-    resolver: &ImageResolver<SystemHttpProvider>,
-) {
-    for computed in &mut cascade.computed {
-        prepare_background_image(&mut computed.background_image, base_url, resolver);
-        prepare_background_image(&mut computed.list_style_image, base_url, resolver);
-    }
-}
 
 /// Fetches and renders one HTTP document at the requested screen viewport.
 pub fn render_screen_url(
