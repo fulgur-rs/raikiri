@@ -368,32 +368,41 @@ fn class_list(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
     Ok(object.into())
 }
 
-/// `Element.innerHTML` getter (HTML Standard §the innerHTML mixin: getter
-/// steps run the fragment serializing algorithm): a live serialization of
-/// the element's children, computed fresh on every read from the current
-/// arena state rather than a retained source string. An error is only a
-/// corrupted document arena (an out-of-range or malformed template-fragment
-/// index) that a brand-checked `Element` index should never expose in
-/// practice, so it is treated as a host failure, the same as the setter's
-/// fragment-parse failure below.
+/// `Element.innerHTML` getter (HTML Standard §8.5.4 "The innerHTML
+/// property": getter steps run the fragment serializing algorithm): a live
+/// serialization of the element's children, computed fresh on every read
+/// from the current arena state rather than a retained source string. An
+/// error means some element under `index` carries an attribute name the
+/// serializer rejects (`Document::serialize_inner_html`'s own validation);
+/// `replace_children_from` (used by the setter below) copies a parsed
+/// fragment's attribute names without that validation, so a host whose
+/// fragment parser hands back a non-XML-name attribute can make this
+/// reachable. Treated as a host failure, the same as the setter's own
+/// fragment-parse failure.
 fn inner_html(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     let result = with_state(context, |s| s.host.document().serialize_inner_html(index))?;
     match result {
         Ok(html) => Ok(js_str(&html)),
-        Err(message) => Err(host_failure(context, HostError(message))), // cov:ignore: serialize_inner_html only errors for an out-of-range or malformed index, which a brand-checked Element index never is
+        Err(message) => Err(host_failure(context, HostError(message))),
     }
 }
 
-/// `Element.innerHTML` setter (HTML Standard §the innerHTML mixin: setter
-/// steps run the fragment parsing algorithm with `this` as the context
-/// element): parses `value` as an HTML fragment through the host (context
-/// element's tag name and namespace), then replaces the element's children
-/// with the parsed result. Targeting a `<template>` replaces its template
-/// contents instead of its direct children (`Document::replace_children_from`).
+/// `Element.innerHTML` setter (HTML Standard §8.5.4 "The innerHTML
+/// property": setter steps run the fragment parsing algorithm with `this`
+/// as the context element). `[LegacyNullToEmptyString]` (the attribute's
+/// WebIDL type): `null` sets the empty string rather than converting to the
+/// string `"null"`. Parses the given markup as an HTML fragment through the
+/// host (context element's tag name and namespace), then replaces the
+/// element's children with the parsed result. Targeting a `<template>`
+/// replaces its template contents instead of its direct children
+/// (`Document::replace_children_from`).
 fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
-    let markup = dom_string(args, 0, context)?;
+    let markup = match args.first() {
+        Some(v) if v.is_null() => String::new(),
+        _ => dom_string(args, 0, context)?,
+    };
     let parsed = with_state(context, |s| {
         let doc = s.host.document();
         let tag = doc

@@ -399,6 +399,43 @@ fn inner_html_serializes_and_replaces_children_through_the_host_parser() {
     ok(&mut rt, "p.textContent === 'xyz'");
 }
 
+/// `[LegacyNullToEmptyString]` (the `innerHTML` attribute's WebIDL type):
+/// `null` sets the empty string, not the string `"null"` that plain
+/// `ToString` conversion would otherwise produce.
+#[test]
+fn inner_html_setter_treats_null_as_the_empty_string() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var p = document.createElement('p'); document.body.appendChild(p); p.innerHTML = null;",
+    )
+    .unwrap();
+    ok(&mut rt, "p.textContent === ''");
+}
+
+/// `Document::replace_children_from` (used by the setter) copies a parsed
+/// fragment's attribute names without the validation
+/// `Document::set_element_attribute` (used by `setAttribute`) performs, so
+/// a non-XML-name attribute planted directly on the document (modeling what
+/// a permissive host fragment parser could hand back) makes
+/// `serialize_inner_html`'s own validation error reachable from the
+/// `innerHTML` getter.
+#[test]
+fn inner_html_getter_reports_an_invalid_attribute_name_as_a_host_error() {
+    let (mut rt, body) = rt_with_body();
+    with_state(rt.context_mut(), |s| {
+        let doc = s.host.document_mut();
+        let child = doc.create_detached_element("div").unwrap();
+        doc.append_child(body, child).unwrap();
+        doc.set_element_attributes(child, vec![("1bad".into(), "x".into())]);
+    })
+    .unwrap();
+    let err = rt.evaluate("document.body.innerHTML;");
+    assert!(
+        matches!(err, Err(RuntimeError::Host(ref m)) if m.contains("invalid attribute name")),
+        "{err:?}"
+    );
+}
+
 #[test]
 fn inner_html_host_failure_is_reported_as_host_error() {
     use super::super::host::{BoxGeometry, DocumentHost, HostError};
@@ -486,5 +523,16 @@ fn mutations_set_dirty_and_reads_and_no_op_writes_do_not() {
     assert!(
         !is_dirty(&mut rt),
         "a toggle matching the current state should not write"
+    );
+
+    clear_dirty(&mut rt);
+    rt.evaluate("d.innerHTML = '<span></span>';").unwrap();
+    assert!(is_dirty(&mut rt), "innerHTML= should mark dirty");
+
+    clear_dirty(&mut rt);
+    rt.evaluate("d.innerHTML;").unwrap();
+    assert!(
+        !is_dirty(&mut rt),
+        "reading innerHTML should not mark dirty"
     );
 }
