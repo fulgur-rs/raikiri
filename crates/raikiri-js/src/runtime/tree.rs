@@ -11,7 +11,7 @@
 //! - <https://dom.spec.whatwg.org/#converting-nodes-into-a-node>
 
 use boa_engine::object::builtins::JsArray;
-use boa_engine::{Context, JsError, JsNativeError, JsResult, JsValue};
+use boa_engine::{Context, JsError, JsResult, JsValue};
 use raikiri_dom::{DomMutationError, NodeKind};
 
 use super::interfaces::{Members, wrap, wrap_optional};
@@ -19,7 +19,7 @@ use super::node::{js_str, mark_dirty};
 use super::webidl::{
     arg_node, arg_node_or_null, dom_string, node_index, this_character_data, this_child_node,
     this_document, this_node, this_parent_node, this_processing_instruction, throw_dom_exception,
-    with_state,
+    unreachable_mutation_error, with_state,
 };
 
 /// Map a raikiri-dom mutation-validity failure to the `DOMException` it
@@ -108,10 +108,18 @@ fn nodes_into_a_node(context: &mut Context, items: Vec<NodeOrText>) -> JsResult<
     result.map_err(|e| map_mutation_error(context, e))
 }
 
-/// DOM §4.2.3 "replace all with node within parent": detach every current
-/// child of `parent`, then insert `node` (already built, e.g. by
-/// [`nodes_into_a_node`]), or nothing for `None`. The removal happens only
-/// *after* `pre_insert`'s own validity check, which runs against `parent`'s
+/// DOM §4.2.3 "replace all with node within parent": detach every child of
+/// `parent` other than `node` itself, then insert `node` (already built,
+/// e.g. by [`nodes_into_a_node`]), or nothing for `None`.
+///
+/// `node` is excluded from the detach loop because it can already be one
+/// of `parent`'s current children (e.g. `b.replaceChildren(existingChild)`,
+/// or the `textContent` setter given `parent`'s own existing single Text
+/// child) -- `pre_insert`'s move (detach, then reattach at the end) leaves
+/// it attached, and an unconditional detach loop over the *pre-insert*
+/// snapshot of `parent`'s children would immediately detach it right back
+/// out, losing it instead of keeping it. The detach loop only runs *after*
+/// `pre_insert`'s own validity check, which runs against `parent`'s
 /// children as they stand before this call -- exactly the "ensure
 /// pre-insertion validity of node into this before null" step that precedes
 /// "replace all" in every caller (`ParentNode.replaceChildren`, the
@@ -131,7 +139,9 @@ pub(crate) fn replace_all(
             doc.pre_insert(parent, node, None)?;
         }
         for child in previous_children {
-            doc.detach_from_parent(child);
+            if Some(child) != node {
+                doc.detach_from_parent(child);
+            }
         }
         Ok(())
     })?;
@@ -274,11 +284,15 @@ fn node_value(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
 }
 
 /// `Node.nodeValue` setter (DOM §4.4): replaces a `CharacterData` node's
-/// data outright; every other kind ignores the write.
+/// data outright; every other kind ignores the write. `nodeValue` is typed
+/// `DOMString?` (nullable): WebIDL's ES-value conversion for a nullable
+/// `DOMString?` maps both `null` and `undefined` to the IDL null value, so
+/// either one clears the node the same way, unlike plain `ToString`
+/// (which would otherwise stringify `undefined` to `"undefined"`).
 fn set_node_value(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_node(this, context)?;
     let value = match args.first() {
-        Some(v) if v.is_null() => String::new(),
+        Some(v) if v.is_null() || v.is_undefined() => String::new(),
         _ => dom_string(args, 0, context)?,
     };
     let is_character_data = with_state(context, |s| {
@@ -291,10 +305,10 @@ fn set_node_value(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
         let result = with_state(context, |s| {
             s.host.document_mut().set_character_data(index, &value)
         })?;
-        if let Err(message) = result {
+        if result.is_err() {
             // cov:ignore: `is_character_data` above already confirmed a Text,
             // Comment, or ProcessingInstruction index.
-            return Err(JsNativeError::error().with_message(message).into());
+            return Err(unreachable_mutation_error());
         }
         mark_dirty(context)?;
     }
@@ -711,10 +725,10 @@ fn set_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult
     let result = with_state(context, |s| {
         s.host.document_mut().set_character_data(index, &value)
     })?;
-    if let Err(message) = result {
+    if result.is_err() {
         // cov:ignore: `this_character_data` above already confirmed a Text,
         // Comment, or ProcessingInstruction index.
-        return Err(JsNativeError::error().with_message(message).into());
+        return Err(unreachable_mutation_error());
     }
     mark_dirty(context)?;
     Ok(JsValue::undefined())
@@ -748,10 +762,10 @@ fn append_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
     let result = with_state(context, |s| {
         s.host.document_mut().set_character_data(index, &updated)
     })?;
-    if let Err(message) = result {
+    if result.is_err() {
         // cov:ignore: `this_character_data` above already confirmed a Text,
         // Comment, or ProcessingInstruction index.
-        return Err(JsNativeError::error().with_message(message).into());
+        return Err(unreachable_mutation_error());
     }
     mark_dirty(context)?;
     Ok(JsValue::undefined())

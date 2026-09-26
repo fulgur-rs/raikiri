@@ -347,8 +347,12 @@ fn character_data_length_counts_utf16_code_units() {
     ok(&mut rt, "t.length === 4");
 }
 
-/// The `textContent` setter's DocumentFragment/Element branch clears every
-/// child for an empty string, rather than inserting an empty Text node.
+/// The `textContent` setter's DocumentFragment branch (via
+/// `tree::replace_all`) clears every child for an empty string, rather
+/// than inserting an empty Text node. `element_textcontent_setter_empty_
+/// string_clears_children` below pins the same DOM §4.4 behavior for
+/// Element, realized through a separate raikiri-dom primitive
+/// (`set_element_text_content`) instead of this same helper.
 #[test]
 fn fragment_text_content_setter_empty_string_clears_children() {
     let mut rt = rt();
@@ -359,6 +363,84 @@ fn fragment_text_content_setter_empty_string_clears_children() {
     )
     .unwrap();
     ok(&mut rt, "f.childNodes.length === 0");
+}
+
+/// Element's `textContent` setter (DOM §4.4, same "replace all" behavior
+/// as DocumentFragment's, but implemented via `set_element_text_content`
+/// rather than `tree::replace_all`) also clears to zero children for an
+/// empty string, not a single empty-data Text child.
+#[test]
+fn element_text_content_setter_empty_string_clears_children() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var p = document.createElement('p'); document.body.appendChild(p); \
+         p.textContent = 'x'; p.textContent = '';",
+    )
+    .unwrap();
+    ok(&mut rt, "p.childNodes.length === 0");
+}
+
+/// `nodeValue` is `DOMString?`: both `null` and `undefined` clear a
+/// `CharacterData` node's data, not just `null`.
+#[test]
+fn node_value_setter_treats_undefined_like_null() {
+    let mut rt = rt();
+    rt.evaluate("var t = document.createTextNode('x'); t.nodeValue = undefined;")
+        .unwrap();
+    ok(&mut rt, "t.data === ''");
+}
+
+/// `textContent` is also `DOMString?`: `undefined` clears an Element's
+/// children the same way `null` or the empty string does.
+#[test]
+fn text_content_setter_treats_undefined_like_null() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var p = document.createElement('p'); document.body.appendChild(p); \
+         p.textContent = 'x'; p.textContent = undefined;",
+    )
+    .unwrap();
+    ok(&mut rt, "p.childNodes.length === 0");
+}
+
+/// `replaceChildren` given a node that is already one of `parent`'s
+/// current children must keep it, not lose it: `replace_all`'s detach loop
+/// walks a *pre-insert* snapshot of `parent`'s children, so without
+/// excluding the just-(re)inserted node from that loop, `pre_insert`'s
+/// detach-then-reattach would leave it attached only for the very next
+/// line to detach it right back out.
+#[test]
+fn replace_children_keeps_a_node_that_was_already_a_child() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var b = document.body; \
+         var a = document.createElement('a'); \
+         var c = document.createElement('c'); \
+         b.append(a, c); \
+         b.replaceChildren(a);",
+    )
+    .unwrap();
+    ok(&mut rt, "b.childNodes.length === 1 && b.firstChild === a");
+}
+
+/// The same scenario with a second, order-swapped replacement node: `c`
+/// (not already adjacent to `a` in that order) must end up spliced in
+/// alongside the preserved `a`, in the given order.
+#[test]
+fn replace_children_keeps_an_existing_child_among_other_replacements() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var b = document.body; \
+         var a = document.createElement('a'); \
+         var c = document.createElement('c'); \
+         b.append(a, c); \
+         b.replaceChildren(c, a);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "b.childNodes.length === 2 && b.firstChild === c && b.lastChild === a",
+    );
 }
 
 /// `ParentNode.append`'s node-or-string arguments are converted and spliced

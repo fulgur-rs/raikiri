@@ -1,7 +1,7 @@
 //! `Node`, `Element`, and `Document` members.
 
 use boa_engine::object::JsObject;
-use boa_engine::{Context, JsNativeError, JsResult, JsString, JsValue, NativeFunction};
+use boa_engine::{Context, JsResult, JsString, JsValue, NativeFunction};
 use raikiri_dom::NodeKind;
 use raikiri_style::{SelectorQuery, StyleNodeId};
 
@@ -9,7 +9,7 @@ use super::host::HostError;
 use super::interfaces::{Members, closure_function, wrap, wrap_optional};
 use super::webidl::{
     dom_string, host_failure, host_failure_with_message, this_document, this_element, this_node,
-    throw_dom_exception, with_state,
+    throw_dom_exception, unreachable_mutation_error, with_state,
 };
 
 /// Record that the DOM changed so the next layout-dependent read flushes.
@@ -130,11 +130,15 @@ fn text_content(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResul
     Ok(text.map_or_else(JsValue::null, |t| js_str(&t)))
 }
 
+/// `textContent` is typed `DOMString?` (nullable): WebIDL's ES-value
+/// conversion for a nullable `DOMString?` maps both `null` and `undefined`
+/// to the IDL null value, so either one clears the node the same way,
+/// unlike plain `ToString` (which would otherwise stringify `undefined` to
+/// `"undefined"`).
 fn set_text_content(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_node(this, context)?;
-    // `LegacyNullToEmptyString`-like: null clears the node.
     let value = match args.first() {
-        Some(v) if v.is_null() => String::new(),
+        Some(v) if v.is_null() || v.is_undefined() => String::new(),
         _ => dom_string(args, 0, context)?,
     };
     let target_kind = with_state(context, |s| {
@@ -142,15 +146,21 @@ fn set_text_content(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
     })?;
     match target_kind {
         Some(NodeKind::Element) => {
+            // DOM §4.4 textContent setter, DocumentFragment/Element branch:
+            // "replace all" within this with a single new Text node, or with
+            // nothing for an empty string. Realized here through raikiri-dom's
+            // own `set_element_text_content` (clear-then-push-if-nonempty in a
+            // single call) rather than through `tree::replace_all` below --
+            // both implement the same "replace all" semantics.
             let result = with_state(context, |s| {
                 s.host
                     .document_mut()
                     .set_element_text_content(index, &value)
             })?;
-            if let Err(message) = result {
+            if result.is_err() {
                 // cov:ignore: `set_element_text_content` only rejects an out-of-range or
                 // non-Element index; `target_kind` above already resolved this index to Element.
-                return Err(JsNativeError::error().with_message(message).into());
+                return Err(unreachable_mutation_error());
             }
             mark_dirty(context)?;
         }
@@ -173,10 +183,10 @@ fn set_text_content(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
             let result = with_state(context, |s| {
                 s.host.document_mut().set_character_data(index, &value)
             })?;
-            if let Err(message) = result {
+            if result.is_err() {
                 // cov:ignore: `target_kind` above already resolved this index to a
                 // Text, Comment, or ProcessingInstruction node.
-                return Err(JsNativeError::error().with_message(message).into());
+                return Err(unreachable_mutation_error());
             }
             mark_dirty(context)?;
         }

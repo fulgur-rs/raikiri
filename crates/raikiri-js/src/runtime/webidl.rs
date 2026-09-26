@@ -132,6 +132,20 @@ pub(crate) fn arg_node_or_null(
     }
 }
 
+/// A fixed-message `Error` for a raikiri-dom mutation `Result<_, String>`
+/// failure that a preceding brand/kind check has already made unreachable
+/// in practice (every call site is `cov:ignore`d for exactly that reason).
+/// Takes no argument on purpose: raikiri-dom's own message text can embed
+/// an arena index (e.g. "target index 3 is out of range"), which must
+/// never reach script, and there is no reachable path here to describe
+/// more specifically anyway, so the caller's `String` is simply dropped
+/// rather than threaded through and ignored.
+pub(crate) fn unreachable_mutation_error() -> JsError {
+    JsNativeError::error()
+        .with_message("an internal DOM operation failed unexpectedly")
+        .into()
+}
+
 /// Create a `DOMException` with the given name and return it as a JS error.
 pub(crate) fn throw_dom_exception(context: &mut Context, name: &str, message: &str) -> JsError {
     let proto = protos(context).dom_exception.clone();
