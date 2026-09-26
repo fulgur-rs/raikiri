@@ -130,7 +130,7 @@ fn text_content_covers_text_nodes_null_clear_and_document_no_op() {
     // DocumentFragment / Element / Attr / CharacterData accept a write).
     rt.evaluate("document.textContent = 'ignored';").unwrap();
     ok(&mut rt, "document.textContent === null");
-    // A `null` argument clears the element ([LegacyNullToEmptyString]-like).
+    // A `null` argument clears the element (`LegacyNullToEmptyString`-like).
     rt.evaluate("var p = document.createElement('p'); document.body.appendChild(p); p.textContent = 'ab'; p.textContent = null;").unwrap();
     ok(&mut rt, "p.textContent === ''");
 }
