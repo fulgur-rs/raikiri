@@ -1324,7 +1324,8 @@ css/ok | macos | aarch64 | skia | high | r | i | 2026-08-02
         // + CSS Page monolithic-overflow exact 800x600 slice (+5).
         // + CSS Break widows-orphans paged-text exact 800x600 slice (+11).
         // + CSS Page fixedpos exact 800x600 slice (+9).
-        assert_eq!(set.baseline.entries.len(), 1333);
+        // + css/printing fragmented-inline-block exact 800x600 slice (+2).
+        assert_eq!(set.baseline.entries.len(), 1335);
         assert!(set.quarantine.is_empty());
         assert!(set.deprecated.is_empty());
     }
