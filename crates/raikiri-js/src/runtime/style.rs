@@ -273,58 +273,34 @@ fn style_object(context: &mut Context, index: usize, computed: bool) -> JsResult
         Some(context.intrinsics().constructors().object().prototype()),
         StyleTarget { index, computed },
     );
-    let get_property_value = closure_function(
-        context,
-        "getPropertyValue",
-        1,
-        NativeFunction::from_copy_closure(move |_, args, ctx| {
-            let name = dom_string(args, 0, ctx)?;
-            let value = if computed {
-                read_computed(ctx, index, &name)?.unwrap_or_default()
-            } else {
-                read_inline(ctx, index, &name)?
-            };
-            Ok(JsValue::from(JsString::from(value)))
-        }),
-        // cov:ignore: closure_function only fails to define a non-writable
-        // `length` on the function object it just built, which never happens
-        // for a fresh, extensible object.
-    )?;
-    target.set(
-        js_string!("getPropertyValue"),
-        get_property_value,
-        true,
-        context,
-        // cov:ignore: `set` on a plain, extensible, freshly created target
-        // object cannot fail.
-    )?;
+    let get_value = NativeFunction::from_copy_closure(move |_, args, ctx| {
+        let name = dom_string(args, 0, ctx)?;
+        let value = if computed {
+            read_computed(ctx, index, &name)?.unwrap_or_default()
+        } else {
+            read_inline(ctx, index, &name)?
+        };
+        Ok(JsValue::from(JsString::from(value)))
+    });
+    let get_value = closure_function(context, "getPropertyValue", 1, get_value)?;
+    target.set(js_string!("getPropertyValue"), get_value, true, context)?;
     if !computed {
-        let set_property = closure_function(
-            context,
-            "setProperty",
-            2,
-            NativeFunction::from_copy_closure(move |_, args, ctx| {
-                let name = dom_string(args, 0, ctx)?;
-                let value = dom_string(args, 1, ctx)?;
-                write_inline(ctx, index, &name, &value)?;
-                Ok(JsValue::undefined())
-            }),
-            // cov:ignore: see the `getPropertyValue` closure_function call above.
-        )?;
-        let remove_property = closure_function(
-            context,
-            "removeProperty",
-            1,
-            NativeFunction::from_copy_closure(move |_, args, ctx| {
-                let name = dom_string(args, 0, ctx)?;
-                let previous = read_inline(ctx, index, &name)?;
-                write_inline(ctx, index, &name, "")?;
-                Ok(JsValue::from(JsString::from(previous)))
-            }),
-            // cov:ignore: see the `getPropertyValue` closure_function call above.
-        )?;
-        target.set(js_string!("setProperty"), set_property, true, context)?;
-        target.set(js_string!("removeProperty"), remove_property, true, context)?;
+        let set_value = NativeFunction::from_copy_closure(move |_, args, ctx| {
+            let name = dom_string(args, 0, ctx)?;
+            let value = dom_string(args, 1, ctx)?;
+            write_inline(ctx, index, &name, &value)?;
+            Ok(JsValue::undefined())
+        });
+        let set_value = closure_function(context, "setProperty", 2, set_value)?;
+        let remove_value = NativeFunction::from_copy_closure(move |_, args, ctx| {
+            let name = dom_string(args, 0, ctx)?;
+            let previous = read_inline(ctx, index, &name)?;
+            write_inline(ctx, index, &name, "")?;
+            Ok(JsValue::from(JsString::from(previous)))
+        });
+        let remove_value = closure_function(context, "removeProperty", 1, remove_value)?;
+        target.set(js_string!("setProperty"), set_value, true, context)?;
+        target.set(js_string!("removeProperty"), remove_value, true, context)?;
     }
     let proxy = JsProxyBuilder::new(target)
         .get(style_get_trap)
@@ -458,28 +434,14 @@ pub(crate) const HTML_ELEMENT_MEMBERS: Members = Members {
 
 /// `getComputedStyle` and the `CSS` namespace object.
 pub(crate) fn install_globals(context: &mut Context) -> JsResult<()> {
+    let attr = Attribute::WRITABLE | Attribute::CONFIGURABLE;
     let gcs = function(context, "getComputedStyle", 1, get_computed_style)?;
-    context.register_global_property(
-        js_string!("getComputedStyle"),
-        gcs,
-        Attribute::WRITABLE | Attribute::CONFIGURABLE,
-        // cov:ignore: install runs once on a fresh realm's global object,
-        // which Boa never rejects a plain property definition on.
-    )?;
+    context.register_global_property(js_string!("getComputedStyle"), gcs, attr)?;
     let supports = function(context, "supports", 2, css_supports)?;
     let css = ObjectInitializer::new(context)
-        .property(
-            js_string!("supports"),
-            supports,
-            Attribute::WRITABLE | Attribute::CONFIGURABLE,
-        )
+        .property(js_string!("supports"), supports, attr)
         .build();
-    context.register_global_property(
-        js_string!("CSS"),
-        css,
-        Attribute::WRITABLE | Attribute::CONFIGURABLE,
-        // cov:ignore: see the `getComputedStyle` registration above.
-    )?;
+    context.register_global_property(js_string!("CSS"), css, attr)?;
     Ok(())
 }
 
