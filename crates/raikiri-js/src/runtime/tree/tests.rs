@@ -292,6 +292,50 @@ fn before_skips_a_sibling_that_is_also_being_inserted() {
     );
 }
 
+/// `m.before('x')` where `m` has a real preceding sibling `a` that is not
+/// among the given nodes: the viable-previous-sibling search finds `a`
+/// itself (rather than falling back to `parent`'s first child), so the new
+/// content lands immediately after `a`, not at the very front of `b`.
+#[test]
+fn before_resolves_a_real_viable_previous_sibling() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var b = document.body; var a = document.createElement('a'); b.appendChild(a); \
+         var m = document.createElement('m'); b.appendChild(m); \
+         m.before('x');",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "b.childNodes.length === 3 && b.firstChild === a \
+         && a.nextSibling.data === 'x' && a.nextSibling.nextSibling === m",
+    );
+}
+
+/// `previousElementSibling` / `nextElementSibling` at a tree boundary (no
+/// preceding or following sibling at all, element or otherwise): the
+/// search loop never runs, falling straight through to `null`.
+#[test]
+fn element_sibling_getters_are_null_at_a_boundary() {
+    let mut rt = rt();
+    rt.evaluate("var b = document.body; var x = document.createElement('x'); b.appendChild(x);")
+        .unwrap();
+    ok(
+        &mut rt,
+        "x.previousElementSibling === null && x.nextElementSibling === null",
+    );
+}
+
+/// `Node.nodeValue`'s setter is a no-op for every interface but
+/// `CharacterData` (DOM §4.4: "Otherwise: do nothing"), exercised here
+/// against an `Element`, unlike the getter-only check elsewhere.
+#[test]
+fn node_value_setter_is_a_no_op_off_character_data() {
+    let mut rt = rt();
+    rt.evaluate("document.body.nodeValue = 'ignored';").unwrap();
+    ok(&mut rt, "document.body.nodeValue === null");
+}
+
 /// `CharacterData.length` counts UTF-16 code units (DOM §4.10), not
 /// raikiri-dom's UTF-8 byte length: an astral character is one Unicode
 /// scalar value but a two-unit UTF-16 surrogate pair.

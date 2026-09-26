@@ -249,22 +249,29 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     let text = derived(context, "Text", &character_data, &[&NO_MEMBERS])?;
     let comment = derived(context, "Comment", &character_data, &[&NO_MEMBERS])?;
     let pi_members = [&tree::PROCESSING_INSTRUCTION_MEMBERS];
-    let pi = derived(
+    // A `?` at the end of a call rustfmt wraps across several lines makes
+    // cargo-llvm-cov attribute the whole statement's coverage to its first
+    // line only, always reporting the closing line as a zero-hit false
+    // negative; splitting the fallible call from its `?` keeps both
+    // statements single-line and immune to that.
+    let pi_result = derived(
         context,
         "ProcessingInstruction",
         &character_data,
         &pi_members,
-    )?;
+    );
+    let pi = pi_result?;
     // DOMException.prototype inherits Error.prototype (WebIDL §3.14.1), but
     // the interface object itself is an ordinary function.
     let error = context.intrinsics().constructors().error().prototype();
-    let dom_exception = interface(
+    let dom_exception_result = interface(
         context,
         "DOMException",
         Some(&error),
         None,
         &[&DOM_EXCEPTION],
-    )?;
+    );
+    let dom_exception = dom_exception_result?;
     context.insert_data(Protos {
         event_target: event_target.prototype,
         node: node_i.prototype,
@@ -307,6 +314,8 @@ fn prototype_for(context: &mut Context, index: usize) -> JsResult<JsObject> {
         Some(NodeKind::ProcessingInstruction) => p.processing_instruction.clone(),
         Some(NodeKind::Document) => p.document.clone(),
         Some(NodeKind::DocumentFragment) => p.document_fragment.clone(),
+        // cov:ignore: `NodeKind` is `#[non_exhaustive]`; every variant it currently
+        // defines already has its own arm above, so this only guards a future one.
         Some(_) => p.node.clone(),
         None => {
             return Err(JsNativeError::typ()
