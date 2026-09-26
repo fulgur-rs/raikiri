@@ -25,12 +25,10 @@ pub(crate) struct State {
     /// arena slots, so wrappers live exactly as long as the runtime.
     pub wrappers: Vec<Option<JsObject>>,
     /// Set by every DOM mutation; cleared by a successful host flush.
-    #[allow(dead_code, reason = "read by the style and layout bindings")]
     pub dirty: bool,
     /// First host failure seen during the current evaluation.
     pub host_failure: Option<String>,
     /// Per-element `style` objects so `el.style === el.style`.
-    #[allow(dead_code, reason = "populated by the inline style binding")]
     pub style_objects: HashMap<usize, JsObject>,
     /// Per-element `classList` objects so `el.classList === el.classList`.
     pub class_lists: HashMap<usize, JsObject>,

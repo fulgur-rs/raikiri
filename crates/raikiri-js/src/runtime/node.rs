@@ -598,6 +598,11 @@ pub(crate) const ELEMENT_MEMBERS: Members = Members {
         ("hasAttribute", 1, has_attribute),
         ("setAttribute", 2, set_attribute),
         ("removeAttribute", 1, remove_attribute),
+        (
+            "getBoundingClientRect",
+            0,
+            super::style::get_bounding_client_rect,
+        ),
     ],
 };
 
