@@ -425,3 +425,6 @@ pub struct SemanticEntry {
     /// Alt text (image 等の代替テキスト)。
     pub alt_text: Option<String>,
 }
+
+#[cfg(test)]
+mod tests;

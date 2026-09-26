@@ -180,3 +180,6 @@ pub struct PageDrawables {
     /// scope 内 descendants を deterministic 順序で並べる。
     pub inline_box_subtree_descendants: BTreeMap<NodeId, Vec<NodeId>>,
 }
+
+#[cfg(test)]
+mod tests;
