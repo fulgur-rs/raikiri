@@ -1,6 +1,6 @@
-//! `EventTarget` listener registration and removal (DOM §2.7). Dispatch is
-//! out of scope for this runtime; only the registered-listener state is
-//! kept, in [`super::State`], for a later spec increment to consume.
+//! `EventTarget` listener registration and removal (DOM §2.7). The listener
+//! state kept here, in [`super::State`], is consumed by [`super::dispatch`],
+//! which implements `dispatchEvent` (DOM §2.9) over it.
 //!
 //! Spec ref: <https://dom.spec.whatwg.org/#interface-eventtarget>
 
@@ -11,23 +11,26 @@ use boa_engine::{Context, JsNativeError, JsResult, JsValue, js_string};
 use super::interfaces::{Members, function};
 use super::webidl::{dom_string, node_index, with_state};
 
-/// One registered listener (DOM §2.7's "an event listener" struct, minus
-/// the event-path/dispatch fields no algorithm here needs yet).
+/// One registered listener (DOM §2.7's "an event listener" struct, minus the
+/// touch-target-list field no algorithm here needs). There is no stored
+/// `removed` field: a listener removed by an earlier listener's own
+/// callback, during the same dispatch, is instead detected by
+/// `dispatch::invoke` re-checking that an identical
+/// `(type, callback, capture)` entry is still present in the target's list
+/// right before calling it, rather than flagging entries in place.
 #[derive(Clone)]
 pub(crate) struct Listener {
     pub kind: String,
     pub callback: JsObject,
     pub capture: bool,
-    #[allow(
-        dead_code,
-        reason = "recorded now for a later dispatch implementation to read; registration alone never reads it back"
-    )]
     pub once: bool,
-    #[allow(
-        dead_code,
-        reason = "recorded now for a later dispatch implementation to read; registration alone never reads it back"
-    )]
     pub passive: bool,
+    /// Whether this entry is the single slot an event handler IDL attribute
+    /// (`onclick`, `onerror`, ...) manages, rather than an ordinary
+    /// `addEventListener` registration -- see
+    /// [`super::dispatch::install_window_handlers`] and the matching
+    /// `HTMLElement` accessors.
+    pub is_handler: bool,
 }
 
 /// `this`'s listener-storage key: `Some(index)` for a `Node` wrapper, or
@@ -39,7 +42,7 @@ pub(crate) struct Listener {
 /// (and `null`, reachable the same way through `.call(null, ...)`) as the
 /// window key is what makes that call, and `window.addEventListener(...)`
 /// itself, both work.
-fn this_event_target(this: &JsValue, context: &mut Context) -> JsResult<Option<usize>> {
+pub(crate) fn this_event_target(this: &JsValue, context: &mut Context) -> JsResult<Option<usize>> {
     if let Some(index) = node_index(this) {
         return Ok(Some(index));
     }
@@ -77,7 +80,7 @@ fn convert_callback(args: &[JsValue], _context: &mut Context) -> JsResult<Option
 /// One `AddEventListenerOptions` field (`ToBoolean` of whatever is there;
 /// absent or `undefined` is `false`, matching the dictionary member's own
 /// default).
-fn dict_flag(context: &mut Context, options: &JsObject, name: &str) -> JsResult<bool> {
+pub(crate) fn dict_flag(context: &mut Context, options: &JsObject, name: &str) -> JsResult<bool> {
     let value = options.get(js_string!(name), context)?;
     Ok(!value.is_undefined() && value.to_boolean())
 }
@@ -126,7 +129,11 @@ fn capture_from_remove_options(context: &mut Context, args: &[JsValue]) -> JsRes
 /// an `options` dictionary member's own getter throwing both take priority
 /// over the "callback is null" no-op. A duplicate `(type, callback,
 /// capture)` registration is ignored, whether or not `once`/`passive`
-/// match.
+/// match -- except against the one listener slot an event handler IDL
+/// attribute (`onclick`, ...) manages: that slot's internal callback is
+/// never the same identity as one supplied to `addEventListener`, even when
+/// both happen to be the very same JS function, so it is never treated as
+/// a duplicate of it (nor removable by `removeEventListener`, see below).
 pub(crate) fn add_event_listener(
     this: &JsValue,
     args: &[JsValue],
@@ -142,7 +149,10 @@ pub(crate) fn add_event_listener(
     with_state(context, |s| {
         let list = s.listeners.entry(key).or_default();
         let duplicate = list.iter().any(|l| {
-            l.kind == kind && JsObject::equals(&l.callback, &callback) && l.capture == capture
+            !l.is_handler
+                && l.kind == kind
+                && JsObject::equals(&l.callback, &callback)
+                && l.capture == capture
         });
         if !duplicate {
             list.push(Listener {
@@ -151,6 +161,7 @@ pub(crate) fn add_event_listener(
                 capture,
                 once,
                 passive,
+                is_handler: false,
             });
         }
     })?;
@@ -163,6 +174,9 @@ pub(crate) fn add_event_listener(
 /// `removeEventListener`'s `options` is `(EventListenerOptions or
 /// boolean)`, a dictionary with only a `capture` member, so `once`/
 /// `passive` are never read here at all (not merely read and discarded).
+/// An event handler IDL attribute's own listener slot is never removed
+/// this way, matching [`add_event_listener`]'s own note on why the two
+/// never collide.
 pub(crate) fn remove_event_listener(
     this: &JsValue,
     args: &[JsValue],
@@ -178,9 +192,10 @@ pub(crate) fn remove_event_listener(
     with_state(context, |s| {
         if let Some(list) = s.listeners.get_mut(&key) {
             list.retain(|l| {
-                !(l.kind == kind
-                    && JsObject::equals(&l.callback, &callback)
-                    && l.capture == capture)
+                l.is_handler
+                    || !(l.kind == kind
+                        && JsObject::equals(&l.callback, &callback)
+                        && l.capture == capture)
             });
         }
     })?;
@@ -193,19 +208,23 @@ pub(crate) const EVENT_TARGET_MEMBERS: Members = Members {
     methods: &[
         ("addEventListener", 2, add_event_listener),
         ("removeEventListener", 2, remove_event_listener),
+        ("dispatchEvent", 1, super::dispatch::dispatch_event),
     ],
 };
 
-/// `window`/`self`'s own `addEventListener`/`removeEventListener`: this
-/// runtime's global object has no dedicated `EventTarget` wrapper (`window
-/// === globalThis`, an ordinary object), so these are defined directly on
-/// it rather than reached through a prototype chain.
+/// `window`/`self`'s own `addEventListener`/`removeEventListener`/
+/// `dispatchEvent`: this runtime's global object has no dedicated
+/// `EventTarget` wrapper (`window === globalThis`, an ordinary object), so
+/// these are defined directly on it rather than reached through a
+/// prototype chain.
 pub(crate) fn install_globals(context: &mut Context) -> JsResult<()> {
     let attr = Attribute::WRITABLE | Attribute::CONFIGURABLE;
     let add = function(context, "addEventListener", 2, add_event_listener)?;
     context.register_global_property(js_string!("addEventListener"), add, attr)?;
     let remove = function(context, "removeEventListener", 2, remove_event_listener)?;
     context.register_global_property(js_string!("removeEventListener"), remove, attr)?;
+    let dispatch = function(context, "dispatchEvent", 1, super::dispatch::dispatch_event)?;
+    context.register_global_property(js_string!("dispatchEvent"), dispatch, attr)?;
     Ok(())
 }
 

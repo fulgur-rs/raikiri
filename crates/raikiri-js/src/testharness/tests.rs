@@ -125,6 +125,21 @@ fn missing_element_is_an_assertion_failure_not_a_pass() {
     assert!(result[0].message.contains("null"));
 }
 
+/// A runtime limit is not an exception a `test()` body can turn into a
+/// failed outcome: it stops the whole run.
+#[test]
+fn runtime_limits_abort_the_run() {
+    let (host, ..) = StubHost::page();
+    let result = run_testharness_on_host(
+        "test(function() { function f() { f(); } f(); }, 'deep');",
+        host,
+    );
+    assert!(
+        matches!(result, Err(TestHarnessError::JavaScript(ref m)) if m.contains("recursion limit")),
+        "{result:?}"
+    );
+}
+
 #[test]
 fn callbacks_that_requeue_themselves_hit_the_event_loop_limit() {
     let (host, ..) = StubHost::page();
