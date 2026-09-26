@@ -7,7 +7,7 @@ use raikiri_html::{
     parse_html_with_resources,
 };
 
-const FONT: &[u8] = include_bytes!("../../raikiri/tests/data/NotoSansTest-Regular.ttf");
+const FONT: &[u8] = include_bytes!("data/NotoSansTest-Regular.ttf");
 
 #[test]
 fn font_input_errors_are_preserved() {

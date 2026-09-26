@@ -31,7 +31,7 @@ fn builder_registers_consumer_supplied_font_bytes_without_system_fonts() {
     let mut context = FontContextBuilder::new()
         .font_bytes(
             "Bundled Test",
-            include_bytes!("../../../raikiri/tests/data/NotoSansTest-Regular.ttf").as_slice(),
+            include_bytes!("../../tests/data/NotoSansTest-Regular.ttf").as_slice(),
         )
         .build()
         .expect("bundled bytes register");
