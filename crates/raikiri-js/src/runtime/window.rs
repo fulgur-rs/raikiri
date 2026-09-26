@@ -3,26 +3,28 @@
 //! are installed by [`super::interfaces::install`] already, onto the same
 //! global object).
 //!
-//! `location`, `navigator`, and `console` are exposed as plain singleton
-//! objects, not as interfaces with their own constructor: there is exactly
-//! one of each, reachable only through `window`, and nothing here ever
-//! constructs a second one.
+//! `Location`/`Navigator` are real interfaces (illegal constructor,
+//! `@@toStringTag` on the prototype) -- [`super::interfaces::install`]
+//! builds them the same way as every other interface and passes their
+//! prototypes into [`install`]. `console` has no interface object: the
+//! Console Standard defines it as a WebIDL *namespace*, not an interface.
+//! Exactly one instance of each singleton exists, reachable only through
+//! `window`.
 
 use boa_engine::native_function::NativeFunctionPointer;
 use boa_engine::object::{JsObject, ObjectInitializer};
-use boa_engine::property::Attribute;
-use boa_engine::{Context, JsResult, JsValue, js_string};
+use boa_engine::property::{Attribute, PropertyDescriptor};
+use boa_engine::{Context, JsResult, JsValue, NativeFunction, js_string};
 
-use super::interfaces::function;
+use super::interfaces::{Members, closure_function, function};
 use super::node::js_str;
 use super::webidl::with_state;
 
 // ---- location --------------------------------------------------------
 
-/// `window.location`'s components. Either derived from [`super::host::
-/// DocumentHost::document_url`], or this fixed fallback when there is none
-/// (`about:blank`'s own component breakdown: no host or port, opaque
-/// origin).
+/// `window.location`'s components. Either derived from [`super::host::DocumentHost::document_url`],
+/// or this fixed fallback when there is none (`about:blank`'s own component
+/// breakdown: no host or port, opaque origin).
 struct LocationParts {
     href: String,
     protocol: String,
@@ -62,6 +64,12 @@ impl LocationParts {
     fn parse(url: &str) -> Self {
         let (before_hash, hash) = split_at_delimiter(url, '#');
         let (before_search, search) = split_at_delimiter(before_hash, '?');
+        // `Location.search`/`.hash` (WHATWG URL Standard): a delimiter with
+        // nothing after it (`".../a?"`, `".../a#"`) reads back as `""`, not
+        // the bare delimiter -- normalized once here, before either branch
+        // below reads `search`/`hash`.
+        let hash = normalize_bare_delimiter(hash);
+        let search = normalize_bare_delimiter(search);
         let Some(scheme_end) = before_search.find("://") else {
             return Self {
                 href: url.to_owned(),
@@ -110,6 +118,16 @@ fn split_at_delimiter(s: &str, delimiter: char) -> (&str, String) {
     match s.find(delimiter) {
         Some(i) => (&s[..i], s[i..].to_owned()),
         None => (s, String::new()),
+    }
+}
+
+/// [`split_at_delimiter`]'s result, further collapsing a bare delimiter with
+/// nothing after it (e.g. `"?"`, from a URL like `".../a?"`) to `""`.
+fn normalize_bare_delimiter(component: String) -> String {
+    if component.len() == 1 {
+        String::new()
+    } else {
+        component
     }
 }
 
@@ -182,7 +200,11 @@ const LOCATION_METHODS: &[(&str, usize, NativeFunctionPointer)] = &[
     ("reload", 0, location_no_op),
 ];
 
-fn location_object(context: &mut Context) -> JsResult<JsObject> {
+/// `Location`'s accessors are `[LegacyUnforgeable]`: own properties on each
+/// instance (there is only ever one), not members of `Location.prototype`
+/// -- `proto` (built by `interfaces::install`) carries only `@@toStringTag`
+/// and backs `instanceof`/`Object.prototype.toString`.
+fn location_object(context: &mut Context, proto: &JsObject) -> JsResult<JsObject> {
     let accessors: Vec<_> = LOCATION_ACCESSORS
         .iter()
         .map(|&(n, f)| {
@@ -199,7 +221,7 @@ fn location_object(context: &mut Context) -> JsResult<JsObject> {
 
     let attribute_attr = Attribute::ENUMERABLE | Attribute::CONFIGURABLE;
     let method_attr = Attribute::WRITABLE | Attribute::CONFIGURABLE;
-    let mut builder = ObjectInitializer::new(context);
+    let mut builder = ObjectInitializer::with_native_data_and_proto((), proto.clone(), context);
     for (name, getter, setter) in accessors {
         builder.accessor(js_string!(name), Some(getter), Some(setter), attribute_attr);
     }
@@ -212,9 +234,7 @@ fn location_object(context: &mut Context) -> JsResult<JsObject> {
     for (name, method) in methods {
         builder.property(js_string!(name), method, method_attr);
     }
-    let object = builder.build();
-    super::interfaces::set_to_string_tag(&object, "Location", context)?;
-    Ok(object)
+    Ok(builder.build())
 }
 
 // ---- navigator ---------------------------------------------------------
@@ -223,13 +243,22 @@ fn location_object(context: &mut Context) -> JsResult<JsObject> {
 /// string of its own to report, and content sniffing on it is out of scope.
 const USER_AGENT: &str = "Mozilla/5.0 (compatible; raikiri)";
 
-fn navigator_object(context: &mut Context) -> JsResult<JsObject> {
-    let attr = Attribute::ENUMERABLE | Attribute::CONFIGURABLE;
-    let object = ObjectInitializer::new(context)
-        .property(js_string!("userAgent"), js_str(USER_AGENT), attr)
-        .build();
-    super::interfaces::set_to_string_tag(&object, "Navigator", context)?;
-    Ok(object)
+fn navigator_user_agent(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
+    Ok(js_str(USER_AGENT))
+}
+
+/// `Navigator.prototype`'s own members (unlike `Location`'s, a read-only
+/// attribute with no per-instance state belongs on the prototype as usual).
+pub(crate) const NAVIGATOR_MEMBERS: Members = Members {
+    getters: &[("userAgent", navigator_user_agent)],
+    accessors: &[],
+    methods: &[],
+};
+
+/// The `Navigator` singleton has no own properties at all: `userAgent` is
+/// inherited from `proto` (`Navigator.prototype`).
+fn navigator_object(context: &mut Context, proto: &JsObject) -> JsResult<JsObject> {
+    Ok(ObjectInitializer::with_native_data_and_proto((), proto.clone(), context).build())
 }
 
 // ---- console -------------------------------------------------------------
@@ -245,12 +274,14 @@ pub(crate) enum ConsoleLevel {
     Debug,
 }
 
-/// One `console.*` call, recorded in call order.
+/// One `console.*` call, recorded in call order. `State` is `pub(crate)`
+/// with no accessor of its own, so nothing outside this crate can read
+/// `State.console` back yet; only this runtime's own tests do, directly via
+/// `with_state`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(
     dead_code,
-    reason = "recorded for the embedder to read back and report; only this runtime's own \
-              tests read a recorded message back directly"
+    reason = "level/message are only read back by this runtime's own tests so far, via with_state"
 )]
 pub(crate) struct ConsoleMessage {
     pub level: ConsoleLevel,
@@ -325,25 +356,70 @@ fn console_object(context: &mut Context) -> JsResult<JsObject> {
 
 // ---- install ---------------------------------------------------------
 
-/// Define `window.location`/`navigator`/`console`, and the frame-identity
-/// members `parent`/`top`/`frames`/`opener`.
-pub(crate) fn install(context: &mut Context) -> JsResult<()> {
-    let location = location_object(context)?;
-    let navigator = navigator_object(context)?;
-    let console = console_object(context)?;
-    // Non-writable, like `window`/`self` (`interfaces::install`): assigning
-    // to `window.location` must not silently replace it with an unrelated
-    // value, since navigating through it is a no-op rather than an error.
-    let singleton_attr = Attribute::CONFIGURABLE;
-    context.register_global_property(js_string!("location"), location, singleton_attr)?;
-    context.register_global_property(js_string!("navigator"), navigator, singleton_attr)?;
-    context.register_global_property(js_string!("console"), console, singleton_attr)?;
+/// Build a `NativeFunction` that ignores its call arguments and always
+/// returns a clone of `captures` -- used for `location`'s getter, which
+/// must keep returning the exact same singleton object every time (`window
+/// .location === window.location`), not rebuild one per call. `T: Trace`
+/// (here, `JsObject`) so the capture is itself garbage-collector-visible;
+/// see [`NativeFunction::from_copy_closure_with_captures`].
+fn constant_getter(captures: JsObject) -> NativeFunction {
+    NativeFunction::from_copy_closure_with_captures(
+        |_this: &JsValue, _args: &[JsValue], captures: &JsObject, _context: &mut Context| {
+            Ok(JsValue::from(captures.clone()))
+        },
+        captures,
+    )
+}
 
+/// Define `window.location`/`navigator`/`console`, and the frame-identity
+/// members `parent`/`top`/`frames`/`opener`. `location_proto`/
+/// `navigator_proto` are `Location`/`Navigator`'s prototypes, built by
+/// `interfaces::install` the same way as every other interface.
+pub(crate) fn install(
+    context: &mut Context,
+    location_proto: &JsObject,
+    navigator_proto: &JsObject,
+) -> JsResult<()> {
+    let location = location_object(context, location_proto)?;
+    let navigator = navigator_object(context, navigator_proto)?;
+    let console = console_object(context)?;
+
+    // `location`: `[PutForwards=href, LegacyUnforgeable]` -- a real
+    // accessor property, not a plain data property, so that writing to it
+    // (even in strict mode) forwards to `href`'s own setter (a no-op here)
+    // instead of throwing on a non-writable property. The getter always
+    // returns the one singleton built above.
+    let location_getter = closure_function(context, "get location", 0, constant_getter(location))?;
+    let location_setter = function(context, "set location", 1, location_no_op)?;
+    let location_descriptor = PropertyDescriptor::builder()
+        .get(location_getter)
+        .set(location_setter)
+        .enumerable(true)
+        .configurable(true)
+        .build();
+    context.global_object().define_property_or_throw(
+        js_string!("location"),
+        location_descriptor,
+        context,
+    )?;
+
+    // `navigator`/`console`/`parent`/`frames`: `[Replaceable]` in the real
+    // spec (reading returns the live value; writing defines an ordinary,
+    // shadowing own property) -- approximated here as a plain writable data
+    // property, which gives the same observable read/write behavior for a
+    // simple assignment.
+    let replaceable_attr = Attribute::WRITABLE | Attribute::CONFIGURABLE;
+    context.register_global_property(js_string!("navigator"), navigator, replaceable_attr)?;
+    context.register_global_property(js_string!("console"), console, replaceable_attr)?;
     let global = context.global_object();
-    context.register_global_property(js_string!("parent"), global.clone(), singleton_attr)?;
-    context.register_global_property(js_string!("top"), global.clone(), singleton_attr)?;
-    context.register_global_property(js_string!("frames"), global, singleton_attr)?;
-    context.register_global_property(js_string!("opener"), JsValue::null(), singleton_attr)?;
+    context.register_global_property(js_string!("parent"), global.clone(), replaceable_attr)?;
+    context.register_global_property(js_string!("frames"), global.clone(), replaceable_attr)?;
+    // `top`: `[LegacyUnforgeable]`, *not* `[Replaceable]` -- stays
+    // non-writable, unlike `parent`/`frames` above.
+    context.register_global_property(js_string!("top"), global, Attribute::CONFIGURABLE)?;
+    // `opener`: a plain writable `any` attribute (not `[Replaceable]`,
+    // just an ordinary read/write property), default `null`.
+    context.register_global_property(js_string!("opener"), JsValue::null(), replaceable_attr)?;
     Ok(())
 }
 

@@ -107,11 +107,11 @@ pub trait DocumentHost: 'static {
     /// the embedder has no URL for it -- `window.location` and
     /// `document.URL`/`documentURI` then read as `about:blank`.
     ///
-    /// A `String` rather than a parsed URL type: this crate has no URL
-    /// parsing/validation dependency of its own (only `raikiri-dom` and
-    /// `raikiri-style`), and its callers only ever read this back as
-    /// components of an already-valid string, never construct or validate
-    /// one -- see `super::window`'s own narrow component extraction.
+    /// A `String` rather than a parsed URL type: the `url` crate is not
+    /// among this crate's own dependencies, and its callers only ever read
+    /// this back as components of an already-valid string, never construct
+    /// or validate one -- see `super::window`'s own narrow component
+    /// extraction.
     fn document_url(&self) -> Option<String> {
         None
     }

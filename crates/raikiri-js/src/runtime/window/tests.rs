@@ -16,6 +16,13 @@ fn rt_with_url(url: &str) -> DomRuntime {
     DomRuntime::new(host).unwrap()
 }
 
+fn ok(rt: &mut DomRuntime, src: &str) {
+    assert!(
+        rt.evaluate(src).unwrap().to_boolean(),
+        "expected true: {src}"
+    );
+}
+
 /// A [`DocumentHost`] that delegates everything to a [`StubHost`] except
 /// `document_url`, which it leaves at the trait's own default (`None`):
 /// `StubHost` overrides that method (so tests can set a URL), which means
@@ -58,13 +65,6 @@ fn document_url_default_trait_body_is_none() {
     );
 }
 
-fn ok(rt: &mut DomRuntime, src: &str) {
-    assert!(
-        rt.evaluate(src).unwrap().to_boolean(),
-        "expected true: {src}"
-    );
-}
-
 #[test]
 fn location_reports_every_component_of_an_explicit_url() {
     let mut rt = rt_with_url("https://example.test:8443/a/b.html?q=1#h");
@@ -98,6 +98,16 @@ fn location_reports_a_url_with_no_explicit_port_or_query_or_fragment() {
          && location.hash === '' \
          && location.origin === 'http://example.test'",
     );
+}
+
+#[test]
+fn location_reports_a_bare_delimiter_query_or_fragment_as_empty() {
+    // `Location.search`/`.hash` (WHATWG URL Standard): a trailing `?`/`#`
+    // with nothing after it reads back as `""`, not the bare delimiter.
+    let mut rt = rt_with_url("https://example.test/a?");
+    ok(&mut rt, "location.search === '' && location.hash === ''");
+    let mut rt = rt_with_url("https://example.test/a#");
+    ok(&mut rt, "location.search === '' && location.hash === ''");
 }
 
 #[test]
@@ -152,17 +162,51 @@ fn window_parent_top_frames_and_opener() {
 }
 
 #[test]
-fn location_navigator_and_console_are_not_replaceable() {
+fn location_setter_forwards_to_href_and_does_not_replace_the_singleton() {
     let mut rt = rt();
-    // Assigning to these globals must not silently replace the singleton
-    // object -- non-strict assignment to a non-writable property is a
-    // silent no-op.
-    rt.evaluate("location = 1; navigator = 1; console = 1;")
+    // `location`'s setter is a `[PutForwards=href]`-style forward (a no-op
+    // here, since navigation is out of scope): assignment never replaces
+    // the singleton object itself, unlike a plain writable data property.
+    rt.evaluate("location = 'https://other.test/';").unwrap();
+    ok(
+        &mut rt,
+        "typeof location === 'object' && location.href === 'about:blank'",
+    );
+}
+
+#[test]
+fn navigator_console_parent_frames_are_replaceable() {
+    let mut rt = rt();
+    // `[Replaceable]` (approximated as a plain writable data property):
+    // assignment actually replaces the value, unlike `location`/`top`.
+    rt.evaluate("navigator = 1; console = 2; parent = 3; frames = 4;")
         .unwrap();
     ok(
         &mut rt,
-        "typeof location === 'object' && typeof navigator === 'object' \
-         && typeof console === 'object'",
+        "navigator === 1 && console === 2 && parent === 3 && frames === 4",
+    );
+}
+
+#[test]
+fn top_stays_unforgeable_unlike_parent_and_frames() {
+    let mut rt = rt();
+    // `top` is `[LegacyUnforgeable]`, not `[Replaceable]` like `parent`/
+    // `frames`: non-strict assignment to it is a silent no-op.
+    rt.evaluate("top = 1;").unwrap();
+    ok(&mut rt, "top === window");
+}
+
+#[test]
+fn location_and_opener_assignment_do_not_throw_in_strict_mode() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "(function () { \
+           'use strict'; \
+           window.location = 'https://other.test/'; \
+           window.opener = null; \
+           return true; \
+         })()",
     );
 }
 
@@ -223,6 +267,24 @@ fn location_and_navigator_have_tostringtag() {
     );
 }
 
+#[test]
+fn location_and_navigator_have_interface_objects_with_illegal_constructors() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "typeof Location === 'function' && typeof Navigator === 'function' \
+         && location instanceof Location && navigator instanceof Navigator",
+    );
+    ok(
+        &mut rt,
+        "try { new Location(); false } catch (e) { e instanceof TypeError }",
+    );
+    ok(
+        &mut rt,
+        "try { new Navigator(); false } catch (e) { e instanceof TypeError }",
+    );
+}
+
 // ---- LocationParts (pure Rust, no JS engine needed) ------------------
 
 #[test]
@@ -250,6 +312,14 @@ fn location_parts_parses_a_url_with_no_port_query_fragment_or_path() {
     assert_eq!(parts.search, "");
     assert_eq!(parts.hash, "");
     assert_eq!(parts.origin, "https://example.test");
+}
+
+#[test]
+fn location_parts_normalizes_a_bare_query_or_fragment_delimiter() {
+    let parts = super::LocationParts::parse("https://example.test/a?");
+    assert_eq!(parts.search, "");
+    let parts = super::LocationParts::parse("https://example.test/a#");
+    assert_eq!(parts.hash, "");
 }
 
 #[test]

@@ -76,9 +76,10 @@ fn illegal_constructor(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<
 /// WebIDL namespace object, the namespace's -- own identifier), so
 /// `Object.prototype.toString.call(x)` reads `[object <tag>]` instead of the
 /// engine's generic default. Shared by [`interface`] (every interface
-/// prototype gets one) and [`super::window`]'s plain singleton objects
-/// (`location`, `navigator`, `console`), which have no interface prototype
-/// of their own to hang it on.
+/// prototype gets one) and [`super::window`]'s `console` singleton (a
+/// WebIDL namespace object, so it has no interface/prototype of its own to
+/// carry this any other way); `location`/`navigator` instead inherit it
+/// through the `Location`/`Navigator` prototypes `interface` itself builds.
 pub(crate) fn set_to_string_tag(
     object: &JsObject,
     tag: &str,
@@ -303,6 +304,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     use super::query;
     use super::style::{self, HTML_ELEMENT_MEMBERS};
     use super::tree;
+    use super::window;
     use super::{collections, events, geometry, indexed, token_list};
     // A `?` on a call rustfmt wraps across lines leaves the never-taken
     // error-branch region on the closing line, so that line always reports
@@ -526,7 +528,33 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     style::install_globals(context)?;
     events::install_globals(context)?;
     dispatch::install_window_handlers(context)?;
-    super::window::install(context)?;
+    // `Location`/`Navigator`: real interfaces (illegal constructor,
+    // `@@toStringTag`), the same as every other interface above -- their
+    // singletons' own accessors/methods are built by `window::install`
+    // itself, since `Location`'s (unlike a typical interface's) are
+    // `[LegacyUnforgeable]` own properties rather than prototype members.
+    let location_result = interface(
+        context,
+        "Location",
+        None,
+        None,
+        &[&NO_MEMBERS],
+        illegal_constructor,
+        0,
+    );
+    let location_i = location_result?;
+    let navigator_members = [&window::NAVIGATOR_MEMBERS];
+    let navigator_result = interface(
+        context,
+        "Navigator",
+        None,
+        None,
+        &navigator_members,
+        illegal_constructor,
+        0,
+    );
+    let navigator_i = navigator_result?;
+    super::window::install(context, &location_i.prototype, &navigator_i.prototype)?;
     Ok(())
 }
 
