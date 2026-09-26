@@ -596,6 +596,12 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                         id,
                         &ancestor_path,
                         quirks_mode,
+                        // A stylesheet cascade has no scoping element (`:scope`
+                        // falls back to `:root` semantics, matched by
+                        // `is_supported_selector`'s existing rejection of any
+                        // selector containing `:scope` before it ever reaches
+                        // the rule tree, so this arm is dead in practice here).
+                        None,
                     ) {
                         for decl in &rule.declarations {
                             // shorthand を longhand に展開してから candidate に

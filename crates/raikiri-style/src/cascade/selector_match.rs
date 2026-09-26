@@ -80,6 +80,20 @@ use super::resolve_directionality;
 ///   pushed onto `ancestor_path`, so an empty `ancestors` slice means "no
 ///   element ancestor", i.e. this element is the root element of the
 ///   document tree — exactly the spec's "root of the document" .
+/// - `Component::Scope` (`:scope`, CSS Selectors L4 §14.3.3
+///   <https://www.w3.org/TR/selectors-4/#the-scope-pseudo>) — matches iff
+///   `elem_id == scope` when a scope element is given, or falls back to
+///   `:root` semantics (`ancestors.is_empty()`) when it is not — the same
+///   two-way rule the upstream `selectors` crate's own matcher applies to
+///   this component (its `matching.rs`, `Component::Scope | Component::
+///   ImplicitScope => match context.shared.scope_element { Some(e) => ...,
+///   None => element.is_root() }`; this crate does not use that matcher,
+///   but mirrors its rule here). `scope` is always `None` in a stylesheet
+///   cascade (nothing here ever supplies one), so this arm never actually
+///   changes cascade matching; it only takes effect through
+///   [`crate::SelectorQuery::matches_scoped`], the DOM query entry point
+///   `Element.matches`/`closest`/`querySelector`/`querySelectorAll` use
+///   when their `this` is itself an `Element` (DOM §4.2.6, DOM §4.9).
 /// - `Component::Empty` (`:empty`, CSS Selectors
 ///   L4 §13.2 <https://www.w3.org/TR/selectors-4/#the-empty-pseudo>) — see
 ///   [`matches_empty`] doc for the whitespace handling.
@@ -119,6 +133,7 @@ use super::resolve_directionality;
 /// `ruletree.rs` `is_supported_selector_list` のコメント) は
 /// `is_supported_selector_list` が rule tree 構築時点で drop 済のはずだが、
 /// safety net として引き続き match fail する。
+#[allow(clippy::too_many_arguments)] // one component-matching entry point threading element identity, quirks mode, and two independent optional binding contexts (`:has()` anchor, `:scope` element)
 pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
     dom: &D,
     iter: &mut SelectorIter<'_, RaikiriSelectorImpl>,
@@ -127,6 +142,7 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
     relative_anchor: Option<StyleNodeId>,
+    scope: Option<StyleNodeId>,
 ) -> bool {
     use selectors::parser::Component;
 
@@ -236,6 +252,10 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                 crate::PseudoClass::Hover | crate::PseudoClass::Active => false,
             },
             Component::Root => ancestors.is_empty(),
+            Component::Scope => match scope {
+                Some(scope_id) => elem_id == scope_id,
+                None => ancestors.is_empty(),
+            },
             Component::Empty => matches_empty(dom, elem_id),
             Component::Negation(selectors) => !selector_slice_matches_with_anchor(
                 selectors.slice(),
@@ -245,6 +265,7 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                 ancestors,
                 quirks_mode,
                 relative_anchor,
+                scope,
             ),
             Component::Is(selectors) | Component::Where(selectors) => {
                 selector_slice_matches_with_anchor(
@@ -255,6 +276,7 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                     ancestors,
                     quirks_mode,
                     relative_anchor,
+                    scope,
                 )
             }
             Component::Has(_) if relative_anchor.is_some() => false,
@@ -264,6 +286,7 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                 elem_id,
                 ancestors,
                 quirks_mode,
+                scope,
             ),
             Component::Nth(data) => {
                 // Root element (`ancestors.is_empty()`) still has a sibling
@@ -289,6 +312,7 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                     data,
                     ancestors,
                     quirks_mode,
+                    scope,
                 )
             }
             Component::NthOf(data) => {
@@ -301,6 +325,7 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                     data,
                     ancestors,
                     quirks_mode,
+                    scope,
                 )
             }
             Component::RelativeSelectorAnchor => relative_anchor == Some(elem_id),
@@ -396,6 +421,7 @@ pub(crate) struct SiblingMatchContext<'a> {
     selector_filter: Option<&'a [Selector<RaikiriSelectorImpl>]>,
     ancestors: &'a [StyleNodeId],
     quirks_mode: StyleQuirksMode,
+    scope: Option<StyleNodeId>,
 }
 
 /// 1-based sibling position of `elem_id` among `parent_id`'s **in-document
@@ -465,6 +491,7 @@ pub(crate) fn sibling_position<D: StyleDom>(
                 child_id,
                 context.ancestors,
                 context.quirks_mode,
+                context.scope,
             )
         {
             continue;
@@ -523,6 +550,7 @@ pub(crate) fn sibling_position<D: StyleDom>(
 /// siblings before or after it, which the "an+b-1 siblings before/after
 /// it" framing above does not require a *parent element* to state, only a
 /// sibling list (possibly of size 1, itself alone).
+#[allow(clippy::too_many_arguments)] // mirrors compound_matches's own Nth/NthOf parameter set (sibling position plus the shared matching context)
 fn matches_nth<D: StyleDom>(
     dom: &D,
     parent_id: StyleNodeId,
@@ -531,6 +559,7 @@ fn matches_nth<D: StyleDom>(
     data: &NthSelectorData,
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
+    scope: Option<StyleNodeId>,
 ) -> bool {
     let (from_start, from_end, total) = sibling_position(
         dom,
@@ -542,6 +571,7 @@ fn matches_nth<D: StyleDom>(
             selector_filter: None,
             ancestors,
             quirks_mode,
+            scope,
         },
     );
     matches_nth_position(from_start, from_end, total, data)
@@ -552,6 +582,7 @@ fn matches_nth<D: StyleDom>(
 /// position among the inclusive siblings that match `S`; the selector-list
 /// matcher therefore runs for every direct element child before the normal
 /// `An+B` arithmetic is applied.
+#[allow(clippy::too_many_arguments)] // mirrors matches_nth's own parameter set, plus the An+B-of-S selector-list data
 fn matches_nth_of<D: StyleDom>(
     dom: &D,
     parent_id: StyleNodeId,
@@ -560,6 +591,7 @@ fn matches_nth_of<D: StyleDom>(
     data: &NthOfSelectorData<RaikiriSelectorImpl>,
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
+    scope: Option<StyleNodeId>,
 ) -> bool {
     let nth_data = data.nth_data();
     let (from_start, from_end, total) = sibling_position(
@@ -572,6 +604,7 @@ fn matches_nth_of<D: StyleDom>(
             selector_filter: Some(data.selectors()),
             ancestors,
             quirks_mode,
+            scope,
         },
     );
     matches_nth_position(from_start, from_end, total, nth_data)
@@ -664,10 +697,11 @@ pub(crate) fn match_complex_selector_list<D: StyleDom, E: StyleElement>(
     elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
+    scope: Option<StyleNodeId>,
 ) -> Option<Specificity> {
     let mut best: Option<Specificity> = None;
     for selector in list.slice() {
-        if selector_matches(dom, selector, elem, elem_id, ancestors, quirks_mode) {
+        if selector_matches(dom, selector, elem, elem_id, ancestors, quirks_mode, scope) {
             let spec = specificity_of(selector);
             best = Some(match best {
                 Some(prev) => prev.max(spec),
@@ -685,10 +719,21 @@ fn selector_slice_matches<D: StyleDom, E: StyleElement>(
     elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
+    scope: Option<StyleNodeId>,
 ) -> bool {
-    selector_slice_matches_with_anchor(selectors, dom, elem, elem_id, ancestors, quirks_mode, None)
+    selector_slice_matches_with_anchor(
+        selectors,
+        dom,
+        elem,
+        elem_id,
+        ancestors,
+        quirks_mode,
+        None,
+        scope,
+    )
 }
 
+#[allow(clippy::too_many_arguments)] // thin passthrough carrying every matching-context parameter down to selector_matches_with_anchor
 fn selector_slice_matches_with_anchor<D: StyleDom, E: StyleElement>(
     selectors: &[Selector<RaikiriSelectorImpl>],
     dom: &D,
@@ -697,6 +742,7 @@ fn selector_slice_matches_with_anchor<D: StyleDom, E: StyleElement>(
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
     relative_anchor: Option<StyleNodeId>,
+    scope: Option<StyleNodeId>,
 ) -> bool {
     selectors.iter().any(|selector| {
         selector_matches_with_anchor(
@@ -707,6 +753,7 @@ fn selector_slice_matches_with_anchor<D: StyleDom, E: StyleElement>(
             ancestors,
             quirks_mode,
             relative_anchor,
+            scope,
         )
     })
 }
@@ -718,14 +765,25 @@ fn selector_matches<D: StyleDom, E: StyleElement>(
     elem_id: StyleNodeId,
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
+    scope: Option<StyleNodeId>,
 ) -> bool {
-    selector_matches_with_anchor(dom, selector, elem, elem_id, ancestors, quirks_mode, None)
+    selector_matches_with_anchor(
+        dom,
+        selector,
+        elem,
+        elem_id,
+        ancestors,
+        quirks_mode,
+        None,
+        scope,
+    )
 }
 
 /// Matches a selector while optionally binding the internal
 /// `RelativeSelectorAnchor` component generated for a `:has()` argument to a
 /// particular element. Ordinary stylesheet selectors use [`selector_matches`]
 /// and therefore cannot match that internal component.
+#[allow(clippy::too_many_arguments)] // same matching context as compound_matches, plus the selector and iterator it drives
 fn selector_matches_with_anchor<D: StyleDom, E: StyleElement>(
     dom: &D,
     selector: &Selector<RaikiriSelectorImpl>,
@@ -734,6 +792,7 @@ fn selector_matches_with_anchor<D: StyleDom, E: StyleElement>(
     ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
     relative_anchor: Option<StyleNodeId>,
+    scope: Option<StyleNodeId>,
 ) -> bool {
     let mut iter = selector.iter();
     compound_matches(
@@ -744,6 +803,7 @@ fn selector_matches_with_anchor<D: StyleDom, E: StyleElement>(
         ancestors,
         quirks_mode,
         relative_anchor,
+        scope,
     ) && match iter.next_sequence() {
         None => true,
         Some(combinator) => match_combinator_chain(
@@ -754,6 +814,7 @@ fn selector_matches_with_anchor<D: StyleDom, E: StyleElement>(
             iter,
             quirks_mode,
             relative_anchor,
+            scope,
         ),
     }
 }
@@ -768,6 +829,7 @@ fn has_relative_selector_matches<D: StyleDom>(
     anchor_id: StyleNodeId,
     anchor_ancestors: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
+    scope: Option<StyleNodeId>,
 ) -> bool {
     for relative_selector in relative_selectors {
         let leading_combinator = relative_selector.selector.combinator_at_parse_order(1);
@@ -810,6 +872,7 @@ fn has_relative_selector_matches<D: StyleDom>(
             include_descendants,
             anchor_id,
             quirks_mode,
+            scope,
         ) {
             return true;
         }
@@ -820,6 +883,7 @@ fn has_relative_selector_matches<D: StyleDom>(
 /// Searches the candidate roots and, when the relative selector can reach
 /// deeper nodes, their element subtrees. The explicit stack avoids consuming
 /// the native call stack on deeply nested untrusted markup.
+#[allow(clippy::too_many_arguments)] // the :has() candidate search needs its own region/anchor data plus the shared matching context
 fn relative_selector_matches_in_regions<D: StyleDom>(
     dom: &D,
     selector: &Selector<RaikiriSelectorImpl>,
@@ -828,6 +892,7 @@ fn relative_selector_matches_in_regions<D: StyleDom>(
     include_descendants: bool,
     anchor_id: StyleNodeId,
     quirks_mode: StyleQuirksMode,
+    scope: Option<StyleNodeId>,
 ) -> bool {
     // Keep one mutable ancestor path and record only its length in each stack
     // entry. Cloning the full path into every pending child makes a deep,
@@ -860,6 +925,7 @@ fn relative_selector_matches_in_regions<D: StyleDom>(
             &ancestor_path,
             quirks_mode,
             Some(anchor_id),
+            scope,
         ) {
             return true;
         }
@@ -967,19 +1033,28 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
          doc for why that's the only shape a successfully-parsed selector \
          can take here"
     );
-    let matches = compound_matches(dom, &mut iter, elem, elem_id, ancestors, quirks_mode, None)
-        && match iter.next_sequence() {
-            None => true,
-            Some(next_combinator) => match_combinator_chain(
-                dom,
-                next_combinator,
-                elem_id,
-                ancestors,
-                iter,
-                quirks_mode,
-                None,
-            ),
-        };
+    let matches = compound_matches(
+        dom,
+        &mut iter,
+        elem,
+        elem_id,
+        ancestors,
+        quirks_mode,
+        None,
+        None,
+    ) && match iter.next_sequence() {
+        None => true,
+        Some(next_combinator) => match_combinator_chain(
+            dom,
+            next_combinator,
+            elem_id,
+            ancestors,
+            iter,
+            quirks_mode,
+            None,
+            None,
+        ),
+    };
     matches.then_some(pseudo)
 }
 
@@ -1233,6 +1308,7 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 /// pathological shape on a [`Combinator::LaterSibling`] chain (`* ~ * ~ *
 /// ~ ... ~ *` against a run of uniformly-matching siblings) is bounded the
 /// same way, as a direct consequence rather than a separate fix.
+#[allow(clippy::too_many_arguments)] // drives the explicit-stack combinator search: its own combinator/candidate state plus the shared matching context
 fn match_combinator_chain<D: StyleDom>(
     dom: &D,
     combinator: Combinator,
@@ -1241,6 +1317,7 @@ fn match_combinator_chain<D: StyleDom>(
     iter: SelectorIter<'_, RaikiriSelectorImpl>,
     quirks_mode: StyleQuirksMode,
     relative_anchor: Option<StyleNodeId>,
+    scope: Option<StyleNodeId>,
 ) -> bool {
     struct Frame<'a, 's, D: StyleDom> {
         candidates: PendingCandidates<'a, D>,
@@ -1328,6 +1405,7 @@ fn match_combinator_chain<D: StyleDom>(
             candidate_iter,
             quirks_mode,
             relative_anchor,
+            scope,
         ) else {
             // Candidate's compound didn't match — try this frame's next
             // candidate (loop back without push/pop). Immediate failure,
@@ -1602,6 +1680,7 @@ fn match_from_element<'s, D: StyleDom>(
     mut iter: SelectorIter<'s, RaikiriSelectorImpl>,
     quirks_mode: StyleQuirksMode,
     relative_anchor: Option<StyleNodeId>,
+    scope: Option<StyleNodeId>,
 ) -> Option<SelectorIter<'s, RaikiriSelectorImpl>> {
     // Both guards below are defensive and not reachable via the real
     // `collect_cascaded` → `match_complex_selector_list` call path: every
@@ -1645,6 +1724,7 @@ fn match_from_element<'s, D: StyleDom>(
         ancestors,
         quirks_mode,
         relative_anchor,
+        scope,
     ) {
         return None;
     }

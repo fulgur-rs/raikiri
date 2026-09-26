@@ -8,25 +8,38 @@
 //! - <https://dom.spec.whatwg.org/#interface-nonelementparentnode>
 //! - <https://dom.spec.whatwg.org/#interface-parentnode>
 //! - <https://dom.spec.whatwg.org/#interface-element>
+//!
+//! # Known limitation: sibling combinators/structural pseudo-classes on a
+//! # disconnected tree
+//!
+//! Every selector-matching entry point here (`querySelector`/
+//! `querySelectorAll`/`matches`/`closest`) ultimately calls
+//! [`raikiri_style::SelectorQuery::matches_scoped`], whose sibling
+//! combinators (`+`/`~`) and structural pseudo-classes
+//! (`:first-child`/`:nth-child()`/etc.) key off raikiri-dom's
+//! `IS_IN_DOCUMENT` flag rather than this binding's own ancestor-chain
+//! plumbing. That flag is only ever set for nodes reachable from the real
+//! document root (`mark_in_document_flags`, called before every walk
+//! here), so it stays clear for every node in a tree that either has never
+//! been attached, or is attached only under a `DocumentFragment` (whose
+//! contents are never part of the main document tree). A query against
+//! such a tree can therefore under-match a sibling combinator or
+//! structural pseudo-class even when both the queried element and the
+//! sibling/position in question are real elements of that tree.
+//! Descendant/child combinators are unaffected -- they walk the ancestor
+//! chain this binding itself constructs, never that flag.
 
 use boa_engine::object::builtins::JsArray;
 use boa_engine::{Context, JsResult, JsValue};
 use raikiri_dom::{Document, NodeKind};
-use raikiri_style::{SelectorQuery, StyleNodeId};
+use raikiri_style::{SelectorQuery, StyleDom, StyleNodeId, StyleQuirksMode};
 
-use super::interfaces::{Members, wrap, wrap_optional};
+use super::interfaces::{HTML_NS, Members, wrap, wrap_optional};
 use super::node::{attribute, js_str, write_attribute};
 use super::webidl::{
     dom_string, this_document, this_element, this_non_element_parent_node, this_parent_node,
     throw_dom_exception, with_state,
 };
-
-/// The HTML namespace URI, for DOM §4.4 "HTML namespace + HTML document"
-/// tag-name matching. Duplicated from `interfaces.rs`'s own private
-/// constant of the same value rather than shared, following this runtime's
-/// existing convention of a local literal per module (`node.rs`'s
-/// `html_uppercased_name` does the same).
-const HTML_NS: &str = "http://www.w3.org/1999/xhtml";
 
 // ---- shared tree walk ---------------------------------------------------
 
@@ -51,16 +64,16 @@ fn element_ancestors(doc: &Document, index: usize) -> Vec<StyleNodeId> {
 /// Pre-order walk of every **element** that is a descendant of `root` in
 /// the `ParentNode` mixin's sense: `root` itself is never visited, even
 /// when it is an Element (a scoped `querySelector` never matches its own
-/// scoping root). `visit` is called with that element's real ancestor
-/// **element** chain, root side first -- seeded from `root`'s own real
-/// ancestors (and `root` itself, when `root` is an Element) rather than
-/// starting empty at `root`, so a combinator selector still sees the whole
-/// document tree, not just the subtree below `root`; only which elements
-/// count as *candidates* is scoped, matching how DOM §4.2.6 "match a
-/// selector against a tree" resolves `:scope` against a scoping root
-/// without restricting ordinary combinator matching to its subtree. This
-/// is the ancestor shape [`raikiri_style::SelectorQuery::matches`] expects,
-/// and what `:root` (`ancestors.is_empty()`) relies on.
+/// scoping root -- that is a separate question from whether `:scope`
+/// matches `root`, which [`scope_for_root`]/`matches_scoped` handle).
+/// `visit` is called with that element's real ancestor **element** chain,
+/// root side first -- seeded from `root`'s own real ancestors (and `root`
+/// itself, when `root` is an Element) rather than starting empty at
+/// `root`, so an ordinary combinator selector (e.g. `body p`) still sees
+/// the whole document tree, not just the subtree below `root`; only which
+/// elements count as *candidates* is scoped. This is the ancestor shape
+/// [`raikiri_style::SelectorQuery::matches`]/`matches_scoped` expects, and
+/// what `:root` (`ancestors.is_empty()`) relies on.
 ///
 /// Stops at the first `Some`. Iterative, with an explicit `(node, ancestor
 /// depth)` stack rather than the native call stack: a script can build an
@@ -146,12 +159,22 @@ fn element_collection(context: &mut Context, indices: Vec<usize>) -> JsResult<Js
 }
 
 /// A parsed selector list, or a thrown `SyntaxError` `DOMException` (DOM
-/// §4.2.6, every selector-consuming method: `querySelector`,
-/// `querySelectorAll`, `matches`, `closest`).
+/// §4.2.6 `querySelector`/`querySelectorAll`; DOM §4.9 `Element.matches`/
+/// `closest`).
 fn parsed_selector(context: &mut Context, args: &[JsValue]) -> JsResult<SelectorQuery> {
     let source = dom_string(args, 0, context)?;
     SelectorQuery::parse(&source)
         .map_err(|message| throw_dom_exception(context, "SyntaxError", &message))
+}
+
+/// The `:scope` element (CSS Selectors L4 §14.3.3) for a `querySelector`/
+/// `querySelectorAll` call rooted at `root`: `root` itself when it is an
+/// Element -- an `Element`-scoped call binds its own scoping root as
+/// `:scope` (DOM §4.2.6) -- or `None` for a Document/DocumentFragment
+/// root, which has no element of its own to bind; `:scope` then falls back
+/// to `:root` semantics (see [`SelectorQuery::matches_scoped`]'s doc).
+fn scope_for_root(doc: &Document, root: usize) -> Option<StyleNodeId> {
+    (doc.get_node(root)?.kind() == NodeKind::Element).then_some(StyleNodeId(root as u64))
 }
 
 // ---- NonElementParentNode mixin (Document, DocumentFragment) ------------
@@ -190,9 +213,10 @@ fn query_selector(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
         // changed since the last refresh).
         s.host.document_mut().mark_in_document_flags();
         let doc = s.host.document();
+        let scope = scope_for_root(doc, index);
         find_in_tree(doc, index, |e, ancestors| {
             query
-                .matches(doc, StyleNodeId(e as u64), ancestors)
+                .matches_scoped(doc, StyleNodeId(e as u64), ancestors, scope)
                 .then_some(e)
         })
     })?;
@@ -209,8 +233,9 @@ fn query_selector_all(
     let found = with_state(context, |s| {
         s.host.document_mut().mark_in_document_flags();
         let doc = s.host.document();
+        let scope = scope_for_root(doc, index);
         descendants_matching(doc, index, |e, ancestors| {
-            query.matches(doc, StyleNodeId(e as u64), ancestors)
+            query.matches_scoped(doc, StyleNodeId(e as u64), ancestors, scope)
         })
     })?;
     static_node_list(context, found)
@@ -227,15 +252,22 @@ pub(crate) const PARENT_NODE_QUERY_MEMBERS: Members = Members {
 
 // ---- getElementsByTagName / getElementsByClassName (Document, Element) -
 
-/// DOM §4.4 "HTML namespace + HTML document" tag-name matching: an
-/// HTML-namespace element's qualified name compares to `query`
-/// ASCII-case-insensitively; any other namespace compares case-sensitively.
-fn tag_name_matches(doc: &Document, node: usize, query: &str) -> bool {
+/// DOM §4.4 "HTML namespace + HTML document" tag-name matching: `query`
+/// is ASCII-lowercased once up front (the spec's own "let qualifiedName be
+/// qualifiedName, converted to ASCII lowercase" step, done here rather
+/// than per candidate), then compared exactly against an HTML-namespace
+/// element's own qualified name -- which is already lowercase, since
+/// every element this runtime can produce is either script-created
+/// (`Document.createElement` itself lowercases, see `node.rs::
+/// create_element`) or came from an HTML parser (which lowercases tag
+/// names during tokenization). Any other namespace compares `query`
+/// verbatim, case-sensitively.
+fn tag_name_matches(doc: &Document, node: usize, query: &str, query_lower: &str) -> bool {
     doc.get_node(node)
         .and_then(|n| n.tag_name())
         .is_some_and(|tag| {
             if doc.element_namespace_uri(node) == Some(HTML_NS) {
-                tag.eq_ignore_ascii_case(query)
+                tag == query_lower
             } else {
                 tag == query
             }
@@ -244,19 +276,31 @@ fn tag_name_matches(doc: &Document, node: usize, query: &str) -> bool {
 
 fn elements_by_tag_name(doc: &Document, root: usize, query: &str) -> Vec<usize> {
     if query == "*" {
-        descendants_matching(doc, root, |_, _| true)
-    } else {
-        descendants_matching(doc, root, |node, _| tag_name_matches(doc, node, query))
+        return descendants_matching(doc, root, |_, _| true);
     }
+    let query_lower = query.to_ascii_lowercase();
+    descendants_matching(doc, root, |node, _| {
+        tag_name_matches(doc, node, query, &query_lower)
+    })
 }
 
 /// DOM §4.4 `getElementsByClassName`: an empty token list (the empty
 /// string, or a string containing only ASCII whitespace) matches nothing.
-fn class_name_matches(doc: &Document, node: usize, tokens: &[String]) -> bool {
+/// `quirks_html` (CSS Selectors L4's class-selector quirks-mode rule,
+/// applied here to `getElementsByClassName`'s own token-set matching
+/// rather than a `.foo` selector) ASCII-case-folds every token comparison
+/// under quirks mode, matching `raikiri_style::cascade::selector_match`'s
+/// `Component::Class` arm.
+fn class_name_matches(doc: &Document, node: usize, tokens: &[String], quirks: bool) -> bool {
     let class_attr = attribute_str(doc, node, "class");
-    tokens
-        .iter()
-        .all(|t| class_attr.split_ascii_whitespace().any(|c| c == t))
+    let class_tokens: Vec<&str> = class_attr.split_ascii_whitespace().collect();
+    tokens.iter().all(|t| {
+        if quirks {
+            class_tokens.iter().any(|c| c.eq_ignore_ascii_case(t))
+        } else {
+            class_tokens.contains(&t.as_str())
+        }
+    })
 }
 
 fn attribute_str<'a>(doc: &'a Document, node: usize, name: &str) -> &'a str {
@@ -268,7 +312,16 @@ fn elements_by_class_name(doc: &Document, root: usize, query: &str) -> Vec<usize
     if tokens.is_empty() {
         return Vec::new();
     }
-    descendants_matching(doc, root, |node, _| class_name_matches(doc, node, &tokens))
+    // `Document` has its own inherent `quirks_mode()` (raikiri_traits::
+    // QuirksMode, the parser-facing 3-way value) as well as this
+    // `StyleDom::quirks_mode()` (raikiri_style::StyleQuirksMode, the one
+    // CSS selector matching itself consults) -- the inherent method shadows
+    // the trait one under plain method-call syntax, so the trait method is
+    // named explicitly here to reach the value this comparison needs.
+    let quirks = StyleDom::quirks_mode(doc) == StyleQuirksMode::Quirks;
+    descendants_matching(doc, root, |node, _| {
+        class_name_matches(doc, node, &tokens, quirks)
+    })
 }
 
 fn get_elements_by_tag_name_from(
@@ -329,6 +382,18 @@ pub(crate) const DOCUMENT_QUERY_MEMBERS: Members = Members {
 // ---- Element: matches, closest, getElementsBy*, getAttributeNames, -----
 // ---- id, className -------------------------------------------------------
 
+/// `Element.matches` (DOM §4.9): binds `:scope` to `this` itself
+/// ("`:scope` elements « this »" in the spec's own wording).
+///
+/// **Known limitation**: sibling combinators (`+`/`~`) and structural
+/// pseudo-classes that key off document position consult raikiri-dom's
+/// `IS_IN_DOCUMENT` bit, which is only ever set for nodes reachable from
+/// the real document root; a `matches` call against an element in a
+/// detached tree (never attached, or attached only under a
+/// `DocumentFragment`) can therefore under-match those forms even when
+/// `this` and the sibling in question are both real elements of that
+/// detached tree. Descendant/child combinators are unaffected -- they walk
+/// this binding's own always-accurate ancestor chain, not that bit.
 fn element_matches(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     let query = parsed_selector(context, args)?;
@@ -336,17 +401,23 @@ fn element_matches(this: &JsValue, args: &[JsValue], context: &mut Context) -> J
         s.host.document_mut().mark_in_document_flags();
         let doc = s.host.document();
         let ancestors = element_ancestors(doc, index);
-        query.matches(doc, StyleNodeId(index as u64), &ancestors)
+        let scope = Some(StyleNodeId(index as u64));
+        query.matches_scoped(doc, StyleNodeId(index as u64), &ancestors, scope)
     })?;
     Ok(JsValue::from(matched))
 }
 
-/// `Element.closest` (DOM §4.2.6): `this`'s inclusive ancestor elements, in
+/// `Element.closest` (DOM §4.9): `this`'s inclusive ancestor elements, in
 /// reverse tree order (`this` first, then its parent, and so on), the
-/// first one that matches `selectors`.
+/// first one that matches `selectors` with `:scope` bound to `this` --
+/// fixed for every candidate in the walk, not re-derived per candidate
+/// (the spec's "`:scope` elements « this »" is the same single-element set
+/// throughout its own step 3 loop). See [`element_matches`]'s doc for the
+/// same disconnected-tree sibling-combinator limitation.
 fn element_closest(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     let query = parsed_selector(context, args)?;
+    let scope = Some(StyleNodeId(index as u64));
     let found = with_state(context, |s| {
         s.host.document_mut().mark_in_document_flags();
         let doc = s.host.document();
@@ -355,7 +426,7 @@ fn element_closest(this: &JsValue, args: &[JsValue], context: &mut Context) -> J
         (0..chain.len()).rev().find_map(|i| {
             let candidate = chain[i];
             query
-                .matches(doc, candidate, &chain[..i])
+                .matches_scoped(doc, candidate, &chain[..i], scope)
                 .then_some(candidate.0 as usize)
         })
     })?;

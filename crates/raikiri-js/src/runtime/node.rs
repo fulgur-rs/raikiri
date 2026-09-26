@@ -64,7 +64,7 @@ fn node_name(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<J
 
 /// DOM §4.9 "HTML-uppercased qualified name" for HTML-namespace elements.
 fn html_uppercased_name(doc: &raikiri_dom::Document, index: usize, tag: &str) -> String {
-    if doc.element_namespace_uri(index) == Some("http://www.w3.org/1999/xhtml") {
+    if doc.element_namespace_uri(index) == Some(super::interfaces::HTML_NS) {
         tag.to_ascii_uppercase()
     } else {
         tag.to_owned()
@@ -454,7 +454,7 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
             .to_owned();
         let ns = doc
             .element_namespace_uri(index)
-            .unwrap_or("http://www.w3.org/1999/xhtml")
+            .unwrap_or(super::interfaces::HTML_NS)
             .to_owned();
         s.host.parse_fragment(&tag, &ns, &markup)
     })?;

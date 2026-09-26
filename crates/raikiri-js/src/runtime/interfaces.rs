@@ -12,7 +12,7 @@ use raikiri_dom::NodeKind;
 
 use super::webidl::with_state;
 
-const HTML_NS: &str = "http://www.w3.org/1999/xhtml";
+pub(crate) const HTML_NS: &str = "http://www.w3.org/1999/xhtml";
 
 /// Native data of every node wrapper. The index is never exposed to scripts.
 #[derive(Debug, Trace, Finalize, JsData)]

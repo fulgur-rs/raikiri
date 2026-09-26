@@ -24,7 +24,9 @@ impl SelectorQuery {
         parse_selector_list(source).map(|list| Self { list })
     }
 
-    /// Whether the element `elem_id` matches any selector in the list.
+    /// Whether the element `elem_id` matches any selector in the list, with
+    /// no `:scope` element bound (`:scope` falls back to `:root`
+    /// semantics — see [`Self::matches_scoped`]).
     ///
     /// `ancestors` holds `elem_id`'s ancestor **element** ids only, root
     /// side first and ending with `elem_id`'s parent element. The Document
@@ -42,6 +44,30 @@ impl SelectorQuery {
         elem_id: StyleNodeId,
         ancestors: &[StyleNodeId],
     ) -> bool {
+        self.matches_scoped(dom, elem_id, ancestors, None)
+    }
+
+    /// [`Self::matches`], additionally binding CSS Selectors L4 `:scope`
+    /// (§14.3.3 <https://www.w3.org/TR/selectors-4/#the-scope-pseudo>) to
+    /// `scope`: a `:scope` component in the selector list matches iff
+    /// `elem_id == scope`. `scope: None` is [`Self::matches`]'s own
+    /// behavior — `:scope` then falls back to `:root` semantics
+    /// (`ancestors.is_empty()`), the same fallback the `selectors` crate's
+    /// own (unused-by-this-matcher) reference matcher applies when it has
+    /// no bound scope element.
+    ///
+    /// DOM query callers bind `scope` to the scoping root of a
+    /// element-scoped query (`Element.querySelector`/`querySelectorAll`/
+    /// `matches`/`closest`, DOM §4.2.6, §4.9); a document- or
+    /// fragment-scoped query has no such element, so it calls this the
+    /// same as [`Self::matches`] (`scope: None`).
+    pub fn matches_scoped<D: StyleDom>(
+        &self,
+        dom: &D,
+        elem_id: StyleNodeId,
+        ancestors: &[StyleNodeId],
+        scope: Option<StyleNodeId>,
+    ) -> bool {
         let Some(node) = dom.node(elem_id) else {
             return false;
         };
@@ -55,6 +81,7 @@ impl SelectorQuery {
             elem_id,
             ancestors,
             dom.quirks_mode(),
+            scope,
         )
         .is_some()
     }

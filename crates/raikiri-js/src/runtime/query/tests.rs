@@ -251,3 +251,105 @@ fn get_element_by_id_is_not_available_on_element() {
         "try { DocumentFragment.prototype.getElementById.call(document.body, 'x'); false } catch (e) { e instanceof TypeError }",
     );
 }
+
+/// CSS Selectors L4 `:scope` (§14.3.3): an `Element`-scoped
+/// `querySelector`/`querySelectorAll` binds its own scoping root as
+/// `:scope`; `Element.matches`/`closest` bind `this`.
+#[test]
+fn scope_pseudo_class_binds_to_the_scoping_element() {
+    let mut rt = rt();
+    rt.evaluate(TREE).unwrap();
+    ok(&mut rt, "s.querySelector(':scope > p') === p1");
+    ok(&mut rt, "s.querySelectorAll(':scope > p').length === 2");
+    // `Element.matches` always binds `:scope` to `this` itself, so
+    // `x.matches(':scope')` is trivially true for any `x` -- the
+    // meaningful check is that `:scope` still combines correctly with the
+    // rest of the selector: `p1`'s own parent (`s`) is not `p1`, so a
+    // selector requiring an ancestor that *is* the scope fails.
+    ok(&mut rt, "s.matches(':scope')");
+    ok(&mut rt, "!p1.matches(':scope > p')");
+    ok(&mut rt, "sp.closest(':scope') === sp");
+}
+
+/// A Document/DocumentFragment-scoped query has no element to bind
+/// `:scope` to; it then falls back to `:root` semantics (matches only the
+/// document element).
+#[test]
+fn scope_pseudo_class_falls_back_to_root_on_a_document_scoped_query() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "document.querySelector(':scope') === document.documentElement",
+    );
+    ok(
+        &mut rt,
+        "document.documentElement.closest('html') === document.documentElement",
+    );
+}
+
+/// **Known limitation** (see this module's doc): a sibling combinator's
+/// candidate lookup consults raikiri-dom's `IS_IN_DOCUMENT` flag directly,
+/// which stays clear for every node of a tree that was never attached to
+/// the real document -- including a `DocumentFragment`'s own contents.
+/// `b` really is `i`'s immediately preceding sibling here, but `b + i`
+/// still fails to match because neither is ever marked in-document. This
+/// test pins the current (incorrect) behavior rather than asserting it is
+/// correct.
+#[test]
+fn matches_under_matches_a_sibling_combinator_on_a_fragment_child() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var f = document.createDocumentFragment();
+         var b = document.createElement('b'); var i = document.createElement('i');
+         f.append(b, i);
+         i.matches('b + i') === false",
+    );
+}
+
+/// Descendant/child combinators are unaffected by the limitation above --
+/// they walk this binding's own always-accurate ancestor chain, never the
+/// `IS_IN_DOCUMENT` flag, so they still match correctly inside a
+/// `DocumentFragment`'s detached contents.
+#[test]
+fn matches_descendant_combinator_works_on_a_fragment_child() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var f = document.createDocumentFragment();
+         var d = document.createElement('div'); var sp = document.createElement('span');
+         d.appendChild(sp); f.appendChild(d);
+         sp.matches('div span')",
+    );
+}
+
+#[test]
+fn query_selector_empty_string_is_a_syntax_error() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "try { document.querySelector(''); false } catch (e) { e.name === 'SyntaxError' }",
+    );
+}
+
+fn is_dirty(rt: &mut DomRuntime) -> bool {
+    with_state(rt.context_mut(), |s| s.dirty).unwrap()
+}
+
+fn clear_dirty(rt: &mut DomRuntime) {
+    with_state(rt.context_mut(), |s| s.dirty = false).unwrap();
+}
+
+#[test]
+fn id_and_class_name_setters_mark_dirty() {
+    let mut rt = rt();
+    rt.evaluate("var d = document.createElement('div'); document.body.appendChild(d);")
+        .unwrap();
+    clear_dirty(&mut rt);
+    rt.evaluate("d.id = 'x';").unwrap();
+    assert!(is_dirty(&mut rt), "id= should mark dirty");
+
+    clear_dirty(&mut rt);
+    rt.evaluate("d.className = 'y';").unwrap();
+    assert!(is_dirty(&mut rt), "className= should mark dirty");
+}

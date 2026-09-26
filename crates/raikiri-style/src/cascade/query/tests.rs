@@ -74,3 +74,35 @@ fn unknown_id_never_matches() {
     // non-element id.
     assert!(!query.matches(&dom, StyleNodeId::new(dom.node_count() as u64), &[]));
 }
+
+#[test]
+fn scope_pseudo_class_matches_only_the_bound_scope_element() {
+    let (dom, div, p) = doc();
+    let query = SelectorQuery::parse(":scope").unwrap();
+    assert!(query.matches_scoped(&dom, p, &[div], Some(p)));
+    assert!(!query.matches_scoped(&dom, div, &[], Some(p)));
+}
+
+#[test]
+fn scope_pseudo_class_combines_with_a_combinator() {
+    let (dom, div, p) = doc();
+    let query = SelectorQuery::parse(":scope > p").unwrap();
+    assert!(query.matches_scoped(&dom, p, &[div], Some(div)));
+    // `div` is bound as scope, but `div` itself is not a `p` -- `:scope`
+    // matching `div` doesn't make `div` match the whole `:scope > p` selector.
+    assert!(!query.matches_scoped(&dom, div, &[], Some(div)));
+}
+
+#[test]
+fn scope_pseudo_class_falls_back_to_root_semantics_with_no_bound_scope() {
+    let (dom, div, p) = doc();
+    let query = SelectorQuery::parse(":scope").unwrap();
+    // [`SelectorQuery::matches`] never binds a scope element -- `:scope`
+    // then behaves exactly like `:root` (matches only the document element).
+    assert!(query.matches(&dom, div, &[]));
+    assert!(!query.matches(&dom, p, &[div]));
+    // `matches_scoped` with an explicit `None` is the same call `matches`
+    // makes internally.
+    assert!(query.matches_scoped(&dom, div, &[], None));
+    assert!(!query.matches_scoped(&dom, p, &[div], None));
+}

@@ -704,6 +704,7 @@ fn next_sibling_combinator_does_not_match_parent_child_relationship() {
             StyleNodeId::new(p as u64),
             &[StyleNodeId::new(div as u64)],
             StyleQuirksMode::NoQuirks,
+            None,
         ),
         None,
         "div + p must not match a p that is div's child, not its sibling"
@@ -1177,6 +1178,7 @@ fn descendant_combinator_deep_unsatisfiable_chain_does_not_explode() {
         target_id,
         &ancestors,
         StyleQuirksMode::NoQuirks,
+        None,
     );
     let elapsed = start.elapsed();
 
@@ -1223,6 +1225,7 @@ fn later_sibling_combinator_deep_unsatisfiable_run_does_not_explode() {
         target_id,
         &[],
         StyleQuirksMode::NoQuirks,
+        None,
     );
     let elapsed = start.elapsed();
 
@@ -1272,6 +1275,7 @@ fn match_complex_selector_list_rejects_unsupported_component_via_safety_net() {
             StyleNodeId::new(p as u64),
             &[],
             StyleQuirksMode::NoQuirks,
+            None,
         ),
         None,
         "NonTSPseudoClass component must fall through the safety net"
