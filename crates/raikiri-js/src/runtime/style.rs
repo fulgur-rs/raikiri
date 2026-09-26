@@ -518,7 +518,7 @@ fn style_get_property_priority(
 /// This runtime does not reject a `property` outside
 /// [`raikiri_style::property::supported_property_names`] the way real
 /// CSSOM's `setProperty` does (silently returning for an unsupported,
-/// non-custom name): this operation has always stored any name given to it
+/// non-custom name): this operation stores any name given to it
 /// (ASCII-lowercased per step 2.1, the same as every recognized name), and
 /// no caller here relies on rejecting an unrecognized one -- only the
 /// per-property accessors (`s.marginTop = …`) are scoped to the supported
