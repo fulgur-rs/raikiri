@@ -44,7 +44,7 @@ impl<'a> DomView<'a> {
     }
 
     fn node(&self, node: NodeId) -> Option<&'a raikiri_dom::Node> {
-        self.document.get_node(node.0 as usize)
+        self.document.get_node(usize::try_from(node.0).ok()?)
     }
 
     /// The document node.

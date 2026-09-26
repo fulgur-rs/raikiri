@@ -134,6 +134,9 @@ pub fn layout(
     let links = navigation::build_links(&out.pages, &out.link_events);
     let rendered = navigation::build_rendered(&out.pages);
     let anchors = navigation::build_anchors(DomView::new(&out.document), &out.pages);
+    if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
+        return Ok(LayoutStatus::Aborted);
+    }
     Ok(LayoutStatus::Completed(DocumentLayout {
         out,
         links,

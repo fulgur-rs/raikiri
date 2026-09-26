@@ -84,7 +84,7 @@ impl<'a> Page<'a> {
     /// Computed values from the cascade used for layout. `None` for an
     /// out-of-range node.
     pub fn computed(&self, node: NodeId) -> Option<&'a ComputedValues> {
-        self.cascade.computed.get(node.0 as usize)
+        self.cascade.computed.get(usize::try_from(node.0).ok()?)
     }
 
     /// The `@page` cascade for this page's context.

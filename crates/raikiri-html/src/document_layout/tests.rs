@@ -363,3 +363,22 @@ fn is_rendered_reflects_fragments_and_is_total() {
     assert!(layout.is_rendered(p.node()));
     assert!(!layout.is_rendered(NodeId(1_000_000)));
 }
+
+#[test]
+fn dom_and_computed_reject_large_node_ids() {
+    let result = laid_out(PAGED);
+    let page = result.page(0).expect("page");
+    let view = page.dom();
+    for bad in [NodeId(1_u64 << 32), NodeId(u64::MAX)] {
+        assert_eq!(view.kind(bad), None);
+        assert_eq!(view.parent(bad), None);
+        assert_eq!(view.children(bad).count(), 0);
+        assert_eq!(view.local_name(bad), None);
+        assert_eq!(view.namespace(bad), None);
+        assert_eq!(view.attr(bad, "id"), None);
+        assert_eq!(view.text(bad), None);
+        assert_eq!(view.text_content(bad), "");
+        assert!(page.computed(bad).is_none());
+        assert!(!result.is_rendered(bad));
+    }
+}
