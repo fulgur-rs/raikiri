@@ -101,6 +101,10 @@ fn tiny_png() -> Vec<u8> {
 fn test_load_fixture_missing_input() {
     let dir = build_fixture(None, &[(0, tiny_png())]);
     let err = load_fixture(dir.path()).expect_err("expected MissingInputHtml");
+    assert!(
+        format!("{err}").contains("input.html missing"),
+        "Display must name the missing file: {err}"
+    );
     match err {
         FixtureError::MissingInputHtml { fixture_dir } => {
             assert_eq!(fixture_dir, dir.path());
@@ -116,6 +120,10 @@ fn test_load_fixture_noncontiguous() {
         &[(0, tiny_png()), (2, tiny_png())], // missing page 1
     );
     let err = load_fixture(dir.path()).expect_err("expected NonContiguousPages");
+    assert!(
+        format!("{err}").contains("non-contiguous"),
+        "Display must describe the numbering gap: {err}"
+    );
     match err {
         FixtureError::NonContiguousPages { found, .. } => {
             assert_eq!(found, vec![0, 2]);
@@ -327,7 +335,16 @@ fn test_run_and_compare_writes_artifacts_on_diff() {
     let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
         run_and_compare(&dir_path, Tolerance::EXACT, move |_html| vec![actual_clone]);
     }));
-    assert!(result.is_err(), "expected run_and_compare to panic on diff");
+    let payload = result.expect_err("expected run_and_compare to panic on diff");
+    let msg = payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&'static str>().copied())
+        .unwrap_or("");
+    assert!(
+        msg.contains("actual PNG") && msg.contains("diff PNG"),
+        "panic message must render DiffReport artifact paths, got: {msg}"
+    );
 
     // Both artifacts should have been written.
     let actual_path = diff_dir.join("page-0000-actual.png");
