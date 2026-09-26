@@ -5,10 +5,12 @@ from __future__ import annotations
 import base64
 import contextlib
 import os
+import re
 import shutil
 import sys
 import tempfile
 import uuid
+from pathlib import Path
 
 from mozprocess import ProcessHandler
 from tools.serve.serve import make_hosts_file
@@ -22,6 +24,7 @@ from wptrunner.executors import executor_kwargs as base_executor_kwargs
 from wptrunner.executors.base import (
     RefTestExecutor,
     RefTestImplementation,
+    get_pages,
     reftest_result_converter,
 )
 from wptrunner.products import Product
@@ -62,6 +65,39 @@ class RaikiriBrowser(NullBrowser):
             "binary": self.binary,
             "binary_args": self.binary_args,
         }
+
+
+def _print_page_size(viewport_size):
+    width_cm, height_cm = viewport_size
+    pixels_per_cm = 96 / 2.54
+    return round(width_cm * pixels_per_cm), round(height_cm * pixels_per_cm)
+
+
+def _ordered_page_paths(directory):
+    directory = Path(directory)
+    entries = list(directory.iterdir())
+    if not entries:
+        raise ValueError(f"print process produced no pages in {directory}")
+
+    numbered = []
+    for path in entries:
+        match = re.fullmatch(r"page-(\d{4})\.png", path.name)
+        if match is None or not path.is_file():
+            raise ValueError(f"unexpected print output: {path}")
+        numbered.append((int(match.group(1)), path))
+    numbered.sort()
+    expected = list(range(1, len(numbered) + 1))
+    actual = [number for number, _ in numbered]
+    if actual != expected:
+        raise ValueError(
+            f"print page sequence must be contiguous from 1; got {actual}"
+        )
+    return [path for _, path in numbered]
+
+
+def _select_page_paths(paths, ranges_value):
+    selected = get_pages(ranges_value, len(paths))
+    return [path for index, path in enumerate(paths, 1) if index in selected]
 
 
 class RaikiriRefTestExecutor(RefTestExecutor):
@@ -120,31 +156,10 @@ class RaikiriRefTestExecutor(RefTestExecutor):
         message = "\n".join(item for item in self.output if item)
         return message or "Raikiri screenshot process produced no diagnostic output"
 
-    def screenshot(self, test, viewport_size, dpi, page_ranges):
-        del page_ranges
-        if dpi not in (None, 1, 1.0):
-            return False, (
-                "ERROR",
-                f"Raikiri prototype does not support device-pixel-ratio {dpi}",
-            )
-
-        output_path = os.path.join(self.tempdir, f"{uuid.uuid4()}.png")
-        self.command = [self.binary]
-        self.command.extend(self.binary_args)
-        self.command.extend(
-            [
-                "--url",
-                self.test_url(test),
-                "--output",
-                output_path,
-                "--window-size",
-                viewport_size or "800x600",
-                "--host-file",
-                self.hosts_path,
-            ]
-        )
+    def _run_command(self, test, command):
+        self.command = command
         self.output = []
-
+        self.proc = None
         try:
             self.proc = ProcessHandler(
                 self.command,
@@ -156,7 +171,7 @@ class RaikiriRefTestExecutor(RefTestExecutor):
                 timeout=test.timeout * self.timeout_multiplier + self.extra_timeout
             )
         except OSError as error:
-            return False, ("ERROR", f"could not start screenshot process: {error}")
+            return "ERROR", f"could not start screenshot process: {error}"
         except KeyboardInterrupt:
             if self.proc is not None:
                 self.proc.kill()
@@ -165,9 +180,37 @@ class RaikiriRefTestExecutor(RefTestExecutor):
         if return_code is None:
             self.proc.kill()
             self.proc.wait()
-            return False, ("EXTERNAL-TIMEOUT", self._diagnostic())
+            return "EXTERNAL-TIMEOUT", self._diagnostic()
         if return_code != 0:
-            return False, ("CRASH", self._diagnostic())
+            return "CRASH", self._diagnostic()
+        return None
+
+    def screenshot(self, test, viewport_size, dpi, page_ranges):
+        del page_ranges
+        if dpi not in (None, 1, 1.0):
+            return False, (
+                "ERROR",
+                f"Raikiri prototype does not support device-pixel-ratio {dpi}",
+            )
+
+        output_path = os.path.join(self.tempdir, f"{uuid.uuid4()}.png")
+        command = [self.binary]
+        command.extend(self.binary_args)
+        command.extend(
+            [
+                "--url",
+                self.test_url(test),
+                "--output",
+                output_path,
+                "--window-size",
+                viewport_size or "800x600",
+                "--host-file",
+                self.hosts_path,
+            ]
+        )
+        error = self._run_command(test, command)
+        if error is not None:
+            return False, error
         if not os.path.isfile(output_path):
             return False, (
                 "ERROR",
@@ -190,6 +233,48 @@ class RaikiriRefTestExecutor(RefTestExecutor):
         return self.convert_result(test, self.implementation.run_test(test))
 
 
+class RaikiriPrintRefTestExecutor(RaikiriRefTestExecutor):
+    is_print = True
+
+    def screenshot(self, test, viewport_size, dpi, page_ranges):
+        assert dpi is None
+        width, height = _print_page_size(viewport_size or (5 * 2.54, 3 * 2.54))
+        output_directory = Path(tempfile.mkdtemp(prefix="pages-", dir=self.tempdir))
+        command = [self.binary]
+        command.extend(self.binary_args)
+        command.extend(
+            [
+                "print-reftest",
+                "--url",
+                self.test_url(test),
+                "--output-directory",
+                str(output_directory),
+                "--page-size",
+                f"{width}x{height}",
+                "--host-file",
+                self.hosts_path,
+            ]
+        )
+        try:
+            error = self._run_command(test, command)
+            if error is not None:
+                return False, error
+            try:
+                paths = _ordered_page_paths(output_directory)
+                paths = _select_page_paths(
+                    paths, (page_ranges or {}).get(test.url)
+                )
+                encoded = [
+                    base64.b64encode(path.read_bytes()).decode("ascii")
+                    for path in paths
+                ]
+            except (OSError, ValueError) as error:
+                return False, ("ERROR", str(error))
+            return True, encoded
+        finally:
+            shutil.rmtree(output_directory, ignore_errors=True)
+
+
 def get_product():
     _allow_product_managed_host_resolution()
     return Product(
@@ -205,7 +290,10 @@ def get_product():
         },
         get_env_extras=lambda **kwargs: [_http_only_servers],
         get_timeout_multiplier=get_timeout_multiplier,
-        executor_classes={"reftest": RaikiriRefTestExecutor},
+        executor_classes={
+            "reftest": RaikiriRefTestExecutor,
+            "print-reftest": RaikiriPrintRefTestExecutor,
+        },
     )
 
 
