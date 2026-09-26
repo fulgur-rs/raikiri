@@ -206,3 +206,52 @@ fn render_resources_default_matches_new() {
     let debug_default = format!("{:?}", RenderResources::default());
     assert_eq!(debug_new, debug_default);
 }
+
+struct StubImageProvider;
+
+impl raikiri_traits::ReplacedResolver for StubImageProvider {
+    fn resolve(
+        &self,
+        _req: raikiri_traits::ResolverRequest<'_>,
+    ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+        Ok(raikiri_traits::ResolvedIntrinsic {
+            intrinsic: raikiri_traits::IntrinsicBox::new(2.0, 1.0),
+            disposition: raikiri_traits::ResolveDisposition::Ok,
+        })
+    }
+}
+
+impl raikiri_traits::ImagePixelSource for StubImageProvider {
+    fn get_decoded(&self, _url: &Url) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+        None
+    }
+}
+
+#[test]
+fn replaced_resolver_builder_retains_resolver_only() {
+    let provider = StubImageProvider;
+    let resources = RenderResources::new().replaced_resolver(&provider);
+    let debug = format!("{resources:?}");
+    assert!(debug.contains("has_replaced_resolver: true"), "{debug}");
+    assert!(debug.contains("has_image_pixel_source: false"), "{debug}");
+}
+
+#[test]
+fn replaced_resource_provider_retains_both_roles() {
+    let provider = StubImageProvider;
+    let resources = RenderResources::new().replaced_resource_provider(&provider);
+    let debug = format!("{resources:?}");
+    assert!(debug.contains("has_replaced_resolver: true"), "{debug}");
+    assert!(debug.contains("has_image_pixel_source: true"), "{debug}");
+}
+
+#[test]
+fn image_pixel_source_builder_and_font_context_ref() {
+    let provider = StubImageProvider;
+    let resources = RenderResources::new()
+        .image_pixel_source(&provider)
+        .font_context(parley::FontContext::new());
+    let debug = format!("{resources:?}");
+    assert!(debug.contains("has_image_pixel_source: true"), "{debug}");
+    let _ = resources.font_context_ref();
+}
