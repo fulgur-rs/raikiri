@@ -271,15 +271,15 @@ fn box_geometry_returns_none_for_an_element_with_no_box() {
 ///   border and padding keep `i`'s 7px top margin from collapsing through
 ///   it (CSS 2.1 §8.3.1), so `i`'s border edge sits 5 + 7 = 12 below `o`'s
 ///   top padding edge and 5 (the left padding) right of its left one.
-/// - `o`'s top margin collapses with the body's and the root's top margins
-///   (neither has top border or padding), so its border edge is 10 from
-///   the top of the initial containing block. `o.offsetTop` is that value
-///   as-is because its offsetParent is the body.
-/// - `o.offsetLeft` is 10 here, but CSS 2.1 with the UA stylesheet's
-///   `body { margin: 8px }` gives 8 + 10 = 18: this layout reports the
-///   body box at the origin with the page's full width, so the body's
-///   horizontal margin does not reach the geometry. The measured value is
-///   pinned so a layout change there is noticed.
+/// - `o.offsetTop`/`o.offsetLeft` are both 10, `o`'s own margin, because
+///   its offsetParent is the body and the result is relative to the
+///   initial containing block. CSS 2.1 with the UA stylesheet's
+///   `body { margin: 8px }` gives 10 at the top only through margin
+///   collapsing (max(8, 10)) and 8 + 10 = 18 at the left, but this layout
+///   places the body box at the origin with the viewport's full size, so
+///   the body's margins never reach the geometry (a lone `margin: 5px`
+///   block sits at 5, not 8). The measured values are pinned so a layout
+///   change there is noticed.
 /// - `i` (100 x 200) fits horizontally inside `o`'s 110px padding box, so
 ///   `scrollWidth` is the padding box width; vertically it ends
 ///   7 + 200 = 207 below `o`'s top content edge, i.e. 5 + 207 = 212 below
