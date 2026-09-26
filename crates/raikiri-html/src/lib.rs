@@ -13,6 +13,7 @@ mod cascade;
 mod document;
 mod document_layout;
 mod document_parse;
+mod font_context;
 mod import;
 mod parse;
 mod render;
@@ -33,6 +34,9 @@ pub use document_layout::{
     LayoutStatus, Link, Page, PageGeometry, PageMode, RepeatKind, layout,
 };
 pub use document_parse::{parse_html, parse_html_with_limits};
+pub use font_context::{
+    BundledFont, FontContextBuildError, FontContextBuilder, MAX_BUNDLED_FONT_BYTES,
+};
 pub use parse::{effective_document_base_url, parse, parse_fragment, parse_with_sink};
 pub use resources::{
     DEFAULT_MAX_AGGREGATE_RESOURCE_BYTES, DEFAULT_MAX_RESOURCE_BYTES, RenderResources,

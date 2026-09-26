@@ -32,8 +32,7 @@ pub use raikiri_html::{
     parse_html_with_resources,
 };
 
-mod font_context;
-pub use font_context::{
+pub use raikiri_html::{
     BundledFont, FontContextBuildError, FontContextBuilder, MAX_BUNDLED_FONT_BYTES,
 };
 
