@@ -24,6 +24,14 @@ fn num(rt: &mut DomRuntime, src: &str) -> f64 {
     rt.evaluate(src).unwrap().as_number().unwrap()
 }
 
+fn text(rt: &mut DomRuntime, src: &str) -> String {
+    rt.evaluate(src)
+        .unwrap()
+        .as_string()
+        .unwrap()
+        .to_std_string_escaped()
+}
+
 /// Depth-first search for the element carrying `id`, for tests that need a
 /// concrete arena index without going through the runtime's opaque JS handles.
 fn find_by_id(document: &raikiri_dom::Document, id: &str) -> usize {
@@ -170,6 +178,43 @@ fn box_geometry_before_any_flush_is_a_host_error() {
     .unwrap();
     let mut host = WptDocumentHost::new(setup, dir.path());
     assert!(host.box_geometry(0).is_err());
+}
+
+/// `getComputedStyle` on the runtime pre-checks the property name itself and
+/// never reaches the host for an unsupported one (see
+/// `unsupported_computed_property_does_not_flush` above), so the host's own
+/// defensive `None` return for an unsupported name is only reachable through
+/// a direct call.
+#[test]
+fn computed_value_returns_none_for_an_unsupported_property_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let setup = prepare_wpt_live_document(
+        "<div id=t></div>",
+        DEFAULT_REFTTEST_WIDTH,
+        DEFAULT_REFTTEST_HEIGHT,
+        dir.path(),
+        dir.path(),
+    )
+    .unwrap();
+    let mut host = WptDocumentHost::new(setup, dir.path());
+    host.flush().unwrap();
+    assert_eq!(host.computed_value(0, "no-such-prop").unwrap(), None);
+}
+
+/// A `ch`-authored length needs a font's zero-glyph advance to resolve to a
+/// concrete pixel value, which only the closure passed to
+/// `ComputedProperty::serialize` can measure.
+#[test]
+fn computed_letter_spacing_in_ch_units_measures_font_advance() {
+    let (_dir, mut rt) = runtime("<div id=t style='letter-spacing: 1ch'>x</div>");
+    let value = text(
+        &mut rt,
+        "getComputedStyle(document.getElementById('t')).getPropertyValue('letter-spacing')",
+    );
+    assert!(
+        value.ends_with("px"),
+        "expected a measured px length, got {value:?}"
+    );
 }
 
 /// An element with no generated box (here, `display: none`) reports `None`
