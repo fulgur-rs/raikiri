@@ -6,14 +6,21 @@ worktree gets a replaceable `target/wpt` symlink to that checkout for existing
 commands and Rust tests. Removing `target/` (for example with `cargo clean`)
 removes only the link; `fetch.sh` and the gate recreate it from the home cache.
 
-`subset.txt` defines the shared sparse roots: all of `acid/`, `css/`, `fonts/`, and
-`images/`. `fetch.sh` validates this exact set and atomically replaces the
-cache's sparse-pattern file with a read-only inode. An already-open stale
-writer is detached; later runs of an old `fetch.sh` fail instead of narrowing
-the shared checkout and hiding tests from sibling worktrees. Do not narrow or
-add per-task paths; use the survey's category/theme filters. To change shared
-roots, use a reviewed project-level change that updates both `subset.txt` and
-the guard in `fetch.sh`. Only then should a maintainer unlock
+`subset.txt` defines the shared sparse roots: all of `acid/`, `css/`, `fonts/`,
+`images/`, and the top-level `resources/` (anchored as `/resources` so it
+pulls in only the WPT-root `resources/` directory, not the many per-test
+`resources/` helper directories nested throughout the tree). The top-level
+`resources/` directory carries the real `testharness.js`,
+`testharnessreport.js`, `check-layout-th.js`, and `testdriver*.js`, so
+JS-driven WPT pages can load their scripts from files instead of needing a
+substitute harness. `fetch.sh` validates this exact set and atomically
+replaces the cache's sparse-pattern file with a read-only inode. An
+already-open stale writer is detached; later runs of an old `fetch.sh` fail
+instead of narrowing the shared checkout and hiding tests from sibling
+worktrees. Do not narrow or add per-task paths; use the survey's
+category/theme filters. To change shared roots, use a reviewed project-level
+change that updates both `subset.txt` and the guard in `fetch.sh`. Only then
+should a maintainer unlock
 `$HOME/.cache/raikiri/wpt/.git/info/sparse-checkout` with `chmod u+w` before
 rerunning the fetch.
 

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Shallow-clone WPT upstream and sparse-checkout the stable shared roots
-# (acid/, css/, fonts/, images/). Idempotent: re-running updates to the pinned SHA.
+# (acid/, css/, fonts/, images/, resources/). Idempotent: re-running updates
+# to the pinned SHA.
 # Keep subset.txt broad and branch-independent: this checkout is shared across
 # worktrees, and narrowing sparse paths in one branch hides files from others.
 # The shared sparse-checkout file is made read-only so stale branch scripts

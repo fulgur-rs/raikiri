@@ -7,3 +7,9 @@ acid
 css
 fonts
 images
+# /resources is anchored (leading slash) so it matches only the top-level
+# resources/ directory, not the thousands of per-test resources/ helper
+# directories nested throughout the WPT tree. It carries the real
+# testharness.js, testharnessreport.js, check-layout-th.js, and
+# testdriver*.js so JS-driven WPT pages can load their scripts from files.
+/resources

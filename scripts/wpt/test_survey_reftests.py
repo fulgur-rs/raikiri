@@ -165,12 +165,14 @@ class SurveyReftestsTests(unittest.TestCase):
 
     def test_subset_validation_requires_exact_root_lines(self) -> None:
         subset_file = Path(self.temp.name) / "subset.txt"
-        subset_file.write_text("# stable roots\nacid\ncss\nfonts\nimages\n", encoding="utf-8")
+        subset_file.write_text(
+            "# stable roots\nacid\ncss\nfonts\nimages\n/resources\n", encoding="utf-8"
+        )
         valid = self.run_shared_sparse(
             'set -e; source "$1"; validate_shared_wpt_subset "$2"', subset_file
         )
         self.assertEqual(valid.returncode, 0, valid.stderr)
-        self.assertEqual(valid.stdout, "acid\ncss\nfonts\nimages\n")
+        self.assertEqual(valid.stdout, "acid\ncss\nfonts\nimages\n/resources\n")
 
         subset_file.write_text("css fonts images\n", encoding="utf-8")
         invalid = self.run_shared_sparse(

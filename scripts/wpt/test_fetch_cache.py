@@ -53,7 +53,11 @@ class FetchCacheTests(unittest.TestCase):
         self._write(self.wpt_source, "css/test.html", "css root\n")
         self._write(self.wpt_source, "fonts/ahem.txt", "font root\n")
         self._write(self.wpt_source, "images/ref.txt", "image root\n")
+        self._write(self.wpt_source, "resources/testharness.js", "resources root\n")
         self._write(self.wpt_source, "outside/not-sparse.txt", "outside roots\n")
+        self._write(
+            self.wpt_source, "html/dom/resources/nested.js", "nested per-test resources\n"
+        )
         self._git(self.wpt_source, "add", "-A")
         self._git(self.wpt_source, "commit", "-qm", "fake pinned WPT")
         self.pin = self._git(self.wpt_source, "rev-parse", "HEAD")
@@ -108,13 +112,15 @@ class FetchCacheTests(unittest.TestCase):
         self.assertEqual(first.returncode, 0, first.stderr)
         self.assertEqual(self.cache.resolve(), self.cache)
         self.assertEqual((self.cache / ".git" / "info" / "sparse-checkout").read_text(),
-                         "acid\ncss\nfonts\nimages\n")
+                         "acid\ncss\nfonts\nimages\n/resources\n")
         self.assertEqual(
             (self.cache / ".git" / "info" / "sparse-checkout").stat().st_mode & 0o222,
             0,
         )
         self.assertEqual(self._git(self.cache, "rev-parse", "HEAD"), self.pin)
         self.assertFalse((self.cache / "outside/not-sparse.txt").exists())
+        self.assertTrue((self.cache / "resources/testharness.js").exists())
+        self.assertFalse((self.cache / "html/dom/resources/nested.js").exists())
         main_link = self.project / "target/wpt"
         self.assertTrue(main_link.is_symlink())
         self.assertEqual(main_link.resolve(), self.cache)
