@@ -2,9 +2,9 @@
 //! engine.
 //!
 //! The existing CSS parsing API uses `raikiri_style` for CSS value parsing and
-//! serialization. The [`dom`] module provides a replaceable host boundary for
-//! JavaScript DOM access; its initial surface supports the CSS Text i18n WPT
-//! corpus while allowing a future live Raikiri DOM backend.
+//! serialization. The [`runtime`] module provides native DOM interfaces bound
+//! to a `raikiri_dom::Document` through the embedder-supplied
+//! [`runtime::DocumentHost`] trait.
 //!
 //! CSS parsing coverage remains limited to `test_invalid_value` and the parts
 //! of `test_valid_value` supported by the value serializer. Tests that require
@@ -13,11 +13,9 @@
 use boa_engine::object::builtins::JsArray;
 use boa_engine::{Context, JsResult, JsValue, NativeFunction, Source, js_string};
 
-pub mod dom;
 pub mod runtime;
 pub mod testharness;
 use cssparser::{ParseError, Parser, ParserInput};
-pub use dom::{DomBackend, DomNodeId, DomRect, JsRuntime, ScriptError, run_script};
 use raikiri_style::property::PropertyValue;
 
 /// One WPT `test()` call's outcome, as recorded by the JS-side harness shim.

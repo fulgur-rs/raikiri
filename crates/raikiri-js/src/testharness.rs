@@ -1,14 +1,13 @@
-//! A small WPT testharness compatibility layer over the reusable DOM facade.
+//! A small WPT testharness compatibility layer over [`DomRuntime`].
 //!
-//! The harness helpers here are intentionally separate from [`crate::dom`]:
-//! future script runners can reuse the same JavaScript-to-DOM boundary without
-//! using this test-specific assertion/reporting shim.
+//! The harness helpers here are intentionally separate from [`crate::runtime`]:
+//! other script runners can reuse the native DOM bindings without using this
+//! test-specific assertion/reporting shim.
 
 use boa_engine::object::builtins::JsArray;
 use boa_engine::{Context, JsResult, js_string};
 
 use crate::TestOutcome;
-use crate::dom::{DomBackend, JsRuntime, ScriptError};
 use crate::runtime::{DocumentHost, DomRuntime, RuntimeError};
 
 /// Why a testharness script could not produce a trustworthy result.
@@ -130,61 +129,33 @@ function __raikiri_run_font_callbacks(limit) {
 const FONT_CALLBACKS_PER_TURN: usize = 64;
 const MAX_FONT_CALLBACK_TURNS: usize = 16;
 
-/// A script runtime that the shim/font-callback driver in
-/// [`drive_testharness`] can evaluate source in and inspect state through,
-/// independent of which DOM implementation it is bound to.
-trait HarnessRuntime {
-    /// Evaluate `source`, translating the runtime's own error type into
-    /// [`TestHarnessError`].
-    fn evaluate_for_harness(&mut self, source: &str) -> Result<(), TestHarnessError>;
-    /// The underlying Boa context, for reading shim-internal globals.
-    fn context_for_harness(&mut self) -> &mut Context;
-}
-
-impl HarnessRuntime for JsRuntime {
-    fn evaluate_for_harness(&mut self, source: &str) -> Result<(), TestHarnessError> {
-        self.evaluate(source).map(|_| ()).map_err(map_script_error)
-    }
-    fn context_for_harness(&mut self) -> &mut Context {
-        self.context_mut()
-    }
-}
-
-impl HarnessRuntime for DomRuntime {
-    fn evaluate_for_harness(&mut self, source: &str) -> Result<(), TestHarnessError> {
-        self.evaluate(source).map(|_| ()).map_err(map_runtime_error)
-    }
-    fn context_for_harness(&mut self) -> &mut Context {
-        self.context_mut()
-    }
-}
-
 /// Load the testharness shim, run `inline_script`, then drain deferred font
 /// callbacks (see [`TESTHARNESS_SHIM`]) until the shim's `test()` calls have
 /// all recorded an outcome.
-fn drive_testharness<R>(
-    runtime: &mut R,
+fn drive_testharness(
+    runtime: &mut DomRuntime,
     inline_script: &str,
-) -> Result<Vec<TestOutcome>, TestHarnessError>
-where
-    R: HarnessRuntime,
-{
-    runtime.evaluate_for_harness(TESTHARNESS_SHIM)?;
-    runtime.evaluate_for_harness(inline_script)?;
+) -> Result<Vec<TestOutcome>, TestHarnessError> {
+    runtime
+        .evaluate(TESTHARNESS_SHIM)
+        .map_err(map_runtime_error)?;
+    runtime.evaluate(inline_script).map_err(map_runtime_error)?;
 
     for _ in 0..MAX_FONT_CALLBACK_TURNS {
-        if has_pending_font_callbacks(runtime.context_for_harness())
+        if has_pending_font_callbacks(runtime.context_mut())
             .map_err(|error| TestHarnessError::JavaScript(error.to_string()))?
         {
-            runtime.evaluate_for_harness(&format!(
-                "__raikiri_run_font_callbacks({FONT_CALLBACKS_PER_TURN})"
-            ))?;
+            runtime
+                .evaluate(&format!(
+                    "__raikiri_run_font_callbacks({FONT_CALLBACKS_PER_TURN})"
+                ))
+                .map_err(map_runtime_error)?;
         }
 
-        let callbacks_pending = has_pending_font_callbacks(runtime.context_for_harness())
+        let callbacks_pending = has_pending_font_callbacks(runtime.context_mut())
             .map_err(|error| TestHarnessError::JavaScript(error.to_string()))?;
         if !callbacks_pending {
-            let results = read_results(runtime.context_for_harness())
+            let results = read_results(runtime.context_mut())
                 .map_err(|error| TestHarnessError::JavaScript(error.to_string()))?;
             return if results.is_empty() {
                 Err(TestHarnessError::NoTests)
@@ -197,25 +168,12 @@ where
     Err(TestHarnessError::EventLoopLimit)
 }
 
-/// Run an unmodified inline WPT script using the supplied DOM implementation
-/// and a small testharness API shim.
-///
-/// DOM queries, mutations, and geometry reads go through [`DomBackend`]. The
-/// caller can change its backend without changing the script source or this
-/// runner's JavaScript-facing DOM facade.
-pub fn run_testharness_script<B>(
-    inline_script: &str,
-    backend: B,
-) -> Result<Vec<TestOutcome>, TestHarnessError>
-where
-    B: DomBackend,
-{
-    let mut runtime = JsRuntime::new(backend).map_err(map_script_error)?;
-    drive_testharness(&mut runtime, inline_script)
-}
-
 /// Run an unmodified inline WPT script against the native DOM runtime over
-/// `host`, using the same assertion/reporting shim as [`run_testharness_script`].
+/// `host`, using a small testharness API shim.
+///
+/// DOM queries, mutations, and geometry reads go through [`DocumentHost`].
+/// The caller can change its host without changing the script source or the
+/// runtime's JavaScript-facing DOM bindings.
 pub fn run_testharness_on_host<H>(
     inline_script: &str,
     host: H,
@@ -225,13 +183,6 @@ where
 {
     let mut runtime = DomRuntime::new(host).map_err(map_runtime_error)?;
     drive_testharness(&mut runtime, inline_script)
-}
-
-fn map_script_error(error: ScriptError) -> TestHarnessError {
-    match error {
-        ScriptError::JavaScript(message) => TestHarnessError::JavaScript(message),
-        ScriptError::Dom(message) => TestHarnessError::Dom(message),
-    }
 }
 
 fn map_runtime_error(error: RuntimeError) -> TestHarnessError {

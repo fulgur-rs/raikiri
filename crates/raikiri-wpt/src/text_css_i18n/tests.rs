@@ -1,3 +1,8 @@
+use std::cell::Cell;
+use std::rc::Rc;
+
+use raikiri_js::runtime::DomRuntime;
+
 use super::*;
 
 const TWO_BY_THREE_PNG: &[u8] = &[
@@ -7,18 +12,65 @@ const TWO_BY_THREE_PNG: &[u8] = &[
     130,
 ];
 
-fn live_backend(html: &str, root: &Path) -> LiveDocumentBackend {
+/// A [`DomRuntime`] over a live WPT document, for tests that drive the
+/// native DOM bindings directly with `evaluate` rather than through the
+/// testharness shim.
+fn live_runtime(html: &str, root: &Path) -> DomRuntime {
     let setup = crate::reftest::prepare_wpt_live_document(html, 800, 600, root, root)
         .expect("valid test HTML should configure the live document");
-    LiveDocumentBackend::new(setup, root)
+    DomRuntime::new(crate::wpt_host::WptDocumentHost::new(setup, root)).unwrap()
+}
+
+/// Like [`live_runtime`], but also returns the host's test-only layout-flush
+/// counter (captured before the host moves into the runtime).
+fn live_runtime_with_flushes(html: &str, root: &Path) -> (Rc<Cell<usize>>, DomRuntime) {
+    let setup = crate::reftest::prepare_wpt_live_document(html, 800, 600, root, root)
+        .expect("valid test HTML should configure the live document");
+    let host = crate::wpt_host::WptDocumentHost::new(setup, root);
+    let flushes = host.flushes.clone();
+    (flushes, DomRuntime::new(host).unwrap())
+}
+
+fn ok(rt: &mut DomRuntime, src: &str) {
+    assert!(
+        rt.evaluate(src).unwrap().to_boolean(),
+        "expected true: {src}"
+    );
+}
+
+fn num(rt: &mut DomRuntime, src: &str) -> f64 {
+    rt.evaluate(src).unwrap().as_number().unwrap()
+}
+
+fn text(rt: &mut DomRuntime, src: &str) -> String {
+    rt.evaluate(src)
+        .unwrap()
+        .as_string()
+        .unwrap()
+        .to_std_string_escaped()
+}
+
+/// The computed value of `property` on the element with id `id`, read the
+/// same way a WPT `test()` body would (`getComputedStyle(...).getPropertyValue(...)`).
+fn computed(rt: &mut DomRuntime, id: &str, property: &str) -> String {
+    text(
+        rt,
+        &format!(
+            "getComputedStyle(document.getElementById({id:?})).getPropertyValue({property:?})"
+        ),
+    )
 }
 
 #[test]
 fn create_element_rejects_invalid_xml_names() {
     let root = tempfile::tempdir().unwrap();
     let html = r#"<!doctype html><html><body></body></html>"#;
-    let mut backend = live_backend(html, root.path());
-    assert!(backend.create_element("a>b").is_err());
+    let mut rt = live_runtime(html, root.path());
+    ok(
+        &mut rt,
+        "try { document.createElement('a>b'); false } \
+         catch (e) { e instanceof DOMException && e.name === 'InvalidCharacterError' }",
+    );
 }
 
 #[test]
@@ -27,8 +79,15 @@ fn live_dom_script_creates_appends_and_mutates_elements() {
     let html = r#"<!doctype html><html><head>
             <style>.dynamic { width: 22px; height: 7px; }</style>
         </head><body></body></html>"#;
-    let backend = live_backend(html, root.path());
-    let outcomes = run_testharness_script(
+    let setup = prepare_wpt_live_document(
+        html,
+        DEFAULT_REFTTEST_WIDTH,
+        DEFAULT_REFTTEST_HEIGHT,
+        root.path(),
+        root.path(),
+    )
+    .unwrap();
+    let outcomes = run_testharness_on_host(
         r#"
                 test(function() {
                     var body = document.body;
@@ -51,20 +110,27 @@ fn live_dom_script_creates_appends_and_mutates_elements() {
                     assert_equals(child.offsetHeight, 13);
                 }, 'dynamic element creation, mutation, and geometry');
             "#,
-        backend,
+        crate::wpt_host::WptDocumentHost::new(setup, root.path()),
     )
     .unwrap();
 
     assert_eq!(outcomes.len(), 1);
-    assert!(outcomes[0].passed);
+    assert!(outcomes[0].passed, "{:?}", outcomes[0]);
 }
 
 #[test]
 fn dynamic_style_text_and_connection_updates_the_cascade() {
     let root = tempfile::tempdir().unwrap();
     let html = r#"<!doctype html><html><head></head><body></body></html>"#;
-    let backend = live_backend(html, root.path());
-    let outcomes = run_testharness_script(
+    let setup = prepare_wpt_live_document(
+        html,
+        DEFAULT_REFTTEST_WIDTH,
+        DEFAULT_REFTTEST_HEIGHT,
+        root.path(),
+        root.path(),
+    )
+    .unwrap();
+    let outcomes = run_testharness_on_host(
         r#"
                 test(function() {
                     var box = document.createElement('div');
@@ -84,7 +150,7 @@ fn dynamic_style_text_and_connection_updates_the_cascade() {
                     assert_equals(box.offsetHeight, 14);
                 }, 'style text and connection changes update the cascade');
             "#,
-        backend,
+        crate::wpt_host::WptDocumentHost::new(setup, root.path()),
     )
     .unwrap();
 
@@ -98,28 +164,30 @@ fn live_dom_mutations_coalesce_into_lazy_full_layout_flushes() {
     let html = r#"<!doctype html><html><body>
             <div id="probe" style="width: 10px; height: 5px"></div>
         </body></html>"#;
-    let mut backend = live_backend(html, root.path());
-    let probe = backend.get_element_by_id("probe").unwrap().unwrap();
+    let (flushes, mut rt) = live_runtime_with_flushes(html, root.path());
+    rt.evaluate("var probe = document.getElementById('probe');")
+        .unwrap();
 
-    let initial = backend.bounding_client_rect(probe).unwrap();
-    assert_eq!((initial.width, initial.height), (10.0, 5.0));
-    assert_eq!(backend.layout_flush_count, 1);
+    assert_eq!(num(&mut rt, "probe.getBoundingClientRect().width"), 10.0);
+    assert_eq!(num(&mut rt, "probe.getBoundingClientRect().height"), 5.0);
+    assert_eq!(flushes.get(), 1);
 
-    backend.set_style_property(probe, "width", "20px").unwrap();
-    backend.set_style_property(probe, "height", "8px").unwrap();
-    backend.set_attribute(probe, "data-mutated", "yes").unwrap();
-    assert_eq!(backend.layout_flush_count, 1);
+    rt.evaluate(
+        "probe.style.width = '20px'; probe.style.height = '8px'; \
+         probe.setAttribute('data-mutated', 'yes');",
+    )
+    .unwrap();
+    assert_eq!(flushes.get(), 1);
 
-    let updated = backend.bounding_client_rect(probe).unwrap();
-    assert_eq!((updated.width, updated.height), (20.0, 8.0));
-    assert_eq!(backend.layout_flush_count, 2);
-    backend.bounding_client_rect(probe).unwrap();
-    assert_eq!(backend.layout_flush_count, 2);
+    assert_eq!(num(&mut rt, "probe.getBoundingClientRect().width"), 20.0);
+    assert_eq!(num(&mut rt, "probe.getBoundingClientRect().height"), 8.0);
+    assert_eq!(flushes.get(), 2);
+    rt.evaluate("probe.getBoundingClientRect();").unwrap();
+    assert_eq!(flushes.get(), 2);
 
-    backend.set_style_property(probe, "height", "11px").unwrap();
-    let updated_again = backend.bounding_client_rect(probe).unwrap();
-    assert_eq!(updated_again.height, 11.0);
-    assert_eq!(backend.layout_flush_count, 3);
+    rt.evaluate("probe.style.height = '11px';").unwrap();
+    assert_eq!(num(&mut rt, "probe.getBoundingClientRect().height"), 11.0);
+    assert_eq!(flushes.get(), 3);
 }
 
 #[test]
@@ -127,23 +195,25 @@ fn changing_image_source_updates_intrinsic_geometry_after_one_lazy_flush() {
     let root = tempfile::tempdir().unwrap();
     fs::write(root.path().join("small.png"), TWO_BY_THREE_PNG).unwrap();
     let html = r#"<!doctype html><html><body><img id="probe"></body></html>"#;
-    let mut backend = live_backend(html, root.path());
-    let image = backend.get_element_by_id("probe").unwrap().unwrap();
+    let (flushes, mut rt) = live_runtime_with_flushes(html, root.path());
+    rt.evaluate("var probe = document.getElementById('probe');")
+        .unwrap();
 
-    let initial = backend.bounding_client_rect(image).unwrap();
-    assert_eq!((initial.width, initial.height), (0.0, 0.0));
-    assert_eq!(backend.layout_flush_count, 1);
+    assert_eq!(num(&mut rt, "probe.getBoundingClientRect().width"), 0.0);
+    assert_eq!(num(&mut rt, "probe.getBoundingClientRect().height"), 0.0);
+    assert_eq!(flushes.get(), 1);
 
-    backend.set_attribute(image, "src", "small.png").unwrap();
-    assert_eq!(backend.layout_flush_count, 1);
-    let loaded = backend.bounding_client_rect(image).unwrap();
-    assert_eq!((loaded.width, loaded.height), (2.0, 3.0));
-    assert_eq!(backend.layout_flush_count, 2);
+    rt.evaluate("probe.setAttribute('src', 'small.png');")
+        .unwrap();
+    assert_eq!(flushes.get(), 1);
+    assert_eq!(num(&mut rt, "probe.getBoundingClientRect().width"), 2.0);
+    assert_eq!(num(&mut rt, "probe.getBoundingClientRect().height"), 3.0);
+    assert_eq!(flushes.get(), 2);
 
-    backend.remove_attribute(image, "src").unwrap();
-    let missing = backend.bounding_client_rect(image).unwrap();
-    assert_eq!((missing.width, missing.height), (0.0, 0.0));
-    assert_eq!(backend.layout_flush_count, 3);
+    rt.evaluate("probe.removeAttribute('src');").unwrap();
+    assert_eq!(num(&mut rt, "probe.getBoundingClientRect().width"), 0.0);
+    assert_eq!(num(&mut rt, "probe.getBoundingClientRect().height"), 0.0);
+    assert_eq!(flushes.get(), 3);
 }
 
 #[test]
@@ -154,35 +224,46 @@ fn live_selectors_and_inline_style_access_cover_dom_facade_queries() {
                  style="color: red; --token: first"></div>
             <span id="unstyled"></span>
         </body></html>"#;
-    let mut backend = live_backend(html, root.path());
-    let target = backend.get_element_by_id("target").unwrap().unwrap();
-    let unstyled = backend.get_element_by_id("unstyled").unwrap().unwrap();
-    let body = backend.query_selector("body").unwrap().unwrap();
-    let html_element = backend.query_selector("html").unwrap().unwrap();
+    let mut rt = live_runtime(html, root.path());
+    rt.evaluate(
+        "var target = document.getElementById('target'); \
+         var unstyled = document.getElementById('unstyled');",
+    )
+    .unwrap();
 
-    assert!(backend.get_element_by_id("").unwrap().is_none());
-    assert!(backend.query_selector("*").unwrap().is_some());
-    assert_eq!(backend.query_selector("#target").unwrap(), Some(target));
-    assert_eq!(backend.query_selector(".second").unwrap(), Some(target));
-    assert_eq!(
-        backend.query_selector("[data-key='value']").unwrap(),
-        Some(target)
+    ok(&mut rt, "document.getElementById('') === null");
+    ok(&mut rt, "document.querySelector('*') !== null");
+    ok(&mut rt, "document.querySelector('#target') === target");
+    ok(&mut rt, "document.querySelector('.second') === target");
+    ok(
+        &mut rt,
+        "document.querySelector(\"[data-key='value']\") === target",
     );
-    assert_eq!(backend.query_selector("[data-key]").unwrap(), Some(target));
-    assert_eq!(backend.query_selector("DIV").unwrap(), Some(target));
-    assert_eq!(backend.parent_node(target).unwrap(), Some(body));
-    assert_eq!(backend.parent_node(html_element).unwrap(), None);
+    ok(&mut rt, "document.querySelector('[data-key]') === target");
+    ok(&mut rt, "document.querySelector('DIV') === target");
+    ok(&mut rt, "target.parentNode === document.body");
+    // Unlike the legacy facade (which had no Document wrapper at all), the
+    // native <html> element's parent is the Document itself (DOM §4.8), not
+    // null.
+    ok(&mut rt, "document.documentElement.parentNode === document");
 
-    assert_eq!(backend.style_property(target, "COLOR").unwrap(), "red");
-    assert_eq!(backend.style_property(target, "--token").unwrap(), "first");
-    assert_eq!(backend.style_property(unstyled, "color").unwrap(), "");
-    backend.set_style_property(target, "", "ignored").unwrap();
-    backend
-        .set_style_property(target, "--token", "second")
+    ok(&mut rt, "target.style.getPropertyValue('COLOR') === 'red'");
+    ok(
+        &mut rt,
+        "target.style.getPropertyValue('--token') === 'first'",
+    );
+    ok(&mut rt, "unstyled.style.getPropertyValue('color') === ''");
+    rt.evaluate("target.style.setProperty('', 'ignored');")
         .unwrap();
-    assert_eq!(backend.style_property(target, "--token").unwrap(), "second");
-    backend.set_style_property(target, "color", "").unwrap();
-    assert_eq!(backend.style_property(target, "color").unwrap(), "");
+    rt.evaluate("target.style.setProperty('--token', 'second');")
+        .unwrap();
+    ok(
+        &mut rt,
+        "target.style.getPropertyValue('--token') === 'second'",
+    );
+    rt.evaluate("target.style.setProperty('color', '');")
+        .unwrap();
+    ok(&mut rt, "target.style.getPropertyValue('color') === ''");
 }
 
 #[test]
@@ -190,20 +271,20 @@ fn setting_style_element_inner_html_reloads_stylesheet_and_removal() {
     let root = tempfile::tempdir().unwrap();
     let html = r#"<!doctype html><html><head><style id="dynamic"></style></head>
             <body><div id="probe"></div></body></html>"#;
-    let mut backend = live_backend(html, root.path());
-    let style = backend.get_element_by_id("dynamic").unwrap().unwrap();
-    let probe = backend.get_element_by_id("probe").unwrap().unwrap();
+    let mut rt = live_runtime(html, root.path());
+    rt.evaluate(
+        "var style = document.getElementById('dynamic'); \
+         var probe = document.getElementById('probe');",
+    )
+    .unwrap();
 
-    backend
-        .set_inner_html(style, "#probe { width: 27px; height: 19px; }")
+    rt.evaluate("style.innerHTML = '#probe { width: 27px; height: 19px; }';")
         .unwrap();
-    let styled = backend.bounding_client_rect(probe).unwrap();
-    assert_eq!(styled.width, 27.0);
-    assert_eq!(styled.height, 19.0);
+    assert_eq!(num(&mut rt, "probe.getBoundingClientRect().width"), 27.0);
+    assert_eq!(num(&mut rt, "probe.getBoundingClientRect().height"), 19.0);
 
-    backend.set_inner_html(style, "").unwrap();
-    let unstyled = backend.bounding_client_rect(probe).unwrap();
-    assert_ne!(unstyled.width, 27.0);
+    rt.evaluate("style.innerHTML = '';").unwrap();
+    assert_ne!(num(&mut rt, "probe.getBoundingClientRect().width"), 27.0);
 }
 
 #[test]
@@ -267,17 +348,9 @@ fn live_backend_updates_identity_attributes_style_and_current_geometry() {
             @media screen { #media-box { width: 23px; height: 17px; } }
             @media print { #media-box { width: 230px; height: 170px; } }
             </style></head><body><p>initial</p></body></html>"#;
-    let setup = prepare_wpt_live_document(
-        html,
-        DEFAULT_REFTTEST_WIDTH,
-        DEFAULT_REFTTEST_HEIGHT,
-        wpt_root.path(),
-        wpt_root.path(),
-    )
-    .unwrap();
-    let backend = LiveDocumentBackend::new(setup, wpt_root.path());
+    let mut rt = live_runtime(html, wpt_root.path());
 
-    raikiri_js::run_script(
+    rt.evaluate(
             r#"
                 var body = document.body;
                 if (document.querySelector('body') !== body)
@@ -362,7 +435,6 @@ fn live_backend_updates_identity_attributes_style_and_current_geometry() {
                 if (document.getElementById('from-style').offsetHeight <= 0)
                     throw new Error('a removed style element still affected cascade');
             "#,
-            backend,
         )
         .unwrap();
 }
@@ -536,7 +608,7 @@ fn white_space_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/white-space-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 6);
@@ -551,7 +623,7 @@ fn white_space_collapse_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/white-space-collapse-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 4);
@@ -566,7 +638,7 @@ fn line_break_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/line-break-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 5);
@@ -581,7 +653,7 @@ fn hyphens_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/hyphens-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 3);
@@ -596,7 +668,7 @@ fn overflow_wrap_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/overflow-wrap-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 3);
@@ -611,7 +683,7 @@ fn word_break_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/word-break-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 5);
@@ -626,7 +698,7 @@ fn text_transform_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/text-transform-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 10);
@@ -641,7 +713,7 @@ fn text_align_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/text-align-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 7);
@@ -656,7 +728,7 @@ fn text_justify_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/text-justify-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 4);
@@ -671,7 +743,7 @@ fn text_justify_computed_legacy_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/text-justify-computed-legacy.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 1);
@@ -686,7 +758,7 @@ fn text_indent_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/text-indent-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 10);
@@ -701,7 +773,7 @@ fn text_align_last_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/text-align-last-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 8);
@@ -716,7 +788,7 @@ fn text_wrap_mode_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/text-wrap-mode-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 2);
@@ -731,7 +803,7 @@ fn text_autospace_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/text-autospace-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 32);
@@ -746,7 +818,7 @@ fn text_wrap_style_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/text-wrap-style-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 3);
@@ -761,7 +833,7 @@ fn text_wrap_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/text-wrap-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 17);
@@ -776,7 +848,7 @@ fn hyphenate_character_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/hyphenate-character-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 5);
@@ -791,7 +863,7 @@ fn hyphenate_limit_chars_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/hyphenate-limit-chars-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 11);
@@ -806,7 +878,7 @@ fn text_spacing_trim_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/text-spacing-trim-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 7);
@@ -822,7 +894,7 @@ fn letter_spacing_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/letter-spacing-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 9);
@@ -837,7 +909,7 @@ fn word_spacing_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/word-spacing-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 9);
@@ -872,7 +944,7 @@ fn text_shadow_computed_wpt_case_uses_the_pinned_computed_helper() {
         wpt_root.join("css/css-text-decor/text-shadow/parsing/text-shadow-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 7);
@@ -901,7 +973,7 @@ fn word_space_transform_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/word-space-transform-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 5);
@@ -918,7 +990,7 @@ fn text_decoration_skip_ink_computed_wpt_case_uses_the_pinned_computed_helper() 
         wpt_root.join("css/css-text-decor/parsing/text-decoration-skip-ink-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 3);
@@ -935,7 +1007,7 @@ fn text_decoration_skip_spaces_computed_wpt_case_uses_the_pinned_computed_helper
         wpt_root.join("css/css-text-decor/parsing/text-decoration-skip-spaces-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 5);
@@ -951,7 +1023,7 @@ fn text_decoration_style_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text-decor/parsing/text-decoration-style-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 5);
@@ -967,7 +1039,7 @@ fn text_decoration_line_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text-decor/parsing/text-decoration-line-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 18);
@@ -983,7 +1055,7 @@ fn text_decoration_color_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text-decor/parsing/text-decoration-color-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 3);
@@ -999,7 +1071,7 @@ fn text_decoration_inset_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text-decor/parsing/text-decoration-inset-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 10);
@@ -1015,7 +1087,7 @@ fn text_decoration_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text-decor/parsing/text-decoration-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 14);
@@ -1031,7 +1103,7 @@ fn text_underline_offset_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text-decor/text-underline-offset-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 15);
@@ -1046,7 +1118,7 @@ fn writing_mode_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-writing-modes/parsing/writing-mode-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 3);
@@ -1061,7 +1133,7 @@ fn direction_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-writing-modes/parsing/direction-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 2);
@@ -1076,7 +1148,7 @@ fn unicode_bidi_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-writing-modes/parsing/unicode-bidi-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 6);
@@ -1092,7 +1164,7 @@ fn text_combine_upright_computed_wpt_case_uses_the_pinned_computed_helper() {
         wpt_root.join("css/css-writing-modes/parsing/text-combine-upright-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 2);
@@ -1107,7 +1179,7 @@ fn text_orientation_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-writing-modes/parsing/text-orientation-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 3);
@@ -1123,7 +1195,7 @@ fn text_underline_position_computed_wpt_case_uses_the_pinned_computed_helper() {
         wpt_root.join("css/css-text-decor/parsing/text-underline-position-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 7);
@@ -1140,7 +1212,7 @@ fn text_emphasis_position_computed_wpt_case_uses_the_pinned_computed_helper() {
         wpt_root.join("css/css-text-decor/parsing/text-emphasis-position-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 7);
@@ -1156,7 +1228,7 @@ fn text_emphasis_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text-decor/parsing/text-emphasis-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 7);
@@ -1172,7 +1244,7 @@ fn text_emphasis_style_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text-decor/parsing/text-emphasis-style-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 9);
@@ -1188,7 +1260,7 @@ fn text_emphasis_style_computed_vertical_lr_wpt_case_uses_the_pinned_computed_he
         wpt_root.join("css/css-text-decor/parsing/text-emphasis-style-computed-vertical-lr.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 9);
@@ -1204,7 +1276,7 @@ fn tab_size_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/tab-size-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 10);
@@ -1220,7 +1292,7 @@ fn word_wrap_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/word-wrap-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 3);
@@ -1234,7 +1306,7 @@ fn text_spacing_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-text/parsing/text-spacing-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 16);
@@ -1248,7 +1320,7 @@ fn font_kerning_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-fonts/parsing/font-kerning-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 3);
@@ -1262,7 +1334,7 @@ fn font_variant_caps_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-fonts/parsing/font-variant-caps-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 7);
@@ -1276,7 +1348,7 @@ fn font_optical_sizing_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-fonts/parsing/font-optical-sizing-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 2);
@@ -1290,7 +1362,7 @@ fn font_variant_emoji_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-fonts/parsing/font-variant-emoji-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 4);
@@ -1304,7 +1376,7 @@ fn font_language_override_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-fonts/parsing/font-language-override-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 5);
@@ -1318,7 +1390,7 @@ fn font_variant_ligatures_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-fonts/parsing/font-variant-ligatures-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 10);
@@ -1332,7 +1404,7 @@ fn font_synthesis_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-fonts/parsing/font-synthesis-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 21);
@@ -1346,7 +1418,7 @@ fn font_variant_position_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-fonts/parsing/font-variant-position-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 3);
@@ -1360,7 +1432,7 @@ fn font_palette_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-fonts/parsing/font-palette-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 4);
@@ -1374,7 +1446,7 @@ fn font_variant_numeric_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-fonts/parsing/font-variant-numeric-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 11);
@@ -1388,7 +1460,7 @@ fn font_variant_east_asian_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-fonts/parsing/font-variant-east-asian-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 12);
@@ -1406,17 +1478,13 @@ fn assert_computed_cases(cases: &[(&str, &str, &str)]) {
         })
         .collect();
     let html = format!("<!doctype html><html><body>{body}</body></html>");
-    let mut backend = live_backend(&html, root.path());
+    let mut rt = live_runtime(&html, root.path());
     let mismatches: Vec<String> = cases
         .iter()
         .enumerate()
         .filter_map(|(index, (property, value, expected))| {
-            let node = backend
-                .get_element_by_id(&format!("c{index}"))
-                .unwrap()
-                .expect("case element exists");
-            let actual = backend.computed_style_property(node, property).unwrap();
-            (actual.as_deref() != Some(*expected))
+            let actual = computed(&mut rt, &format!("c{index}"), property);
+            (actual != *expected)
                 .then(|| format!("{property}: {value} => {actual:?}, expected {expected:?}"))
         })
         .collect();
@@ -1426,21 +1494,14 @@ fn assert_computed_cases(cases: &[(&str, &str, &str)]) {
 #[test]
 fn computed_style_property_ignores_unsupported_names_without_flushing() {
     let root = tempfile::tempdir().unwrap();
-    let mut backend = live_backend(
+    let (flushes, mut rt) = live_runtime_with_flushes(
         r#"<!doctype html><html><body><div id="box"></div></body></html>"#,
         root.path(),
     );
-    let node = backend.get_element_by_id("box").unwrap().unwrap();
-    assert_eq!(
-        backend.computed_style_property(node, "color").unwrap(),
-        None
-    );
-    assert_eq!(backend.layout_flush_count, 0);
-    assert_eq!(
-        backend.computed_style_property(node, "WORD-WRAP").unwrap(),
-        Some("normal".to_owned())
-    );
-    assert_eq!(backend.layout_flush_count, 1);
+    assert_eq!(computed(&mut rt, "box", "color"), "");
+    assert_eq!(flushes.get(), 0);
+    assert_eq!(computed(&mut rt, "box", "WORD-WRAP"), "normal");
+    assert_eq!(flushes.get(), 1);
 }
 
 #[test]
@@ -1726,15 +1787,11 @@ fn computed_style_property_serializes_structured_properties() {
 #[test]
 fn computed_text_decoration_inset_measures_ch_with_the_document_fonts() {
     let root = tempfile::tempdir().unwrap();
-    let mut backend = live_backend(
+    let mut rt = live_runtime(
         r#"<!doctype html><html><body><div id="box" style="text-decoration-inset: 2ch">x</div></body></html>"#,
         root.path(),
     );
-    let node = backend.get_element_by_id("box").unwrap().unwrap();
-    let value = backend
-        .computed_style_property(node, "text-decoration-inset")
-        .unwrap()
-        .expect("text-decoration-inset has a computed value");
+    let value = computed(&mut rt, "box", "text-decoration-inset");
     let px: f32 = value
         .strip_suffix("px")
         .and_then(|number| number.parse().ok())
@@ -1745,45 +1802,28 @@ fn computed_text_decoration_inset_measures_ch_with_the_document_fonts() {
 #[test]
 fn computed_ch_lengths_match_the_measured_zero_advance() {
     let root = tempfile::tempdir().unwrap();
-    let mut backend = live_backend(
+    let mut rt = live_runtime(
         r#"<!doctype html><html><body><div id="box" style="font-family: monospace; font-size: 20px; text-decoration-inset: 2ch; letter-spacing: 2ch; word-spacing: 2ch; text-indent: 2ch">x</div></body></html>"#,
         root.path(),
     );
-    let node = backend.get_element_by_id("box").unwrap().unwrap();
-    let measured = backend
-        .computed_style_property(node, "text-decoration-inset")
-        .unwrap()
-        .expect("inset has a computed value");
+    let measured = computed(&mut rt, "box", "text-decoration-inset");
     // The style layer's 0.5em fallback would read 20px here.
     assert_ne!(measured, "20px");
     for property in ["letter-spacing", "word-spacing", "text-indent"] {
-        assert_eq!(
-            backend
-                .computed_style_property(node, property)
-                .unwrap()
-                .as_deref(),
-            Some(measured.as_str()),
-            "{property}"
-        );
+        assert_eq!(computed(&mut rt, "box", property), measured, "{property}");
     }
 }
 
 #[test]
 fn inherited_ch_spacing_keeps_the_declaring_elements_length() {
     let root = tempfile::tempdir().unwrap();
-    let mut backend = live_backend(
+    let mut rt = live_runtime(
         r#"<!doctype html><html><body><div id="parent" style="font-family: sans-serif; font-size: 20px; letter-spacing: 2ch; word-spacing: 2ch"><span id="child" style="font-family: monospace; font-size: 10px">x</span></div></body></html>"#,
         root.path(),
     );
-    let parent = backend.get_element_by_id("parent").unwrap().unwrap();
-    let child = backend.get_element_by_id("child").unwrap().unwrap();
     for property in ["letter-spacing", "word-spacing"] {
-        let declared = backend.computed_style_property(parent, property).unwrap();
-        assert_eq!(
-            backend.computed_style_property(child, property).unwrap(),
-            declared,
-            "{property}"
-        );
+        let declared = computed(&mut rt, "parent", property);
+        assert_eq!(computed(&mut rt, "child", property), declared, "{property}");
     }
 }
 
@@ -1794,7 +1834,7 @@ fn font_variation_settings_computed_wpt_case_uses_the_pinned_computed_helper() {
     let test_file = wpt_root.join("css/css-fonts/parsing/font-variation-settings-computed.html");
     let helper = fs::read_to_string(wpt_root.join("css/support/computed-testcommon.js"))
         .expect("read the pinned WPT computed-testcommon.js helper");
-    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper, Engine::Native);
+    let result = run_testharness_file_with_helper(&test_file, &wpt_root, &helper);
 
     assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.total(), 8);
@@ -1815,91 +1855,4 @@ fn font_shorthand_subproperties_reset_wpt_case_uses_the_pinned_fixture() {
         "the pinned fixture should cover each currently-supported subproperty",
     );
     assert!(result.all_passed(), "{:?}", result.outcomes);
-}
-
-fn file(id: &str, passed: &[bool], error: Option<&str>) -> TestHarnessFileResult {
-    TestHarnessFileResult {
-        test_id: id.into(),
-        outcomes: passed
-            .iter()
-            .enumerate()
-            .map(|(i, &p)| TestOutcome {
-                name: format!("t{i}"),
-                passed: p,
-                message: String::new(),
-            })
-            .collect(),
-        error: error.map(str::to_owned),
-    }
-}
-
-#[test]
-fn regressions_flag_fewer_passes_and_new_errors_only() {
-    let legacy = vec![
-        file("a", &[true, false], None),
-        file("b", &[true], None),
-        file("c", &[], Some("x")),
-    ];
-    let native = vec![
-        file("a", &[true, true], None),
-        file("b", &[], Some("boom")),
-        file("c", &[true], None),
-    ];
-    let found = regressions(&legacy, &native);
-    assert_eq!(
-        found,
-        vec![Regression {
-            test_id: "b".into(),
-            legacy: "1/1".into(),
-            native: "error: boom".into(),
-        }]
-    );
-}
-
-#[test]
-fn regressions_flag_a_pass_count_drop() {
-    let legacy = vec![file("a", &[true, true], None)];
-    let native = vec![file("a", &[true, false], None)];
-    assert_eq!(
-        regressions(&legacy, &native),
-        vec![Regression {
-            test_id: "a".into(),
-            legacy: "2/2".into(),
-            native: "1/2".into(),
-        }]
-    );
-}
-
-#[test]
-fn regressions_ignore_files_missing_from_the_native_run_and_shared_errors() {
-    let legacy = vec![
-        file("only-legacy", &[true], None),
-        file("both", &[], Some("x")),
-    ];
-    let native = vec![file("both", &[], Some("y"))];
-    assert!(regressions(&legacy, &native).is_empty());
-}
-
-#[test]
-fn both_engines_run_the_same_page_and_differ_where_native_follows_the_dom_spec() {
-    let wpt_root = tempfile::tempdir().unwrap();
-    write_test_page(
-        wpt_root.path(),
-        "root-parent.html",
-        r#"<!doctype html><html><head>
-                <script src="/resources/testharness.js"></script>
-            </head><body><script>
-                test(function() {
-                    assert_true(document.body.parentNode.parentNode === document,
-                        'the root element parent is the Document');
-                }, 'root element parent');
-            </script></body></html>"#,
-    );
-
-    let legacy = run_css_text_i18n_with(wpt_root.path(), Engine::Legacy).unwrap();
-    let native = run_css_text_i18n_with(wpt_root.path(), Engine::Native).unwrap();
-    assert_eq!((legacy[0].passed(), legacy[0].total()), (0, 1));
-    assert_eq!((native[0].passed(), native[0].total()), (1, 1));
-    assert!(regressions(&legacy, &native).is_empty());
-    assert_eq!(regressions(&native, &legacy).len(), 1);
 }

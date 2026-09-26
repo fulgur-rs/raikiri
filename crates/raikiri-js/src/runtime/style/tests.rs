@@ -122,6 +122,22 @@ fn computed_style_unsupported_property_skips_flush() {
     ok(&mut rt, "!('noSuchProp' in cs)");
 }
 
+/// `getComputedStyle`'s Proxy traps take any string key, so a dashed CSS
+/// property name works through bracket access and `in`, not just the
+/// camelCase form `computed_style_unsupported_property_skips_flush` covers.
+#[test]
+fn computed_style_supports_dashed_property_name_access() {
+    let (mut host, _, _, body) = StubHost::page();
+    host.computed
+        .insert((body, "white-space".into()), "pre".into());
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var cs = getComputedStyle(document.body); \
+         ('white-space' in cs) && cs['white-space'] === 'pre'",
+    );
+}
+
 #[test]
 fn get_computed_style_rejects_a_non_element_argument() {
     let (host, ..) = StubHost::page();
