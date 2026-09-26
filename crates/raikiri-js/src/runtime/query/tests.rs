@@ -103,8 +103,11 @@ fn query_selector_uses_fresh_in_document_flags() {
 /// build an arbitrarily deep chain, and there is no other bound on it
 /// before it reaches raikiri-dom. Built directly against `Document` with
 /// `create_detached_element` + `attach_child` (both O(1)) rather than
-/// through JS `appendChild`, whose cycle check does an O(N) `parent_of`
-/// scan per call and would make building this chain quadratic.
+/// through JS `appendChild`, whose move step detaches the node from its
+/// (possibly absent) old parent via `detach_from_parent` -- an O(N)
+/// `parent_of` scan per call, independent of the separate (and here cheap)
+/// inclusive-ancestor cycle check -- and would make building this chain
+/// quadratic.
 #[test]
 fn find_in_tree_walks_a_very_deep_chain_without_overflowing_the_stack() {
     let (mut rt, body) = rt_with_body();
