@@ -54,7 +54,7 @@ pub mod fonts;
 pub mod layout;
 pub mod taffy_impl;
 
-pub use document::Document;
+pub use document::{Document, DomMutationError};
 pub use dom_impl::{ChildIter, ElementRef, NodeRef, StyleChildIter};
 pub use fonts::{
     FontError, FontFaceApplyReport, FontFaceLoader, FontWarn, apply_font_faces, build_wpt_font_ctx,

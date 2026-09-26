@@ -25,8 +25,11 @@ impl StubHost {
         let mut document = Document::new();
         let root = document.root_index();
         let html = document.create_detached_element("html").unwrap();
-        // `append_child` only accepts Element parents; the document root
-        // takes its element child through the parser-level attach.
+        // The document root takes its element child through the
+        // parser-level attach, mirroring how a real HTML parse wires the
+        // root `<html>` element (`append_child` would also accept a
+        // Document parent now, but this stub predates that and there is no
+        // move-from-elsewhere semantics to exercise here).
         document.attach_child(root, html);
         let head = document.create_detached_element("head").unwrap();
         document.append_child(html, head).unwrap();

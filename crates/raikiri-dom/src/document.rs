@@ -35,6 +35,9 @@ use crate::layout::LayoutWarn;
 use crate::node::{Attr, Node, NodeData};
 use raikiri_style::property::CalcLengthPercentage;
 
+mod mutation;
+pub use mutation::DomMutationError;
+
 const XHTML_NAMESPACE_URI: &str = "http://www.w3.org/1999/xhtml";
 
 fn is_xml_name_start(ch: char) -> bool {
@@ -413,44 +416,21 @@ impl Document {
         self.flags_dirty = true;
     }
 
-    /// Append a detached or already-connected child to an element using DOM move semantics.
+    /// Append a detached or already-connected child to `parent` using DOM
+    /// move semantics, delegating to [`Document::pre_insert`] with
+    /// `before = None` (DOM §4.2.3 "pre-insert node into parent before
+    /// null").
     ///
-    /// The child is detached from its current parent before it is appended. This
-    /// also rejects cycles; low-level parser operations should keep using
-    /// [`Document::attach_child`] and detach explicitly as required by TreeSink.
+    /// Kept as a thin `String`-erroring wrapper for existing callers; new
+    /// code should call [`Document::pre_insert`] directly to distinguish
+    /// [`DomMutationError::HierarchyRequest`] from
+    /// [`DomMutationError::NotFound`].
     pub fn append_child(&mut self, parent: usize, child: usize) -> Result<(), String> {
-        let Some(parent_node) = self.nodes.get(parent) else {
-            return Err(format!("appendChild parent index {parent} is out of range"));
-        };
-        if !matches!(&parent_node.data, NodeData::Element(_)) {
-            return Err("appendChild parent must be an Element".into());
-        }
-        let Some(child_node) = self.nodes.get(child) else {
-            return Err(format!("appendChild child index {child} is out of range"));
-        };
-        if !matches!(
-            &child_node.data,
-            NodeData::Element(_) | NodeData::Text(_) | NodeData::DocumentFragment
-        ) {
-            return Err("appendChild child must be an Element, Text, or DocumentFragment".into());
-        }
-
-        let mut pending = vec![child];
-        let mut visited = std::collections::HashSet::new();
-        while let Some(descendant) = pending.pop() {
-            if descendant == parent {
-                return Err("appendChild would create a DOM cycle".into());
-            }
-            if visited.insert(descendant)
-                && let Some(node) = self.nodes.get(descendant)
-            {
-                pending.extend(node.children.iter().copied());
-            }
-        }
-
-        self.detach_from_parent(child);
-        self.attach_child(parent, child);
-        Ok(())
+        self.pre_insert(parent, child, None)
+            .map_err(|err| match err {
+                DomMutationError::HierarchyRequest(message)
+                | DomMutationError::NotFound(message) => message,
+            })
     }
 
     /// `parent` の children 配列内、`before` の直前 index に `child` を挿入する。

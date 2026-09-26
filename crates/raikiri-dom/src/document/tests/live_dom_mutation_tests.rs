@@ -17,16 +17,35 @@ fn append_child_moves_elements_and_rejects_cycles() {
 }
 
 #[test]
-fn append_child_rejects_stale_indices_and_non_dom_kinds() {
+fn append_child_rejects_stale_indices_and_hierarchy_violations() {
     let mut doc = Document::new();
     let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
     let child = doc.append_element(None, "span", Style::default(), None::<&str>);
-    let comment = doc.append_comment(Some(host), "not appendable");
 
     assert!(doc.append_child(usize::MAX, child).is_err());
+    // The Document root already has `host` as its one Element child, so a
+    // second Element cannot be inserted under it (DOM §4.2.3 step 6).
     assert!(doc.append_child(0, child).is_err());
     assert!(doc.append_child(host, usize::MAX).is_err());
-    assert!(doc.append_child(host, comment).is_err());
+    // The Document root can never be inserted as anyone's child: it is also
+    // an inclusive ancestor of every other node in this arena.
+    assert!(doc.append_child(host, doc.root_index()).is_err());
+}
+
+#[test]
+fn append_child_accepts_comment_and_processing_instruction_children() {
+    // Unlike the old Element/Text/DocumentFragment-only check this method
+    // used to run inline, DOM §4.2.3 pre-insert validity allows any
+    // CharacterData node -- Comment and ProcessingInstruction included --
+    // as a plain Element's child.
+    let mut doc = Document::new();
+    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let comment = doc.create_detached_comment("note");
+    let pi = doc.append_processing_instruction(None, "target", "data");
+
+    doc.append_child(host, comment).unwrap();
+    doc.append_child(host, pi).unwrap();
+    assert_eq!(doc.nodes[host].children, vec![comment, pi]);
 }
 
 #[test]
