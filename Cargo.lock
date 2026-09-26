@@ -2469,7 +2469,6 @@ dependencies = [
  "blitz-html",
  "blitz-paint",
  "blitz-traits",
- "cssparser",
  "insta",
  "parley",
  "png",

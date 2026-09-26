@@ -80,7 +80,9 @@ fn geometry_reads_flush_only_when_dirty() {
     );
     ok(
         &mut rt,
-        "var r = document.body.getBoundingClientRect(); r.x === 1 && r.top === 2 && r.height === 20.4",
+        "var r = document.body.getBoundingClientRect(); \
+         r.x === 1 && r.y === 2 && r.left === 1 && r.top === 2 && \
+         r.right === 11 && r.bottom === 22.4 && r.width === 10 && r.height === 20.4",
     );
     assert_eq!(
         flushes.get(),

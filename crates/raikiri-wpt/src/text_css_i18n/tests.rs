@@ -217,7 +217,7 @@ fn changing_image_source_updates_intrinsic_geometry_after_one_lazy_flush() {
 }
 
 #[test]
-fn live_selectors_and_inline_style_access_cover_dom_facade_queries() {
+fn native_dom_selectors_and_inline_style_access_cover_dom_queries() {
     let root = tempfile::tempdir().unwrap();
     let html = r#"<!doctype html><html><body>
             <div id="target" class="first second" data-key="value"
@@ -242,9 +242,7 @@ fn live_selectors_and_inline_style_access_cover_dom_facade_queries() {
     ok(&mut rt, "document.querySelector('[data-key]') === target");
     ok(&mut rt, "document.querySelector('DIV') === target");
     ok(&mut rt, "target.parentNode === document.body");
-    // Unlike the legacy facade (which had no Document wrapper at all), the
-    // native <html> element's parent is the Document itself (DOM §4.8), not
-    // null.
+    // The <html> element's parent is the Document itself (DOM §4.8).
     ok(&mut rt, "document.documentElement.parentNode === document");
 
     ok(&mut rt, "target.style.getPropertyValue('COLOR') === 'red'");
@@ -342,7 +340,7 @@ fn write_test_page(wpt_root: &Path, name: &str, html: &str) {
 }
 
 #[test]
-fn live_backend_updates_identity_attributes_style_and_current_geometry() {
+fn native_dom_updates_identity_attributes_style_and_current_geometry() {
     let wpt_root = tempfile::tempdir().unwrap();
     let html = r#"<!doctype html><html><head><style>
             @media screen { #media-box { width: 23px; height: 17px; } }

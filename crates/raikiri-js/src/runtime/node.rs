@@ -300,8 +300,8 @@ fn validate_token(context: &mut Context, token: &str) -> JsResult<()> {
 
 /// `Element.classList`: a live-ish `DOMTokenList` backed by the `class`
 /// attribute, cached per element so repeated reads return the same object.
-/// `add`/`remove`/`contains`/`toggle` cover the surface the legacy facade
-/// exposed; the rest of `DOMTokenList` (`length`, indexing, `value`,
+/// `add`/`remove`/`contains`/`toggle` cover the surface the CSS Text i18n
+/// corpus needs; the rest of `DOMTokenList` (`length`, indexing, `value`,
 /// `replace`, iteration) is future work.
 fn class_list(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
