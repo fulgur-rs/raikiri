@@ -44,36 +44,36 @@ pub(crate) enum CollectionSource {
 }
 
 impl CollectionSource {
-    /// The nodes the collection currently contains, in tree order.
-    fn nodes(&self, doc: &Document) -> Vec<usize> {
-        match self {
-            Self::ChildNodes(node) => doc
-                .get_node(*node)
-                .map(|n| n.children.clone())
-                .unwrap_or_default(),
-            Self::Children(node) => element_children_of(doc, *node),
-            Self::TagName(root, query) => elements_by_tag_name(doc, *root, query),
-            Self::ClassNames(root, tokens) => elements_with_class_tokens(doc, *root, tokens),
-            Self::Static(nodes) => nodes.clone(),
-        }
+    /// Run `f` over the nodes the collection currently contains, in
+    /// collection order. A live kind walks the current tree; a static one
+    /// lends its stored list without copying it.
+    fn with_nodes<T>(
+        &self,
+        context: &mut Context,
+        f: impl FnOnce(&Document, &[usize]) -> T,
+    ) -> JsResult<T> {
+        with_state(context, |s| {
+            let doc = s.host.document();
+            let live = match self {
+                Self::Static(nodes) => return f(doc, nodes),
+                Self::ChildNodes(node) => doc
+                    .get_node(*node)
+                    .map(|n| n.children.clone())
+                    .unwrap_or_default(),
+                Self::Children(node) => element_children_of(doc, *node),
+                Self::TagName(root, query) => elements_by_tag_name(doc, *root, query),
+                Self::ClassNames(root, tokens) => elements_with_class_tokens(doc, *root, tokens),
+            };
+            f(doc, &live)
+        })
     }
 
     fn length(&self, context: &mut Context) -> JsResult<usize> {
-        if let Self::Static(nodes) = self {
-            return Ok(nodes.len());
-        }
-        with_state(context, |s| self.nodes(s.host.document()).len())
+        self.with_nodes(context, |_, nodes| nodes.len())
     }
 
     fn item(&self, index: usize, context: &mut Context) -> JsResult<Option<JsValue>> {
-        let node = if let Self::Static(nodes) = self {
-            nodes.get(index).copied()
-        } else {
-            with_state(context, |s| {
-                self.nodes(s.host.document()).get(index).copied()
-            })?
-        };
-        match node {
+        match self.with_nodes(context, |_, nodes| nodes.get(index).copied())? {
             Some(node) => Ok(Some(wrap(context, node)?.into())),
             None => Ok(None),
         }
@@ -190,13 +190,8 @@ fn html_collection_named_item(
     if name.is_empty() {
         return Ok(JsValue::null());
     }
-    let found = with_state(context, |s| {
-        let doc = s.host.document();
-        source
-            .0
-            .nodes(doc)
-            .into_iter()
-            .find(|&n| has_name(doc, n, &name))
+    let found = source.0.with_nodes(context, |doc, nodes| {
+        nodes.iter().copied().find(|&n| has_name(doc, n, &name))
     })?;
     match found {
         Some(node) => Ok(wrap(context, node)?.into()),
