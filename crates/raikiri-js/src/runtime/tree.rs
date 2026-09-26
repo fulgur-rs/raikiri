@@ -113,10 +113,9 @@ fn nodes_into_a_node(context: &mut Context, items: Vec<NodeOrText>) -> JsResult<
 /// e.g. by [`nodes_into_a_node`]), or nothing for `None`.
 ///
 /// `node` is excluded from the detach loop because it can already be one
-/// of `parent`'s current children (e.g. `b.replaceChildren(existingChild)`,
-/// or the `textContent` setter given `parent`'s own existing single Text
-/// child) -- `pre_insert`'s move (detach, then reattach at the end) leaves
-/// it attached, and an unconditional detach loop over the *pre-insert*
+/// of `parent`'s current children (e.g. `b.replaceChildren(existingChild)`)
+/// -- `pre_insert`'s move (detach, then reattach at the end) leaves it
+/// attached, and an unconditional detach loop over the *pre-insert*
 /// snapshot of `parent`'s children would immediately detach it right back
 /// out, losing it instead of keeping it. The detach loop only runs *after*
 /// `pre_insert`'s own validity check, which runs against `parent`'s

@@ -109,7 +109,7 @@ use super::host::{DocumentHost, HostError};
 use super::interfaces::{NodeHandle, protos, wrap, wrap_optional};
 use super::webidl::{
     arg_node, dom_string, host_failure, this_document, this_element, this_node,
-    throw_dom_exception, with_state,
+    throw_dom_exception, unreachable_mutation_error, with_state,
 };
 use super::{BoxGeometry, shared};
 
@@ -317,6 +317,22 @@ fn dom_exceptions_are_errors_with_name_message_and_code() {
     assert!(
         matches!(err, Err(RuntimeError::JavaScript(ref m)) if m.starts_with("\"plain\"")),
         "{err:?}"
+    );
+}
+
+/// `unreachable_mutation_error` always reports the same fixed message,
+/// regardless of what it is called about, and that message carries no
+/// digit that could be an arena index.
+#[test]
+fn unreachable_mutation_error_hides_any_underlying_detail() {
+    let message = unreachable_mutation_error().to_string();
+    assert!(
+        !message.chars().any(|c| c.is_ascii_digit()),
+        "message leaked something index-shaped: {message:?}"
+    );
+    assert!(
+        message.contains("internal DOM operation failed"),
+        "{message:?}"
     );
 }
 

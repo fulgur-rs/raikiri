@@ -349,10 +349,11 @@ fn character_data_length_counts_utf16_code_units() {
 
 /// The `textContent` setter's DocumentFragment branch (via
 /// `tree::replace_all`) clears every child for an empty string, rather
-/// than inserting an empty Text node. `element_textcontent_setter_empty_
-/// string_clears_children` below pins the same DOM §4.4 behavior for
-/// Element, realized through a separate raikiri-dom primitive
-/// (`set_element_text_content`) instead of this same helper.
+/// than inserting an empty Text node.
+/// `element_text_content_setter_empty_string_clears_children` below pins
+/// the same DOM §4.4 behavior for Element, realized through a separate
+/// raikiri-dom primitive (`set_element_text_content`) instead of this same
+/// helper.
 #[test]
 fn fragment_text_content_setter_empty_string_clears_children() {
     let mut rt = rt();
