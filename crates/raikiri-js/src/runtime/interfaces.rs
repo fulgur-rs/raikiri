@@ -249,11 +249,10 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     let text = derived(context, "Text", &character_data, &[&NO_MEMBERS])?;
     let comment = derived(context, "Comment", &character_data, &[&NO_MEMBERS])?;
     let pi_members = [&tree::PROCESSING_INSTRUCTION_MEMBERS];
-    // A `?` at the end of a call rustfmt wraps across several lines makes
-    // cargo-llvm-cov attribute the whole statement's coverage to its first
-    // line only, always reporting the closing line as a zero-hit false
-    // negative; splitting the fallible call from its `?` keeps both
-    // statements single-line and immune to that.
+    // A `?` on a call rustfmt wraps across lines leaves the never-taken
+    // error-branch region on the closing line, so that line always reports
+    // zero hits; binding the call first keeps the `?` on a one-line
+    // statement instead.
     let pi_result = derived(
         context,
         "ProcessingInstruction",
