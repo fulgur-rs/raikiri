@@ -26,25 +26,52 @@ const PROPERTY_KEY_END_MARKER: &str = "\n        _ => return None,\n    })\n}";
 /// per line; every arm in both matches this test scans is written on one
 /// line, so a per-line scan is exact without pulling in a regex dependency
 /// this crate otherwise has no use for.
+///
+/// A line that starts with `"` but does not fit that shape panics rather
+/// than silently contributing no names, so either shape below becomes a
+/// test failure instead of a quiet gap in the scan:
+/// - no `=>` at all on the line -- a long or-pattern's leading alternative,
+///   rustfmt-wrapped onto its own line with the rest following on
+///   `|`-prefixed continuation lines (see [`arm_names_in_block`], which
+///   catches those continuation lines);
+/// - an `|`-separated part that is not a clean `"name"` -- a match guard
+///   (`"name" if cond =>`).
 fn arm_names_in_line(line: &str) -> Vec<&str> {
     let trimmed = line.trim_start();
     if !trimmed.starts_with('"') {
         return Vec::new();
     }
     let Some(arrow) = trimmed.find("=>") else {
-        return Vec::new();
+        panic!(
+            "match arm pattern has no `=>` on its own line -- a rustfmt-wrapped \
+             or-pattern's leading line looks exactly like this and would \
+             otherwise silently drop every name on it: {line:?}"
+        );
     };
     trimmed[..arrow]
         .split('|')
-        .filter_map(|part| {
+        .map(|part| {
             let part = part.trim();
-            part.strip_prefix('"').and_then(|s| s.strip_suffix('"'))
+            part.strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "match arm part is not a clean \"name\" -- a match guard \
+                     (`\"name\" if cond =>`) looks like this and would \
+                     otherwise silently drop its name: {line:?}"
+                    )
+                })
         })
         .collect()
 }
 
 /// Every match-arm property name inside the block between `start_marker`
-/// and `end_marker` in `source`.
+/// and `end_marker` in `source`. Panics if any line in that block, once
+/// trimmed, starts with `|` -- a rustfmt-wrapped or-pattern's continuation
+/// line looks exactly like this (its leading alternative lives on the
+/// *previous* line instead, which [`arm_names_in_line`] separately catches
+/// as "no `=>`"), and silently walking past it would drop every name the
+/// continuation line carries.
 fn arm_names_in_block(source: &str, start_marker: &str, end_marker: &str) -> BTreeSet<String> {
     let after_start = source
         .find(start_marker)
@@ -54,6 +81,16 @@ fn arm_names_in_block(source: &str, start_marker: &str, end_marker: &str) -> BTr
         .find(end_marker)
         .map(|i| &after_start[..i])
         .unwrap_or_else(|| panic!("end marker not found: {end_marker:?}"));
+    for line in block.lines() {
+        if line.trim_start().starts_with('|') {
+            panic!(
+                "match arm pattern wrapped onto a `|`-continuation line -- a \
+                 rustfmt-wrapped or-pattern's continuation line starts like \
+                 this and would otherwise silently drop every name on it: \
+                 {line:?}"
+            );
+        }
+    }
     block
         .lines()
         .flat_map(arm_names_in_line)
@@ -146,6 +183,32 @@ fn every_listed_name_is_recognized() {
         missing.is_empty(),
         "supported_property_names() lists a name parse_value does not dispatch on: {missing:?}"
     );
+}
+
+#[test]
+#[should_panic(expected = "no `=>`")]
+fn arm_names_in_line_panics_on_a_wrapped_or_patterns_leading_line() {
+    // rustfmt sometimes wraps a long or-pattern's first alternative onto
+    // its own line, with the rest following on `|`-prefixed continuation
+    // lines; this is what that leading line looks like on its own.
+    arm_names_in_line("        \"a-very-long-property-name-goes-right-here\"");
+}
+
+#[test]
+#[should_panic(expected = "`|`-continuation line")]
+fn arm_names_in_block_panics_on_a_wrapped_or_patterns_continuation_line() {
+    let source = "match normalized_name.as_str() {\n            | \"bar\" => Some(PropertyValue::Bar),\n        _ => None,\n    }\n}";
+    arm_names_in_block(
+        source,
+        "match normalized_name.as_str() {\n",
+        "\n        _ => None,\n    }\n}",
+    );
+}
+
+#[test]
+#[should_panic(expected = "not a clean")]
+fn arm_names_in_line_panics_on_a_guarded_arm() {
+    arm_names_in_line("        \"foo\" if some_condition(x) => Some(PropertyValue::Foo),");
 }
 
 #[test]

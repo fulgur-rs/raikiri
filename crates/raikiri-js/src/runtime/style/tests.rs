@@ -206,6 +206,83 @@ fn set_property_priority_argument_variants() {
     );
 }
 
+/// CSSOM marks `setProperty`'s `value` `[LegacyNullToEmptyString]`: an
+/// explicit `null` converts to `""`, which then removes the declaration
+/// the same as an ordinary empty string would.
+#[test]
+fn set_property_value_null_removes_the_declaration() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var s = document.body.style; \
+         s.setProperty('color', 'red'); \
+         s.setProperty('color', null); \
+         s.getPropertyValue('color') === ''",
+    );
+}
+
+/// `cssFloat` is `[LegacyNullToEmptyString] CSSOMString` (CSSOM
+/// `CSSStyleProperties`), the same as `setProperty`'s `value`.
+#[test]
+fn css_float_setter_treats_null_as_empty_string() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var s = document.body.style; \
+         s.cssFloat = 'left'; \
+         s.cssFloat = null; \
+         s.getPropertyValue('float') === ''",
+    );
+}
+
+/// Every generated camel-cased/dashed/webkit-cased attribute setter is
+/// also `[LegacyNullToEmptyString] CSSOMString` (CSSOM §6.7.1's three
+/// partial-interface blocks) -- checked through both a camelCase key and
+/// its independently-installed dashed twin.
+#[test]
+fn generated_attribute_setters_treat_null_as_empty_string() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var s = document.body.style; \
+         s.marginTop = '1px'; \
+         s.marginTop = null; \
+         s.getPropertyValue('margin-top') === ''",
+    );
+    ok(
+        &mut rt,
+        "s['margin-left'] = '2px'; \
+         s['margin-left'] = null; \
+         s.getPropertyValue('margin-left') === ''",
+    );
+}
+
+/// WebIDL converts every argument before an operation's own algorithm
+/// steps run: a `priority` whose `toString` throws must abort
+/// `setProperty` even when `value` is empty, and the declaration must be
+/// left exactly as it was -- the empty-`value` removal never runs, because
+/// the throwing conversion happens first.
+#[test]
+fn set_property_converts_priority_before_the_empty_value_check() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var s = document.body.style; s.setProperty('color', 'red');")
+        .unwrap();
+    let error = rt
+        .evaluate(
+            "s.setProperty('color', '', { toString: function () { throw new Error('boom'); } });",
+        )
+        .unwrap_err();
+    match error {
+        RuntimeError::JavaScript(message) => assert!(message.contains("boom"), "{message}"),
+        other => panic!("expected a JavaScript error, got {other:?}"),
+    }
+    ok(&mut rt, "s.getPropertyValue('color') === 'red'");
+}
+
 #[test]
 fn style_objects_behave_like_ordinary_objects_for_inherited_members() {
     let (host, ..) = StubHost::page();

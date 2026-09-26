@@ -104,6 +104,19 @@ pub(crate) fn inline_style_value(style_attr: Option<&str>, property: &str) -> St
         .unwrap_or_default()
 }
 
+/// Serializes `declarations` back to `style` attribute text (`"prop:
+/// value;"` per declaration, space-joined) -- the inverse of
+/// [`parse_inline_style`], and CSSOM's "serialize a CSS declaration
+/// block". Shared by [`with_inline_style_property`]'s "replace one
+/// declaration" and the `cssText` getter's "serialize them all unchanged".
+fn serialize_declarations(declarations: &[(String, String)]) -> String {
+    declarations
+        .iter()
+        .map(|(n, v)| format!("{n}: {v};"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// A `style` attribute with `property` replaced by `value` (removed when blank).
 pub(crate) fn with_inline_style_property(
     style_attr: Option<&str>,
@@ -113,27 +126,21 @@ pub(crate) fn with_inline_style_property(
     let property = property.trim();
     let mut declarations = style_attr.map(parse_inline_style).unwrap_or_default();
     if property.is_empty() {
-        return declarations
-            .into_iter()
-            .map(|(n, v)| format!("{n}: {v};"))
-            .collect::<Vec<_>>()
-            .join(" ");
+        return serialize_declarations(&declarations);
     }
     declarations.retain(|(name, _)| !same_property(name, property));
     if !value.trim().is_empty() {
         declarations.push((property.to_owned(), value.to_owned()));
     }
-    declarations
-        .into_iter()
-        .map(|(n, v)| format!("{n}: {v};"))
-        .collect::<Vec<_>>()
-        .join(" ")
+    serialize_declarations(&declarations)
 }
 
 /// The last declared value of `property` in `style_attr`, `!important`
 /// (and any surrounding whitespace) included -- `None` when `property` is
-/// not declared at all. Shared by [`property_priority`] and the `cssText`
-/// getter's reuse of [`with_inline_style_property`].
+/// not declared at all. Used by [`property_priority`] to check for a
+/// trailing `!important` without also stripping it off, unlike
+/// [`inline_style_value`] (which strips it, since it backs
+/// `getPropertyValue`).
 fn declared_value(style_attr: Option<&str>, property: &str) -> Option<String> {
     let style = style_attr?;
     parse_inline_style(style)
@@ -354,6 +361,27 @@ fn optional_string(args: &[JsValue], i: usize, context: &mut Context) -> JsResul
     }
 }
 
+/// `DOMString` conversion of a `[LegacyNullToEmptyString]` argument (CSSOM:
+/// `setProperty`'s `value`, `cssFloat`, and every generated camel/dashed/
+/// webkit-cased attribute setter): an explicit `null` converts to `""`
+/// directly; anything else -- including a missing argument or an explicit
+/// `undefined` -- runs the ordinary `ToString` conversion via
+/// [`dom_string`] as usual. Unlike [`optional_string`] (an *optional*
+/// argument with a default), a required `[LegacyNullToEmptyString]`
+/// argument does not also treat `undefined` as `""`: only `null` gets the
+/// special conversion; `s.color = undefined` stores the literal string
+/// `"undefined"`, the same as any other required `DOMString` argument.
+fn legacy_null_to_empty_string(
+    args: &[JsValue],
+    i: usize,
+    context: &mut Context,
+) -> JsResult<String> {
+    match args.get(i) {
+        Some(v) if v.is_null() => Ok(String::new()),
+        _ => dom_string(args, i, context),
+    }
+}
+
 fn style_length(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let source = this_style(this, context)?;
     Ok(JsValue::from(source.length(context)? as u32))
@@ -401,12 +429,16 @@ fn style_get_property_priority(
     Ok(JsValue::from(JsString::from(priority)))
 }
 
-/// `setProperty(property, value, priority = "")` (CSSOM). A `priority` that
-/// is neither `""` nor an ASCII case-insensitive match for `"important"` is
-/// spec-silent (return, no error, no write) rather than rejected as an
-/// argument error. An empty `value` removes the declaration outright,
-/// checked before `priority` is even read, so `setProperty(name, "",
-/// "important")` cannot store a lone `" !important"`.
+/// `setProperty(property, value, priority = "")` (CSSOM). `value` and
+/// `priority` are both converted before either is inspected (WebIDL
+/// converts every argument before an operation's own algorithm runs, so a
+/// `priority` whose conversion throws must abort the call even when
+/// `value` is empty) -- but the empty-`value` check itself still runs
+/// *before* validating `priority`, so `setProperty(name, "", "important")`
+/// removes the declaration rather than storing a lone `" !important"`. A
+/// `priority` that is neither `""` nor an ASCII case-insensitive match for
+/// `"important"` is spec-silent (return, no error, no write) rather than
+/// rejected as an argument error.
 ///
 /// This runtime does not reject a `property` outside
 /// [`raikiri_style::property::supported_property_names`] the way real
@@ -425,12 +457,12 @@ fn style_set_property(
         return Err(no_modification_allowed(context));
     }
     let name = dom_string(args, 0, context)?;
-    let value = dom_string(args, 1, context)?;
+    let value = legacy_null_to_empty_string(args, 1, context)?;
+    let priority = optional_string(args, 2, context)?;
     if value.is_empty() {
         write_inline(context, source.index, &name, "")?;
         return Ok(JsValue::undefined());
     }
-    let priority = optional_string(args, 2, context)?;
     if !priority.is_empty() && !priority.eq_ignore_ascii_case("important") {
         return Ok(JsValue::undefined());
     }
@@ -459,9 +491,7 @@ fn style_remove_property(
 }
 
 /// `cssText`, on getting: `""` for a computed declaration (CSSOM); the
-/// serialized inline declarations otherwise, reusing
-/// [`with_inline_style_property`]'s existing "empty property name" branch
-/// (which just serializes the current declarations without changing them).
+/// serialized inline declarations otherwise.
 fn style_css_text_get(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let source = this_style(this, context)?;
     if source.computed {
@@ -469,7 +499,8 @@ fn style_css_text_get(this: &JsValue, _: &[JsValue], context: &mut Context) -> J
     }
     let index = source.index;
     let text = with_state(context, |s| {
-        with_inline_style_property(s.host.document().element_attribute(index, "style"), "", "")
+        let style_attr = s.host.document().element_attribute(index, "style");
+        serialize_declarations(&style_attr.map(parse_inline_style).unwrap_or_default())
     })?;
     Ok(JsValue::from(JsString::from(text)))
 }
@@ -517,7 +548,7 @@ fn style_css_float_set(
     if source.computed {
         return Err(no_modification_allowed(context));
     }
-    let value = dom_string(args, 0, context)?;
+    let value = legacy_null_to_empty_string(args, 0, context)?;
     write_inline(context, source.index, "float", &value)?;
     Ok(JsValue::undefined())
 }
@@ -602,7 +633,7 @@ fn property_accessor_pair(
         if source.computed {
             return Err(no_modification_allowed(ctx));
         }
-        let value = dom_string(args, 0, ctx)?;
+        let value = legacy_null_to_empty_string(args, 0, ctx)?;
         write_inline(ctx, source.index, property, &value)?;
         Ok(JsValue::undefined())
     });
