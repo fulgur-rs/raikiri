@@ -200,57 +200,54 @@ impl SvgDocument {
         let mut pixels = allocate_transparent_pixels(byte_len)?;
 
         if root_style.visible && root_style.opacity > 0.0 {
+            // Keep the original XML intact for selector matching whenever its
+            // root opacity can be removed from the rendered pixels. Rewriting
+            // opacity declarations into inline styles changes matches for
+            // selectors such as `[style]` and `[opacity="0.5"]`.
+            let normalize_zero_root_opacity =
+                root_style.neutralize_root_opacity && self.tree.root().opacity().get() == 0.0;
             let source = if viewport_matches_tree(&self.tree, width, height, self.has_view_box) {
                 self.source.clone()
             } else {
                 with_root_viewport_size(&self.source, width, height)?
             };
-            let source = if root_style.neutralize_root_opacity {
+            let source = if normalize_zero_root_opacity {
                 normalize_svg_opacity_cascade(&source)?
             } else {
                 source
             };
-            let source =
-                if root_style.neutralize_root_opacity || root_style.host_controls_root_background {
-                    with_root_style_overrides(
-                        &source,
-                        root_style.opacity,
-                        root_style.neutralize_root_opacity,
-                        root_style.host_controls_root_background,
-                    )?
-                } else {
-                    source
-                };
+            let source = if normalize_zero_root_opacity || root_style.host_controls_root_background
+            {
+                with_root_style_overrides(
+                    &source,
+                    root_style.opacity,
+                    normalize_zero_root_opacity,
+                    root_style.host_controls_root_background,
+                )?
+            } else {
+                source
+            };
             let source = with_inherited_color(&source, root_style.inherited_color)?;
             let raster_opacity = if root_style.neutralize_root_opacity {
                 1.0
             } else {
                 root_style.opacity
             };
-            if source == self.source {
-                render_tree(
-                    &self.tree,
-                    width,
-                    height,
-                    raster_opacity,
-                    root_style
-                        .neutralize_root_opacity
-                        .then_some(root_style.opacity),
-                    &mut pixels,
-                )?;
-            } else {
-                let tree = parse_tree(&source)?;
-                render_tree(
-                    &tree,
-                    width,
-                    height,
-                    raster_opacity,
-                    root_style
-                        .neutralize_root_opacity
-                        .then_some(root_style.opacity),
-                    &mut pixels,
-                )?;
-            }
+            let parsed_tree = (source != self.source)
+                .then(|| parse_tree(&source))
+                .transpose()?;
+            let tree = parsed_tree.as_ref().unwrap_or(&self.tree);
+            let neutralized_root_opacity = root_style
+                .neutralize_root_opacity
+                .then_some(tree.root().opacity().get());
+            render_tree(
+                tree,
+                width,
+                height,
+                raster_opacity,
+                neutralized_root_opacity,
+                &mut pixels,
+            )?;
         }
 
         Ok(DecodedImage {
