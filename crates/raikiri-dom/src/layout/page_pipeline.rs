@@ -15,6 +15,7 @@ pub fn relayout_text_for_width(
     page_width: f32,
     mut font_ctx: FontContext,
 ) {
+    document.page_projection.clear();
     for node in document.nodes.iter_mut() {
         if let Some(text) = node.data.as_text_mut() {
             text.text_layout = None;
@@ -922,6 +923,7 @@ pub fn layout_pages_with_resolver_and_base_url(
     resolver: &dyn ReplacedResolver,
     base_url: Option<&url::Url>,
 ) -> Result<Vec<PageSlice>, LayoutError> {
+    document.page_projection.clear();
     document.mark_in_document_flags();
     match base_url {
         Some(base_url) => {
@@ -968,6 +970,7 @@ pub fn layout_pages_with_page_geometry_and_resolver_and_base_url(
     resolver: &dyn ReplacedResolver,
     base_url: Option<&url::Url>,
 ) -> Result<Vec<PageSlice>, LayoutError> {
+    document.page_projection.clear();
     document.mark_in_document_flags();
     match base_url {
         Some(base_url) => {

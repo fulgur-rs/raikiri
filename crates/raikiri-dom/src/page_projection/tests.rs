@@ -184,3 +184,142 @@ fn projection_clone_and_replacement_are_independent() {
     assert_eq!(doc.page_fragments(0).count(), count);
     assert_eq!(doc.page_links(0).count(), links);
 }
+
+fn assert_paged_resolver_error_clears_projection(with_geometry: bool) {
+    struct Fails;
+    impl ReplacedResolver for Fails {
+        fn resolve(&self, _: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
+            Err(ResolverError::Decode("failed".into()))
+        }
+    }
+    let (mut doc, cascade, page, slices, _, _) = fixture();
+    project(&mut doc, &cascade, page, &slices[..1]);
+    assert!(doc.page_fragments(0).next().is_some());
+    assert!(doc.page_links(0).next().is_some());
+    let result = if with_geometry {
+        crate::layout_pages_with_page_geometry_and_resolver_and_base_url(
+            &mut doc,
+            &cascade,
+            page,
+            FontContext::new(),
+            &[100.0],
+            &[100.0],
+            &Fails,
+            None,
+        )
+    } else {
+        crate::layout_pages_with_resolver_and_base_url(
+            &mut doc,
+            &cascade,
+            page,
+            FontContext::new(),
+            &Fails,
+            None,
+        )
+    };
+    assert!(matches!(
+        result,
+        Err(raikiri_traits::LayoutError::Resolver(_))
+    ));
+    assert_eq!(doc.page_fragments(0).count(), 0);
+    assert_eq!(doc.page_links(0).count(), 0);
+}
+
+#[test]
+fn projection_is_cleared_before_paged_resolver_error() {
+    assert_paged_resolver_error_clears_projection(false);
+}
+
+#[test]
+fn projection_is_cleared_before_scheduled_resolver_error() {
+    assert_paged_resolver_error_clears_projection(true);
+}
+
+fn assert_metadata_change_clears_projection(change: u8) {
+    let (mut doc, cascade, page, slices, div, _) = fixture();
+    project(&mut doc, &cascade, page, &slices[..1]);
+    let owner = doc
+        .page_links(0)
+        .find(|(_, target, _)| *target == "/go")
+        .expect("link")
+        .0
+        .0 as usize;
+    let layout_dirty = doc.layout_dirty;
+    assert!(doc.page_fragments(0).next().is_some());
+    match change {
+        0 => doc.set_element_attributes(owner, vec![("href".into(), "/new".into())]),
+        1 => doc
+            .set_element_attribute(owner, "href", "/new")
+            .expect("set href"),
+        2 => {
+            assert!(
+                doc.remove_element_attribute(owner, "href")
+                    .expect("remove href")
+                    .is_some()
+            );
+        }
+        3 => doc.set_element_inline_style(div, Some("width:40px".into())),
+        4 => doc.set_element_namespace(div, Some("http://www.w3.org/2000/svg".into())),
+        5 => doc
+            .set_element_namespaced_attribute(owner, "urn:example", None, "href", "/new")
+            .expect("qualified attribute"),
+        6 => doc
+            .set_element_attribute(div, "style", "width:40px")
+            .expect("set style"),
+        7 => {
+            assert!(
+                doc.remove_element_attribute(div, "style")
+                    .expect("remove style")
+                    .is_some()
+            );
+        }
+        _ => unreachable!(),
+    }
+    assert_eq!(doc.layout_dirty, layout_dirty);
+    assert_eq!(doc.page_fragments(0).count(), 0);
+    assert_eq!(doc.page_links(0).count(), 0);
+}
+
+#[test]
+fn projection_is_cleared_by_attribute_list_change() {
+    assert_metadata_change_clears_projection(0);
+}
+#[test]
+fn projection_is_cleared_by_href_change() {
+    assert_metadata_change_clears_projection(1);
+}
+#[test]
+fn projection_is_cleared_by_href_removal() {
+    assert_metadata_change_clears_projection(2);
+}
+#[test]
+fn projection_is_cleared_by_inline_style_change() {
+    assert_metadata_change_clears_projection(3);
+}
+#[test]
+fn projection_is_cleared_by_namespace_change() {
+    assert_metadata_change_clears_projection(4);
+}
+#[test]
+fn projection_is_cleared_by_namespaced_attribute_change() {
+    assert_metadata_change_clears_projection(5);
+}
+#[test]
+fn projection_is_cleared_by_style_attribute_change() {
+    assert_metadata_change_clears_projection(6);
+}
+#[test]
+fn projection_is_cleared_by_style_attribute_removal() {
+    assert_metadata_change_clears_projection(7);
+}
+
+#[test]
+fn projection_is_cleared_by_text_relayout() {
+    let (mut doc, cascade, page, slices, _, _) = fixture();
+    project(&mut doc, &cascade, page, &slices[..1]);
+    assert!(doc.page_fragments(0).next().is_some());
+    assert!(doc.page_links(0).next().is_some());
+    crate::relayout_text_for_width(&mut doc, &cascade, 5.0, page.width, FontContext::new());
+    assert_eq!(doc.page_fragments(0).count(), 0);
+    assert_eq!(doc.page_links(0).count(), 0);
+}
