@@ -447,6 +447,17 @@ fn stub_host_reports_configured_values() {
                 width: 10.0,
                 height: 5.0,
             },
+            padding_box: super::DomRect {
+                left: 1.0,
+                top: 2.0,
+                right: 11.0,
+                bottom: 7.0,
+                width: 10.0,
+                height: 5.0,
+            },
+            scroll_width: 10.0,
+            scroll_height: 5.0,
+            position: super::PositionKind::Static,
         }))
     );
     assert_eq!(host.box_geometry(0), Ok(None));

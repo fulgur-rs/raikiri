@@ -311,6 +311,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &tree::NON_DOCUMENT_TYPE_CHILD_NODE_MEMBERS,
         &query::PARENT_NODE_QUERY_MEMBERS,
         &query::ELEMENT_QUERY_MEMBERS,
+        &geometry::ELEMENT_METRICS_MEMBERS,
     ];
     let element = derived(context, "Element", &node_i, &element_members)?;
     let character_data_members = [
@@ -334,7 +335,11 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &query::PARENT_NODE_QUERY_MEMBERS,
     ];
     let document_fragment = derived(context, "DocumentFragment", &node_i, &fragment_members)?;
-    let html_element = derived(context, "HTMLElement", &element, &[&HTML_ELEMENT_MEMBERS])?;
+    let html_element_members = [
+        &HTML_ELEMENT_MEMBERS,
+        &geometry::HTML_ELEMENT_OFFSET_MEMBERS,
+    ];
+    let html_element = derived(context, "HTMLElement", &element, &html_element_members)?;
     let text = derived(context, "Text", &character_data, &[&NO_MEMBERS])?;
     let comment = derived(context, "Comment", &character_data, &[&NO_MEMBERS])?;
     let pi_members = [&tree::PROCESSING_INSTRUCTION_MEMBERS];

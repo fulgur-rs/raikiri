@@ -24,7 +24,7 @@ pub(crate) mod webidl;
 #[cfg(test)]
 pub(crate) mod test_host;
 
-pub use host::{BoxGeometry, DocumentHost, DomRect, HostError};
+pub use host::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
 
 /// Mutable runtime state shared by every native binding.
 pub(crate) struct State {

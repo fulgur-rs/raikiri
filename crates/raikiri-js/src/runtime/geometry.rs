@@ -1,7 +1,11 @@
 //! `DOMRect` / `DOMRectReadOnly` (Geometry Interfaces Module Level 1 §3),
-//! and `Element.getBoundingClientRect`'s return type.
+//! `Element.getBoundingClientRect`'s return type, and the CSSOM View box
+//! metrics (`offset*`, `client*`, `scroll*`) computed from the host's
+//! [`BoxGeometry`].
 //!
-//! Spec ref: <https://drafts.fxtf.org/geometry/#DOMRect>
+//! Spec refs: <https://drafts.fxtf.org/geometry/#DOMRect>,
+//! <https://drafts.csswg.org/cssom-view/#extension-to-the-element-interface>,
+//! <https://drafts.csswg.org/cssom-view/#extensions-to-the-htmlelement-interface>
 
 use std::cell::Cell;
 
@@ -9,8 +13,11 @@ use boa_engine::object::{JsObject, ObjectInitializer};
 use boa_engine::property::Attribute;
 use boa_engine::{Context, Finalize, JsData, JsNativeError, JsResult, JsValue, Trace, js_string};
 
-use super::host::DomRect;
-use super::interfaces::{Members, protos};
+use super::host::{BoxGeometry, DomRect, PositionKind};
+use super::interfaces::{HTML_NS, Members, protos, wrap_optional};
+use super::node::first_element_child;
+use super::style::ensure_flushed;
+use super::webidl::{host_failure, this_element, with_state};
 
 /// Native data behind a `DOMRect`/`DOMRectReadOnly` instance. `x`/`y`/
 /// `width`/`height` are the only stored fields (the spec's own model);
@@ -245,6 +252,227 @@ pub(crate) const DOM_RECT_MEMBERS: Members = Members {
         ("y", get_y, set_y),
         ("width", get_width, set_width),
         ("height", get_height, set_height),
+    ],
+    methods: &[],
+};
+
+// ---- CSSOM View box metrics ------------------------------------------------
+
+/// Geometry of `index`'s principal box after bringing layout up to date, or
+/// `None` when it has no box.
+pub(crate) fn box_geometry(context: &mut Context, index: usize) -> JsResult<Option<BoxGeometry>> {
+    ensure_flushed(context)?;
+    let geometry = with_state(context, |s| s.host.box_geometry(index))?;
+    geometry.map_err(|error| host_failure(context, error))
+}
+
+/// A CSSOM View `long` metric: every `offset*`, `client*`, and
+/// `scrollWidth`/`scrollHeight` attribute is declared `long`, so the
+/// layout value is rounded to the nearest integer (half away from zero).
+/// The saturating cast also turns a `-0.0` into `0`.
+fn long(value: f64) -> JsValue {
+    JsValue::from(value.round() as i32)
+}
+
+/// The document's root element and its body element (the `body` child of
+/// the `html` document element, exactly as `document.body` finds it).
+fn root_and_body(context: &mut Context) -> JsResult<(Option<usize>, Option<usize>)> {
+    with_state(context, |s| {
+        let doc = s.host.document();
+        let document = doc.root_index();
+        let root = first_element_child(doc, document, None);
+        let body = first_element_child(doc, document, Some("html"))
+            .and_then(|html| first_element_child(doc, html, Some("body")));
+        (root, body)
+    })
+}
+
+/// `index`'s parent when that parent is an element, and whether `index`
+/// itself is an HTML `td`, `th`, or `table`.
+fn parent_and_table_part(context: &mut Context, index: usize) -> JsResult<(Option<usize>, bool)> {
+    with_state(context, |s| {
+        let doc = s.host.document();
+        let parent = doc
+            .parent_of(index)
+            .filter(|&p| doc.get_node(p).and_then(|n| n.tag_name()).is_some());
+        let table_part = doc.element_namespace_uri(index) == Some(HTML_NS)
+            && doc
+                .get_node(index)
+                .and_then(|n| n.tag_name())
+                .is_some_and(|t| matches!(t, "td" | "th" | "table"));
+        (parent, table_part)
+    })
+}
+
+/// `HTMLElement.offsetParent` (CSSOM View §7). No fixed-position
+/// containing block other than the viewport is modeled (transforms,
+/// filters, and containment are not exposed by the host), so a `fixed`
+/// element always gets `null`, and an ancestor qualifies when its
+/// `position` is not `static`. An ancestor with no box reads as `static`.
+fn offset_parent_of(context: &mut Context, index: usize) -> JsResult<Option<usize>> {
+    let Some(geometry) = box_geometry(context, index)? else {
+        return Ok(None);
+    };
+    let (root, body) = root_and_body(context)?;
+    if Some(index) == root || Some(index) == body || geometry.position == PositionKind::Fixed {
+        return Ok(None);
+    }
+    let element_is_static = geometry.position == PositionKind::Static;
+    let mut ancestor = parent_and_table_part(context, index)?.0;
+    while let Some(candidate) = ancestor {
+        let (parent, table_part) = parent_and_table_part(context, candidate)?;
+        let positioned =
+            box_geometry(context, candidate)?.is_some_and(|g| g.position != PositionKind::Static);
+        if positioned || Some(candidate) == body || (element_is_static && table_part) {
+            return Ok(Some(candidate));
+        }
+        ancestor = parent;
+    }
+    Ok(None)
+}
+
+fn offset_parent(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_element(this, context)?;
+    let parent = offset_parent_of(context, index)?;
+    wrap_optional(context, parent)
+}
+
+/// `offsetTop`/`offsetLeft` (CSSOM View §7) along the axis `edge` picks.
+///
+/// Zero for the body element or an element without a box; the border edge
+/// relative to the initial containing block when there is no offsetParent;
+/// otherwise the border edge minus the offsetParent's padding edge. When
+/// the offsetParent is the body element, the border edge is returned
+/// as-is (relative to the initial containing block) instead of being made
+/// relative to the body's padding edge: that is what engines report, and
+/// what content measuring against a `static` body expects.
+fn offset_coordinate(
+    this: &JsValue,
+    context: &mut Context,
+    edge: fn(&DomRect) -> f64,
+) -> JsResult<JsValue> {
+    let index = this_element(this, context)?;
+    let Some(geometry) = box_geometry(context, index)? else {
+        return Ok(long(0.0));
+    };
+    let (_, body) = root_and_body(context)?;
+    if Some(index) == body {
+        return Ok(long(0.0));
+    }
+    let origin = match offset_parent_of(context, index)? {
+        Some(parent) if Some(parent) != body => {
+            let parent_geometry = box_geometry(context, parent)?;
+            parent_geometry.map_or(0.0, |g| edge(&g.padding_box))
+        }
+        _ => 0.0,
+    };
+    Ok(long(edge(&geometry.border_box) - origin))
+}
+
+fn offset_top(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    offset_coordinate(this, context, |r| r.top)
+}
+
+fn offset_left(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    offset_coordinate(this, context, |r| r.left)
+}
+
+/// A metric read straight off the element's box, `0` when it has no box.
+fn box_metric(
+    this: &JsValue,
+    context: &mut Context,
+    metric: fn(&BoxGeometry) -> f64,
+) -> JsResult<JsValue> {
+    let index = this_element(this, context)?;
+    let geometry = box_geometry(context, index)?;
+    Ok(long(geometry.map_or(0.0, |g| metric(&g))))
+}
+
+/// `offsetWidth`/`offsetHeight` (CSSOM View §7): the border box size.
+fn offset_width(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    box_metric(this, context, |g| g.border_box.width)
+}
+
+fn offset_height(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    box_metric(this, context, |g| g.border_box.height)
+}
+
+/// `clientTop`/`clientLeft` (CSSOM View §6): the top/left border width,
+/// the distance between the border and padding edges (no scrollbars are
+/// rendered).
+fn client_top(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    box_metric(this, context, |g| g.padding_box.top - g.border_box.top)
+}
+
+fn client_left(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    box_metric(this, context, |g| g.padding_box.left - g.border_box.left)
+}
+
+/// `clientWidth`/`clientHeight` (CSSOM View §6): the padding box size.
+fn client_width(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    box_metric(this, context, |g| g.padding_box.width)
+}
+
+fn client_height(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    box_metric(this, context, |g| g.padding_box.height)
+}
+
+/// `scrollWidth`/`scrollHeight` (CSSOM View §6): the scrolling area size.
+fn scroll_width(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    box_metric(this, context, |g| g.scroll_width)
+}
+
+fn scroll_height(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    box_metric(this, context, |g| g.scroll_height)
+}
+
+/// `scrollTop`/`scrollLeft` (CSSOM View §6, `unrestricted double`). This
+/// runtime keeps no scroll state, so every element stays at its origin.
+fn scroll_position(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    this_element(this, context)?;
+    Ok(JsValue::from(0))
+}
+
+/// The `scrollTop`/`scrollLeft` setters: the argument still goes through
+/// the `unrestricted double` conversion (running any `valueOf`), then the
+/// scroll request is dropped because nothing scrolls.
+fn set_scroll_position(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    this_element(this, context)?;
+    args.first()
+        .cloned()
+        .unwrap_or_default()
+        .to_number(context)?;
+    Ok(JsValue::undefined())
+}
+
+pub(crate) const HTML_ELEMENT_OFFSET_MEMBERS: Members = Members {
+    getters: &[
+        ("offsetParent", offset_parent),
+        ("offsetTop", offset_top),
+        ("offsetLeft", offset_left),
+        ("offsetWidth", offset_width),
+        ("offsetHeight", offset_height),
+    ],
+    accessors: &[],
+    methods: &[],
+};
+
+pub(crate) const ELEMENT_METRICS_MEMBERS: Members = Members {
+    getters: &[
+        ("clientTop", client_top),
+        ("clientLeft", client_left),
+        ("clientWidth", client_width),
+        ("clientHeight", client_height),
+        ("scrollWidth", scroll_width),
+        ("scrollHeight", scroll_height),
+    ],
+    accessors: &[
+        ("scrollTop", scroll_position, set_scroll_position),
+        ("scrollLeft", scroll_position, set_scroll_position),
     ],
     methods: &[],
 };

@@ -11,7 +11,6 @@ use boa_engine::{
 use cssparser::{Parser, ParserInput};
 use raikiri_dom::NodeKind;
 
-use super::host::DomRect;
 use super::indexed::{IndexedSource, indexed_object, this_indexed};
 use super::interfaces::{Members, closure_function, function, protos};
 use super::node::mark_dirty;
@@ -184,25 +183,6 @@ pub(crate) fn ensure_flushed(context: &mut Context) -> JsResult<()> {
     result.map_err(|error| host_failure(context, error))
 }
 
-fn border_box(context: &mut Context, index: usize) -> JsResult<DomRect> {
-    ensure_flushed(context)?;
-    let geometry = with_state(context, |s| s.host.box_geometry(index))?;
-    match geometry {
-        Ok(geometry) => Ok(geometry.map(|g| g.border_box).unwrap_or_default()),
-        Err(error) => Err(host_failure(context, error)),
-    }
-}
-
-fn offset_height(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let index = this_element(this, context)?;
-    Ok(JsValue::from(border_box(context, index)?.height.round()))
-}
-
-fn offset_width(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let index = this_element(this, context)?;
-    Ok(JsValue::from(border_box(context, index)?.width.round()))
-}
-
 /// `Element.getBoundingClientRect` (CSSOM View §5): the border box, in the
 /// coordinate space this runtime uses (relative to the initial containing
 /// block; there is no scroll or transform to account for yet), as a real
@@ -213,7 +193,8 @@ pub(crate) fn get_bounding_client_rect(
     context: &mut Context,
 ) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
-    let r = border_box(context, index)?;
+    let geometry = super::geometry::box_geometry(context, index)?;
+    let r = geometry.map(|g| g.border_box).unwrap_or_default();
     Ok(super::geometry::new_dom_rect(context, r)?.into())
 }
 
@@ -738,11 +719,7 @@ fn css_supports(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
 }
 
 pub(crate) const HTML_ELEMENT_MEMBERS: Members = Members {
-    getters: &[
-        ("style", style),
-        ("offsetHeight", offset_height),
-        ("offsetWidth", offset_width),
-    ],
+    getters: &[("style", style)],
     accessors: &[],
     methods: &[],
 };
