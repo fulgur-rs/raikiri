@@ -1,10 +1,12 @@
-//! `Document.createElementNS` (DOM §4.5 "validate and extract") and
-//! `Document.title` (HTML "document.title").
+//! `Document.createElementNS` (DOM §4.5 "validate and extract"),
+//! `Document.title` (HTML "document.title"), `document.readyState`/
+//! `currentScript` (HTML "current document readiness" / "current script"),
+//! and `document.URL`/`documentURI`.
 
 use boa_engine::{Context, JsResult, JsValue};
 use raikiri_dom::NodeKind;
 
-use super::interfaces::{HTML_NS, wrap};
+use super::interfaces::{HTML_NS, wrap, wrap_optional};
 use super::node::{first_element_child, js_str, mark_dirty};
 use super::webidl::{
     dom_string, this_document, throw_dom_exception, unreachable_mutation_error, with_state,
@@ -322,6 +324,72 @@ pub(crate) fn set_title(
     }
     mark_dirty(context)?;
     Ok(JsValue::undefined())
+}
+
+// ---- readyState / currentScript / URL / documentURI -----------------------
+
+/// HTML "current document readiness".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(
+    dead_code,
+    reason = "Loading/Interactive are produced by a parse-and-run pipeline this crate does not \
+              drive yet; only this runtime's own tests construct them today"
+)]
+pub(crate) enum ReadyState {
+    Loading,
+    Interactive,
+    #[default]
+    Complete,
+}
+
+impl ReadyState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Loading => "loading",
+            Self::Interactive => "interactive",
+            Self::Complete => "complete",
+        }
+    }
+}
+
+pub(crate) fn ready_state(
+    this: &JsValue,
+    _: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    this_document(this, context)?;
+    let state = with_state(context, |s| s.ready_state)?;
+    Ok(js_str(state.as_str()))
+}
+
+pub(crate) fn current_script(
+    this: &JsValue,
+    _: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    this_document(this, context)?;
+    let script = with_state(context, |s| s.current_script)?;
+    wrap_optional(context, script)
+}
+
+/// `document.URL`: [`super::host::DocumentHost::document_url`], or
+/// `"about:blank"` when the host has none, matching `window.location.href`'s
+/// own fallback.
+pub(crate) fn url(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    this_document(this, context)?;
+    let url = with_state(context, |s| s.host.document_url())?;
+    Ok(js_str(&url.unwrap_or_else(|| "about:blank".to_owned())))
+}
+
+/// `document.documentURI`: identical to `document.URL` (HTML defines both
+/// getters as the same algorithm; the two names exist only for legacy
+/// SVG/DOM-Core compatibility).
+pub(crate) fn document_uri(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    url(this, args, context)
 }
 
 #[cfg(test)]

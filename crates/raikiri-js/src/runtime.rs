@@ -22,6 +22,7 @@ pub(crate) mod style;
 pub(crate) mod token_list;
 pub(crate) mod tree;
 pub(crate) mod webidl;
+pub(crate) mod window;
 
 #[cfg(test)]
 pub(crate) mod test_host;
@@ -81,6 +82,17 @@ pub(crate) struct State {
     /// *before* Boa's own [`Limits::max_recursion`] (JS call frames) would
     /// ever trip, so `dispatch` enforces its own, much smaller bound.
     pub dispatch_depth: u32,
+    /// `document.readyState`. Production code always leaves this at its
+    /// default (`Complete`): nothing in this crate today drives document
+    /// parsing and script execution end-to-end, so only this runtime's own
+    /// tests ever set it to `Loading`/`Interactive`.
+    pub ready_state: document::ReadyState,
+    /// `document.currentScript`: the arena index of the `<script>` element
+    /// currently executing, or `None` when no script is (HTML "current
+    /// script").
+    pub current_script: Option<usize>,
+    /// `console.*` calls recorded during evaluation, in call order.
+    pub console: Vec<window::ConsoleMessage>,
 }
 
 /// Shared handle to [`State`], stored in the Boa context's host data.
@@ -153,6 +165,9 @@ impl DomRuntime {
             event_loop: event_loop::EventLoop::new(limits.clone()),
             reporting_exception: false,
             dispatch_depth: 0,
+            ready_state: document::ReadyState::default(),
+            current_script: None,
+            console: Vec::new(),
         };
         let executor = Rc::new(event_loop::RaikiriJobExecutor);
         let built = Context::builder().job_executor(executor).build();

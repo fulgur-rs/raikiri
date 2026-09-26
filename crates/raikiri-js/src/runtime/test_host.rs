@@ -17,6 +17,9 @@ pub(crate) struct StubHost {
     pub fail_flush: bool,
     pub fail_geometry: bool,
     pub fail_computed: bool,
+    /// [`DocumentHost::document_url`]'s return value; tests set this
+    /// directly (`host.document_url = Some(...)`) before building a runtime.
+    pub document_url: Option<String>,
 }
 
 impl StubHost {
@@ -45,6 +48,7 @@ impl StubHost {
                 fail_flush: false,
                 fail_geometry: false,
                 fail_computed: false,
+                document_url: None,
             },
             html,
             head,
@@ -124,5 +128,8 @@ impl DocumentHost for StubHost {
         let root = fragment.root_index();
         fragment.append_text(root, markup);
         Ok(fragment)
+    }
+    fn document_url(&self) -> Option<String> {
+        self.document_url.clone()
     }
 }

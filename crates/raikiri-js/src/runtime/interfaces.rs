@@ -71,6 +71,28 @@ fn illegal_constructor(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<
         .into())
 }
 
+/// Define `object`'s `Symbol.toStringTag` (WebIDL §3.6.3 / §3.9: non-writable,
+/// non-enumerable, configurable, its value the interface's or namespace's
+/// own identifier), so `Object.prototype.toString.call(x)` reads
+/// `[object <tag>]` instead of the engine's generic default. Shared by
+/// [`interface`] (every interface prototype gets one) and [`super::window`]'s
+/// plain singleton objects (`location`, `navigator`, `console`), which have
+/// no interface prototype of their own to hang it on.
+pub(crate) fn set_to_string_tag(
+    object: &JsObject,
+    tag: &str,
+    context: &mut Context,
+) -> JsResult<()> {
+    let descriptor = PropertyDescriptor::builder()
+        .value(JsString::from(tag))
+        .writable(false)
+        .enumerable(false)
+        .configurable(true)
+        .build();
+    object.define_property_or_throw(JsSymbol::to_string_tag(), descriptor, context)?;
+    Ok(())
+}
+
 /// A native getter/setter/method function object with the given `name` and
 /// `length` (ECMA-262 §10.2.9: `length` is non-writable, non-enumerable,
 /// configurable), built from `native`.
@@ -244,19 +266,7 @@ fn interface(
     let standard = builder.build();
     let constructor = standard.constructor();
     let prototype = standard.prototype();
-    // WebIDL §3.6.3: every interface's prototype carries a non-writable,
-    // non-enumerable, configurable `Symbol.toStringTag` whose value is the
-    // interface's own identifier, so `Object.prototype.toString.call(x)`
-    // reads `[object <name>]` instead of the engine's generic default. Set
-    // here, once, so every interface built through this function gets it
-    // without repeating the definition at each call site.
-    let to_string_tag = PropertyDescriptor::builder()
-        .value(JsString::from(name))
-        .writable(false)
-        .enumerable(false)
-        .configurable(true)
-        .build();
-    prototype.define_property_or_throw(JsSymbol::to_string_tag(), to_string_tag, context)?;
+    set_to_string_tag(&prototype, name, context)?;
     let exposed = Attribute::WRITABLE | Attribute::CONFIGURABLE;
     context.register_global_property(JsString::from(name), constructor.clone(), exposed)?;
     Ok(Interface {
@@ -515,6 +525,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     style::install_globals(context)?;
     events::install_globals(context)?;
     dispatch::install_window_handlers(context)?;
+    super::window::install(context)?;
     Ok(())
 }
 
