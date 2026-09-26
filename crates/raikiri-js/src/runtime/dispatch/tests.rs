@@ -568,7 +568,21 @@ fn dispatch_and_call_window_on_error_on_a_non_event_object_are_defensive_no_ops(
     assert!(result.is_undefined());
 }
 
-// ---- fix round 1 (Fable review) -------------------------------------------
+/// `dispatchEvent()` (the exposed binding) now checks this first, so this
+/// exercises `dispatch`'s own matching, redundant check directly, as a
+/// future caller that skips that pre-check (there is none today) would.
+#[test]
+fn dispatch_itself_also_rejects_an_already_dispatching_event() {
+    let mut rt = rt();
+    let event = rt.evaluate("new Event('x')").unwrap().as_object().unwrap();
+    let _ = dispatch::event_data(&event, |d| d.dispatched.set(true));
+    let context = rt.context_mut();
+    let err = dispatch::dispatch(context, &event, None);
+    assert!(err.is_err());
+}
+
+// ---- dispatch nesting, removed-during-dispatch, abort propagation, and
+// event handler IDL attribute / addEventListener slot semantics ------------
 
 #[test]
 fn recursive_dispatch_event_aborts_before_the_native_stack_overflows() {
@@ -741,6 +755,75 @@ fn remove_event_listener_never_removes_a_handler_slot() {
          document.body.onclick = g; document.body.removeEventListener('click', g); \
          document.body.dispatchEvent(new Event('click')); \
          calls === 1 && document.body.onclick === g",
+    );
+}
+
+#[test]
+fn a_handler_slots_own_callback_removing_a_same_function_addeventlistener_registration_does_not_resurrect_it()
+ {
+    // The handler slot (`onclick`) runs first, in its own turn, and removes
+    // the plain `addEventListener` registration that happens to share its
+    // callback. Without matching `is_handler` too, the still-live handler
+    // slot (same callback) would make the removed ordinary registration
+    // look "still registered" and run it a second time.
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; function f(){ log.push('f'); document.body.removeEventListener('click', f); } \
+         document.body.onclick = f; \
+         document.body.addEventListener('click', f); \
+         document.body.dispatchEvent(new Event('click')); log.join() === 'f'",
+    );
+}
+
+#[test]
+fn an_addeventlistener_removal_does_not_resurrect_an_ordinary_registration_via_a_same_function_handler_slot()
+ {
+    // Same hazard, triggered from the other direction: an ordinary
+    // `addEventListener` listener (not the handler itself) removes another
+    // ordinary registration that shares its callback with an unrelated
+    // handler slot.
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; function f(){ log.push('f'); } \
+         document.body.addEventListener('click', function remover(){ \
+           log.push('remover'); document.body.removeEventListener('click', f); \
+         }); \
+         document.body.addEventListener('click', f); \
+         document.body.onclick = f; \
+         document.body.dispatchEvent(new Event('click')); log.join() === 'remover,f'",
+    );
+}
+
+#[test]
+fn a_handler_reassigned_by_an_earlier_listener_in_the_same_dispatch_runs_its_current_value() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; function f(){ log.push('f'); } function g(){ log.push('g'); } \
+         document.body.addEventListener('click', ()=>{ document.body.onclick = g; }); \
+         document.body.onclick = f; \
+         document.body.dispatchEvent(new Event('click')); log.join() === 'g'",
+    );
+}
+
+#[test]
+fn redispatching_an_in_flight_trusted_event_is_invalid_state_error_and_keeps_is_trusted() {
+    let mut rt = rt();
+    let body = body_index(&mut rt);
+    ok(
+        &mut rt,
+        "var inner=null, captured=null; document.body.addEventListener('rt', function(e){ \
+           captured = e; \
+           try { document.body.dispatchEvent(e); } catch (x) { inner = x.name; } \
+         }); true",
+    );
+    let handled = dispatch::fire_event(rt.context_mut(), Some(body), "rt", false, false).unwrap();
+    assert!(handled);
+    ok(
+        &mut rt,
+        "inner === 'InvalidStateError' && captured.isTrusted === true",
     );
 }
 

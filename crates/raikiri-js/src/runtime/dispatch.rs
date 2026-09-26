@@ -622,26 +622,48 @@ fn handle_generic_handler_return_value(event: &JsObject, result: &JsResult<JsVal
     }
 }
 
-/// Whether an identical `(type, callback, capture)` entry is still present
-/// in `node`'s listener list right now -- DOM §2.9 inner invoke's "listener
-/// whose removed is false" check, applied to a listener a prior one (at the
-/// same node, in the same [`invoke`] call) may have removed via
-/// `removeEventListener` in the meantime. There is no stored `removed`
-/// flag; this re-derives it against the live list instead (see
-/// [`events::Listener`]'s own doc comment).
-fn still_registered(
+/// The live counterpart of `listener` (from the dispatch-start snapshot)
+/// right now, or `None` if it is no longer registered -- DOM §2.9 inner
+/// invoke's "listener whose removed is false" check, applied to a listener
+/// a prior one (at the same node, in the same [`invoke`] call) may have
+/// removed via `removeEventListener`, or an event handler IDL attribute a
+/// prior one may have reassigned or cleared, in the meantime.
+///
+/// An event handler IDL attribute's listener is matched by `(type,
+/// is_handler)` alone, never by callback identity: its callback can be
+/// replaced in place (`el.onclick = g` after `el.onclick = f`) without
+/// changing *which* listener it is, and HTML's "get the current value of
+/// the event handler" reads that value fresh at invocation time, so the
+/// *current* (possibly-replaced) callback is what comes back here, not the
+/// snapshot's. An ordinary `addEventListener` registration is still
+/// matched by `(type, callback, capture)` identity, same as before, but
+/// only against other ordinary registrations (`!l.is_handler`) -- without
+/// that, a handler slot and an ordinary registration that happen to share
+/// the very same callback function would alias each other in this check.
+///
+/// There is no stored `removed` flag; this re-derives it against the live
+/// list instead (see [`events::Listener`]'s own doc comment).
+fn current_listener(
     context: &mut Context,
     node: Option<usize>,
     listener: &Listener,
-) -> JsResult<bool> {
+) -> JsResult<Option<Listener>> {
     with_state(context, |s| {
-        s.listeners.get(&node).is_some_and(|list| {
-            list.iter().any(|l| {
-                l.kind == listener.kind
-                    && JsObject::equals(&l.callback, &listener.callback)
-                    && l.capture == listener.capture
-            })
-        })
+        let list = s.listeners.get(&node)?;
+        if listener.is_handler {
+            list.iter()
+                .find(|l| l.is_handler && l.kind == listener.kind)
+                .cloned()
+        } else {
+            list.iter()
+                .find(|l| {
+                    !l.is_handler
+                        && l.kind == listener.kind
+                        && JsObject::equals(&l.callback, &listener.callback)
+                        && l.capture == listener.capture
+                })
+                .cloned()
+        }
     })
 }
 
@@ -672,9 +694,9 @@ fn invoke(
             Some(false) if listener.capture => continue,
             _ => {}
         }
-        if !still_registered(context, node, &listener)? {
+        let Some(listener) = current_listener(context, node, &listener)? else {
             continue;
-        }
+        };
         if listener.once {
             // `node`'s entry necessarily already exists (the check just
             // above confirmed it), but `entry(...).or_default()` -- rather
@@ -828,11 +850,15 @@ pub(crate) fn dispatch(
     Ok(!default_prevented(event))
 }
 
-/// `EventTarget.prototype.dispatchEvent`/`window.dispatchEvent`: unlike
-/// [`fire_event`] (which builds its own trusted event and calls [`dispatch`]
-/// directly), every event reaching script's `dispatchEvent()` has its
-/// `isTrusted` reset to `false` first (DOM §2.9), even one a previous
-/// [`fire_event`]/[`report_exception`] call marked trusted.
+/// `EventTarget.prototype.dispatchEvent`/`window.dispatchEvent` (DOM §2.9):
+/// step 1's `InvalidStateError` (already dispatching) is checked *before*
+/// step 2 resets `isTrusted` to `false` -- so a rejected re-entrant call on
+/// an event a previous [`fire_event`]/[`report_exception`] call marked
+/// trusted must leave `isTrusted` untouched, not flip it to `false` on its
+/// way to being rejected. [`dispatch`] repeats the same check as its own
+/// first step (harmlessly redundant here: nothing can invalidate this
+/// synchronous precondition between the two calls), for [`fire_event`]'s
+/// sake, which calls it directly and skips both of these steps entirely.
 pub(crate) fn dispatch_event(
     this: &JsValue,
     args: &[JsValue],
@@ -844,6 +870,13 @@ pub(crate) fn dispatch_event(
         .and_then(JsValue::as_object)
         .filter(|o| o.is::<EventData>())
         .ok_or_else(|| type_error("parameter 1 is not of type 'Event'"))?;
+    if event_data(&event, |d| d.dispatched.get()).unwrap_or(false) {
+        return Err(throw_dom_exception(
+            context,
+            "InvalidStateError",
+            "the event is already being dispatched",
+        ));
+    }
     let _ = event_data(&event, |d| d.is_trusted.set(false));
     let result = dispatch(context, &event, key)?;
     Ok(JsValue::from(result))
