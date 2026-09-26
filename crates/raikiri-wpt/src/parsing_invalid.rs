@@ -15,10 +15,6 @@ use raikiri_js::testharness::{TestHarnessError, run_testharness_scripts_on_host}
 use crate::reftest::{DEFAULT_REFTTEST_HEIGHT, DEFAULT_REFTTEST_WIDTH, prepare_wpt_live_document};
 use crate::wpt_host::WptDocumentHost;
 
-/// The name suffix `parsing-testcommon.js` gives every `test()` registered by
-/// `test_invalid_value`.
-const INVALID_VALUE_NAME_SUFFIX: &str = " should not set the property value";
-
 /// Known-valid, property-agnostic sanity check run before the helper and the
 /// test script: `color: red` must round-trip through an element's inline
 /// style. It catches an inert style binding (a setter that silently no-ops,
@@ -35,15 +31,6 @@ const POSITIVE_CONTROL_JS: &str = r#"
     }
 })();
 "#;
-
-/// Which JavaScript implementation executes the parsing tests.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Engine {
-    /// The standalone CSS-only shim context.
-    Legacy,
-    /// Native DOM interfaces over a live `WptDocumentHost` document.
-    Native,
-}
 
 /// One `css/*/parsing/*.html` file's outcomes.
 #[derive(Debug)]
@@ -70,24 +57,6 @@ impl ParsingFileOutcome {
     pub fn all_passed(&self) -> bool {
         !self.outcomes.is_empty() && self.passed() == self.total()
     }
-
-    /// Outcomes registered by `test_invalid_value`, identified by the test
-    /// name `parsing-testcommon.js` gives them.
-    pub fn invalid_value_outcomes(&self) -> impl Iterator<Item = &TestOutcome> {
-        self.outcomes
-            .iter()
-            .filter(|o| o.name.ends_with(INVALID_VALUE_NAME_SUFFIX))
-    }
-
-    /// Number of passing `test_invalid_value` outcomes.
-    pub fn invalid_value_passed(&self) -> usize {
-        self.invalid_value_outcomes().filter(|o| o.passed).count()
-    }
-
-    /// Number of `test_invalid_value` outcomes.
-    pub fn invalid_value_total(&self) -> usize {
-        self.invalid_value_outcomes().count()
-    }
 }
 
 /// Why [`run_parsing_invalid_file`] could not produce an outcome.
@@ -100,8 +69,6 @@ pub enum ParsingFileError {
     Io(String),
     /// Building the live document for the test page failed.
     Document(String),
-    /// The legacy shim reported an error.
-    Legacy(raikiri_js::HarnessError),
     /// The native testharness run reported an error.
     Harness(TestHarnessError),
 }
@@ -117,7 +84,6 @@ impl std::fmt::Display for ParsingFileError {
             }
             ParsingFileError::Io(msg) => write!(f, "I/O error: {msg}"),
             ParsingFileError::Document(msg) => write!(f, "live document: {msg}"),
-            ParsingFileError::Legacy(e) => write!(f, "{e}"),
             ParsingFileError::Harness(e) => write!(f, "{e}"),
         }
     }
@@ -168,15 +134,6 @@ pub fn run_parsing_invalid_file(
     wpt_root: &Path,
     relative_path: &Path,
 ) -> Result<ParsingFileOutcome, ParsingFileError> {
-    run_parsing_invalid_file_with(wpt_root, relative_path, Engine::Native)
-}
-
-/// Run one `css/*/parsing/*.html` file on the selected `engine`.
-pub fn run_parsing_invalid_file_with(
-    wpt_root: &Path,
-    relative_path: &Path,
-    engine: Engine,
-) -> Result<ParsingFileOutcome, ParsingFileError> {
     let page_path = wpt_root.join(relative_path);
     let html = fs::read_to_string(&page_path).map_err(|e| ParsingFileError::Io(e.to_string()))?;
     let script = inline_scripts(&html);
@@ -186,104 +143,25 @@ pub fn run_parsing_invalid_file_with(
     let parsing_testcommon = fs::read_to_string(wpt_root.join("css/support/parsing-testcommon.js"))
         .map_err(|e| ParsingFileError::Io(e.to_string()))?;
 
-    let outcomes = match engine {
-        Engine::Legacy => raikiri_js::run_invalid_value_script(&parsing_testcommon, &script)
-            .map_err(ParsingFileError::Legacy)?,
-        Engine::Native => {
-            let page_base = page_path.parent().unwrap_or(wpt_root);
-            let setup = prepare_wpt_live_document(
-                &html,
-                DEFAULT_REFTTEST_WIDTH,
-                DEFAULT_REFTTEST_HEIGHT,
-                page_base,
-                wpt_root,
-            )
-            .map_err(ParsingFileError::Document)?;
-            run_testharness_scripts_on_host(
-                &[POSITIVE_CONTROL_JS, &parsing_testcommon, &script],
-                WptDocumentHost::new(setup, wpt_root),
-            )
-            .map_err(ParsingFileError::Harness)?
-        }
-    };
+    let page_base = page_path.parent().unwrap_or(wpt_root);
+    let setup = prepare_wpt_live_document(
+        &html,
+        DEFAULT_REFTTEST_WIDTH,
+        DEFAULT_REFTTEST_HEIGHT,
+        page_base,
+        wpt_root,
+    )
+    .map_err(ParsingFileError::Document)?;
+    let outcomes = run_testharness_scripts_on_host(
+        &[POSITIVE_CONTROL_JS, &parsing_testcommon, &script],
+        WptDocumentHost::new(setup, wpt_root),
+    )
+    .map_err(ParsingFileError::Harness)?;
 
     Ok(ParsingFileOutcome {
         test_id: path_to_test_id(relative_path),
         outcomes,
     })
-}
-
-/// A file whose `test_invalid_value` results got worse on the native engine,
-/// or got better (see [`compare`]).
-#[derive(Debug, PartialEq, Eq)]
-pub struct Difference {
-    /// WPT-relative test ID.
-    pub test_id: String,
-    /// Legacy summary (`passed/total` over `test_invalid_value` outcomes, or
-    /// the error).
-    pub legacy: String,
-    /// Native summary, in the same form.
-    pub native: String,
-}
-
-/// Regressions and improvements between the two engines' results for one
-/// set of files.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct Comparison {
-    /// Files where legacy ran without error and native errored, or native
-    /// passed fewer `test_invalid_value` assertions.
-    pub regressions: Vec<Difference>,
-    /// Files where legacy errored and native did not, or native passed more
-    /// `test_invalid_value` assertions.
-    pub improvements: Vec<Difference>,
-}
-
-fn invalid_value_summary(result: &Result<ParsingFileOutcome, ParsingFileError>) -> String {
-    match result {
-        Ok(outcome) => format!(
-            "{}/{}",
-            outcome.invalid_value_passed(),
-            outcome.invalid_value_total()
-        ),
-        Err(error) => format!("error: {error}"),
-    }
-}
-
-/// Compare the legacy and native results of the same file, counting only
-/// `test_invalid_value` outcomes. `results` pairs a test ID with its legacy
-/// and native results.
-pub fn compare<'a, I>(results: I) -> Comparison
-where
-    I: IntoIterator<
-        Item = (
-            &'a str,
-            &'a Result<ParsingFileOutcome, ParsingFileError>,
-            &'a Result<ParsingFileOutcome, ParsingFileError>,
-        ),
-    >,
-{
-    let mut comparison = Comparison::default();
-    for (test_id, legacy, native) in results {
-        let bucket = match (legacy, native) {
-            (Ok(_), Err(_)) => Some(&mut comparison.regressions),
-            (Err(_), Ok(_)) => Some(&mut comparison.improvements),
-            (Ok(old), Ok(new)) if new.invalid_value_passed() < old.invalid_value_passed() => {
-                Some(&mut comparison.regressions)
-            }
-            (Ok(old), Ok(new)) if new.invalid_value_passed() > old.invalid_value_passed() => {
-                Some(&mut comparison.improvements)
-            }
-            _ => None,
-        };
-        if let Some(bucket) = bucket {
-            bucket.push(Difference {
-                test_id: test_id.to_owned(),
-                legacy: invalid_value_summary(legacy),
-                native: invalid_value_summary(native),
-            });
-        }
-    }
-    comparison
 }
 
 fn path_to_test_id(path: &Path) -> String {

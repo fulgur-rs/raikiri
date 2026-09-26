@@ -37,26 +37,6 @@ fn fixture(html: &str) -> tempfile::TempDir {
 
 const FIXTURE_PATH: &str = "css/some-cat/parsing/t.html";
 
-fn outcome(
-    test_id: &str,
-    results: &[(&str, bool)],
-) -> Result<ParsingFileOutcome, ParsingFileError> {
-    Ok(ParsingFileOutcome {
-        test_id: test_id.to_owned(),
-        outcomes: results
-            .iter()
-            .map(|(name, passed)| TestOutcome {
-                name: (*name).to_owned(),
-                passed: *passed,
-                message: String::new(),
-            })
-            .collect(),
-    })
-}
-
-const INVALID: &str = "e.style['x'] = \"y\" should not set the property value";
-const VALID: &str = "e.style['x'] = \"y\" should set the property value";
-
 #[test]
 fn inline_scripts_skips_src_tags_and_keeps_bare_ones() {
     let html = r#"<script src="/resources/testharness.js"></script>
@@ -132,8 +112,6 @@ test(function () {
     assert_eq!(outcome.test_id, FIXTURE_PATH);
     assert_eq!(outcome.total(), 3, "{:?}", outcome.outcomes);
     assert!(outcome.all_passed(), "{:?}", outcome.outcomes);
-    assert_eq!(outcome.invalid_value_total(), 1);
-    assert_eq!(outcome.invalid_value_passed(), 1);
 }
 
 #[test]
@@ -211,82 +189,6 @@ fn display_names_each_error_kind() {
         "no test_invalid_value( calls in this file's inline script"
     );
 }
-
-#[test]
-fn invalid_value_counts_ignore_other_test_names() {
-    let result = outcome("a", &[(INVALID, true), (INVALID, false), (VALID, true)]).unwrap();
-    assert_eq!(result.invalid_value_total(), 2);
-    assert_eq!(result.invalid_value_passed(), 1);
-    assert_eq!(result.total(), 3);
-    assert_eq!(result.passed(), 2);
-}
-
-#[test]
-fn compare_counts_only_invalid_value_outcomes() {
-    let legacy_error: Result<ParsingFileOutcome, ParsingFileError> =
-        Err(ParsingFileError::Io("gone".into()));
-    let native_error: Result<ParsingFileOutcome, ParsingFileError> =
-        Err(ParsingFileError::Io("gone".into()));
-    let fewer_old = outcome("fewer", &[(INVALID, true), (INVALID, true)]);
-    let fewer_new = outcome("fewer", &[(INVALID, true), (INVALID, false)]);
-    let more_old = outcome("more", &[(INVALID, false)]);
-    let more_new = outcome("more", &[(INVALID, true)]);
-    // Extra non-invalid-value outcomes on native, passing or failing, do
-    // not count either way.
-    let same_old = outcome("same", &[(INVALID, true), (VALID, true)]);
-    let same_new = outcome("same", &[(INVALID, true), (VALID, false), (VALID, false)]);
-    let ok = outcome("x", &[(INVALID, true)]);
-
-    let comparison = compare([
-        ("regressed-to-error", &ok, &native_error),
-        ("fixed-error", &legacy_error, &ok),
-        ("both-error", &legacy_error, &native_error),
-        ("fewer", &fewer_old, &fewer_new),
-        ("more", &more_old, &more_new),
-        ("same", &same_old, &same_new),
-    ]);
-
-    assert_eq!(
-        comparison.regressions,
-        vec![
-            Difference {
-                test_id: "regressed-to-error".into(),
-                legacy: "1/1".into(),
-                native: "error: I/O error: gone".into(),
-            },
-            Difference {
-                test_id: "fewer".into(),
-                legacy: "2/2".into(),
-                native: "1/2".into(),
-            },
-        ]
-    );
-    assert_eq!(
-        comparison.improvements,
-        vec![
-            Difference {
-                test_id: "fixed-error".into(),
-                legacy: "error: I/O error: gone".into(),
-                native: "1/1".into(),
-            },
-            Difference {
-                test_id: "more".into(),
-                legacy: "0/1".into(),
-                native: "1/1".into(),
-            },
-        ]
-    );
-}
-
-#[test]
-fn legacy_engine_still_runs_the_shim() {
-    let dir = fixture("<script>test_invalid_value(\"box-sizing\", \"margin-box\");</script>");
-    let outcome =
-        run_parsing_invalid_file_with(dir.path(), Path::new(FIXTURE_PATH), Engine::Legacy).unwrap();
-    assert_eq!(outcome.total(), 1);
-    assert!(outcome.all_passed(), "{:?}", outcome.outcomes);
-}
-
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn run_parsing_invalid_file_on_real_fixture_is_seven_of_seven() {
