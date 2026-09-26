@@ -45,7 +45,7 @@ pub fn render_print_url(
         ))
     })?;
     let base_url = effective_document_base_url(&base_probe, Some(&fallback_base_url))
-        .unwrap_or(fallback_base_url);
+        .unwrap_or_else(|| fallback_base_url.clone());
     let html = String::from_utf8_lossy(resource.bytes.as_ref());
     let stylesheet_provider = StylesheetUrlProvider { provider };
     let image_resolver = ImageResolver::new(provider.clone());
@@ -63,6 +63,7 @@ pub fn render_print_url(
         height,
         PrintRenderResources {
             network: Some(&stylesheet_provider),
+            parse_base_url: Some(&fallback_base_url),
             base_url: Some(&base_url),
             replaced_resolver: Some(&image_resolver),
             image_pixel_source: Some(&image_resolver),

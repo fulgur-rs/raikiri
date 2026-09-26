@@ -5,10 +5,11 @@
 //! both `ReplacedResolver` and `ImagePixelSource` over any `NetworkProvider`).
 //!
 //! `ssrf_guard` is the non-overridable IP-address safety floor (private /
-//! loopback / link-local / CGNAT / metadata ranges). [`UreqHttpProvider`]
-//! applies that floor at connect time and on every redirect hop.
-//! [`SystemHttpProvider`] is the explicit trusted-network alternative for
-//! browser clients that must reach loopback or private addresses.
+//! loopback / link-local / CGNAT / metadata ranges). With the `http-ureq`
+//! feature, `UreqHttpProvider` applies that floor at connect time and on every
+//! redirect hop. `SystemHttpProvider` is the explicit trusted-network
+//! alternative for browser clients that must reach loopback or private
+//! addresses.
 
 #[cfg(feature = "http-ureq")] // cov:ignore: attribute line has no executable code
 mod deadline_transport;

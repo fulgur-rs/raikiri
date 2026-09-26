@@ -112,4 +112,7 @@ pub(crate) fn prepare_cascade_images(
         prepare_background_image(&mut computed.background_image, base_url, resolver);
         prepare_background_image(&mut computed.list_style_image, base_url, resolver);
     }
+    cascade
+        .page
+        .for_each_background_image_mut(|image| prepare_background_image(image, base_url, resolver));
 }

@@ -89,6 +89,7 @@ pub struct RenderedDocument {
 
 pub(crate) struct PrintRenderResources<'a> {
     pub(crate) network: Option<&'a dyn raikiri_traits::NetworkProvider>,
+    pub(crate) parse_base_url: Option<&'a raikiri::Url>,
     pub(crate) base_url: Option<&'a raikiri::Url>,
     pub(crate) replaced_resolver: Option<&'a dyn raikiri_traits::ReplacedResolver>,
     pub(crate) image_pixel_source: Option<&'a dyn raikiri_traits::ImagePixelSource>,
@@ -1760,6 +1761,7 @@ fn render_raikiri_pages_inner(
             network: stylesheet_network
                 .as_ref()
                 .map(|provider| provider as &dyn raikiri_traits::NetworkProvider),
+            parse_base_url: stylesheet_base.as_ref(),
             base_url: stylesheet_base.as_ref(),
             replaced_resolver: image_resolver
                 .as_ref()
@@ -1802,7 +1804,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     let opts = ParseOptions {
         extra_stylesheets: &[],
         network: resources.network,
-        base_url: base_url.cloned(),
+        base_url: resources.parse_base_url.cloned(),
     };
     let media_context = MediaContext::print();
     // WPT's print UA supplies a 0.5in default page margin when an authored
@@ -1814,6 +1816,9 @@ pub(crate) fn render_raikiri_pages_with_resources(
         authored_page_viewport(&html, width as f32, height as f32);
     let html = expand_viewport_units(&html, viewport_width, viewport_height);
     let mut uncascaded = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
+    if let Some(base_url) = base_url {
+        crate::http_resources::absolutize_img_sources(&mut uncascaded.dom, base_url);
+    }
     // @font-face preparation: register `url(...)`
     // faces into the font context once, then expand `local(...)` aliases
     // into every cascade built below. Without @font-face rules both calls
@@ -2012,6 +2017,9 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // parse/layout pass.
     let (mut uncascaded, slices) = if geometry_varies {
         let mut fresh = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
+        if let Some(base_url) = base_url {
+            crate::http_resources::absolutize_img_sources(&mut fresh.dom, base_url);
+        }
         let mut fresh_cascade =
             build_cascaded_with_media_context_for_page(&fresh, &media_context, &first_query);
         if let Some(prepare) = prepare_cascade_images {

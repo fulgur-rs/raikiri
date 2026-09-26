@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use raikiri_net::SystemHttpProvider;
 
 use super::render_print_url;
+use crate::reftest::RenderedImage;
 use crate::test_http_server::{TestResponse, TestServer};
 
 fn red_png() -> Vec<u8> {
@@ -18,6 +19,13 @@ fn red_png() -> Vec<u8> {
         .expect("PNG pixels");
     writer.finish().expect("finish PNG");
     output
+}
+
+fn contains_red_pixel(image: &RenderedImage) -> bool {
+    image
+        .rgba
+        .chunks_exact(4)
+        .any(|pixel| pixel[0] > 200 && pixel[1] < 50 && pixel[2] < 50 && pixel[3] > 200)
 }
 
 #[test]
@@ -127,4 +135,122 @@ fn uses_effective_document_base_for_print_resources() {
     let requests = server.finish();
 
     assert!(requests.iter().any(|path| path == "/assets/image.png"));
+}
+
+#[test]
+fn paints_relative_img_from_the_effective_document_base() {
+    let server = TestServer::start(HashMap::from([
+        (
+            "/pages/index.html",
+            TestResponse::ok(
+                "text/html",
+                b"<base href='/assets/'><style>@page:first{size:32px 32px;margin:0}@page{size:36px 36px;margin:0}html,body{margin:0}img{display:block;width:8px;height:8px}.spacer{height:60px}</style><img src='red.png'><div class='spacer'></div>"
+                    .to_vec(),
+            ),
+        ),
+        (
+            "/assets/red.png",
+            TestResponse::ok("image/png", red_png()),
+        ),
+    ]));
+
+    let document = render_print_url(
+        &SystemHttpProvider::new(),
+        server.url("pages/index.html"),
+        32,
+        32,
+    )
+    .expect("render relative image");
+    let requests = server.finish();
+
+    assert!(requests.iter().any(|path| path == "/assets/red.png"));
+    assert!(contains_red_pixel(&document.pages[0]));
+}
+
+#[test]
+fn resolves_relative_base_once_for_external_stylesheets() {
+    let server = TestServer::start(HashMap::from([
+        (
+            "/pages/index.html",
+            TestResponse::ok(
+                "text/html",
+                b"<base href='assets/'><link rel='stylesheet' href='sheet.css'><p>probe</p>"
+                    .to_vec(),
+            ),
+        ),
+        (
+            "/pages/assets/sheet.css",
+            TestResponse::ok("text/css", b"@page{size:32px 32px;margin:0}".to_vec()),
+        ),
+    ]));
+
+    render_print_url(
+        &SystemHttpProvider::new(),
+        server.url("pages/index.html"),
+        32,
+        32,
+    )
+    .expect("render stylesheet with relative base");
+    let requests = server.finish();
+
+    assert!(
+        requests
+            .iter()
+            .any(|path| path == "/pages/assets/sheet.css")
+    );
+    assert!(!requests.iter().any(|path| path.contains("assets/assets")));
+}
+
+#[test]
+fn paints_relative_page_background_image() {
+    let server = TestServer::start(HashMap::from([
+        (
+            "/pages/index.html",
+            TestResponse::ok(
+                "text/html",
+                b"<style>@page{size:32px 32px;margin:0;background-image:url('red.png')}</style>"
+                    .to_vec(),
+            ),
+        ),
+        ("/pages/red.png", TestResponse::ok("image/png", red_png())),
+    ]));
+
+    let document = render_print_url(
+        &SystemHttpProvider::new(),
+        server.url("pages/index.html"),
+        32,
+        32,
+    )
+    .expect("render page background image");
+    let requests = server.finish();
+
+    assert!(requests.iter().any(|path| path == "/pages/red.png"));
+    assert!(contains_red_pixel(&document.pages[0]));
+}
+
+#[test]
+fn paints_relative_page_margin_box_background_image() {
+    let server = TestServer::start(HashMap::from([
+        (
+            "/pages/index.html",
+            TestResponse::ok(
+                "text/html",
+                b"<style>@page{size:64px 64px;margin:16px;@top-left{content:'x';background-image:url('red.png')}}</style>"
+                    .to_vec(),
+            ),
+        ),
+        ("/pages/red.png", TestResponse::ok("image/png", red_png())),
+    ]));
+
+    let document = render_print_url(
+        &SystemHttpProvider::new(),
+        server.url("pages/index.html"),
+        64,
+        64,
+    )
+    .expect("render margin box background image");
+    let requests = server.finish();
+
+    assert!(requests.iter().any(|path| path == "/pages/red.png"));
+    assert!(contains_red_pixel(&document.pages[0]));
 }
