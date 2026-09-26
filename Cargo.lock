@@ -2363,11 +2363,14 @@ dependencies = [
  "bytes",
  "criterion",
  "cssparser",
+ "data-url",
  "html5ever 0.40.1",
+ "image",
  "markup5ever 0.40.0",
  "parley",
  "raikiri-dom",
  "raikiri-style",
+ "raikiri-svg",
  "raikiri-traits",
  "rustc-hash",
  "smol_str",
@@ -2394,6 +2397,7 @@ dependencies = [
  "flate2",
  "image",
  "png",
+ "raikiri-svg",
  "raikiri-traits",
  "tempfile",
  "ureq",
@@ -2407,12 +2411,14 @@ dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
  "criterion",
+ "cssparser",
  "kurbo",
  "parley",
  "peniko",
  "raikiri-dom",
  "raikiri-html",
  "raikiri-style",
+ "raikiri-svg",
  "raikiri-traits",
  "taffy",
  "url",
@@ -2428,6 +2434,18 @@ dependencies = [
  "rustc-hash",
  "selectors",
  "smol_str",
+]
+
+[[package]]
+name = "raikiri-svg"
+version = "0.1.0"
+dependencies = [
+ "cssparser",
+ "raikiri-traits",
+ "resvg",
+ "roxmltree 0.21.1",
+ "simplecss",
+ "usvg",
 ]
 
 [[package]]
@@ -2584,6 +2602,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32eef8b209c3c1c15dbad02c1f30f9539f00dc7253e0cbcdaae442a50a09d7c1"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "resvg"
+version = "0.48.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67e3803f97b999e80cbf7c6ecdd07a8102204d92e1633cf48783720c521196bd"
+dependencies = [
+ "bytemuck",
+ "log",
+ "pico-args",
+ "rgb",
+ "svgtypes",
+ "tiny-skia",
+ "usvg",
+]
+
+[[package]]
+name = "rgb"
+version = "0.8.53"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47b34b781b31e5d73e9fbc8689c70551fd1ade9a19e3e28cfec8580a79290cc4"
+dependencies = [
+ "bytemuck",
 ]
 
 [[package]]

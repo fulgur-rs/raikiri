@@ -13,12 +13,15 @@ raikiri-dom    = { workspace = true }
 raikiri-style  = { workspace = true }
 cssparser      = { workspace = true }
 parley         = { workspace = true }
+image          = { workspace = true }
+raikiri-svg    = { workspace = true }
 html5ever      = { workspace = true }
 markup5ever    = { workspace = true }
 rustc-hash     = { workspace = true }
 smol_str       = { workspace = true }
 taffy          = { workspace = true }
 url            = { workspace = true }
+data-url       = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

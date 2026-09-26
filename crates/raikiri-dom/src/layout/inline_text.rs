@@ -697,6 +697,9 @@ pub(crate) fn prepare_text_indent_before_taffy(
         if !doc.nodes[idx].is_in_document() {
             continue;
         }
+        if doc.nodes[idx].is_inline_svg_content() {
+            continue;
+        }
         let cv = &cascade.computed[idx];
         let Some(parent_idx) = parent_of[idx] else {
             continue; // cov:ignore: in-document text nodes always have a parent.
@@ -1203,6 +1206,9 @@ pub(crate) fn realign_text_after_layout(
     let mut ch_probes: HashMap<(String, u32, u32, u8), f32> = HashMap::new();
     for (idx, parent) in parent_of.iter().enumerate() {
         if doc.nodes[idx].kind() != NodeKind::Text {
+            continue;
+        }
+        if doc.nodes[idx].is_inline_svg_content() {
             continue;
         }
         if !doc.nodes[idx].is_in_document() {
@@ -4614,10 +4620,11 @@ fn effective_language_for_text(
     let mut current = parent_of[text_idx];
     while let Some(idx) = current {
         if let crate::node::NodeData::Element(element) = &doc.nodes[idx].data
-            && let Some(attr) = element
-                .attributes
-                .iter()
-                .find(|attr| attr.local.eq_ignore_ascii_case("lang") || attr.local == "xml:lang")
+            && let Some(attr) = element.attributes.iter().find(|attr| {
+                (attr.namespace.is_none() && attr.local.eq_ignore_ascii_case("lang"))
+                    || (attr.namespace.as_deref() == Some("http://www.w3.org/XML/1998/namespace")
+                        && attr.local == "lang")
+            })
         {
             return attr.value.trim().to_ascii_lowercase();
         }
@@ -5226,7 +5233,7 @@ pub(crate) fn preshape_text(
         if doc.nodes[idx].kind() != NodeKind::Text {
             continue;
         }
-        if !doc.nodes[idx].is_in_document() {
+        if !doc.nodes[idx].is_in_document() || doc.nodes[idx].is_inline_svg_content() {
             continue;
         }
         let raw: String = match &doc.nodes[idx].data {

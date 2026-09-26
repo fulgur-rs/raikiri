@@ -1026,7 +1026,7 @@ fn resolve_string_set_component(
             NodeData::Element(e) => Some(ContentComponent::Literal(
                 e.attributes
                     .iter()
-                    .find(|a| a.local == name)
+                    .find(|a| a.namespace.is_none() && a.local == name)
                     .map(|a| a.value.clone())
                     .unwrap_or_default(),
             )),

@@ -100,27 +100,25 @@ impl ReplacedResolver for FallbackRecordingResolver<'_> {
                 self.policy
                     .and_then(|policy| policy.max_decoded_bytes(ResourceKind::Image)),
             )
-            && let Some(image) = source.get_decoded(&url)
+            && let Some(actual) = source.decoded_byte_len(&url)
+            && actual > limit
         {
-            let actual = image.rgba.len() as u64;
-            if actual > limit {
-                push_resource_warning(
-                    &self.warnings,
-                    RenderWarning {
-                        kind: WarningKind::ResourceLimitExceeded {
-                            kind: ResourceKind::Image,
-                            limit,
-                            actual,
-                        },
-                        node_id: None,
-                        details: "decoded image exceeded its configured byte limit".to_owned(),
+            push_resource_warning(
+                &self.warnings,
+                RenderWarning {
+                    kind: WarningKind::ResourceLimitExceeded {
+                        kind: ResourceKind::Image,
+                        limit,
+                        actual,
                     },
-                );
-                resolved.intrinsic = IntrinsicBox::default();
-                resolved.disposition = ResolveDisposition::Fallback {
-                    reason: "decoded image exceeded its configured byte limit".to_owned(),
-                };
-            }
+                    node_id: None,
+                    details: "decoded image exceeded its configured byte limit".to_owned(),
+                },
+            );
+            resolved.intrinsic = IntrinsicBox::default();
+            resolved.disposition = ResolveDisposition::Fallback {
+                reason: "decoded image exceeded its configured byte limit".to_owned(),
+            };
         }
         if let ResolveDisposition::Fallback { reason } = &resolved.disposition {
             let mut seen = self
@@ -479,6 +477,27 @@ fn resolve_page_geometries(
         .collect()
 }
 
+fn preload_page_background_images(
+    doc: &HtmlDocument,
+    slices: &[PageSlice],
+    consumer_properties: &[ConsumerPropertyRegistration],
+    resources: &RenderResources<'_>,
+    warnings: &SharedRenderWarnings,
+) {
+    let mut seen = HashSet::new();
+    let mut attempts = 0usize;
+    for slice in slices {
+        let query = page_query_for_slice(slice);
+        let cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
+            &doc.uncascaded,
+            &MediaContext::default(),
+            &query,
+            consumer_properties,
+        );
+        resources.preload_background_images(&cascade, warnings, &mut seen, &mut attempts);
+    }
+}
+
 fn content_width_for_geometry(geometry: PageFragmentPageGeometry) -> f32 {
     (geometry.page_box.width - geometry.margins.left - geometry.margins.right).max(0.0)
 }
@@ -752,6 +771,7 @@ pub fn render_streaming(
         property_observer,
         consumer_properties,
         runtime,
+        resources,
     )
 }
 
@@ -775,6 +795,7 @@ fn render_streaming_inner(
     property_observer: Option<&mut dyn ConsumerPropertyObserver>,
     consumer_properties: &[ConsumerPropertyRegistration],
     runtime: RenderExecutionResources<'_>,
+    resources: &RenderResources<'_>,
 ) -> Result<RenderStatus, RenderError> {
     let signal = config.signal.clone();
     let is_aborted = || signal.as_ref().is_some_and(|signal| signal.is_aborted());
@@ -927,6 +948,16 @@ fn render_streaming_inner(
     // Resolve once more after the final bounded schedule pass so metadata and
     // page names always describe the slices that will actually be emitted.
     page_geometries = resolve_page_geometries(doc, &defaults, &slices, consumer_properties);
+
+    // Fetch CSS background sources only after the final page schedule is known.
+    // Paint remains read-only and consumes the cache through ImagePixelSource.
+    preload_page_background_images(
+        doc,
+        &slices,
+        consumer_properties,
+        resources,
+        &runtime.warnings,
+    );
 
     let pages = page_fragments_from_slices_with_page_geometry(
         &document,

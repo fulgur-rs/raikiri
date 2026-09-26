@@ -82,7 +82,9 @@ pub(crate) fn resolve_images_with_base(
             let src = element
                 .attributes
                 .iter()
-                .find(|attribute| attribute.local.as_str() == "src")
+                .find(|attribute| {
+                    attribute.namespace.is_none() && attribute.local.as_str() == "src"
+                })
                 .map(|attribute| attribute.value.as_str());
             let next_size = if let Some(src) = src {
                 let url = Url::parse(src)
@@ -90,7 +92,7 @@ pub(crate) fn resolve_images_with_base(
                     .or_else(|| base_url.and_then(|base| base.join(src).ok()));
                 if let Some(url) = url {
                     match resolver.resolve(ResolverRequest::new(&url)) {
-                        Ok(resolved) => Some((resolved.intrinsic.width, resolved.intrinsic.height)),
+                        Ok(resolved) => Some(resolved.intrinsic),
                         Err(error) => {
                             if previous_size.is_some() {
                                 element.image_intrinsic_size = None;
@@ -116,6 +118,118 @@ pub(crate) fn resolve_images_with_base(
         document.invalidate_layout_cache();
     }
     result
+}
+
+/// Populate CSS-defaulted layout sizes for outermost inline SVG roots.
+///
+/// This reads only the root's namespace-qualified DOM metadata; SVG parsing and
+/// rasterization remain in `raikiri-svg` at paint time. Missing or unsupported
+/// natural dimensions use the CSS default object size so a parse failure can
+/// still reach paint and be reported there.
+pub(crate) fn resolve_inline_svg_intrinsic_sizes(document: &mut Document) {
+    let mut changed = false;
+    for node in &mut document.nodes {
+        let is_inline_svg_root = node.is_inline_svg_root();
+        let NodeData::Element(element) = &mut node.data else {
+            continue;
+        };
+        let next_size = if is_inline_svg_root {
+            let attr = |name: &str| {
+                element
+                    .attributes
+                    .iter()
+                    .find(|attribute| {
+                        attribute.namespace.is_none() && attribute.local.as_str() == name
+                    })
+                    .map(|attribute| attribute.value.as_str())
+            };
+            let width = attr("width").and_then(parse_absolute_svg_length);
+            let height = attr("height").and_then(parse_absolute_svg_length);
+            let ratio = match (width, height) {
+                (Some(width), Some(height)) => positive_svg_ratio(width, height),
+                _ => attr("viewBox").and_then(parse_svg_view_box_ratio),
+            };
+            let (default_width, default_height) = default_svg_object_size(width, height, ratio);
+            let mut intrinsic = raikiri_traits::IntrinsicBox::new(default_width, default_height);
+            intrinsic.aspect_ratio = ratio;
+            Some(intrinsic)
+        } else if element.tag_name.as_str() != "img" {
+            None
+        } else {
+            element.image_intrinsic_size
+        };
+        if element.image_intrinsic_size != next_size {
+            element.image_intrinsic_size = next_size;
+            changed = true;
+        }
+    }
+    if changed {
+        document.invalidate_layout_cache();
+    }
+}
+
+fn parse_absolute_svg_length(value: &str) -> Option<f32> {
+    let value = value.trim();
+    let units = [
+        ("px", 1.0_f64),
+        ("in", 96.0),
+        ("cm", 96.0 / 2.54),
+        ("mm", 96.0 / 25.4),
+        ("q", 96.0 / 101.6),
+        ("pt", 96.0 / 72.0),
+        ("pc", 16.0),
+    ];
+    let lower = value.to_ascii_lowercase();
+    let (number, factor) = units
+        .iter()
+        .find_map(|(unit, factor)| lower.strip_suffix(unit).map(|number| (number, *factor)))
+        .unwrap_or((value, 1.0));
+    let value = number.trim().parse::<f64>().ok()? * factor;
+    (value.is_finite() && value > 0.0 && value <= f32::MAX as f64).then_some(value as f32)
+}
+
+fn parse_svg_view_box_ratio(value: &str) -> Option<f32> {
+    let mut values = value
+        .split(|character: char| character.is_ascii_whitespace() || character == ',')
+        .filter(|part| !part.is_empty())
+        .map(str::parse::<f32>);
+    let _x = values.next()?.ok()?;
+    let _y = values.next()?.ok()?;
+    let width = values.next()?.ok()?;
+    let height = values.next()?.ok()?;
+    if values.next().is_some() {
+        return None;
+    }
+    positive_svg_ratio(width, height)
+}
+
+fn positive_svg_ratio(width: f32, height: f32) -> Option<f32> {
+    if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    let ratio = width / height;
+    (ratio.is_finite() && ratio > 0.0).then_some(ratio)
+}
+
+fn default_svg_object_size(
+    width: Option<f32>,
+    height: Option<f32>,
+    ratio: Option<f32>,
+) -> (f32, f32) {
+    const DEFAULT_WIDTH: f32 = 300.0;
+    const DEFAULT_HEIGHT: f32 = 150.0;
+    match (width, height, ratio) {
+        (Some(width), Some(height), _) => (width, height),
+        (Some(width), None, Some(ratio)) => (width, width / ratio),
+        (None, Some(height), Some(ratio)) => (height * ratio, height),
+        (None, None, Some(ratio)) => {
+            let width = DEFAULT_WIDTH.min(DEFAULT_HEIGHT * ratio);
+            (width, width / ratio)
+        }
+        (Some(width), None, _) => (width, DEFAULT_HEIGHT),
+        (None, Some(height), _) => (DEFAULT_WIDTH, height),
+        _ => (DEFAULT_WIDTH, DEFAULT_HEIGHT),
+    }
 }
 
 #[cfg(test)]

@@ -78,7 +78,8 @@ pub use raikiri_traits::{
     // ── 既存 ──
     AbortController, AbortSignal, Body, CascadeError, ConsumerPropertyEvent,
     ConsumerPropertyObserver, ConsumerPropertyValue, DecodedImage, Dom, Element, FetchOutcome,
-    FetchedResource, HeaderMap, ImagePixelSource, Method, NetworkError, NetworkProvider,
+    FetchedResource, HeaderMap, ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, Method,
+    NetworkError, NetworkProvider,
     Node, NodeId, NodeKind, ParseError, QuirksMode, RenderError, RenderWarning,
     Request, ResourceKind, StylesheetKind, WarningKind,
 

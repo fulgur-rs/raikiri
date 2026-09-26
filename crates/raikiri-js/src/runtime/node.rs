@@ -113,7 +113,7 @@ fn text_content(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResul
 
 fn set_text_content(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_node(this, context)?;
-    // [LegacyNullToEmptyString]-like: null clears the node.
+    // `LegacyNullToEmptyString`-like: null clears the node.
     let value = match args.first() {
         Some(v) if v.is_null() => String::new(),
         _ => dom_string(args, 0, context)?,

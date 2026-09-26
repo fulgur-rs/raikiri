@@ -7,9 +7,11 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+cssparser      = { workspace = true }
 raikiri-traits = { workspace = true }
 raikiri-dom    = { workspace = true }
 raikiri-style  = { workspace = true }
+raikiri-svg    = { workspace = true }
 anyrender      = { workspace = true }
 peniko         = { workspace = true }
 kurbo          = { workspace = true }

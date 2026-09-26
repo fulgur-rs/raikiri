@@ -516,9 +516,9 @@ fn strip_xhtml_cdata_wrapper(text: &str) -> String {
 
 /// Return whether an element is a stylesheet-bearing `<style>` element.
 ///
-/// HTML/XHTML and SVG define stylesheet-bearing style elements. A same-named
-/// MathML element is not a CSS stylesheet source, so namespace must be part of
-/// this predicate rather than relying on the local tag name alone.
+/// Host document CSS accepts HTML/XHTML and SVG style elements. SVG style
+/// text also remains in its subtree so the SVG parser can apply paint-only
+/// properties to the serialized vector content.
 fn is_stylesheet_style_element(element: &impl raikiri_traits::Element) -> bool {
     element.tag_name() == "style"
         && matches!(
@@ -819,17 +819,31 @@ fn wire_side_tables(
     for (idx, name) in qual_names {
         // HTML default namespace は Node.namespace = None のまま (optimized path)。
         // それ以外の svg / mathml / xml / ... は URI string を SmolStr で格納。
-        if name.ns != ns!(html) {
-            doc.set_element_namespace(*idx, Some(SmolStr::new(AsRef::<str>::as_ref(&name.ns))));
+        let namespace =
+            (name.ns != ns!(html)).then(|| SmolStr::new(AsRef::<str>::as_ref(&name.ns)));
+        let prefix = name
+            .prefix
+            .as_ref()
+            .map(|prefix| SmolStr::new(AsRef::<str>::as_ref(prefix)));
+        if namespace.is_some() || prefix.is_some() {
+            doc.set_element_namespace_info(*idx, namespace, prefix);
         }
     }
     for (idx, attrs) in attributes {
         let mut inline_style: Option<SmolStr> = None;
         let mut native: Vec<(SmolStr, SmolStr)> = Vec::with_capacity(attrs.len());
+        let mut namespaced = Vec::new();
         for a in attrs {
-            // null namespace 以外の attr (xlink:href 等) は現状 drop。SVG /
-            // MathML full support は将来別途扱う。
             if a.name.ns != ns!() {
+                namespaced.push((
+                    SmolStr::new(AsRef::<str>::as_ref(&a.name.ns)),
+                    a.name
+                        .prefix
+                        .as_ref()
+                        .map(|prefix| SmolStr::new(AsRef::<str>::as_ref(prefix))),
+                    SmolStr::new(AsRef::<str>::as_ref(&a.name.local)),
+                    SmolStr::new(a.value.as_ref()),
+                ));
                 continue;
             }
             let local = AsRef::<str>::as_ref(&a.name.local);
@@ -853,6 +867,9 @@ fn wire_side_tables(
         }
         if !native.is_empty() {
             doc.set_element_attributes(*idx, native);
+        }
+        for (namespace, prefix, local, value) in namespaced {
+            let _ = doc.set_element_namespaced_attribute(*idx, namespace, prefix, local, value);
         }
     }
 }
