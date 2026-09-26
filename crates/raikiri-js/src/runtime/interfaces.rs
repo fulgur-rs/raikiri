@@ -73,8 +73,9 @@ fn illegal_constructor(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<
 /// configurable), built from `native`.
 ///
 /// Shared by [`function`] (interface members, a plain function pointer) and
-/// [`closure_function`] (bindings that capture state, such as a `classList`
-/// method closing over its element's arena index).
+/// [`closure_function`] (bindings that capture state, such as a
+/// `CSSStyleDeclaration` per-property getter/setter closing over the CSS
+/// property name it reads/writes).
 fn function_with_length(
     context: &mut Context,
     name: &str,
