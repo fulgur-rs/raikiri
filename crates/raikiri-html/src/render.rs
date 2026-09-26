@@ -16,11 +16,11 @@ use raikiri_dom::{
 use raikiri_style::FontFaceRegistry;
 use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue, DocumentPlan,
-    IntrinsicBox, PageBox, PageDefaults, PageEventObserver, PageFragmentPageGeometry, PlanConfig,
-    PolicyViolation, RenderError, RenderSink, RenderStatus, RenderStatus::Aborted,
+    IntrinsicBox, LayoutConfig, PageBox, PageDefaults, PageEventObserver, PageFragmentPageGeometry,
+    PlanConfig, PolicyViolation, RenderError, RenderSink, RenderStatus, RenderStatus::Aborted,
     RenderStatus::Completed, RenderSummary, RenderWarning, ReplacedResolver, ResolveDisposition,
-    ResolvedIntrinsic, ResolverError, ResolverRequest, ResourceKind, ResourcePolicy,
-    StreamingConfig, ViolationType, WarningKind,
+    ResolvedIntrinsic, ResolverError, ResolverRequest, ResourceKind, ResourcePolicy, ViolationType,
+    WarningKind,
 };
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -460,6 +460,7 @@ fn resolve_page_geometries(
     defaults: &PageDefaults,
     slices: &[PageSlice],
     consumer_properties: &[ConsumerPropertyRegistration],
+    media_context: &MediaContext,
 ) -> (
     Vec<PageFragmentPageGeometry>,
     Vec<raikiri_style::PageCascadeResult>,
@@ -470,7 +471,7 @@ fn resolve_page_geometries(
         let query = page_query_for_slice(slice);
         let cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
             &doc.uncascaded,
-            &MediaContext::default(),
+            media_context,
             &query,
             consumer_properties,
         );
@@ -491,6 +492,7 @@ fn preload_page_background_images(
     consumer_properties: &[ConsumerPropertyRegistration],
     resources: &RenderResources<'_>,
     warnings: &SharedRenderWarnings,
+    media_context: &MediaContext,
 ) {
     let mut seen = HashSet::new();
     let mut attempts = 0usize;
@@ -498,7 +500,7 @@ fn preload_page_background_images(
         let query = page_query_for_slice(slice);
         let cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
             &doc.uncascaded,
-            &MediaContext::default(),
+            media_context,
             &query,
             consumer_properties,
         );
@@ -573,7 +575,7 @@ pub fn plan(
 /// };
 /// use raikiri_traits::{
 ///     ConsumerPropertyEvent, ConsumerPropertyObserver, PageEventObserver, PageFragment,
-///     PageFragmentEvent, PageDefaults, RenderSink, RenderSummary, StreamingConfig,
+///     PageFragmentEvent, PageDefaults, RenderSink, RenderSummary, LayoutConfig,
 /// };
 ///
 /// #[derive(Default)]
@@ -624,7 +626,7 @@ pub fn plan(
 /// render_streaming(
 ///     &doc,
 ///     PageDefaults::default(),
-///     StreamingConfig::default(),
+///     LayoutConfig::default(),
 ///     options,
 ///     &mut sink,
 /// )
@@ -716,14 +718,14 @@ impl<'r, 'a> RenderOptions<'r, 'a> {
 /// layout, before every page, and before completion. Aborted renders return
 /// without calling [`RenderSink::finish_render`]. If the bounded page-geometry
 /// schedule does not converge, [`RenderError::PageGeometryDidNotConverge`]
-/// is returned before any page is emitted. Observer I/O failures are returned
-/// as [`RenderError::Sink`]; a page may already have been accepted and
+/// is returned before any page is emitted. Sink and observer I/O failures are returned
+/// as [`RenderError::Observer`]; a page may already have been accepted and
 /// `finish_render` is skipped. Successful renders call
 /// [`RenderSink::finish_render`] exactly once.
 pub fn render_streaming(
     doc: &HtmlDocument,
     defaults: PageDefaults,
-    config: StreamingConfig,
+    config: LayoutConfig,
     options: RenderOptions<'_, '_>,
     sink: &mut dyn RenderSink,
 ) -> Result<RenderStatus, RenderError> {
@@ -772,13 +774,15 @@ pub fn render_streaming(
             });
         }
         let page_index = page.page_index;
-        sink.accept_page(page).map_err(RenderError::Sink)?;
+        sink.accept_page(page).map_err(RenderError::Observer)?;
         if let (Some(observer), Some(events)) = (
             page_observer.as_deref_mut(),
             events_by_page.remove(&page_index),
         ) {
             for event in events {
-                observer.observe_event(event).map_err(RenderError::Sink)?;
+                observer
+                    .observe_event(event)
+                    .map_err(RenderError::Observer)?;
             }
         }
         emitted_pages = emitted_pages.saturating_add(1);
@@ -797,7 +801,7 @@ pub fn render_streaming(
         warnings: out.warnings,
     };
     sink.finish_render(summary.clone())
-        .map_err(RenderError::Sink)?;
+        .map_err(RenderError::Observer)?;
     Ok(Completed(summary))
 }
 
@@ -833,11 +837,12 @@ pub(crate) struct PipelineInputs<'r, 'a> {
 pub(crate) fn run_pipeline(
     doc: &HtmlDocument,
     defaults: PageDefaults,
-    config: &StreamingConfig,
+    config: &LayoutConfig,
     inputs: PipelineInputs<'_, '_>,
 ) -> Result<PipelineRun, RenderError> {
     let consumer_properties = inputs.consumer_properties;
     let property_observer = inputs.property_observer;
+    let media_context = &config.media_context;
     let default_resources;
     let resources = match inputs.resources {
         Some(resources) => resources,
@@ -887,7 +892,7 @@ pub(crate) fn run_pipeline(
     first_query.is_right = true;
     let mut first_cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
         &doc.uncascaded,
-        &MediaContext::default(),
+        media_context,
         &first_query,
         consumer_properties,
     );
@@ -898,7 +903,7 @@ pub(crate) fn run_pipeline(
         first_query.page_name = Some(Atom::from(name.as_str()));
         first_cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
             &doc.uncascaded,
-            &MediaContext::default(),
+            media_context,
             &first_query,
             consumer_properties,
         );
@@ -923,7 +928,7 @@ pub(crate) fn run_pipeline(
             first_query.page_name = page_name.map(Atom::from);
             let mut cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
                 &doc.uncascaded,
-                &MediaContext::default(),
+                media_context,
                 &first_query,
                 consumer_properties,
             );
@@ -970,7 +975,7 @@ pub(crate) fn run_pipeline(
     .map_err(RenderError::from)?;
     const MAX_PAGE_GEOMETRY_PASSES: u32 = 3;
     let mut page_geometries =
-        resolve_page_geometries(doc, &defaults, &slices, consumer_properties).0;
+        resolve_page_geometries(doc, &defaults, &slices, consumer_properties, media_context).0;
     let mut geometry_converged = true;
     for pass in 0..MAX_PAGE_GEOMETRY_PASSES {
         let Some(first_geometry) = page_geometries.first().copied() else {
@@ -1003,7 +1008,8 @@ pub(crate) fn run_pipeline(
         // A scheduled pass can change both page count and page selectors. Re-
         // resolve before the next iteration so the following schedule is
         // derived from the slices it will actually replace.
-        page_geometries = resolve_page_geometries(doc, &defaults, &slices, consumer_properties).0;
+        page_geometries =
+            resolve_page_geometries(doc, &defaults, &slices, consumer_properties, media_context).0;
         let refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
         if refreshed_schedule == schedule {
             break;
@@ -1026,7 +1032,7 @@ pub(crate) fn run_pipeline(
     // Resolve once more after the final bounded schedule pass so metadata and
     // page names always describe the slices that will actually be emitted.
     let (final_geometries, page_styles) =
-        resolve_page_geometries(doc, &defaults, &slices, consumer_properties);
+        resolve_page_geometries(doc, &defaults, &slices, consumer_properties, media_context);
     page_geometries = final_geometries;
 
     // Fetch CSS background sources only after the final page schedule is known.
@@ -1038,6 +1044,7 @@ pub(crate) fn run_pipeline(
             consumer_properties,
             resources,
             &runtime.warnings,
+            media_context,
         );
     }
 
@@ -1071,7 +1078,7 @@ pub(crate) fn run_pipeline(
         {
             property_observer
                 .observe_event(event)
-                .map_err(RenderError::Sink)?;
+                .map_err(RenderError::Observer)?;
         }
     }
 

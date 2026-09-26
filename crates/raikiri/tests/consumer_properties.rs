@@ -2,9 +2,9 @@
 
 use raikiri::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyRegistration,
-    ConsumerPropertyValue, PageBox, PageDefaults, PageFragment, RenderOptions, RenderResources,
-    RenderSink, RenderStatus, RenderSummary, ReplacedResolver, ResolverError, ResolverRequest,
-    StreamingConfig, parse_html, render_streaming,
+    ConsumerPropertyValue, LayoutConfig, PageBox, PageDefaults, PageFragment, RenderOptions,
+    RenderResources, RenderSink, RenderStatus, RenderSummary, ReplacedResolver, ResolverError,
+    ResolverRequest, parse_html, render_streaming,
 };
 
 struct NoopResolver;
@@ -94,7 +94,7 @@ fn resolved_consumer_properties_are_neutral_and_document_ordered() {
     let status = render_streaming(
         &doc,
         defaults(),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new()
             .resources(&resources)
             .consumer_properties(&registrations, &mut observer),
@@ -176,14 +176,14 @@ fn explicit_none_is_a_neutral_value_and_observer_errors_are_structured() {
     let error = render_streaming(
         &doc,
         defaults(),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new()
             .resources(&resources)
             .consumer_properties(&registrations, &mut observer),
         &mut sink,
     )
     .expect_err("observer failure must stop the render");
-    assert!(matches!(error, raikiri::RenderError::Sink(_)));
+    assert!(matches!(error, raikiri::RenderError::Observer(_)));
     assert!(sink.pages.is_empty());
     assert!(sink.summary.is_none());
 
@@ -193,7 +193,7 @@ fn explicit_none_is_a_neutral_value_and_observer_errors_are_structured() {
     render_streaming(
         &doc,
         defaults(),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new()
             .resources(&resources)
             .consumer_properties(&registrations, &mut observer),
@@ -235,7 +235,7 @@ fn registrations_use_var_resolution_media_and_explicit_inheritance() {
     render_streaming(
         &doc,
         defaults(),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new()
             .resources(&resources)
             .consumer_properties(&registrations, &mut observer),
@@ -291,7 +291,7 @@ fn content_text_ignores_non_rendered_subtrees() {
     render_streaming(
         &doc,
         defaults(),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new()
             .resources(&resources)
             .consumer_properties(&registrations, &mut observer),
@@ -334,7 +334,7 @@ fn consumer_property_edge_values_and_closure_observer() {
     render_streaming(
         &doc,
         defaults(),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new()
             .resources(&resources)
             .consumer_properties(&registrations, &mut observer),
@@ -374,7 +374,7 @@ fn empty_consumer_registration_keeps_rendering_compatible() {
     let status = render_streaming(
         &doc,
         defaults(),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new()
             .resources(&resources)
             .consumer_properties(&registrations, &mut observer),

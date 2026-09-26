@@ -52,12 +52,12 @@ pub use ua::MINIMAL_UA_CSS;
 pub use parley::FontContext;
 pub use raikiri_style::{
     CascadeResult, ComputedValues, ConsumerPropertyGrammar, ConsumerPropertyRegistration,
-    MediaContext, PageCascadeResult, PageContextQuery,
+    MediaContext, MediaType, PageCascadeResult, PageContextQuery,
 };
 
 pub use raikiri_traits::{
-    ConsumerPropertyEvent, ConsumerPropertyObserver, NodeId, NodeKind, PageDefaults, PaintInsets,
-    PaintRect, RenderError, RenderWarning, StreamingConfig,
+    ConsumerPropertyEvent, ConsumerPropertyObserver, LayoutConfig, LayoutConfigBuilder, NodeId,
+    NodeKind, PageDefaults, PaintInsets, PaintRect, RenderError, RenderWarning,
 };
 
 #[cfg(test)]

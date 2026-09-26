@@ -41,8 +41,8 @@ pub mod strategy;
 
 // 主要型 crate-root re-export (Consumer が `use raikiri_traits::*` で足りる shape)
 pub use config::{
-    BatchConfig, BatchConfigBuilder, LookaheadConfig, LookaheadConfigBuilder, PlanConfig,
-    PlanConfigBuilder, RenderLimits, RenderLimitsBuilder, StreamingConfig, StreamingConfigBuilder,
+    BatchConfig, BatchConfigBuilder, LayoutConfig, LayoutConfigBuilder, LookaheadConfig,
+    LookaheadConfigBuilder, PlanConfig, PlanConfigBuilder, RenderLimits, RenderLimitsBuilder,
 };
 pub use consumer::{ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue};
 pub use dom::{Dom, Element, Node, NodeId, NodeKind, QuirksMode, StylesheetKind, Symbol};

@@ -94,7 +94,7 @@ pub use raikiri_traits::{
     RenderLimits, RenderLimitsBuilder,
     LookaheadConfig, LookaheadConfigBuilder,
     PlanConfig, PlanConfigBuilder,
-    StreamingConfig, StreamingConfigBuilder,
+    LayoutConfig, LayoutConfigBuilder,
     BatchConfig, BatchConfigBuilder,
 
     // ── paged model ──

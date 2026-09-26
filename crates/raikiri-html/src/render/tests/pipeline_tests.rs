@@ -9,7 +9,7 @@ fn run(doc: &HtmlDocument) -> PipelineOutput {
     match run_pipeline(
         doc,
         PageDefaults::default(),
-        &StreamingConfig::default(),
+        &LayoutConfig::default(),
         PipelineInputs {
             resources: None,
             consumer_properties: &[],

@@ -20,8 +20,8 @@ fn external_consumer_can_reference_all_reexported_types() {
         PageFragment,
         PlanConfig,
         PlanConfigBuilder,
-        StreamingConfig,
-        StreamingConfigBuilder,
+        LayoutConfig,
+        LayoutConfigBuilder,
         BatchConfig,
         BatchConfigBuilder,
         LookaheadConfig,
@@ -81,7 +81,7 @@ fn external_consumer_can_call_parse_plan_render_streaming() {
     let stream_status = render_streaming(
         &doc,
         PageDefaults::default(),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new().resources(&resources),
         &mut sink,
     )
@@ -105,7 +105,7 @@ fn external_consumer_can_call_parse_plan_render_streaming() {
 fn external_consumer_can_construct_all_non_exhaustive_types() {
     // struct via Default — configs
     let _ = PlanConfig::default();
-    let _ = StreamingConfig::default();
+    let _ = LayoutConfig::default();
     let _ = BatchConfig::default();
     let _ = LookaheadConfig::default();
     let _ = RenderLimits::default();
@@ -135,7 +135,7 @@ fn external_consumer_can_construct_all_non_exhaustive_types() {
     // struct via builder
     let _ = PageDefaults::builder().build();
     let _ = PlanConfig::builder().build();
-    let _ = StreamingConfig::builder().build();
+    let _ = LayoutConfig::builder().build();
     let _ = BatchConfig::builder().build();
     let _ = LookaheadConfig::builder().build();
     let _ = RenderLimits::builder().build();
@@ -252,7 +252,7 @@ fn external_consumer_can_use_new_constructor_on_all_types() {
 
     // render entry point configs (raikiri-traits::config)
     let _ = PlanConfig::new();
-    let _ = StreamingConfig::new();
+    let _ = LayoutConfig::new();
     let _ = BatchConfig::new();
     let _ = LookaheadConfig::new();
     let _ = RenderLimits::new();
@@ -278,7 +278,7 @@ fn external_consumer_can_use_new_constructor_on_all_types() {
 ///
 /// `#[non_exhaustive]` 下でも pub field は crate 外から代入可能な状態を保つ
 /// 必要がある。この test は `LookaheadConfig`, `RenderLimits`, `PageDefaults`,
-/// `PageBox`, `PlanConfig`, `StreamingConfig`, `BatchConfig`, `Border` の各 pub
+/// `PageBox`, `PlanConfig`, `LayoutConfig`, `BatchConfig`, `Border` の各 pub
 /// field に対し `c.field = value` が compile することで、Consumer の runtime
 /// tuning 経路を check する。
 #[test]
@@ -330,7 +330,7 @@ fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
     plan_cfg.limits = limits.clone();
     plan_cfg.initial_registry = Some(TargetRegistry::new());
 
-    let mut stream_cfg = StreamingConfig::default();
+    let mut stream_cfg = LayoutConfig::default();
     stream_cfg.lookahead = lookahead.clone();
     stream_cfg.limits = limits.clone();
     stream_cfg.initial_registry = Some(TargetRegistry::new());
@@ -387,7 +387,7 @@ fn external_consumer_can_chain_builder_fluent_setters() {
     assert_eq!(limits.max_input_bytes, Some(16 * 1_024 * 1_024));
     assert_eq!(limits.max_parse_warnings, Some(256));
 
-    // Cross-struct integration: LookaheadConfig を PlanConfig / StreamingConfig /
+    // Cross-struct integration: LookaheadConfig を PlanConfig / LayoutConfig /
     // BatchConfig に差し込む fluent chain も pin。`initial_registry` は
     // `Option<TargetRegistry>` の inner type も check するため `Some(...)` 経路を
     // 使う (`None` だけでは inner の T が silently 変わっても検出できない)。
@@ -396,10 +396,10 @@ fn external_consumer_can_chain_builder_fluent_setters() {
         .limits(limits.clone())
         .initial_registry(Some(TargetRegistry::new()))
         .build();
-    // StreamingConfigBuilder は 4 setter (lookahead / limits /
+    // LayoutConfigBuilder は 4 setter (lookahead / limits /
     // initial_registry / signal) 全てを chain 対象に含める。
     let abort_controller = AbortController::new();
-    let _stream = StreamingConfig::builder()
+    let _stream = LayoutConfig::builder()
         .lookahead(lookahead.clone())
         .limits(limits.clone())
         .initial_registry(Some(TargetRegistry::new()))

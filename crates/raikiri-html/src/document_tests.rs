@@ -2,8 +2,8 @@
 
 use super::*;
 use raikiri_traits::{
-    AbortController, PageDefaults, ParseError, PlanConfig, RenderError, RenderLimits, RenderSink,
-    RenderStatus, ReplacedResolver, StreamingConfig,
+    AbortController, LayoutConfig, PageDefaults, ParseError, PlanConfig, RenderError, RenderLimits,
+    RenderSink, RenderStatus, ReplacedResolver,
 };
 
 #[cfg(test)]
@@ -347,7 +347,7 @@ mod stub_tests {
         let status = render_streaming(
             &doc,
             PageDefaults::default(),
-            StreamingConfig::default(),
+            LayoutConfig::default(),
             RenderOptions::new(),
             &mut sink,
         )
@@ -392,7 +392,7 @@ mod stub_tests {
         let doc = hello_world_doc();
         let controller = AbortController::new();
         controller.abort();
-        let config = StreamingConfig::builder()
+        let config = LayoutConfig::builder()
             .signal(Some(controller.signal.clone()))
             .build();
         let mut sink = RecordingSink::default();

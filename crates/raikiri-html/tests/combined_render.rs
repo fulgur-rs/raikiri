@@ -12,9 +12,9 @@ use raikiri_html::{
     render_streaming,
 };
 use raikiri_traits::{
-    ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue, PageDefaults,
-    PageEventObserver, PageFragment, PageFragmentEvent, PageFragmentKind, RenderSink, RenderStatus,
-    RenderSummary, ResourceKind, StreamingConfig, WarningKind,
+    ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue, LayoutConfig,
+    PageDefaults, PageEventObserver, PageFragment, PageFragmentEvent, PageFragmentKind, RenderSink,
+    RenderStatus, RenderSummary, ResourceKind, WarningKind,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -113,7 +113,7 @@ fn one_render_combines_links_consumer_properties_and_resource_warnings() {
     let status = render_streaming(
         &doc,
         defaults(200.0, 100.0),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new()
             .resources(&resources)
             .page_observer(&mut links)
@@ -181,7 +181,7 @@ fn first_ordered_grid_item_selects_initial_named_page_geometry() {
     let status = render_streaming(
         &doc,
         defaults(400.0, 400.0),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new().resources(&resources),
         &mut sink,
     )
@@ -226,7 +226,7 @@ fn explicit_grid_row_ends_select_initial_page_from_resolved_grid_placement() {
     let status = render_streaming(
         &doc,
         defaults(400.0, 400.0),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new().resources(&resources),
         &mut sink,
     )
@@ -265,7 +265,7 @@ fn explicit_grid_rows_resolve_first_page_before_sizing_and_wrapping() {
     let status = render_streaming(
         &doc,
         defaults(400.0, 400.0),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new().resources(&resources),
         &mut sink,
     )
@@ -311,7 +311,7 @@ fn multi_column_grid_order_selects_initial_named_page_geometry() {
     let status = render_streaming(
         &doc,
         defaults(400.0, 400.0),
-        StreamingConfig::default(),
+        LayoutConfig::default(),
         RenderOptions::new().resources(&resources),
         &mut sink,
     )

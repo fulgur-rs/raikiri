@@ -355,44 +355,47 @@ impl PlanConfigBuilder {
     }
 }
 
-/// `render_streaming()` 用 config (round 4 review #1 対応)。
+/// Configuration for document layout and page production.
 #[non_exhaustive]
 #[derive(Debug, Default, Clone)]
-pub struct StreamingConfig {
+pub struct LayoutConfig {
     /// lookahead 設定。
     pub lookahead: LookaheadConfig,
     /// resource / cost 上限。
     pub limits: RenderLimits,
-    /// `plan` の結果を hint として渡す (round 4 review #2)。
+    /// An optional registry hint for target resolution.
     pub initial_registry: Option<TargetRegistry>,
+    /// Media type and viewport used to evaluate layout-time media queries.
+    /// Defaults to print media.
+    pub media_context: raikiri_style::MediaContext,
     /// Optional cooperative cancellation signal checked before layout and
-    /// before each page emission. An aborted render never calls
-    /// `RenderSink::finish_render`.
+    /// during page production.
     pub signal: Option<crate::AbortSignal>,
 }
 
-impl StreamingConfig {
+impl LayoutConfig {
     /// Default 相当の shortcut。
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Fluent builder を返す。
-    pub fn builder() -> StreamingConfigBuilder {
-        StreamingConfigBuilder::default()
+    pub fn builder() -> LayoutConfigBuilder {
+        LayoutConfigBuilder::default()
     }
 }
 
-/// `StreamingConfig` の fluent builder。
+/// Fluent builder for [`LayoutConfig`].
 #[derive(Debug, Default, Clone)]
-pub struct StreamingConfigBuilder {
+pub struct LayoutConfigBuilder {
     lookahead: Option<LookaheadConfig>,
     limits: Option<RenderLimits>,
     initial_registry: Option<Option<TargetRegistry>>,
     signal: Option<Option<crate::AbortSignal>>,
+    media_context: Option<raikiri_style::MediaContext>,
 }
 
-impl StreamingConfigBuilder {
+impl LayoutConfigBuilder {
     /// `lookahead` を設定。
     pub fn lookahead(mut self, v: LookaheadConfig) -> Self {
         self.lookahead = Some(v);
@@ -411,6 +414,12 @@ impl StreamingConfigBuilder {
         self
     }
 
+    /// Set the media type and viewport for layout-time media queries.
+    pub fn media_context(mut self, v: raikiri_style::MediaContext) -> Self {
+        self.media_context = Some(v);
+        self
+    }
+
     /// Set a cooperative cancellation signal.
     pub fn signal(mut self, v: Option<crate::AbortSignal>) -> Self {
         self.signal = Some(v);
@@ -418,13 +427,14 @@ impl StreamingConfigBuilder {
     }
 
     /// Build。未設定 field は Default 値。
-    pub fn build(self) -> StreamingConfig {
-        let d = StreamingConfig::default();
-        StreamingConfig {
+    pub fn build(self) -> LayoutConfig {
+        let d = LayoutConfig::default();
+        LayoutConfig {
             lookahead: self.lookahead.unwrap_or(d.lookahead),
             limits: self.limits.unwrap_or(d.limits),
             initial_registry: self.initial_registry.unwrap_or(d.initial_registry),
             signal: self.signal.unwrap_or(d.signal),
+            media_context: self.media_context.unwrap_or(d.media_context),
         }
     }
 }
