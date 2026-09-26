@@ -363,3 +363,20 @@ fn invalid_data_url_is_reported_as_a_decode_error() {
             if message.contains("invalid data URL payload")
     ));
 }
+
+#[test]
+fn decoded_byte_len_reports_raster_bytes_and_svg_none() {
+    use raikiri_traits::ImagePixelSource;
+    let resolver = ImageResolver::new(StaticBytesProvider(TINY_PNG));
+    let url = url::Url::parse("file:///fixture.png").unwrap();
+    assert_eq!(resolver.decoded_byte_len(&url), None);
+    resolver.resolve(ResolverRequest::new(&url)).unwrap();
+    assert_eq!(resolver.decoded_byte_len(&url), Some(8));
+
+    let svg_resolver = ImageResolver::new(StaticSvgProvider(TWO_COLOR_SVG));
+    let svg_url = url::Url::parse("file:///fixture.svg").unwrap();
+    svg_resolver
+        .resolve(ResolverRequest::new(&svg_url))
+        .unwrap();
+    assert_eq!(svg_resolver.decoded_byte_len(&svg_url), None);
+}
