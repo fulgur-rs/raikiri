@@ -274,6 +274,34 @@ fn replace_child_adjusts_reference_when_node_is_childs_next_sibling() {
     assert_eq!(d.get_node(body).unwrap().children, vec![a, node, z]);
 }
 
+/// `replace_child` with a `DocumentFragment` `node` (DOM §4.2.3 "replace a
+/// child with node within parent", combined with [`Document::attach_child`]/
+/// [`Document::insert_child_before`]'s existing fragment-aware "splice, don't
+/// insert the fragment itself" semantics): the fragment's own children take
+/// `child`'s place in source order, and the fragment itself is left emptied
+/// rather than becoming a child of `parent`.
+#[test]
+fn replace_child_splices_a_document_fragments_children_in_place() {
+    let (mut d, _, _, body) = doc_with_html_body();
+    let a = d.create_detached_element("a").unwrap();
+    let child = d.create_detached_element("child").unwrap();
+    let z = d.create_detached_element("z").unwrap();
+    d.pre_insert(body, a, None).unwrap();
+    d.pre_insert(body, child, None).unwrap();
+    d.pre_insert(body, z, None).unwrap();
+
+    let fragment = d.create_detached_fragment();
+    let f1 = d.create_detached_element("f1").unwrap();
+    let f2 = d.create_detached_element("f2").unwrap();
+    d.attach_child(fragment, f1);
+    d.attach_child(fragment, f2);
+
+    d.replace_child(body, fragment, child).unwrap();
+
+    assert_eq!(d.get_node(body).unwrap().children, vec![a, f1, f2, z]);
+    assert!(d.get_node(fragment).unwrap().children.is_empty());
+}
+
 #[test]
 fn replace_child_replaces_the_documents_sole_element_child() {
     let mut d = Document::new();
