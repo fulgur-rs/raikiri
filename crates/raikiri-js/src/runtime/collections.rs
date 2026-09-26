@@ -23,7 +23,7 @@ use super::indexed::{IndexedSource, indexed_object, this_indexed};
 use super::interfaces::{HTML_NS, Members, protos, wrap};
 use super::query::{elements_by_tag_name, elements_with_class_tokens};
 use super::tree::element_children_of;
-use super::webidl::{dom_string, with_state};
+use super::webidl::{arg_unsigned_long, dom_string, with_state};
 
 /// What a collection enumerates. Every kind except [`Self::Static`] is
 /// re-evaluated against the current tree on each access.
@@ -37,7 +37,9 @@ pub(crate) enum CollectionSource {
     /// (`getElementsByTagName`).
     TagName(usize, String),
     /// Descendant elements of the root carrying every class token
-    /// (`getElementsByClassName`); the token list is never empty.
+    /// (`getElementsByClassName`). An empty token list (the argument was
+    /// empty or only ASCII whitespace) matches nothing, so the collection
+    /// is always empty.
     ClassNames(usize, Vec<String>),
     /// A fixed list of nodes, in the order given.
     Static(Vec<usize>),
@@ -56,10 +58,10 @@ impl CollectionSource {
             let doc = s.host.document();
             let live = match self {
                 Self::Static(nodes) => return f(doc, nodes),
-                Self::ChildNodes(node) => doc
-                    .get_node(*node)
-                    .map(|n| n.children.clone())
-                    .unwrap_or_default(),
+                Self::ChildNodes(node) => {
+                    let children = doc.get_node(*node).map_or(&[][..], |n| &n.children[..]);
+                    return f(doc, children);
+                }
                 Self::Children(node) => element_children_of(doc, *node),
                 Self::TagName(root, query) => elements_by_tag_name(doc, *root, query),
                 Self::ClassNames(root, tokens) => elements_with_class_tokens(doc, *root, tokens),
@@ -119,14 +121,6 @@ pub(crate) fn html_collection(
 ) -> JsResult<JsObject> {
     let prototype = protos(context).html_collection.clone();
     indexed_object(context, prototype, HtmlCollectionSource(source))
-}
-
-/// WebIDL `unsigned long` conversion of a required argument `i`.
-fn arg_unsigned_long(args: &[JsValue], i: usize, context: &mut Context) -> JsResult<usize> {
-    let value = args.get(i).ok_or_else(|| {
-        JsNativeError::typ().with_message("1 argument required, but only 0 present")
-    })?;
-    Ok(value.to_u32(context)? as usize)
 }
 
 fn node_list_length(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {

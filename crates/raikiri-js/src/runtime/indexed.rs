@@ -27,7 +27,25 @@
 //!
 //! Every other key is forwarded to the target with the original receiver,
 //! so expandos, symbols, and prototype members behave as on an ordinary
-//! object.
+//! object. `set` is forwarded as `Reflect.set(target, key, value, receiver)`
+//! for every key: with the proxy as receiver, an index write reaches this
+//! proxy's own `getOwnPropertyDescriptor` / `defineProperty` traps, so it
+//! fails exactly as `[[DefineOwnProperty]]` does.
+//!
+//! # Every trap is defined
+//!
+//! A proxy looks each trap up on its handler with an ordinary `[[Get]]`,
+//! which walks the handler's prototype chain, and the handler
+//! `JsProxyBuilder` creates inherits from `Object.prototype`. A trap left
+//! undefined could therefore be supplied by a script that adds, say,
+//! `Object.prototype.getPrototypeOf`, and that function would receive the
+//! native target. So every trap that can fire on a non-callable target is
+//! installed, the ones with nothing to add as plain forwards to the matching
+//! `Reflect` function captured by [`install`]. For the same reason the
+//! descriptor objects exchanged with `Reflect` (the one
+//! `getOwnPropertyDescriptor` returns, and the one `defineProperty` passes
+//! on) are null-prototype copies, so that converting them to a property
+//! descriptor cannot pick up a polluted `Object.prototype.get` / `set`.
 //!
 //! # Brand checks
 //!
@@ -75,6 +93,10 @@ struct IndexedIntrinsics {
     reflect_get_own_property_descriptor: JsObject,
     reflect_define_property: JsObject,
     reflect_delete_property: JsObject,
+    reflect_set: JsObject,
+    reflect_get_prototype_of: JsObject,
+    reflect_set_prototype_of: JsObject,
+    reflect_is_extensible: JsObject,
 }
 
 /// Capture the intrinsics [`indexed_object`] needs. Must run before any
@@ -91,6 +113,10 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     let reflect_get_own_property_descriptor = function(js_string!("getOwnPropertyDescriptor"))?;
     let reflect_define_property = function(js_string!("defineProperty"))?;
     let reflect_delete_property = function(js_string!("deleteProperty"))?;
+    let reflect_set = function(js_string!("set"))?;
+    let reflect_get_prototype_of = function(js_string!("getPrototypeOf"))?;
+    let reflect_set_prototype_of = function(js_string!("setPrototypeOf"))?;
+    let reflect_is_extensible = function(js_string!("isExtensible"))?;
     let targets = JsWeakMap::new(context);
     context.insert_data(IndexedIntrinsics {
         targets,
@@ -98,6 +124,10 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         reflect_get_own_property_descriptor,
         reflect_define_property,
         reflect_delete_property,
+        reflect_set,
+        reflect_get_prototype_of,
+        reflect_set_prototype_of,
+        reflect_is_extensible,
     });
     Ok(())
 }
@@ -141,6 +171,10 @@ pub(crate) fn indexed_object<S: IndexedSource>(
         .define_property(define_property_trap)
         .delete_property(delete_property_trap::<S>)
         .prevent_extensions(prevent_extensions_trap)
+        .set(set_trap)
+        .get_prototype_of(get_prototype_of_trap)
+        .set_prototype_of(set_prototype_of_trap)
+        .is_extensible(is_extensible_trap)
         .build(context)?
         .into();
     let targets = intrinsics(context)?.targets.clone();
@@ -198,6 +232,42 @@ fn call(function: &JsObject, args: &[JsValue], context: &mut Context) -> JsResul
     function.call(&JsValue::undefined(), args, context)
 }
 
+/// Call the captured `Reflect` function `pick` selects with the trap's own
+/// arguments.
+fn forward(
+    pick: fn(&IndexedIntrinsics) -> &JsObject,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let function = pick(intrinsics(context)?).clone();
+    call(&function, args, context)
+}
+
+/// A null-prototype copy of the descriptor object `value` (or `undefined`
+/// as is), so that reading it back as a descriptor sees only its own
+/// fields.
+fn detached_descriptor(value: JsValue, context: &mut Context) -> JsResult<JsValue> {
+    let Some(source) = value.as_object() else {
+        return Ok(value);
+    };
+    let descriptor = JsObject::with_null_proto();
+    for field in [
+        "value",
+        "writable",
+        "get",
+        "set",
+        "enumerable",
+        "configurable",
+    ] {
+        let field = JsString::from(field);
+        if source.has_own_property(field.clone(), context)? {
+            let value = source.get(field.clone(), context)?;
+            descriptor.create_data_property_or_throw(field, value, context)?;
+        }
+    }
+    Ok(descriptor.into())
+}
+
 /// `get` trap (`« target, key, receiver »`): a supported index reads the
 /// source; anything else is `Reflect.get(target, key, receiver)`.
 fn get_trap<S: IndexedSource>(
@@ -211,8 +281,7 @@ fn get_trap<S: IndexedSource>(
     {
         return Ok(value);
     }
-    let reflect_get = intrinsics(context)?.reflect_get.clone();
-    call(&reflect_get, args, context)
+    forward(|i| &i.reflect_get, args, context)
 }
 
 /// `has` trap (`« target, key »`).
@@ -264,17 +333,15 @@ fn get_own_property_descriptor_trap<S: IndexedSource>(
     if let Some(index) = array_index(args, context)?
         && let Some(value) = source.item(index, context)?
     {
-        let descriptor = JsObject::with_object_proto(context.intrinsics());
+        let descriptor = JsObject::with_null_proto();
         descriptor.create_data_property_or_throw(js_string!("value"), value, context)?;
         descriptor.create_data_property_or_throw(js_string!("writable"), false, context)?;
         descriptor.create_data_property_or_throw(js_string!("enumerable"), true, context)?;
         descriptor.create_data_property_or_throw(js_string!("configurable"), true, context)?;
         return Ok(descriptor.into());
     }
-    let reflect = intrinsics(context)?
-        .reflect_get_own_property_descriptor
-        .clone();
-    call(&reflect, args, context)
+    let own = forward(|i| &i.reflect_get_own_property_descriptor, args, context)?;
+    detached_descriptor(own, context)
 }
 
 /// `defineProperty` trap (`« target, key, descriptor »`): array indices are
@@ -283,8 +350,16 @@ fn define_property_trap(_: &JsValue, args: &[JsValue], context: &mut Context) ->
     if array_index(args, context)?.is_some() {
         return Ok(false.into());
     }
-    let reflect = intrinsics(context)?.reflect_define_property.clone();
-    call(&reflect, args, context)
+    // The engine builds the descriptor argument with `Object.prototype` as
+    // its prototype; detach it before `Reflect.defineProperty` reads it back.
+    let target = args.first().cloned().unwrap_or_default();
+    let key = args.get(1).cloned().unwrap_or_default();
+    let descriptor = detached_descriptor(args.get(2).cloned().unwrap_or_default(), context)?;
+    forward(
+        |i| &i.reflect_define_property,
+        &[target, key, descriptor],
+        context,
+    )
 }
 
 /// `deleteProperty` trap (`« target, key »`): a supported index cannot be
@@ -300,8 +375,36 @@ fn delete_property_trap<S: IndexedSource>(
     {
         return Ok(false.into());
     }
-    let reflect = intrinsics(context)?.reflect_delete_property.clone();
-    call(&reflect, args, context)
+    forward(|i| &i.reflect_delete_property, args, context)
+}
+
+/// `set` trap (`« target, key, value, receiver »`), forwarded for every key
+/// (see the module docs for how index writes fail).
+fn set_trap(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    forward(|i| &i.reflect_set, args, context)
+}
+
+/// `getPrototypeOf` trap (`« target »`).
+fn get_prototype_of_trap(
+    _: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    forward(|i| &i.reflect_get_prototype_of, args, context)
+}
+
+/// `setPrototypeOf` trap (`« target, prototype »`).
+fn set_prototype_of_trap(
+    _: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    forward(|i| &i.reflect_set_prototype_of, args, context)
+}
+
+/// `isExtensible` trap (`« target »`).
+fn is_extensible_trap(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    forward(|i| &i.reflect_is_extensible, args, context)
 }
 
 /// `preventExtensions` trap: always refuses (see the module docs).

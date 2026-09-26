@@ -258,3 +258,43 @@ fn child_nodes_of_every_node_kind() {
          && document.children.length === 1 && document.children[0] === document.documentElement",
     );
 }
+
+/// Traps a proxy handler does not define are looked up on the handler's
+/// prototype chain; none may be picked up from a polluted
+/// `Object.prototype`, which would hand script the native target.
+#[test]
+fn traps_ignore_a_polluted_object_prototype() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var b = document.body; b.append(document.createElement('a')); var c = b.childNodes; \
+         var seen = []; \
+         ['set', 'get', 'has', 'getPrototypeOf', 'setPrototypeOf', 'isExtensible', 'ownKeys', \
+          'defineProperty', 'deleteProperty', 'getOwnPropertyDescriptor', 'preventExtensions'] \
+           .forEach(function (n) { \
+             Object.defineProperty(Object.prototype, n, { __proto__: null, configurable: true, writable: true, \
+               value: function (t) { seen.push(n); return Reflect[n].apply(null, arguments); } }); \
+           }); \
+         try { \
+           c.x = 1; Object.getPrototypeOf(c); Object.isExtensible(c); \
+           Object.setPrototypeOf(c, NodeList.prototype); Object.getOwnPropertyDescriptor(c, 0); \
+           Object.getOwnPropertyDescriptor(c, 'x'); var keys = Object.keys(c); var threw = false; \
+         } catch (e) { var threw = String(e); } \
+         ['set', 'get', 'has', 'getPrototypeOf', 'setPrototypeOf', 'isExtensible', 'ownKeys', \
+          'defineProperty', 'deleteProperty', 'getOwnPropertyDescriptor', 'preventExtensions'] \
+           .forEach(function (n) { delete Object.prototype[n]; });",
+    )
+    .unwrap();
+    ok(&mut rt, "threw === false && seen.length === 0");
+    ok(&mut rt, "keys.join() === '0,x' && c.x === 1");
+}
+
+#[test]
+fn prototype_can_be_read_and_replaced_through_the_proxy() {
+    let mut rt = rt();
+    rt.evaluate("var c = document.body.childNodes; var p = {}; Object.setPrototypeOf(c, p);")
+        .unwrap();
+    ok(
+        &mut rt,
+        "Object.getPrototypeOf(c) === p && !(c instanceof NodeList) && Object.isExtensible(c)",
+    );
+}

@@ -10,10 +10,10 @@
 //! - <https://dom.spec.whatwg.org/#interface-processinginstruction>
 //! - <https://dom.spec.whatwg.org/#converting-nodes-into-a-node>
 
-use super::collections::{CollectionSource, html_collection, node_list};
 use boa_engine::{Context, JsError, JsResult, JsValue};
 use raikiri_dom::{DomMutationError, NodeKind};
 
+use super::collections::{CollectionSource, html_collection, node_list};
 use super::interfaces::{Members, wrap, wrap_optional};
 use super::node::{js_str, mark_dirty};
 use super::webidl::{

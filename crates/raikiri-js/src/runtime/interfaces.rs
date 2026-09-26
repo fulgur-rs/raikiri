@@ -295,9 +295,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &html_collection_members,
     );
     let html_collection = html_collection_result?;
-    let (node_list_proto, html_collection_proto) =
-        (&node_list.prototype, &html_collection.prototype);
-    collections::install_iteration(context, node_list_proto, html_collection_proto)?;
+    collections::install_iteration(context, &node_list.prototype, &html_collection.prototype)?;
     indexed::install(context)?;
     context.insert_data(Protos {
         event_target: event_target.prototype,

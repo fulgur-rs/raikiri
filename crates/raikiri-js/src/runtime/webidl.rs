@@ -17,6 +17,19 @@ pub(crate) fn dom_string(args: &[JsValue], i: usize, context: &mut Context) -> J
         .to_std_string_escaped())
 }
 
+/// WebIDL `unsigned long` conversion (ToUint32, no `[EnforceRange]`) of
+/// required argument `i`; a missing argument is a `TypeError`.
+pub(crate) fn arg_unsigned_long(
+    args: &[JsValue],
+    i: usize,
+    context: &mut Context,
+) -> JsResult<usize> {
+    let value = args
+        .get(i)
+        .ok_or_else(|| type_error("a required argument is missing"))?;
+    Ok(value.to_u32(context)? as usize)
+}
+
 /// The arena index behind a node wrapper, if `value` is one. Not an error
 /// by itself -- callers that accept a mix of `Node` and non-`Node`
 /// arguments (DOM §4.2.6 "convert nodes into a node") use this to tell them
