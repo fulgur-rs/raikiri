@@ -79,7 +79,8 @@ impl<'r, 'a> LayoutOptions<'r, 'a> {
 /// Lay out `doc` into pages and keep the result for drawing.
 ///
 /// The input document is borrowed and cloned internally, so it stays usable
-/// after an error or abort.
+/// after an error or abort. Only print media is supported; a screen media
+/// context returns [`RenderError::Configuration`] before layout begins.
 ///
 /// ```
 /// use raikiri_html::{
@@ -106,6 +107,11 @@ pub fn layout(
     config: LayoutConfig,
     options: LayoutOptions<'_, '_>,
 ) -> Result<LayoutStatus, RenderError> {
+    if config.media_context.media_type() != crate::MediaType::Print {
+        return Err(RenderError::Configuration(
+            "Document layout requires print media".to_owned(),
+        ));
+    }
     let LayoutOptions {
         resources,
         consumer_properties,

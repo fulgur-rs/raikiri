@@ -460,6 +460,7 @@ fn resolve_page_geometries(
     defaults: &PageDefaults,
     slices: &[PageSlice],
     consumer_properties: &[ConsumerPropertyRegistration],
+    media_context: &MediaContext,
 ) -> (
     Vec<PageFragmentPageGeometry>,
     Vec<raikiri_style::PageCascadeResult>,
@@ -470,7 +471,7 @@ fn resolve_page_geometries(
         let query = page_query_for_slice(slice);
         let cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
             &doc.uncascaded,
-            &MediaContext::default(),
+            media_context,
             &query,
             consumer_properties,
         );
@@ -491,6 +492,7 @@ fn preload_page_background_images(
     consumer_properties: &[ConsumerPropertyRegistration],
     resources: &RenderResources<'_>,
     warnings: &SharedRenderWarnings,
+    media_context: &MediaContext,
 ) {
     let mut seen = HashSet::new();
     let mut attempts = 0usize;
@@ -498,7 +500,7 @@ fn preload_page_background_images(
         let query = page_query_for_slice(slice);
         let cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
             &doc.uncascaded,
-            &MediaContext::default(),
+            media_context,
             &query,
             consumer_properties,
         );
@@ -838,6 +840,7 @@ pub(crate) fn run_pipeline(
 ) -> Result<PipelineRun, RenderError> {
     let consumer_properties = inputs.consumer_properties;
     let property_observer = inputs.property_observer;
+    let media_context = &config.media_context;
     let default_resources;
     let resources = match inputs.resources {
         Some(resources) => resources,
@@ -887,7 +890,7 @@ pub(crate) fn run_pipeline(
     first_query.is_right = true;
     let mut first_cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
         &doc.uncascaded,
-        &MediaContext::default(),
+        media_context,
         &first_query,
         consumer_properties,
     );
@@ -898,7 +901,7 @@ pub(crate) fn run_pipeline(
         first_query.page_name = Some(Atom::from(name.as_str()));
         first_cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
             &doc.uncascaded,
-            &MediaContext::default(),
+            media_context,
             &first_query,
             consumer_properties,
         );
@@ -923,7 +926,7 @@ pub(crate) fn run_pipeline(
             first_query.page_name = page_name.map(Atom::from);
             let mut cascade = build_cascaded_with_media_context_for_page_and_consumer_properties(
                 &doc.uncascaded,
-                &MediaContext::default(),
+                media_context,
                 &first_query,
                 consumer_properties,
             );
@@ -970,7 +973,7 @@ pub(crate) fn run_pipeline(
     .map_err(RenderError::from)?;
     const MAX_PAGE_GEOMETRY_PASSES: u32 = 3;
     let mut page_geometries =
-        resolve_page_geometries(doc, &defaults, &slices, consumer_properties).0;
+        resolve_page_geometries(doc, &defaults, &slices, consumer_properties, media_context).0;
     let mut geometry_converged = true;
     for pass in 0..MAX_PAGE_GEOMETRY_PASSES {
         let Some(first_geometry) = page_geometries.first().copied() else {
@@ -1003,7 +1006,8 @@ pub(crate) fn run_pipeline(
         // A scheduled pass can change both page count and page selectors. Re-
         // resolve before the next iteration so the following schedule is
         // derived from the slices it will actually replace.
-        page_geometries = resolve_page_geometries(doc, &defaults, &slices, consumer_properties).0;
+        page_geometries =
+            resolve_page_geometries(doc, &defaults, &slices, consumer_properties, media_context).0;
         let refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
         if refreshed_schedule == schedule {
             break;
@@ -1026,7 +1030,7 @@ pub(crate) fn run_pipeline(
     // Resolve once more after the final bounded schedule pass so metadata and
     // page names always describe the slices that will actually be emitted.
     let (final_geometries, page_styles) =
-        resolve_page_geometries(doc, &defaults, &slices, consumer_properties);
+        resolve_page_geometries(doc, &defaults, &slices, consumer_properties, media_context);
     page_geometries = final_geometries;
 
     // Fetch CSS background sources only after the final page schedule is known.
@@ -1038,6 +1042,7 @@ pub(crate) fn run_pipeline(
             consumer_properties,
             resources,
             &runtime.warnings,
+            media_context,
         );
     }
 
