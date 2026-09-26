@@ -269,22 +269,38 @@ fn token_list_supports(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<
         .into())
 }
 
+/// `value`'s getter and the stringifier (DOM §7.1: both run "get an
+/// attribute value") share this: the raw `class` attribute text, verbatim --
+/// not a reserialization of the parsed, whitespace-collapsed, deduplicated
+/// [`token_set`] that `length`/`item`/iteration expose.
+fn raw_class_attribute(context: &mut Context, index: usize) -> JsResult<String> {
+    Ok(attribute(context, index, CLASS_ATTR)?.unwrap_or_default())
+}
+
 fn token_list_value(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_source(this, context)?.0;
-    Ok(js_str(&token_set(context, index)?.join(" ")))
+    Ok(js_str(&raw_class_attribute(context, index)?))
 }
 
 /// `value`'s setter (DOM §7.1): unlike `add`/`remove`/etc., this sets the
 /// attribute to the given string directly, bypassing the update steps'
 /// "don't create an attribute for an empty set" rule -- setting `value = ''`
-/// still creates an empty `class` attribute if none existed.
+/// still creates an empty `class` attribute if none existed. `value` is
+/// `[LegacyNullToEmptyString]`: an explicit `null` stores `""` directly
+/// rather than running the ordinary `ToString` conversion (which would
+/// otherwise stringify it to the literal `"null"`); anything else --
+/// including a missing argument or an explicit `undefined` -- still runs
+/// `ToString` as usual.
 fn set_token_list_value(
     this: &JsValue,
     args: &[JsValue],
     context: &mut Context,
 ) -> JsResult<JsValue> {
     let index = this_source(this, context)?.0;
-    let value = dom_string(args, 0, context)?;
+    let value = match args.first() {
+        Some(v) if v.is_null() => String::new(),
+        _ => dom_string(args, 0, context)?,
+    };
     write_attribute(context, index, CLASS_ATTR, &value)?;
     Ok(JsValue::undefined())
 }

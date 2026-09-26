@@ -190,6 +190,48 @@ fn to_string_matches_the_value_getter() {
     ok(&mut rt, "e.classList.toString() === 'a b'");
 }
 
+/// DOM §7.1's `value` getter and stringifier both run "get an attribute
+/// value" -- the raw `class` attribute text, not a reserialization of the
+/// parsed (whitespace-collapsed, deduplicated) token set `length`/`item`/
+/// iteration expose. `setAttribute` here bypasses `classList`'s own writes
+/// entirely, so the attribute keeps its irregular spacing and duplicate
+/// token unchanged.
+#[test]
+fn value_getter_and_stringifier_return_the_raw_attribute_text() {
+    let mut rt = rt();
+    rt.evaluate("var e = document.createElement('e'); e.setAttribute('class', ' a  a b ');")
+        .unwrap();
+    ok(
+        &mut rt,
+        "e.classList.value === ' a  a b ' && e.classList.toString() === ' a  a b ' \
+         && e.classList.length === 2",
+    );
+}
+
+/// `value`'s setter is `[LegacyNullToEmptyString]` (DOM §7.1): an explicit
+/// `null` stores the empty string rather than the stringified `\"null\"`.
+#[test]
+fn value_setter_treats_null_as_the_empty_string() {
+    let mut rt = rt();
+    rt.evaluate("var e = document.createElement('e'); e.classList.value = null;")
+        .unwrap();
+    ok(
+        &mut rt,
+        "e.hasAttribute('class') && e.getAttribute('class') === ''",
+    );
+}
+
+/// Unlike `null`, an explicit `undefined` is not special-cased by
+/// `[LegacyNullToEmptyString]` -- it runs the ordinary `DOMString`
+/// conversion, storing the literal string `\"undefined\"`.
+#[test]
+fn value_setter_stringifies_an_explicit_undefined_normally() {
+    let mut rt = rt();
+    rt.evaluate("var e = document.createElement('e'); e.classList.value = undefined;")
+        .unwrap();
+    ok(&mut rt, "e.getAttribute('class') === 'undefined'");
+}
+
 #[test]
 fn add_and_remove_validate_before_mutating_anything() {
     let mut rt = rt();
