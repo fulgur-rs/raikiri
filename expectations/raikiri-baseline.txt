@@ -1570,3 +1570,6 @@ css/css-page/fixedpos-006-print.html
 css/css-page/fixedpos-007-print.html
 css/css-page/fixedpos-008-print.html
 css/css-page/fixedpos-009-print.html
+# --- css/printing fragmented-inline-block exact 800x600 PASS-only (+2) ---
+css/printing/fragmented-inline-block-001-print.html
+css/printing/fragmented-inline-block-002-print.html
