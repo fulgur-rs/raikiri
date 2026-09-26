@@ -7,9 +7,11 @@ commands and Rust tests. Removing `target/` (for example with `cargo clean`)
 removes only the link; `fetch.sh` and the gate recreate it from the home cache.
 
 `subset.txt` defines the shared sparse roots: all of `acid/`, `css/`, `fonts/`,
-`images/`, and the top-level `resources/` (anchored as `/resources` so it
+`images/`, the top-level `resources/` (anchored as `/resources` so it
 pulls in only the WPT-root `resources/` directory, not the many per-test
-`resources/` helper directories nested throughout the tree). The top-level
+`resources/` helper directories nested throughout the tree), upstream
+`tools/`, the root `wpt` CLI, and `/docs/commands.json`, which that CLI reads
+while loading its command registry. The top-level
 `resources/` directory carries the real `testharness.js`,
 `testharnessreport.js`, `check-layout-th.js`, and `testdriver*.js`, so
 JS-driven WPT pages can load their scripts from files instead of needing a
@@ -44,6 +46,34 @@ to create a duplicate cache while the old physical checkout is still present.
 
 Idempotent: re-running updates to the current pinned SHA. Override the remote
 URL with `WPT_REMOTE_URL=...` (mirrors / CI cache warmup).
+
+## Running upstream reftests directly
+
+The Raikiri product plugin lets upstream `wpt run` own test discovery,
+wptserve, reference traversal, comparison, timeout, and result reporting.
+Mise pins uv and exposes the task entry point. The wrapper fetches the pinned
+checkout, builds the screenshot process, asks uv to prepare
+`target/wpt-venv`, installs WPT's runner requirements and the local product
+plugin, and starts the upstream runner with WPT's own environment setup
+disabled:
+
+```sh
+mise run wpt:reftest -- css/css-color/background-color-rgb-001.html
+mise run wpt:print-reftest -- css/css-page/page-box-001-print.html
+```
+
+The print runner renders every paginated result to contiguous
+`page-0001.png`, `page-0002.png`, ... files, then returns the ordered page set
+to upstream wptrunner for page-count and per-page comparison. The temporary
+PNGs are removed after each comparison.
+
+The virtualenv is disposable build output under `target/`. uv selects the
+pinned Python 3.14.7 interpreter and downloads it when the host does not
+already provide that version. Updating the Python version requires changing
+`PYTHON_VERSION` in `run-raikiri.sh`.
+
+This prototype supports static HTTP screen and print reftests. It does not yet
+support HTTPS, `reftest-wait`, or testharness tests.
 
 ## Updating the pin
 

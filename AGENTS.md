@@ -218,6 +218,15 @@ RUSTDOCFLAGS="-D warnings --cfg test" cargo doc --no-deps --document-private-ite
   見合わないという判断。private / pub(crate) item の doc link を検証したい場合は、
   上の「わざと壊して確かめる」節の 2 本の補助 command を個別に走らせること。
 
+## loopback を使う Rust test は sandbox 外で実行する
+
+`raikiri-net` の `http-ureq` suite と `raikiri-wpt` の browser test は loopback
+listener を bind する。network 制限付き sandbox 内では `PermissionDenied` になり、
+実装とは無関係な false failure になるため、この2つの `cargo test` は最初から sandbox
+外で実行すること。Codex向けの command-specific な許可は
+`.codex/rules/cargo-test.rules` に定義している。testをskipしたり
+`PermissionDenied`を成功扱いにしたりしない。
+
 ## 使い捨て worktree は `.worktrees/` 配下に作る (`/tmp` に作らない)
 
 一時的な目的 (baseline 比較、使い捨て実験など) で切る throwaway/scratch な

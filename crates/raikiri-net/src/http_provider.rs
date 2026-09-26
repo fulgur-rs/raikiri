@@ -1,9 +1,8 @@
-//! Real HTTP(S) `NetworkProvider`, backed by `ureq` and hardened against
-//! SSRF: every address `ureq` would connect to is resolved through this
-//! crate's internal `SsrfSafeResolver`, which filters candidates through
-//! [`crate::ssrf_guard`] before a connection is ever attempted, and
-//! [`UreqHttpProvider::new`] disables proxy pickup so a proxy environment
-//! variable cannot silently reroute connections around that filtering.
+//! Real HTTP(S) `NetworkProvider` implementations backed by `ureq`.
+//!
+//! [`UreqHttpProvider`] is hardened against SSRF and is the default for
+//! untrusted URLs. [`SystemHttpProvider`] deliberately permits system and
+//! private-network destinations for trusted browser-style clients.
 
 use std::io::{self, Read as _};
 use std::time::Duration;
@@ -16,6 +15,7 @@ use ureq::ResponseExt as _;
 use ureq::unversioned::transport::Connector as _;
 use url::Url;
 
+use crate::host_resolver::{HostResolverOverrides, OverrideResolver};
 use crate::http_resolver::{SsrfBlocked, SsrfSafeResolver};
 
 /// Time limit for one hop: [`UreqHttpProvider::fetch_one_hop`], from DNS
@@ -75,6 +75,52 @@ const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
 /// trusting that snapshot, closing this gap without patching `ureq` itself.
 pub struct UreqHttpProvider {
     agent: ureq::Agent,
+}
+
+/// HTTP(S) provider for trusted browser-style clients that need normal system
+/// networking, including loopback and private addresses.
+///
+/// This provider has no SSRF filtering. Use [`UreqHttpProvider`] when a URL is
+/// supplied by an untrusted caller.
+#[derive(Clone)]
+pub struct SystemHttpProvider {
+    agent: ureq::Agent,
+}
+
+impl Default for SystemHttpProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SystemHttpProvider {
+    /// Builds a direct, timeout-bounded provider using system name resolution.
+    pub fn new() -> Self {
+        let connector = ()
+            .chain(crate::deadline_transport::DeadlineTcpConnector::default())
+            .chain(ureq::unversioned::transport::RustlsConnector::default());
+        Self {
+            agent: ureq::Agent::with_parts(
+                agent_config(),
+                connector,
+                ureq::unversioned::resolver::DefaultResolver::default(),
+            ),
+        }
+    }
+
+    /// Builds a provider with explicit hostname overrides and system fallback.
+    pub fn with_host_overrides(overrides: HostResolverOverrides) -> Self {
+        let connector = ()
+            .chain(crate::deadline_transport::DeadlineTcpConnector::default())
+            .chain(ureq::unversioned::transport::RustlsConnector::default());
+        Self {
+            agent: ureq::Agent::with_parts(
+                agent_config(),
+                connector,
+                OverrideResolver::new(overrides),
+            ),
+        }
+    }
 }
 
 impl Default for UreqHttpProvider {
@@ -227,108 +273,122 @@ fn is_followable_redirect(status: u16) -> bool {
     matches!(status, 301 | 302 | 303 | 307 | 308)
 }
 
-impl NetworkProvider for UreqHttpProvider {
-    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
-        // Only checked up front: a signal aborted after this point does not
-        // interrupt a fetch already in progress.
-        if request.signal.as_ref().is_some_and(|s| s.is_aborted()) {
-            return Err(NetworkError::Aborted);
+fn fetch_one_hop(
+    agent: &ureq::Agent,
+    provider_name: &str,
+    request: Request,
+) -> Result<FetchOutcome, NetworkError> {
+    // Only checked up front: a signal aborted after this point does not
+    // interrupt a fetch already in progress.
+    if request.signal.as_ref().is_some_and(|s| s.is_aborted()) {
+        return Err(NetworkError::Aborted);
+    }
+    if !matches!(request.url.scheme(), "http" | "https") {
+        return Err(NetworkError::Other(format!(
+            "{provider_name} only supports http/https URLs, got: {}",
+            request.url
+        )));
+    }
+
+    let kind = request.kind;
+    let url_str = request.url.as_str();
+
+    // `max_redirects(0)`: this method fetches exactly one hop and
+    // reports a 3xx back to the caller instead of following it, so a
+    // policy-enforcing caller can check the redirect target before any
+    // request is ever sent to it.
+    let result = match request.method {
+        RaikiriMethod::Get => {
+            let mut builder = agent.get(url_str).config().max_redirects(0).build();
+            for (name, value) in &request.headers {
+                builder = builder.header(name.as_str(), value.as_str());
+            }
+            builder.call()
         }
-        if !matches!(request.url.scheme(), "http" | "https") {
+        RaikiriMethod::Post => {
+            let bytes = match &request.body {
+                Body::Bytes(bytes) => bytes.to_vec(),
+                Body::Empty => Vec::new(),
+                Body::Form(_) => {
+                    return Err(NetworkError::Other(format!(
+                        "{provider_name} does not yet support Body::Form"
+                    )));
+                }
+                // cov:ignore: `raikiri_traits::Body` is
+                // `#[non_exhaustive]`; this crate cannot construct a
+                // fourth variant to exercise this arm from a test, only
+                // `Bytes`/`Form`/`Empty` exist today.
+                _ => {
+                    return Err(NetworkError::Other(format!(
+                        "{provider_name} does not support this Body variant"
+                    )));
+                }
+            };
+            let mut builder = agent.post(url_str).config().max_redirects(0).build();
+            for (name, value) in &request.headers {
+                builder = builder.header(name.as_str(), value.as_str());
+            }
+            if let Some(content_type) = request.content_type.as_deref() {
+                builder = builder.header("Content-Type", content_type);
+            }
+            builder.send(&bytes[..])
+        }
+        // cov:ignore: `raikiri_traits::Method` is `#[non_exhaustive]`;
+        // this crate cannot construct a third variant to exercise this
+        // arm from a test, only `Get`/`Post` exist today.
+        _ => {
             return Err(NetworkError::Other(format!(
-                "UreqHttpProvider only supports http/https URLs, got: {}",
-                request.url
+                "{provider_name} only supports GET and POST"
             )));
         }
+    };
 
-        let kind = request.kind;
-        let url_str = request.url.as_str();
+    let mut response = result.map_err(|e| map_ureq_error(&request.url, kind, e))?;
 
-        // `max_redirects(0)`: this method fetches exactly one hop and
-        // reports a 3xx back to the caller instead of following it, so a
-        // policy-enforcing caller can check the redirect target before any
-        // request is ever sent to it.
-        let result = match request.method {
-            RaikiriMethod::Get => {
-                let mut builder = self.agent.get(url_str).config().max_redirects(0).build();
-                for (name, value) in &request.headers {
-                    builder = builder.header(name.as_str(), value.as_str());
-                }
-                builder.call()
-            }
-            RaikiriMethod::Post => {
-                let bytes = match &request.body {
-                    Body::Bytes(bytes) => bytes.to_vec(),
-                    Body::Empty => Vec::new(),
-                    Body::Form(_) => {
-                        return Err(NetworkError::Other(
-                            "UreqHttpProvider does not yet support Body::Form".into(),
-                        ));
-                    }
-                    // cov:ignore: `raikiri_traits::Body` is
-                    // `#[non_exhaustive]`; this crate cannot construct a
-                    // fourth variant to exercise this arm from a test, only
-                    // `Bytes`/`Form`/`Empty` exist today.
-                    _ => {
-                        return Err(NetworkError::Other(
-                            "UreqHttpProvider does not support this Body variant".into(),
-                        ));
-                    }
-                };
-                let mut builder = self.agent.post(url_str).config().max_redirects(0).build();
-                for (name, value) in &request.headers {
-                    builder = builder.header(name.as_str(), value.as_str());
-                }
-                if let Some(content_type) = request.content_type.as_deref() {
-                    builder = builder.header("Content-Type", content_type);
-                }
-                builder.send(&bytes[..])
-            }
-            // cov:ignore: `raikiri_traits::Method` is `#[non_exhaustive]`;
-            // this crate cannot construct a third variant to exercise this
-            // arm from a test, only `Get`/`Post` exist today.
-            _ => {
-                return Err(NetworkError::Other(
-                    "UreqHttpProvider only supports GET and POST".into(),
-                ));
-            }
-        };
-
-        let mut response = result.map_err(|e| map_ureq_error(&request.url, kind, e))?;
-
-        let status = response.status().as_u16();
-        if is_followable_redirect(status) {
-            let location = response
-                .headers()
-                .get(ureq::http::header::LOCATION)
-                .and_then(|v| v.to_str().ok())
-                .ok_or_else(|| {
-                    NetworkError::Other(format!(
-                        "redirect response ({status}) had no usable Location header"
-                    ))
-                })?;
-            let resolved = request.url.join(location).map_err(|e| {
-                NetworkError::Other(format!("invalid redirect Location {location:?}: {e}"))
+    let status = response.status().as_u16();
+    if is_followable_redirect(status) {
+        let location = response
+            .headers()
+            .get(ureq::http::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| {
+                NetworkError::Other(format!(
+                    "redirect response ({status}) had no usable Location header"
+                ))
             })?;
-            return Ok(FetchOutcome::Redirect {
-                location: resolved,
-                status,
-            });
-        }
+        let resolved = request.url.join(location).map_err(|e| {
+            NetworkError::Other(format!("invalid redirect Location {location:?}: {e}"))
+        })?;
+        return Ok(FetchOutcome::Redirect {
+            location: resolved,
+            status,
+        });
+    }
 
-        let final_url = Url::parse(&response.get_uri().to_string())
-            .map_err(|e| NetworkError::Other(format!("invalid final URL: {e}")))?;
-        let content_type = response.body().mime_type().map(str::to_owned);
-        let encoding = response.body().charset().map(str::to_owned);
-        let bytes = read_body_capped(response.body_mut(), MAX_RESPONSE_BYTES)
-            .map_err(|e| map_ureq_error(&final_url, kind, e))?;
+    let final_url = Url::parse(&response.get_uri().to_string())
+        .map_err(|e| NetworkError::Other(format!("invalid final URL: {e}")))?;
+    let content_type = response.body().mime_type().map(str::to_owned);
+    let encoding = response.body().charset().map(str::to_owned);
+    let bytes = read_body_capped(response.body_mut(), MAX_RESPONSE_BYTES)
+        .map_err(|e| map_ureq_error(&final_url, kind, e))?;
 
-        Ok(FetchOutcome::Body(FetchedResource {
-            bytes: bytes.into(),
-            content_type,
-            final_url,
-            encoding,
-        }))
+    Ok(FetchOutcome::Body(FetchedResource {
+        bytes: bytes.into(),
+        content_type,
+        final_url,
+        encoding,
+    }))
+}
+
+impl NetworkProvider for UreqHttpProvider {
+    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+        fetch_one_hop(&self.agent, "UreqHttpProvider", request)
+    }
+}
+
+impl NetworkProvider for SystemHttpProvider {
+    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+        fetch_one_hop(&self.agent, "SystemHttpProvider", request)
     }
 }
 
