@@ -382,3 +382,77 @@ fn dom_and_computed_reject_large_node_ids() {
         assert!(!result.is_rendered(bad));
     }
 }
+
+// Losing the abort check after consumer delivery would return a partial result.
+#[test]
+fn layout_aborts_when_property_observer_aborts() {
+    let doc = dom("<h1 style='bookmark-level:1'>x</h1>");
+    let registrations = [crate::ConsumerPropertyRegistration::integer(
+        "bookmark-level",
+    )];
+    let controller = AbortController::new();
+    let mut count = 0;
+    let mut observer = |_: ConsumerPropertyEvent| {
+        count += 1;
+        controller.abort();
+        Ok::<_, std::io::Error>(())
+    };
+    let status = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::builder()
+            .signal(Some(controller.signal.clone()))
+            .build(),
+        LayoutOptions::new().consumer_properties(&registrations, &mut observer),
+    )
+    .unwrap();
+    assert!(matches!(status, LayoutStatus::Aborted));
+    assert_eq!(count, 1);
+    assert!(matches!(
+        layout(
+            &doc,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new()
+        )
+        .unwrap(),
+        LayoutStatus::Completed(_)
+    ));
+}
+
+// A second origin offset would move placements and clickable areas off the page.
+#[test]
+fn layout_page_origin_is_applied_once_to_fragments_and_links() {
+    let doc = dom(
+        "<style>body{margin:0} @page{size:100px 100px;margin:20px;padding:5px} div{width:10px;height:10px}</style><div><a href=' /go '>x</a></div>",
+    );
+    let result = completed(
+        layout(
+            &doc,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    let page = result.page(0).unwrap();
+    let rect = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("div"))
+        .unwrap()
+        .rect();
+    assert_eq!(rect, raikiri_traits::PaintRect::new(25.0, 25.0, 10.0, 10.0));
+    assert_eq!(
+        page.geometry().content_box,
+        raikiri_traits::PaintRect::new(25.0, 25.0, 60.0, 50.0)
+    );
+    let text = page
+        .fragments()
+        .find(|f| f.kind() == FragmentKind::Text)
+        .unwrap()
+        .rect();
+    let links: Vec<_> = page.links().collect();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target, "/go");
+    assert_eq!(links[0].quads, &[text]);
+}

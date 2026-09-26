@@ -22,12 +22,13 @@
 
 #![allow(rustdoc::private_intra_doc_links)]
 pub use raikiri_html::{
-    DEFAULT_MAX_AGGREGATE_RESOURCE_BYTES, DEFAULT_MAX_RESOURCE_BYTES, HtmlDocument, RenderOptions,
-    RenderResources, ResourceLimits, build_cascaded, build_cascaded_for_page,
-    build_cascaded_with_consumer_properties, build_cascaded_with_media_context,
-    build_cascaded_with_media_context_for_page,
+    Anchor, AnchorIndex, DEFAULT_MAX_AGGREGATE_RESOURCE_BYTES, DEFAULT_MAX_RESOURCE_BYTES,
+    DocumentLayout, DomView, Fragment, FragmentKind, HtmlDocument, LayoutOptions, LayoutStatus,
+    Link, Page, PageGeometry, PageMode, RenderOptions, RenderResources, RepeatKind, ResourceLimits,
+    build_cascaded, build_cascaded_for_page, build_cascaded_with_consumer_properties,
+    build_cascaded_with_media_context, build_cascaded_with_media_context_for_page,
     build_cascaded_with_media_context_for_page_and_consumer_properties, build_rule_tree,
-    build_rule_tree_with_consumer_properties, parse_html, parse_html_with_limits,
+    build_rule_tree_with_consumer_properties, layout, parse_html, parse_html_with_limits,
     parse_html_with_resources, plan, render_streaming,
 };
 
@@ -47,7 +48,7 @@ pub use html_to_png::{html_to_png, html_to_png_with_fonts, html_to_png_with_reso
 // PageScene と Document 間で node identity を統一する。
 mod page_scene;
 pub use page_scene::{
-    Fragment, Orientation, PageMetadata, PageScene, Pt, build_page_scene,
+    Fragment as PageSceneFragment, Orientation, PageMetadata, PageScene, Pt, build_page_scene,
     build_page_scene_for_page, build_page_scene_for_page_named,
 };
 

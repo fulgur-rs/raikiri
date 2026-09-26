@@ -52,3 +52,18 @@ fn pipeline_page_styles_follow_the_page_context() {
         ":first must change the first page's page cascade"
     );
 }
+
+#[test]
+fn converged_schedule_keeps_page_content_origins() {
+    let doc = parse(
+        "<style>@page{size:100px 100px;margin:0} @page :left{size:100px 240px;margin:0} @page wide{size:100px 180px;margin:0}</style><div style='height:200px'>first</div><div style='page:wide;break-before:page;height:10px'>wide</div><div style='height:300px'>tail</div>",
+    );
+    let out = run(&doc);
+    assert_eq!(
+        out.pages
+            .iter()
+            .map(|p| p.content_origin_y)
+            .collect::<Vec<_>>(),
+        vec![0.0, 100.0, 280.0, 380.0]
+    );
+}
