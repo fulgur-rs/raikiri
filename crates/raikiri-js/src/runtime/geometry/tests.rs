@@ -391,3 +391,24 @@ fn metric_getters_reject_non_elements() {
            try { set.call({}, 1); return false; } catch (e) { return e instanceof TypeError; } })",
     );
 }
+
+#[test]
+fn inline_boxes_report_zero_client_metrics() {
+    let (mut host, _, _, body) = StubHost::page();
+    let span = element(&mut host, body, "span", "span");
+    let d = StubHost::dom_rect;
+    let mut g = StubHost::boxed(
+        d(0.0, 0.0, 30.0, 20.0),
+        d(2.0, 2.0, 26.0, 16.0),
+        PositionKind::Static,
+    );
+    g.is_inline = true;
+    host.geometry.insert(span, g);
+    let mut rt = runtime_over(host);
+    ok(
+        &mut rt,
+        "var s = document.getElementById('span'); \
+         s.clientTop === 0 && s.clientLeft === 0 && s.clientWidth === 0 && s.clientHeight === 0 \
+         && s.offsetWidth === 30 && s.offsetHeight === 20 && s.scrollWidth === 26",
+    );
+}

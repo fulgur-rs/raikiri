@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use raikiri_js::runtime::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
+use raikiri_style::property::DisplayValue;
 
 use crate::reftest::{
     LiveWptSetup, live_wpt_stylesheet_sources_in_subtree, parse_wpt_inner_html_fragment,
@@ -148,6 +149,7 @@ impl DocumentHost for WptDocumentHost {
             scroll_width,
             scroll_height,
             position: computed.map_or(PositionKind::Static, |c| position_kind(&c.position)),
+            is_inline: computed.is_some_and(|c| c.display == DisplayValue::Inline),
         }))
     }
 
@@ -223,31 +225,44 @@ fn border_box_of(scene: &raikiri::PageScene, node: usize) -> Option<DomRect> {
 
 /// The scrolling area size of `node` (CSSOM View §6 "scrolling area"),
 /// approximated as the union of its padding box with the border boxes of
-/// every descendant that has a fragment, measured from the padding box
-/// origin. It is never smaller than the padding box. Descendants extending
-/// above or left of the padding box do not add to it (they are not
-/// reachable by scrolling), and the end-side padding is not added after
-/// in-flow content.
+/// every descendant that has a fragment, extended by the box's own
+/// end-side padding after that content (CSS Overflow 3 §3.3 "Scrollable
+/// Overflow"; this layout only produces in-flow descendants), measured from
+/// the padding box origin. It is never smaller than the padding box.
+/// Descendants extending above or left of the padding box do not add to it
+/// (they are not reachable by scrolling).
+///
+/// The page scene only has fragments for nodes that intersect the page, so
+/// descendants laid out entirely off the page are not counted.
+///
+/// The end-side padding is the used value from the node's layout (so a
+/// percentage is already resolved against its containing block).
 fn scroll_extent(
     scene: &raikiri::PageScene,
     document: &raikiri_dom::Document,
     node: usize,
     padding_box: &DomRect,
 ) -> (f64, f64) {
-    let (mut right, mut bottom) = (padding_box.right, padding_box.bottom);
-    let mut pending: Vec<usize> = document
+    let (mut content_right, mut content_bottom) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    let (mut pending, padding) = document
         .get_node(node)
-        .map(|n| n.children.to_vec())
+        .map(|n| (n.children.to_vec(), n.unrounded_layout.padding))
         .unwrap_or_default();
     while let Some(index) = pending.pop() {
         if let Some(descendant) = border_box_of(scene, index) {
-            right = right.max(descendant.right);
-            bottom = bottom.max(descendant.bottom);
+            content_right = content_right.max(descendant.right);
+            content_bottom = content_bottom.max(descendant.bottom);
         }
         if let Some(n) = document.get_node(index) {
             pending.extend(n.children.iter().copied());
         }
     }
+    let right = padding_box
+        .right
+        .max(content_right + f64::from(padding.right));
+    let bottom = padding_box
+        .bottom
+        .max(content_bottom + f64::from(padding.bottom));
     (right - padding_box.left, bottom - padding_box.top)
 }
 

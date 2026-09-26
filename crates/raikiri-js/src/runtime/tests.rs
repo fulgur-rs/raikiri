@@ -458,6 +458,7 @@ fn stub_host_reports_configured_values() {
             scroll_width: 10.0,
             scroll_height: 5.0,
             position: super::PositionKind::Static,
+            is_inline: false,
         }))
     );
     assert_eq!(host.box_geometry(0), Ok(None));

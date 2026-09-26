@@ -47,14 +47,17 @@ pub struct BoxGeometry {
     pub border_box: DomRect,
     /// The padding box (border box minus border widths).
     pub padding_box: DomRect,
-    /// Scrollable overflow extent measured from the padding box origin
-    /// (at least the padding box size).
+    /// Scrollable overflow width measured from the padding box origin
+    /// (at least the padding box width).
     pub scroll_width: f64,
-    /// Scrollable overflow extent measured from the padding box origin
-    /// (at least the padding box size).
+    /// Scrollable overflow height measured from the padding box origin
+    /// (at least the padding box height).
     pub scroll_height: f64,
     /// Computed `position`.
     pub position: PositionKind,
+    /// Whether the box is a non-atomic inline box (`display: inline`),
+    /// whose `client*` metrics are zero (CSSOM View §6).
+    pub is_inline: bool,
 }
 
 /// A failure inside the embedder (layout, stylesheet loading, fragment

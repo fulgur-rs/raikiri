@@ -281,16 +281,19 @@ fn box_geometry_returns_none_for_an_element_with_no_box() {
 ///   block sits at 5, not 8). The measured values are pinned so a layout
 ///   change there is noticed.
 /// - `i` (100 x 200) fits horizontally inside `o`'s 110px padding box, so
-///   `scrollWidth` is the padding box width; vertically it ends
-///   7 + 200 = 207 below `o`'s top content edge, i.e. 5 + 207 = 212 below
-///   the top padding edge. Browsers also add `o`'s bottom padding after
-///   in-flow content (217); the scroll extent this host reports is the
-///   union of descendant border boxes only.
+///   `scrollWidth` is the padding box width. Vertically, `i`'s border box
+///   ends 5 + 7 + 200 = 212 below `o`'s top padding edge, and scrollable
+///   overflow also includes the box's own end-side padding after that
+///   content (CSS Overflow 3 §3.3 "Scrollable Overflow"), so
+///   `scrollHeight` is 212 + 5 = 217.
+/// - `s` is a non-atomic inline box, so its `client*` metrics are all 0
+///   (CSSOM View §6) while its border box still has a size.
 #[test]
 fn cssom_view_metrics_follow_the_css_box_model() {
     let (_dir, mut rt) = runtime(
         "<div id=o style='position:relative; margin:10px; border:3px solid; padding:5px; \
-         width:100px; height:50px'><div id=i style='margin-top:7px; height:200px'></div></div>",
+         width:100px; height:50px'><div id=i style='margin-top:7px; height:200px'></div></div>\
+         <div><span id=s style='border:2px solid; padding:1px'>x</span></div>",
     );
     rt.evaluate("var o = document.getElementById('o'), i = document.getElementById('i');")
         .unwrap();
@@ -306,15 +309,22 @@ fn cssom_view_metrics_follow_the_css_box_model() {
         ("o.clientWidth", 110.0),
         ("o.clientHeight", 60.0),
         ("o.scrollWidth", 110.0),
-        ("o.scrollHeight", 212.0),
+        ("o.scrollHeight", 217.0),
+        ("document.getElementById('s').clientTop", 0.0),
+        ("document.getElementById('s').clientLeft", 0.0),
+        ("document.getElementById('s').clientWidth", 0.0),
+        ("document.getElementById('s').clientHeight", 0.0),
         ("i.scrollHeight", 200.0),
     ] {
         assert_eq!(num(&mut rt, src), expected, "{src}");
     }
     assert_eq!(
-        rt.evaluate("i.offsetParent === o && o.offsetParent === document.body")
-            .unwrap()
-            .as_boolean(),
+        rt.evaluate(
+            "i.offsetParent === o && o.offsetParent === document.body \
+             && document.getElementById('s').offsetWidth > 0"
+        )
+        .unwrap()
+        .as_boolean(),
         Some(true)
     );
 }

@@ -71,8 +71,9 @@ impl StubHost {
         }
     }
 
-    /// Geometry with explicit border and padding boxes and `position`; the
-    /// scroll extent is the padding box size (no overflow).
+    /// Geometry of a non-inline box with explicit border and padding boxes
+    /// and `position`; the scroll extent is the padding box size (no
+    /// overflow). Tests adjust the returned fields for anything else.
     pub fn boxed(border: DomRect, padding: DomRect, position: PositionKind) -> BoxGeometry {
         BoxGeometry {
             border_box: border,
@@ -80,6 +81,7 @@ impl StubHost {
             scroll_width: padding.width,
             scroll_height: padding.height,
             position,
+            is_inline: false,
         }
     }
 }

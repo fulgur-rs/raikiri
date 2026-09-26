@@ -341,11 +341,15 @@ fn offset_parent(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResu
 ///
 /// Zero for the body element or an element without a box; the border edge
 /// relative to the initial containing block when there is no offsetParent;
-/// otherwise the border edge minus the offsetParent's padding edge. When
-/// the offsetParent is the body element, the border edge is returned
+/// otherwise the border edge minus the offsetParent's padding edge.
+///
+/// When the offsetParent is the body element, the border edge is returned
 /// as-is (relative to the initial containing block) instead of being made
-/// relative to the body's padding edge: that is what engines report, and
-/// what content measuring against a `static` body expects.
+/// relative to the body's padding edge. That is what engines report: a
+/// static child of a body with the UA stylesheet's 8px margin reads
+/// `offsetTop === 8`, which is what layout-checking test fixtures written
+/// against those engines expect. A positioned body is not distinguished;
+/// it gets the same treatment.
 fn offset_coordinate(
     this: &JsValue,
     context: &mut Context,
@@ -361,6 +365,10 @@ fn offset_coordinate(
     }
     let origin = match offset_parent_of(context, index)? {
         Some(parent) if Some(parent) != body => {
+            // Every positioned offsetParent has a box (its position came
+            // from it), but a `td`/`th`/`table` offsetParent is chosen by
+            // name alone; a boxless one falls back to the origin
+            // defensively.
             let parent_geometry = box_geometry(context, parent)?;
             parent_geometry.map_or(0.0, |g| edge(&g.padding_box))
         }
@@ -397,24 +405,36 @@ fn offset_height(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResu
     box_metric(this, context, |g| g.border_box.height)
 }
 
+/// A `client*` metric (CSSOM View §6): `0` when the element has no box or
+/// its box is a non-atomic inline box.
+fn client_metric(
+    this: &JsValue,
+    context: &mut Context,
+    metric: fn(&BoxGeometry) -> f64,
+) -> JsResult<JsValue> {
+    let index = this_element(this, context)?;
+    let geometry = box_geometry(context, index)?.filter(|g| !g.is_inline);
+    Ok(long(geometry.map_or(0.0, |g| metric(&g))))
+}
+
 /// `clientTop`/`clientLeft` (CSSOM View §6): the top/left border width,
 /// the distance between the border and padding edges (no scrollbars are
 /// rendered).
 fn client_top(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    box_metric(this, context, |g| g.padding_box.top - g.border_box.top)
+    client_metric(this, context, |g| g.padding_box.top - g.border_box.top)
 }
 
 fn client_left(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    box_metric(this, context, |g| g.padding_box.left - g.border_box.left)
+    client_metric(this, context, |g| g.padding_box.left - g.border_box.left)
 }
 
 /// `clientWidth`/`clientHeight` (CSSOM View §6): the padding box size.
 fn client_width(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    box_metric(this, context, |g| g.padding_box.width)
+    client_metric(this, context, |g| g.padding_box.width)
 }
 
 fn client_height(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    box_metric(this, context, |g| g.padding_box.height)
+    client_metric(this, context, |g| g.padding_box.height)
 }
 
 /// `scrollWidth`/`scrollHeight` (CSSOM View §6): the scrolling area size.
