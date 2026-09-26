@@ -2,10 +2,12 @@
 
 mod dom_view;
 mod fragment;
+mod navigation;
 mod page;
 
 pub use dom_view::DomView;
 pub use fragment::{Fragment, FragmentKind, RepeatKind};
+pub use navigation::{Anchor, AnchorIndex, Link};
 pub use page::{Page, PageGeometry, PageMode};
 
 use crate::render::{PipelineInputs, PipelineOutput, PipelineRun, run_pipeline};
@@ -109,12 +111,23 @@ pub fn layout(
     if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
         return Ok(LayoutStatus::Aborted);
     }
-    Ok(LayoutStatus::Completed(DocumentLayout { out }))
+    let links = navigation::build_links(&out.pages, &out.link_events);
+    let rendered = navigation::build_rendered(&out.pages);
+    let anchors = navigation::build_anchors(DomView::new(&out.document), &out.pages);
+    Ok(LayoutStatus::Completed(DocumentLayout {
+        out,
+        links,
+        anchors,
+        rendered,
+    }))
 }
 
 /// An owned, laid-out document.
 pub struct DocumentLayout {
     out: PipelineOutput,
+    links: Vec<navigation::PageLinks>,
+    anchors: AnchorIndex,
+    rendered: std::collections::HashSet<raikiri_traits::NodeId>,
 }
 
 impl DocumentLayout {
@@ -137,10 +150,23 @@ impl DocumentLayout {
     fn page_at(&self, i: usize) -> Page<'_> {
         Page {
             fragment: &self.out.pages[i],
+            links: &self.links[i],
             style: &self.out.page_styles[i],
             document: &self.out.document,
             cascade: &self.out.cascade,
         }
+    }
+
+    /// In-document link destinations. Positions are in layout space until
+    /// paint-space positions are exposed.
+    pub fn anchors(&self) -> &AnchorIndex {
+        &self.anchors
+    }
+
+    /// Whether `node` has at least one fragment on some page. `false` for an
+    /// out-of-range node.
+    pub fn is_rendered(&self, node: raikiri_traits::NodeId) -> bool {
+        self.rendered.contains(&node)
     }
 
     /// Parse-time and layout-time warnings.

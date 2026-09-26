@@ -28,6 +28,7 @@ pub struct PageGeometry {
 /// One laid-out page, borrowed from a [`super::DocumentLayout`].
 #[derive(Clone, Copy)]
 pub struct Page<'a> {
+    pub(super) links: &'a super::navigation::PageLinks,
     pub(super) fragment: &'a PageFragment,
     pub(super) style: &'a PageCascadeResult,
     pub(super) document: &'a raikiri_dom::Document,
@@ -89,5 +90,17 @@ impl<'a> Page<'a> {
     /// The `@page` cascade for this page's context.
     pub fn page_style(&self) -> &'a PageCascadeResult {
         self.style
+    }
+    /// Links on this page. Quads are in layout space until paint-space
+    /// positions are exposed.
+    pub fn links(&self) -> impl Iterator<Item = super::Link<'a>> + 'a {
+        self.links
+            .entries
+            .iter()
+            .map(|(owner, target, quads)| super::Link {
+                owner: *owner,
+                target: target.as_str(),
+                quads: quads.as_slice(),
+            })
     }
 }

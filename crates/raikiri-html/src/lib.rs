@@ -30,8 +30,8 @@ pub use cascade::{
 };
 pub use document::HtmlDocument;
 pub use document_layout::{
-    DocumentLayout, DomView, Fragment, FragmentKind, LayoutOptions, LayoutStatus, Page,
-    PageGeometry, PageMode, RepeatKind, layout,
+    Anchor, AnchorIndex, DocumentLayout, DomView, Fragment, FragmentKind, LayoutOptions,
+    LayoutStatus, Link, Page, PageGeometry, PageMode, RepeatKind, layout,
 };
 pub use document_parse::{parse_html, parse_html_with_limits};
 pub use parse::{effective_document_base_url, parse, parse_fragment, parse_with_sink};

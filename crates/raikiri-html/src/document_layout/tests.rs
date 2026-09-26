@@ -294,3 +294,72 @@ fn layout_keeps_the_input_document_usable() {
     );
     assert_eq!(first.page_count(), second.page_count());
 }
+
+const NAV: &str = "<style>@page { size: 300px 200px; margin: 20px } p { margin: 0; height: 120px }</style>\
+    <p id='first'>one <a href=' #second '>jump</a> <a href='#x'>a</a><a href='#x'>b</a></p>\
+    <p id='second' style='break-before: page'>two</p><a name='named'>n</a><p id='first'>dup</p>\
+    <div style='display:none' id='hidden'>h</div><a href='   '>empty</a>";
+
+fn laid_out(html: &str) -> DocumentLayout {
+    completed(
+        layout(
+            &dom(html),
+            PageDefaults::default(),
+            StreamingConfig::default(),
+            LayoutOptions::new(),
+        )
+        .expect("layout"),
+    )
+}
+
+#[test]
+fn anchors_index_ids_and_a_names_first_in_document_order() {
+    let layout = laid_out(NAV);
+    let anchors = layout.anchors();
+    let first = anchors.get("first").expect("first");
+    assert_eq!(first.page_index, 0);
+    let second = anchors.get("second").expect("second");
+    assert!(
+        second.page_index >= 1,
+        "second paragraph is on a later page"
+    );
+    assert!(anchors.get("named").is_some());
+    assert!(
+        anchors.get("hidden").is_none(),
+        "display:none has no fragment"
+    );
+}
+
+#[test]
+fn links_group_quads_by_owner_and_target_and_trim_href() {
+    let layout = laid_out(NAV);
+    let page0 = layout.page(0).expect("page 0");
+    let links: Vec<_> = page0.links().collect();
+    let jump = links
+        .iter()
+        .find(|l| l.target == "#second")
+        .expect("trimmed href");
+    assert!(!jump.quads.is_empty());
+    let xs: Vec<_> = links.iter().filter(|l| l.target == "#x").collect();
+    assert_eq!(
+        xs.len(),
+        2,
+        "two <a> owners with the same target stay separate"
+    );
+    assert!(
+        links.iter().all(|l| !l.target.is_empty()),
+        "blank href makes no link"
+    );
+}
+
+#[test]
+fn is_rendered_reflects_fragments_and_is_total() {
+    let layout = laid_out(NAV);
+    let page = layout.page(0).expect("page 0");
+    let p = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("p"))
+        .expect("p");
+    assert!(layout.is_rendered(p.node()));
+    assert!(!layout.is_rendered(NodeId(1_000_000)));
+}
