@@ -119,7 +119,8 @@ pub use specified::SpecifiedValues;
 
 pub mod cascade;
 pub use cascade::{
-    CascadeResult, cascade, cascade_with_media_context, cascade_with_media_context_for_page,
+    CascadeResult, SelectorQuery, cascade, cascade_with_media_context,
+    cascade_with_media_context_for_page,
 };
 
 #[cfg(test)]

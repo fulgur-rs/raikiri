@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+raikiri-dom   = { workspace = true }
 raikiri-style = { workspace = true }
 cssparser     = { workspace = true }
 # default-features = false drops boa_engine's `temporal`/`intl` machinery

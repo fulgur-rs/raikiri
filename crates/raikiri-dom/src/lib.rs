@@ -73,7 +73,7 @@ pub use layout::{
 };
 pub use node::{ElementData, Node, NodeData, NodeFlags, TextData};
 pub use raikiri_traits::{
-    PageFragment, PageFragmentEvent, PageFragmentGeometry, PageFragmentGeometryTable,
+    NodeKind, PageFragment, PageFragmentEvent, PageFragmentGeometry, PageFragmentGeometryTable,
     PageFragmentInsets, PageFragmentItem, PageFragmentKind, PageFragmentLineRange,
     PageFragmentLink, PageFragmentLinkEvent, PageFragmentOrientation, PageFragmentPageGeometry,
     PageFragmentRect,

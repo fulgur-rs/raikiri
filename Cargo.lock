@@ -2382,6 +2382,7 @@ dependencies = [
  "boa_engine",
  "boa_gc",
  "cssparser",
+ "raikiri-dom",
  "raikiri-style",
 ]
 
@@ -2468,7 +2469,6 @@ dependencies = [
  "blitz-html",
  "blitz-paint",
  "blitz-traits",
- "cssparser",
  "insta",
  "parley",
  "png",

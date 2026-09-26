@@ -11,3 +11,4 @@ pub mod parsing_invalid;
 pub mod reftest;
 pub mod runner;
 pub mod text_css_i18n;
+pub(crate) mod wpt_host;

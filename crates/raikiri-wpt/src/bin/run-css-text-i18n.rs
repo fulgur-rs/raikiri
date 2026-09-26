@@ -3,11 +3,11 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use raikiri_wpt::text_css_i18n::run_css_text_i18n;
+use raikiri_wpt::text_css_i18n::{TestHarnessRunError, run_css_text_i18n};
 
 fn main() -> ExitCode {
-    let wpt_root = match parse_args() {
-        Ok(root) => root,
+    let Options { wpt_root } = match parse_args() {
+        Ok(options) => options,
         Err(ParseArgsError::Help) => {
             println!("{}", usage());
             return ExitCode::SUCCESS;
@@ -20,10 +20,7 @@ fn main() -> ExitCode {
 
     let results = match run_css_text_i18n(&wpt_root) {
         Ok(results) => results,
-        Err(error) => {
-            eprintln!("WPT testharness run failed: {error}");
-            return ExitCode::from(2);
-        }
+        Err(error) => return run_failed(&error),
     };
 
     let mut passed_files = 0usize;
@@ -64,12 +61,21 @@ fn main() -> ExitCode {
     }
 }
 
+fn run_failed(error: &TestHarnessRunError) -> ExitCode {
+    eprintln!("WPT testharness run failed: {error}");
+    ExitCode::from(2)
+}
+
+struct Options {
+    wpt_root: PathBuf,
+}
+
 enum ParseArgsError {
     Help,
     Invalid(String),
 }
 
-fn parse_args() -> Result<PathBuf, ParseArgsError> {
+fn parse_args() -> Result<Options, ParseArgsError> {
     let mut args = std::env::args().skip(1);
     let mut wpt_root = PathBuf::from("target/wpt");
     while let Some(argument) = args.next() {
@@ -88,7 +94,7 @@ fn parse_args() -> Result<PathBuf, ParseArgsError> {
             }
         }
     }
-    Ok(wpt_root)
+    Ok(Options { wpt_root })
 }
 
 fn usage() -> &'static str {

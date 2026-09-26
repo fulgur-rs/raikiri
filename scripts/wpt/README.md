@@ -85,11 +85,12 @@ This route is intentionally limited to the CSS Text i18n testharness APIs. The
 158 reftest-only files in the directory remain on the visual reftest path; this
 command does not run arbitrary WPT JavaScript or implement unsupported DOM APIs.
 
-General scripts can use `raikiri_js::run_script` or keep a shared global scope
-with `raikiri_js::JsRuntime`. DOM access goes through `raikiri_js::dom::DomBackend`.
-The current runner uses a measured-layout snapshot adapter. A live DOM adapter
-can replace it behind the same JavaScript facade, without changing the WPT
-scripts or the CSS parsing runner.
+General scripts can use `raikiri_js::runtime::DomRuntime`, which binds native
+DOM interfaces (`Document`, `Element`, `HTMLElement`, ...) directly to a
+`raikiri_dom::Document` through the embedder-supplied
+`raikiri_js::runtime::DocumentHost` trait. The current runner's host
+(`WptDocumentHost`) rebuilds style and layout lazily after DOM mutations, over
+one live Raikiri document.
 
 ## Surveying WPT reftests
 
