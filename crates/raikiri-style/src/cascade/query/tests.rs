@@ -106,3 +106,68 @@ fn scope_pseudo_class_falls_back_to_root_semantics_with_no_bound_scope() {
     assert!(query.matches_scoped(&dom, div, &[], None));
     assert!(!query.matches_scoped(&dom, p, &[div], None));
 }
+
+/// `:scope` inside `:not(...)` (CSS Selectors L4 §14.3.3, §4.9): the bound
+/// scope element is threaded straight through `:not()`'s inner selector
+/// list, the same as every other selector combinator threads it through.
+#[test]
+fn scope_pseudo_class_inside_negation() {
+    let (dom, div, p) = doc();
+    let query = SelectorQuery::parse(":not(:scope)").unwrap();
+    // `div` is the bound scope -- `:scope` matches it, so `:not(:scope)`
+    // must not.
+    assert!(!query.matches_scoped(&dom, div, &[], Some(div)));
+    // `p` is not the bound scope.
+    assert!(query.matches_scoped(&dom, p, &[div], Some(div)));
+}
+
+/// `:scope` inside `:has(...)`'s relative selector list refers to the
+/// *outer* bound scope element, never to `:has()`'s own anchor (the element
+/// being tested) -- confirmed against WPT
+/// `css/selectors/has-argument-with-explicit-scope.html`, which relies on
+/// exactly this to make `:has(:scope)` match nothing among a scope
+/// element's own descendants (none of them can equal the scope element
+/// itself). This fixture instead anchors `:has(:scope)` on an *ancestor* of
+/// the bound scope, which the two possible meanings of `:scope` tell apart:
+/// under "outer scope" semantics the scope element is a real descendant of
+/// that ancestor and the match succeeds; if `:scope` were instead rebound to
+/// the `:has()` anchor, the anchor could never be its own descendant and the
+/// match would incorrectly fail.
+#[test]
+fn scope_pseudo_class_inside_has_refers_to_the_outer_scope_not_the_has_anchor() {
+    let mut dom = TestDoc::new();
+    let outer = dom.push_element(0, "div", None);
+    let scope_el = dom.push_element(outer, "div", None);
+    dom.push_element(scope_el, "p", None);
+
+    let query = SelectorQuery::parse(":has(:scope)").unwrap();
+    let scope_el = StyleNodeId::new(scope_el as u64);
+    let outer = StyleNodeId::new(outer as u64);
+    assert!(query.matches_scoped(&dom, outer, &[], Some(scope_el)));
+    // The bound scope element itself has no descendant equal to itself, so
+    // `:has()` never matches on it (regardless of which meaning `:scope`
+    // takes here).
+    assert!(!query.matches_scoped(&dom, scope_el, &[outer], Some(scope_el)));
+}
+
+/// `:scope` inside `:nth-child(An+B of S)`'s filter selector list `S`: the
+/// bound scope element is threaded through the sibling-filter match the same
+/// as any other selector, so `:nth-child(1 of :scope)` matches only the one
+/// sibling that both is the bound scope element and is first among siblings
+/// matching `:scope` (trivially true whenever it matches at all, since a
+/// single element can never equal two different siblings).
+#[test]
+fn scope_pseudo_class_inside_nth_child_of_selector_list() {
+    let mut dom = TestDoc::new();
+    let ul = dom.push_element(0, "ul", None);
+    let li1 = dom.push_element(ul, "li", None);
+    let li2 = dom.push_element(ul, "li", None);
+    let li3 = dom.push_element(ul, "li", None);
+
+    let query = SelectorQuery::parse(":nth-child(1 of :scope)").unwrap();
+    let ancestors = &[StyleNodeId::new(ul as u64)];
+    let scope = Some(StyleNodeId::new(li2 as u64));
+    assert!(query.matches_scoped(&dom, StyleNodeId::new(li2 as u64), ancestors, scope));
+    assert!(!query.matches_scoped(&dom, StyleNodeId::new(li1 as u64), ancestors, scope));
+    assert!(!query.matches_scoped(&dom, StyleNodeId::new(li3 as u64), ancestors, scope));
+}
