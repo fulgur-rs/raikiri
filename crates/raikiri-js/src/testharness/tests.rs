@@ -347,3 +347,30 @@ fn font_load_callbacks_run_through_the_testharness_event_loop() {
     assert_eq!(result.len(), 1);
     assert!(result[0].passed, "{:?}", result[0]);
 }
+
+#[test]
+fn run_testharness_on_host_reports_outcomes_from_native_dom() {
+    let (host, ..) = crate::runtime::test_host::StubHost::page();
+    let outcomes = crate::testharness::run_testharness_on_host(
+        "test(function () { assert_equals(document.body.tagName, 'BODY'); }, 'body');
+         test(function () { assert_true(document.body instanceof HTMLElement); }, 'proto');",
+        host,
+    )
+    .unwrap();
+    assert_eq!(outcomes.len(), 2);
+    assert!(outcomes.iter().all(|o| o.passed), "{outcomes:?}");
+}
+
+#[test]
+fn run_testharness_on_host_maps_host_failures_to_dom_errors() {
+    let (mut host, ..) = crate::runtime::test_host::StubHost::page();
+    host.fail_flush = true;
+    let result = crate::testharness::run_testharness_on_host(
+        "test(function () { document.body.offsetHeight; }, 'geometry');",
+        host,
+    );
+    assert!(
+        matches!(result, Err(crate::testharness::TestHarnessError::Dom(ref m)) if m == "stub flush failure"),
+        "{result:?}"
+    );
+}
