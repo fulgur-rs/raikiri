@@ -67,6 +67,16 @@ mod html_document_tests {
     }
 
     #[test]
+    fn html_document_into_parts_returns_owned_halves() {
+        let doc = hello_world_doc();
+        let expected_nodes = doc.dom().node_count();
+        let expected_computed = doc.cascade().computed.len();
+        let (uncascaded, cascade) = doc.into_parts();
+        assert_eq!(uncascaded.dom.node_count(), expected_nodes);
+        assert_eq!(cascade.computed.len(), expected_computed);
+    }
+
+    #[test]
     fn html_document_cascade_populated_after_construct() {
         let doc = hello_world_doc();
         assert!(
