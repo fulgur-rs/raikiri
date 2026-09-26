@@ -100,11 +100,6 @@ fn run() -> Result<(), String> {
                     }
                 }
             }
-            // cov:ignore: only reached while scanning real WPT fixtures for
-            // a file with neither a test_invalid_value( nor a
-            // test_valid_value( call, exercised by the ignored (WPT
-            // checkout-dependent) `run_parsing_invalid_bin.rs` integration
-            // test; default coverage skips ignored tests.
             Err(ParsingFileError::NoParsingTestCalls) => continue,
             Err(e) => {
                 total_files += 1;
