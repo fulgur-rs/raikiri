@@ -98,9 +98,7 @@ pub use raikiri_traits::{
     BatchConfig, BatchConfigBuilder,
 
     // ── paged model ──
-    PageBox, PageContext, PageFragment, PageFragmentEvent, PageFragmentPageGeometry,
-    PageFragmentLink, PageFragmentLinkEvent,
-    PageDefaults, PageDefaultsBuilder,
+    PageBox, PageContext, PageDefaults, PageDefaultsBuilder,
     LayoutBuffer, TargetRegistry, RunningTemplate, FormData,
     GcpmDirective, ContentValueItem,
 

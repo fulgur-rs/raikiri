@@ -1,14 +1,13 @@
 //! Owned layout results and borrowed per-page views for drawing consumers.
 
 mod dom_view;
-mod fragment;
 mod navigation;
 mod page;
 
 pub use dom_view::DomView;
-pub use fragment::{Fragment, FragmentKind, RepeatKind};
 pub use navigation::{Anchor, AnchorIndex, Link};
 pub use page::{Page, PageGeometry, PageMode};
+pub use raikiri_dom::{Fragment, FragmentKind, RepeatKind};
 
 use crate::render::{PipelineInputs, PipelineOutput, PipelineRun, run_pipeline};
 use crate::{ConsumerPropertyRegistration, HtmlDocument, RenderResources};
@@ -137,15 +136,14 @@ pub fn layout(
     if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
         return Ok(LayoutStatus::Aborted);
     }
-    let links = navigation::build_links(&out.pages, &out.link_events);
-    let rendered = navigation::build_rendered(&out.pages);
-    let anchors = navigation::build_anchors(DomView::new(&out.document), &out.pages);
+    let rendered = navigation::build_rendered(&out.document, &out.slices);
+    let anchors =
+        navigation::build_anchors(DomView::new(&out.document), &out.document, &out.slices);
     if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
         return Ok(LayoutStatus::Aborted);
     }
     Ok(LayoutStatus::Completed(DocumentLayout {
         out,
-        links,
         anchors,
         rendered,
     }))
@@ -154,7 +152,6 @@ pub fn layout(
 /// An owned, laid-out document.
 pub struct DocumentLayout {
     out: Box<PipelineOutput>,
-    links: Vec<navigation::PageLinks>,
     anchors: AnchorIndex,
     rendered: std::collections::HashSet<raikiri_traits::NodeId>,
 }
@@ -162,24 +159,24 @@ pub struct DocumentLayout {
 impl DocumentLayout {
     /// Number of pages.
     pub fn page_count(&self) -> u32 {
-        u32::try_from(self.out.pages.len()).unwrap_or(u32::MAX)
+        u32::try_from(self.out.slices.len()).unwrap_or(u32::MAX)
     }
 
     /// Pages in order.
     pub fn pages(&self) -> impl ExactSizeIterator<Item = Page<'_>> + '_ {
-        (0..self.out.pages.len()).map(move |i| self.page_at(i))
+        (0..self.out.slices.len()).map(move |i| self.page_at(i))
     }
 
     /// One page, or `None` when out of range.
     pub fn page(&self, index: u32) -> Option<Page<'_>> {
         let i = index as usize;
-        (i < self.out.pages.len()).then(|| self.page_at(i))
+        (i < self.out.slices.len()).then(|| self.page_at(i))
     }
 
     fn page_at(&self, i: usize) -> Page<'_> {
         Page {
-            fragment: &self.out.pages[i],
-            links: &self.links[i],
+            slice: &self.out.slices[i],
+            geometry: &self.out.geometries[i],
             style: &self.out.page_styles[i],
             document: &self.out.document,
             cascade: &self.out.cascade,

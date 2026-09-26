@@ -2,18 +2,18 @@
 
 use parley::FontContext;
 use raikiri_dom::{
-    FontFaceLoader, InitialPageContextError, InitialPageProbeResources, PageSlice,
-    apply_font_faces, first_page_name, layout_pages_with_page_geometry_and_resolver_and_base_url,
-    layout_pages_with_resolver_and_base_url, page_fragment_events_from_pages,
-    page_fragments_from_slices_with_page_geometry, resolve_initial_page_context,
-    resolve_page_fragment_geometry,
+    FontFaceLoader, InitialPageContextError, InitialPageProbeResources, PageContentInsets,
+    PageMargins, PageSlice, apply_font_faces, first_page_name,
+    layout_pages_with_page_geometry_and_resolver_and_base_url,
+    layout_pages_with_resolver_and_base_url, page_content_insets, page_margins,
+    resolve_initial_page_context,
 };
 use raikiri_style::FontFaceRegistry;
 use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue, IntrinsicBox,
-    LayoutConfig, PageBox, PageDefaults, PageFragmentPageGeometry, PolicyViolation, RenderError,
-    RenderWarning, ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError,
-    ResolverRequest, ResourceKind, ResourcePolicy, ViolationType, WarningKind,
+    LayoutConfig, PageBox, PageDefaults, PaintRect, PolicyViolation, RenderError, RenderWarning,
+    ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError, ResolverRequest,
+    ResourceKind, ResourcePolicy, ViolationType, WarningKind,
 };
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -448,6 +448,34 @@ fn page_box_for_cascade(
         .unwrap_or(defaults.page_box)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct ResolvedPageGeometry {
+    pub(crate) page_box: PageBox,
+    pub(crate) margins: PageMargins,
+    pub(crate) content_insets: PageContentInsets,
+    pub(crate) content_box: PaintRect,
+}
+
+fn resolve_page_geometry(
+    cascade: &raikiri_style::CascadeResult,
+    page_box: PageBox,
+) -> ResolvedPageGeometry {
+    let margins = page_margins(cascade, page_box);
+    let content_insets = page_content_insets(cascade, page_box);
+    let content_box = PaintRect::new(
+        margins.left + content_insets.left,
+        margins.top + content_insets.top,
+        margins.content_width(page_box),
+        (margins.content_height(page_box) - content_insets.top - content_insets.bottom).max(0.0),
+    );
+    ResolvedPageGeometry {
+        page_box,
+        margins,
+        content_insets,
+        content_box,
+    }
+}
+
 fn resolve_page_geometries(
     doc: &HtmlDocument,
     defaults: &PageDefaults,
@@ -455,7 +483,7 @@ fn resolve_page_geometries(
     consumer_properties: &[ConsumerPropertyRegistration],
     media_context: &MediaContext,
 ) -> (
-    Vec<PageFragmentPageGeometry>,
+    Vec<ResolvedPageGeometry>,
     Vec<raikiri_style::PageCascadeResult>,
 ) {
     let mut geometries = Vec::with_capacity(slices.len());
@@ -469,11 +497,7 @@ fn resolve_page_geometries(
             consumer_properties,
         );
         let page_box = page_box_for_cascade(&cascade, defaults);
-        geometries.push(resolve_page_fragment_geometry(
-            &cascade,
-            page_box,
-            slice.page_index,
-        ));
+        geometries.push(resolve_page_geometry(&cascade, page_box));
         styles.push(cascade.page);
     }
     (geometries, styles)
@@ -501,7 +525,7 @@ fn preload_page_background_images(
     }
 }
 
-fn content_width_for_geometry(geometry: PageFragmentPageGeometry) -> f32 {
+fn content_width_for_geometry(geometry: ResolvedPageGeometry) -> f32 {
     (geometry.page_box.width - geometry.margins.left - geometry.margins.right).max(0.0)
 }
 
@@ -513,7 +537,7 @@ struct PageGeometrySchedule {
 }
 
 fn page_geometry_schedule(
-    page_geometries: &[PageFragmentPageGeometry],
+    page_geometries: &[ResolvedPageGeometry],
     slices: &[PageSlice],
 ) -> PageGeometrySchedule {
     PageGeometrySchedule {
@@ -529,12 +553,11 @@ fn page_geometry_schedule(
     }
 }
 
-fn geometry_differs(left: PageFragmentPageGeometry, right: PageFragmentPageGeometry) -> bool {
+fn geometry_differs(left: ResolvedPageGeometry, right: ResolvedPageGeometry) -> bool {
     left.page_box != right.page_box
         || left.margins != right.margins
         || left.content_insets != right.content_insets
         || left.content_box != right.content_box
-        || left.orientation != right.orientation
 }
 
 fn map_initial_page_context_error(error: InitialPageContextError) -> RenderError {
@@ -549,9 +572,9 @@ fn map_initial_page_context_error(error: InitialPageContextError) -> RenderError
 pub(crate) struct PipelineOutput {
     pub(crate) document: raikiri_dom::Document,
     pub(crate) cascade: raikiri_style::CascadeResult,
-    pub(crate) pages: Vec<raikiri_traits::PageFragment>,
+    pub(crate) slices: Vec<PageSlice>,
+    pub(crate) geometries: Vec<ResolvedPageGeometry>,
     pub(crate) page_styles: Vec<raikiri_style::PageCascadeResult>,
-    pub(crate) link_events: Vec<raikiri_traits::PageFragmentEvent>,
     pub(crate) warnings: Vec<RenderWarning>,
     pub(crate) base_url: Option<url::Url>,
 }
@@ -780,15 +803,13 @@ pub(crate) fn run_pipeline(
         );
     }
 
-    let pages = page_fragments_from_slices_with_page_geometry(
-        &document,
-        &first_cascade,
-        page_box,
-        &slices,
-        &page_geometries,
-    );
+    let geometries: Vec<_> = page_geometries
+        .iter()
+        .map(|geometry| (geometry.page_box, geometry.margins, geometry.content_insets))
+        .collect();
+    document.project_pages(&first_cascade, page_box, &slices, &geometries);
 
-    let total_pages = u32::try_from(pages.len()).unwrap_or(u32::MAX);
+    let total_pages = u32::try_from(slices.len()).unwrap_or(u32::MAX);
     if config
         .limits
         .max_document_pages
@@ -814,7 +835,6 @@ pub(crate) fn run_pipeline(
         }
     }
 
-    let link_events = page_fragment_events_from_pages(&document, &pages);
     let mut warnings = doc.uncascaded.warnings.clone();
     warnings.extend(
         runtime
@@ -829,9 +849,9 @@ pub(crate) fn run_pipeline(
     Ok(PipelineRun::Completed(Box::new(PipelineOutput {
         document,
         cascade: first_cascade,
-        pages,
+        slices,
+        geometries: page_geometries,
         page_styles,
-        link_events,
         warnings,
         base_url: effective_base_url,
     })))

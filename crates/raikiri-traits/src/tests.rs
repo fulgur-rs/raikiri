@@ -18,8 +18,6 @@ fn nodeid_construct() {
 
 #[test]
 fn page_placeholders_default_construct() {
-    let _ = PageFragment::default();
-    let _ = PageFragment::new();
     let _ = PageBox::default();
     let _ = PageContext::default();
     let _ = LayoutBuffer::default();

@@ -163,6 +163,7 @@ pub fn layout_single_page(
     page_box: PageBox,
     mut font_ctx: FontContext,
 ) -> Result<(), LayoutError> {
+    document.page_projection.clear();
     // observation-side entry で
     // membership を sync する — `mark_in_document_flags` は flags_dirty=false
     // なら idempotent no-op なので、既に sink.finish() 経由で sync 済の場合は
@@ -370,7 +371,8 @@ pub struct PageSlice {
 /// without corresponding pagination support. The projection is deterministic
 /// and keeps source-node identity stable, so a consumer can select
 /// continuation lines without re-running pagination.
-pub fn layout_page_fragments(
+#[cfg(test)]
+pub(crate) fn layout_page_fragments(
     document: &mut Document,
     cascade: &CascadeResult,
     page_box: PageBox,
@@ -387,7 +389,7 @@ pub fn layout_page_fragments(
 /// The returned `content_box.x/y` is the physical page-local offset for the
 /// page's content-relative item rectangles. This helper keeps the conversion
 /// in `raikiri-dom` so consumers do not recompute page margins or insets.
-pub fn resolve_page_fragment_geometry(
+pub(crate) fn resolve_page_fragment_geometry(
     cascade: &CascadeResult,
     page_box: PageBox,
     page_index: u32,
@@ -430,7 +432,8 @@ pub fn resolve_page_fragment_geometry(
 /// This compatibility entry point remains valid for fixed-page callers. New
 /// page-aware callers should use [`page_fragments_from_slices_with_page_geometry`]
 /// so each page carries its producer-resolved metadata.
-pub fn page_fragments_from_slices(
+#[cfg(test)]
+pub(crate) fn page_fragments_from_slices(
     document: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,
@@ -450,7 +453,7 @@ pub fn page_fragments_from_slices(
 /// page-aware caller should provide every emitted page explicitly. Item
 /// rectangles remain relative to each page's `content_box` origin; consumers
 /// add `content_box.x/y` exactly once when placing them on the physical page.
-pub fn page_fragments_from_slices_with_page_geometry(
+pub(crate) fn page_fragments_from_slices_with_page_geometry(
     document: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,
@@ -670,7 +673,7 @@ pub fn page_fragments_from_slices_with_page_geometry(
 /// A box ancestor is omitted when a more specific text or replaced placement
 /// already represents the same link, retaining one useful hit rectangle per
 /// visible leaf and a fallback for empty/non-text links.
-pub fn page_fragment_events_from_pages(
+pub(crate) fn page_fragment_events_from_pages(
     document: &Document,
     pages: &[PageFragment],
 ) -> Vec<PageFragmentEvent> {
@@ -772,7 +775,6 @@ pub fn page_fragment_events_from_pages(
             .then_with(|| left.rect.y.total_cmp(&right.rect.y))
             .then_with(|| left.rect.x.total_cmp(&right.rect.x))
             .then_with(|| left.fragment_index.cmp(&right.fragment_index)),
-        _ => std::cmp::Ordering::Equal, // cov:ignore: future non-exhaustive event variant cannot be constructed here
     });
     events
 }
@@ -797,7 +799,8 @@ fn is_descendant_of(
 /// [`layout_page_fragments`] or [`page_fragments_from_slices`]. The result
 /// normalizes each item to its containing page and sorts node fragments by
 /// page/fragment index, while preserving the producer's `is_repeat` flag.
-pub fn page_fragment_geometry_table(pages: &[PageFragment]) -> PageFragmentGeometryTable {
+#[cfg(test)]
+pub(crate) fn page_fragment_geometry_table(pages: &[PageFragment]) -> PageFragmentGeometryTable {
     let mut table = PageFragmentGeometryTable::new();
     for page in pages {
         for item in &page.items {
@@ -2155,6 +2158,7 @@ pub fn layout_single_page_with_resolver_and_base_url(
     resolver: &dyn ReplacedResolver,
     base_url: Option<&url::Url>,
 ) -> Result<(), LayoutError> {
+    document.page_projection.clear();
     // See "# 実行順" above — this must precede `resolve_images`, whose
     // membership gate reads the flags this refreshes.
     document.mark_in_document_flags();

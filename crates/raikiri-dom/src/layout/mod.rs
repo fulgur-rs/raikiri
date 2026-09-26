@@ -5,15 +5,11 @@
 //! 最小統合で pre-shape する。現在の scope は単一 A4 ページ、ASCII Latin、
 //! parley system font default (byte-identical cross-machine は将来 font pinning で対応予定)。
 //!
-//! Single-page, paged-layout, and neutral page-fragment entry points are public;
+//! Single-page and paged-layout entry points are public;
 //! implementation helpers remain crate-private.
 
-use raikiri_traits::{
-    NodeId, NodeKind, PageFragment, PageFragmentEvent, PageFragmentGeometry,
-    PageFragmentGeometryTable, PageFragmentInsets, PageFragmentItem, PageFragmentKind,
-    PageFragmentLineRange, PageFragmentLink, PageFragmentLinkEvent, PageFragmentOrientation,
-    PageFragmentPageGeometry, PageFragmentRect, ReplacedResolver,
-};
+use crate::page_projection::records::*;
+use raikiri_traits::{NodeId, NodeKind, ReplacedResolver};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
@@ -96,12 +92,14 @@ pub use page::{
     PageMargins, first_page_name, page_content_insets, page_margins, resolve_initial_page_context,
 };
 pub use page_pipeline::{
-    PageSlice, layout_page_fragments, layout_pages, layout_pages_with_page_geometry,
+    PageSlice, layout_pages, layout_pages_with_page_geometry,
     layout_pages_with_page_geometry_and_resolver,
     layout_pages_with_page_geometry_and_resolver_and_base_url, layout_pages_with_page_steps,
     layout_pages_with_resolver, layout_pages_with_resolver_and_base_url, layout_single_page,
     layout_single_page_with_resolver, layout_single_page_with_resolver_and_base_url,
-    page_fragment_events_from_pages, page_fragment_geometry_table, page_fragments_from_slices,
-    page_fragments_from_slices_with_page_geometry, relayout_text_for_width,
-    resolve_page_fragment_geometry,
+    relayout_text_for_width,
+};
+
+pub(crate) use page_pipeline::{
+    page_fragment_events_from_pages, page_fragments_from_slices_with_page_geometry,
 };

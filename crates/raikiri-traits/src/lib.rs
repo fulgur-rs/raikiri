@@ -7,7 +7,7 @@
 //! ## Module tour
 //!
 //! - [`dom`]      — DOM abstraction trait + identifier newtypes (Symbol, NodeId)
-//! - [`page`]     — Page-related opaque model types (PageFragment, PageBox, ...)
+//! - [`page`]     — Page-related opaque model types (PageBox, ...)
 //! - [`paint`]    — Shared paint geometry and color values
 //! - [`policy`]   — ResourcePolicy trait + violation types
 //! - [`net`]      — NetworkProvider trait + Request / FetchedResource types
@@ -58,11 +58,8 @@ pub use net::{
 pub use page::{
     ContentSource, ContentValueConvertError, ContentValueItem, CounterStack, FormData,
     GcpmDirective, LayoutBuffer, NamedStringState, PageBox, PageContext, PageDefaults,
-    PageDefaultsBuilder, PageFragment, PageFragmentEvent, PageFragmentGeometry,
-    PageFragmentGeometryTable, PageFragmentInsets, PageFragmentItem, PageFragmentKind,
-    PageFragmentLineRange, PageFragmentLink, PageFragmentLinkEvent, PageFragmentOrientation,
-    PageFragmentPageGeometry, PageFragmentRect, PendingResolution, ResolveOutcome, RunningTemplate,
-    RunningTemplateId, TargetInfo, TargetRegistry, resolve_content_component,
+    PageDefaultsBuilder, PendingResolution, ResolveOutcome, RunningTemplate, RunningTemplateId,
+    TargetInfo, TargetRegistry, resolve_content_component,
 };
 pub use paint::{PaintClip, PaintColor, PaintInsets, PaintRect};
 pub use plan::{BreakReason, DocumentPlan, PageSummary, TargetDefinition};

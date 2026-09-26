@@ -113,6 +113,7 @@ fn is_html_raw_text_element(namespace: Option<&str>, tag_name: &str) -> bool {
 /// parse 経路が index 1 以降に append する想定 (root = 0 の子として)。
 #[derive(Debug, Clone)]
 pub struct Document {
+    pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: Vec<Node>,
     /// arena index of the Document root (always 0 の予定、明示的に保持して
     /// 将来 detach root 等の変則 case に備える)。
@@ -208,6 +209,7 @@ impl Document {
         let mut nodes = Vec::with_capacity(16);
         nodes.push(Node::new_document());
         Self {
+            page_projection: crate::page_projection::PageProjection::default(),
             nodes,
             root: 0,
             layout_dirty: false,
@@ -1655,6 +1657,7 @@ impl Document {
     /// clear は次回 `compute_child_layout` (taffy_impl 経由) で lazy に発火する。
     /// per-mutation は O(1)、per-layout-batch で amortized O(N)。
     pub(crate) fn invalidate_layout_cache(&mut self) {
+        self.page_projection.clear();
         self.layout_dirty = true;
     }
 

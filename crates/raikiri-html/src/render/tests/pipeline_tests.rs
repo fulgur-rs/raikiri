@@ -32,8 +32,8 @@ fn pipeline_collects_one_page_style_per_page() {
              <div></div><div></div>",
     );
     let out = run(&doc);
-    assert!(out.pages.len() >= 2, "fixture must paginate");
-    assert_eq!(out.page_styles.len(), out.pages.len());
+    assert!(out.slices.len() >= 2, "fixture must paginate");
+    assert_eq!(out.page_styles.len(), out.slices.len());
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn converged_schedule_keeps_page_content_origins() {
     );
     let out = run(&doc);
     assert_eq!(
-        out.pages
+        out.slices
             .iter()
             .map(|p| p.content_origin_y)
             .collect::<Vec<_>>(),

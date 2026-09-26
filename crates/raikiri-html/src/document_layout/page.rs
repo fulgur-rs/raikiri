@@ -1,6 +1,6 @@
 use super::{DomView, Fragment};
 use raikiri_style::{ComputedValues, PageCascadeResult};
-use raikiri_traits::{NodeId, PageFragment, PaintInsets, PaintRect};
+use raikiri_traits::{NodeId, PaintInsets, PaintRect};
 
 /// How the page is laid out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,8 +28,8 @@ pub struct PageGeometry {
 /// One laid-out page, borrowed from a [`super::DocumentLayout`].
 #[derive(Clone, Copy)]
 pub struct Page<'a> {
-    pub(super) links: &'a super::navigation::PageLinks,
-    pub(super) fragment: &'a PageFragment,
+    pub(super) slice: &'a raikiri_dom::PageSlice,
+    pub(super) geometry: &'a crate::render::ResolvedPageGeometry,
     pub(super) style: &'a PageCascadeResult,
     pub(super) document: &'a raikiri_dom::Document,
     pub(super) cascade: &'a raikiri_style::CascadeResult,
@@ -38,17 +38,17 @@ pub struct Page<'a> {
 impl<'a> Page<'a> {
     /// Zero-based page index.
     pub fn index(&self) -> u32 {
-        self.fragment.page_index
+        self.slice.page_index
     }
 
     /// Named page, if the page context selected one.
     pub fn name(&self) -> Option<&'a str> {
-        self.fragment.page_name.as_deref()
+        self.slice.page_name.as_deref()
     }
 
     /// Page geometry.
     pub fn geometry(&self) -> PageGeometry {
-        let f = self.fragment;
+        let f = self.geometry;
         PageGeometry {
             page_box: PaintRect::new(0.0, 0.0, f.page_box.width, f.page_box.height),
             margins: PaintInsets::new(
@@ -68,12 +68,8 @@ impl<'a> Page<'a> {
     }
 
     /// All fragments on this page. The order is not the paint order.
-    pub fn fragments(&self) -> impl Iterator<Item = Fragment<'a>> + 'a {
-        let content_box = self.fragment.content_box;
-        self.fragment
-            .items
-            .iter()
-            .map(move |item| Fragment::new(item, content_box))
+    pub fn fragments(&self) -> impl Iterator<Item = Fragment<'a>> + 'a + use<'a> {
+        self.document.page_fragments(self.slice.page_index)
     }
 
     /// Structure and attributes of the document.
@@ -93,14 +89,13 @@ impl<'a> Page<'a> {
     }
     /// Links on this page. Quads are in layout space until paint-space
     /// positions are exposed.
-    pub fn links(&self) -> impl Iterator<Item = super::Link<'a>> + 'a {
-        self.links
-            .entries
-            .iter()
+    pub fn links(&self) -> impl Iterator<Item = super::Link<'a>> + 'a + use<'a> {
+        self.document
+            .page_links(self.slice.page_index)
             .map(|(owner, target, quads)| super::Link {
-                owner: *owner,
-                target: target.as_str(),
-                quads: quads.as_slice(),
+                owner,
+                target,
+                quads,
             })
     }
 }
