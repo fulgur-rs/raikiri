@@ -1360,3 +1360,88 @@ fn canvas_background_with_page_margins_keeps_canvas_layer() {
     assert!(!raikiri_dom::page_margins(&cascade, PageBox::A4).is_zero());
     assert_eq!(fill_count(&document, &cascade), 2);
 }
+
+fn margin_row_margins(top: f32) -> raikiri_dom::PageMargins {
+    raikiri_dom::PageMargins {
+        top,
+        right: 10.0,
+        bottom: 10.0,
+        left: 10.0,
+    }
+}
+
+fn fixed_margin_spec() -> MarginBoxPaintSpec {
+    let initial = ComputedValues::initial();
+    MarginBoxPaintSpec {
+        slot: PageMarginBoxSlot::TopCenter,
+        content: String::new(),
+        background: Some(Color::from_rgba8(255, 0, 0, 255)),
+        background_image_url: None,
+        background_image_lime: false,
+        background_size: initial.background_size,
+        background_position: initial.background_position,
+        background_repeat: initial.background_repeat,
+        content_image_lime: false,
+        border_top: None,
+        border_right: None,
+        border_bottom: None,
+        border_left: None,
+        margin_auto: [false; 4],
+        margin: [0.0; 4],
+        padding: [0.0; 4],
+        width: Some(100.0),
+        height: None,
+        text_color: Color::from_rgba8(0, 0, 0, 255),
+        font_size: 16.0,
+        font_family: String::new(),
+        alignment: parley::Alignment::Start,
+        vertical_align: text::MarginTextVerticalAlign::Top,
+        vertical_writing: false,
+    }
+}
+
+fn paint_margin_row(
+    specs: &[MarginBoxPaintSpec],
+    top: bool,
+    margins: raikiri_dom::PageMargins,
+) -> usize {
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_horizontal_margin_boxes(
+        &mut scene,
+        specs,
+        top,
+        PageBox::A4.width,
+        PageBox::A4.height,
+        margins,
+        None,
+        &mut warnings,
+    );
+    assert!(warnings.is_empty());
+    scene
+        .commands
+        .iter()
+        .filter(|command| matches!(command, RenderCommand::Fill(_)))
+        .count()
+}
+
+#[test]
+fn margin_row_without_specs_paints_nothing() {
+    assert_eq!(paint_margin_row(&[], true, margin_row_margins(10.0)), 0);
+}
+
+#[test]
+fn margin_row_without_row_height_paints_nothing() {
+    assert_eq!(
+        paint_margin_row(&[fixed_margin_spec()], true, margin_row_margins(0.0)),
+        0
+    );
+}
+
+#[test]
+fn margin_row_paints_fixed_width_background() {
+    assert_eq!(
+        paint_margin_row(&[fixed_margin_spec()], true, margin_row_margins(10.0)),
+        1
+    );
+}
