@@ -80,6 +80,26 @@ impl<'r, 'a> LayoutOptions<'r, 'a> {
 ///
 /// The input document is borrowed and cloned internally, so it stays usable
 /// after an error or abort.
+///
+/// ```
+/// use raikiri_html::{
+///     LayoutOptions, LayoutStatus, PageDefaults, RenderResources, StreamingConfig,
+///     layout, parse_html_with_resources,
+/// };
+/// let document = parse_html_with_resources(
+///     "<p>Hello</p>".as_bytes(), &RenderResources::new(),
+/// )?;
+/// if let LayoutStatus::Completed(result) = layout(
+///     &document, PageDefaults::default(), StreamingConfig::default(), LayoutOptions::new(),
+/// )? {
+///     for page in result.pages() {
+///         for fragment in page.fragments() {
+///             let _border_box = fragment.rect();
+///         }
+///     }
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub fn layout(
     doc: &HtmlDocument,
     defaults: PageDefaults,
@@ -124,7 +144,7 @@ pub fn layout(
 
 /// An owned, laid-out document.
 pub struct DocumentLayout {
-    out: PipelineOutput,
+    out: Box<PipelineOutput>,
     links: Vec<navigation::PageLinks>,
     anchors: AnchorIndex,
     rendered: std::collections::HashSet<raikiri_traits::NodeId>,

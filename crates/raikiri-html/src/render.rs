@@ -820,7 +820,7 @@ pub(crate) struct PipelineOutput {
     pub(crate) base_url: Option<url::Url>,
 }
 pub(crate) enum PipelineRun {
-    Completed(PipelineOutput),
+    Completed(Box<PipelineOutput>),
     Aborted,
 }
 pub(crate) struct PipelineInputs<'r, 'a> {
@@ -1087,7 +1087,7 @@ pub(crate) fn run_pipeline(
     );
     drop(runtime);
     drop(resolver);
-    Ok(PipelineRun::Completed(PipelineOutput {
+    Ok(PipelineRun::Completed(Box::new(PipelineOutput {
         document,
         cascade: first_cascade,
         pages,
@@ -1095,7 +1095,7 @@ pub(crate) fn run_pipeline(
         link_events,
         warnings,
         base_url: effective_base_url,
-    }))
+    })))
 }
 
 #[cfg(test)]

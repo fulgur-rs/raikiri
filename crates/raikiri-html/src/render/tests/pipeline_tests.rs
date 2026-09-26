@@ -19,7 +19,7 @@ fn run(doc: &HtmlDocument) -> PipelineOutput {
     )
     .expect("pipeline")
     {
-        PipelineRun::Completed(out) => out,
+        PipelineRun::Completed(out) => *out,
         PipelineRun::Aborted => panic!("unexpected abort"),
     }
 }
