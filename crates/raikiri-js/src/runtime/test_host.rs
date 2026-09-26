@@ -15,6 +15,7 @@ pub(crate) struct StubHost {
     pub geometry: HashMap<usize, BoxGeometry>,
     pub computed: HashMap<(usize, String), String>,
     pub fail_flush: bool,
+    pub fail_geometry: bool,
 }
 
 impl StubHost {
@@ -38,6 +39,7 @@ impl StubHost {
                 geometry: HashMap::new(),
                 computed: HashMap::new(),
                 fail_flush: false,
+                fail_geometry: false,
             },
             html,
             head,
@@ -76,6 +78,9 @@ impl DocumentHost for StubHost {
         }
     }
     fn box_geometry(&mut self, node: usize) -> Result<Option<BoxGeometry>, HostError> {
+        if self.fail_geometry {
+            return Err(HostError("stub geometry failure".into()));
+        }
         Ok(self.geometry.get(&node).copied())
     }
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {

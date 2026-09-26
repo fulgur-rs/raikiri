@@ -25,6 +25,10 @@ fn inline_style_helpers_match_the_previous_runner_semantics() {
         with_inline_style_property(Some("color: red;"), "color", " "),
         ""
     );
+    assert_eq!(
+        with_inline_style_property(Some("color: red;"), "  ", "blue"),
+        "color: red;"
+    );
 }
 
 #[test]
@@ -41,6 +45,14 @@ fn style_object_reads_and_writes_camel_and_dashed_names() {
     ok(
         &mut rt,
         "s.removeProperty('text-align') === 'center' && s.textAlign === ''",
+    );
+    ok(
+        &mut rt,
+        "'getPropertyValue' in s && !('made-up-property' in s)",
+    );
+    ok(
+        &mut rt,
+        "var before = document.body.getAttribute('style'); s.setProperty('', 'x'); document.body.getAttribute('style') === before",
     );
 }
 
@@ -106,6 +118,36 @@ fn flush_failure_is_a_host_error() {
         rt.evaluate("document.body.offsetHeight"),
         Err(RuntimeError::Host("stub flush failure".into()))
     );
+}
+
+#[test]
+fn geometry_failure_is_a_host_error() {
+    let (mut host, ..) = StubHost::page();
+    host.fail_geometry = true;
+    let mut rt = DomRuntime::new(host).unwrap();
+    assert_eq!(
+        rt.evaluate("document.body.offsetHeight"),
+        Err(RuntimeError::Host("stub geometry failure".into()))
+    );
+}
+
+#[test]
+fn style_proxy_traps_cover_symbol_keys_and_computed_writes() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "document.body.style[Symbol.iterator] === undefined",
+    );
+    ok(
+        &mut rt,
+        "(document.body.style[Symbol()] = 'x', document.body.getAttribute('style') === null)",
+    );
+    ok(
+        &mut rt,
+        "var cs = getComputedStyle(document.body); cs.color = 'red'; document.body.getAttribute('style') === null",
+    );
+    ok(&mut rt, "!(Symbol() in cs)");
 }
 
 #[test]

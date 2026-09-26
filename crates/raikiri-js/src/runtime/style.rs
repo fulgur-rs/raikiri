@@ -210,23 +210,25 @@ struct StyleTarget {
     computed: bool,
 }
 
+// cov:ignore: a proxy's traps are internal (never exposed to script) and
+// `style_object` always builds a `StyleTarget`, so no test can reach this;
+// it exists only so a future proxy misuse throws instead of panicking.
 fn proxy_target_error() -> JsError {
     JsNativeError::typ()
         .with_message("style proxy called on an unexpected target")
         .into()
 }
 
-/// The `(index, computed)` pair carried by a style proxy's target, or a
+/// The target object plus the `(index, computed)` pair it carries, or a
 /// `TypeError` when `value` is not one (a trap should never see this, but a
 /// binding must never panic on an unexpected argument).
-fn style_target(value: &JsValue) -> JsResult<(usize, bool)> {
-    value
-        .as_object()
-        .and_then(|o| {
-            o.downcast_ref::<StyleTarget>()
-                .map(|t| (t.index, t.computed))
-        })
-        .ok_or_else(proxy_target_error)
+fn style_target(value: &JsValue) -> JsResult<(JsObject, usize, bool)> {
+    let object = value.as_object().ok_or_else(proxy_target_error)?;
+    let (index, computed) = object
+        .downcast_ref::<StyleTarget>()
+        .map(|t| (t.index, t.computed))
+        .ok_or_else(proxy_target_error)?;
+    Ok((object.clone(), index, computed))
 }
 
 fn read_inline(context: &mut Context, index: usize, property: &str) -> JsResult<String> {
@@ -239,6 +241,9 @@ fn read_inline(context: &mut Context, index: usize, property: &str) -> JsResult<
 }
 
 fn write_inline(context: &mut Context, index: usize, property: &str, value: &str) -> JsResult<()> {
+    if property.trim().is_empty() {
+        return Ok(());
+    }
     with_state(context, |s| {
         let next = with_inline_style_property(
             s.host.document().element_attribute(index, "style"),
@@ -281,12 +286,17 @@ fn style_object(context: &mut Context, index: usize, computed: bool) -> JsResult
             };
             Ok(JsValue::from(JsString::from(value)))
         }),
+        // cov:ignore: closure_function only fails to define a non-writable
+        // `length` on the function object it just built, which never happens
+        // for a fresh, extensible object.
     )?;
     target.set(
         js_string!("getPropertyValue"),
         get_property_value,
         true,
         context,
+        // cov:ignore: `set` on a plain, extensible, freshly created target
+        // object cannot fail.
     )?;
     if !computed {
         let set_property = closure_function(
@@ -299,6 +309,7 @@ fn style_object(context: &mut Context, index: usize, computed: bool) -> JsResult
                 write_inline(ctx, index, &name, &value)?;
                 Ok(JsValue::undefined())
             }),
+            // cov:ignore: see the `getPropertyValue` closure_function call above.
         )?;
         let remove_property = closure_function(
             context,
@@ -310,6 +321,7 @@ fn style_object(context: &mut Context, index: usize, computed: bool) -> JsResult
                 write_inline(ctx, index, &name, "")?;
                 Ok(JsValue::from(JsString::from(previous)))
             }),
+            // cov:ignore: see the `getPropertyValue` closure_function call above.
         )?;
         target.set(js_string!("setProperty"), set_property, true, context)?;
         target.set(js_string!("removeProperty"), remove_property, true, context)?;
@@ -331,8 +343,7 @@ fn string_key(key: &JsValue) -> Option<String> {
 /// is read as a camelCase or dashed style property name.
 fn style_get_trap(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let target_value = args.first().cloned().unwrap_or_default();
-    let (index, computed) = style_target(&target_value)?;
-    let target = target_value.as_object().ok_or_else(proxy_target_error)?;
+    let (target, index, computed) = style_target(&target_value)?;
     let key = args.get(1).cloned().unwrap_or_default();
     let property_key = key.to_property_key(context)?;
     if target.has_own_property(property_key.clone(), context)? {
@@ -354,7 +365,7 @@ fn style_get_trap(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
 /// write updates the inline `style` attribute; computed style is read-only.
 fn style_set_trap(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let target_value = args.first().cloned().unwrap_or_default();
-    let (index, computed) = style_target(&target_value)?;
+    let (_, index, computed) = style_target(&target_value)?;
     if computed {
         return Ok(JsValue::from(false));
     }
@@ -376,8 +387,7 @@ fn style_set_trap(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
 /// as present, matching a real `CSSStyleDeclaration`'s indexed-property view.
 fn style_has_trap(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let target_value = args.first().cloned().unwrap_or_default();
-    let (index, computed) = style_target(&target_value)?;
-    let target = target_value.as_object().ok_or_else(proxy_target_error)?;
+    let (target, index, computed) = style_target(&target_value)?;
     let key = args.get(1).cloned().unwrap_or_default();
     let property_key = key.to_property_key(context)?;
     if target.has_property(property_key, context)? {
@@ -453,6 +463,8 @@ pub(crate) fn install_globals(context: &mut Context) -> JsResult<()> {
         js_string!("getComputedStyle"),
         gcs,
         Attribute::WRITABLE | Attribute::CONFIGURABLE,
+        // cov:ignore: install runs once on a fresh realm's global object,
+        // which Boa never rejects a plain property definition on.
     )?;
     let supports = function(context, "supports", 2, css_supports)?;
     let css = ObjectInitializer::new(context)
@@ -466,6 +478,7 @@ pub(crate) fn install_globals(context: &mut Context) -> JsResult<()> {
         js_string!("CSS"),
         css,
         Attribute::WRITABLE | Attribute::CONFIGURABLE,
+        // cov:ignore: see the `getComputedStyle` registration above.
     )?;
     Ok(())
 }
