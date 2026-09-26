@@ -129,3 +129,47 @@ fn provider_errors_remain_network_errors() {
         ResolverError::Network(NetworkError::Other(_))
     ));
 }
+
+fn tiny_decoded() -> DecodedImage {
+    DecodedImage {
+        width: 2,
+        height: 1,
+        rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
+    }
+}
+
+#[test]
+fn raster_source_rasterize_respects_output_limit() {
+    let source = ImageSource::raster(Arc::new(tiny_decoded()));
+    let size = ImageRasterSize {
+        width: 2.0,
+        height: 1.0,
+    };
+    assert!(source.rasterize(size, None).is_some());
+    assert!(source.rasterize(size, Some(8)).is_some());
+    assert_eq!(source.rasterize(size, Some(7)), None);
+}
+
+#[test]
+fn raster_source_reports_decoded_byte_len() {
+    let source = ImageSource::raster(Arc::new(tiny_decoded()));
+    assert_eq!(source.decoded_byte_len(), Some(8));
+}
+
+const TWO_COLOR_SVG: &[u8] = b"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"2\"><rect width=\"4\" height=\"2\" fill=\"red\"/></svg>";
+
+#[test]
+fn svg_source_rasterize_caches_second_call() {
+    let document = SvgDocument::parse(TWO_COLOR_SVG).expect("parse svg");
+    let source = ImageSource::svg(document);
+    assert_eq!(source.decoded_byte_len(), None);
+    let size = ImageRasterSize {
+        width: 4.0,
+        height: 2.0,
+    };
+    let first = source.rasterize(size, None).expect("rasterize");
+    assert_eq!((first.width, first.height), (4, 2));
+    assert!(source.cached_raster().is_some());
+    let second = source.rasterize(size, None).expect("cached rasterize");
+    assert_eq!(second.rgba, first.rgba);
+}
