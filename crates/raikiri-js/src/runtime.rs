@@ -38,6 +38,9 @@ pub(crate) struct State {
     pub host_failure: Option<String>,
     /// Per-element `style` objects so `el.style === el.style`.
     pub style_objects: HashMap<usize, JsObject>,
+    /// Per-element `getComputedStyle` objects so
+    /// `getComputedStyle(el) === getComputedStyle(el)`.
+    pub computed_style_objects: HashMap<usize, JsObject>,
     /// Per-element `classList` objects so `el.classList === el.classList`.
     pub class_lists: HashMap<usize, JsObject>,
     /// Per-node `childNodes` lists so `n.childNodes === n.childNodes`.
@@ -100,6 +103,7 @@ impl DomRuntime {
             dirty: true,
             host_failure: None,
             style_objects: HashMap::new(),
+            computed_style_objects: HashMap::new(),
             class_lists: HashMap::new(),
             child_node_lists: HashMap::new(),
             children_collections: HashMap::new(),

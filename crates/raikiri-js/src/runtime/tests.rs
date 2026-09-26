@@ -43,6 +43,34 @@ fn interface_objects_form_the_dom_prototype_chain() {
     ));
 }
 
+/// WebIDL §3.6.3: every interface prototype carries its own
+/// `Symbol.toStringTag`, set once inside `interfaces::interface` rather
+/// than per call site, so `Object.prototype.toString.call(x)` reads the
+/// interface's identifier for any wrapped node, not the engine's generic
+/// `[object Object]` default.
+#[test]
+fn every_interface_prototype_carries_its_own_to_string_tag() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    assert!(eval_bool(
+        &mut rt,
+        "Object.prototype.toString.call(document.body) === '[object HTMLElement]'"
+    ));
+    assert!(eval_bool(
+        &mut rt,
+        "Object.prototype.toString.call(document) === '[object Document]'"
+    ));
+    assert!(eval_bool(
+        &mut rt,
+        "Object.prototype.toString.call(document.body.childNodes) === '[object NodeList]'"
+    ));
+    assert!(eval_bool(
+        &mut rt,
+        "String(document.body.classList) !== '[object Object]' && \
+         Object.prototype.toString.call(document.body.classList) === '[object DOMTokenList]'"
+    ));
+}
+
 #[test]
 fn interface_constructors_are_illegal() {
     let (host, ..) = StubHost::page();

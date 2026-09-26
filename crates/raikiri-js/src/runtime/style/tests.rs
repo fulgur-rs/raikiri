@@ -1,4 +1,4 @@
-use crate::runtime::style::{inline_style_value, with_inline_style_property};
+use crate::runtime::style::{attribute_names, inline_style_value, with_inline_style_property};
 use crate::runtime::test_host::StubHost;
 use crate::runtime::{DomRuntime, RuntimeError};
 
@@ -32,6 +32,23 @@ fn inline_style_helpers_match_the_previous_runner_semantics() {
 }
 
 #[test]
+fn attribute_names_covers_plain_dashed_camel_and_webkit_forms() {
+    assert_eq!(attribute_names("color"), vec!["color".to_owned()]);
+    assert_eq!(
+        attribute_names("font-size"),
+        vec!["font-size".to_owned(), "fontSize".to_owned()]
+    );
+    assert_eq!(
+        attribute_names("-webkit-transform"),
+        vec![
+            "-webkit-transform".to_owned(),
+            "WebkitTransform".to_owned(),
+            "webkitTransform".to_owned(),
+        ]
+    );
+}
+
+#[test]
 fn style_object_reads_and_writes_camel_and_dashed_names() {
     let (host, ..) = StubHost::page();
     let mut rt = DomRuntime::new(host).unwrap();
@@ -56,15 +73,159 @@ fn style_object_reads_and_writes_camel_and_dashed_names() {
     );
 }
 
+/// Task 6's replacement for the Plan 1 named-property `Proxy`: dashed and
+/// camelCase keys are real accessors on `CSSStyleDeclaration.prototype`, so
+/// `s instanceof CSSStyleDeclaration` and `in` work through ordinary
+/// prototype-chain lookup, and an unsupported name becomes a plain expando
+/// rather than a style write.
+#[test]
+fn interface_shape_matches_cssom() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var s = document.body.style;").unwrap();
+    ok(
+        &mut rt,
+        "s instanceof CSSStyleDeclaration && \
+         ('marginTop' in CSSStyleDeclaration.prototype) && \
+         ('margin-top' in CSSStyleDeclaration.prototype) && \
+         s.parentRule === null",
+    );
+    ok(&mut rt, "String(s) === '[object CSSStyleDeclaration]'");
+    ok(
+        &mut rt,
+        "Object.prototype.toString.call(s) === '[object CSSStyleDeclaration]'",
+    );
+    ok(
+        &mut rt,
+        "s.fooBar = 'x'; s.getPropertyValue('foo-bar') === '' && s.fooBar === 'x'",
+    );
+}
+
+#[test]
+fn css_float_aliases_the_float_property() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var s = document.body.style; \
+         s.cssFloat = 'left'; \
+         s.getPropertyValue('float') === 'left' && s.cssFloat === 'left'",
+    );
+}
+
+#[test]
+fn css_text_getter_and_setter_replace_the_whole_declaration_block() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var s = document.body.style; s.marginTop = '1px';")
+        .unwrap();
+    ok(&mut rt, "s.cssText === 'margin-top: 1px;'");
+    ok(
+        &mut rt,
+        "s.cssText = 'padding: 3px'; \
+         s.paddingTop !== undefined && \
+         s.getPropertyValue('padding') === '3px' && \
+         s.marginTop === ''",
+    );
+    // The same literal text set directly through the attribute reads back
+    // identically through `getPropertyValue` -- `cssText`'s setter stores
+    // it verbatim, the same as `setAttribute`.
+    ok(
+        &mut rt,
+        "document.body.setAttribute('style', 'padding: 3px'); \
+         document.body.style.getPropertyValue('padding') === s.getPropertyValue('padding')",
+    );
+}
+
+#[test]
+fn length_and_item_enumerate_declared_properties_in_order() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var s = document.body.style; s.marginTop = '1px'; s['margin-left'] = '2px';")
+        .unwrap();
+    ok(
+        &mut rt,
+        "s.getPropertyValue('margin-top') === '1px' && \
+         s.marginLeft === '2px' && \
+         s.length === 2 && \
+         s.item(0) === 'margin-top' && \
+         s.item(1) === 'margin-left' && \
+         s.item(5) === '' && \
+         s[0] === 'margin-top' && \
+         s[5] === undefined",
+    );
+}
+
+#[test]
+fn get_property_priority_reports_important() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var s = document.body.style; \
+         s.setProperty('color', 'red', 'important'); \
+         s.getPropertyPriority('color') === 'important' && \
+         s.getPropertyValue('color') === 'red'",
+    );
+    ok(&mut rt, "s.getPropertyPriority('no-such-prop') === ''");
+}
+
+#[test]
+fn set_property_priority_argument_variants() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    // Missing, `undefined`, and `null` priority all behave like `""`.
+    ok(
+        &mut rt,
+        "var s = document.body.style; \
+         s.setProperty('color', 'red'); \
+         s.getPropertyPriority('color') === ''",
+    );
+    ok(
+        &mut rt,
+        "s.setProperty('color', 'green', undefined); \
+         s.getPropertyPriority('color') === ''",
+    );
+    ok(
+        &mut rt,
+        "s.setProperty('color', 'blue', null); \
+         s.getPropertyPriority('color') === '' && s.getPropertyValue('color') === 'blue'",
+    );
+    // A bogus priority is spec-silent: no write happens at all.
+    ok(
+        &mut rt,
+        "s.setProperty('color', 'purple', 'bogus'); \
+         s.getPropertyValue('color') === 'blue'",
+    );
+    // An empty value removes the declaration outright, even with a
+    // (would-be) `!important` priority -- it must never store a lone
+    // `\" !important\"`.
+    ok(
+        &mut rt,
+        "s.setProperty('color', '', 'important'); s.getPropertyValue('color') === ''",
+    );
+}
+
 #[test]
 fn style_objects_behave_like_ordinary_objects_for_inherited_members() {
     let (host, ..) = StubHost::page();
     let mut rt = DomRuntime::new(host).unwrap();
-    ok(&mut rt, "String(document.body.style) === '[object Object]'");
-    ok(&mut rt, "'' + document.body.style === '[object Object]'");
     ok(
         &mut rt,
-        "getComputedStyle(document.body).hasOwnProperty('getPropertyValue')",
+        "String(document.body.style) === '[object CSSStyleDeclaration]'",
+    );
+    ok(
+        &mut rt,
+        "'' + document.body.style === '[object CSSStyleDeclaration]'",
+    );
+    // `getPropertyValue` now lives on `CSSStyleDeclaration.prototype`
+    // rather than being an own property of every instance (Plan 1's
+    // per-instance Proxy target defined it directly on the target); the
+    // inherited member is still callable without throwing.
+    ok(
+        &mut rt,
+        "!getComputedStyle(document.body).hasOwnProperty('getPropertyValue') && \
+         typeof getComputedStyle(document.body).getPropertyValue === 'function'",
     );
 }
 
@@ -121,12 +282,14 @@ fn computed_style_unsupported_property_skips_flush() {
         "var cs = getComputedStyle(document.body); cs.whiteSpace === 'normal' && cs.getPropertyValue('white-space') === 'normal' && ('whiteSpace' in cs)",
     );
     assert_eq!(flushes.get(), 1);
+    // `noSuchProp` is not a supported CSS property name at all, so unlike
+    // `whiteSpace` above it has no accessor on the prototype either.
     ok(&mut rt, "!('noSuchProp' in cs)");
 }
 
-/// `getComputedStyle`'s Proxy traps take any string key, so a dashed CSS
-/// property name works through bracket access and `in`, not just the
-/// camelCase form `computed_style_unsupported_property_skips_flush` covers.
+/// A dashed CSS property name works the same as its camelCase accessor,
+/// since both are real, independently-defined keys on
+/// `CSSStyleDeclaration.prototype`.
 #[test]
 fn computed_style_supports_dashed_property_name_access() {
     let (mut host, _, _, body) = StubHost::page();
@@ -151,6 +314,75 @@ fn get_computed_style_rejects_a_non_element_argument() {
         }
         other => panic!("expected a JavaScript TypeError, got {other:?}"),
     }
+}
+
+#[test]
+fn get_computed_style_returns_the_same_object_per_element() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "getComputedStyle(document.body) === getComputedStyle(document.body)",
+    );
+    ok(
+        &mut rt,
+        "getComputedStyle(document.body) !== getComputedStyle(document.head)",
+    );
+}
+
+#[test]
+fn computed_declaration_indexed_view_lists_every_supported_property_name() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    let expected = raikiri_style::property::supported_property_names().len();
+    ok(
+        &mut rt,
+        &format!(
+            "var cs = getComputedStyle(document.body); \
+             cs.length === {expected} && cs.item(0) === 'align-content' && cs[0] === 'align-content'",
+        ),
+    );
+}
+
+#[test]
+fn computed_declaration_write_paths_throw_no_modification_allowed() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var cs = getComputedStyle(document.body);")
+        .unwrap();
+    for (label, script) in [
+        ("setter", "cs.color = 'red'"),
+        ("setProperty", "cs.setProperty('color', 'red')"),
+        ("removeProperty", "cs.removeProperty('color')"),
+        ("cssText setter", "cs.cssText = 'color: red'"),
+        ("cssFloat setter", "cs.cssFloat = 'left'"),
+    ] {
+        let src = format!(
+            "try {{ {script}; false }} catch (e) {{ e.name === 'NoModificationAllowedError' }}"
+        );
+        ok(&mut rt, &src);
+        // The write attempt must not have taken effect either.
+        assert!(
+            rt.evaluate("document.body.getAttribute('style')")
+                .unwrap()
+                .is_null(),
+            "{label} must not have written the style attribute"
+        );
+    }
+}
+
+#[test]
+fn computed_css_text_is_always_empty_and_priority_is_never_important() {
+    let (mut host, _, _, body) = StubHost::page();
+    host.computed.insert((body, "color".into()), "red".into());
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var cs = getComputedStyle(document.body); \
+         cs.cssText === '' && \
+         cs.getPropertyPriority('color') === '' && \
+         cs.cssFloat === ''",
+    );
 }
 
 #[test]
@@ -189,7 +421,7 @@ fn geometry_failure_is_a_host_error() {
 }
 
 #[test]
-fn style_proxy_traps_cover_symbol_keys_and_computed_writes() {
+fn style_expandos_do_not_touch_the_style_attribute() {
     let (host, ..) = StubHost::page();
     let mut rt = DomRuntime::new(host).unwrap();
     ok(
@@ -202,9 +434,8 @@ fn style_proxy_traps_cover_symbol_keys_and_computed_writes() {
     );
     ok(
         &mut rt,
-        "var cs = getComputedStyle(document.body); cs.color = 'red'; document.body.getAttribute('style') === null",
+        "var cs = getComputedStyle(document.body); !(Symbol() in cs)",
     );
-    ok(&mut rt, "!(Symbol() in cs)");
 }
 
 #[test]

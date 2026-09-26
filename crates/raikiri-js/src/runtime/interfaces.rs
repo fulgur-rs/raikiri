@@ -52,6 +52,7 @@ pub(crate) struct Protos {
     pub dom_token_list: JsObject,
     pub dom_rect_read_only: JsObject,
     pub dom_rect: JsObject,
+    pub css_style_declaration: JsObject,
 }
 
 /// The prototypes registered by [`install`].
@@ -238,10 +239,24 @@ fn interface(
     }
     let standard = builder.build();
     let constructor = standard.constructor();
+    let prototype = standard.prototype();
+    // WebIDL §3.6.3: every interface's prototype carries a non-writable,
+    // non-enumerable, configurable `Symbol.toStringTag` whose value is the
+    // interface's own identifier, so `Object.prototype.toString.call(x)`
+    // reads `[object <name>]` instead of the engine's generic default. Set
+    // here, once, so every interface built through this function gets it
+    // without repeating the definition at each call site.
+    let to_string_tag = PropertyDescriptor::builder()
+        .value(JsString::from(name))
+        .writable(false)
+        .enumerable(false)
+        .configurable(true)
+        .build();
+    prototype.define_property_or_throw(JsSymbol::to_string_tag(), to_string_tag, context)?;
     let exposed = Attribute::WRITABLE | Attribute::CONFIGURABLE;
     context.register_global_property(JsString::from(name), constructor.clone(), exposed)?;
     Ok(Interface {
-        prototype: standard.prototype(),
+        prototype,
         constructor,
     })
 }
@@ -406,6 +421,18 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         0,
     );
     let dom_rect = dom_rect_result?;
+    let css_style_declaration_members = [&style::CSS_STYLE_DECLARATION_MEMBERS];
+    let css_style_declaration_result = interface(
+        context,
+        "CSSStyleDeclaration",
+        None,
+        None,
+        &css_style_declaration_members,
+        illegal_constructor,
+        0,
+    );
+    let css_style_declaration = css_style_declaration_result?;
+    style::install_property_accessors(context, &css_style_declaration.prototype)?;
     indexed::install(context)?;
     context.insert_data(Protos {
         event_target: event_target.prototype,
@@ -424,6 +451,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         dom_token_list: dom_token_list.prototype,
         dom_rect_read_only: dom_rect_read_only.prototype,
         dom_rect: dom_rect.prototype,
+        css_style_declaration: css_style_declaration.prototype,
     });
 
     let global = context.global_object();
