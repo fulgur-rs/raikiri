@@ -1303,3 +1303,60 @@ fn paint_root_element_border_paints_html_border_sides() {
         .count();
     assert_eq!(fills, 4, "one fill strip per border side");
 }
+
+fn canvas_fixture(page_css: Option<&str>, body_style: Option<&str>) -> (Document, CascadeResult) {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
+    if let Some(css) = page_css {
+        let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+        document.append_text(style, css);
+    }
+    let body = document.append_element(Some(html), "body", Style::default(), body_style);
+    document.append_text(body, "hi");
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    (document, cascade)
+}
+
+fn fill_count(document: &Document, cascade: &CascadeResult) -> usize {
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_canvas_background(
+        &mut scene,
+        document,
+        cascade,
+        PageBox::A4,
+        None,
+        &mut warnings,
+    );
+    assert!(warnings.is_empty());
+    scene
+        .commands
+        .iter()
+        .filter(|command| matches!(command, RenderCommand::Fill(_)))
+        .count()
+}
+
+#[test]
+fn canvas_background_paints_body_color_over_white_page() {
+    let (document, cascade) = canvas_fixture(None, Some("background-color: blue"));
+    assert!(raikiri_dom::page_margins(&cascade, PageBox::A4).is_zero());
+    assert_eq!(fill_count(&document, &cascade), 2);
+}
+
+#[test]
+fn canvas_background_without_body_color_paints_page_only() {
+    let (document, cascade) = canvas_fixture(None, None);
+    assert_eq!(fill_count(&document, &cascade), 1);
+}
+
+#[test]
+fn canvas_background_with_page_margins_keeps_canvas_layer() {
+    let (document, cascade) = canvas_fixture(
+        Some("@page { margin: 5px; }"),
+        Some("background-color: blue"),
+    );
+    assert!(!raikiri_dom::page_margins(&cascade, PageBox::A4).is_zero());
+    assert_eq!(fill_count(&document, &cascade), 2);
+}
