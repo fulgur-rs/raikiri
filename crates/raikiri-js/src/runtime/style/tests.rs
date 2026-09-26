@@ -554,8 +554,8 @@ fn setters_ignore_values_that_do_not_parse_for_the_property() {
 /// CSS-wide keywords and custom properties are stored as given (trimmed).
 ///
 /// The last assertion pins a documented deviation from CSSOM `setProperty`
-/// step 3, which silently ignores a name that is neither a supported
-/// property nor a custom property: this runtime's `setProperty` has always
+/// step 2 (2.2: a property that is not a supported CSS property makes the
+/// method return without a write): this runtime's `setProperty` has always
 /// stored such a name's value verbatim, and still does.
 #[test]
 fn setters_store_the_canonical_serialization_of_a_parsed_value() {

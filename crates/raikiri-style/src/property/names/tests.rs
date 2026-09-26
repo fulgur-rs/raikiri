@@ -162,10 +162,11 @@ fn every_property_key_for_name_arm_is_listed() {
 /// parses successfully across the ~220 unrelated grammars this list
 /// covers.
 ///
-/// Instead, each name is checked two ways: [`is_supported_property_name`]
-/// is a real runtime call into `property_key_for_name` (true for every name
-/// except the handful of shorthands documented on
-/// [`supported_property_names`] that have no `PropertyKey` of their own);
+/// Instead, each name is checked two ways: `property_key_for_name` is a
+/// real runtime lookup (returning a key for every name except the handful
+/// of shorthands documented on [`supported_property_names`] that have no
+/// `PropertyKey` of their own; [`is_supported_property_name`] cannot serve
+/// as the probe, since it is defined as membership in this very list);
 /// for exactly those few, this falls back to the same dispatch-match scan
 /// the drift tests above use -- a name is "recognized by `parse_value`"
 /// exactly when it has a quoted arm in that match, which is the fact
@@ -177,7 +178,9 @@ fn every_listed_name_is_recognized() {
     let dispatch_names = parse_value_dispatch_names();
     let missing: Vec<&&str> = supported_property_names()
         .iter()
-        .filter(|n| !is_supported_property_name(n) && !dispatch_names.contains(**n))
+        .filter(|n| {
+            crate::property::property_key_for_name(n).is_none() && !dispatch_names.contains(**n)
+        })
         .collect();
     assert!(
         missing.is_empty(),
