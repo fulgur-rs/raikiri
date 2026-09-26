@@ -1,6 +1,6 @@
-//! `EventTarget` listener registration and removal (DOM §2.7). Dispatch is
-//! out of scope for this runtime; only the registered-listener state is
-//! kept, in [`super::State`], for a later spec increment to consume.
+//! `EventTarget` listener registration and removal (DOM §2.7). The listener
+//! state kept here, in [`super::State`], is consumed by [`super::dispatch`],
+//! which implements `dispatchEvent` (DOM §2.9) over it.
 //!
 //! Spec ref: <https://dom.spec.whatwg.org/#interface-eventtarget>
 
@@ -12,22 +12,20 @@ use super::interfaces::{Members, function};
 use super::webidl::{dom_string, node_index, with_state};
 
 /// One registered listener (DOM §2.7's "an event listener" struct, minus
-/// the event-path/dispatch fields no algorithm here needs yet).
+/// the touch-target-list/removed fields no algorithm here needs).
 #[derive(Clone)]
 pub(crate) struct Listener {
     pub kind: String,
     pub callback: JsObject,
     pub capture: bool,
-    #[allow(
-        dead_code,
-        reason = "recorded now for a later dispatch implementation to read; registration alone never reads it back"
-    )]
     pub once: bool,
-    #[allow(
-        dead_code,
-        reason = "recorded now for a later dispatch implementation to read; registration alone never reads it back"
-    )]
     pub passive: bool,
+    /// Whether this entry is the single slot an event handler IDL attribute
+    /// (`onclick`, `onerror`, ...) manages, rather than an ordinary
+    /// `addEventListener` registration -- see
+    /// [`super::dispatch::install_window_handlers`] and the matching
+    /// `HTMLElement` accessors.
+    pub is_handler: bool,
 }
 
 /// `this`'s listener-storage key: `Some(index)` for a `Node` wrapper, or
@@ -39,7 +37,7 @@ pub(crate) struct Listener {
 /// (and `null`, reachable the same way through `.call(null, ...)`) as the
 /// window key is what makes that call, and `window.addEventListener(...)`
 /// itself, both work.
-fn this_event_target(this: &JsValue, context: &mut Context) -> JsResult<Option<usize>> {
+pub(crate) fn this_event_target(this: &JsValue, context: &mut Context) -> JsResult<Option<usize>> {
     if let Some(index) = node_index(this) {
         return Ok(Some(index));
     }
@@ -77,7 +75,7 @@ fn convert_callback(args: &[JsValue], _context: &mut Context) -> JsResult<Option
 /// One `AddEventListenerOptions` field (`ToBoolean` of whatever is there;
 /// absent or `undefined` is `false`, matching the dictionary member's own
 /// default).
-fn dict_flag(context: &mut Context, options: &JsObject, name: &str) -> JsResult<bool> {
+pub(crate) fn dict_flag(context: &mut Context, options: &JsObject, name: &str) -> JsResult<bool> {
     let value = options.get(js_string!(name), context)?;
     Ok(!value.is_undefined() && value.to_boolean())
 }
@@ -151,6 +149,7 @@ pub(crate) fn add_event_listener(
                 capture,
                 once,
                 passive,
+                is_handler: false,
             });
         }
     })?;
@@ -193,19 +192,23 @@ pub(crate) const EVENT_TARGET_MEMBERS: Members = Members {
     methods: &[
         ("addEventListener", 2, add_event_listener),
         ("removeEventListener", 2, remove_event_listener),
+        ("dispatchEvent", 1, super::dispatch::dispatch_event),
     ],
 };
 
-/// `window`/`self`'s own `addEventListener`/`removeEventListener`: this
-/// runtime's global object has no dedicated `EventTarget` wrapper (`window
-/// === globalThis`, an ordinary object), so these are defined directly on
-/// it rather than reached through a prototype chain.
+/// `window`/`self`'s own `addEventListener`/`removeEventListener`/
+/// `dispatchEvent`: this runtime's global object has no dedicated
+/// `EventTarget` wrapper (`window === globalThis`, an ordinary object), so
+/// these are defined directly on it rather than reached through a
+/// prototype chain.
 pub(crate) fn install_globals(context: &mut Context) -> JsResult<()> {
     let attr = Attribute::WRITABLE | Attribute::CONFIGURABLE;
     let add = function(context, "addEventListener", 2, add_event_listener)?;
     context.register_global_property(js_string!("addEventListener"), add, attr)?;
     let remove = function(context, "removeEventListener", 2, remove_event_listener)?;
     context.register_global_property(js_string!("removeEventListener"), remove, attr)?;
+    let dispatch = function(context, "dispatchEvent", 1, super::dispatch::dispatch_event)?;
+    context.register_global_property(js_string!("dispatchEvent"), dispatch, attr)?;
     Ok(())
 }
 

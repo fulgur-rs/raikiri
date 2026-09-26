@@ -53,6 +53,9 @@ pub(crate) struct Protos {
     pub dom_rect_read_only: JsObject,
     pub dom_rect: JsObject,
     pub css_style_declaration: JsObject,
+    pub event: JsObject,
+    pub custom_event: JsObject,
+    pub error_event: JsObject,
 }
 
 /// The prototypes registered by [`install`].
@@ -284,6 +287,7 @@ fn derived(
 
 /// Register every interface, then `window` / `self` / `document`.
 pub(crate) fn install(context: &mut Context) -> JsResult<()> {
+    use super::dispatch;
     use super::node;
     use super::query;
     use super::style::{self, HTML_ELEMENT_MEMBERS};
@@ -339,6 +343,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     let html_element_members = [
         &HTML_ELEMENT_MEMBERS,
         &geometry::HTML_ELEMENT_OFFSET_MEMBERS,
+        &dispatch::HTML_ELEMENT_HANDLER_MEMBERS,
     ];
     let html_element = derived(context, "HTMLElement", &element, &html_element_members)?;
     let text = derived(context, "Text", &character_data, &[&NO_MEMBERS])?;
@@ -355,6 +360,42 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &pi_members,
     );
     let pi = pi_result?;
+    // `Event` has no parent interface (it does not extend `EventTarget`;
+    // `Node` and `Window` are the `EventTarget`s in this runtime).
+    let event_result = interface(
+        context,
+        "Event",
+        None,
+        None,
+        &[&dispatch::EVENT_MEMBERS],
+        dispatch::event_constructor,
+        1,
+    );
+    let event = event_result?;
+    for &(name, code) in dispatch::EVENT_PHASE_CONSTANTS {
+        define_u16_constant(&event.constructor, name, code, context)?;
+        define_u16_constant(&event.prototype, name, code, context)?;
+    }
+    let custom_event_result = interface(
+        context,
+        "CustomEvent",
+        Some(&event.prototype),
+        Some(&event.constructor),
+        &[&dispatch::CUSTOM_EVENT_MEMBERS],
+        dispatch::custom_event_constructor,
+        1,
+    );
+    let custom_event = custom_event_result?;
+    let error_event_result = interface(
+        context,
+        "ErrorEvent",
+        Some(&event.prototype),
+        Some(&event.constructor),
+        &[&dispatch::ERROR_EVENT_MEMBERS],
+        dispatch::error_event_constructor,
+        1,
+    );
+    let error_event = error_event_result?;
     // DOMException.prototype inherits Error.prototype (WebIDL §3.14.1), but
     // the interface object itself is an ordinary function with a real
     // constructor operation.
@@ -459,6 +500,9 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         dom_rect_read_only: dom_rect_read_only.prototype,
         dom_rect: dom_rect.prototype,
         css_style_declaration: css_style_declaration.prototype,
+        event: event.prototype,
+        custom_event: custom_event.prototype,
+        error_event: error_event.prototype,
     });
 
     let global = context.global_object();
@@ -470,6 +514,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     context.register_global_property(js_string!("document"), document, attr)?;
     style::install_globals(context)?;
     events::install_globals(context)?;
+    dispatch::install_window_handlers(context)?;
     Ok(())
 }
 
@@ -654,9 +699,12 @@ fn optional_dom_string(
     }
 }
 
-/// Define one legacy constant (non-writable, non-configurable, enumerable)
-/// on `target`, either `DOMException` or `DOMException.prototype`.
-fn define_legacy_constant(
+/// Define one `unsigned short` interface constant (WebIDL §3.7.7: on both
+/// the interface object and its prototype, non-writable, non-configurable,
+/// enumerable). Shared by [`install_dom_exception_constants`] (the
+/// `DOMException` legacy error codes) and `dispatch`'s `Event` phase
+/// constants (`NONE`, `CAPTURING_PHASE`, `AT_TARGET`, `BUBBLING_PHASE`).
+pub(crate) fn define_u16_constant(
     target: &JsObject,
     name: &str,
     code: u16,
@@ -682,12 +730,12 @@ fn install_dom_exception_constants(
     dom_exception: &Interface,
 ) -> JsResult<()> {
     for &(_, code, constant) in DOM_EXCEPTION_CODES {
-        define_legacy_constant(&dom_exception.constructor, constant, code, context)?;
-        define_legacy_constant(&dom_exception.prototype, constant, code, context)?;
+        define_u16_constant(&dom_exception.constructor, constant, code, context)?;
+        define_u16_constant(&dom_exception.prototype, constant, code, context)?;
     }
     for &(code, constant) in DOM_EXCEPTION_LEGACY_ONLY_CODES {
-        define_legacy_constant(&dom_exception.constructor, constant, code, context)?;
-        define_legacy_constant(&dom_exception.prototype, constant, code, context)?;
+        define_u16_constant(&dom_exception.constructor, constant, code, context)?;
+        define_u16_constant(&dom_exception.prototype, constant, code, context)?;
     }
     Ok(())
 }

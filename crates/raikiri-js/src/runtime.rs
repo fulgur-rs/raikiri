@@ -8,6 +8,7 @@ use std::rc::Rc;
 use boa_engine::{Context, JsObject, JsValue, Source};
 
 pub(crate) mod collections;
+pub(crate) mod dispatch;
 pub(crate) mod document;
 pub(crate) mod event_loop;
 pub(crate) mod events;
@@ -56,6 +57,11 @@ pub(crate) struct State {
     pub listeners: HashMap<Option<usize>, Vec<events::Listener>>,
     /// Task and microtask queues, timers, and the virtual clock.
     pub event_loop: event_loop::EventLoop,
+    /// Set while [`dispatch::report_exception`] is dispatching its own
+    /// `ErrorEvent`, so that an exception thrown by one of *that* event's
+    /// listeners (typically `window.onerror`) is recorded directly instead
+    /// of re-entering `report_exception` and dispatching another one.
+    pub reporting_exception: bool,
 }
 
 /// Shared handle to [`State`], stored in the Boa context's host data.
@@ -126,6 +132,7 @@ impl DomRuntime {
             children_collections: HashMap::new(),
             listeners: HashMap::new(),
             event_loop: event_loop::EventLoop::new(limits.clone()),
+            reporting_exception: false,
         };
         let executor = Rc::new(event_loop::RaikiriJobExecutor);
         let built = Context::builder().job_executor(executor).build();

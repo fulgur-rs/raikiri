@@ -21,7 +21,6 @@ use boa_engine::{
     Context, JsError, JsNativeError, JsObject, JsResult, JsString, JsValue, NativeFunction, Source,
 };
 
-use super::error_message;
 use super::interfaces::function;
 use super::webidl::with_state;
 
@@ -393,7 +392,9 @@ pub(crate) fn abort(context: &mut Context, reason: Abort) -> Abort {
 }
 
 /// Handle an error from a callback the loop invoked: a limit aborts the
-/// run, anything else is recorded as an uncaught exception.
+/// run; anything else goes to the HTML "report an exception" algorithm
+/// (dispatched at `window` before being recorded as uncaught), the same as
+/// a listener's own exception during event dispatch.
 fn settle(context: &mut Context, result: JsResult<JsValue>) -> Result<(), Abort> {
     let Err(error) = result else {
         return Ok(());
@@ -401,10 +402,7 @@ fn settle(context: &mut Context, result: JsResult<JsValue>) -> Result<(), Abort>
     if let Some(reason) = abort_for(&error) {
         return Err(abort(context, reason));
     }
-    let message = error_message(&error, context);
-    let _ = with_state(context, |state| {
-        state.event_loop.uncaught_errors.push(message)
-    });
+    super::dispatch::report_exception(context, &error, None);
     Ok(())
 }
 
