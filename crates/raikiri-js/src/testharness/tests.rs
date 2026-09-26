@@ -374,3 +374,16 @@ fn run_testharness_on_host_maps_host_failures_to_dom_errors() {
         "{result:?}"
     );
 }
+
+#[test]
+fn run_testharness_on_host_maps_uncaught_js_errors_to_javascript_errors() {
+    let (host, ..) = crate::runtime::test_host::StubHost::page();
+    let result = crate::testharness::run_testharness_on_host("throw new Error('uncaught');", host);
+    assert!(
+        matches!(
+            result,
+            Err(crate::testharness::TestHarnessError::JavaScript(_))
+        ),
+        "{result:?}"
+    );
+}
