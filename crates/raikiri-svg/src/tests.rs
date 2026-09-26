@@ -556,3 +556,30 @@ fn rejects_output_above_the_caller_byte_limit() {
         }
     ));
 }
+
+#[test]
+fn svg_error_display_pins_each_variant() {
+    assert!(format!("{}", SvgError::InvalidDocument("bad".to_string())).contains("bad"));
+    assert!(!format!("{}", SvgError::UnsupportedDoctype).is_empty());
+    assert!(!format!("{}", SvgError::ExternalReference).is_empty());
+    assert!(!format!("{}", SvgError::UnsupportedFilterEffects).is_empty());
+    assert!(!format!("{}", SvgError::InvalidViewport).is_empty());
+    assert!(!format!("{}", SvgError::InvalidOpacity).is_empty());
+    let msg = format!(
+        "{}",
+        SvgError::OutputLimitExceeded {
+            bytes: 10,
+            limit: 5
+        }
+    );
+    assert!(msg.contains("10") && msg.contains('5'));
+    assert!(!format!("{}", SvgError::AllocationFailed).is_empty());
+}
+
+#[test]
+fn svg_error_is_std_error() {
+    fn assert_error<T: std::error::Error>() {}
+    assert_error::<SvgError>();
+    let err: &dyn std::error::Error = &SvgError::InvalidViewport;
+    assert!(err.source().is_none());
+}
