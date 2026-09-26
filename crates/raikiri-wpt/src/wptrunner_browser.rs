@@ -9,17 +9,41 @@ use std::process::ExitCode;
 use raikiri::Url;
 use raikiri_net::SystemHttpProvider;
 
-use crate::reftest::RenderedImage;
-use crate::{WptHostResolver, render_screen_url};
+use crate::reftest::{RenderedDocument, RenderedImage};
+use crate::{WptHostResolver, render_print_url, render_screen_url};
 
-struct BrowserArgs {
+enum BrowserCommand {
+    Screen(ScreenArgs),
+    PrintReftest(PrintReftestArgs),
+}
+
+impl BrowserCommand {
+    fn parse<I, S>(arguments: I) -> Result<Self, BrowserError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mut arguments: Vec<String> = arguments.into_iter().map(Into::into).collect();
+        if arguments
+            .first()
+            .is_some_and(|value| value == "print-reftest")
+        {
+            arguments.remove(0);
+            PrintReftestArgs::parse(arguments).map(Self::PrintReftest)
+        } else {
+            ScreenArgs::parse(arguments).map(Self::Screen)
+        }
+    }
+}
+
+struct ScreenArgs {
     url: Url,
     output: PathBuf,
     viewport: Viewport,
     host_file: PathBuf,
 }
 
-impl BrowserArgs {
+impl ScreenArgs {
     fn parse(arguments: impl IntoIterator<Item = String>) -> Result<Self, BrowserError> {
         let mut url = None;
         let mut output = None;
@@ -42,19 +66,49 @@ impl BrowserArgs {
             }
         }
 
-        let url_text = required(url, "--url")?;
-        let url = Url::parse(&url_text)
-            .map_err(|error| BrowserError::new(format!("invalid --url: {error}")))?;
-        if url.scheme() != "http" {
-            return Err(BrowserError::new(format!(
-                "only http URLs are supported by this prototype, got {url}"
-            )));
+        Ok(Self {
+            url: parse_http_url(&required(url, "--url")?)?,
+            output: required(output, "--output")?.into(),
+            viewport: Viewport::parse(&required(window_size, "--window-size")?, "--window-size")?,
+            host_file: required(host_file, "--host-file")?.into(),
+        })
+    }
+}
+
+struct PrintReftestArgs {
+    url: Url,
+    output_directory: PathBuf,
+    page_size: Viewport,
+    host_file: PathBuf,
+}
+
+impl PrintReftestArgs {
+    fn parse(arguments: impl IntoIterator<Item = String>) -> Result<Self, BrowserError> {
+        let mut url = None;
+        let mut output_directory = None;
+        let mut page_size = None;
+        let mut host_file = None;
+        let mut arguments = arguments.into_iter();
+        while let Some(argument) = arguments.next() {
+            let value = arguments
+                .next()
+                .ok_or_else(|| BrowserError::new(format!("missing value for {argument}")))?;
+            let slot = match argument.as_str() {
+                "--url" => &mut url,
+                "--output-directory" => &mut output_directory,
+                "--page-size" => &mut page_size,
+                "--host-file" => &mut host_file,
+                _ => return Err(BrowserError::new(format!("unknown argument: {argument}"))),
+            };
+            if slot.replace(value).is_some() {
+                return Err(BrowserError::new(format!("duplicate argument: {argument}")));
+            }
         }
 
         Ok(Self {
-            url,
-            output: required(output, "--output")?.into(),
-            viewport: Viewport::parse(&required(window_size, "--window-size")?)?,
+            url: parse_http_url(&required(url, "--url")?)?,
+            output_directory: required(output_directory, "--output-directory")?.into(),
+            page_size: Viewport::parse(&required(page_size, "--page-size")?, "--page-size")?,
             host_file: required(host_file, "--host-file")?.into(),
         })
     }
@@ -66,11 +120,9 @@ struct Viewport {
 }
 
 impl Viewport {
-    fn parse(value: &str) -> Result<Self, BrowserError> {
+    fn parse(value: &str, option: &str) -> Result<Self, BrowserError> {
         let (width, height) = value.split_once('x').ok_or_else(|| {
-            BrowserError::new(format!(
-                "invalid --window-size {value:?}; expected WIDTHxHEIGHT"
-            ))
+            BrowserError::new(format!("invalid {option} {value:?}; expected WIDTHxHEIGHT"))
         })?;
         let width = width.parse::<u32>().map_err(|error| {
             BrowserError::new(format!("invalid viewport width {width:?}: {error}"))
@@ -87,6 +139,17 @@ impl Viewport {
     }
 }
 
+fn parse_http_url(value: &str) -> Result<Url, BrowserError> {
+    let url =
+        Url::parse(value).map_err(|error| BrowserError::new(format!("invalid --url: {error}")))?;
+    if url.scheme() != "http" {
+        return Err(BrowserError::new(format!(
+            "only http URLs are supported by this prototype, got {url}"
+        )));
+    }
+    Ok(url)
+}
+
 /// Runs the command and translates its result to process output and an exit code.
 pub fn entrypoint(arguments: impl IntoIterator<Item = String>) -> ExitCode {
     match run(arguments) {
@@ -99,22 +162,76 @@ pub fn entrypoint(arguments: impl IntoIterator<Item = String>) -> ExitCode {
 }
 
 fn run(arguments: impl IntoIterator<Item = String>) -> Result<(), BrowserError> {
-    let args = BrowserArgs::parse(arguments)?;
-    let hosts = WptHostResolver::from_hosts_file(&args.host_file)
+    match BrowserCommand::parse(arguments)? {
+        BrowserCommand::Screen(args) => {
+            let provider = provider_from_hosts_file(&args.host_file)?;
+            let image = render_screen_url(
+                &provider,
+                args.url,
+                args.viewport.width,
+                args.viewport.height,
+            )
+            .map_err(|error| BrowserError::new(error.to_string()))?;
+            write_png_atomically(&args.output, &image)
+        }
+        BrowserCommand::PrintReftest(args) => {
+            ensure_empty_output_directory(&args.output_directory)?;
+            let provider = provider_from_hosts_file(&args.host_file)?;
+            let document = render_print_url(
+                &provider,
+                args.url,
+                args.page_size.width,
+                args.page_size.height,
+            )
+            .map_err(|error| BrowserError::new(error.to_string()))?;
+            write_pages_atomically(&args.output_directory, &document)
+        }
+    }
+}
+
+fn provider_from_hosts_file(host_file: &Path) -> Result<SystemHttpProvider, BrowserError> {
+    let hosts = WptHostResolver::from_hosts_file(host_file)
         .map_err(|error| BrowserError::new(error.to_string()))?;
-    let provider = SystemHttpProvider::with_host_overrides(hosts.into_overrides());
-    let image = render_screen_url(
-        &provider,
-        args.url,
-        args.viewport.width,
-        args.viewport.height,
-    )
-    .map_err(|error| BrowserError::new(error.to_string()))?;
-    write_png_atomically(&args.output, &image)
+    Ok(SystemHttpProvider::with_host_overrides(
+        hosts.into_overrides(),
+    ))
 }
 
 fn required(value: Option<String>, name: &str) -> Result<String, BrowserError> {
     value.ok_or_else(|| BrowserError::new(format!("missing required argument {name}")))
+}
+
+fn ensure_empty_output_directory(output: &Path) -> Result<(), BrowserError> {
+    if !output.is_dir() {
+        return Err(BrowserError::new(format!(
+            "print output directory does not exist or is not a directory: {}",
+            output.display()
+        )));
+    }
+    let mut entries = fs::read_dir(output)
+        .map_err(|error| BrowserError::new(format!("read {}: {error}", output.display())))?;
+    if entries.next().is_some() {
+        return Err(BrowserError::new(format!(
+            "print output directory must be empty: {}",
+            output.display()
+        )));
+    }
+    Ok(())
+}
+
+fn write_pages_atomically(
+    output_directory: &Path,
+    document: &RenderedDocument,
+) -> Result<(), BrowserError> {
+    ensure_empty_output_directory(output_directory)?;
+    if document.pages.is_empty() {
+        return Err(BrowserError::new("print renderer produced no pages".into()));
+    }
+    for (index, page) in document.pages.iter().enumerate() {
+        let output = output_directory.join(format!("page-{:04}.png", index + 1));
+        write_png_atomically(&output, page)?;
+    }
+    Ok(())
 }
 
 fn write_png_atomically(output: &Path, image: &RenderedImage) -> Result<(), BrowserError> {
@@ -188,3 +305,6 @@ impl fmt::Display for BrowserError {
 }
 
 impl std::error::Error for BrowserError {}
+
+#[cfg(test)]
+mod tests;
