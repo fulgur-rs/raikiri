@@ -19,8 +19,8 @@
 
 - これらは全て **bd やこのセッションの会話文脈にアクセスできる読み手にしか意味がない**。
   ソースコメントは spec 由来の rationale を説明するためのものであり、想定読者は
-  将来の contributor・OSS reader・そして raikiri の設計目的である blitz backport の
-  レビュアーまで含む。誰も bd DB を持っていない。
+  将来の contributor・OSS reader・raikiri を依存先として使う下流 consumer の開発者まで
+  含む。誰も bd DB を持っていない。
 - bd issue は close・rename・`bd compact` による要約の対象になる。ソース中の ID 参照は
   将来ほぼ確実に dangling reference になる。
 - memory への参照は特に有害。memory は **そのセッションを実行している agent 個体の
