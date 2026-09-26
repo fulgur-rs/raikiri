@@ -541,22 +541,34 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                             })
                         })
                     });
-                if is_svg_root && let Some(raw_opacity) = elem.attr("opacity") {
-                    let mut input = ParserInput::new(raw_opacity);
-                    let mut parser = Parser::new(&mut input);
-                    if let Some(value) = crate::property::parse_value("opacity", &mut parser)
-                        && value.key() == crate::property::PropertyKey::Opacity
-                        && parser.expect_exhausted().is_ok()
-                    {
-                        push_cascaded_decl(
-                            &mut out.decls,
-                            &mut out.custom_decls,
-                            value,
-                            false,
-                            Origin::AuthorPresentationalHint,
-                            PRESENTATIONAL_HINT_SPECIFICITY,
-                            PRESENTATIONAL_HINT_SOURCE_ORDER,
-                        );
+                if is_svg_root {
+                    for (attribute, property, expected_key) in [
+                        ("opacity", "opacity", crate::property::PropertyKey::Opacity),
+                        (
+                            "background-color",
+                            "background-color",
+                            crate::property::PropertyKey::BackgroundColor,
+                        ),
+                    ] {
+                        let Some(raw_value) = elem.attr(attribute) else {
+                            continue;
+                        };
+                        let mut input = ParserInput::new(raw_value);
+                        let mut parser = Parser::new(&mut input);
+                        if let Some(value) = crate::property::parse_value(property, &mut parser)
+                            && value.key() == expected_key
+                            && parser.expect_exhausted().is_ok()
+                        {
+                            push_cascaded_decl(
+                                &mut out.decls,
+                                &mut out.custom_decls,
+                                value,
+                                false,
+                                Origin::AuthorPresentationalHint,
+                                PRESENTATIONAL_HINT_SPECIFICITY,
+                                PRESENTATIONAL_HINT_SOURCE_ORDER,
+                            );
+                        }
                     }
                 }
                 // HTML LS §15.3.9 margin-collapsing quirks (quirks-mode

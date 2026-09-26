@@ -4,6 +4,7 @@
 //! local files, issue requests, or recursively load data URLs are rejected.
 
 use raikiri_traits::DecodedImage;
+use std::collections::BTreeMap;
 use std::ops::Range;
 
 const DEFAULT_MAX_OUTPUT_BYTES: u64 = 32 * 1024 * 1024;
@@ -36,12 +37,15 @@ pub struct SvgViewport {
 pub struct SvgRootStyle {
     /// The inherited CSS `color`, in straight RGBA8.
     pub inherited_color: [u8; 4],
-    /// Host computed opacity. When root opacity is neutralized, this remains
-    /// the SVG root's inherited value and the caller composites it externally.
-    /// Otherwise it is applied once to the completed raster.
+    /// Host computed opacity. It is assigned to the SVG root while inherited
+    /// opacity declarations are resolved. If root opacity is neutralized, the
+    /// caller must composite this opacity around the raster and its box
+    /// decorations together. The raster backend removes root opacity after its
+    /// 8-bit pass, so small rounding differences are possible. Otherwise this
+    /// opacity is applied once to the completed raster.
     pub opacity: f32,
-    /// Neutralize the source root opacity when the caller composites the
-    /// computed opacity around the SVG and its box decorations as one group.
+    /// Remove the SVG root group's opacity from the raster when the caller
+    /// composites the computed opacity around the SVG and its box decorations.
     pub neutralize_root_opacity: bool,
     /// The host controls the SVG root's `background-color`, including when it
     /// computes to transparent, so omit the source background from the raster.
@@ -122,6 +126,7 @@ pub struct SvgDocument {
     source: String,
     intrinsic: SvgIntrinsicSize,
     has_view_box: bool,
+    root_has_color: bool,
 }
 
 impl SvgDocument {
@@ -154,6 +159,7 @@ impl SvgDocument {
             .attribute("viewBox")
             .and_then(parse_view_box_ratio)
             .is_some();
+        let root_has_color = root.attribute("color").is_some();
         let tree = parse_tree(source)?;
         let tree_size = tree.size();
         if !tree_size.width().is_finite()
@@ -171,6 +177,7 @@ impl SvgDocument {
             source: source.to_owned(),
             intrinsic,
             has_view_box,
+            root_has_color,
         })
     }
 
@@ -200,29 +207,37 @@ impl SvgDocument {
         let mut pixels = allocate_transparent_pixels(byte_len)?;
 
         if root_style.visible && root_style.opacity > 0.0 {
-            // Keep the original XML intact for selector matching whenever its
-            // root opacity can be removed from the rendered pixels. Rewriting
-            // opacity declarations into inline styles changes matches for
-            // selectors such as `[style]` and `[opacity="0.5"]`.
-            let normalize_zero_root_opacity =
-                root_style.neutralize_root_opacity && self.tree.root().opacity().get() == 0.0;
-            let source = if viewport_matches_tree(&self.tree, width, height, self.has_view_box) {
-                self.source.clone()
+            let viewport_matches =
+                viewport_matches_tree(&self.tree, width, height, self.has_view_box);
+            let modifies_source = !viewport_matches
+                || root_style.neutralize_root_opacity
+                || root_style.host_controls_root_background
+                || !self.root_has_color;
+            // Freeze selector matches before viewport, host-style, and opacity
+            // rewrites change attributes that selectors can inspect.
+            let source = if modifies_source {
+                freeze_svg_stylesheet_selectors(&self.source)?
             } else {
-                with_root_viewport_size(&self.source, width, height)?
+                self.source.clone()
             };
-            let source = if normalize_zero_root_opacity {
+            let source = if viewport_matches {
+                source
+            } else {
+                with_root_viewport_size(&source, width, height)?
+            };
+            let source = if root_style.neutralize_root_opacity {
                 normalize_svg_opacity_cascade(&source)?
             } else {
                 source
             };
-            let source = if normalize_zero_root_opacity || root_style.host_controls_root_background
+            let source = if root_style.neutralize_root_opacity
+                || root_style.host_controls_root_background
             {
                 with_root_style_overrides(
                     &source,
                     root_style.opacity,
-                    normalize_zero_root_opacity,
-                    root_style.host_controls_root_background,
+                    root_style.neutralize_root_opacity,
+                    root_style.host_controls_root_background || root_style.neutralize_root_opacity,
                 )?
             } else {
                 source
@@ -237,15 +252,14 @@ impl SvgDocument {
                 .then(|| parse_tree(&source))
                 .transpose()?;
             let tree = parsed_tree.as_ref().unwrap_or(&self.tree);
-            let neutralized_root_opacity = root_style
-                .neutralize_root_opacity
-                .then_some(tree.root().opacity().get());
             render_tree(
                 tree,
                 width,
                 height,
                 raster_opacity,
-                neutralized_root_opacity,
+                root_style
+                    .neutralize_root_opacity
+                    .then_some(root_style.opacity),
                 &mut pixels,
             )?;
         }
@@ -763,11 +777,132 @@ struct OpacityDeclaration {
     source_order: usize,
 }
 
+fn freeze_svg_stylesheet_selectors(source: &str) -> Result<String, SvgError> {
+    let xml = roxmltree::Document::parse(source)
+        .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
+    let root = xml.root_element();
+    let style_nodes = xml
+        .descendants()
+        .filter(|node| {
+            node.has_tag_name("style")
+                && node
+                    .attribute("type")
+                    .is_none_or(|style_type| style_type == "text/css")
+        })
+        .collect::<Vec<_>>();
+
+    let mut stylesheet_ranges = style_nodes
+        .iter()
+        .filter_map(|node| xml_element_content_range(source, *node).map(|range| (*node, range)))
+        .collect::<Vec<_>>();
+    stylesheet_ranges.sort_by_key(|(_, range)| range.start);
+    if stylesheet_ranges
+        .windows(2)
+        .any(|pair| pair[0].1.end > pair[1].1.start)
+    {
+        return Err(SvgError::InvalidDocument(
+            "nested SVG style elements are unsupported".to_owned(),
+        ));
+    }
+
+    let mut stylesheet = simplecss::StyleSheet::new();
+    for node in &style_nodes {
+        if let Some(text) = node.text() {
+            stylesheet.parse_more(text);
+        }
+    }
+    if stylesheet.rules.is_empty() {
+        return Ok(source.to_owned());
+    }
+
+    let marker_prefix = unique_attribute_name(source, "data-raikiri-svg-selector");
+    let mut frozen_stylesheet = String::new();
+    let mut element_markers = BTreeMap::<usize, Vec<String>>::new();
+    for (index, rule) in stylesheet.rules.iter().enumerate() {
+        let marker = format!("{marker_prefix}-{index}");
+        let mut has_match = false;
+        for node in root.descendants().filter(|node| node.is_element()) {
+            // Markers cannot be inserted into source ranges that are replaced
+            // wholesale as stylesheet text. Such nested markup is not a
+            // renderable SVG element, even if a broad selector matches it.
+            if stylesheet_ranges.iter().any(|(_, range)| {
+                range.start <= node.range().start && node.range().start < range.end
+            }) {
+                continue;
+            }
+            if rule.selector.matches(&SvgCssElement(node)) {
+                has_match = true;
+                element_markers
+                    .entry(node.range().start)
+                    .or_default()
+                    .push(marker.clone());
+            }
+        }
+
+        if !has_match {
+            continue;
+        }
+
+        frozen_stylesheet.push('[');
+        frozen_stylesheet.push_str(&marker);
+        frozen_stylesheet.push_str("] {");
+        for declaration in &rule.declarations {
+            frozen_stylesheet.push(' ');
+            frozen_stylesheet.push_str(declaration.name);
+            frozen_stylesheet.push(':');
+            frozen_stylesheet.push_str(declaration.value);
+            if declaration.important {
+                frozen_stylesheet.push_str(" !important");
+            }
+            frozen_stylesheet.push(';');
+        }
+        frozen_stylesheet.push_str(" }\n");
+    }
+
+    let mut edits = Vec::<(Range<usize>, String)>::new();
+    for (element_start, markers) in element_markers {
+        let end = root_start_tag_end(source, element_start)
+            .ok_or_else(|| SvgError::InvalidDocument("unterminated SVG element tag".to_owned()))?;
+        let insertion = if end > element_start && source.as_bytes()[end - 1] == b'/' {
+            end - 1
+        } else {
+            end
+        };
+        let attributes = markers
+            .iter()
+            .map(|marker| format!(" {marker}=\"\""))
+            .collect::<String>();
+        edits.push((insertion..insertion, attributes));
+    }
+
+    let mut stylesheet_inserted = false;
+    for (_, range) in stylesheet_ranges {
+        let replacement = if !stylesheet_inserted {
+            stylesheet_inserted = true;
+            escape_xml_text(&frozen_stylesheet)
+        } else {
+            String::new()
+        };
+        edits.push((range, replacement));
+    }
+    if !frozen_stylesheet.is_empty() && !stylesheet_inserted {
+        return Err(SvgError::InvalidDocument(
+            "could not rewrite SVG style element".to_owned(),
+        ));
+    }
+
+    edits.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
+    let mut result = source.to_owned();
+    for (range, replacement) in edits {
+        result.replace_range(range, &replacement);
+    }
+    Ok(result)
+}
+
 fn normalize_svg_opacity_cascade(source: &str) -> Result<String, SvgError> {
-    // usvg resolves `inherit` while it builds its tree and copies the parent's
-    // `!important` bit with the inherited value. Materialize each element's
-    // winning declaration first, while keeping the literal `inherit` so it
-    // still resolves in each `<use>` clone.
+    // Freeze winning opacity declarations before removing them from
+    // stylesheets. Keep the literal `inherit` so referenced subtrees retain
+    // their instance-specific inheritance through `<use>`.
     let xml = roxmltree::Document::parse(source)
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
     let root = xml.root_element();
@@ -812,15 +947,22 @@ fn normalize_svg_opacity_cascade(source: &str) -> Result<String, SvgError> {
             edits.push((attribute.range(), String::new()));
         }
 
+        if node == root {
+            continue;
+        }
         let Some(winner) = winner else {
             continue;
         };
+        // `opacity` is not inherited by default, but an explicit `inherit`
+        // must stay dynamic: usvg applies it in the `<use>` instance context.
+        // Replacing it with the source element's computed number changes the
+        // cloned element's opacity.
+        let value = winner.value;
         let existing_style = node.attribute("style");
         let retained = existing_style.map_or_else(String::new, |style| {
             strip_inline_style_properties(style, &["opacity"])
         });
-        let style_value =
-            append_inline_declarations(&retained, &format!("opacity:{}", winner.value));
+        let style_value = append_inline_declarations(&retained, &format!("opacity:{value}"));
         if let Some(attribute) = node
             .attributes()
             .find(|attribute| attribute.name() == "style")
@@ -1361,7 +1503,10 @@ fn xml_element_content_range(source: &str, node: roxmltree::Node<'_, '_>) -> Opt
 }
 
 fn unique_scope_attribute(source: &str) -> String {
-    let base = "data-raikiri-root-opacity-scope";
+    unique_attribute_name(source, "data-raikiri-root-opacity-scope")
+}
+
+fn unique_attribute_name(source: &str, base: &str) -> String {
     (0_u32..)
         .map(|suffix| {
             if suffix == 0 {
@@ -1597,12 +1742,14 @@ fn render_tree(
     );
     resvg::render(tree, transform, &mut pixmap.as_mut());
 
-    if let Some(root_opacity) = neutralized_root_opacity.filter(|opacity| *opacity < 1.0) {
-        // Keep the host value available while parsing so explicit `inherit`
-        // declarations (including nodes expanded from `<use>`) resolve in
-        // their original context. Remove the resulting SVG root group alpha
-        // here, while pixels are premultiplied, because the host composites
-        // that opacity around the raster and its box decorations together.
+    if let Some(root_opacity) = neutralized_root_opacity
+        .filter(|opacity| *opacity < 1.0 && !within_four_ulps_of_one(*opacity))
+    {
+        // usvg exposes the parsed tree but not a setter for the source root
+        // group's opacity. Remove that final premultiplied group multiplier so
+        // the host paint layer can apply it once around SVG content and box
+        // decorations together. The source root background is omitted before
+        // rendering because usvg stores it outside the source root group.
         let inverse_opacity = 1.0 / root_opacity;
         for channel in pixmap.data_mut() {
             *channel = (f32::from(*channel) * inverse_opacity)
@@ -1620,6 +1767,10 @@ fn render_tree(
     }
     *pixels = pixmap.take_demultiplied();
     Ok(())
+}
+
+fn within_four_ulps_of_one(value: f32) -> bool {
+    value <= 1.0 && 1.0_f32.to_bits().saturating_sub(value.to_bits()) <= 4
 }
 
 #[cfg(test)]
