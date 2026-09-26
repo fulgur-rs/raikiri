@@ -16,6 +16,7 @@ pub(crate) struct StubHost {
     pub computed: HashMap<(usize, String), String>,
     pub fail_flush: bool,
     pub fail_geometry: bool,
+    pub fail_computed: bool,
 }
 
 impl StubHost {
@@ -40,6 +41,7 @@ impl StubHost {
                 computed: HashMap::new(),
                 fail_flush: false,
                 fail_geometry: false,
+                fail_computed: false,
             },
             html,
             head,
@@ -84,6 +86,9 @@ impl DocumentHost for StubHost {
         Ok(self.geometry.get(&node).copied())
     }
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {
+        if self.fail_computed {
+            return Err(HostError("stub computed style failure".into()));
+        }
         Ok(self.computed.get(&(node, property.to_owned())).cloned())
     }
     fn parse_fragment(

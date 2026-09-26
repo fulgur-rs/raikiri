@@ -57,6 +57,18 @@ fn style_object_reads_and_writes_camel_and_dashed_names() {
 }
 
 #[test]
+fn style_objects_behave_like_ordinary_objects_for_inherited_members() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(&mut rt, "String(document.body.style) === '[object Object]'");
+    ok(&mut rt, "'' + document.body.style === '[object Object]'");
+    ok(
+        &mut rt,
+        "getComputedStyle(document.body).hasOwnProperty('getPropertyValue')",
+    );
+}
+
+#[test]
 fn geometry_reads_flush_only_when_dirty() {
     let (mut host, _, _, body) = StubHost::page();
     host.geometry.insert(body, StubHost::rect(20.4));
@@ -107,6 +119,33 @@ fn computed_style_unsupported_property_skips_flush() {
         "var cs = getComputedStyle(document.body); cs.whiteSpace === 'normal' && cs.getPropertyValue('white-space') === 'normal' && ('whiteSpace' in cs)",
     );
     assert_eq!(flushes.get(), 1);
+    ok(&mut rt, "!('noSuchProp' in cs)");
+}
+
+#[test]
+fn get_computed_style_rejects_a_non_element_argument() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    let error = rt.evaluate("getComputedStyle(document)").unwrap_err();
+    match error {
+        RuntimeError::JavaScript(message) => {
+            assert!(message.contains("argument is not an Element"), "{message}");
+        }
+        other => panic!("expected a JavaScript TypeError, got {other:?}"),
+    }
+}
+
+#[test]
+fn computed_value_failure_is_a_host_error() {
+    let (mut host, _, _, body) = StubHost::page();
+    host.computed
+        .insert((body, "white-space".into()), "normal".into());
+    host.fail_computed = true;
+    let mut rt = DomRuntime::new(host).unwrap();
+    assert_eq!(
+        rt.evaluate("getComputedStyle(document.body).getPropertyValue('white-space')"),
+        Err(RuntimeError::Host("stub computed style failure".into()))
+    );
 }
 
 #[test]
@@ -158,4 +197,5 @@ fn css_supports_uses_the_value_parser() {
         &mut rt,
         "CSS.supports('color', 'red') && !CSS.supports('color', '12px') && CSS.supports('color', 'inherit')",
     );
+    ok(&mut rt, "!CSS.supports('no-such-property', 'inherit')");
 }

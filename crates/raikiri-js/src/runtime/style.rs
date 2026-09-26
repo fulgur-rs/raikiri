@@ -8,9 +8,10 @@ use boa_engine::{
     Trace, js_string,
 };
 use cssparser::{Parser, ParserInput};
+use raikiri_dom::NodeKind;
 
 use super::host::DomRect;
-use super::interfaces::{Members, closure_function, function, wrap};
+use super::interfaces::{Members, closure_function, function};
 use super::node::mark_dirty;
 use super::webidl::{arg_node, dom_string, host_failure, this_element, with_state};
 
@@ -314,15 +315,21 @@ fn string_key(key: &JsValue) -> Option<String> {
     key.as_string().map(|s| s.to_std_string_escaped())
 }
 
-/// Proxy `[[Get]]` trap (`« target, key, receiver »`): an own property of the
-/// target (one of the methods `style_object` defined) wins; otherwise the key
-/// is read as a camelCase or dashed style property name.
+/// Proxy `[[Get]]` trap (`« target, key, receiver »`): a property the target
+/// already has — one of the methods `style_object` defined, or one inherited
+/// from `Object.prototype` (`toString`, `valueOf`, `hasOwnProperty`, ...) —
+/// wins; otherwise the key is read as a camelCase or dashed style property
+/// name. Checking the whole prototype chain (not just own properties, which
+/// the legacy facade's plain-object `style`/computed-style views never had
+/// to distinguish either — `dom.rs:272`, `:288`) is what lets `String(el.style)`,
+/// `'' + el.style`, and `el.style.hasOwnProperty(...)` work like a normal
+/// object instead of throwing `TypeError` on a non-callable `""`.
 fn style_get_trap(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let target_value = args.first().cloned().unwrap_or_default();
     let (target, index, computed) = style_target(&target_value)?;
     let key = args.get(1).cloned().unwrap_or_default();
     let property_key = key.to_property_key(context)?;
-    if target.has_own_property(property_key.clone(), context)? {
+    if target.has_property(property_key.clone(), context)? {
         return target.get(property_key, context);
     }
     let Some(name) = string_key(&key) else {
@@ -392,8 +399,14 @@ fn style(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsVal
 
 fn get_computed_style(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = arg_node(args, 0, context)?;
-    let element = wrap(context, index)?;
-    this_element(&element.into(), context)?;
+    let is_element = with_state(context, |s| {
+        s.host.document().get_node(index).map(|n| n.kind()) == Some(NodeKind::Element)
+    })?;
+    if !is_element {
+        return Err(JsNativeError::typ()
+            .with_message("argument is not an Element")
+            .into());
+    }
     Ok(style_object(context, index, true)?.into())
 }
 
