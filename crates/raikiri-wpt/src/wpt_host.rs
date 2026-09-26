@@ -10,10 +10,6 @@ use crate::reftest::{
     update_live_wpt_stylesheet_sources,
 };
 
-#[allow(
-    dead_code,
-    reason = "constructed only by this module's own tests until a WPT runner is switched over to it"
-)]
 pub(crate) struct WptDocumentHost {
     setup: LiveWptSetup,
     wpt_root: PathBuf,
@@ -25,10 +21,6 @@ pub(crate) struct WptDocumentHost {
     pub(crate) flushes: std::rc::Rc<std::cell::Cell<usize>>,
 }
 
-#[allow(
-    dead_code,
-    reason = "constructed only by this module's own tests until a WPT runner is switched over to it"
-)]
 impl WptDocumentHost {
     pub(crate) fn new(setup: LiveWptSetup, wpt_root: &Path) -> Self {
         let root = setup.uncascaded.dom.root_index();

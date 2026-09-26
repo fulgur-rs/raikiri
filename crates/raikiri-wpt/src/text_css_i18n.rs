@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use raikiri_js::TestOutcome;
 use raikiri_js::dom::{DomBackend, DomNodeId, DomRect, ElementGeometry};
-use raikiri_js::testharness::run_testharness_script;
+use raikiri_js::testharness::{run_testharness_on_host, run_testharness_script};
 
 use crate::reftest::{DEFAULT_REFTTEST_HEIGHT, DEFAULT_REFTTEST_WIDTH, prepare_wpt_live_document};
 
@@ -660,13 +660,71 @@ impl DomBackend for LiveDocumentBackend {
     }
 }
 
-/// Run every testharness-only HTML page under `css/css-text/i18n`.
+/// Which JavaScript DOM implementation executes the pages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Engine {
+    /// The previous plain-object facade over `DomBackend`.
+    Legacy,
+    /// Native DOM interfaces over `WptDocumentHost`.
+    Native,
+}
+
+/// One file where the native engine did worse than the legacy one.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Regression {
+    /// WPT-relative test ID.
+    pub test_id: String,
+    /// Legacy summary (`passed/total` or the error).
+    pub legacy: String,
+    /// Native summary (`passed/total` or the error).
+    pub native: String,
+}
+
+fn summary(result: &TestHarnessFileResult) -> String {
+    match &result.error {
+        Some(error) => format!("error: {error}"),
+        None => format!("{}/{}", result.passed(), result.total()),
+    }
+}
+
+/// Files where `native` passes fewer assertions than `legacy`, or errors
+/// where `legacy` did not. Files are matched by test ID; a file absent from
+/// `native` is not reported.
+pub fn regressions(
+    legacy: &[TestHarnessFileResult],
+    native: &[TestHarnessFileResult],
+) -> Vec<Regression> {
+    legacy
+        .iter()
+        .filter_map(|old| {
+            let new = native.iter().find(|new| new.test_id == old.test_id)?;
+            let worse = old.error.is_none() && (new.error.is_some() || new.passed() < old.passed());
+            worse.then(|| Regression {
+                test_id: old.test_id.clone(),
+                legacy: summary(old),
+                native: summary(new),
+            })
+        })
+        .collect()
+}
+
+/// Run every testharness-only HTML page under `css/css-text/i18n` on the
+/// native DOM runtime.
 ///
 /// Each script runs against a live Raikiri document. DOM and style writes
 /// update arena nodes; geometry reads lazily recascade and relayout that same
 /// document before returning current page-scene fragments.
 pub fn run_css_text_i18n(
     wpt_root: &Path,
+) -> Result<Vec<TestHarnessFileResult>, TestHarnessRunError> {
+    run_css_text_i18n_with(wpt_root, Engine::Native)
+}
+
+/// Run every testharness-only HTML page under `css/css-text/i18n` on the
+/// selected `engine`.
+pub fn run_css_text_i18n_with(
+    wpt_root: &Path,
+    engine: Engine,
 ) -> Result<Vec<TestHarnessFileResult>, TestHarnessRunError> {
     let test_root = wpt_root.join(TEST_DIR);
     if !test_root.is_dir() {
@@ -683,19 +741,21 @@ pub fn run_css_text_i18n(
 
     let results = files
         .iter()
-        .map(|path| run_testharness_file(path, wpt_root))
+        .map(|path| run_testharness_file_with_helper(path, wpt_root, "", engine))
         .collect();
     Ok(results)
 }
 
+#[cfg(test)]
 fn run_testharness_file(path: &Path, wpt_root: &Path) -> TestHarnessFileResult {
-    run_testharness_file_with_helper(path, wpt_root, "")
+    run_testharness_file_with_helper(path, wpt_root, "", Engine::Native)
 }
 
 fn run_testharness_file_with_helper(
     path: &Path,
     wpt_root: &Path,
     helper_script: &str,
+    engine: Engine,
 ) -> TestHarnessFileResult {
     let test_id = path
         .strip_prefix(wpt_root)
@@ -745,8 +805,15 @@ fn run_testharness_file_with_helper(
         }
     };
 
-    let backend = LiveDocumentBackend::new(setup, wpt_root);
-    let result = run_testharness_script(&script, backend);
+    let result = match engine {
+        Engine::Legacy => {
+            run_testharness_script(&script, LiveDocumentBackend::new(setup, wpt_root))
+        }
+        Engine::Native => run_testharness_on_host(
+            &script,
+            crate::wpt_host::WptDocumentHost::new(setup, wpt_root),
+        ),
+    };
     match result {
         Ok(outcomes) => TestHarnessFileResult {
             test_id,
