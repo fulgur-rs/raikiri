@@ -4640,6 +4640,20 @@ fn language_matches(language: &str, primary: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('-'))
 }
 
+/// Turkic dotted-I casing applies to the Latin writing system, not an
+/// explicitly different script such as `tr-Cyrl`.
+fn uses_turkic_case_tailoring(language: &str) -> bool {
+    if !language_matches(language, "tr") && !language_matches(language, "az") {
+        return false;
+    }
+    // In a BCP 47 tag the optional script subtag follows the primary language.
+    language.split('-').nth(1).is_none_or(|subtag| {
+        subtag.len() != 4
+            || !subtag.bytes().all(|byte| byte.is_ascii_alphabetic())
+            || subtag.eq_ignore_ascii_case("Latn")
+    })
+}
+
 fn text_transform_has_full_width(transform: TextTransform) -> bool {
     matches!(
         transform,
@@ -4685,10 +4699,11 @@ fn apply_text_transform(text: &str, transform: TextTransform, language: &str) ->
     };
     let mut cased = String::with_capacity(text.len());
     let mut in_word = false;
+    let turkic_case = uses_turkic_case_tailoring(language);
     for c in text.chars() {
         match case {
             Some(TextTransform::Uppercase) => {
-                if language_matches(language, "tr") || language_matches(language, "az") {
+                if turkic_case {
                     match c {
                         'i' => cased.push('İ'),
                         'ı' => cased.push('I'),
@@ -4699,7 +4714,7 @@ fn apply_text_transform(text: &str, transform: TextTransform, language: &str) ->
                 }
             }
             Some(TextTransform::Lowercase) => {
-                if language_matches(language, "tr") || language_matches(language, "az") {
+                if turkic_case {
                     match c {
                         'I' => cased.push('ı'),
                         'İ' => cased.push('i'),
@@ -4726,9 +4741,7 @@ fn apply_text_transform(text: &str, transform: TextTransform, language: &str) ->
             _ => cased.push(c),
         }
     }
-    if matches!(case, Some(TextTransform::Lowercase))
-        && (language_matches(language, "tr") || language_matches(language, "az"))
-    {
+    if matches!(case, Some(TextTransform::Lowercase)) && turkic_case {
         tailor_turkic_combining_dot(&mut cased);
     }
     if matches!(case, Some(TextTransform::Capitalize)) && language_matches(language, "nl") {
@@ -5390,7 +5403,7 @@ pub(crate) fn preshape_text(
             .chars()
             .eq(std::iter::once(char::from_u32(0x0307).unwrap()))
             && matches!(cv.text_transform, TextTransform::Lowercase)
-            && (language_matches(&language, "tr") || language_matches(&language, "az"))
+            && uses_turkic_case_tailoring(&language)
             && let Some(previous) = jobs.last_mut()
             && parent_of[previous.idx] == parent_of[idx]
             && previous.text.ends_with('ı')

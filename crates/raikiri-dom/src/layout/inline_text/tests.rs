@@ -3299,6 +3299,46 @@ fn preshape_text_measures_inherited_ch_spacing_with_the_declaring_font() {
 }
 
 #[test]
+fn split_combining_dot_follows_explicit_script_tailoring() {
+    use parley::{FontContext, LayoutContext};
+    use raikiri_style::{build_rule_tree, cascade};
+
+    for (language, dot_folds_into_previous_job) in [("tr-Latn", true), ("tr-Cyrl", false)] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let p = doc.append_element(
+            Some(body),
+            "p",
+            Style::default(),
+            Some("text-transform: lowercase"),
+        );
+        doc.set_element_attribute(p, "lang", language)
+            .expect("set language");
+        let first = doc.append_text(p, "I");
+        let dot = doc.append_text(p, "\u{0307}");
+        let rules = build_rule_tree(&doc);
+        let cr = cascade(&doc, &rules).expect("cascade Ok");
+        let mut fonts = FontContext::new();
+        let mut layout_cx = LayoutContext::<()>::new();
+        preshape_text(
+            &mut doc,
+            &cr,
+            &mut fonts,
+            &mut layout_cx,
+            PageBox::A4.width,
+            PageBox::A4.width,
+        );
+        assert!(doc.nodes[first].text_layout().is_some());
+        assert_eq!(
+            doc.nodes[dot].text_layout().is_none(),
+            dot_folds_into_previous_job,
+            "{language}"
+        );
+    }
+}
+
+#[test]
 fn text_transform_maps_case_width_kana_and_language_tailoring() {
     assert_eq!(
         apply_text_transform("hello world", TextTransform::Capitalize, ""),
@@ -3327,6 +3367,38 @@ fn text_transform_maps_case_width_kana_and_language_tailoring() {
     assert_eq!(
         apply_text_transform("İI", TextTransform::Lowercase, "tr"),
         "iı"
+    );
+    assert_eq!(
+        apply_text_transform("I", TextTransform::Lowercase, "tr-TR"),
+        "ı"
+    );
+    assert_eq!(
+        apply_text_transform("I", TextTransform::Lowercase, "tr-Latn"),
+        "ı"
+    );
+    assert_eq!(
+        apply_text_transform("I", TextTransform::Lowercase, "tr-Cyrl"),
+        "i"
+    );
+    assert_eq!(
+        apply_text_transform("I", TextTransform::Lowercase, "az-Cyrl"),
+        "i"
+    );
+    assert_eq!(
+        apply_text_transform("i", TextTransform::Uppercase, "tr-Cyrl"),
+        "I"
+    );
+    assert_eq!(
+        apply_text_transform("i", TextTransform::Uppercase, "az-Latn"),
+        "İ"
+    );
+    assert_eq!(
+        apply_text_transform("I\u{0307}", TextTransform::Lowercase, "tr-Latn"),
+        "i"
+    );
+    assert_eq!(
+        apply_text_transform("I\u{0307}", TextTransform::Lowercase, "tr-Cyrl"),
+        "i\u{0307}"
     );
     assert_eq!(
         apply_text_transform("ijsland", TextTransform::Capitalize, "nl"),
