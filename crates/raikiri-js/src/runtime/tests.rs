@@ -86,6 +86,16 @@ fn interface_constructors_are_illegal() {
 }
 
 #[test]
+fn annex_b_web_compatibility_features_are_available() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    assert!(eval_bool(&mut rt, "'00B0  DEGREE'.substr(0, 4) === '00B0'"));
+    assert!(eval_bool(&mut rt, "'abc'.substr(-2) === 'bc'"));
+    assert!(eval_bool(&mut rt, "typeof escape === 'function'"));
+    assert!(eval_bool(&mut rt, "<!-- an HTML-like comment\ntrue"));
+}
+
+#[test]
 fn global_object_exposes_no_internal_names() {
     let (host, ..) = StubHost::page();
     let mut rt = DomRuntime::new(host).unwrap();

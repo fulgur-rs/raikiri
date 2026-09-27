@@ -13,6 +13,15 @@ use crate::reftest::{DEFAULT_REFTTEST_HEIGHT, DEFAULT_REFTTEST_WIDTH, prepare_wp
 
 const TEST_DIR: &str = "css/css-text/i18n";
 
+/// Which JavaScript harness executes the pages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Engine {
+    /// The page's inline scripts on the built-in testharness shim.
+    Shim,
+    /// The whole page, with the checkout's real `testharness.js`.
+    Real,
+}
+
 /// Per-file result from a CSS Text i18n testharness page.
 #[derive(Debug)]
 pub struct TestHarnessFileResult {
@@ -73,6 +82,14 @@ impl std::error::Error for TestHarnessRunError {}
 pub fn run_css_text_i18n(
     wpt_root: &Path,
 ) -> Result<Vec<TestHarnessFileResult>, TestHarnessRunError> {
+    run_css_text_i18n_with(wpt_root, Engine::Shim)
+}
+
+/// Like [`run_css_text_i18n`], on the selected `engine`.
+pub fn run_css_text_i18n_with(
+    wpt_root: &Path,
+    engine: Engine,
+) -> Result<Vec<TestHarnessFileResult>, TestHarnessRunError> {
     let test_root = wpt_root.join(TEST_DIR);
     if !test_root.is_dir() {
         return Err(TestHarnessRunError::Io(format!(
@@ -88,9 +105,94 @@ pub fn run_css_text_i18n(
 
     let results = files
         .iter()
-        .map(|path| run_testharness_file_with_helper(path, wpt_root, ""))
+        .map(|path| match engine {
+            Engine::Shim => run_testharness_file_with_helper(path, wpt_root, ""),
+            Engine::Real => run_real_testharness_file(path, wpt_root),
+        })
         .collect();
     Ok(results)
+}
+
+fn test_id(path: &Path, wpt_root: &Path) -> String {
+    path.strip_prefix(wpt_root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// Run one page end to end with the checkout's real `testharness.js`.
+fn run_real_testharness_file(path: &Path, wpt_root: &Path) -> TestHarnessFileResult {
+    let test_id = test_id(path, wpt_root);
+    // `run_testharness_page` joins its path onto `wpt_root`, so a discovered
+    // path (already under a possibly relative `wpt_root`) goes in relative.
+    let relative = path.strip_prefix(wpt_root).unwrap_or(path);
+    match crate::testharness_page::run_testharness_page(relative, wpt_root) {
+        Ok(outcomes) => TestHarnessFileResult {
+            test_id,
+            outcomes,
+            error: None,
+        },
+        Err(error) => TestHarnessFileResult {
+            test_id,
+            outcomes: Vec::new(),
+            error: Some(error.to_string()),
+        },
+    }
+}
+
+/// One file whose results differ between the two engines.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Difference {
+    /// WPT-relative test ID.
+    pub test_id: String,
+    /// Shim summary (`passed/total`, or the error).
+    pub shim: String,
+    /// Real-harness summary, in the same form.
+    pub real: String,
+}
+
+/// Regressions and improvements between the two engines' results.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Comparison {
+    /// Files where the shim ran without error and the real harness errored,
+    /// or the real harness passed fewer assertions.
+    pub regressions: Vec<Difference>,
+    /// Files where the shim errored and the real harness did not, or the
+    /// real harness passed more assertions.
+    pub improvements: Vec<Difference>,
+}
+
+fn summary(result: &TestHarnessFileResult) -> String {
+    match &result.error {
+        Some(error) => format!("error: {error}"),
+        None => format!("{}/{}", result.passed(), result.total()),
+    }
+}
+
+/// Compare the shim and real-harness results of the same files, paired in
+/// order.
+pub fn compare<'a, I>(results: I) -> Comparison
+where
+    I: IntoIterator<Item = (&'a TestHarnessFileResult, &'a TestHarnessFileResult)>,
+{
+    let mut comparison = Comparison::default();
+    for (shim, real) in results {
+        let bucket = match (&shim.error, &real.error) {
+            (None, Some(_)) => Some(&mut comparison.regressions),
+            (Some(_), None) => Some(&mut comparison.improvements),
+            (None, None) if real.passed() < shim.passed() => Some(&mut comparison.regressions),
+            (None, None) if real.passed() > shim.passed() => Some(&mut comparison.improvements),
+            _ => None,
+        };
+        if let Some(bucket) = bucket {
+            bucket.push(Difference {
+                test_id: shim.test_id.clone(),
+                shim: summary(shim),
+                real: summary(real),
+            });
+        }
+    }
+    comparison
 }
 
 #[cfg(test)]
@@ -103,11 +205,7 @@ fn run_testharness_file_with_helper(
     wpt_root: &Path,
     helper_script: &str,
 ) -> TestHarnessFileResult {
-    let test_id = path
-        .strip_prefix(wpt_root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/");
+    let test_id = test_id(path, wpt_root);
     let html = match fs::read_to_string(path) {
         Ok(html) => html,
         Err(error) => {

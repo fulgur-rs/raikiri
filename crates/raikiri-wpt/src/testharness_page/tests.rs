@@ -363,3 +363,23 @@ fn real_harness_loads_a_root_relative_support_script() {
     let results = run_testharness_page(Path::new("css/t/page.html"), dir.path()).unwrap();
     assert_eq!(results, vec![outcome("helper", true, "")]);
 }
+
+#[test]
+fn page_errors_display_their_kind_and_detail() {
+    assert_eq!(
+        PageError::Harness("ERROR: boom".into()).to_string(),
+        "harness: ERROR: boom"
+    );
+    assert_eq!(
+        PageError::Aborted("too many tasks".into()).to_string(),
+        "aborted: too many tasks"
+    );
+    assert_eq!(
+        PageError::NoResults.to_string(),
+        "the harness reported no test results"
+    );
+    assert_eq!(
+        PageError::Host("missing.html: not found".into()).to_string(),
+        "host: missing.html: not found"
+    );
+}

@@ -1904,3 +1904,57 @@ fn font_shorthand_subproperties_reset_wpt_case_uses_the_pinned_fixture() {
     );
     assert!(result.all_passed(), "{:?}", result.outcomes);
 }
+
+fn file_result(test_id: &str, passes: &[bool], error: Option<&str>) -> TestHarnessFileResult {
+    TestHarnessFileResult {
+        test_id: test_id.to_owned(),
+        outcomes: passes
+            .iter()
+            .enumerate()
+            .map(|(i, passed)| TestOutcome {
+                name: format!("t{i}"),
+                passed: *passed,
+                message: String::new(),
+            })
+            .collect(),
+        error: error.map(str::to_owned),
+    }
+}
+
+#[test]
+fn compare_buckets_errors_and_pass_counts_per_file() {
+    let shim = [
+        file_result("same", &[true, false], None),
+        file_result("new-error", &[true], None),
+        file_result("fixed-error", &[], Some("boom")),
+        file_result("fewer", &[true, true], None),
+        file_result("more", &[false, false], None),
+        file_result("both-error", &[], Some("a")),
+    ];
+    let real = [
+        file_result("same", &[false, true], None),
+        file_result("new-error", &[], Some("harness: ERROR")),
+        file_result("fixed-error", &[true], None),
+        file_result("fewer", &[true, false], None),
+        file_result("more", &[true, false, true], None),
+        file_result("both-error", &[], Some("b")),
+    ];
+    let comparison = compare(shim.iter().zip(real.iter()));
+    let ids = |differences: &[Difference]| {
+        differences
+            .iter()
+            .map(|difference| difference.test_id.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&comparison.regressions), ["new-error", "fewer"]);
+    assert_eq!(ids(&comparison.improvements), ["fixed-error", "more"]);
+    assert_eq!(
+        comparison.regressions[0],
+        Difference {
+            test_id: "new-error".into(),
+            shim: "1/1".into(),
+            real: "error: harness: ERROR".into(),
+        }
+    );
+    assert_eq!(comparison.improvements[1].real, "2/3");
+}

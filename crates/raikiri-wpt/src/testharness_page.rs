@@ -4,13 +4,6 @@
 //! this crate's report script (served in place of
 //! `resources/testharnessreport.js`, see [`REPORT_SCRIPT`]) hands the
 //! harness's completion results back to Rust.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the WPT runners do not run pages through the real harness yet"
-    )
-)]
 
 use std::path::Path;
 
@@ -85,6 +78,19 @@ pub(crate) enum PageError {
     /// never completed and some script failed to load.
     Host(String),
 }
+
+impl std::fmt::Display for PageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Harness(message) => write!(f, "harness: {message}"),
+            Self::Aborted(reason) => write!(f, "aborted: {reason}"),
+            Self::NoResults => write!(f, "the harness reported no test results"),
+            Self::Host(message) => write!(f, "host: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for PageError {}
 
 /// The most subtests read from one delivery. The loop over the delivered
 /// list runs natively, outside the script engine's own loop limit, so a
