@@ -86,6 +86,16 @@ fn interface_constructors_are_illegal() {
 }
 
 #[test]
+fn annex_b_web_compatibility_features_are_available() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    assert!(eval_bool(&mut rt, "'00B0  DEGREE'.substr(0, 4) === '00B0'"));
+    assert!(eval_bool(&mut rt, "'abc'.substr(-2) === 'bc'"));
+    assert!(eval_bool(&mut rt, "typeof escape === 'function'"));
+    assert!(eval_bool(&mut rt, "<!-- an HTML-like comment\ntrue"));
+}
+
+#[test]
 fn global_object_exposes_no_internal_names() {
     let (host, ..) = StubHost::page();
     let mut rt = DomRuntime::new(host).unwrap();
@@ -479,4 +489,54 @@ fn stub_host_reports_configured_values() {
         Some("<b>x</b>")
     );
     let _ = host.document_mut();
+}
+
+/// Missing and empty-valued attributes must be distinguishable through
+/// `getAttribute`/`hasAttribute`, not collapsed to the same observable state.
+#[test]
+fn element_attribute_reads_distinguish_missing_and_empty_values() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        r#"
+            var line = document.createElement('div');
+            document.body.appendChild(line);
+            line.setAttribute('data-empty', '');
+            line.setAttribute('title', 'initial');
+        "#,
+    )
+    .unwrap();
+    assert!(eval_bool(
+        &mut rt,
+        "line.getAttribute('missing') === null && !line.hasAttribute('missing')",
+    ));
+    assert!(eval_bool(
+        &mut rt,
+        "line.getAttribute('data-empty') === '' && line.hasAttribute('data-empty')",
+    ));
+    assert!(eval_bool(
+        &mut rt,
+        "line.getAttribute('title') === 'initial' && line.hasAttribute('title')",
+    ));
+}
+
+/// `setAttribute` coerces a non-string argument (DOM §4.9's `DOMString`
+/// argument type) and `removeAttribute` makes a later read report the
+/// attribute as absent again.
+#[test]
+fn element_attribute_mutations_round_trip_through_native_bindings() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var line = document.createElement('div'); document.body.appendChild(line);")
+        .unwrap();
+    rt.evaluate("line.setAttribute('data-count', 42);").unwrap();
+    assert!(eval_bool(
+        &mut rt,
+        "line.getAttribute('data-count') === '42' && line.hasAttribute('data-count')",
+    ));
+    rt.evaluate("line.removeAttribute('data-count');").unwrap();
+    assert!(eval_bool(
+        &mut rt,
+        "line.getAttribute('data-count') === null && !line.hasAttribute('data-count')",
+    ));
 }

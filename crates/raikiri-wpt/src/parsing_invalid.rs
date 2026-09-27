@@ -1,26 +1,27 @@
 //! Runs a WPT CSS parsing test file's `test_invalid_value`/`test_valid_value`
 //! assertions, aggregating per-file PASS/FAIL counts.
 //!
-//! The real `css/support/parsing-testcommon.js` and the file's inline script
-//! run on the native DOM runtime against a live Raikiri document built from
-//! the test page, so `document.getElementById('target')` and element style
+//! Each page runs end to end with the checkout's real
+//! `resources/testharness.js`: its `<script>` elements, inline or `src`
+//! (including `css/support/parsing-testcommon.js`), run in document order on
+//! the native DOM runtime against a live Raikiri document built from the
+//! page, so `document.getElementById('target')` and element style
 //! declarations behave as they do for any other testharness page.
 
 use std::fs;
 use std::path::Path;
 
 use raikiri_js::TestOutcome;
-use raikiri_js::testharness::{TestHarnessError, run_testharness_scripts_on_host};
 
-use crate::reftest::{DEFAULT_REFTTEST_HEIGHT, DEFAULT_REFTTEST_WIDTH, prepare_wpt_live_document};
-use crate::wpt_host::WptDocumentHost;
+use crate::testharness_page::{PageError, run_testharness_page_with_preamble};
 
-/// Known-valid, property-agnostic sanity check run before the helper and the
-/// test script: `color: red` must round-trip through an element's inline
+/// Known-valid, property-agnostic sanity check run before any of the page's
+/// scripts: `color: red` must round-trip through an element's inline
 /// style. It catches an inert style binding (a setter that silently no-ops,
 /// or a getter that always reads back empty) that would otherwise make every
 /// `test_invalid_value` assertion pass for the wrong reason. A failure throws,
-/// so the whole file is reported as an error instead of a result.
+/// so the whole file is reported as [`ParsingFileError::PositiveControl`]
+/// instead of a result.
 const POSITIVE_CONTROL_JS: &str = r#"
 (function () {
     var div = document.createElement("div");
@@ -65,12 +66,14 @@ pub enum ParsingFileError {
     /// The file's inline script has neither a `test_invalid_value(` nor a
     /// `test_valid_value(` call, so there is nothing for this runner to run.
     NoParsingTestCalls,
-    /// Reading the test file or `parsing-testcommon.js` failed.
+    /// Reading the test file failed.
     Io(String),
-    /// Building the live document for the test page failed.
-    Document(String),
-    /// The native testharness run reported an error.
-    Harness(TestHarnessError),
+    /// The positive control run ahead of the page's scripts failed, so the
+    /// style binding cannot be trusted and the page was not run.
+    PositiveControl(String),
+    /// The page ran but produced no trustworthy results (a harness-level
+    /// error, a resource limit, a host failure, or no tests at all).
+    Page(String),
 }
 
 impl std::fmt::Display for ParsingFileError {
@@ -83,8 +86,8 @@ impl std::fmt::Display for ParsingFileError {
                 )
             }
             ParsingFileError::Io(msg) => write!(f, "I/O error: {msg}"),
-            ParsingFileError::Document(msg) => write!(f, "live document: {msg}"),
-            ParsingFileError::Harness(e) => write!(f, "{e}"),
+            ParsingFileError::PositiveControl(msg) => write!(f, "positive control: {msg}"),
+            ParsingFileError::Page(msg) => write!(f, "{msg}"),
         }
     }
 }
@@ -124,7 +127,8 @@ pub fn inline_scripts(html: &str) -> String {
     out
 }
 
-/// Run one `css/*/parsing/*.html` file on the native DOM runtime.
+/// Run one `css/*/parsing/*.html` file with the real `testharness.js`,
+/// after the positive control.
 ///
 /// `wpt_root` is the fetched WPT checkout root (`target/wpt` by
 /// convention; see `scripts/wpt/fetch.sh`); `relative_path` is the file's
@@ -134,34 +138,31 @@ pub fn run_parsing_invalid_file(
     wpt_root: &Path,
     relative_path: &Path,
 ) -> Result<ParsingFileOutcome, ParsingFileError> {
-    let page_path = wpt_root.join(relative_path);
-    let html = fs::read_to_string(&page_path).map_err(|e| ParsingFileError::Io(e.to_string()))?;
+    let html = fs::read_to_string(wpt_root.join(relative_path))
+        .map_err(|e| ParsingFileError::Io(e.to_string()))?;
     let script = inline_scripts(&html);
     if !script.contains("test_invalid_value(") && !script.contains("test_valid_value(") {
         return Err(ParsingFileError::NoParsingTestCalls);
     }
-    let parsing_testcommon = fs::read_to_string(wpt_root.join("css/support/parsing-testcommon.js"))
-        .map_err(|e| ParsingFileError::Io(e.to_string()))?;
-
-    let page_base = page_path.parent().unwrap_or(wpt_root);
-    let setup = prepare_wpt_live_document(
-        &html,
-        DEFAULT_REFTTEST_WIDTH,
-        DEFAULT_REFTTEST_HEIGHT,
-        page_base,
-        wpt_root,
-    )
-    .map_err(ParsingFileError::Document)?;
-    let outcomes = run_testharness_scripts_on_host(
-        &[POSITIVE_CONTROL_JS, &parsing_testcommon, &script],
-        WptDocumentHost::new(setup, wpt_root),
-    )
-    .map_err(ParsingFileError::Harness)?;
-
+    let outcomes = run_page_after_control(wpt_root, relative_path, POSITIVE_CONTROL_JS)?;
     Ok(ParsingFileOutcome {
         test_id: path_to_test_id(relative_path),
         outcomes,
     })
+}
+
+/// Run the whole page with the real `testharness.js`, `control` first.
+fn run_page_after_control(
+    wpt_root: &Path,
+    relative_path: &Path,
+    control: &str,
+) -> Result<Vec<TestOutcome>, ParsingFileError> {
+    run_testharness_page_with_preamble(relative_path, wpt_root, control).map_err(
+        |error| match error {
+            PageError::Preamble(message) => ParsingFileError::PositiveControl(message),
+            other => ParsingFileError::Page(other.to_string()),
+        },
+    )
 }
 
 fn path_to_test_id(path: &Path) -> String {

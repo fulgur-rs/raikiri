@@ -27,6 +27,8 @@ fn rt_over(document: raikiri_dom::Document) -> DomRuntime {
         fail_flush: false,
         fail_geometry: false,
         fail_computed: false,
+        document_url: None,
+        scripts: std::collections::HashMap::new(),
     };
     DomRuntime::new(host).unwrap()
 }
@@ -230,6 +232,75 @@ fn document_title_setter_overwrites_a_title_outside_head_when_there_is_no_head()
     ok(&mut rt, "document.title === 'old'");
     rt.evaluate("document.title = 'new';").unwrap();
     ok(&mut rt, "document.title === 'new'");
+}
+
+#[test]
+fn ready_state_defaults_to_complete() {
+    let mut rt = rt();
+    ok(&mut rt, "document.readyState === 'complete'");
+}
+
+#[test]
+fn ready_state_reports_a_state_the_state_field_was_set_to() {
+    let mut rt = rt();
+    with_state(rt.context_mut(), |s| {
+        s.ready_state = super::ReadyState::Loading;
+    })
+    .unwrap();
+    ok(&mut rt, "document.readyState === 'loading'");
+    with_state(rt.context_mut(), |s| {
+        s.ready_state = super::ReadyState::Interactive;
+    })
+    .unwrap();
+    ok(&mut rt, "document.readyState === 'interactive'");
+}
+
+#[test]
+fn current_script_defaults_to_null() {
+    let mut rt = rt();
+    ok(&mut rt, "document.currentScript === null");
+}
+
+#[test]
+fn current_script_reports_the_node_the_state_field_was_set_to() {
+    let (mut rt, body) = rt_with_body();
+    let script = with_state(rt.context_mut(), |s| {
+        s.host
+            .document_mut()
+            .create_detached_element("script")
+            .unwrap()
+    })
+    .unwrap();
+    with_state(rt.context_mut(), |s| {
+        s.host.document_mut().append_child(body, script).unwrap();
+        s.current_script = Some(script);
+    })
+    .unwrap();
+    ok(
+        &mut rt,
+        "document.currentScript !== null && document.currentScript.tagName === 'SCRIPT'",
+    );
+}
+
+#[test]
+fn document_url_and_document_uri_report_the_host_document_url() {
+    let (mut host, ..) = StubHost::page();
+    host.document_url = Some("https://example.test/a.html".to_owned());
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "document.URL === 'https://example.test/a.html' \
+         && document.documentURI === 'https://example.test/a.html'",
+    );
+}
+
+#[test]
+fn document_url_and_document_uri_default_to_about_blank() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "document.URL === 'about:blank' && document.documentURI === 'about:blank'",
+    );
 }
 
 /// [`super::is_xml_name_start`]/[`super::is_xml_name_char`] duplicate

@@ -53,6 +53,9 @@ pub(crate) struct Protos {
     pub dom_rect_read_only: JsObject,
     pub dom_rect: JsObject,
     pub css_style_declaration: JsObject,
+    pub event: JsObject,
+    pub custom_event: JsObject,
+    pub error_event: JsObject,
 }
 
 /// The prototypes registered by [`install`].
@@ -66,6 +69,30 @@ fn illegal_constructor(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<
     Err(JsNativeError::typ()
         .with_message("Illegal constructor")
         .into())
+}
+
+/// Define `object`'s `Symbol.toStringTag` (WebIDL §3.6.3: non-writable,
+/// non-enumerable, configurable, its value the interface's -- or, for a
+/// WebIDL namespace object, the namespace's -- own identifier), so
+/// `Object.prototype.toString.call(x)` reads `[object <tag>]` instead of the
+/// engine's generic default. Shared by [`interface`] (every interface
+/// prototype gets one) and [`super::window`]'s `console` singleton (a
+/// WebIDL namespace object, so it has no interface/prototype of its own to
+/// carry this any other way); `location`/`navigator` instead inherit it
+/// through the `Location`/`Navigator` prototypes `interface` itself builds.
+pub(crate) fn set_to_string_tag(
+    object: &JsObject,
+    tag: &str,
+    context: &mut Context,
+) -> JsResult<()> {
+    let descriptor = PropertyDescriptor::builder()
+        .value(JsString::from(tag))
+        .writable(false)
+        .enumerable(false)
+        .configurable(true)
+        .build();
+    object.define_property_or_throw(JsSymbol::to_string_tag(), descriptor, context)?;
+    Ok(())
 }
 
 /// A native getter/setter/method function object with the given `name` and
@@ -241,19 +268,7 @@ fn interface(
     let standard = builder.build();
     let constructor = standard.constructor();
     let prototype = standard.prototype();
-    // WebIDL §3.6.3: every interface's prototype carries a non-writable,
-    // non-enumerable, configurable `Symbol.toStringTag` whose value is the
-    // interface's own identifier, so `Object.prototype.toString.call(x)`
-    // reads `[object <name>]` instead of the engine's generic default. Set
-    // here, once, so every interface built through this function gets it
-    // without repeating the definition at each call site.
-    let to_string_tag = PropertyDescriptor::builder()
-        .value(JsString::from(name))
-        .writable(false)
-        .enumerable(false)
-        .configurable(true)
-        .build();
-    prototype.define_property_or_throw(JsSymbol::to_string_tag(), to_string_tag, context)?;
+    set_to_string_tag(&prototype, name, context)?;
     let exposed = Attribute::WRITABLE | Attribute::CONFIGURABLE;
     context.register_global_property(JsString::from(name), constructor.clone(), exposed)?;
     Ok(Interface {
@@ -284,10 +299,12 @@ fn derived(
 
 /// Register every interface, then `window` / `self` / `document`.
 pub(crate) fn install(context: &mut Context) -> JsResult<()> {
+    use super::dispatch;
     use super::node;
     use super::query;
     use super::style::{self, HTML_ELEMENT_MEMBERS};
     use super::tree;
+    use super::window;
     use super::{collections, events, geometry, indexed, token_list};
     // A `?` on a call rustfmt wraps across lines leaves the never-taken
     // error-branch region on the closing line, so that line always reports
@@ -339,6 +356,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     let html_element_members = [
         &HTML_ELEMENT_MEMBERS,
         &geometry::HTML_ELEMENT_OFFSET_MEMBERS,
+        &dispatch::HTML_ELEMENT_HANDLER_MEMBERS,
     ];
     let html_element = derived(context, "HTMLElement", &element, &html_element_members)?;
     let text = derived(context, "Text", &character_data, &[&NO_MEMBERS])?;
@@ -355,6 +373,42 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &pi_members,
     );
     let pi = pi_result?;
+    // `Event` has no parent interface (it does not extend `EventTarget`;
+    // `Node` and `Window` are the `EventTarget`s in this runtime).
+    let event_result = interface(
+        context,
+        "Event",
+        None,
+        None,
+        &[&dispatch::EVENT_MEMBERS],
+        dispatch::event_constructor,
+        1,
+    );
+    let event = event_result?;
+    for &(name, code) in dispatch::EVENT_PHASE_CONSTANTS {
+        define_u16_constant(&event.constructor, name, code, context)?;
+        define_u16_constant(&event.prototype, name, code, context)?;
+    }
+    let custom_event_result = interface(
+        context,
+        "CustomEvent",
+        Some(&event.prototype),
+        Some(&event.constructor),
+        &[&dispatch::CUSTOM_EVENT_MEMBERS],
+        dispatch::custom_event_constructor,
+        1,
+    );
+    let custom_event = custom_event_result?;
+    let error_event_result = interface(
+        context,
+        "ErrorEvent",
+        Some(&event.prototype),
+        Some(&event.constructor),
+        &[&dispatch::ERROR_EVENT_MEMBERS],
+        dispatch::error_event_constructor,
+        1,
+    );
+    let error_event = error_event_result?;
     // DOMException.prototype inherits Error.prototype (WebIDL §3.14.1), but
     // the interface object itself is an ordinary function with a real
     // constructor operation.
@@ -440,6 +494,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     let css_style_declaration = css_style_declaration_result?;
     style::install_property_accessors(context, &css_style_declaration.prototype)?;
     indexed::install(context)?;
+    super::event_loop::install(context)?;
     context.insert_data(Protos {
         event_target: event_target.prototype,
         node: node_i.prototype,
@@ -458,6 +513,9 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         dom_rect_read_only: dom_rect_read_only.prototype,
         dom_rect: dom_rect.prototype,
         css_style_declaration: css_style_declaration.prototype,
+        event: event.prototype,
+        custom_event: custom_event.prototype,
+        error_event: error_event.prototype,
     });
 
     let global = context.global_object();
@@ -469,6 +527,34 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     context.register_global_property(js_string!("document"), document, attr)?;
     style::install_globals(context)?;
     events::install_globals(context)?;
+    dispatch::install_window_handlers(context)?;
+    // `Location`/`Navigator`: real interfaces (illegal constructor,
+    // `@@toStringTag`), the same as every other interface above -- their
+    // singletons' own accessors/methods are built by `window::install`
+    // itself, since `Location`'s (unlike a typical interface's) are
+    // `[LegacyUnforgeable]` own properties rather than prototype members.
+    let location_result = interface(
+        context,
+        "Location",
+        None,
+        None,
+        &[&NO_MEMBERS],
+        illegal_constructor,
+        0,
+    );
+    let location_i = location_result?;
+    let navigator_members = [&window::NAVIGATOR_MEMBERS];
+    let navigator_result = interface(
+        context,
+        "Navigator",
+        None,
+        None,
+        &navigator_members,
+        illegal_constructor,
+        0,
+    );
+    let navigator_i = navigator_result?;
+    super::window::install(context, &location_i.prototype, &navigator_i.prototype)?;
     Ok(())
 }
 
@@ -653,9 +739,12 @@ fn optional_dom_string(
     }
 }
 
-/// Define one legacy constant (non-writable, non-configurable, enumerable)
-/// on `target`, either `DOMException` or `DOMException.prototype`.
-fn define_legacy_constant(
+/// Define one `unsigned short` interface constant (WebIDL §3.7.7: on both
+/// the interface object and its prototype, non-writable, non-configurable,
+/// enumerable). Shared by [`install_dom_exception_constants`] (the
+/// `DOMException` legacy error codes) and `dispatch`'s `Event` phase
+/// constants (`NONE`, `CAPTURING_PHASE`, `AT_TARGET`, `BUBBLING_PHASE`).
+pub(crate) fn define_u16_constant(
     target: &JsObject,
     name: &str,
     code: u16,
@@ -681,12 +770,12 @@ fn install_dom_exception_constants(
     dom_exception: &Interface,
 ) -> JsResult<()> {
     for &(_, code, constant) in DOM_EXCEPTION_CODES {
-        define_legacy_constant(&dom_exception.constructor, constant, code, context)?;
-        define_legacy_constant(&dom_exception.prototype, constant, code, context)?;
+        define_u16_constant(&dom_exception.constructor, constant, code, context)?;
+        define_u16_constant(&dom_exception.prototype, constant, code, context)?;
     }
     for &(code, constant) in DOM_EXCEPTION_LEGACY_ONLY_CODES {
-        define_legacy_constant(&dom_exception.constructor, constant, code, context)?;
-        define_legacy_constant(&dom_exception.prototype, constant, code, context)?;
+        define_u16_constant(&dom_exception.constructor, constant, code, context)?;
+        define_u16_constant(&dom_exception.prototype, constant, code, context)?;
     }
     Ok(())
 }

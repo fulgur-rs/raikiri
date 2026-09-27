@@ -17,6 +17,13 @@ pub(crate) struct StubHost {
     pub fail_flush: bool,
     pub fail_geometry: bool,
     pub fail_computed: bool,
+    /// [`DocumentHost::document_url`]'s return value; tests set this
+    /// directly (`host.document_url = Some(...)`) before building a runtime.
+    pub document_url: Option<String>,
+    /// [`DocumentHost::fetch_script`]'s canned responses, by the exact URL
+    /// [`super::scripts::run`] resolved and asked for; a URL with no entry
+    /// fails, the same as the default `DocumentHost` implementation.
+    pub scripts: HashMap<String, String>,
 }
 
 impl StubHost {
@@ -45,6 +52,8 @@ impl StubHost {
                 fail_flush: false,
                 fail_geometry: false,
                 fail_computed: false,
+                document_url: None,
+                scripts: HashMap::new(),
             },
             html,
             head,
@@ -124,5 +133,14 @@ impl DocumentHost for StubHost {
         let root = fragment.root_index();
         fragment.append_text(root, markup);
         Ok(fragment)
+    }
+    fn document_url(&self) -> Option<String> {
+        self.document_url.clone()
+    }
+    fn fetch_script(&mut self, url: &str) -> Result<String, HostError> {
+        self.scripts
+            .get(url)
+            .cloned()
+            .ok_or_else(|| HostError(format!("no script registered for {url}")))
     }
 }

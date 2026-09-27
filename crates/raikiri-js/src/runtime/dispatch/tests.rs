@@ -1,0 +1,868 @@
+use boa_engine::{JsError, JsString, JsValue};
+
+use crate::runtime::dispatch;
+use crate::runtime::test_host::StubHost;
+use crate::runtime::webidl::{node_index, with_state};
+use crate::runtime::{Abort, DomRuntime, Limits, RunOptions, RuntimeError};
+
+fn rt() -> DomRuntime {
+    let (host, ..) = StubHost::page();
+    DomRuntime::new(host).unwrap()
+}
+
+fn ok(rt: &mut DomRuntime, src: &str) {
+    assert!(
+        rt.evaluate(src).unwrap().to_boolean(),
+        "expected true: {src}"
+    );
+}
+
+fn body_index(rt: &mut DomRuntime) -> usize {
+    let value = rt.evaluate("document.body").unwrap();
+    node_index(&value).unwrap()
+}
+
+fn uncaught(rt: &mut DomRuntime) -> Vec<String> {
+    with_state(rt.context_mut(), |s| s.event_loop.uncaught_errors.clone()).unwrap()
+}
+
+// ---- DOM §2.9 dispatch order (capture / target / bubble) -----------------
+
+#[test]
+fn capture_then_target_registration_order_then_bubble() {
+    // Current DOM §2.9: at the target, every capture-flagged listener runs
+    // (during the capturing pass) before any non-capture one (the forward
+    // pass), regardless of registration order between the two groups --
+    // `ptc` (capture, registered 2nd) before `pt` (non-capture, registered
+    // 1st).
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; var b=document.body; var p=document.createElement('p'); b.appendChild(p);
+  window.addEventListener('x', e=>log.push('wc'), true); document.addEventListener('x', e=>log.push('dc'), true);
+  b.addEventListener('x', e=>log.push('bc'), true); p.addEventListener('x', e=>log.push('pt'));
+  p.addEventListener('x', e=>log.push('ptc'), true); b.addEventListener('x', e=>log.push('bb'));
+  window.addEventListener('x', e=>log.push('wb'));
+  p.dispatchEvent(new Event('x', {bubbles:true})) && log.join() === 'wc,dc,bc,ptc,pt,bb,wb'",
+    );
+}
+
+#[test]
+fn stop_propagation_in_a_target_capture_listener_suppresses_the_targets_non_capture_listeners() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; var p=document.createElement('p'); document.body.appendChild(p);
+  p.addEventListener('tc', ()=>log.push('pt'));
+  p.addEventListener('tc', e=>{ log.push('ptc'); e.stopPropagation(); }, true);
+  p.dispatchEvent(new Event('tc')); log.join() === 'ptc'",
+    );
+}
+
+#[test]
+fn passive_listener_preventdefault_is_ignored() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var e=new Event('y',{cancelable:true}); document.body.addEventListener('y', ev=>ev.preventDefault(), {passive:true}); document.body.dispatchEvent(e) === true && !e.defaultPrevented",
+    );
+}
+
+#[test]
+fn once_listener_removed_before_its_own_call_never_fires_again() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var c=0; document.body.addEventListener('z', ()=>c++, {once:true}); document.body.dispatchEvent(new Event('z')); document.body.dispatchEvent(new Event('z')); c === 1",
+    );
+}
+
+#[test]
+fn window_onerror_handler_gets_message_and_uncaught_errors_stays_empty_when_it_returns_true() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var seen=[]; window.onerror=function(m){ seen.push(m); return true; };
+  document.body.addEventListener('w', ()=>{ throw new Error('boom'); }); document.body.addEventListener('w', ()=>seen.push('next'));
+  document.body.dispatchEvent(new Event('w')); seen.length === 2 && /boom/.test(seen[0]) && seen[1] === 'next'",
+    );
+    assert!(uncaught(&mut rt).is_empty());
+}
+
+#[test]
+fn window_onerror_handler_returning_a_falsy_value_leaves_the_exception_unhandled() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "window.onerror = function(){ return false; }; \
+         document.body.addEventListener('w2', ()=>{ throw new Error('boom2'); }); \
+         document.body.dispatchEvent(new Event('w2')); true",
+    );
+    let errors = uncaught(&mut rt);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("boom2"), "{errors:?}");
+}
+
+#[test]
+fn custom_event_detail_instanceof_event_and_bubbling_phase_constant() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var ev=new CustomEvent('k',{detail:{a:1}}); ev.detail.a === 1 && ev instanceof Event && Event.BUBBLING_PHASE === 3",
+    );
+}
+
+#[test]
+fn redispatching_an_in_flight_event_is_an_invalid_state_error() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var e2=new Event('r'), inner=null; document.body.addEventListener('r', ()=>{ try { document.body.dispatchEvent(e2); } catch(x) { inner = x.name; } }); document.body.dispatchEvent(e2); inner === 'InvalidStateError'",
+    );
+}
+
+#[test]
+fn a_handleevent_object_listener_is_called_with_itself_as_this() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var h={handleEvent(e){ this.hit=e.type; }}; document.body.addEventListener('q', h); document.body.dispatchEvent(new Event('q')); h.hit === 'q'",
+    );
+}
+
+#[test]
+fn timer_callback_exception_reaches_the_window_error_event_and_is_recorded() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var seen=null; window.addEventListener('error', e=>{ seen=e.message; }); \
+         setTimeout(()=>{ throw new Error('timer-boom'); }, 0); true",
+    );
+    rt.run_until_idle().unwrap();
+    ok(&mut rt, "/timer-boom/.test(seen)");
+    let errors = uncaught(&mut rt);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("timer-boom"), "{errors:?}");
+}
+
+// ---- stopPropagation / stopImmediatePropagation ---------------------------
+
+#[test]
+fn stop_propagation_during_capture_stops_before_the_next_node_including_the_target() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; var b=document.body; var p=document.createElement('p'); b.appendChild(p);
+  document.addEventListener('cap', e=>{ log.push('doc'); e.stopPropagation(); }, true);
+  b.addEventListener('cap', ()=>log.push('body-capture'), true);
+  p.addEventListener('cap', ()=>log.push('target'));
+  p.dispatchEvent(new Event('cap')); log.join() === 'doc'",
+    );
+}
+
+#[test]
+fn stop_immediate_propagation_stops_the_remaining_listeners_on_the_same_node() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; document.body.addEventListener('si', e=>{ log.push('a'); e.stopImmediatePropagation(); });
+  document.body.addEventListener('si', ()=>log.push('b'));
+  document.body.dispatchEvent(new Event('si')); log.join() === 'a'",
+    );
+}
+
+#[test]
+fn stop_propagation_at_the_target_still_prevents_bubbling() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; var b=document.body; var p=document.createElement('p'); b.appendChild(p);
+  p.addEventListener('sp', e=>{ log.push('target'); e.stopPropagation(); });
+  b.addEventListener('sp', ()=>log.push('bubble'));
+  p.dispatchEvent(new Event('sp', {bubbles:true})); log.join() === 'target'",
+    );
+}
+
+#[test]
+fn a_non_bubbling_event_never_reaches_ancestor_listeners() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; var b=document.body; var p=document.createElement('p'); b.appendChild(p);
+  p.addEventListener('nb', ()=>log.push('target'));
+  b.addEventListener('nb', ()=>log.push('bubble'));
+  p.dispatchEvent(new Event('nb')); log.join() === 'target'",
+    );
+}
+
+// ---- constructors ----------------------------------------------------------
+
+#[test]
+fn event_customevent_errorevent_all_require_new() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "try { Event('x'); false } catch (e) { e instanceof TypeError }",
+    );
+    ok(
+        &mut rt,
+        "try { CustomEvent('x'); false } catch (e) { e instanceof TypeError }",
+    );
+    ok(
+        &mut rt,
+        "try { ErrorEvent('x'); false } catch (e) { e instanceof TypeError }",
+    );
+}
+
+#[test]
+fn event_type_is_a_required_argument() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "try { new Event(); false } catch (e) { e instanceof TypeError }",
+    );
+}
+
+#[test]
+fn a_non_object_init_dict_is_a_type_error() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "try { new Event('x', 5); false } catch (e) { e instanceof TypeError }",
+    );
+}
+
+#[test]
+fn event_init_defaults_and_composed_flag() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var e=new Event('x'); !e.bubbles && !e.cancelable && !e.composed && e.isTrusted === false",
+    );
+    ok(&mut rt, "new Event('x', {composed:true}).composed === true");
+}
+
+#[test]
+fn custom_event_without_detail_defaults_to_undefined() {
+    let mut rt = rt();
+    ok(&mut rt, "new CustomEvent('x').detail === undefined");
+}
+
+#[test]
+fn error_event_fields_round_trip() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var boxed = {}; var ev = new ErrorEvent('error', {message:'m', filename:'f', lineno:1, colno:2, error:boxed}); \
+         ev.message === 'm' && ev.filename === 'f' && ev.lineno === 1 && ev.colno === 2 && ev.error === boxed",
+    );
+}
+
+#[test]
+fn event_phase_constants_on_constructor_and_prototype() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "Event.NONE === 0 && Event.CAPTURING_PHASE === 1 && Event.AT_TARGET === 2 && Event.BUBBLING_PHASE === 3 && \
+         Event.prototype.NONE === 0 && Event.prototype.BUBBLING_PHASE === 3",
+    );
+}
+
+// ---- target / currentTarget / eventPhase lifecycle ------------------------
+
+#[test]
+fn target_current_target_and_phase_reset_after_dispatch() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var seenPhase=null, seenCurrent=null; \
+         document.body.addEventListener('x', e=>{ seenPhase=e.eventPhase; seenCurrent = e.currentTarget === document.body; }); \
+         var e=new Event('x'); document.body.dispatchEvent(e); \
+         seenPhase === Event.AT_TARGET && seenCurrent && e.eventPhase === Event.NONE && e.currentTarget === null && e.target === document.body",
+    );
+}
+
+#[test]
+fn composed_path_is_empty_outside_dispatch_and_lists_the_path_during_it() {
+    let mut rt = rt();
+    ok(&mut rt, "new Event('x').composedPath().length === 0");
+    ok(
+        &mut rt,
+        "var seenLen=0, seenFirst=false; var b=document.body; var p=document.createElement('p'); b.appendChild(p); \
+         p.addEventListener('x', e=>{ var path=e.composedPath(); seenLen=path.length; seenFirst = path[0] === p; }); \
+         p.dispatchEvent(new Event('x', {bubbles:true})); seenLen === 5 && seenFirst",
+    );
+}
+
+#[test]
+fn dispatch_event_returns_false_when_a_cancelable_default_was_prevented() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "document.body.addEventListener('x', e=>e.preventDefault()); \
+         document.body.dispatchEvent(new Event('x', {cancelable:true})) === false",
+    );
+}
+
+#[test]
+fn prevent_default_on_a_non_cancelable_event_is_a_no_op() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var e=new Event('x'); document.body.addEventListener('x', ()=>e.preventDefault()); \
+         document.body.dispatchEvent(e) === true && !e.defaultPrevented",
+    );
+}
+
+#[test]
+fn dispatch_event_with_a_non_event_argument_is_a_type_error() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "try { document.body.dispatchEvent({}); false } catch (e) { e instanceof TypeError }",
+    );
+}
+
+#[test]
+fn window_dispatch_event_dispatches_at_the_window_alone() {
+    let mut rt = rt();
+    ok(&mut rt, "window.dispatchEvent(new Event('foo')) === true");
+}
+
+// ---- event handler IDL attributes -----------------------------------------
+
+#[test]
+fn onclick_setter_registers_at_the_position_first_assigned() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; document.body.onclick=()=>log.push('a'); document.body.addEventListener('click', ()=>log.push('b')); \
+         document.body.onclick=()=>log.push('c'); document.body.dispatchEvent(new Event('click')); log.join() === 'c,b'",
+    );
+}
+
+#[test]
+fn onclick_getter_reflects_the_current_handler_or_null() {
+    let mut rt = rt();
+    ok(&mut rt, "document.body.onclick === null");
+    ok(
+        &mut rt,
+        "function f(){} document.body.onclick=f; document.body.onclick === f",
+    );
+}
+
+#[test]
+fn setting_a_non_function_handler_clears_it() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var called=false; document.body.onclick=()=>{ called=true; }; document.body.onclick=null; \
+         document.body.dispatchEvent(new Event('click')); !called && document.body.onclick === null",
+    );
+}
+
+#[test]
+fn oninput_and_onchange_are_also_available_on_html_elements() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var i=0, c=0; document.body.oninput=()=>i++; document.body.onchange=()=>c++; \
+         document.body.dispatchEvent(new Event('input')); document.body.dispatchEvent(new Event('change')); \
+         i === 1 && c === 1",
+    );
+}
+
+#[test]
+fn window_gets_the_same_five_handler_attributes() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var hit=false; window.onload=()=>{ hit=true; }; window.dispatchEvent(new Event('load')); hit",
+    );
+    ok(
+        &mut rt,
+        "window.onclick === null && window.oninput === null && window.onchange === null && window.onerror === null",
+    );
+}
+
+// ---- recursive report_exception guard -------------------------------------
+
+#[test]
+fn a_throwing_onerror_handler_is_recorded_directly_without_recursing() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "window.onerror = function(){ throw new Error('nested'); }; \
+         document.body.addEventListener('boom', ()=>{ throw new Error('boom'); }); \
+         document.body.dispatchEvent(new Event('boom')); true",
+    );
+    let errors = uncaught(&mut rt);
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert!(errors[0].contains("nested"), "{errors:?}");
+    assert!(errors[1].contains("boom"), "{errors:?}");
+}
+
+// ---- fire_event / report_exception (Rust-side entry points) ---------------
+
+#[test]
+fn fire_event_is_trusted_and_dispatches_at_the_given_target() {
+    let mut rt = rt();
+    let body = body_index(&mut rt);
+    ok(
+        &mut rt,
+        "var seen=null; document.body.addEventListener('ping', e=>{ seen = e.isTrusted; }); true",
+    );
+    let handled = dispatch::fire_event(rt.context_mut(), Some(body), "ping", false, false).unwrap();
+    assert!(handled);
+    ok(&mut rt, "seen === true");
+}
+
+#[test]
+fn report_exception_carries_the_source_hint_into_the_error_event_filename() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var fn=null; window.addEventListener('error', e=>{ fn = e.filename; }); true",
+    );
+    let error = JsError::from_opaque(JsValue::from(JsString::from("boom")));
+    dispatch::report_exception(rt.context_mut(), &error, Some("script.js")).unwrap();
+    ok(&mut rt, "fn === 'script.js'");
+}
+
+#[test]
+fn events_added_with_add_event_listener_after_this_module_exists_still_work() {
+    // A basic sanity check that ordinary `add`/`removeEventListener`
+    // (`events.rs`) still cooperate with dispatch after `Listener` grew the
+    // `is_handler` field.
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var c=0; function f(){c++;} document.body.addEventListener('e', f); \
+         document.body.dispatchEvent(new Event('e')); document.body.removeEventListener('e', f); \
+         document.body.dispatchEvent(new Event('e')); c === 1",
+    );
+}
+
+// ---- coverage: dictionary defaults, timeStamp, and defensive branches -----
+
+#[test]
+fn error_event_defaults_when_the_init_dict_is_omitted_entirely() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var e = new ErrorEvent('x'); e.message === '' && e.filename === '' && \
+         e.lineno === 0 && e.colno === 0 && e.error === undefined",
+    );
+}
+
+#[test]
+fn error_event_defaults_when_the_init_dict_is_present_but_empty() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var e = new ErrorEvent('x', {}); e.message === '' && e.filename === '' && \
+         e.lineno === 0 && e.colno === 0",
+    );
+}
+
+#[test]
+fn event_time_stamp_is_the_virtual_clock_value_at_construction() {
+    let mut rt = rt();
+    ok(&mut rt, "new Event('x').timeStamp === 0");
+}
+
+#[test]
+fn a_listener_without_a_callable_handleevent_is_a_typeerror_reported_not_thrown() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        // Dispatch itself does not throw or abort -- the TypeError goes to
+        // `report_exception` like any other listener exception -- but it is
+        // recorded as uncaught (nothing prevented it).
+        "var h={}; document.body.addEventListener('t', h); \
+         document.body.dispatchEvent(new Event('t')) === true",
+    );
+    let errors = uncaught(&mut rt);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("TypeError"), "{errors:?}");
+}
+
+#[test]
+fn a_handleevent_property_that_is_not_callable_is_also_a_typeerror() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var h={handleEvent: 5}; document.body.addEventListener('t', h); \
+         document.body.dispatchEvent(new Event('t')) === true",
+    );
+    let errors = uncaught(&mut rt);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("TypeError"), "{errors:?}");
+}
+
+#[test]
+fn stop_propagation_during_bubble_stops_before_the_next_ancestor() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; var b=document.body; var p=document.createElement('p'); b.appendChild(p);
+  p.addEventListener('bp', ()=>log.push('target'));
+  b.addEventListener('bp', e=>{ log.push('body'); e.stopPropagation(); });
+  document.addEventListener('bp', ()=>log.push('doc'));
+  p.dispatchEvent(new Event('bp', {bubbles:true})); log.join() === 'target,body'",
+    );
+}
+
+#[test]
+fn setting_a_handler_to_null_with_no_existing_handler_is_a_no_op() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "document.body.onclick = null; document.body.onclick === null",
+    );
+}
+
+#[test]
+fn a_resource_limit_hit_inside_a_listener_aborts_dispatch_uncatchably() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::with_options(
+        host,
+        RunOptions {
+            limits: Limits {
+                max_loop_iterations: 10,
+                ..Default::default()
+            },
+        },
+    )
+    .unwrap();
+    let result = rt.evaluate(
+        "try { \
+           document.body.addEventListener('x', ()=>{ while (true) {} }); \
+           document.body.dispatchEvent(new Event('x')); \
+           'not aborted' \
+         } catch (e) { 'caught' }",
+    );
+    assert_eq!(result, Err(RuntimeError::Aborted(Abort::LoopIterations)));
+    assert_eq!(rt.run_until_idle(), Err(Abort::LoopIterations));
+}
+
+/// Both of these are unreachable from script (the exposed `dispatchEvent`
+/// binding brand-checks its argument before ever calling
+/// [`dispatch::dispatch`], and every internal caller always passes a
+/// freshly built `Event`/`CustomEvent`/`ErrorEvent`), but the defensive
+/// checks themselves are still reachable directly, and worth pinning down
+/// rather than left as dead code no test ever proves correct.
+#[test]
+fn dispatch_and_call_window_on_error_on_a_non_event_object_are_defensive_no_ops() {
+    let mut rt = rt();
+    let body = rt.evaluate("document.body").unwrap().as_object().unwrap();
+    let callback = rt
+        .evaluate("(function(){ throw new Error('should not run'); })")
+        .unwrap()
+        .as_object()
+        .unwrap();
+    let context = rt.context_mut();
+    let err = dispatch::dispatch(context, &body, None);
+    assert!(err.is_err());
+    let result = dispatch::call_window_on_error(context, &callback, &body).unwrap();
+    assert!(result.is_undefined());
+}
+
+/// `dispatchEvent()` (the exposed binding) now checks this first, so this
+/// exercises `dispatch`'s own matching, redundant check directly, as a
+/// future caller that skips that pre-check (there is none today) would.
+#[test]
+fn dispatch_itself_also_rejects_an_already_dispatching_event() {
+    let mut rt = rt();
+    let event = rt.evaluate("new Event('x')").unwrap().as_object().unwrap();
+    let _ = dispatch::event_data(&event, |d| d.dispatched.set(true));
+    let context = rt.context_mut();
+    let err = dispatch::dispatch(context, &event, None);
+    assert!(err.is_err());
+}
+
+// ---- dispatch nesting, removed-during-dispatch, abort propagation, and
+// event handler IDL attribute / addEventListener slot semantics ------------
+
+#[test]
+fn recursive_dispatch_event_aborts_before_the_native_stack_overflows() {
+    let mut rt = rt();
+    let result = rt.evaluate(
+        "document.body.addEventListener('x', function(){ document.body.dispatchEvent(new Event('x')); }); \
+         document.body.dispatchEvent(new Event('x'))",
+    );
+    assert_eq!(result, Err(RuntimeError::Aborted(Abort::Recursion)));
+    assert_eq!(rt.run_until_idle(), Err(Abort::Recursion));
+}
+
+#[test]
+fn recursive_dispatch_event_through_a_handleevent_listener_also_aborts() {
+    let mut rt = rt();
+    let result = rt.evaluate(
+        "var h = { handleEvent(){ document.body.dispatchEvent(new Event('x')); } }; \
+         document.body.addEventListener('x', h); \
+         document.body.dispatchEvent(new Event('x'))",
+    );
+    assert_eq!(result, Err(RuntimeError::Aborted(Abort::Recursion)));
+}
+
+#[test]
+fn a_listener_removed_by_an_earlier_listener_is_not_invoked() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; function second(){ log.push('second'); } \
+         document.body.addEventListener('rm', function first(){ \
+           log.push('first'); document.body.removeEventListener('rm', second); \
+         }); \
+         document.body.addEventListener('rm', second); \
+         document.body.dispatchEvent(new Event('rm')); log.join() === 'first'",
+    );
+}
+
+#[test]
+fn a_resource_limit_hit_while_reporting_an_exception_propagates_from_dispatch_event() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::with_options(
+        host,
+        RunOptions {
+            limits: Limits {
+                max_loop_iterations: 10,
+                ..Default::default()
+            },
+        },
+    )
+    .unwrap();
+    let result = rt.evaluate(
+        "window.onerror = function(){ while (true) {} }; \
+         document.body.addEventListener('boom', ()=>{ throw new Error('boom'); }); \
+         try { document.body.dispatchEvent(new Event('boom')); 'not aborted' } catch (e) { 'caught' }",
+    );
+    assert_eq!(result, Err(RuntimeError::Aborted(Abort::LoopIterations)));
+    assert_eq!(rt.run_until_idle(), Err(Abort::LoopIterations));
+}
+
+#[test]
+fn a_resource_limit_hit_formatting_a_reported_exceptions_own_message_propagates() {
+    // Distinct from the test above: here the abort comes from
+    // `report_exception`'s own call to `error_message` (the *reported*
+    // exception's `toString`), not from a `window.onerror` handler.
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::with_options(
+        host,
+        RunOptions {
+            limits: Limits {
+                max_loop_iterations: 10,
+                ..Default::default()
+            },
+        },
+    )
+    .unwrap();
+    let result = rt.evaluate(
+        "document.body.addEventListener('boom', ()=>{ throw { toString(){ while (true) {} } }; }); \
+         document.body.dispatchEvent(new Event('boom'))",
+    );
+    assert_eq!(result, Err(RuntimeError::Aborted(Abort::LoopIterations)));
+    assert_eq!(rt.run_until_idle(), Err(Abort::LoopIterations));
+}
+
+#[test]
+fn a_resource_limit_hit_while_reporting_a_timer_exception_propagates_from_run_until_idle() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::with_options(
+        host,
+        RunOptions {
+            limits: Limits {
+                max_loop_iterations: 10,
+                ..Default::default()
+            },
+        },
+    )
+    .unwrap();
+    rt.evaluate(
+        "window.onerror = function(){ while (true) {} }; \
+         setTimeout(()=>{ throw new Error('timer-boom'); }, 0); true",
+    )
+    .unwrap();
+    assert_eq!(rt.run_until_idle(), Err(Abort::LoopIterations));
+}
+
+#[test]
+fn error_message_abort_from_a_thrown_objects_tostring_is_surfaced_not_swallowed() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::with_options(
+        host,
+        RunOptions {
+            limits: Limits {
+                max_loop_iterations: 10,
+                ..Default::default()
+            },
+        },
+    )
+    .unwrap();
+    let result = rt.evaluate("throw { toString(){ while (true) {} } }");
+    assert_eq!(result, Err(RuntimeError::Aborted(Abort::LoopIterations)));
+    assert_eq!(rt.run_until_idle(), Err(Abort::LoopIterations));
+}
+
+#[test]
+fn error_message_falls_through_to_the_outer_display_form_when_tostring_throws_ordinarily() {
+    let mut rt = rt();
+    let result = rt.evaluate("throw { toString(){ throw new Error('nested'); } }");
+    assert!(
+        matches!(result, Err(RuntimeError::JavaScript(_))),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn a_generic_handler_returning_exactly_false_cancels_a_cancelable_event() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "document.body.onclick = () => false; \
+         document.body.dispatchEvent(new Event('click', {cancelable:true})) === false",
+    );
+}
+
+#[test]
+fn a_generic_handler_returning_a_merely_falsy_non_false_value_does_not_cancel() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "document.body.onclick = () => 0; \
+         document.body.dispatchEvent(new Event('click', {cancelable:true})) === true",
+    );
+}
+
+#[test]
+fn a_handler_slot_and_an_addeventlistener_registration_of_the_same_function_are_distinct() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; function f(){ log.push('f'); } \
+         document.body.onclick = f; document.body.addEventListener('click', f); \
+         document.body.dispatchEvent(new Event('click')); log.join() === 'f,f'",
+    );
+}
+
+#[test]
+fn remove_event_listener_never_removes_a_handler_slot() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var calls=0; function g(){ calls++; } \
+         document.body.onclick = g; document.body.removeEventListener('click', g); \
+         document.body.dispatchEvent(new Event('click')); \
+         calls === 1 && document.body.onclick === g",
+    );
+}
+
+#[test]
+fn a_handler_slots_own_callback_removing_a_same_function_addeventlistener_registration_does_not_resurrect_it()
+ {
+    // The handler slot (`onclick`) runs first, in its own turn, and removes
+    // the plain `addEventListener` registration that happens to share its
+    // callback. Without matching `is_handler` too, the still-live handler
+    // slot (same callback) would make the removed ordinary registration
+    // look "still registered" and run it a second time.
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; function f(){ log.push('f'); document.body.removeEventListener('click', f); } \
+         document.body.onclick = f; \
+         document.body.addEventListener('click', f); \
+         document.body.dispatchEvent(new Event('click')); log.join() === 'f'",
+    );
+}
+
+#[test]
+fn an_addeventlistener_removal_does_not_resurrect_an_ordinary_registration_via_a_same_function_handler_slot()
+ {
+    // Same hazard, triggered from the other direction: an ordinary
+    // `addEventListener` listener (not the handler itself) removes another
+    // ordinary registration that shares its callback with an unrelated
+    // handler slot.
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; function f(){ log.push('f'); } \
+         document.body.addEventListener('click', function remover(){ \
+           log.push('remover'); document.body.removeEventListener('click', f); \
+         }); \
+         document.body.addEventListener('click', f); \
+         document.body.onclick = f; \
+         document.body.dispatchEvent(new Event('click')); log.join() === 'remover,f'",
+    );
+}
+
+#[test]
+fn a_handler_reassigned_by_an_earlier_listener_in_the_same_dispatch_runs_its_current_value() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; function f(){ log.push('f'); } function g(){ log.push('g'); } \
+         document.body.addEventListener('click', ()=>{ document.body.onclick = g; }); \
+         document.body.onclick = f; \
+         document.body.dispatchEvent(new Event('click')); log.join() === 'g'",
+    );
+}
+
+#[test]
+fn redispatching_an_in_flight_trusted_event_is_invalid_state_error_and_keeps_is_trusted() {
+    let mut rt = rt();
+    let body = body_index(&mut rt);
+    ok(
+        &mut rt,
+        "var inner=null, captured=null; document.body.addEventListener('rt', function(e){ \
+           captured = e; \
+           try { document.body.dispatchEvent(e); } catch (x) { inner = x.name; } \
+         }); true",
+    );
+    let handled = dispatch::fire_event(rt.context_mut(), Some(body), "rt", false, false).unwrap();
+    assert!(handled);
+    ok(
+        &mut rt,
+        "inner === 'InvalidStateError' && captured.isTrusted === true",
+    );
+}
+
+#[test]
+fn script_dispatch_event_resets_is_trusted_to_false_even_for_a_previously_trusted_event() {
+    let mut rt = rt();
+    let body = body_index(&mut rt);
+    ok(
+        &mut rt,
+        "var captured=null; document.body.addEventListener('ft', e=>{ captured = e; }); true",
+    );
+    let handled = dispatch::fire_event(rt.context_mut(), Some(body), "ft", false, false).unwrap();
+    assert!(handled);
+    ok(&mut rt, "captured.isTrusted === true");
+    ok(
+        &mut rt,
+        "document.body.dispatchEvent(captured); captured.isTrusted === false",
+    );
+}
+
+#[test]
+fn a_load_event_bubbling_from_an_element_reaches_document_but_not_window() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log=[]; var p=document.createElement('p'); document.body.appendChild(p);
+  document.addEventListener('load', ()=>log.push('doc'));
+  window.addEventListener('load', ()=>log.push('win'));
+  p.dispatchEvent(new Event('load', {bubbles:true})); log.join() === 'doc'",
+    );
+}
+
+#[test]
+fn window_on_error_uses_the_ordinary_calling_convention_for_a_plain_event() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var got=null; window.onerror = function(e){ got = e; }; \
+         window.dispatchEvent(new Event('error')); \
+         got instanceof Event && !(got instanceof ErrorEvent)",
+    );
+}

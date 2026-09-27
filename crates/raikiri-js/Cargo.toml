@@ -7,14 +7,17 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-raikiri-dom   = { workspace = true }
-raikiri-style = { workspace = true }
-cssparser     = { workspace = true }
+raikiri-dom    = { workspace = true }
+raikiri-style  = { workspace = true }
+raikiri-traits = { workspace = true }
+cssparser      = { workspace = true }
 # default-features = false drops boa_engine's `temporal`/`intl` machinery
 # (ICU, timezone data) this crate has no use for; `default-features = true`
 # would also work but pulls in dependencies purely for API surface this
-# crate never calls.
-boa_engine = { version = "0.22", default-features = false }
+# crate never calls. `annex-b` is kept: ECMAScript Annex B (for example
+# `String.prototype.substr` and HTML-like comments) is normative for web
+# browsers, and web content such as WPT pages relies on it.
+boa_engine = { version = "0.22", default-features = false, features = ["annex-b"] }
 boa_gc = "0.22"
 
 [features]

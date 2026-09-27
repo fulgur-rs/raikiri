@@ -2,8 +2,11 @@
 //! and layout are rebuilt from scratch on every `flush` call; it is the
 //! runtime that only calls `flush` when a DOM mutation happened since the
 //! last one, right before a layout-dependent read.
+//!
+//! External scripts are read from the WPT checkout on disk; nothing outside
+//! the checkout root is ever read (see [`WptDocumentHost::script_source`]).
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use raikiri_js::runtime::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
 use raikiri_style::property::DisplayValue;
@@ -16,6 +19,13 @@ use crate::reftest::{
 pub(crate) struct WptDocumentHost {
     setup: LiveWptSetup,
     wpt_root: PathBuf,
+    /// `wpt_root` canonicalized once, for the containment check of every
+    /// script read; `None` when the root does not exist, which refuses every
+    /// script fetch.
+    canonical_root: Option<PathBuf>,
+    /// The page's own `file:` URL, when the caller knows which file the
+    /// document came from; otherwise the document's base URL stands in.
+    page_url: Option<raikiri::Url>,
     page_scene: Option<raikiri::PageScene>,
     computed_styles: Option<Vec<raikiri_style::ComputedValues>>,
     /// `<style>` sources connected at the last flush, in tree order.
@@ -31,12 +41,70 @@ impl WptDocumentHost {
         Self {
             setup,
             wpt_root: wpt_root.to_path_buf(),
+            canonical_root: std::fs::canonicalize(wpt_root).ok(),
+            page_url: None,
             page_scene: None,
             computed_styles: None,
             style_sources,
             #[cfg(test)]
             flushes: Default::default(),
         }
+    }
+
+    /// Report `url` as the document's URL (`document.URL`, `location`, and
+    /// the base that relative `<script src>` values resolve against).
+    pub(crate) fn with_page_url(mut self, url: raikiri::Url) -> Self {
+        self.page_url = Some(url);
+        self
+    }
+
+    /// The source text of the external script at `url`, an absolute URL
+    /// already resolved against the document URL.
+    ///
+    /// Only `file:` URLs are fetched. The URL's path is tried twice: as the
+    /// real filesystem path it names (a relative `src` merged with the page's
+    /// own URL, which already lies inside the checkout), and then re-rooted
+    /// at the WPT root (WPT writes support files as root-relative paths such
+    /// as `/resources/testharness.js`, which a `file:` base with an empty
+    /// host resolves to the filesystem root). The first candidate whose
+    /// canonical path lies inside the canonical WPT root is read; `..`
+    /// segments, symlinks, and absolute paths that leave the root fail both
+    /// candidates and are refused.
+    ///
+    /// `<wpt_root>/resources/testharnessreport.js` is never read from disk:
+    /// it is answered with this crate's own report script, matched on the
+    /// candidate path before canonicalization (the file need not exist).
+    fn script_source(&self, url: &str) -> Result<String, HostError> {
+        let refuse = |reason: &str| HostError(format!("{url}: {reason}"));
+        let parsed = raikiri::Url::parse(url).map_err(|_| refuse("not an absolute URL"))?;
+        if parsed.scheme() != "file" {
+            return Err(refuse("only file: URLs are fetched"));
+        }
+        let path = parsed
+            .to_file_path()
+            .map_err(|()| refuse("not a local file path"))?;
+        let root = self
+            .canonical_root
+            .as_deref()
+            .ok_or_else(|| refuse("the WPT root does not exist"))?;
+        let rerooted: PathBuf = path
+            .components()
+            .filter(|component| matches!(component, Component::Normal(_)))
+            .collect();
+        let report = root.join("resources").join("testharnessreport.js");
+        for candidate in [path.clone(), root.join(rerooted)] {
+            if candidate == report {
+                return Ok(crate::testharness_page::REPORT_SCRIPT.to_owned());
+            }
+            let Ok(canonical) = std::fs::canonicalize(&candidate) else {
+                continue;
+            };
+            if canonical.starts_with(root) {
+                return std::fs::read_to_string(&canonical)
+                    .map_err(|error| refuse(&format!("read failed: {error}")));
+            }
+        }
+        Err(refuse("no such file inside the WPT root"))
     }
 
     /// Diff the connected `<style>` sources against the last flush and apply
@@ -68,6 +136,17 @@ impl DocumentHost for WptDocumentHost {
 
     fn document_mut(&mut self) -> &mut raikiri_dom::Document {
         &mut self.setup.uncascaded.dom
+    }
+
+    fn document_url(&self) -> Option<String> {
+        self.page_url
+            .as_ref()
+            .or(self.setup.document_base_url.as_ref())
+            .map(ToString::to_string)
+    }
+
+    fn fetch_script(&mut self, url: &str) -> Result<String, HostError> {
+        self.script_source(url)
     }
 
     fn flush(&mut self) -> Result<(), HostError> {

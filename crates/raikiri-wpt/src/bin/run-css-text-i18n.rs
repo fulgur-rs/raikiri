@@ -98,5 +98,5 @@ fn parse_args() -> Result<Options, ParseArgsError> {
 }
 
 fn usage() -> &'static str {
-    "Usage: run-css-text-i18n [--wpt-root PATH]\n\nRuns testharness-only pages under css/css-text/i18n.\nReport-only: does not modify expectations files."
+    "Usage: run-css-text-i18n [--wpt-root PATH]\n\nRuns testharness pages under css/css-text/i18n with the real testharness.js.\nReport-only: does not modify expectations files."
 }

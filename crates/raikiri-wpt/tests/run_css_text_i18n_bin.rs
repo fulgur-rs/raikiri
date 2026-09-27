@@ -6,15 +6,44 @@ use std::path::Path;
 use assert_cmd::Command;
 use tempfile::TempDir;
 
+/// A stand-in for `resources/testharness.js` with just what these pages and
+/// the runner's report script use: `setup`, `add_completion_callback`,
+/// `test`, and `assert_true`. Results are delivered on `load`.
+const FAKE_HARNESS: &str = r#"
+var __tests = [];
+var __callbacks = [];
+function setup(options) {}
+function add_completion_callback(callback) { __callbacks.push(callback); }
+function assert_true(value, message) {
+    if (value !== true) { throw new Error("assert_true: " + (message || "")); }
+}
+function test(body, name) {
+    try {
+        body();
+        __tests.push({ name: name, status: 0, message: null });
+    } catch (error) {
+        __tests.push({ name: name, status: 1, message: String(error) });
+    }
+}
+window.addEventListener("load", function () {
+    for (var i = 0; i < __callbacks.length; i++) {
+        __callbacks[i](__tests, { status: 0, message: null });
+    }
+});
+"#;
+
 fn write_page(wpt_root: &Path, name: &str, html: &str) {
     let path = wpt_root.join("css/css-text/i18n").join(name);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, html).unwrap();
+    let harness = wpt_root.join("resources/testharness.js");
+    fs::create_dir_all(harness.parent().unwrap()).unwrap();
+    fs::write(harness, FAKE_HARNESS).unwrap();
 }
 
 fn page(body: &str, inline_script: &str) -> String {
     format!(
-        "<!doctype html><html><head><style>#box {{ height: 20px; width: 40px }}</style><script src=\"/resources/testharness.js\"></script></head><body>{body}<script>{inline_script}</script></body></html>"
+        "<!doctype html><html><head><style>#box {{ height: 20px; width: 40px }}</style><script src=\"/resources/testharness.js\"></script><script src=\"/resources/testharnessreport.js\"></script></head><body>{body}<script>{inline_script}</script></body></html>"
     )
 }
 

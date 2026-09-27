@@ -347,3 +347,145 @@ fn position_kind_maps_each_computed_position() {
         assert_eq!(super::position_kind(&value), expected, "{value:?}");
     }
 }
+
+/// A host over an empty document in `page_dir`, with `wpt_root` as the
+/// checkout root.
+fn host_at(page_dir: &std::path::Path, wpt_root: &std::path::Path) -> WptDocumentHost {
+    let setup = prepare_wpt_live_document(
+        "",
+        DEFAULT_REFTTEST_WIDTH,
+        DEFAULT_REFTTEST_HEIGHT,
+        page_dir,
+        wpt_root,
+    )
+    .unwrap();
+    WptDocumentHost::new(setup, wpt_root)
+}
+
+/// A WPT-root-like temp directory with `resources/helper.js` and
+/// `css/page/local.js`, plus the canonical root path.
+fn script_root() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    std::fs::create_dir_all(root.join("resources")).unwrap();
+    std::fs::create_dir_all(root.join("css/page")).unwrap();
+    std::fs::write(root.join("resources/helper.js"), "var helper = 1;").unwrap();
+    std::fs::write(root.join("css/page/local.js"), "var local = 1;").unwrap();
+    (dir, root)
+}
+
+fn file_url(path: &std::path::Path) -> String {
+    raikiri::Url::from_file_path(path).unwrap().to_string()
+}
+
+#[test]
+fn document_url_is_the_page_url_or_else_the_base_url() {
+    let (_dir, root) = script_root();
+    let host = host_at(&root.join("css/page"), &root);
+    assert_eq!(
+        host.document_url(),
+        Some(file_url(&root.join("css/page")) + "/")
+    );
+    let page = raikiri::Url::from_file_path(root.join("css/page/t.html")).unwrap();
+    let host = host.with_page_url(page.clone());
+    assert_eq!(host.document_url(), Some(page.to_string()));
+}
+
+#[test]
+fn fetch_script_reads_a_path_inside_the_root_as_given() {
+    let (_dir, root) = script_root();
+    let mut host = host_at(&root.join("css/page"), &root);
+    let url = file_url(&root.join("css/page/local.js"));
+    assert_eq!(host.fetch_script(&url).unwrap(), "var local = 1;");
+}
+
+#[test]
+fn fetch_script_reroots_a_root_relative_path_at_the_wpt_root() {
+    let (_dir, root) = script_root();
+    let mut host = host_at(&root.join("css/page"), &root);
+    assert_eq!(
+        host.fetch_script("file:///resources/helper.js").unwrap(),
+        "var helper = 1;"
+    );
+}
+
+#[test]
+fn fetch_script_serves_the_embedded_report_script_without_a_file() {
+    let (_dir, root) = script_root();
+    let mut host = host_at(&root.join("css/page"), &root);
+    let expected = crate::testharness_page::REPORT_SCRIPT;
+    assert_eq!(
+        host.fetch_script("file:///resources/testharnessreport.js")
+            .unwrap(),
+        expected
+    );
+    let as_given = file_url(&root.join("resources/testharnessreport.js"));
+    assert_eq!(host.fetch_script(&as_given).unwrap(), expected);
+}
+
+#[test]
+fn fetch_script_refuses_paths_outside_the_root() {
+    let (_dir, root) = script_root();
+    let outside = tempfile::tempdir().unwrap();
+    let secret = std::fs::canonicalize(outside.path())
+        .unwrap()
+        .join("secret.js");
+    std::fs::write(&secret, "var secret = 1;").unwrap();
+    let mut host = host_at(&root.join("css/page"), &root);
+    // An absolute path outside the root.
+    let error = host.fetch_script(&file_url(&secret)).unwrap_err();
+    assert!(
+        error.0.contains("no such file inside the WPT root"),
+        "{error:?}"
+    );
+    // `..` segments climbing out of the root from the page's directory.
+    let climbing = format!(
+        "{}/../../../../../../../../../../..{}",
+        file_url(&root.join("css/page")),
+        secret.display()
+    );
+    assert!(host.fetch_script(&climbing).is_err());
+    // A symlink inside the root pointing outside it.
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&secret, root.join("resources/link.js")).unwrap();
+        assert!(
+            host.fetch_script("file:///resources/link.js").is_err(),
+            "a symlink must not escape the root"
+        );
+    }
+}
+
+#[test]
+fn fetch_script_refuses_non_file_and_unusable_urls() {
+    let (_dir, root) = script_root();
+    let mut host = host_at(&root.join("css/page"), &root);
+    for (url, reason) in [
+        ("https://example.test/a.js", "only file: URLs are fetched"),
+        ("not a url", "not an absolute URL"),
+        ("file://remote-host/a.js", "not a local file path"),
+    ] {
+        let error = host.fetch_script(url).unwrap_err();
+        assert!(error.0.contains(reason), "{url}: {error:?}");
+    }
+}
+
+#[test]
+fn fetch_script_reports_read_failures_and_a_missing_root() {
+    let (_dir, root) = script_root();
+    let mut host = host_at(&root.join("css/page"), &root);
+    let error = host.fetch_script("file:///resources/").unwrap_err();
+    assert!(error.0.contains("read failed"), "{error:?}");
+    std::fs::write(root.join("resources/latin1.js"), [0xff, 0xfe]).unwrap();
+    let error = host
+        .fetch_script("file:///resources/latin1.js")
+        .unwrap_err();
+    assert!(error.0.contains("read failed"), "{error:?}");
+
+    let missing = root.join("no-such-root");
+    let mut host = host_at(&root.join("css/page"), &missing);
+    let error = host
+        .fetch_script("file:///resources/helper.js")
+        .unwrap_err();
+    assert!(error.0.contains("the WPT root does not exist"), "{error:?}");
+}

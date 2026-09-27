@@ -2387,6 +2387,7 @@ dependencies = [
  "cssparser",
  "raikiri-dom",
  "raikiri-style",
+ "raikiri-traits",
 ]
 
 [[package]]
@@ -2487,6 +2488,7 @@ dependencies = [
  "blitz-html",
  "blitz-paint",
  "blitz-traits",
+ "boa_engine",
  "cssparser",
  "insta",
  "parley",

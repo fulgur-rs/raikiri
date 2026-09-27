@@ -6,8 +6,8 @@ use raikiri_dom::NodeKind;
 use super::host::HostError;
 use super::interfaces::{Members, wrap, wrap_optional};
 use super::webidl::{
-    dom_string, host_failure, host_failure_with_message, this_document, this_element, this_node,
-    throw_dom_exception, unreachable_mutation_error, with_state,
+    dom_string, guard_node_budget, host_failure, host_failure_with_message, this_document,
+    this_element, this_node, throw_dom_exception, unreachable_mutation_error, with_state,
 };
 
 /// Record that the DOM changed so the next layout-dependent read flushes.
@@ -152,6 +152,9 @@ fn set_text_content(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
             // own `set_element_text_content` (clear-then-push-if-nonempty in a
             // single call) rather than through `tree::replace_all` below --
             // both implement the same "replace all" semantics.
+            if !value.is_empty() {
+                guard_node_budget(context)?;
+            }
             let result = with_state(context, |s| {
                 s.host
                     .document_mut()
@@ -171,6 +174,7 @@ fn set_text_content(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
             let text_node = if value.is_empty() {
                 None
             } else {
+                guard_node_budget(context)?;
                 Some(with_state(context, |s| {
                     s.host.document_mut().create_detached_text(&value)
                 })?)
@@ -456,6 +460,7 @@ fn body(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValu
 fn create_element(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     this_document(this, context)?;
     let name = dom_string(args, 0, context)?.to_ascii_lowercase();
+    guard_node_budget(context)?;
     let result = with_state(context, |s| {
         s.host.document_mut().create_detached_element(&name)
     })?;
@@ -514,6 +519,10 @@ pub(crate) const DOCUMENT_MEMBERS: Members = Members {
         ("documentElement", document_element),
         ("head", head),
         ("body", body),
+        ("readyState", super::document::ready_state),
+        ("currentScript", super::document::current_script),
+        ("URL", super::document::url),
+        ("documentURI", super::document::document_uri),
     ],
     accessors: &[("title", super::document::title, super::document::set_title)],
     methods: &[

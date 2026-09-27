@@ -24,6 +24,7 @@ raikiri-style       = { workspace = true }
 raikiri-paint       = { workspace = true }
 raikiri-net         = { workspace = true, features = ["http-ureq"] }
 raikiri-js          = { workspace = true }
+boa_engine          = { version = "0.22", default-features = false }
 time                = { workspace = true }
 png                 = { workspace = true }
 cssparser           = { workspace = true }
