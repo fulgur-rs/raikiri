@@ -268,7 +268,11 @@ impl Document {
                     tree.nodes[idx].display,
                     DisplayValue::InlineBlock | DisplayValue::InlineFlex | DisplayValue::InlineGrid
                 );
-                if inline_shrink_wrap && tree.nodes[idx].style.size.width.is_auto() {
+                if inline_shrink_wrap
+                    && tree.nodes[idx].style.size.width.is_auto()
+                    && (inputs.known_dimensions.width.is_none()
+                        || inputs.sizing_mode != taffy::SizingMode::ContentSize)
+                {
                     return compute_inline_block_shrink_wrap(tree, node_id, inputs, block_ctx);
                 }
             }
@@ -287,6 +291,44 @@ impl Document {
                 return crate::layout::compute_multicol_layout(tree, node_id, inputs, block_ctx); // cov:ignore: exercised by ignored nested multicol WPT reftests
             }
             let is_leaf = tree.nodes[idx].children.is_empty();
+            if tree.nodes[idx].is_inline_svg_root()
+                && tree.nodes[idx].attribute("width").is_none()
+                && tree.nodes[idx].attribute("height").is_none()
+                && let Some(intrinsic) = tree.nodes[idx].image_intrinsic_box()
+                && let Some(ratio) = intrinsic.aspect_ratio
+            {
+                // CSS Sizing 3, intrinsic sizes: ratio-only replaced content
+                // uses the definite available inline size, not a 300px default.
+                let mut style = tree.nodes[idx].style.clone();
+                // Transfer the ratio in measurement only. Taffy's leaf ratio
+                // floor would otherwise override explicit/max heights.
+                style.aspect_ratio = None;
+                return compute_leaf_layout(
+                    inputs,
+                    &style,
+                    |val, basis| tree.resolve_calc_value(val, basis),
+                    |known, available| {
+                        // Taffy's known dimensions include padding and border;
+                        // its available space has already removed those insets.
+                        let known = Size {
+                            width: known.width.and(available.width.into_option()),
+                            height: known.height.and(available.height.into_option()),
+                        };
+                        let width = known
+                            .width
+                            .or(known.height.map(|height| height * ratio))
+                            .unwrap_or(match available.width {
+                                AvailableSpace::Definite(width) => width,
+                                AvailableSpace::MinContent => 0.0,
+                                AvailableSpace::MaxContent => intrinsic.width,
+                            });
+                        Size {
+                            width,
+                            height: known.height.unwrap_or(width / ratio),
+                        }
+                    },
+                );
+            }
             if is_leaf {
                 let style = tree.nodes[idx].style.clone();
                 if tree.nodes[idx].has_pre_taffy_text_indent() {

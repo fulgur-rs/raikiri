@@ -905,3 +905,175 @@ fn pagination_child_order_falls_back_when_grid_row_details_are_incomplete() {
         vec![earlier, later]
     );
 }
+
+#[test]
+fn stretched_column_flex_image_keeps_the_known_cross_size() {
+    use raikiri_style::{build_rule_tree, cascade};
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-direction:column;width:800px"),
+    );
+    let image = doc.append_element(
+        Some(flex),
+        "img",
+        Style::default(),
+        Some("display:inline-block"),
+    );
+    if let crate::node::NodeData::Element(element) = &mut doc.nodes[image].data {
+        let mut intrinsic = raikiri_traits::IntrinsicBox::new(300.0, 150.0);
+        intrinsic.aspect_ratio = Some(2.0);
+        element.image_intrinsic_size = Some(intrinsic);
+    }
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    layout_single_page(&mut doc, &cascade, PageBox::A4, FontContext::new()).unwrap();
+    assert_eq!(
+        doc.nodes[image].unrounded_layout.size,
+        taffy::Size {
+            width: 800.0,
+            height: 400.0
+        }
+    );
+}
+
+#[test]
+fn ratio_only_inline_svg_uses_the_containing_width() {
+    use raikiri_style::{build_rule_tree, cascade};
+    for (container_width, svg_style, expected_width, expected_height) in [
+        (800.0, "display:inline", 800.0, 400.0),
+        (200.0, "display:inline", 200.0, 100.0),
+        (800.0, "display:inline;width:80px", 80.0, 40.0),
+        (800.0, "display:inline;width:80px;padding:10px", 100.0, 60.0),
+        (
+            800.0,
+            "display:inline;width:80px;border:10px solid",
+            100.0,
+            60.0,
+        ),
+        (800.0, "display:inline;height:40px", 80.0, 40.0),
+        (800.0, "display:inline;width:80px;height:30px", 80.0, 30.0),
+        (800.0, "display:inline;max-width:200px", 200.0, 100.0),
+        (
+            800.0,
+            "display:inline;width:calc(100% - 20px)",
+            780.0,
+            390.0,
+        ),
+        (
+            800.0,
+            "display:block;width:800px;height:100px",
+            800.0,
+            100.0,
+        ),
+        (800.0, "display:block;max-height:100px", 200.0, 100.0),
+        (
+            800.0,
+            "display:block;width:800px;max-height:100px",
+            800.0,
+            100.0,
+        ),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        let container_style = format!("display:block;width:{container_width}px");
+        let container = doc.append_element(
+            Some(body),
+            "section",
+            Style::default(),
+            Some(&container_style),
+        );
+        doc.append_text(container, "\n");
+        let svg = doc.append_element(Some(container), "svg", Style::default(), Some(svg_style));
+        doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
+        doc.set_element_attributes(svg, vec![("viewBox".into(), "0 0 1000 500".into())]);
+        let rect = doc.append_element(
+            Some(svg),
+            "rect",
+            Style::default(),
+            Some("width:9999px;height:9999px"),
+        );
+        doc.set_element_namespace(rect, Some("http://www.w3.org/2000/svg".into()));
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).unwrap();
+        let mut page = PageBox::new();
+        page.width = 800.0;
+        layout_single_page(&mut doc, &cascade, page, FontContext::new()).unwrap();
+        assert_eq!(
+            doc.nodes[svg].unrounded_layout.size,
+            taffy::Size {
+                width: expected_width,
+                height: expected_height
+            }
+        );
+    }
+}
+
+#[test]
+fn ratio_only_svg_intrinsic_probes_and_calc_width_are_measured() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use taffy::{AvailableSpace, LayoutInput, LayoutPartialTree, NodeId, Size, SizingMode};
+    let mut doc = Document::new();
+    let svg = doc.append_element(
+        Some(0),
+        "svg",
+        Style::default(),
+        Some("display:block;width:calc(100% - 20px)"),
+    );
+    doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
+    doc.set_element_attributes(svg, vec![("viewBox".into(), "0 0 1000 500".into())]);
+    doc.mark_in_document_flags();
+    crate::image_resolve::resolve_inline_svg_intrinsic_sizes(&mut doc);
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &cascade);
+    for (sizing_mode, width, expected) in [
+        (
+            SizingMode::InherentSize,
+            AvailableSpace::Definite(800.0),
+            Size {
+                width: 780.0,
+                height: 390.0,
+            },
+        ),
+        (
+            SizingMode::ContentSize,
+            AvailableSpace::MaxContent,
+            Size {
+                width: 300.0,
+                height: 150.0,
+            },
+        ),
+        (
+            SizingMode::ContentSize,
+            AvailableSpace::MinContent,
+            Size::ZERO,
+        ),
+    ] {
+        let output = doc.compute_child_layout(
+            NodeId::from(svg),
+            LayoutInput {
+                run_mode: taffy::RunMode::ComputeSize,
+                sizing_mode,
+                axis: taffy::RequestedAxis::Both,
+                parent_size: Size {
+                    width: Some(800.0),
+                    height: Some(600.0),
+                },
+                available_space: Size {
+                    width,
+                    height: AvailableSpace::MaxContent,
+                },
+                ..LayoutInput::HIDDEN
+            },
+        );
+        assert_eq!(output.size, expected);
+    }
+}

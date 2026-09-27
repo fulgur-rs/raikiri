@@ -109,6 +109,25 @@ pub(crate) fn apply_computed_to_style(doc: &mut Document, cascade: &CascadeResul
             .image_intrinsic_box()
             .and_then(|intrinsic| intrinsic.aspect_ratio)
             .filter(|ratio| ratio.is_finite() && *ratio > 0.0);
+        // SVG 2 geometry: auto dimensions on svg are treated as 100%.
+        // With only a viewBox ratio and no definite height, width establishes
+        // the viewport and the ratio determines its auto height.
+        if doc.nodes[idx].is_inline_svg_root()
+            && doc.nodes[idx].attribute("width").is_none()
+            && doc.nodes[idx].attribute("height").is_none()
+            && doc.nodes[idx].style.aspect_ratio.is_some()
+        {
+            if matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
+                && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
+            {
+                doc.nodes[idx].style.size.width = Dimension::percent(1.0);
+            } else if !matches!(cv.width, ComputedLengthPercentageOrAuto::Auto) {
+                // Taffy transfers max-height to max-width through this ratio
+                // even for a definite width. SVG leaf measurement handles its
+                // auto height without shrinking an authored width.
+                doc.nodes[idx].style.aspect_ratio = None;
+            }
+        }
         if let Some((intrinsic_width, intrinsic_height)) =
             bridge_known_image_intrinsic_size(doc, idx, cv)
         {
