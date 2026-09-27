@@ -256,6 +256,18 @@ fn shaping_unpinned_exact_passes() {
     assert_exact_passes(&root, &candidates);
 }
 
+/// Inline element boundaries preserve ideograph-to-Latin auto spacing.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn text_autospace_inline_element_boundaries_exact_passes() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let candidates = [
+        "css/css-text/text-autospace/text-autospace-elements-005.html",
+        "css/css-text/text-autospace/text-autospace-elements-005b.html",
+    ];
+    assert_resource_exact_passes(&root, &candidates);
+}
+
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn text_autospace_unpinned_exact_passes() {
