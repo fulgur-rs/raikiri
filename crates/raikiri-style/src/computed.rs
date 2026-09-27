@@ -495,7 +495,8 @@ pub struct ComputedValues {
     /// The keyword/flag set is preserved for the inline text layout consumer.
     pub text_autospace: TextAutospace,
     /// `word-space-transform` (CSS Text 4). **Inherited**, initial `none`;
-    /// the specified keyword combination is preserved without text transformation.
+    /// the inline text layout handles interior U+200B and in-flow inline
+    /// `<wbr>` in the `space` single-line subset. Other values remain data-only.
     pub word_space_transform: WordSpaceTransform,
     /// `text-spacing-trim` (CSS Text 4). **Inherited**, initial `normal`;
     /// computed value is the specified keyword. The value is data-only and

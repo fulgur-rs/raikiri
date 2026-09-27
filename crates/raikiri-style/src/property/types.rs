@@ -5786,8 +5786,8 @@ css_keywords!(TextJustify {
 
 /// CSS Text 4 `word-space-transform` computed value.
 ///
-/// This preserves the specified keyword combination. It does not transform
-/// spaces in text layout or rendering.
+/// The inline text layout consumes `space` for interior U+200B and in-flow
+/// inline `<wbr>` in the single-line spacing subset. Other values are data-only.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WordSpaceTransform {

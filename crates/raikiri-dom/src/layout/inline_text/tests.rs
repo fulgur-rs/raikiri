@@ -3875,3 +3875,95 @@ fn anywhere_nbsp_adapter_keeps_inline_root_on_per_node_fallback() {
             .contains(&item.id)
     }));
 }
+
+#[test]
+fn word_space_transform_space_shapes_zwsp_without_mutating_dom_text() {
+    use parley::{FontContext, LayoutContext};
+    use raikiri_style::{build_rule_tree, cascade};
+
+    fn shaped_width(source: &str, transform: &str) -> (f32, String) {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let block = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(format!("font-size:32px;word-space-transform:{transform}").as_str()),
+        );
+        let text = doc.append_text(block, source);
+        let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+        preshape_text(
+            &mut doc,
+            &cascade,
+            &mut FontContext::new(),
+            &mut LayoutContext::<()>::new(),
+            800.0,
+            800.0,
+        );
+        (
+            doc.nodes[text].text_layout().expect("shaped").full_width(),
+            doc.nodes[text]
+                .text_content()
+                .expect("source text")
+                .to_owned(),
+        )
+    }
+
+    let source = "b\u{200B}c";
+    let (transformed, original) = shaped_width(source, "space");
+    let (unchanged, _) = shaped_width(source, "none");
+    let (reference, _) = shaped_width("b c", "none");
+    assert_eq!(original, source);
+    assert!((transformed - reference).abs() < 0.01);
+    assert!(transformed > unchanged);
+}
+
+#[test]
+fn word_space_transform_space_uses_wbr_own_computed_value() {
+    use parley::{FontContext, LayoutContext};
+    use raikiri_style::{build_rule_tree, cascade};
+
+    fn wbr_width(
+        override_style: Option<&str>,
+        transform: &str,
+    ) -> (taffy::Dimension, taffy::Dimension) {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let block = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(
+                format!("font-size:32px;word-space-transform:space;text-transform:{transform}")
+                    .as_str(),
+            ),
+        );
+        doc.append_text(block, "a");
+        let wbr = doc.append_element(Some(block), "wbr", Style::default(), override_style);
+        doc.append_text(block, "b");
+        let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+        apply_computed_to_style(&mut doc, &cascade);
+        let before = doc.nodes[wbr].style.size.width;
+        preshape_text(
+            &mut doc,
+            &cascade,
+            &mut FontContext::new(),
+            &mut LayoutContext::<()>::new(),
+            800.0,
+            800.0,
+        );
+        (before, doc.nodes[wbr].style.size.width)
+    }
+
+    let (before, with_space) = wbr_width(None, "none");
+    let (_, suppressed) = wbr_width(Some("word-space-transform:none"), "none");
+    let (_, full_width) = wbr_width(None, "full-width");
+    let (authored, inline_block) = wbr_width(Some("display:inline-block;width:100px"), "none");
+    assert!(with_space.into_option().is_some_and(|width| width > 0.0));
+    assert_eq!(suppressed, before);
+    assert!(full_width.value() > with_space.value());
+    assert_eq!(authored, taffy::Dimension::length(100.0));
+    assert_eq!(inline_block, authored);
+}

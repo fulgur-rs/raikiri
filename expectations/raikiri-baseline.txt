@@ -1585,3 +1585,5 @@ css/css-page/fixedpos-009-print.html
 # --- css/printing fragmented-inline-block exact 800x600 PASS-only (+2) ---
 css/printing/fragmented-inline-block-001-print.html
 css/printing/fragmented-inline-block-002-print.html
+# --- css-text word-space-transform:space ZWSP/wbr exact 800x600 PASS-only (+1) ---
+css/css-text/word-space-transform/word-space-transform-002.html

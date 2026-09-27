@@ -33,7 +33,8 @@ use raikiri_style::property::{
     GridAutoFlowValue, GridLineValue, GridRepeatCount, GridTemplateAreasValue, Hyphens, Length,
     LengthOrAuto, LineBreak, OverflowValue, OverflowWrap, PositionValue, PropertyKey,
     PropertyValue, RubyPosition, SelfAlignmentValue, TextAlign, TextAutospace, TextJustify,
-    TextTransform, TextWrapMode, VerticalAlign, WhiteSpace, WordBreak, WritingMode,
+    TextTransform, TextWrapMode, VerticalAlign, WhiteSpace, WordBreak, WordSpaceTransform,
+    WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ChLengthProvenance, ComputedColumnWidth, ComputedFlexBasis,
