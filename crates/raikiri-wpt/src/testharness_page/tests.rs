@@ -382,4 +382,43 @@ fn page_errors_display_their_kind_and_detail() {
         PageError::Host("missing.html: not found".into()).to_string(),
         "host: missing.html: not found"
     );
+    assert_eq!(
+        PageError::Preamble("Error: bad".into()).to_string(),
+        "preamble: Error: bad"
+    );
+}
+
+#[test]
+fn a_preamble_runs_before_every_page_script() {
+    let dir = page_root(
+        FAKE_HARNESS,
+        "<script>report([{name: window.__order.join(','), status: 0}], {status: 0});</script>",
+    );
+    let results = run_testharness_page_with_preamble(
+        Path::new("css/t/page.html"),
+        dir.path(),
+        "window.__order = ['preamble', typeof add_completion_callback];",
+    )
+    .unwrap();
+    assert_eq!(results, vec![outcome("preamble,undefined", true, "")]);
+}
+
+#[test]
+fn a_throwing_preamble_stops_the_page_as_a_preamble_error() {
+    let dir = page_root(
+        FAKE_HARNESS,
+        "<script>report([{name: 'never', status: 0}], {status: 0});</script>",
+    );
+    let result = run_testharness_page_with_preamble(
+        Path::new("css/t/page.html"),
+        dir.path(),
+        "throw new Error('sanity check failed');",
+    );
+    let Err(PageError::Preamble(message)) = result else {
+        panic!("expected a preamble error, got {result:?}");
+    };
+    assert!(message.contains("sanity check failed"), "{message}");
+    // A page that cannot be set up is still a host error, preamble or not.
+    let missing = run_testharness_page_with_preamble(Path::new("missing.html"), dir.path(), "");
+    assert!(matches!(missing, Err(PageError::Host(_))), "{missing:?}");
 }

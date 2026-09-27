@@ -13,7 +13,17 @@ use raikiri_js::TestOutcome;
 use raikiri_js::testharness::{TestHarnessError, run_testharness_scripts_on_host};
 
 use crate::reftest::{DEFAULT_REFTTEST_HEIGHT, DEFAULT_REFTTEST_WIDTH, prepare_wpt_live_document};
+use crate::testharness_page::{PageError, run_testharness_page_with_preamble};
 use crate::wpt_host::WptDocumentHost;
+
+/// Which JavaScript harness executes the pages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Engine {
+    /// The page's inline scripts on the built-in testharness shim.
+    Shim,
+    /// The whole page, with the checkout's real `testharness.js`.
+    Real,
+}
 
 /// Known-valid, property-agnostic sanity check run before the helper and the
 /// test script: `color: red` must round-trip through an element's inline
@@ -71,6 +81,12 @@ pub enum ParsingFileError {
     Document(String),
     /// The native testharness run reported an error.
     Harness(TestHarnessError),
+    /// The positive control run ahead of the page's scripts failed, so the
+    /// style binding cannot be trusted and the page was not run.
+    PositiveControl(String),
+    /// The page ran but produced no trustworthy results (a harness-level
+    /// error, a resource limit, a host failure, or no tests at all).
+    Page(String),
 }
 
 impl std::fmt::Display for ParsingFileError {
@@ -85,6 +101,8 @@ impl std::fmt::Display for ParsingFileError {
             ParsingFileError::Io(msg) => write!(f, "I/O error: {msg}"),
             ParsingFileError::Document(msg) => write!(f, "live document: {msg}"),
             ParsingFileError::Harness(e) => write!(f, "{e}"),
+            ParsingFileError::PositiveControl(msg) => write!(f, "positive control: {msg}"),
+            ParsingFileError::Page(msg) => write!(f, "{msg}"),
         }
     }
 }
@@ -134,11 +152,27 @@ pub fn run_parsing_invalid_file(
     wpt_root: &Path,
     relative_path: &Path,
 ) -> Result<ParsingFileOutcome, ParsingFileError> {
+    run_parsing_invalid_file_with(wpt_root, relative_path, Engine::Shim)
+}
+
+/// Like [`run_parsing_invalid_file`], on the selected `engine`.
+pub fn run_parsing_invalid_file_with(
+    wpt_root: &Path,
+    relative_path: &Path,
+    engine: Engine,
+) -> Result<ParsingFileOutcome, ParsingFileError> {
     let page_path = wpt_root.join(relative_path);
     let html = fs::read_to_string(&page_path).map_err(|e| ParsingFileError::Io(e.to_string()))?;
     let script = inline_scripts(&html);
     if !script.contains("test_invalid_value(") && !script.contains("test_valid_value(") {
         return Err(ParsingFileError::NoParsingTestCalls);
+    }
+    if engine == Engine::Real {
+        let outcomes = run_page_after_control(wpt_root, relative_path, POSITIVE_CONTROL_JS)?;
+        return Ok(ParsingFileOutcome {
+            test_id: path_to_test_id(relative_path),
+            outcomes,
+        });
     }
     let parsing_testcommon = fs::read_to_string(wpt_root.join("css/support/parsing-testcommon.js"))
         .map_err(|e| ParsingFileError::Io(e.to_string()))?;
@@ -162,6 +196,20 @@ pub fn run_parsing_invalid_file(
         test_id: path_to_test_id(relative_path),
         outcomes,
     })
+}
+
+/// Run the whole page with the real `testharness.js`, `control` first.
+fn run_page_after_control(
+    wpt_root: &Path,
+    relative_path: &Path,
+    control: &str,
+) -> Result<Vec<TestOutcome>, ParsingFileError> {
+    run_testharness_page_with_preamble(relative_path, wpt_root, control).map_err(
+        |error| match error {
+            PageError::Preamble(message) => ParsingFileError::PositiveControl(message),
+            other => ParsingFileError::Page(other.to_string()),
+        },
+    )
 }
 
 fn path_to_test_id(path: &Path) -> String {

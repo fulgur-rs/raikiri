@@ -77,6 +77,9 @@ pub(crate) enum PageError {
     /// scripts ran (layout, stylesheet, fragment parsing), or the harness
     /// never completed and some script failed to load.
     Host(String),
+    /// The script run ahead of the page's own scripts threw, so the page
+    /// was not run.
+    Preamble(String),
 }
 
 impl std::fmt::Display for PageError {
@@ -86,6 +89,7 @@ impl std::fmt::Display for PageError {
             Self::Aborted(reason) => write!(f, "aborted: {reason}"),
             Self::NoResults => write!(f, "the harness reported no test results"),
             Self::Host(message) => write!(f, "host: {message}"),
+            Self::Preamble(message) => write!(f, "preamble: {message}"),
         }
     }
 }
@@ -119,6 +123,30 @@ pub(crate) fn run_testharness_page(
     path: &Path,
     wpt_root: &Path,
 ) -> Result<Vec<TestOutcome>, PageError> {
+    let mut runtime = prepare_page(path, wpt_root)?;
+    finish_page(&mut runtime)
+}
+
+/// Like [`run_testharness_page`], but first evaluates `preamble` as a
+/// classic script of its own, after the page's document is built and before
+/// any of the page's `<script>` elements run. An uncaught error in it stops
+/// the page there, reported as [`PageError::Preamble`], so a failed sanity
+/// check never mixes with the page's own results.
+pub(crate) fn run_testharness_page_with_preamble(
+    path: &Path,
+    wpt_root: &Path,
+    preamble: &str,
+) -> Result<Vec<TestOutcome>, PageError> {
+    let mut runtime = prepare_page(path, wpt_root)?;
+    runtime
+        .evaluate(preamble)
+        .map_err(|error| PageError::Preamble(error.to_string()))?;
+    finish_page(&mut runtime)
+}
+
+/// Read the page, build its live document and a runtime over it, and install
+/// the page support scripts; no page script has run yet.
+fn prepare_page(path: &Path, wpt_root: &Path) -> Result<DomRuntime, PageError> {
     let page = wpt_root.join(path);
     let html = std::fs::read_to_string(&page)
         .map_err(|error| PageError::Host(format!("{}: {error}", page.display())))?;
@@ -141,6 +169,12 @@ pub(crate) fn run_testharness_page(
     let mut runtime = DomRuntime::new(host).map_err(|error| PageError::Host(error.to_string()))?; // cov:ignore: building a realm over a parsed document does not fail.
     let installed = install_page_support(&mut runtime);
     installed.map_err(|error| PageError::Host(error.to_string()))?; // cov:ignore: only defines properties on a fresh realm's own objects.
+    Ok(runtime)
+}
+
+/// Run the page's scripts and turn the run and whatever the harness
+/// delivered into the page's result.
+fn finish_page(runtime: &mut DomRuntime) -> Result<Vec<TestOutcome>, PageError> {
     let report = runtime.run_document();
     let delivery = runtime.context_mut().remove_data::<Delivery>();
     page_outcome(&report, delivery.map(|delivery| *delivery))

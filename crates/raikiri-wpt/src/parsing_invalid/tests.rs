@@ -22,8 +22,54 @@ function test_invalid_value(property, value) {
 }
 "#;
 
+/// A stand-in for `resources/testharness.js` with what the helper, these
+/// pages, and the runner's report script use: `setup`,
+/// `add_completion_callback`, `test`, `assert_equals`, and `assert_true`.
+/// An uncaught error outside a test makes the harness status ERROR, as in
+/// the real harness; results are delivered on `load`.
+const FAKE_HARNESS: &str = r#"
+var __tests = [];
+var __callbacks = [];
+var __status = { status: 0, message: null };
+function setup(options) {}
+function add_completion_callback(callback) { __callbacks.push(callback); }
+function assert_equals(actual, expected) {
+    if (actual !== expected) {
+        throw new Error("assert_equals: expected " + String(expected) + ", got " + String(actual));
+    }
+}
+function assert_true(value) {
+    if (value !== true) { throw new Error("assert_true: got " + String(value)); }
+}
+function test(body, name) {
+    try {
+        body();
+        __tests.push({ name: name, status: 0, message: null });
+    } catch (error) {
+        __tests.push({ name: name, status: 1, message: String(error) });
+    }
+}
+window.addEventListener("error", function (event) {
+    __status = { status: 1, message: String(event.message) };
+});
+window.addEventListener("load", function () {
+    for (var i = 0; i < __callbacks.length; i++) {
+        __callbacks[i](__tests, __status);
+    }
+});
+"#;
+
+/// The `<script>` tags a WPT parsing page starts with.
+const PAGE_HEAD: &str = r#"<!DOCTYPE html>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script src="/css/support/parsing-testcommon.js"></script>
+"#;
+
 fn fixture(html: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("resources")).unwrap();
+    fs::write(dir.path().join("resources/testharness.js"), FAKE_HARNESS).unwrap();
     fs::create_dir_all(dir.path().join("css/support")).unwrap();
     fs::create_dir_all(dir.path().join("css/some-cat/parsing")).unwrap();
     fs::write(
@@ -130,6 +176,75 @@ fn native_run_reports_an_uncaught_script_error_as_a_harness_error() {
     assert!(error.to_string().contains("undefinedHelper"), "{error}");
 }
 
+fn run_real(html: &str) -> Result<ParsingFileOutcome, ParsingFileError> {
+    let dir = fixture(&format!("{PAGE_HEAD}{html}"));
+    run_parsing_invalid_file_with(dir.path(), Path::new(FIXTURE_PATH), Engine::Real)
+}
+
+#[test]
+fn real_run_executes_the_page_scripts_on_a_live_document() {
+    let outcome = run_real(
+        r#"<div id="target"></div>
+<script>
+undeclaredInSloppyMode = 1;
+test_invalid_value("box-sizing", "margin-box");
+test_valid_value("box-sizing", "border-box");
+test(function () {
+    assert_true(document.getElementById("target") instanceof HTMLElement);
+}, "the page's own markup is live");
+</script>"#,
+    )
+    .unwrap();
+    assert_eq!(outcome.test_id, FIXTURE_PATH);
+    assert_eq!(outcome.total(), 3, "{:?}", outcome.outcomes);
+    assert!(outcome.all_passed(), "{:?}", outcome.outcomes);
+}
+
+#[test]
+fn real_run_reports_a_valid_value_as_failing_the_invalid_check() {
+    let outcome =
+        run_real("<script>test_invalid_value(\"box-sizing\", \"content-box\");</script>").unwrap();
+    assert_eq!(outcome.total(), 1);
+    assert!(!outcome.all_passed(), "{:?}", outcome.outcomes);
+}
+
+#[test]
+fn real_run_reports_an_uncaught_script_error_as_a_page_error() {
+    let error =
+        run_real("<script>test_valid_value(\"color\", \"red\"); undefinedHelper();</script>")
+            .unwrap_err();
+    assert!(matches!(error, ParsingFileError::Page(_)), "{error:?}");
+    assert!(error.to_string().contains("undefinedHelper"), "{error}");
+}
+
+/// An inert style binding — here a `getPropertyValue` that always reads back
+/// empty, which would make every `test_invalid_value` pass — must fail the
+/// positive control ahead of the page's scripts, turning the file into an
+/// error of its own instead of a result.
+#[test]
+fn real_run_positive_control_catches_an_inert_style_binding() {
+    let dir = fixture(&format!(
+        "{PAGE_HEAD}<script>test_invalid_value(\"color\", \"bogus\");</script>"
+    ));
+    let inert = format!(
+        "CSSStyleDeclaration.prototype.getPropertyValue = function () {{ return ''; }};\n\
+         {POSITIVE_CONTROL_JS}"
+    );
+    let error = run_page_after_control(dir.path(), Path::new(FIXTURE_PATH), &inert).unwrap_err();
+    assert!(
+        matches!(error, ParsingFileError::PositiveControl(_)),
+        "{error:?}"
+    );
+    assert!(
+        error.to_string().contains("positive control failed"),
+        "{error}"
+    );
+    // Without the inert binding the same page runs.
+    let outcomes =
+        run_page_after_control(dir.path(), Path::new(FIXTURE_PATH), POSITIVE_CONTROL_JS).unwrap();
+    assert_eq!(outcomes.len(), 1);
+}
+
 #[test]
 fn positive_control_passes_on_the_native_runtime() {
     let (host, ..) = live_host();
@@ -187,6 +302,14 @@ fn display_names_each_error_kind() {
     assert_eq!(
         ParsingFileError::NoParsingTestCalls.to_string(),
         "no test_invalid_value( or test_valid_value( calls in this file's inline script"
+    );
+    assert_eq!(
+        ParsingFileError::PositiveControl("Error: bad".into()).to_string(),
+        "positive control: Error: bad"
+    );
+    assert_eq!(
+        ParsingFileError::Page("harness: ERROR: boom".into()).to_string(),
+        "harness: ERROR: boom"
     );
 }
 #[test]
