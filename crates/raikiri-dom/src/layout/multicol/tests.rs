@@ -742,3 +742,103 @@ fn relayout_nested_multicol_children_column_places_a_block_sibling_of_an_empty_d
     assert!((doc.nodes[a].unrounded_layout.size.width - 90.0).abs() < 0.01);
     assert!((doc.nodes[container].unrounded_layout.size.height - 30.0).abs() < 0.01);
 }
+
+#[test]
+fn vertical_fallback_multicol_preserves_logical_minimum_block_extent() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    for writing_mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+        for (container_size, expected_height, second_y) in [
+            ("", 40.0, 40.0),
+            ("block-size:30px", 30.0, 60.0),
+            ("block-size:60px", 60.0, 80.0),
+        ] {
+            let mut doc = Document::new();
+            let html = doc.append_element(
+                Some(0),
+                "html",
+                Style::default(),
+                Some(format!("writing-mode:{writing_mode}")),
+            );
+            let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+            let container = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some(format!(
+                    "display:block;column-count:3;inline-size:500px;{container_size}"
+                )),
+            );
+            let children: Vec<_> = (0..2)
+                .map(|_| {
+                    doc.append_element(
+                        Some(container),
+                        "div",
+                        Style::default(),
+                        Some("display:block;min-block-size:40px;break-inside:avoid"),
+                    )
+                })
+                .collect();
+            let rules = build_rule_tree(&doc);
+            let cascade = cascade(&doc, &rules).expect("cascade Ok");
+            let mut page = raikiri_traits::PageBox::new();
+            page.width = 800.0;
+            page.height = 600.0;
+            layout_single_page(&mut doc, &cascade, page, FontContext::new()).expect("layout Ok");
+
+            assert_eq!(
+                doc.nodes[container].unrounded_layout.size.height,
+                expected_height
+            );
+            for &child in &children {
+                assert_eq!(doc.nodes[child].unrounded_layout.size.height, 40.0);
+            }
+            assert_eq!(doc.nodes[children[0]].unrounded_layout.location.y, 0.0);
+            assert_eq!(doc.nodes[children[1]].unrounded_layout.location.y, second_y);
+        }
+    }
+}
+
+#[test]
+fn vertical_fallback_preserves_explicit_physical_min_height() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    for minimum in [
+        "min-block-size:40px;min-height:80px",
+        "min-block-size:auto;min-height:80px",
+        "min-block-size:calc(20px + 20px);min-height:calc(60px + 20px)",
+        "min-block-size:40px;min-height:50%",
+        "min-height:80px",
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(
+            Some(0),
+            "html",
+            Style::default(),
+            Some("writing-mode:vertical-rl"),
+        );
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;width:200px;height:160px"),
+        );
+        let child = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some(format!("display:block;{minimum}")),
+        );
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = raikiri_traits::PageBox::new();
+        page.width = 800.0;
+        page.height = 600.0;
+        layout_single_page(&mut doc, &cascade, page, FontContext::new()).expect("layout Ok");
+        assert_eq!(
+            doc.nodes[child].unrounded_layout.size.height, 80.0,
+            "{minimum}"
+        );
+    }
+}

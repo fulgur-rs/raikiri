@@ -532,6 +532,18 @@ fn bridge_min_max_size(
     // (bridge_size と同 shape — default 保持は cv 側の Auto で自然に達成)。
     // Keep calc() handles alive in the document arena just like width/height;
     // collapsing a max-width calc() to zero would spuriously clamp a <col>.
+    // The layout writing mode is normalized to horizontal-tb, just like
+    // inline-size/block-size. Keep a logical block minimum on that same
+    // layout axis when no physical min-height is present. Preserve an
+    // explicit physical constraint; CSSOM keeps the original axis mapping.
+    let min_height = if cv.writing_mode == WritingMode::HorizontalTb
+        && cv.cssom_writing_mode != WritingMode::HorizontalTb
+        && matches!(cv.min_height, ComputedLengthPercentageOrAuto::Auto)
+    {
+        cv.min_block_size.unwrap_or(cv.min_height)
+    } else {
+        cv.min_height
+    };
     style.min_size = Size {
         width: computed_length_percentage_or_auto_to_taffy_min_max(
             calc_values,
@@ -541,7 +553,7 @@ fn bridge_min_max_size(
         ),
         height: computed_length_percentage_or_auto_to_taffy_min_max(
             calc_values,
-            cv.min_height,
+            min_height,
             "min-height",
             diag,
         ),
