@@ -232,8 +232,10 @@ pub(crate) struct EventLoop {
     /// Every exception [`super::dispatch::report_exception`] (HTML "report
     /// an exception") recorded because nothing cancelled the `ErrorEvent` it
     /// dispatched: a top-level script's own uncaught exception, a listener's
-    /// exception during `dispatchEvent`, and a callback this loop invoked
-    /// (a timer, an animation frame, a microtask) that nothing else caught.
+    /// exception during event dispatch (a script's own `dispatchEvent` call
+    /// or a trusted lifecycle event such as `DOMContentLoaded`/`load`), and a
+    /// callback this loop invoked (a timer, an animation frame, a microtask)
+    /// that nothing else caught.
     pub uncaught_errors: Vec<String>,
 }
 

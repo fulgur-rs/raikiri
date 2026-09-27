@@ -177,6 +177,30 @@ fn a_forced_timeout_with_no_tests_is_still_no_results() {
     assert_eq!(result, Err(PageError::NoResults));
 }
 
+/// [`run_testharness_page`]'s own doc comment documents a failed script
+/// fetch as outranking a non-OK harness status; [`finish_page`] must not let
+/// the timeout probe undo that by manufacturing a harness status of its own
+/// once a fetch has already failed, even though the page still has a
+/// callable `timeout()` (from testharness.js loading successfully) and never
+/// otherwise delivers.
+#[test]
+fn a_failed_script_fetch_outranks_a_forced_timeout() {
+    let result = run_fake(
+        "<script src=missing.js></script>\
+         <script>\
+            function timeout() {\
+                for (var i = 0; i < __callbacks.length; i++) {\
+                    __callbacks[i]([{ name: 'a', status: 3 }], { status: 2, message: null });\
+                }\
+            }\
+        </script>",
+    );
+    assert!(
+        matches!(&result, Err(PageError::Host(message)) if message.contains("missing.js")),
+        "{result:?}"
+    );
+}
+
 #[test]
 fn a_throwing_timeout_probe_is_reported_as_a_host_failure() {
     let result = run_fake(

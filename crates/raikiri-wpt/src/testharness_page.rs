@@ -176,25 +176,38 @@ fn prepare_page(path: &Path, wpt_root: &Path) -> Result<DomRuntime, PageError> {
 /// Run the page's scripts and turn the run and whatever the harness
 /// delivered into the page's result.
 ///
-/// A page can run to completion (no abort, no host failure) without the
-/// harness ever delivering anything: `setup({explicit_timeout: true, ...})`
-/// (see [`REPORT_SCRIPT`]) disables testharness.js's own self-timeout, so an
-/// `async_test`/`promise_test` that never finishes waiting leaves nothing to
-/// read back, indistinguishable on its own from a page with zero tests. In
-/// that case only, [`probe_timeout`] calls the harness's `timeout()` --
-/// testharness.js's own counterpart to `explicit_timeout`, the only thing
-/// that can still force such a run to finish -- and gives the event loop one
-/// more turn to let the synchronous completion callback it triggers run.
+/// A page can run to completion (no abort, no host failure, no failed script
+/// fetch) without the harness ever delivering anything:
+/// `setup({explicit_timeout: true, ...})` (see [`REPORT_SCRIPT`]) disables
+/// testharness.js's own self-timeout, so an `async_test`/`promise_test` that
+/// never finishes waiting leaves nothing to read back, indistinguishable on
+/// its own from a page with zero tests. In that case only, [`probe_timeout`]
+/// calls the harness's `timeout()` -- testharness.js's own counterpart to
+/// `explicit_timeout`, the only thing that can still force such a run to
+/// finish -- and gives the event loop one more turn to let the synchronous
+/// completion callback it triggers run.
+///
+/// A failed script fetch already outranks a harness status in
+/// [`run_testharness_page`]'s own documented precedence (it explains an
+/// incomplete run better than a harness status can, since the harness itself
+/// may never even have found out why it was left incomplete), so the probe
+/// does not run at all once `report.fetch_errors` is non-empty: forcing a
+/// timeout there would let a manufactured `Harness("TIMEOUT: ...")` hide a
+/// more specific, already-known reason instead of leaving it to
+/// [`page_outcome`]'s existing fetch-error check.
 ///
 /// A forced timeout that still reports zero tests is discarded rather than
 /// kept: that is the page-with-nothing-registered case the probe exists to
 /// leave alone (see [`probe_timeout`]'s own doc comment), so it falls through
-/// to the same fetch-error/[`PageError::NoResults`] handling as if the probe
-/// had never run.
+/// to [`PageError::NoResults`] as if the probe had never run.
 fn finish_page(runtime: &mut DomRuntime) -> Result<Vec<TestOutcome>, PageError> {
     let mut report = runtime.run_document();
     let mut delivery = take_delivery(runtime);
-    if delivery.is_none() && report.aborted.is_none() && report.host_failures.is_empty() {
+    if delivery.is_none()
+        && report.aborted.is_none()
+        && report.host_failures.is_empty()
+        && report.fetch_errors.is_empty()
+    {
         delivery =
             probe_timeout(runtime, &mut report).filter(|delivery| !delivery.tests.is_empty());
     }
@@ -210,12 +223,11 @@ fn take_delivery(runtime: &mut DomRuntime) -> Option<Delivery> {
 }
 
 /// Called only when the page ran to completion but the harness never
-/// delivered anything (see [`finish_page`]'s own doc comment). Evaluates a
-/// `typeof` probe rather than calling `timeout()` directly, since a page that
-/// never loaded testharness.js at all -- a missing or failed fetch, which
-/// [`page_outcome`]'s own fetch-error check turns into a host error once this
-/// still returns no delivery -- has no `timeout` global; that case must stay
-/// [`PageError::NoResults`] or a host error, not a manufactured timeout. A
+/// delivered anything, with no host failure or failed script fetch already
+/// explaining why (see [`finish_page`]'s own doc comment for both). Evaluates
+/// a `typeof` probe rather than calling `timeout()` directly, since a page
+/// that never loaded testharness.js at all has no `timeout` global -- that
+/// case must stay [`PageError::NoResults`], not a manufactured timeout. A
 /// limit hit while running the probe or draining its aftermath is folded into
 /// `report` the same way an earlier abort would be, so [`page_outcome`]'s
 /// existing abort precedence covers it without a second code path; an
