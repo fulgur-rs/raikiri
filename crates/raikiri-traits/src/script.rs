@@ -4,13 +4,15 @@
 //! call into to run a `<script>` element the moment it closes, without that
 //! parser depending on raikiri-js directly (raikiri-html cannot depend on
 //! raikiri-js; see this crate's own role as the shared trait layer between
-//! them). Nothing in raikiri-html calls this yet: today, only
-//! `raikiri_js::runtime::DomRuntime::run_document` implements it, and it
-//! calls its own implementation once per document, after the whole document
-//! has already been parsed, for every `<script>` element in tree order. A
-//! parser that adopted this seam later would call it as each script element
-//! closes instead, and could use the `Block` outcome to pause itself while a
-//! blocking script fetch is outstanding.
+//! them). This trait exists as a documented seam for that future
+//! parser-integration caller, not as something reachable from outside
+//! raikiri-js today: its only implementation is a private type inside
+//! raikiri-js, built and driven internally, once per document after the
+//! whole document has already been parsed, for every `<script>` element in
+//! tree order -- there is currently no way for an external caller to obtain
+//! one of its own. A parser that adopts this seam later would call it as
+//! each script element closes instead, and could use the `Block` outcome to
+//! pause itself while a blocking script fetch is outstanding.
 
 use crate::dom::NodeId;
 

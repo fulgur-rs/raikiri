@@ -55,8 +55,9 @@ pub(crate) struct State {
     pub children_collections: HashMap<usize, JsObject>,
     /// Registered `EventTarget` listeners, keyed by node arena index; `None`
     /// is the window/global object, which has no arena index of its own.
-    /// Dispatch is out of scope for this runtime -- only registration state
-    /// is kept.
+    /// [`dispatch`] both adds and removes entries here (`addEventListener`/
+    /// `removeEventListener`) and reads them back to run a target's
+    /// listeners when `dispatchEvent` or a trusted event fires.
     pub listeners: HashMap<Option<usize>, Vec<events::Listener>>,
     /// Task and microtask queues, timers, and the virtual clock.
     pub event_loop: event_loop::EventLoop,

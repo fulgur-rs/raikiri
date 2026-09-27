@@ -229,8 +229,11 @@ pub(crate) struct EventLoop {
     /// Set once a limit is reached; the runtime then refuses to run
     /// anything else.
     pub aborted: Option<Abort>,
-    /// Messages of exceptions thrown by callbacks the loop invoked (timers,
-    /// animation frames, microtasks) that nothing caught.
+    /// Every exception [`super::dispatch::report_exception`] (HTML "report
+    /// an exception") recorded because nothing cancelled the `ErrorEvent` it
+    /// dispatched: a top-level script's own uncaught exception, a listener's
+    /// exception during `dispatchEvent`, and a callback this loop invoked
+    /// (a timer, an animation frame, a microtask) that nothing else caught.
     pub uncaught_errors: Vec<String>,
 }
 

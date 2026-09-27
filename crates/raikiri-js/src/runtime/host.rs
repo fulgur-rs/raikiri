@@ -62,7 +62,10 @@ pub struct BoxGeometry {
 
 /// A failure inside the embedder (layout, stylesheet loading, fragment
 /// parsing). Scripts see it as an exception; the runtime also records it so
-/// harnesses can report an engine error instead of a test failure.
+/// harnesses can report an engine error instead of a test failure. This is
+/// the behavior for every [`DocumentHost`] method except
+/// [`DocumentHost::fetch_script`], whose own doc comment explains why its
+/// `HostError` is handled differently.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostError(pub String);
 
@@ -120,6 +123,13 @@ pub trait DocumentHost: 'static {
     /// loading of its own (an embedder that only ever runs inline scripts
     /// through [`super::DomRuntime::evaluate`] never needs to override
     /// this).
+    ///
+    /// Unlike every other [`DocumentHost`] method, this one's [`HostError`]
+    /// is never turned into a thrown script exception and never counted in
+    /// [`super::RunReport::host_failures`]: a fetch failure becomes a
+    /// [`super::RunReport::fetch_errors`] entry plus a trusted `error` event
+    /// fired at the `<script>` element, and the script itself is never
+    /// evaluated -- there is nothing running yet for it to be thrown into.
     fn fetch_script(&mut self, _url: &str) -> Result<String, HostError> {
         Err(HostError("script fetching is not supported".into()))
     }
