@@ -72,7 +72,7 @@ impl Default for SvgRootStyle {
 pub enum SvgError {
     /// The source is not a supported SVG document.
     InvalidDocument(String),
-    /// The document contains a DTD, which is outside the supported subset.
+    /// The document contains a DTD other than the inert SVG 1.1 public declaration.
     UnsupportedDoctype,
     /// An SVG `<image>` reference would access a resource outside this file.
     ExternalReference,
@@ -134,12 +134,17 @@ impl SvgDocument {
     pub fn parse(data: &[u8]) -> Result<Self, SvgError> {
         let source = std::str::from_utf8(data)
             .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
-        if contains_doctype_declaration(source) {
-            return Err(SvgError::UnsupportedDoctype);
-        }
-
-        let xml = roxmltree::Document::parse(source)
-            .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
+        let normalized = without_svg11_public_doctype(source)?;
+        // Validate placement in the original XML, then keep DTD-free source
+        // for every subsequent parser pass. No DTD resource is ever loaded.
+        let xml = roxmltree::Document::parse_with_options(
+            source,
+            roxmltree::ParsingOptions {
+                allow_dtd: matches!(normalized, std::borrow::Cow::Owned(_)),
+                ..Default::default()
+            },
+        )
+        .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
         let root = xml.root_element();
         if root.tag_name().name() != "svg"
             || root
@@ -160,7 +165,7 @@ impl SvgDocument {
             .and_then(parse_view_box_ratio)
             .is_some();
         let root_has_color = root.attribute("color").is_some();
-        let tree = parse_tree(source)?;
+        let tree = parse_tree(&normalized)?;
         let tree_size = tree.size();
         if !tree_size.width().is_finite()
             || !tree_size.height().is_finite()
@@ -174,7 +179,7 @@ impl SvgDocument {
 
         Ok(Self {
             tree,
-            source: source.to_owned(),
+            source: normalized.into_owned(),
             intrinsic,
             has_view_box,
             root_has_color,
@@ -288,7 +293,24 @@ fn parse_tree(source: &str) -> Result<usvg::Tree, SvgError> {
     Ok(tree)
 }
 
-fn contains_doctype_declaration(source: &str) -> bool {
+fn without_svg11_public_doctype(source: &str) -> Result<std::borrow::Cow<'_, str>, SvgError> {
+    const DECLARATION: &str = r#"<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">"#;
+    let Some(start) = doctype_declaration_start(source) else {
+        return Ok(std::borrow::Cow::Borrowed(source));
+    };
+    if !source[start..].starts_with(DECLARATION) {
+        return Err(SvgError::UnsupportedDoctype);
+    }
+    let end = start + DECLARATION.len();
+    if doctype_declaration_start(&source[end..]).is_some() {
+        return Err(SvgError::UnsupportedDoctype);
+    }
+    let mut normalized = source[..start].to_owned();
+    normalized.push_str(&source[end..]);
+    Ok(std::borrow::Cow::Owned(normalized))
+}
+
+fn doctype_declaration_start(source: &str) -> Option<usize> {
     let mut cursor = 0;
     while let Some(relative) = source[cursor..].find("<") {
         let start = cursor + relative;
@@ -315,11 +337,11 @@ fn contains_doctype_declaration(source: &str) -> bool {
                 .get("<!DOCTYPE".len())
                 .is_some_and(u8::is_ascii_whitespace)
         {
-            return true;
+            return Some(start);
         }
         cursor = start + 1;
     }
-    false
+    None
 }
 
 fn reject_external_image_references(root: roxmltree::Node<'_, '_>) -> Result<(), SvgError> {

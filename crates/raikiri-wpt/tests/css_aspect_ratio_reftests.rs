@@ -2,7 +2,9 @@
 
 use std::path::PathBuf;
 
-use raikiri_wpt::reftest::{ReftestConfig, discover_pairs_for_file_with_wpt_root, run_pair};
+use raikiri_wpt::reftest::{
+    ReftestConfig, discover_pairs_for_file_with_wpt_root, run_pair_with_images,
+};
 use raikiri_wpt::runner::TestOutcome;
 
 #[test]
@@ -15,7 +17,7 @@ fn intrinsic_aspect_ratio_is_pixel_exact_at_800x600() {
     let mut config = ReftestConfig::default();
     config.width = 800;
     config.height = 600;
-    let result = run_pair(&pairs[0], config).unwrap();
+    let result = run_pair_with_images(&pairs[0], config).unwrap();
     assert!(
         matches!(result.outcome, TestOutcome::Pass),
         "{test:?}: {:?} ({} mismatched pixels)",

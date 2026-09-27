@@ -462,6 +462,98 @@ fn root_opacity_neutralization_rewrites_cdata_stylesheet_content() {
 }
 
 #[test]
+fn svg11_public_doctype_is_inert_and_preserves_rasterization() {
+    let body = r#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><rect width="2" height="1" fill="green"/></svg>"#;
+    let declaration = r#"<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">"#;
+    let plain = SvgDocument::parse(body.as_bytes()).unwrap();
+    let declared = SvgDocument::parse(format!("{declaration}{body}").as_bytes()).unwrap();
+    assert_eq!(declared.intrinsic_size(), plain.intrinsic_size());
+    for (viewport, root_style) in [
+        (
+            SvgViewport {
+                width: 2.0,
+                height: 1.0,
+            },
+            SvgRootStyle::default(),
+        ),
+        (
+            SvgViewport {
+                width: 4.0,
+                height: 3.0,
+            },
+            SvgRootStyle::default(),
+        ),
+        (
+            SvgViewport {
+                width: 4.0,
+                height: 3.0,
+            },
+            SvgRootStyle {
+                opacity: 0.5,
+                neutralize_root_opacity: true,
+                host_controls_root_background: true,
+                ..SvgRootStyle::default()
+            },
+        ),
+    ] {
+        assert_eq!(
+            declared.rasterize(viewport, root_style, None).unwrap().rgba,
+            plain.rasterize(viewport, root_style, None).unwrap().rgba
+        );
+    }
+}
+
+#[test]
+fn public_doctype_does_not_enable_internal_entities_or_other_dtds() {
+    let declarations = [
+        r#"<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" [<!ENTITY x "y">]>"#,
+        r#"<!DOCTYPE svg SYSTEM "file:///etc/passwd">"#,
+        r#"<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "https://example.test/other.dtd">"#,
+    ];
+    for declaration in declarations {
+        let source = format!(
+            "{declaration}<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1\" height=\"1\"/>"
+        );
+        assert!(matches!(
+            SvgDocument::parse(source.as_bytes()),
+            Err(SvgError::UnsupportedDoctype)
+        ));
+    }
+    let declaration = r#"<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">"#;
+    let source = format!("{declaration}{declaration}<svg width=\"1\" height=\"1\"/>");
+    assert!(SvgDocument::parse(source.as_bytes()).is_err());
+    let source = format!("<svg width=\"1\" height=\"1\">{declaration}</svg>");
+    assert!(SvgDocument::parse(source.as_bytes()).is_err());
+    let source = format!("{declaration}<svg width=\"1\" height=\"1\"><text>&x;</text></svg>");
+    assert!(SvgDocument::parse(source.as_bytes()).is_err());
+    for href in [
+        "https://example.test/image.png",
+        "file:///etc/passwd",
+        "data:image/png;base64,AA==",
+    ] {
+        let source =
+            format!("{declaration}<svg width=\"1\" height=\"1\"><image href=\"{href}\"/></svg>");
+        assert!(matches!(
+            SvgDocument::parse(source.as_bytes()),
+            Err(SvgError::ExternalReference)
+        ));
+    }
+    for prefix in [
+        format!("<!--{declaration}-->"),
+        format!("<?probe {declaration}?>"),
+    ] {
+        let source = format!("{prefix}{declaration}<svg width=\"1\" height=\"1\"/>");
+        assert!(SvgDocument::parse(source.as_bytes()).is_ok());
+        let source =
+            format!("{prefix}<!DOCTYPE svg [<!ENTITY x \"y\">]><svg width=\"1\" height=\"1\"/>");
+        assert!(matches!(
+            SvgDocument::parse(source.as_bytes()),
+            Err(SvgError::UnsupportedDoctype)
+        ));
+    }
+}
+
+#[test]
 fn rejects_doctypes_and_non_fragment_image_references() {
     let with_doctype = br#"<!DOCTYPE svg [<!ENTITY x "y">]><svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>"#;
     assert!(matches!(
