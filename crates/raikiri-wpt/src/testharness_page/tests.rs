@@ -68,6 +68,40 @@ fn clean_abort_outranks_delivered_nonfinite_harness_status() {
     );
 }
 
+#[test]
+fn clean_abort_outranks_oversized_final_document_transfer() {
+    let result = run_fake(
+        "<script>document.body.appendChild(document.createTextNode('\\0'.repeat(3000000)));\
+         setTimeout(function(){},40000);</script>",
+    );
+    assert_eq!(
+        result,
+        Err(PageError::Aborted(Abort::VirtualTime.to_string()))
+    );
+}
+
+#[test]
+fn clean_abort_outranks_oversized_result_transfer() {
+    let result = run_fake(
+        "<script>report([{name:'\\0'.repeat(3000000),status:0,message:''}],{status:0});\
+         window.addEventListener('load',function(){(function f(){f();})();});</script>",
+    );
+    assert_eq!(
+        result,
+        Err(PageError::Aborted(Abort::Recursion.to_string()))
+    );
+}
+
+#[cfg(feature = "js-wasmtime")]
+#[test]
+fn oversized_final_document_without_abort_remains_a_host_error() {
+    let result = run_fake(
+        "<script>document.body.appendChild(document.createTextNode('\\0'.repeat(3000000)));\
+         report([{name:'done',status:0,message:''}],{status:0});</script>",
+    );
+    assert!(matches!(result, Err(PageError::Host(message)) if message.contains("transport cap")));
+}
+
 fn outcome(name: &str, passed: bool, message: &str) -> TestOutcome {
     TestOutcome {
         name: name.to_owned(),

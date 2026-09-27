@@ -1,11 +1,24 @@
 //! Compile-time Wasmtime page adapter with native outcome precedence.
 use super::*;
 use raikiri_js_wasmtime_host::{EngineError, SandboxOptions, WasmtimePage};
+use raikiri_js_wasmtime_protocol::ReportDto;
 fn engine_error(e: EngineError) -> PageError {
     if e.aborted {
         PageError::Aborted(e.message)
     } else {
         PageError::Host(e.message)
+    }
+}
+
+fn transfer_error(report: &ReportDto, error: EngineError, stage: &str) -> PageError {
+    if let Some(reason) = report.clone().into_native().aborted {
+        // The failed exchange discarded the Store; keep the last native checkpoint.
+        eprintln!(
+            "WASM_DIAGNOSTIC {stage}: {error}; final state unavailable, retaining last native checkpoint"
+        );
+        PageError::Aborted(reason.to_string())
+    } else {
+        engine_error(error)
     }
 }
 pub(super) fn run(
@@ -37,7 +50,9 @@ pub(super) fn run(
                 .map_err(|e| PageError::Preamble(e.to_string()))?;
         }
         let mut report = runtime.run_document().map_err(engine_error)?;
-        let mut delivery = runtime.take_results().map_err(engine_error)?;
+        let mut delivery = runtime
+            .take_results()
+            .map_err(|error| transfer_error(&report, error, "result transfer"))?;
         if delivery.is_none()
             && report.aborted.is_none()
             && report.host_failures.is_empty()
@@ -46,10 +61,12 @@ pub(super) fn run(
             report = runtime.probe_timeout(report).map_err(engine_error)?;
             delivery = runtime
                 .take_results()
-                .map_err(engine_error)?
+                .map_err(|error| transfer_error(&report, error, "result transfer after timeout"))?
                 .filter(|d| !d.tests.is_empty());
         }
-        runtime.synchronize_final_document().map_err(engine_error)?;
+        runtime
+            .synchronize_final_document()
+            .map_err(|error| transfer_error(&report, error, "final DOM synchronization"))?;
         let delivery = delivery.map(|d| Delivery {
             tests: d
                 .tests
