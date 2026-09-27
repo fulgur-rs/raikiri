@@ -1,0 +1,13 @@
+[package]
+workspace = ".."
+name = "raikiri-js-wasmtime-host"
+version = "0.0.0"
+edition = "2024"
+publish = false
+[dependencies]
+anyhow = "1"
+wasmtime = { version = "=43.0.2", default-features = false, features = ["runtime", "std", "anyhow"] }
+rustix = { version = "=1.1.5", features = ["mm", "param"] }
+raikiri-dom = { path = "../../../crates/raikiri-dom", features = ["snapshot-serde"] }
+raikiri-js = { path = "../../../crates/raikiri-js" }
+raikiri-js-wasmtime-protocol = { path = "../protocol" }

@@ -1,12 +1,16 @@
 //! Report-only runner for testharness pages in `css/css-text/i18n`.
 
+use raikiri_wpt::testharness_results::{ResultRecord, extract_output, write_results};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use raikiri_wpt::text_css_i18n::{TestHarnessRunError, run_css_text_i18n};
 
 fn main() -> ExitCode {
-    let Options { wpt_root } = match parse_args() {
+    let Options {
+        wpt_root,
+        results_path,
+    } = match parse_args() {
         Ok(options) => options,
         Err(ParseArgsError::Help) => {
             println!("{}", usage());
@@ -23,6 +27,14 @@ fn main() -> ExitCode {
         Err(error) => return run_failed(&error),
     };
 
+    let records: Vec<_> = results
+        .iter()
+        .map(|r| ResultRecord::new(&r.test_id, &r.outcomes, r.error.clone()))
+        .collect();
+    if let Err(error) = write_results(results_path.as_deref(), &records) {
+        eprintln!("result output: {error}");
+        return ExitCode::from(2);
+    }
     let mut passed_files = 0usize;
     let mut passed_assertions = 0usize;
     let mut total_assertions = 0usize;
@@ -68,6 +80,7 @@ fn run_failed(error: &TestHarnessRunError) -> ExitCode {
 
 struct Options {
     wpt_root: PathBuf,
+    results_path: Option<PathBuf>,
 }
 
 enum ParseArgsError {
@@ -76,7 +89,9 @@ enum ParseArgsError {
 }
 
 fn parse_args() -> Result<Options, ParseArgsError> {
-    let mut args = std::env::args().skip(1);
+    let mut raw: Vec<String> = std::env::args().collect();
+    let results_path = extract_output(&mut raw).map_err(ParseArgsError::Invalid)?;
+    let mut args = raw.into_iter().skip(1);
     let mut wpt_root = PathBuf::from("target/wpt");
     while let Some(argument) = args.next() {
         match argument.as_str() {
@@ -94,9 +109,12 @@ fn parse_args() -> Result<Options, ParseArgsError> {
             }
         }
     }
-    Ok(Options { wpt_root })
+    Ok(Options {
+        wpt_root,
+        results_path,
+    })
 }
 
 fn usage() -> &'static str {
-    "Usage: run-css-text-i18n [--wpt-root PATH]\n\nRuns testharness pages under css/css-text/i18n with the real testharness.js.\nReport-only: does not modify expectations files."
+    "Usage: run-css-text-i18n [--wpt-root PATH] [--results-json PATH]\n\nRuns testharness pages under css/css-text/i18n with the real testharness.js.\nReport-only: does not modify expectations files."
 }

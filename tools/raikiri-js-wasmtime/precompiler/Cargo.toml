@@ -1,0 +1,9 @@
+[package]
+workspace = ".."
+name = "raikiri-js-wasmtime-precompiler"
+version = "0.0.0"
+edition = "2024"
+publish = false
+[dependencies]
+anyhow = "1"
+wasmtime = { version = "=43.0.2", default-features = false, features = ["runtime", "std", "anyhow", "cranelift"] }

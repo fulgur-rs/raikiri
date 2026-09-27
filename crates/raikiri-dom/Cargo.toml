@@ -7,7 +7,12 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+logical-snapshot = []
+snapshot-serde = ["logical-snapshot", "dep:serde"]
+
 [dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
 bitflags       = "2"
 # East Asian Width for CSS Text 3 §4.1.2 segment-break decisions (lone
 # breaks between inlines). Mirrors parley's own dependency spec exactly
@@ -24,6 +29,7 @@ wuff           = { workspace = true }
 url            = { workspace = true }
 
 [dev-dependencies]
+serde_json = "1"
 criterion = { workspace = true }
 raikiri-html = { workspace = true }
 raikiri-style = { workspace = true }

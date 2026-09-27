@@ -1,0 +1,3 @@
+[workspace]
+members = ["protocol", "harness", "guest", "host", "precompiler"]
+resolver = "2"

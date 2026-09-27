@@ -1,0 +1,12 @@
+[package]
+workspace = ".."
+name = "raikiri-js-wasmtime-protocol"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+raikiri-dom = { path = "../../../crates/raikiri-dom", features = ["snapshot-serde"] }
+raikiri-js = { path = "../../../crates/raikiri-js" }

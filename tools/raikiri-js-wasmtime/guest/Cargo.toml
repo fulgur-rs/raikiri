@@ -1,0 +1,13 @@
+[package]
+workspace = ".."
+name = "raikiri-js-wasmtime-guest"
+version = "0.0.0"
+edition = "2024"
+publish = false
+[lib]
+crate-type = ["cdylib", "rlib"]
+[dependencies]
+raikiri-dom = { path = "../../../crates/raikiri-dom", features = ["snapshot-serde"] }
+raikiri-js = { path = "../../../crates/raikiri-js" }
+raikiri-js-wasmtime-protocol = { path = "../protocol" }
+raikiri-js-wasmtime-harness = { path = "../harness" }
