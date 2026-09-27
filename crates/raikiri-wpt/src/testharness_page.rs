@@ -11,7 +11,7 @@ use boa_engine::object::FunctionObjectBuilder;
 use boa_engine::property::PropertyDescriptor;
 use boa_engine::{Context, JsResult, JsString, JsSymbol, JsValue, NativeFunction, js_string};
 use raikiri_js::TestOutcome;
-use raikiri_js::runtime::{DomRuntime, RunReport};
+use raikiri_js::runtime::{DomRuntime, RunReport, RuntimeError};
 
 use crate::reftest::{DEFAULT_REFTTEST_HEIGHT, DEFAULT_REFTTEST_WIDTH, prepare_wpt_live_document};
 use crate::wpt_host::WptDocumentHost;
@@ -71,7 +71,8 @@ pub(crate) enum PageError {
     /// A resource limit stopped the page before it finished.
     Aborted(String),
     /// The harness completed without reporting a single test, or never
-    /// completed while every script loaded.
+    /// completed while every script loaded and registered no test of its own
+    /// for a forced `timeout()` (see [`probe_timeout`]) to report either.
     NoResults,
     /// The page could not be read or set up, the embedder failed while
     /// scripts ran (layout, stylesheet, fragment parsing), or the harness
@@ -174,10 +175,72 @@ fn prepare_page(path: &Path, wpt_root: &Path) -> Result<DomRuntime, PageError> {
 
 /// Run the page's scripts and turn the run and whatever the harness
 /// delivered into the page's result.
+///
+/// A page can run to completion (no abort, no host failure) without the
+/// harness ever delivering anything: `setup({explicit_timeout: true, ...})`
+/// (see [`REPORT_SCRIPT`]) disables testharness.js's own self-timeout, so an
+/// `async_test`/`promise_test` that never finishes waiting leaves nothing to
+/// read back, indistinguishable on its own from a page with zero tests. In
+/// that case only, [`probe_timeout`] calls the harness's `timeout()` --
+/// testharness.js's own counterpart to `explicit_timeout`, the only thing
+/// that can still force such a run to finish -- and gives the event loop one
+/// more turn to let the synchronous completion callback it triggers run.
+///
+/// A forced timeout that still reports zero tests is discarded rather than
+/// kept: that is the page-with-nothing-registered case the probe exists to
+/// leave alone (see [`probe_timeout`]'s own doc comment), so it falls through
+/// to the same fetch-error/[`PageError::NoResults`] handling as if the probe
+/// had never run.
 fn finish_page(runtime: &mut DomRuntime) -> Result<Vec<TestOutcome>, PageError> {
-    let report = runtime.run_document();
-    let delivery = runtime.context_mut().remove_data::<Delivery>();
-    page_outcome(&report, delivery.map(|delivery| *delivery))
+    let mut report = runtime.run_document();
+    let mut delivery = take_delivery(runtime);
+    if delivery.is_none() && report.aborted.is_none() && report.host_failures.is_empty() {
+        delivery =
+            probe_timeout(runtime, &mut report).filter(|delivery| !delivery.tests.is_empty());
+    }
+    page_outcome(&report, delivery)
+}
+
+/// The harness's delivery, if it has made one yet.
+fn take_delivery(runtime: &mut DomRuntime) -> Option<Delivery> {
+    runtime
+        .context_mut()
+        .remove_data::<Delivery>()
+        .map(|delivery| *delivery)
+}
+
+/// Called only when the page ran to completion but the harness never
+/// delivered anything (see [`finish_page`]'s own doc comment). Evaluates a
+/// `typeof` probe rather than calling `timeout()` directly, since a page that
+/// never loaded testharness.js at all -- a missing or failed fetch, which
+/// [`page_outcome`]'s own fetch-error check turns into a host error once this
+/// still returns no delivery -- has no `timeout` global; that case must stay
+/// [`PageError::NoResults`] or a host error, not a manufactured timeout. A
+/// limit hit while running the probe or draining its aftermath is folded into
+/// `report` the same way an earlier abort would be, so [`page_outcome`]'s
+/// existing abort precedence covers it without a second code path; an
+/// ordinary exception from the probe itself is folded into
+/// `report.host_failures` for the same reason -- surfaced, never silently
+/// dropped, but without a new [`PageError`] variant just for it.
+fn probe_timeout(runtime: &mut DomRuntime, report: &mut RunReport) -> Option<Delivery> {
+    match runtime.evaluate("if (typeof timeout === 'function') { timeout(); }") {
+        Ok(_) => {}
+        Err(RuntimeError::Aborted(reason)) => {
+            report.aborted = Some(reason);
+            return None;
+        }
+        Err(RuntimeError::JavaScript(message) | RuntimeError::Host(message)) => {
+            report
+                .host_failures
+                .push(format!("timeout probe: {message}"));
+            return None;
+        }
+    }
+    if let Err(reason) = runtime.run_until_idle() {
+        report.aborted = Some(reason);
+        return None;
+    }
+    take_delivery(runtime)
 }
 
 /// Install `document.fonts` and the result sink before any page script runs.

@@ -108,6 +108,121 @@ fn no_delivered_tests_is_no_results() {
     assert_eq!(run_fake(""), Err(PageError::NoResults));
 }
 
+/// `explicit_timeout: true` (see [`REPORT_SCRIPT`]) disables a real
+/// testharness.js's own self-timeout, so an `async_test` that never calls
+/// `t.done()` never delivers anything on its own; only a call to the
+/// harness's `timeout()` can still force such a run to finish.
+/// [`FAKE_HARNESS`] does not model any of that real timing machinery -- it
+/// has no notion of `test`/`async_test`/`timeout` at all -- so this builds a
+/// page with its own minimal stand-ins for the three, defined directly in the
+/// page's script: a `test()` that runs its function synchronously and
+/// records PASS/FAIL, an `async_test()` that records a test but
+/// (deliberately) never completes it, and a `timeout()` -- its body supplied
+/// by the caller, so each test below can make it misbehave in a different
+/// way -- that would otherwise deliver whatever was recorded so far.
+fn never_completing_page(timeout_body: &str) -> String {
+    format!(
+        "<script>\
+            var __results = [];\
+            function test(fn, name) {{\
+                var t = {{ name: name, status: 0, message: null }};\
+                try {{ fn(); }} catch (e) {{ t.status = 1; t.message = String(e); }}\
+                __results.push(t);\
+            }}\
+            function async_test(fn, name) {{\
+                var t = {{ name: name, status: 3, message: null }};\
+                __results.push(t);\
+                fn(t);\
+                return t;\
+            }}\
+            function timeout() {{ {timeout_body} }}\
+            test(function () {{}}, 'sync passes');\
+            async_test(function (t) {{ /* never calls t.done() */ }}, 'async never done');\
+        </script>"
+    )
+}
+
+/// The real harness's `tests.timeout()` completes without ever setting a
+/// harness message when no test is mid-cleanup (see
+/// `Tests.prototype.timeout` in testharness.js); `deliver` then reads that
+/// missing message back as `""` (see [`string_property`]), producing
+/// `"TIMEOUT: "` with nothing after the colon. This delivery mirrors that
+/// exactly, so the fake and real harness tests below agree on the message.
+const TIMEOUT_DELIVERS_RECORDED_RESULTS: &str = "for (var i = 0; i < __callbacks.length; i++) { \
+     __callbacks[i](__results, { status: 2, message: null }); \
+ }";
+
+#[test]
+fn an_async_test_that_never_completes_is_a_timeout_not_no_results() {
+    let result = run_fake(&never_completing_page(TIMEOUT_DELIVERS_RECORDED_RESULTS));
+    assert_eq!(result, Err(PageError::Harness("TIMEOUT: ".into())));
+}
+
+/// A forced timeout that still finds nothing to report (no test was ever
+/// registered) is the one case [`finish_page`] deliberately does not treat
+/// as a timeout: it is the same "nothing to report" page
+/// [`no_delivered_tests_is_no_results`] above already covers, just reached
+/// through the probe instead of a normal delivery.
+#[test]
+fn a_forced_timeout_with_no_tests_is_still_no_results() {
+    let result = run_fake(
+        "<script>\
+            function timeout() {\
+                for (var i = 0; i < __callbacks.length; i++) {\
+                    __callbacks[i]([], { status: 2, message: 'Test timed out' });\
+                }\
+            }\
+        </script>",
+    );
+    assert_eq!(result, Err(PageError::NoResults));
+}
+
+#[test]
+fn a_throwing_timeout_probe_is_reported_as_a_host_failure() {
+    let result = run_fake(
+        "<script>\
+            function timeout() { throw new Error('probe boom'); }\
+        </script>",
+    );
+    assert!(
+        matches!(&result, Err(PageError::Host(message))
+            if message.contains("timeout probe") && message.contains("probe boom")),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn a_recursive_timeout_probe_is_reported_as_aborted() {
+    let result = run_fake(
+        "<script>\
+            function timeout() { (function f() { f(); })(); }\
+        </script>",
+    );
+    assert_eq!(
+        result,
+        Err(PageError::Aborted(Abort::Recursion.to_string()))
+    );
+}
+
+/// The probe's own `evaluate()` call succeeds here (scheduling a timer
+/// throws nothing), so this exercises the *second* `run_until_idle()` call
+/// in [`probe_timeout`] hitting a limit, not the first one -- a task due
+/// well past `Limits::default()`'s `max_virtual_time_ms` aborts the instant
+/// the drain looks at it, with nothing else queued that could hit a
+/// different limit first.
+#[test]
+fn a_timeout_probe_that_schedules_a_far_future_task_is_reported_as_aborted() {
+    let result = run_fake(
+        "<script>\
+            function timeout() { setTimeout(function () {}, 40000); }\
+        </script>",
+    );
+    assert_eq!(
+        result,
+        Err(PageError::Aborted(Abort::VirtualTime.to_string()))
+    );
+}
+
 #[test]
 fn only_the_first_delivery_counts() {
     let results = run_fake(
@@ -307,6 +422,27 @@ fn real_harness_async_test_with_step_timeout_completes() {
     )
     .unwrap();
     assert_eq!(results, vec![outcome("async", true, "")]);
+}
+
+/// The real counterpart to
+/// [`an_async_test_that_never_completes_is_a_timeout_not_no_results`]: a
+/// passing synchronous `test()` alongside an `async_test` that registers
+/// itself but never calls `t.done()` never reaches `add_completion_callback`
+/// on its own (`explicit_timeout: true` disables testharness.js's own
+/// self-timeout), so without [`probe_timeout`]'s `timeout()` call this page
+/// would run to the end of `run_document()`'s draining and come back
+/// [`PageError::NoResults`] -- indistinguishable from a page with no tests at
+/// all.
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn real_harness_async_test_that_never_completes_times_out() {
+    let result = run_real(
+        "<script>\
+            test(function () {}, 'sync passes');\
+            async_test(function (t) { /* never calls t.done() */ }, 'async never done');\
+        </script>",
+    );
+    assert_eq!(result, Err(PageError::Harness("TIMEOUT: ".into())));
 }
 
 #[test]
