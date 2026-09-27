@@ -668,8 +668,9 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Break widows-orphans paged-text exact 800x600 slice (+11).
     // + CSS Page fixedpos exact 800x600 slice (+9).
     // + css/printing fragmented-inline-block exact 800x600 slice (+2).
+    // + CSS Text letter-spacing preserved final newline exact slice (+1).
     // + CSS Text text-autospace inline-element exact slice (+2).
-    assert_eq!(set.baseline.entries.len(), 1337);
+    assert_eq!(set.baseline.entries.len(), 1338);
     assert!(set.quarantine.is_empty());
     assert!(set.deprecated.is_empty());
 }
