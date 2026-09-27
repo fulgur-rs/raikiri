@@ -4,19 +4,18 @@
 //! The [`runtime`] module provides native DOM interfaces bound to a
 //! `raikiri_dom::Document` through the embedder-supplied
 //! [`runtime::DocumentHost`] trait; inline style values are parsed and
-//! serialized with `raikiri_style`. The [`testharness`] module runs WPT
-//! testharness scripts on that runtime.
+//! serialized with `raikiri_style`.
 
 pub mod runtime;
-pub mod testharness;
 
-/// One WPT `test()` call's outcome, as recorded by the JS-side harness shim.
+/// One WPT subtest's outcome, as reported by the testharness.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TestOutcome {
-    /// The `test()` call's name argument, verbatim.
+    /// The subtest's name, verbatim.
     pub name: String,
-    /// Whether the test function ran without throwing.
+    /// Whether the subtest passed.
     pub passed: bool,
-    /// The thrown error's string form, empty when `passed` is true.
+    /// The harness's message for the subtest, usually empty when `passed`
+    /// is true.
     pub message: String,
 }

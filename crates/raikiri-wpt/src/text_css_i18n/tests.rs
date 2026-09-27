@@ -2,10 +2,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use raikiri_js::runtime::DomRuntime;
-use raikiri_js::testharness::run_testharness_on_host;
 
 use super::*;
-use crate::reftest::{DEFAULT_REFTTEST_HEIGHT, DEFAULT_REFTTEST_WIDTH, prepare_wpt_live_document};
 
 const TWO_BY_THREE_PNG: &[u8] = &[
     137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 3, 8, 6, 0,
@@ -15,8 +13,8 @@ const TWO_BY_THREE_PNG: &[u8] = &[
 ];
 
 /// A [`DomRuntime`] over a live WPT document, for tests that drive the
-/// native DOM bindings directly with `evaluate` rather than through the
-/// testharness shim.
+/// native DOM bindings directly with `evaluate` rather than through a
+/// testharness page.
 fn live_runtime(html: &str, root: &Path) -> DomRuntime {
     let setup = crate::reftest::prepare_wpt_live_document(html, 800, 600, root, root)
         .expect("valid test HTML should configure the live document");
@@ -75,89 +73,76 @@ fn create_element_rejects_invalid_xml_names() {
     );
 }
 
+/// Defines `check_equals(actual, expected, what)`, which throws unless
+/// `actual === expected`, for scripts that check a sequence of values
+/// through [`DomRuntime::evaluate`].
+const CHECK_EQUALS: &str = r#"
+function check_equals(actual, expected, what) {
+    if (actual !== expected) {
+        throw new Error(what + ": expected " + String(expected) + ", got " + String(actual));
+    }
+}
+"#;
+
 #[test]
 fn live_dom_script_creates_appends_and_mutates_elements() {
     let root = tempfile::tempdir().unwrap();
     let html = r#"<!doctype html><html><head>
             <style>.dynamic { width: 22px; height: 7px; }</style>
         </head><body></body></html>"#;
-    let setup = prepare_wpt_live_document(
-        html,
-        DEFAULT_REFTTEST_WIDTH,
-        DEFAULT_REFTTEST_HEIGHT,
-        root.path(),
-        root.path(),
-    )
-    .unwrap();
-    let outcomes = run_testharness_on_host(
+    let mut rt = live_runtime(html, root.path());
+    rt.evaluate(CHECK_EQUALS).unwrap();
+    rt.evaluate(
         r#"
-                test(function() {
-                    var body = document.body;
-                    var child = document.createElement('DIV');
-                    assert_equals(child.parentNode, null);
-                    child.textContent = 'first';
-                    assert_equals(child.textContent, 'first');
-                    child.classList.add('dynamic');
-                    assert_equals(body.appendChild(child), child);
-                    assert_equals(child.parentNode, body);
-                    assert_equals(document.querySelector('.dynamic'), child);
-                    assert_equals(child.offsetHeight, 7);
-                    child.style.height = '13px';
-                    assert_equals(child.offsetHeight, 13);
-                    child.textContent = 'updated';
-                    assert_equals(child.textContent, 'updated');
-                    child.textContent = null;
-                    assert_equals(child.textContent, '');
-                    child.textContent = 'restored';
-                    assert_equals(child.offsetHeight, 13);
-                }, 'dynamic element creation, mutation, and geometry');
-            "#,
-        crate::wpt_host::WptDocumentHost::new(setup, root.path()),
+            var body = document.body;
+            var child = document.createElement('DIV');
+            check_equals(child.parentNode, null, 'new parentNode');
+            child.textContent = 'first';
+            check_equals(child.textContent, 'first', 'textContent');
+            child.classList.add('dynamic');
+            check_equals(body.appendChild(child), child, 'appendChild result');
+            check_equals(child.parentNode, body, 'appended parentNode');
+            check_equals(document.querySelector('.dynamic'), child, 'querySelector');
+            check_equals(child.offsetHeight, 7, 'styled offsetHeight');
+            child.style.height = '13px';
+            check_equals(child.offsetHeight, 13, 'inline offsetHeight');
+            child.textContent = 'updated';
+            check_equals(child.textContent, 'updated', 'updated textContent');
+            child.textContent = null;
+            check_equals(child.textContent, '', 'null textContent');
+            child.textContent = 'restored';
+            check_equals(child.offsetHeight, 13, 'restored offsetHeight');
+        "#,
     )
     .unwrap();
-
-    assert_eq!(outcomes.len(), 1);
-    assert!(outcomes[0].passed, "{:?}", outcomes[0]);
 }
 
 #[test]
 fn dynamic_style_text_and_connection_updates_the_cascade() {
     let root = tempfile::tempdir().unwrap();
     let html = r#"<!doctype html><html><head></head><body></body></html>"#;
-    let setup = prepare_wpt_live_document(
-        html,
-        DEFAULT_REFTTEST_WIDTH,
-        DEFAULT_REFTTEST_HEIGHT,
-        root.path(),
-        root.path(),
-    )
-    .unwrap();
-    let outcomes = run_testharness_on_host(
+    let mut rt = live_runtime(html, root.path());
+    rt.evaluate(CHECK_EQUALS).unwrap();
+    rt.evaluate(
         r#"
-                test(function() {
-                    var box = document.createElement('div');
-                    box.classList.add('from-style');
-                    document.body.appendChild(box);
-                    var sheet = document.createElement('style');
-                    sheet.textContent = '.from-style { width: 10px; height: 9px; }';
-                    assert_equals(box.offsetHeight, 0);
-                    document.head.appendChild(sheet);
-                    assert_equals(box.offsetHeight, 9);
-                    sheet.textContent = '.from-style { width: 10px; height: 14px; }';
-                    assert_equals(box.offsetHeight, 14);
-                    var detached = document.createElement('div');
-                    detached.appendChild(sheet);
-                    assert_equals(box.offsetHeight, 0);
-                    document.head.appendChild(sheet);
-                    assert_equals(box.offsetHeight, 14);
-                }, 'style text and connection changes update the cascade');
-            "#,
-        crate::wpt_host::WptDocumentHost::new(setup, root.path()),
+            var box = document.createElement('div');
+            box.classList.add('from-style');
+            document.body.appendChild(box);
+            var sheet = document.createElement('style');
+            sheet.textContent = '.from-style { width: 10px; height: 9px; }';
+            check_equals(box.offsetHeight, 0, 'before the sheet connects');
+            document.head.appendChild(sheet);
+            check_equals(box.offsetHeight, 9, 'connected sheet');
+            sheet.textContent = '.from-style { width: 10px; height: 14px; }';
+            check_equals(box.offsetHeight, 14, 'changed sheet text');
+            var detached = document.createElement('div');
+            detached.appendChild(sheet);
+            check_equals(box.offsetHeight, 0, 'disconnected sheet');
+            document.head.appendChild(sheet);
+            check_equals(box.offsetHeight, 14, 'reconnected sheet');
+        "#,
     )
     .unwrap();
-
-    assert_eq!(outcomes.len(), 1);
-    assert!(outcomes[0].passed, "{outcome:?}", outcome = outcomes[0]);
 }
 
 #[test]
