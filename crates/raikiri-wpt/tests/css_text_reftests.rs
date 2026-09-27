@@ -270,7 +270,7 @@ fn text_autospace_inline_element_boundaries_exact_passes() {
 
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn text_autospace_unpinned_exact_passes() {
+fn text_autospace_resource_exact_passes() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     // The Ahem stylesheet is a local WPT resource, and the vs/zh references
     // use nested CSS rules, so run with local resources enabled.
