@@ -86,6 +86,7 @@ fn run_pair_reports_html_read_errors() {
         test: PathBuf::from("/definitely/missing/reftest.html"),
         reference: PathBuf::from("/definitely/missing/reference.html"),
         kind: ReftestKind::Match,
+        reference_suffix: String::new(),
     };
     let result = run_pair(&pair, ReftestConfig::default());
     assert!(matches!(result, Err(ReftestError::Io { .. })));
@@ -495,6 +496,7 @@ fn selected_document_pages_are_compared_in_range_order() {
         Tolerance::EXACT,
         Some(&selection),
         Some(&selection),
+        None,
     );
     assert!(diff.matched);
     assert_eq!(diff.mismatched_pixels, 0);
@@ -565,4 +567,254 @@ fn live_stylesheet_sources_handle_style_targets_and_nested_subtrees() {
         live_wpt_stylesheet_sources_in_subtree(&document, wrapper),
         vec![".first { color: red; }", ".second { color: blue; }"]
     );
+}
+
+#[test]
+fn run_pair_respects_authored_fuzzy_ranges_and_reports_raw_differences() {
+    let pair = ReftestPair {
+        test: PathBuf::from("/virtual/test.html"),
+        reference: PathBuf::from("/virtual/ref.html"),
+        kind: ReftestKind::Match,
+        reference_suffix: String::new(),
+    };
+    let config = ReftestConfig {
+        width: 1,
+        height: 1,
+        tolerance: Tolerance::EXACT,
+    };
+    let reference = "<body style='margin:0;background:rgb(0,0,0)'>";
+    for (fuzzy, want) in [
+        ("maxDifference=10;totalPixels=1", true),
+        ("10-11;1-2", true),
+        ("11-12;1", false),
+        ("10;2-3", false),
+        ("9;1", false),
+    ] {
+        let test = format!(
+            "<meta name='fuzzy' content='{fuzzy}'><body style='margin:0;background:rgb(10,0,0)'>"
+        );
+        let result = run_pair_with_reader(&pair, config, false, |path| {
+            Ok(if path == pair.test {
+                test.clone()
+            } else {
+                reference.to_owned()
+            })
+        })
+        .unwrap();
+        assert_eq!(
+            matches!(result.outcome, TestOutcome::Pass),
+            want,
+            "{fuzzy}: {:?}",
+            result.outcome
+        );
+        assert_eq!(
+            result.mismatched_pixels, 1,
+            "differences under maxDifference still count"
+        );
+    }
+}
+
+#[test]
+fn dynamic_reftest_wait_runs_nested_animation_frames_before_comparison() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = dir.path().join("test.html");
+    let reference = dir.path().join("ref.html");
+    std::fs::write(&test,"<!DOCTYPE html><html class='reftest-wait'><body style='margin:0;background:red'><script>requestAnimationFrame(()=>requestAnimationFrame(()=>{document.body.style.background='green';document.documentElement.removeAttribute('class');}));</script>").unwrap();
+    std::fs::write(
+        &reference,
+        "<!DOCTYPE html><body style='margin:0;background:green'>",
+    )
+    .unwrap();
+    let pair = ReftestPair {
+        test,
+        reference,
+        kind: ReftestKind::Match,
+        reference_suffix: String::new(),
+    };
+    let config = ReftestConfig {
+        width: 40,
+        height: 40,
+        tolerance: Tolerance::EXACT,
+    };
+    let result = run_pair(&pair, config).unwrap();
+    assert!(
+        matches!(result.outcome, TestOutcome::Pass),
+        "{:?}",
+        result.outcome
+    );
+    assert_eq!(result.mismatched_pixels, 0);
+}
+
+#[test]
+fn fuzzy_metadata_keys_errors_and_rgb_only_comparison() {
+    let pair = ReftestPair {
+        test: PathBuf::from("/virtual/test.html"),
+        reference: PathBuf::from("/virtual/ref.html"),
+        kind: ReftestKind::Match,
+        reference_suffix: String::new(),
+    };
+    assert!(fuzzy::metadata("<svg><link rel='match' href='ref.html'></link></svg><meta name='fuzzy' content='ref.html:1;1'>", &pair).is_err());
+    let html = "<!-- <meta name='fuzzy' content='broken'> --><link rel='match' href='ref.html'><meta name='fuzzy' content='0;0'><meta name='fuzzy' content='ref.html:totalPixels=1;maxDifference=10'>";
+    let fuzzy = fuzzy::metadata(html, &pair).unwrap().unwrap();
+    let a = RenderedImage {
+        width: 1,
+        height: 1,
+        rgba: vec![10, 0, 0, 255],
+    };
+    let b = RenderedImage {
+        width: 1,
+        height: 1,
+        rgba: vec![0, 0, 0, 255],
+    };
+    assert!(fuzzy::compare(&a, &b, fuzzy).matched);
+    for value in [
+        "1",
+        "bogus=1;2",
+        "maxDifference=1;maxDifference=2",
+        "1;x",
+        "1;1;1",
+    ] {
+        assert!(fuzzy::metadata(&format!("<meta name='fuzzy' content='{value}'>"), &pair).is_err());
+    }
+    assert!(
+        fuzzy::metadata(
+            "<meta name='fuzzy' content='0;0'><meta name='fuzzy' content='1;1'>",
+            &pair
+        )
+        .is_err()
+    );
+    for html in [
+        "<link rel='match' href='ref.html'><meta name='fuzzy' content='ref.html:1;1'><meta name='fuzzy' content='./ref.html:1;1'>",
+        "<link rel='match' href='ref.html'><meta name='fuzzy' content='typo.html:1;1'>",
+        "<link rel='help match' href='typo.html'><meta name='fuzzy' content='typo.html:1;1'>",
+    ] {
+        assert!(fuzzy::metadata(html, &pair).is_err());
+    }
+    let plain = fuzzy::metadata("<link rel='match' href='ref.html'><link rel='match' href='ref.html?x'><meta name='fuzzy' content='ref.html:0;0'><meta name='fuzzy' content='ref.html?x:10;1'>", &pair).unwrap().unwrap();
+    assert!(!fuzzy::compare(&a, &b, plain).matched);
+    let query_pair = ReftestPair {
+        test: pair.test.clone(),
+        reference: pair.reference.clone(),
+        kind: pair.kind,
+        reference_suffix: "?x".into(),
+    };
+    let query = fuzzy::metadata(
+        "<link rel='match' href='ref.html?x'><meta name='fuzzy' content='ref.html?x:10;1'>",
+        &query_pair,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(fuzzy::compare(&a, &b, query).matched);
+    let relations_html = "<link rel='mismatch' href='ref.html'><link rel='match' href='ref.html'><meta name='fuzzy' content='0;0'><meta name='fuzzy' content='ref.html:10;1'>";
+    let matching = fuzzy::metadata(relations_html, &pair).unwrap().unwrap();
+    assert!(fuzzy::compare(&a, &b, matching).matched);
+    let mismatch_pair = ReftestPair {
+        kind: ReftestKind::Mismatch,
+        test: pair.test.clone(),
+        reference: pair.reference.clone(),
+        reference_suffix: String::new(),
+    };
+    let mismatching = fuzzy::metadata(relations_html, &mismatch_pair)
+        .unwrap()
+        .unwrap();
+    assert!(!fuzzy::compare(&a, &b, mismatching).matched);
+    let wide = fuzzy::metadata("<meta name='fuzzy' content='0-300;0-2'>", &pair)
+        .unwrap()
+        .unwrap();
+    assert!(fuzzy::compare(&a, &b, wide).matched);
+    let reversed = fuzzy::metadata("<meta name='fuzzy' content='10-2;1'>", &pair)
+        .unwrap()
+        .unwrap();
+    assert!(!fuzzy::compare(&a, &b, reversed).matched);
+    let zero = fuzzy::metadata("<meta name='fuzzy' content='0;0'>", &pair)
+        .unwrap()
+        .unwrap();
+    let alpha = RenderedImage {
+        width: 1,
+        height: 1,
+        rgba: vec![10, 0, 0, 0],
+    };
+    assert!(fuzzy::compare(&a, &alpha, zero).matched);
+    assert!(
+        !fuzzy::compare(
+            &a,
+            &RenderedImage {
+                width: 2,
+                height: 1,
+                rgba: vec![0; 8]
+            },
+            zero
+        )
+        .matched
+    );
+}
+
+#[test]
+fn dynamic_reftest_reports_script_errors_and_unreleased_wait() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = ReftestConfig {
+        width: 40,
+        height: 40,
+        ..Default::default()
+    };
+    for script in ["throw new Error('intentional script error');", ""] {
+        let html =
+            format!("<!DOCTYPE html><html class='reftest-wait'><body><script>{script}</script>");
+        assert!(dynamic::prepare(&html, &dir.path().join("test.html"), "", config).is_err());
+    }
+    let html = "<!DOCTYPE html><html class='reftest-wait'><body><script>document.documentElement.addEventListener('TestRendered', () => document.documentElement.removeAttribute('class'));</script>";
+    let result = dynamic::prepare(html, &dir.path().join("test.html"), "", config).unwrap();
+    assert!(!result.contains("reftest-wait"));
+}
+
+#[test]
+fn dynamic_wait_scripts_preserve_document_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = ReftestConfig::default();
+    for (doctype, mode) in [
+        ("<!DOCTYPE html>", raikiri_dom::QuirksMode::NoQuirks),
+        ("", raikiri_dom::QuirksMode::Quirks),
+        (
+            "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\" \"http://www.w3.org/TR/html4/loose.dtd\">",
+            raikiri_dom::QuirksMode::LimitedQuirks,
+        ),
+    ] {
+        let source = format!(
+            "{doctype}<html class='reftest-wait'><body><script type='TEXT/JAVASCRIPT'>document.body.setAttribute('data-ran', 'yes');document.documentElement.removeAttribute('class');</script>"
+        );
+        let html = dynamic::prepare(&source, &dir.path().join("test.html"), "", config).unwrap();
+        assert!(html.contains("data-ran=\"yes\""));
+        let parsed = raikiri_html::parse(
+            html.as_bytes(),
+            &raikiri::ParseOptions {
+                extra_stylesheets: &[],
+                network: None,
+                base_url: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(parsed.dom.quirks_mode(), mode);
+    }
+}
+
+#[test]
+fn reference_query_and_fragment_control_dynamic_rendering_and_keyed_fuzzy() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = dir.path().join("test.html");
+    std::fs::write(&test,"<!DOCTYPE html><link rel='match' href='ref.html?green#paint'><link rel='mismatch' href='ref.html?red#paint'><meta name='fuzzy' content='ref.html?green#paint:0;0'><body style='margin:0;background:green'>").unwrap();
+    std::fs::write(dir.path().join("ref.html"),"<!DOCTYPE html><html class='reftest-wait'><body style='margin:0'><script>document.body.style.background = location.search === '?green' && location.hash === '#paint' ? 'green' : 'red';document.documentElement.removeAttribute('class');</script>").unwrap();
+    let pairs = discover_pairs_for_file(&test).unwrap();
+    assert_eq!(pairs.len(), 2);
+    for pair in pairs {
+        let result = run_pair(
+            &pair,
+            ReftestConfig {
+                width: 40,
+                height: 40,
+                tolerance: Tolerance::EXACT,
+            },
+        )
+        .unwrap();
+        assert!(matches!(result.outcome, TestOutcome::Pass));
+    }
 }

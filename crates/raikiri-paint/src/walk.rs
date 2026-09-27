@@ -3198,6 +3198,7 @@ fn paint_document_impl(
             inside_fixed_containing_block: bool,
             decorations: text::DecorationContext,
         },
+        RestoreTransform(Affine),
         PopClip,
         /// Close an element opacity group after its complete subtree.
         PopOpacity,
@@ -3321,6 +3322,11 @@ fn paint_document_impl(
     } else {
         None
     };
+    let mut transformed_scene = crate::transform::TransformScene {
+        scene,
+        transform: Affine::IDENTITY,
+    };
+    let scene = &mut transformed_scene;
     let mut stack = vec![PaintFrame::Visit {
         node_id: body_id,
         parent_abs_x: 0.0,
@@ -3348,6 +3354,10 @@ fn paint_document_impl(
             inside_fixed_containing_block,
             decorations,
         ) = match frame {
+            PaintFrame::RestoreTransform(transform) => {
+                scene.transform = transform;
+                continue;
+            }
             PaintFrame::PopClip | PaintFrame::PopOpacity => {
                 scene.pop_layer();
                 continue;
@@ -3466,8 +3476,22 @@ fn paint_document_impl(
                 } else {
                     position_offset_px(cv)
                 };
-                let (own_transform_x, own_transform_y) =
-                    transform_translation(cv, layout.size.width, layout.size.height);
+                // spec: https://www.w3.org/TR/css-transforms-1/#terminology
+                // Non-replaced inline and table-column boxes are not transformable.
+                let transformable = !matches!(
+                    cv.display,
+                    DisplayValue::TableColumn | DisplayValue::TableColumnGroup
+                ) && (cv.display != DisplayValue::Inline
+                    || node.is_inline_svg_root()
+                    || matches!(
+                        node.tag_name(),
+                        Some("img" | "canvas" | "video" | "iframe" | "object" | "embed")
+                    ));
+                let (own_transform_x, own_transform_y) = if transformable {
+                    transform_translation(cv, layout.size.width, layout.size.height)
+                } else {
+                    (0.0, 0.0)
+                };
                 let child_transform_x = transform_x + own_transform_x;
                 let child_transform_y = transform_y + own_transform_y;
                 let is_fixed = matches!(cv.position, PositionValue::Fixed);
@@ -3476,7 +3500,7 @@ fn paint_document_impl(
                 // geometry; only viewport-fixed boxes repeat per page.
                 let fixed_in_viewport = is_fixed && !inside_fixed_containing_block;
                 let establishes_fixed_containing_block =
-                    !cv.transform.is_empty() || !cv.filter.is_empty();
+                    (transformable && !cv.transform.is_empty()) || !cv.filter.is_empty();
                 let (fixed_dx, fixed_dy) = if fixed_in_viewport {
                     fixed_position_px(
                         cv,
@@ -3495,6 +3519,24 @@ fn paint_document_impl(
                 let paint_x = abs_x + page_offset_x + pos_dx + fixed_dx + child_transform_x;
                 let mut paint_y =
                     abs_y + page_offset_y + child_shift_y + pos_dy + fixed_dy + child_transform_y;
+                if transformable && !translation_only(cv) {
+                    let matrix = element_transform(
+                        cv,
+                        paint_x,
+                        paint_y,
+                        layout.size.width,
+                        layout.size.height,
+                    );
+                    // spec: https://www.w3.org/TR/css-transforms-1/#transform-function-lists
+                    // A singular matrix hides the element and its subtree.
+                    if matrix.determinant() == 0.0
+                        || !matrix.as_coeffs().iter().all(|value| value.is_finite())
+                    {
+                        continue;
+                    }
+                    stack.push(PaintFrame::RestoreTransform(scene.transform));
+                    scene.transform *= matrix;
+                }
                 let mut paint_height = layout.size.height;
                 let mut paint_background_height = layout.size.height;
                 let mut multicol_clip_pushed = false;
@@ -3701,7 +3743,7 @@ fn paint_document_impl(
                         page_box.width.max(0.0) as f64,
                         page_box.height.max(0.0) as f64,
                     );
-                    scene.push_layer(
+                    scene.scene.push_layer(
                         Mix::Normal,
                         cv.opacity,
                         Affine::IDENTITY,
@@ -3737,7 +3779,7 @@ fn paint_document_impl(
                                 )
                         });
                         if let Some(clip) = clip_background {
-                            scene.push_clip_layer(Affine::IDENTITY, &clip);
+                            scene.scene.push_clip_layer(Affine::IDENTITY, &clip);
                         }
                         paint_element_box_shadows(
                             scene,
@@ -3905,7 +3947,7 @@ fn paint_document_impl(
                                 )
                         });
                         if let Some(clip) = clip_background {
-                            scene.push_clip_layer(Affine::IDENTITY, &clip);
+                            scene.scene.push_clip_layer(Affine::IDENTITY, &clip);
                         }
                         paint_element_background(
                             scene,
@@ -4273,7 +4315,7 @@ fn paint_document_impl(
                             (page_box.width - margins.right - insets.right) as f64,
                             (margins.top + insets.top + content_height) as f64,
                         );
-                        scene.push_clip_layer(Affine::IDENTITY, &clip);
+                        scene.scene.push_clip_layer(Affine::IDENTITY, &clip);
                     }
                     text::draw_text_node(
                         scene,
@@ -4558,7 +4600,7 @@ fn paint_inline_svg(
         .flatten()
         .and_then(|source| raikiri_svg::SvgDocument::parse(source.as_bytes()).ok())
         .and_then(|svg| {
-            svg.rasterize(
+            svg.rasterize_at_css_pixel_scale(
                 raikiri_svg::SvgViewport {
                     width: content_w,
                     height: content_h,
@@ -4619,11 +4661,9 @@ fn paint_inline_svg(
     scene.push_clip_layer(Affine::IDENTITY, &clip);
     scene.fill(
         peniko::Fill::NonZero,
-        Affine::translate((content_x, content_y))
-            * Affine::scale_non_uniform(
-                f64::from(content_w) / raster_w,
-                f64::from(content_h) / raster_h,
-            ),
+        // SVG pixels retain the CSS pixel grid. The buffer is rounded up,
+        // while the clip above keeps the exact fractional viewport extent.
+        Affine::translate((content_x, content_y)),
         brush.as_ref(),
         None,
         &Rect::new(0.0, 0.0, raster_w, raster_h),
@@ -5851,11 +5891,81 @@ fn infer_url_color(url: &str) -> Option<CssColor> {
     }
 }
 
+fn translation_only(cv: &ComputedValues) -> bool {
+    cv.transform.iter().all(|function| {
+        matches!(
+            function,
+            ComputedTransformFunction::Translate(..)
+                | ComputedTransformFunction::TranslateX(..)
+                | ComputedTransformFunction::TranslateY(..)
+        )
+    })
+}
+
+// spec: https://www.w3.org/TR/css-transforms-1/#transform-rendering
+// Commands already carry page coordinates. Conjugate the local matrix around
+// the border-box origin in that same coordinate space, then compose with the
+// ancestor context. This also keeps transforms out of layout geometry.
+fn element_transform(cv: &ComputedValues, x: f32, y: f32, width: f32, height: f32) -> Affine {
+    let resolve = |value: ComputedLengthPercentage, basis: f64| match value {
+        ComputedLengthPercentage::Px(px) => px as f64,
+        ComputedLengthPercentage::Percent(percent) => basis * percent as f64 / 100.0,
+    };
+    // Border backgrounds and borders use this same snapped paint box.
+    let paint_x = (x as f64).round();
+    let paint_y = (y as f64).round();
+    let paint_width = ((x + width) as f64).round() - paint_x;
+    let paint_height = ((y + height) as f64).round() - paint_y;
+    let origin = (
+        paint_x + position_offset(cv.transform_origin.horizontal, paint_width),
+        paint_y + position_offset(cv.transform_origin.vertical, paint_height),
+    );
+    let mut matrix = Affine::translate(origin);
+    for function in cv.transform.iter() {
+        matrix *= match *function {
+            ComputedTransformFunction::Matrix(coeffs) => Affine::new(coeffs.map(f64::from)),
+            ComputedTransformFunction::Translate(x, y) => {
+                Affine::translate((resolve(x, paint_width), resolve(y, paint_height)))
+            }
+            ComputedTransformFunction::TranslateX(x) => {
+                Affine::translate((resolve(x, paint_width), 0.0))
+            }
+            ComputedTransformFunction::TranslateY(y) => {
+                Affine::translate((0.0, resolve(y, paint_height)))
+            }
+            ComputedTransformFunction::Scale(x, y) => Affine::scale_non_uniform(x as f64, y as f64),
+            ComputedTransformFunction::ScaleX(x) => Affine::scale_non_uniform(x as f64, 1.0),
+            ComputedTransformFunction::ScaleY(y) => Affine::scale_non_uniform(1.0, y as f64),
+            ComputedTransformFunction::Rotate(angle) => {
+                Affine::rotate((angle.0 as f64).to_radians())
+            }
+            ComputedTransformFunction::Skew(x, y) => Affine::new([
+                1.0,
+                (y.0 as f64).to_radians().tan(),
+                (x.0 as f64).to_radians().tan(),
+                1.0,
+                0.0,
+                0.0,
+            ]),
+            ComputedTransformFunction::SkewX(x) => {
+                Affine::new([1.0, 0.0, (x.0 as f64).to_radians().tan(), 1.0, 0.0, 0.0])
+            }
+            ComputedTransformFunction::SkewY(y) => {
+                Affine::new([1.0, (y.0 as f64).to_radians().tan(), 0.0, 1.0, 0.0, 0.0])
+            }
+        };
+    }
+    matrix * Affine::translate((-origin.0, -origin.1))
+}
+
 fn transform_translation(
     cv: &raikiri_style::ComputedValues,
     width: f32,
     height: f32,
 ) -> (f32, f32) {
+    if !translation_only(cv) {
+        return (0.0, 0.0);
+    }
     let mut dx = 0.0_f32;
     let mut dy = 0.0_f32;
     let resolve = |value: ComputedLengthPercentage, basis: f32| match value {
@@ -5870,9 +5980,6 @@ fn transform_translation(
             }
             ComputedTransformFunction::TranslateX(x) => dx += resolve(x, width),
             ComputedTransformFunction::TranslateY(y) => dy += resolve(y, height),
-            // Rotation, scale, skew, and arbitrary matrices need transformed
-            // glyph/clip geometry. Keep the compact paint fallback unchanged
-            // for those functions until that matrix path exists.
             _ => {}
         }
     }

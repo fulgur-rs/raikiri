@@ -1166,6 +1166,7 @@ pub(crate) fn resolve_against_inherited(
         // `ClipPath` above (neither absolutizes at all, see
         // `TransformFunction`/`FilterFunction` doc's scope notes).
         | PropertyValue::Transform(_)
+        | PropertyValue::TransformOrigin(..)
         | PropertyValue::Filter(_)
         | PropertyValue::TableLayout(_)
         | PropertyValue::BorderCollapse(_)
@@ -1555,6 +1556,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::MaskImage(v) => target.mask_image = v,
         PropertyValue::ClipPath(v) => target.clip_path = v,
         PropertyValue::Transform(v) => target.transform = v,
+        PropertyValue::TransformOrigin(position, z) => {
+            target.transform_origin = position;
+            target.transform_origin_z = z;
+        }
         PropertyValue::Filter(v) => target.filter = v,
         PropertyValue::TableLayout(v) => target.table_layout = v,
         PropertyValue::BorderCollapse(v) => target.border_collapse = v,

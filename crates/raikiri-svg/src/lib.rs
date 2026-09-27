@@ -204,16 +204,52 @@ impl SvgDocument {
         root_style: SvgRootStyle,
         max_output_bytes: Option<u64>,
     ) -> Result<DecodedImage, SvgError> {
+        self.rasterize_inner(viewport, root_style, max_output_bytes, false)
+    }
+
+    /// Rasterizes inline SVG on the CSS pixel grid without stretching the
+    /// rounded backing buffer. The caller must paint at one image pixel per
+    /// CSS pixel and clip to the original fractional viewport.
+    ///
+    /// Uses the same opacity controls and allocation limit as [`Self::rasterize`].
+    pub fn rasterize_at_css_pixel_scale(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        max_output_bytes: Option<u64>,
+    ) -> Result<DecodedImage, SvgError> {
+        self.rasterize_inner(viewport, root_style, max_output_bytes, true)
+    }
+
+    fn rasterize_inner(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        max_output_bytes: Option<u64>,
+        css_pixel_scale: bool,
+    ) -> Result<DecodedImage, SvgError> {
         if !root_style.opacity.is_finite() || !(0.0..=1.0).contains(&root_style.opacity) {
             return Err(SvgError::InvalidOpacity);
         }
 
         let (width, height, byte_len) = checked_output_size(viewport, max_output_bytes)?;
         let mut pixels = allocate_transparent_pixels(byte_len)?;
+        let viewport = if css_pixel_scale {
+            viewport
+        } else {
+            SvgViewport {
+                width: width as f32,
+                height: height as f32,
+            }
+        };
 
         if root_style.visible && root_style.opacity > 0.0 {
-            let viewport_matches =
-                viewport_matches_tree(&self.tree, width, height, self.has_view_box);
+            let viewport_matches = viewport_matches_tree(
+                &self.tree,
+                viewport.width,
+                viewport.height,
+                self.has_view_box,
+            );
             let modifies_source = !viewport_matches
                 || root_style.neutralize_root_opacity
                 || root_style.host_controls_root_background
@@ -228,7 +264,7 @@ impl SvgDocument {
             let source = if viewport_matches {
                 source
             } else {
-                with_root_viewport_size(&source, width, height)?
+                with_root_viewport_size(&source, viewport.width, viewport.height)?
             };
             let source = if root_style.neutralize_root_opacity {
                 normalize_svg_opacity_cascade(&source)?
@@ -261,6 +297,7 @@ impl SvgDocument {
                 tree,
                 width,
                 height,
+                viewport,
                 raster_opacity,
                 root_style
                     .neutralize_root_opacity
@@ -593,7 +630,7 @@ fn positive_ratio(width: f32, height: f32) -> Option<f32> {
     (ratio.is_finite() && ratio > 0.0).then_some(ratio)
 }
 
-fn viewport_matches_tree(tree: &usvg::Tree, width: u32, height: u32, has_view_box: bool) -> bool {
+fn viewport_matches_tree(tree: &usvg::Tree, width: f32, height: f32, has_view_box: bool) -> bool {
     let size = tree.size();
     let requested_width = f64::from(width);
     let requested_height = f64::from(height);
@@ -608,7 +645,7 @@ fn viewport_matches_tree(tree: &usvg::Tree, width: u32, height: u32, has_view_bo
     (first - second).abs() <= first.max(second).max(1.0) * 1.0e-6
 }
 
-fn with_root_viewport_size(source: &str, width: u32, height: u32) -> Result<String, SvgError> {
+fn with_root_viewport_size(source: &str, width: f32, height: f32) -> Result<String, SvgError> {
     let xml = roxmltree::Document::parse(source)
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
     let root = xml.root_element();
@@ -1748,6 +1785,7 @@ fn render_tree(
     tree: &usvg::Tree,
     width: u32,
     height: u32,
+    viewport: SvgViewport,
     opacity: f32,
     neutralized_root_opacity: Option<f32>,
     pixels: &mut Vec<u8>,
@@ -1759,8 +1797,8 @@ fn render_tree(
         resvg::tiny_skia::Pixmap::from_vec(backing, size).ok_or(SvgError::AllocationFailed)?;
     let svg_size = tree.size();
     let transform = resvg::tiny_skia::Transform::from_scale(
-        width as f32 / svg_size.width(),
-        height as f32 / svg_size.height(),
+        viewport.width / svg_size.width(),
+        viewport.height / svg_size.height(),
     );
     resvg::render(tree, transform, &mut pixmap.as_mut());
 

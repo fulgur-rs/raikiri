@@ -1620,6 +1620,10 @@ pub struct ComputedValues {
     /// [`crate::resolve::resolve_css_position`] for
     /// `background-position`/`object-position`.
     pub transform: Arc<Vec<ComputedTransformFunction>>,
+    /// Border-box origin with absolute lengths and symbolic percentages.
+    pub transform_origin: ComputedCssPosition,
+    /// Absolute Z origin (unused by 2D rendering).
+    pub transform_origin_z: ComputedLength,
     /// `filter`. **non-inherited**, initial: `none` (empty list,
     /// [`empty_filter_list`]) (CSS Filter Effects Level 1 §5 "The filter
     /// property" <https://www.w3.org/TR/filter-effects-1/#FilterProperty>,
@@ -2068,6 +2072,13 @@ impl ComputedValues {
             // CSS Transforms Level 1 §4: transform initial は `none`
             // (空 list)。
             transform: empty_computed_transform_list(),
+            transform_origin: ComputedCssPosition {
+                horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(
+                    50.0,
+                )),
+                vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(50.0)),
+            },
+            transform_origin_z: ComputedLength(0.0),
             // CSS Filter Effects Level 1 §5: filter initial は `none`
             // (空 list)。
             filter: empty_filter_list(),

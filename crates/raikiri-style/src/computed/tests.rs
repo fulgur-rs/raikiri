@@ -607,6 +607,8 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Transforms Level 1 §4/CSS Filter Effects Level 1 §5:
         // 両方 non-inherited なので initial (`none` = 空 list) と
         // 異なる値にしておく (non_initial_parent の趣旨どおり)。
+        transform_origin: ComputedValues::initial().transform_origin,
+        transform_origin_z: crate::resolve::ComputedLength(0.0),
         transform: Arc::new(vec![ComputedTransformFunction::TranslateX(
             ComputedLengthPercentage::Px(32.0),
         )]),

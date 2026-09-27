@@ -340,3 +340,66 @@ fn location_parts_about_blank() {
     assert_eq!(parts.pathname, "blank");
     assert_eq!(parts.origin, "null");
 }
+
+#[test]
+fn named_window_access_follows_connected_ids_and_keeps_builtin_members() {
+    let mut runtime = rt();
+    ok(
+        &mut runtime,
+        "var named = document.createElement('div'); named.id = 'namedTarget'; document.body.appendChild(named); namedTarget === named && window.namedTarget === named",
+    );
+    ok(
+        &mut runtime,
+        "named.id = 'renamedTarget'; typeof namedTarget === 'undefined' && renamedTarget === named",
+    );
+    ok(
+        &mut runtime,
+        "named.id = 'console'; window.console !== named && typeof console.log === 'function'",
+    );
+    ok(
+        &mut runtime,
+        "named.id = 'renamedTarget'; named.remove(); typeof renamedTarget === 'undefined'",
+    );
+}
+
+#[test]
+fn named_window_duplicates_are_live_and_name_attributes_have_html_scope() {
+    let mut runtime = rt();
+    ok(
+        &mut runtime,
+        "var first = document.createElement('div'); first.id = 'namedGroup'; document.body.appendChild(first); var second = document.createElement('div'); second.id = 'namedGroup'; document.body.appendChild(second); var group = namedGroup; group instanceof HTMLCollection && group.length === 2 && group[0] === first && group[1] === second",
+    );
+    ok(
+        &mut runtime,
+        "second.remove(); group.length === 1 && namedGroup === first",
+    );
+    ok(
+        &mut runtime,
+        "var form = document.createElement('form'); form.setAttribute('name', 'namedForm'); document.body.appendChild(form); namedForm === form",
+    );
+    ok(
+        &mut runtime,
+        "var div = document.createElement('div'); div.setAttribute('name', 'notNamed'); document.body.appendChild(div); typeof notNamed === 'undefined'",
+    );
+    ok(
+        &mut runtime,
+        "var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.id = 'notHtml'; document.body.appendChild(svg); typeof notHtml === 'undefined'",
+    );
+    ok(
+        &mut runtime,
+        "var prior = Object.getPrototypeOf(window); var shadow = document.createElement('div'); shadow.id = 'namedShadow'; document.body.appendChild(shadow); window.namedShadow = 7; namedShadow === 7",
+    );
+}
+
+#[test]
+fn named_window_property_precedes_object_prototype() {
+    let mut runtime = rt();
+    ok(
+        &mut runtime,
+        "var element = document.createElement('div'); element.id = 'toString'; document.body.appendChild(element); window.toString === element && toString === element",
+    );
+    ok(
+        &mut runtime,
+        "element.remove(); typeof window.toString === 'function'",
+    );
+}

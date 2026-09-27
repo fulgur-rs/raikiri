@@ -43,6 +43,8 @@ pub(crate) enum CollectionSource {
     ClassNames(usize, Vec<String>),
     /// A fixed list of nodes, in the order given.
     Static(Vec<usize>),
+    /// Connected HTML elements supplying a named Window property.
+    WindowNamed(String),
 }
 
 impl CollectionSource {
@@ -65,6 +67,7 @@ impl CollectionSource {
                 Self::Children(node) => element_children_of(doc, *node),
                 Self::TagName(root, query) => elements_by_tag_name(doc, *root, query),
                 Self::ClassNames(root, tokens) => elements_with_class_tokens(doc, *root, tokens),
+                Self::WindowNamed(name) => super::window::named::nodes(doc, name),
             };
             f(doc, &live)
         })

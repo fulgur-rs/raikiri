@@ -1,14 +1,14 @@
-//! Focused CSS Transforms visual checks at the exact project viewport.
+//! Focused CSS Transforms visual checks with authored WPT fuzzy metadata.
 
 use std::path::PathBuf;
 
 use raikiri_wpt::reftest::{ReftestConfig, discover_pairs_for_file_with_wpt_root, run_pair};
 use raikiri_wpt::runner::{TestOutcome, Tolerance};
 
-/// Static transform-origin and skew cases match their references exactly.
+/// Static and dynamic transforms match using WPT-authored comparison ranges.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn transform_pairs_are_pixel_exact_at_800x600() {
+fn transform_pairs_match_wpt_metadata_at_800x600() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let dir = root.join("css/css-transforms");
     let mut config = ReftestConfig::default();

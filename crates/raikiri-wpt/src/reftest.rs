@@ -6,6 +6,9 @@
 //! The default viewport is 800×600 CSS px (WPT reftest test setup default).
 //! Callers may supply a custom size via [`ReftestConfig`].
 
+mod dynamic;
+mod fuzzy;
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -40,6 +43,8 @@ pub struct ReftestPair {
     pub reference: PathBuf,
     /// Whether the pair is a match or mismatch reftest.
     pub kind: ReftestKind,
+    // Query and fragment are runtime URL state, separate from filesystem lookup.
+    reference_suffix: String,
 }
 
 impl std::fmt::Debug for ReftestPair {
@@ -521,6 +526,7 @@ pub fn discover_pairs_for_file_with_wpt_root(
             test: test_path.to_path_buf(),
             reference,
             kind,
+            reference_suffix: href[href_fs.len()..].to_owned(),
         });
     }
     if pairs.is_empty() {
@@ -2434,6 +2440,7 @@ fn compare_documents_selected(
     tolerance: Tolerance,
     left_selection: Option<&PageSelection>,
     right_selection: Option<&PageSelection>,
+    fuzzy: Option<fuzzy::Fuzzy>,
 ) -> DocumentDiff {
     let left_indices = left_selection
         .map(|selection| selection.indices(left.pages.len()))
@@ -2447,10 +2454,11 @@ fn compare_documents_selected(
     let mut matched = left_indices.len() == right_indices.len();
 
     for position in 0..common {
-        let diff = compare_images(
-            &left.pages[left_indices[position]],
-            &right.pages[right_indices[position]],
-            tolerance,
+        let a = &left.pages[left_indices[position]];
+        let b = &right.pages[right_indices[position]];
+        let diff = fuzzy.map_or_else(
+            || compare_images(a, b, tolerance),
+            |f| fuzzy::compare(a, b, f),
         );
         mismatched_pixels = mismatched_pixels.saturating_add(diff.mismatched_pixels);
         total_pixels = total_pixels.saturating_add(diff.total_pixels);
@@ -2486,7 +2494,7 @@ pub fn compare_documents(
     right: &RenderedDocument,
     tolerance: Tolerance,
 ) -> DocumentDiff {
-    compare_documents_selected(left, right, tolerance, None, None)
+    compare_documents_selected(left, right, tolerance, None, None, None)
 }
 
 // ── High-level runner ──────────────────────────────────────────────────
@@ -2537,6 +2545,10 @@ where
 {
     let test_html = read_html(&pair.test)?;
     let ref_html = read_html(&pair.reference)?;
+    let fuzzy = fuzzy::metadata(&test_html, pair)?;
+    let selections = page_selections_for_pair(&test_html, &pair.reference);
+    let test_html = dynamic::prepare(&test_html, &pair.test, "", config)?;
+    let ref_html = dynamic::prepare(&ref_html, &pair.reference, &pair.reference_suffix, config)?;
     let ref_html = mirror_default_page_margin(&test_html, &ref_html);
     let test_doc = render_raikiri_pages_inner(
         &test_html,
@@ -2562,14 +2574,14 @@ where
         pair.reference.parent(),
     )
     .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
-    let (test_selection, reference_selection) =
-        page_selections_for_pair(&test_html, &pair.reference);
+    let (test_selection, reference_selection) = selections;
     let diff = compare_documents_selected(
         &test_doc,
         &ref_doc,
         config.tolerance,
         test_selection.as_ref(),
         reference_selection.as_ref(),
+        fuzzy,
     );
     let pass = match pair.kind {
         ReftestKind::Match => diff.matched,

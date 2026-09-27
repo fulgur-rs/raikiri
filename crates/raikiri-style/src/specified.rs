@@ -607,6 +607,10 @@ pub struct SpecifiedValues {
     /// と同じ split、[`crate::property::TransformFunction`] doc参照)。
     /// `none` は空 list ([`empty_transform_list`]) で表現する。
     pub transform: Arc<Vec<TransformFunction>>,
+    /// Border-box origin, non-inherited, initial `50% 50%` (CSS Transforms 1 §5).
+    pub transform_origin: CssPosition,
+    /// Z origin; retained even though rendering currently supports only 2D.
+    pub transform_origin_z: Length,
     /// `filter` の **specified** value — `transform` と同じ shape
     /// (埋め込まれた `Length`/`Angle`/`f32` は絶対化しない、
     /// [`FilterFunction`] doc参照)。`none` は空 list
@@ -973,6 +977,11 @@ impl SpecifiedValues {
             // CSS Transforms Level 1 §4: transform initial は `none`
             // (空 list)。
             transform: empty_transform_list(),
+            transform_origin: CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            },
+            transform_origin_z: Length::Px(0.0),
             // CSS Filter Effects Level 1 §5: filter initial は `none`
             // (空 list)。
             filter: empty_filter_list(),
@@ -1355,6 +1364,11 @@ impl SpecifiedValues {
             clip_path: ClipPath::None,
             // non-inherited (CSS Transforms Level 1 §4 "Inherited: no").
             transform: empty_transform_list(),
+            transform_origin: CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            },
+            transform_origin_z: Length::Px(0.0),
             // non-inherited (CSS Filter Effects Level 1 §5 "Inherited: no").
             filter: empty_filter_list(),
             // non-inherited (CSS Tables 3 §4 "Inherited: no")、initial
@@ -1858,6 +1872,18 @@ impl SpecifiedValues {
             // CSS Images Module Level 3 §5.2 — `<length-percentage>` を含む
             // ため `background_position` と同じ shape で絶対化する (同じ
             // `resolve_css_position` を再利用)。
+            transform_origin: resolve_css_position(
+                self.transform_origin,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
+            transform_origin_z: crate::resolve::resolve_length(
+                self.transform_origin_z,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
             object_position: resolve_css_position(
                 self.object_position,
                 font_size,
