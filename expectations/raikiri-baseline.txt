@@ -1356,6 +1356,8 @@ css/css-multicol/multicol-nested-033.html
 
 # --- CSS Text writing-system exact 800x600 PASS-only pin 2026-09-20 ---
 css/css-text/writing-system/writing-system-font-001.html
+# --- CSS Text writing-system script-tag casing exact 800x600 PASS-only (+1) ---
+css/css-text/writing-system/writing-system-text-transform-001.html
 # --- CSS Text multi-category exact 800x600 PASS-only pins 2026-09-21 ---
 # text-group-align, text-spacing-trim, and hanging-punctuation.
 # `hanging-punctuation: first` leading U+3000 exact 800x600 PASS-only pin.
