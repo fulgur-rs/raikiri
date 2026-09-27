@@ -675,7 +675,8 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Text writing-system script-tag casing exact slice (+1).
     // + CSS Text basic overflow-wrap break-word exact slice (+1).
     // + CSS Text nowrap suppresses overflow-wrap exact slice (+1).
-    assert_eq!(set.baseline.entries.len(), 1345);
+    // + CSS Text text-justify none exact slice (+1).
+    assert_eq!(set.baseline.entries.len(), 1346);
     assert!(set.quarantine.is_empty());
     assert!(set.deprecated.is_empty());
 }
