@@ -101,7 +101,7 @@ target/wasmtime-trial/release/run-css-text-i18n --wpt-root target/wpt --results-
 - ローカル試験完了時はuserのno-commit / no-pushをskillのcommit / cleanupより優先し、uncommitted worktreeを保持した。後続のユーザー指示でdraft PR公開（commit / push）を許可された。誤判断なら履歴化されない成果を誤って削除する。
 - 軽微なreview指摘の保留はない。
 - native CSS / layout / font / fragment / fetch処理はguest fuelとlinear-memory capの対象外。外側process timeoutを維持する。
-- clean guest Abortは最終論理DOMを同期する。engine trapは停止Storeを破棄し、最後のnative checkpointだけ残す。
+- clean guest Abortは最終論理DOMの同期を試みる。後続の結果転送／DOM同期が失敗しても既知のAbort理由を優先し、転送失敗と最後のnative checkpointのみが残ることをstderrの`WASM_DIAGNOSTIC`に記録する。engine trapは停止Storeを破棄し、最後のnative checkpointだけ残す。
 - Linux x86_64 / 4KiB pages限定。元のCPU / parser / memory security issueは閉じていない。merge gateは実行していない。
 
 ## Evidence

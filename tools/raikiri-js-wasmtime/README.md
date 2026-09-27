@@ -34,7 +34,10 @@ unchanged. `scripts/measure.py REPO_ROOT` runs freshly copied release binaries
 under `target/integration-logs/{native,wasmtime}-bins` sequentially, samples RSS
 and records hashes/timing. Stop other builds/tests during timing runs.
 
-A clean guest Abort preserves final logical mutations. An engine trap discards
+A clean guest Abort preserves final logical mutations when the final transfer succeeds.
+A later result or DOM transfer failure preserves the known Abort as the page outcome
+and logs the transfer failure separately; only the last native checkpoint remains.
+An engine trap discards
 the Store and preserves only the latest synchronized native checkpoint; the host
 never calls exports on the stopped Store. Fonts remain native and separate.
 
