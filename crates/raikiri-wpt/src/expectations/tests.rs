@@ -671,7 +671,8 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Text letter-spacing preserved final newline exact slice (+1).
     // + CSS Text text-autospace inline-element exact slice (+2).
     // + CSS Text text-autospace font-backed Latin adjacency exact slice (+2).
-    assert_eq!(set.baseline.entries.len(), 1340);
+    // + CSS Text font-resolved Arabic ZWJ join exact slice (+2).
+    assert_eq!(set.baseline.entries.len(), 1342);
     assert!(set.quarantine.is_empty());
     assert!(set.deprecated.is_empty());
 }

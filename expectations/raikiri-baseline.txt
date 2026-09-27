@@ -832,6 +832,8 @@ css/css-text/text-align/text-align-match-parent-root-logical.html
 css/css-text/text-align/text-align-match-parent-root-ltr.html
 css/css-text/text-align/text-align-match-parent-root-rtl.html
 css/css-text/text-align/text-align-start-last-default.html
+css/css-text/text-encoding/shaping-join-001.html
+css/css-text/text-encoding/shaping-join-002.html
 css/css-text/text-encoding/shaping-no-join-001.html
 css/css-text/text-encoding/shaping-no-join-002.html
 css/css-text/text-encoding/shaping-tatweel-001.html

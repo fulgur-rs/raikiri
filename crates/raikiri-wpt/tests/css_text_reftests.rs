@@ -351,21 +351,26 @@ fn text_encoding_unpinned_diagnostics() {
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn text_encoding_join_with_resource_resolution_exact_passes() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
-    let test = root.join("css/css-text/text-encoding/shaping-join-001.html");
-    let pairs =
-        discover_pairs_for_file_with_wpt_root(&test, Some(&root)).expect("discover WPT pair");
-    assert_eq!(pairs.len(), 1);
     let mut config = ReftestConfig::default();
     config.width = 800;
     config.height = 600;
     config.tolerance = Tolerance::EXACT;
-    let result = run_pair_with_images(&pairs[0], config).expect("run WPT pair with resources");
-    assert!(
-        matches!(&result.outcome, TestOutcome::Pass),
-        "resource-enabled join case: outcome={:?}, mismatches={}",
-        result.outcome,
-        result.mismatched_pixels
-    );
+    for relative in [
+        "css/css-text/text-encoding/shaping-join-001.html",
+        "css/css-text/text-encoding/shaping-join-002.html",
+    ] {
+        let test = root.join(relative);
+        let pairs =
+            discover_pairs_for_file_with_wpt_root(&test, Some(&root)).expect("discover WPT pair");
+        assert_eq!(pairs.len(), 1, "{relative}");
+        let result = run_pair_with_images(&pairs[0], config).expect("run WPT pair with resources");
+        assert!(
+            matches!(&result.outcome, TestOutcome::Pass),
+            "{relative}: outcome={:?}, mismatches={}",
+            result.outcome,
+            result.mismatched_pixels
+        );
+    }
 }
 
 /// Verify the smallest resource-enabled exact slice across white-space and line-breaking.
