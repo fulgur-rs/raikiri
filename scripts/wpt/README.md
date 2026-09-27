@@ -104,10 +104,11 @@ shared checkout scope must expand.
 
 ## Running CSS Text i18n testharness pages
 
-The `run-css-text-i18n` binary runs the testharness-only pages under
-`css/css-text/i18n` with Raikiri layout geometry. It executes the inline WPT
-JavaScript unchanged. It does not load the external `testharness.js` or
-`testharnessreport.js`; it supplies the small helper API used by this test set.
+The `run-css-text-i18n` binary runs the testharness pages under
+`css/css-text/i18n` with Raikiri layout geometry. Each page runs end to end:
+its `<script>` elements, inline or `src`, execute in document order with the
+checkout's real, unmodified `resources/testharness.js`, and the runner serves
+its own `resources/testharnessreport.js` to collect the results.
 It does not change either expectations file. The command can return nonzero
 when a WPT assertion fails or when a file cannot run; both are reported
 separately.
@@ -118,9 +119,9 @@ cargo run --locked -p raikiri-wpt --bin run-css-text-i18n -- \
     --wpt-root target/wpt
 ```
 
-This route is intentionally limited to the CSS Text i18n testharness APIs. The
-158 reftest-only files in the directory remain on the visual reftest path; this
-command does not run arbitrary WPT JavaScript or implement unsupported DOM APIs.
+The 158 reftest-only files in the directory remain on the visual reftest path.
+Pages that need DOM APIs the runtime does not implement fail or report an
+execution error rather than being skipped.
 
 General scripts can use `raikiri_js::runtime::DomRuntime`, which binds native
 DOM interfaces (`Document`, `Element`, `HTMLElement`, ...) directly to a

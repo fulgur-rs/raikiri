@@ -1,26 +1,17 @@
 //! Executes the testharness-only tests in `css/css-text/i18n` against Raikiri.
 //!
 //! Reftest files in the same directory remain on the visual runner. This
-//! module covers testharness scripts that query DOM geometry.
+//! module covers testharness pages, which query DOM geometry. Each page runs
+//! end to end with the checkout's real `resources/testharness.js`: its
+//! `<script>` elements, inline or `src`, run in document order against a
+//! live Raikiri document.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use raikiri_js::TestOutcome;
-use raikiri_js::testharness::run_testharness_on_host;
-
-use crate::reftest::{DEFAULT_REFTTEST_HEIGHT, DEFAULT_REFTTEST_WIDTH, prepare_wpt_live_document};
 
 const TEST_DIR: &str = "css/css-text/i18n";
-
-/// Which JavaScript harness executes the pages.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Engine {
-    /// The page's inline scripts on the built-in testharness shim.
-    Shim,
-    /// The whole page, with the checkout's real `testharness.js`.
-    Real,
-}
 
 /// Per-file result from a CSS Text i18n testharness page.
 #[derive(Debug)]
@@ -29,7 +20,7 @@ pub struct TestHarnessFileResult {
     pub test_id: String,
     /// Results for every `test()` call. Empty only when `error` is set.
     pub outcomes: Vec<TestOutcome>,
-    /// A parse, layout, or JavaScript harness error, separate from assertion failures.
+    /// A page, layout, or harness-level error, separate from assertion failures.
     pub error: Option<String>,
 }
 
@@ -73,22 +64,14 @@ impl std::fmt::Display for TestHarnessRunError {
 
 impl std::error::Error for TestHarnessRunError {}
 
-/// Run every testharness-only HTML page under `css/css-text/i18n` on the
-/// native DOM runtime.
+/// Run every testharness HTML page under `css/css-text/i18n` with the real
+/// `testharness.js`.
 ///
-/// Each script runs against a live Raikiri document (`WptDocumentHost`). DOM
+/// Each page runs against a live Raikiri document (`WptDocumentHost`). DOM
 /// and style writes update arena nodes; geometry reads lazily recascade and
 /// relayout that same document before returning current page-scene fragments.
 pub fn run_css_text_i18n(
     wpt_root: &Path,
-) -> Result<Vec<TestHarnessFileResult>, TestHarnessRunError> {
-    run_css_text_i18n_with(wpt_root, Engine::Shim)
-}
-
-/// Like [`run_css_text_i18n`], on the selected `engine`.
-pub fn run_css_text_i18n_with(
-    wpt_root: &Path,
-    engine: Engine,
 ) -> Result<Vec<TestHarnessFileResult>, TestHarnessRunError> {
     let test_root = wpt_root.join(TEST_DIR);
     if !test_root.is_dir() {
@@ -105,27 +88,17 @@ pub fn run_css_text_i18n_with(
 
     let results = files
         .iter()
-        .map(|path| match engine {
-            Engine::Shim => run_testharness_file_with_helper(path, wpt_root, ""),
-            Engine::Real => run_real_testharness_file(path, wpt_root),
-        })
+        .map(|path| run_testharness_file(path, wpt_root))
         .collect();
     Ok(results)
 }
 
-fn test_id(path: &Path, wpt_root: &Path) -> String {
-    path.strip_prefix(wpt_root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
-}
-
 /// Run one page end to end with the checkout's real `testharness.js`.
-fn run_real_testharness_file(path: &Path, wpt_root: &Path) -> TestHarnessFileResult {
-    let test_id = test_id(path, wpt_root);
+fn run_testharness_file(path: &Path, wpt_root: &Path) -> TestHarnessFileResult {
     // `run_testharness_page` joins its path onto `wpt_root`, so a discovered
     // path (already under a possibly relative `wpt_root`) goes in relative.
     let relative = path.strip_prefix(wpt_root).unwrap_or(path);
+    let test_id = relative.to_string_lossy().replace('\\', "/");
     match crate::testharness_page::run_testharness_page(relative, wpt_root) {
         Ok(outcomes) => TestHarnessFileResult {
             test_id,
@@ -138,188 +111,6 @@ fn run_real_testharness_file(path: &Path, wpt_root: &Path) -> TestHarnessFileRes
             error: Some(error.to_string()),
         },
     }
-}
-
-/// One file whose results differ between the two engines.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Difference {
-    /// WPT-relative test ID.
-    pub test_id: String,
-    /// Shim summary (`passed/total`, or the error).
-    pub shim: String,
-    /// Real-harness summary, in the same form.
-    pub real: String,
-}
-
-/// Regressions and improvements between the two engines' results.
-#[derive(Debug, Default, PartialEq, Eq)]
-pub struct Comparison {
-    /// Files where the shim ran without error and the real harness errored,
-    /// or the real harness passed fewer assertions.
-    pub regressions: Vec<Difference>,
-    /// Files where the shim errored and the real harness did not, or the
-    /// real harness passed more assertions.
-    pub improvements: Vec<Difference>,
-}
-
-fn summary(result: &TestHarnessFileResult) -> String {
-    match &result.error {
-        Some(error) => format!("error: {error}"),
-        None => format!("{}/{}", result.passed(), result.total()),
-    }
-}
-
-/// Compare the shim and real-harness results of the same files, paired in
-/// order.
-pub fn compare<'a, I>(results: I) -> Comparison
-where
-    I: IntoIterator<Item = (&'a TestHarnessFileResult, &'a TestHarnessFileResult)>,
-{
-    let mut comparison = Comparison::default();
-    for (shim, real) in results {
-        let bucket = match (&shim.error, &real.error) {
-            (None, Some(_)) => Some(&mut comparison.regressions),
-            (Some(_), None) => Some(&mut comparison.improvements),
-            (None, None) if real.passed() < shim.passed() => Some(&mut comparison.regressions),
-            (None, None) if real.passed() > shim.passed() => Some(&mut comparison.improvements),
-            _ => None,
-        };
-        if let Some(bucket) = bucket {
-            bucket.push(Difference {
-                test_id: shim.test_id.clone(),
-                shim: summary(shim),
-                real: summary(real),
-            });
-        }
-    }
-    comparison
-}
-
-#[cfg(test)]
-fn run_testharness_file(path: &Path, wpt_root: &Path) -> TestHarnessFileResult {
-    run_testharness_file_with_helper(path, wpt_root, "")
-}
-
-fn run_testharness_file_with_helper(
-    path: &Path,
-    wpt_root: &Path,
-    helper_script: &str,
-) -> TestHarnessFileResult {
-    let test_id = test_id(path, wpt_root);
-    let html = match fs::read_to_string(path) {
-        Ok(html) => html,
-        Err(error) => {
-            return TestHarnessFileResult {
-                test_id,
-                outcomes: Vec::new(),
-                error: Some(format!("read test HTML: {error}")),
-            };
-        }
-    };
-    let inline_script = inline_test_scripts(&html);
-    let script = if helper_script.is_empty() {
-        inline_script
-    } else {
-        format!("{helper_script}\n{inline_script}")
-    };
-    if !script.contains("test(") {
-        return TestHarnessFileResult {
-            test_id,
-            outcomes: Vec::new(),
-            error: Some("testharness.js is referenced but no inline test() call was found".into()),
-        };
-    }
-
-    let page_base = path.parent().unwrap_or(wpt_root);
-    let setup = match prepare_wpt_live_document(
-        &html,
-        DEFAULT_REFTTEST_WIDTH,
-        DEFAULT_REFTTEST_HEIGHT,
-        page_base,
-        wpt_root,
-    ) {
-        Ok(setup) => setup,
-        // cov:ignore: prepare_wpt_live_document parses in-memory valid UTF-8 and HTML parsing recovers from markup errors.
-        Err(error) => {
-            return TestHarnessFileResult {
-                test_id,
-                outcomes: Vec::new(),
-                error: Some(format!("prepare live Raikiri document: {error}")),
-            };
-        }
-    };
-
-    let result = run_testharness_on_host(
-        &script,
-        crate::wpt_host::WptDocumentHost::new(setup, wpt_root),
-    );
-    match result {
-        Ok(outcomes) => TestHarnessFileResult {
-            test_id,
-            outcomes,
-            error: None,
-        },
-        Err(error) => TestHarnessFileResult {
-            test_id,
-            outcomes: Vec::new(),
-            error: Some(error.to_string()),
-        },
-    }
-}
-
-fn inline_test_scripts(html: &str) -> String {
-    let lower = html.to_ascii_lowercase();
-    let mut output = String::new();
-    let mut search = 0usize;
-
-    while search < html.len() {
-        let comment = lower[search..].find("<!--").map(|offset| search + offset);
-        let script = lower[search..]
-            .find("<script")
-            .map(|offset| search + offset);
-        let Some(script_start) = script else {
-            if let Some(comment_start) = comment {
-                let Some(comment_end) = lower[comment_start + 4..].find("-->") else {
-                    break;
-                };
-                search = comment_start + 4 + comment_end + 3;
-                continue;
-            }
-            break;
-        };
-
-        if comment.is_some_and(|comment_start| comment_start < script_start) {
-            let comment_start = comment.expect("checked above");
-            let Some(comment_end) = lower[comment_start + 4..].find("-->") else {
-                break;
-            };
-            search = comment_start + 4 + comment_end + 3;
-            continue;
-        }
-
-        let Some(tag_end_offset) = lower[script_start..].find('>') else {
-            break;
-        };
-        let tag_end = script_start + tag_end_offset;
-        let tag = &lower[script_start..=tag_end];
-        let has_src = tag.split_whitespace().any(|attribute| {
-            attribute
-                .strip_prefix("src")
-                .is_some_and(|suffix| suffix.trim_start().starts_with('='))
-        });
-        let body_start = tag_end + 1;
-        let Some(close_offset) = lower[body_start..].find("</script>") else {
-            break;
-        };
-        let body_end = body_start + close_offset;
-        if !has_src {
-            output.push_str(&html[body_start..body_end]);
-            output.push('\n');
-        }
-        search = body_end + "</script>".len();
-    }
-
-    output
 }
 
 fn discover_testharness_files(test_root: &Path) -> Result<Vec<PathBuf>, TestHarnessRunError> {

@@ -205,9 +205,13 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
                     TextEmphasisFill::Open => format!("open {shape}"),
                 }
             }
+            // A fill-only specified value keeps its fill-only form: its shape
+            // is resolved against writing mode only at computed-value time,
+            // so reading it back as a shape would pin it to `circle` (CSS
+            // Text Decoration 3 §3.1).
             TextEmphasisStyle::DefaultShape { fill } => match fill {
-                TextEmphasisFill::Filled => "circle".to_owned(),
-                TextEmphasisFill::Open => "open circle".to_owned(),
+                TextEmphasisFill::Filled => "filled".to_owned(),
+                TextEmphasisFill::Open => "open".to_owned(),
             },
         }),
 
