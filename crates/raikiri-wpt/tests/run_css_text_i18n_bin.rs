@@ -168,3 +168,93 @@ fn bin_reports_a_missing_wpt_root_as_a_run_error() {
         "{stderr}"
     );
 }
+
+#[test]
+fn bin_json_retains_duplicate_names_failures_and_page_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    write_page(
+        dir.path(),
+        "results.html",
+        &page(
+            "",
+            "test(function(){assert_true(true);},'同名'); test(function(){assert_true(false,'deliberate');},'同名');",
+        ),
+    );
+    write_page(dir.path(), "no-test.html", &page("", ""));
+    let output = dir.path().join("results.json");
+    Command::cargo_bin("run-css-text-i18n")
+        .unwrap()
+        .arg("--wpt-root")
+        .arg(dir.path())
+        .arg("--results-json")
+        .arg(&output)
+        .env("RAIKIRI_WPT_METRICS", "1")
+        .assert()
+        .code(1);
+    let records: serde_json::Value = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
+    assert_eq!(records.as_array().unwrap().len(), 2);
+    assert_eq!(records[0]["test_id"], "css/css-text/i18n/no-test.html");
+    assert_eq!(records[0]["tests"], serde_json::json!([]));
+    assert!(
+        records[0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("no test results")
+    );
+    assert_eq!(records[1]["error"], serde_json::Value::Null);
+    assert_eq!(
+        records[1]["tests"][0],
+        serde_json::json!({"name":"同名","passed":true,"message":""})
+    );
+    assert_eq!(records[1]["tests"][1]["name"], "同名");
+    assert_eq!(records[1]["tests"][1]["passed"], false);
+    assert!(
+        records[1]["tests"][1]["message"]
+            .as_str()
+            .unwrap()
+            .contains("FAIL: Error: assert_true: deliberate")
+    );
+}
+
+#[test]
+fn bin_json_write_failure_has_a_distinct_tooling_exit_code() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_clean_page(dir.path(), "pass.html");
+    let assertion = Command::cargo_bin("run-css-text-i18n")
+        .unwrap()
+        .arg("--wpt-root")
+        .arg(dir.path())
+        .arg("--results-json")
+        .arg(dir.path())
+        .assert()
+        .code(2);
+    assert!(
+        String::from_utf8(assertion.get_output().stderr.clone())
+            .unwrap()
+            .contains("result output:")
+    );
+}
+
+#[test]
+fn bin_rejects_duplicate_json_paths_and_missing_json_path() {
+    for args in [
+        vec![
+            "--results-json",
+            "first.json",
+            "--results-json",
+            "second.json",
+        ],
+        vec!["--results-json", "--wpt-root", "wpt"],
+    ] {
+        let assertion = Command::cargo_bin("run-css-text-i18n")
+            .unwrap()
+            .args(args)
+            .assert()
+            .code(2);
+        assert!(
+            String::from_utf8(assertion.get_output().stderr.clone())
+                .unwrap()
+                .contains("--results-json")
+        );
+    }
+}
